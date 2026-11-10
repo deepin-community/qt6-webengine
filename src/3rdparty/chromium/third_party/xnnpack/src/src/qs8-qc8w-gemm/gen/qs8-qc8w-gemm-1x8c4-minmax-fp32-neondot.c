@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/c4-neondot.c.in
 //   Generator: tools/xngen
@@ -7,13 +8,16 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c4__neondot(
@@ -26,7 +30,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c4__neondot(
     int8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -94,7 +98,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c4__neondot(
     vacc0x0123 = vcvtnq_s32_f32(vfpacc0x0123);
     vacc0x4567 = vcvtnq_s32_f32(vfpacc0x4567);
 
-    const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->fp32_neonv8.output_zero_point);
+    const int16x8_t voutput_zero_point = vdupq_n_s16(params->fp32_neonv8.output_zero_point);
     #if XNN_ARCH_ARM64
       const int16x8_t vacc0x01234567 = vqaddq_s16(vqmovn_high_s32(vqmovn_s32(vacc0x0123), vacc0x4567), voutput_zero_point);
 
@@ -104,8 +108,8 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c4__neondot(
 
       int8x8_t vout0x01234567 = vqmovn_s16(vacc0x01234567);
     #endif
-    const int8x8_t voutput_min = vld1_dup_s8(&params->fp32_neonv8.output_min);
-    const int8x8_t voutput_max = vld1_dup_s8(&params->fp32_neonv8.output_max);
+    const int8x8_t voutput_min = vdup_n_s8(params->fp32_neonv8.output_min);
+    const int8x8_t voutput_max = vdup_n_s8(params->fp32_neonv8.output_max);
 
     vout0x01234567 = vmax_s8(vout0x01234567, voutput_min);
 

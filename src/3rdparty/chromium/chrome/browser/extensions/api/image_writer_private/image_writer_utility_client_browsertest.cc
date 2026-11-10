@@ -12,6 +12,7 @@
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "chrome/services/removable_storage_writer/public/mojom/removable_storage_writer.mojom.h"
@@ -128,8 +129,9 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     DCHECK(IsRunningInCorrectSequence());
 
     progress_ = progress;
-    if (!cancel_)
+    if (!cancel_) {
       return;
+    }
 
     image_writer_utility_client_->Cancel(base::BindOnce(
         &ImageWriterUtilityClientTest::Cancelled, base::Unretained(this)));

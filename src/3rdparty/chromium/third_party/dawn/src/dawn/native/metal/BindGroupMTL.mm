@@ -27,24 +27,98 @@
 
 #include "dawn/native/metal/BindGroupMTL.h"
 
+#include "dawn/common/MatchVariant.h"
+#include "dawn/common/Range.h"
 #include "dawn/native/metal/BindGroupLayoutMTL.h"
+#include "dawn/native/metal/BufferMTL.h"
 #include "dawn/native/metal/DeviceMTL.h"
+#include "dawn/native/metal/SamplerMTL.h"
+#include "dawn/native/metal/TextureMTL.h"
+
 namespace dawn::native::metal {
+
+// static
+ResultOrError<Ref<BindGroup>> BindGroup::Create(Device* device,
+                                                const BindGroupDescriptor* descriptor) {
+    Ref<BindGroup> bindGroup = ToBackend(descriptor->layout->GetInternalBindGroupLayout())
+                                   ->AllocateBindGroup(device, descriptor);
+    DAWN_TRY(bindGroup->Initialize(descriptor));
+    return bindGroup;
+}
 
 BindGroup::BindGroup(Device* device, const BindGroupDescriptor* descriptor)
     : BindGroupBase(this, device, descriptor) {}
 
 BindGroup::~BindGroup() = default;
 
-void BindGroup::DestroyImpl() {
-    BindGroupBase::DestroyImpl();
-    ToBackend(GetLayout())->DeallocateBindGroup(this);
+MaybeError BindGroup::InitializeImpl() {
+    auto* device = ToBackend(GetDevice());
+    if (!device->IsToggleEnabled(Toggle::MetalUseArgumentBuffers)) {
+        return {};
+    }
+
+    // TODO(crbug.com/363031535): The argument buffers should probably work in some kind of pool
+    // instead of being allocated here
+
+    auto layout = ToBackend(GetLayout());
+
+    auto encoder = layout->GetArgumentEncoder();
+    NSUInteger argumentBufferLength = [*encoder encodedLength];
+
+    mArgumentBuffer = AcquireNSPRef([device->GetMTLDevice() newBufferWithLength:argumentBufferLength
+                                                                        options:0]);
+    [*encoder setArgumentBuffer:*mArgumentBuffer offset:0];
+
+    for (BindingIndex bindingIndex : Range(layout->GetBindingCount())) {
+        const BindingInfo& bindingInfo = layout->GetBindingInfo(bindingIndex);
+        uint32_t dstBinding = uint32_t(bindingIndex - bindingInfo.indexInArray);
+
+        auto HandleTextureBinding = [&]() {
+            auto textureView = ToBackend(GetBindingAsTextureView(bindingIndex));
+            id<MTLTexture> texture = textureView->GetMTLTexture();
+            [*encoder setTexture:texture atIndex:dstBinding];
+        };
+
+        // TODO(crbug.com/363031535): The buffers, samplers and textures in the MatchVariant need to
+        // have resource usage tracking added.
+        MatchVariant(
+            bindingInfo.bindingLayout,
+            [&](const BufferBindingInfo& layout) {
+                const BufferBinding& binding = GetBindingAsBufferBinding(bindingIndex);
+
+                const id<MTLBuffer> buffer = ToBackend(binding.buffer)->GetMTLBuffer();
+                [*encoder setBuffer:buffer offset:binding.offset atIndex:dstBinding];
+            },
+            [&](const SamplerBindingInfo&) {
+                auto sampler = ToBackend(GetBindingAsSampler(bindingIndex));
+                id<MTLSamplerState> samplerState = sampler->GetMTLSamplerState();
+                [*encoder setSamplerState:samplerState atIndex:dstBinding];
+            },
+            [&](const StaticSamplerBindingInfo&) {
+                // Static samplers are handled in the frontend.
+                // TODO(crbug.com/dawn/2482): Implement static samplers in the
+                // Metal backend.
+                DAWN_CHECK(false);
+            },
+            [&](const TextureBindingInfo&) { HandleTextureBinding(); },
+            [&](const StorageTextureBindingInfo&) { HandleTextureBinding(); },
+            [](const InputAttachmentBindingInfo&) { DAWN_CHECK(false); });
+    }
+
+    return {};
 }
 
-// static
-Ref<BindGroup> BindGroup::Create(Device* device, const BindGroupDescriptor* descriptor) {
-    return ToBackend(descriptor->layout->GetInternalBindGroupLayout())
-        ->AllocateBindGroup(device, descriptor);
+void BindGroup::DeleteThis() {
+    // This function must first run the destructor and then deallocate memory. Take a reference to
+    // the BindGroupLayout+SlabAllocator before running the destructor so this function can access
+    // it afterwards and it's not destroyed prematurely.
+    Ref<BindGroupLayout> layout = ToBackend(GetLayout());
+    BindGroupBase::DeleteThis();
+    layout->DeallocateBindGroup(this);
+}
+
+NSPRef<id<MTLBuffer>> BindGroup::GetArgumentBuffer() const {
+    return mArgumentBuffer;
 }
 
 }  // namespace dawn::native::metal

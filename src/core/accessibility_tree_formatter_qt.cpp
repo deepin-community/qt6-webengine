@@ -1,9 +1,10 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
-#include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/accessibility_tree_formatter_blink.h"
 #include "content/public/browser/ax_inspect_factory.h"
+#include "ui/accessibility/platform/browser_accessibility_manager.h"
 #include "ui/accessibility/platform/inspect/ax_event_recorder.h"
 
 #include <QtGui/qtguiglobal.h>
@@ -17,7 +18,7 @@
 
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "content/browser/accessibility/browser_accessibility.h"
+#include "ui/accessibility/platform/browser_accessibility.h"
 #include "ui/accessibility/platform/inspect/ax_tree_formatter_base.h"
 
 #include <QtGui/qaccessible.h>
@@ -26,7 +27,8 @@
 namespace content {
 
 #if QT_CONFIG(accessibility)
-class AccessibilityTreeFormatterQt : public ui::AXTreeFormatterBase {
+class AccessibilityTreeFormatterQt : public ui::AXTreeFormatterBase
+{
 public:
     explicit AccessibilityTreeFormatterQt();
     ~AccessibilityTreeFormatterQt() override;
@@ -38,8 +40,9 @@ public:
    }
 
 private:
-    void RecursiveBuildAccessibilityTree(const BrowserAccessibility &node, base::Value::Dict *dict) const;
-    void AddProperties(const BrowserAccessibility &node, base::Value::Dict *dict) const;
+    void RecursiveBuildAccessibilityTree(const ui::BrowserAccessibility &node,
+                                         base::Value::Dict *dict) const;
+    void AddProperties(const ui::BrowserAccessibility &node, base::Value::Dict *dict) const;
     std::string ProcessTreeForOutput(const base::Value::Dict &node) const override;
 };
 
@@ -53,14 +56,15 @@ AccessibilityTreeFormatterQt::~AccessibilityTreeFormatterQt()
 
 base::Value::Dict AccessibilityTreeFormatterQt::BuildTree(ui::AXPlatformNodeDelegate *start) const
 {
-    BrowserAccessibility *root_internal =
-        BrowserAccessibility::FromAXPlatformNodeDelegate(start);
+    ui::BrowserAccessibility *root_internal =
+            ui::BrowserAccessibility::FromAXPlatformNodeDelegate(start);
     base::Value::Dict dict;
     RecursiveBuildAccessibilityTree(*root_internal, &dict);
     return dict;
 }
 
-void AccessibilityTreeFormatterQt::RecursiveBuildAccessibilityTree(const BrowserAccessibility &node, base::Value::Dict *dict) const
+void AccessibilityTreeFormatterQt::RecursiveBuildAccessibilityTree(
+        const ui::BrowserAccessibility &node, base::Value::Dict *dict) const
 {
     AddProperties(node, dict);
 
@@ -68,7 +72,7 @@ void AccessibilityTreeFormatterQt::RecursiveBuildAccessibilityTree(const Browser
     for (size_t i = 0; i < node.PlatformChildCount(); ++i) {
         base::Value::Dict child_dict;
 
-        content::BrowserAccessibility *child_node = node.PlatformGetChild(i);
+        ui::BrowserAccessibility *child_node = node.PlatformGetChild(i);
 
         RecursiveBuildAccessibilityTree(*child_node, &child_dict);
         children.Append(std::move(child_dict));
@@ -76,10 +80,11 @@ void AccessibilityTreeFormatterQt::RecursiveBuildAccessibilityTree(const Browser
     dict->Set(kChildrenDictAttr, std::move(children));
 }
 
-void AccessibilityTreeFormatterQt::AddProperties(const BrowserAccessibility &node, base::Value::Dict *dict) const
+void AccessibilityTreeFormatterQt::AddProperties(const ui::BrowserAccessibility &node,
+                                                 base::Value::Dict *dict) const
 {
     dict->Set("id", node.GetId());
-    const QAccessibleInterface *iface = toQAccessibleInterface(&node);
+    const QAccessibleInterface *iface = ui::toQAccessibleInterface(&node);
 
     dict->Set("role", qAccessibleRoleString(iface->role()));
 
@@ -144,12 +149,10 @@ void AccessibilityTreeFormatterQt::AddProperties(const BrowserAccessibility &nod
 
 std::string AccessibilityTreeFormatterQt::ProcessTreeForOutput(const base::Value::Dict &node) const
 {
-    std::string error_value;
     if (auto error_value = node.FindString("error"))
         return *error_value;
 
     std::string line;
-    std::string role_value;
     if (auto role_value = node.FindString("role"))
         WriteAttribute(true, base::StringPrintf("%s", role_value->c_str()), &line);
 
@@ -166,9 +169,7 @@ std::string AccessibilityTreeFormatterQt::ProcessTreeForOutput(const base::Value
     if (auto description_value = node.FindString("description"))
         WriteAttribute(false, base::StringPrintf("description='%s'", description_value->c_str()), &line);
 
-    int id_value;
-    if (auto maybe_id = node.FindInt("id"))
-        id_value = *maybe_id;
+    int id_value = node.FindInt("id").value_or(0);
     WriteAttribute(false, base::StringPrintf("id=%d", id_value), &line);
 
     return line + "\n";
@@ -177,23 +178,31 @@ std::string AccessibilityTreeFormatterQt::ProcessTreeForOutput(const base::Value
 #endif // QT_CONFIG(accessibility)
 
 // static
-std::unique_ptr<ui::AXTreeFormatter>
-AXInspectFactory::CreatePlatformFormatter()
+ui::AXApiType::Type AXInspectFactory::DefaultPlatformFormatterType()
 {
-    return AXInspectFactory::CreateFormatter(ui::AXApiType::kQt);
+    return ui::AXApiType::kQt;
 }
 
 // static
-std::unique_ptr<ui::AXEventRecorder> AXInspectFactory::CreatePlatformRecorder(BrowserAccessibilityManager *manager,
-                                                                              base::ProcessId pid,
-                                                                              const ui::AXTreeSelector &selector)
+ui::AXApiType::Type AXInspectFactory::DefaultPlatformRecorderType()
 {
-    return AXInspectFactory::CreateRecorder(ui::AXApiType::kQt, manager, pid, selector);
+    return ui::AXApiType::kQt;
+}
+
+// static
+std::vector<ui::AXApiType::Type> AXInspectFactory::SupportedApis()
+{
+    return {ui::AXApiType::kBlink, ui::AXApiType::kQt};
 }
 
 // static
 std::unique_ptr<ui::AXTreeFormatter> AXInspectFactory::CreateFormatter(ui::AXApiType::Type type)
 {
+    // Developer mode: crash immediately on any accessibility fatal error.
+    // This only runs during integration tests, or if a developer is
+    // using an inspection tool, e.g. chrome://accessibility.
+    ui::BrowserAccessibilityManager::AlwaysFailFast();
+
     switch (type) {
     case ui::AXApiType::kBlink:
         return std::make_unique<AccessibilityTreeFormatterBlink>();
@@ -211,7 +220,7 @@ std::unique_ptr<ui::AXTreeFormatter> AXInspectFactory::CreateFormatter(ui::AXApi
 
 // static
 std::unique_ptr<ui::AXEventRecorder> AXInspectFactory::CreateRecorder(ui::AXApiType::Type type,
-                                                                      BrowserAccessibilityManager *manager,
+                                                                      ui::AXPlatformTreeManager *manager,
                                                                       base::ProcessId pid,
                                                                       const ui::AXTreeSelector &selector)
 {

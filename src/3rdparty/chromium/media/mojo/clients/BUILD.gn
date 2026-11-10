@@ -3,10 +3,12 @@
 # found in the LICENSE file.
 
 import("//build/config/jumbo.gni")
+import("//media/media_options.gni")
 
 # Implementations of media C++ interfaces using corresponding mojo services.
 jumbo_source_set("clients") {
   visibility = [
+    ":test_support",
     "//chromecast/*",
 
     # Mirroring Service needs the video accelerated encoder mojom interfaces.
@@ -25,9 +27,9 @@ jumbo_source_set("clients") {
     # TODO(liberato): can we avoid this?
     "//content/test/*",
     "//third_party/blink/renderer/modules/mediarecorder",
-    "//third_party/blink/renderer/modules/peerconnection:peerconnection",
+    "//third_party/blink/renderer/modules/peerconnection",
     "//third_party/blink/renderer/modules/webcodecs",
-    "//third_party/blink/renderer/platform:platform",
+    "//third_party/blink/renderer/platform",
   ]
 
   sources = [
@@ -39,12 +41,18 @@ jumbo_source_set("clients") {
     "mojo_cdm.h",
     "mojo_cdm_factory.cc",
     "mojo_cdm_factory.h",
+    "mojo_codec_factory.cc",
+    "mojo_codec_factory.h",
+    "mojo_codec_factory_mojo_decoder.cc",
+    "mojo_codec_factory_mojo_decoder.h",
     "mojo_decoder_factory.cc",
     "mojo_decoder_factory.h",
     "mojo_decryptor.cc",
     "mojo_decryptor.h",
     "mojo_demuxer_stream_impl.cc",
     "mojo_demuxer_stream_impl.h",
+    "mojo_gpu_video_accelerator_factories.cc",
+    "mojo_gpu_video_accelerator_factories.h",
     "mojo_media_log_service.cc",
     "mojo_media_log_service.h",
     "mojo_renderer.cc",
@@ -76,10 +84,10 @@ jumbo_source_set("clients") {
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//services/service_manager/public/mojom",
+    "//services/viz/public/cpp/gpu",
   ]
 
   deps = [
-    "//build:chromeos_buildflags",
     "//media/gpu",
     "//media/mojo/common",
     "//services/service_manager/public/cpp",
@@ -87,8 +95,8 @@ jumbo_source_set("clients") {
 
   if (is_android) {
     deps += [
-      "//gpu/ipc/common:common",
-      "//ui/gl:gl",
+      "//gpu/ipc/common",
+      "//ui/gl",
     ]
   }
   if (is_win) {
@@ -102,12 +110,31 @@ jumbo_source_set("clients") {
 
   if (is_fuchsia) {
     sources += [
+      "mojo_codec_factory_fuchsia.cc",
+      "mojo_codec_factory_fuchsia.h",
       "mojo_fuchsia_cdm_provider.cc",
       "mojo_fuchsia_cdm_provider.h",
     ]
 
-    deps += [ "//third_party/blink/public:blink_headers" ]
+    deps += [
+      "//media/fuchsia/video",
+      "//third_party/blink/public:blink_headers",
+    ]
   }
+}
+
+static_library("test_support") {
+  testonly = true
+
+  sources = [
+    "mock_mojo_video_encoder_metrics_provider_factory.cc",
+    "mock_mojo_video_encoder_metrics_provider_factory.h",
+  ]
+
+  deps = [
+    ":clients",
+    "//testing/gmock",
+  ]
 }
 
 source_set("unit_tests") {
@@ -118,6 +145,7 @@ source_set("unit_tests") {
     "mojo_audio_encoder_unittest.cc",
     "mojo_cdm_unittest.cc",
     "mojo_decryptor_unittest.cc",
+    "mojo_gpu_video_accelerator_factories_unittest.cc",
     "mojo_renderer_unittest.cc",
     "mojo_video_encode_accelerator_unittest.cc",
     "mojo_video_encoder_metrics_provider_unittest.cc",
@@ -126,11 +154,15 @@ source_set("unit_tests") {
   deps = [
     "//base",
     "//base/test:test_support",
+    "//gpu:test_support",
+    "//gpu/ipc/common:test_support",
     "//media:test_support",
     "//media/mojo:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  public_deps = [ "//mojo/public/cpp/test_support:test_utils" ]
 
   if (is_android) {
     sources += [ "mojo_android_overlay_unittest.cc" ]
@@ -147,8 +179,12 @@ source_set("unit_tests") {
 
     deps += [
       "//content/public/renderer",
-      "//content/renderer:renderer",
+      "//content/renderer",
       "//media",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

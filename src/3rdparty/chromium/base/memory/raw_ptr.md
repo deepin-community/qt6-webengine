@@ -38,8 +38,8 @@ with questions or concerns.
 
 `raw_ptr<T>` is a non-owning smart pointer that has improved memory-safety over
 raw pointers.  It behaves just like a raw pointer on platforms where
-ENABLE_BACKUP_REF_PTR_SUPPORT is off, and almost like one when it's on. The main
-difference is that when ENABLE_BACKUP_REF_PTR_SUPPORT is enabled, `raw_ptr<T>`
+USE_RAW_PTR_BACKUP_REF_IMPL is off, and almost like one when it's on. The main
+difference is that when USE_RAW_PTR_BACKUP_REF_IMPL is enabled, `raw_ptr<T>`
 is beneficial for security, because it can prevent a significant percentage of
 Use-after-Free (UaF) bugs from being exploitable. It achieves this by
 quarantining the freed memory as long as any dangling `raw_ptr<T>` pointing to
@@ -55,18 +55,20 @@ Having said that, we want to emphasize that dereferencing a dangling pointer
 remains an Undefined Behavior.
 
 `raw_ptr<T>` protection is enabled by default in all non-Renderer processes, on:
-- Android (incl. AndroidWebView & Android WebEngine)
+- Android (incl. AndroidWebView, Android WebEngine, & Android ChromeCast)
 - Windows
-- ChromeOS (incl. Ash & Lacros)
+- ChromeOS
 - macOS
 - Linux
-
-In particular, it isn't enabled by default on:
-- iOS
-- ChromeCast
 - Fuchsia
-- Aix
-- Zos
+
+In particular, it isn't yet enabled by default on:
+- iOS
+- Linux CastOS (Nest hardware)
+
+For the source of truth, both `enable_backup_ref_ptr_support` and `enable_backup_ref_ptr_feature_flag` need to enabled.
+Please refer to the following files: [build_overrides/partition_alloc.gni](https://source.chromium.org/chromium/chromium/src/+/main:build_overrides/partition_alloc.gni) and [partition_alloc.gni](https://source.chromium.org/chromium/chromium/src/+/main:base/allocator/partition_allocator/partition_alloc.gni;l=5?q=partition_alloc.gni&sq=&ss=chromium)
+
 
 [TOC]
 
@@ -92,7 +94,7 @@ exclusions via:
       Make sure to look at
       [the "Extra pointer rules" section](#Extra-pointer-rules)
       before resorting to this exclusion.
-- [RawPtrManualPathsToIgnore.h](../../tools/clang/plugins/RawPtrManualPathsToIgnore.h)
+- [RawPtrManualPathsToIgnore.h](../../tools/clang/raw_ptr_plugin/RawPtrManualPathsToIgnore.h)
   to exclude at a directory level (NOTE, use it as last resort, and be aware
   it'll require a Clang plugin roll).  Examples:
     - Renderer-only code (i.e. code in paths that contain `/renderer/` or
@@ -144,7 +146,7 @@ below.
 
 ### Performance impact of using |raw_ptr&lt;T&gt;| instead of |T\*|
 
-Compared to a raw C++ pointer, on platforms where ENABLE_BACKUP_REF_PTR_SUPPORT
+Compared to a raw C++ pointer, on platforms where USE_RAW_PTR_BACKUP_REF_IMPL
 is on, `raw_ptr<T>` incurs additional runtime
 overhead for initialization, destruction, and assignment (including
 `ptr++`, `ptr += ...`, etc.).
@@ -169,7 +171,7 @@ below.)
 Some additional overhead comes from setting `raw_ptr<T>` to `nullptr`
 when default-constructed, destructed, or moved. (Yes, we said above to not rely
 on it, but to be precise this will always happen when
-ENABLE_BACKUP_REF_PTR_SUPPORT is on; no guarantees otherwise.)
+USE_RAW_PTR_BACKUP_REF_IMPL is on; no guarantees otherwise.)
 
 During
 [the "Big Rewrite"](https://groups.google.com/a/chromium.org/g/chromium-dev/c/vAEeVifyf78/m/SkBUc6PhBAAJ)
@@ -218,7 +220,7 @@ result in compile errors:
   [Rewrite exclusion statistics](https://docs.google.com/document/d/1uAsWnwy8HfIJhDPSh1efohnqfGsv2LJmYTRBj0JzZh8/edit#heading=h.dg4eebu87wg9)
   )
 - Pointers in unions, as well as pointer fields in classes/structs that are used
-  in unions (side note, absl::variant is strongly preferred)
+  in unions (side note, std::variant is strongly preferred)
 - Code that doesn’t depend on `//base` (including non-Chromium repositories and
   third party libraries)
 - Code in `//ppapi`
@@ -258,7 +260,7 @@ Use raw C++ pointers instead of `raw_ptr<T>` in the following scenarios:
   the security benefit of UaF protection is lower for such short-lived
   pointers.)
 - Pointer fields in unions. However, note that a much better, modern alternative
-  is `absl::variant` + `raw_ptr<T>`. If use of C++ union is absolutely
+  is `std::variant` + `raw_ptr<T>`. If use of C++ union is absolutely
   unavoidable, prefer a regular C++ pointer: incorrect management of a
   `raw_ptr<T>` field can easily lead to ref-count corruption.
 - Pointers whose addresses are used only as identifiers and which are
@@ -274,6 +276,11 @@ You don’t have to, but may use `raw_ptr<T>`, in the following scenarios:
   latter if the collection is a class field (note that some of the perf
   optimizations above might still apply and argue for using a raw C++ pointer).
 
+### Signal Handlers
+
+`raw_ptr<T>` assumes that the allocator's data structures are in a consistent
+state. Signal handlers can interrupt in the middle of an allocation operation;
+therefore, `raw_ptr<T>` should not be used in signal handlers.
 
 ## Extra pointer rules {#Extra-pointer-rules}
 

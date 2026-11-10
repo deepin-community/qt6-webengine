@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <cmath>
+#include <string_view>
 
 #include "base/base64.h"
 #include "base/base_switches.h"
@@ -14,10 +15,10 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/path_service.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
@@ -41,7 +42,7 @@
 #include "ui/gl/gl_switches.h"
 
 namespace {
-constexpr base::StringPiece kFullPerformanceRunSwitch = "full-performance-run";
+constexpr std::string_view kFullPerformanceRunSwitch = "full-performance-run";
 }  // namespace
 
 TabCapturePerformanceTestBase::TabCapturePerformanceTestBase() = default;
@@ -79,11 +80,14 @@ void TabCapturePerformanceTestBase::SetUpCommandLine(
     base::CommandLine* command_line) {
   is_full_performance_run_ = command_line->HasSwitch(kFullPerformanceRunSwitch);
 
+  // MSan and GL do not get along so avoid using the GPU with MSan.
+#if !defined(MEMORY_SANITIZER)
   // Note: The naming "kUseGpuInTests" is very misleading. It actually means
   // "don't use a software OpenGL implementation." Subclasses will either call
   // UseSoftwareCompositing() to use Chrome's software compositor, or else they
   // won't (which means use the default hardware-accelerated compositor).
   command_line->AppendSwitch(switches::kUseGpuInTests);
+#endif
 
   command_line->AppendSwitchASCII(extensions::switches::kAllowlistedExtensionID,
                                   kExtensionId);
@@ -98,10 +102,8 @@ void TabCapturePerformanceTestBase::LoadExtension(
       extensions::ExtensionRegistry::Get(browser()->profile());
   extensions::TestExtensionRegistryObserver registry_observer(
       extension_registry);
-  auto* const extension_service =
-      extensions::ExtensionSystem::Get(browser()->profile())
-          ->extension_service();
-  extensions::UnpackedInstaller::Create(extension_service)->Load(unpacked_dir);
+  extensions::UnpackedInstaller::Create(browser()->profile())
+      ->Load(unpacked_dir);
   extension_ = registry_observer.WaitForExtensionReady().get();
   CHECK(extension_);
   CHECK_EQ(kExtensionId, extension_->id());
@@ -138,22 +140,21 @@ base::Value TabCapturePerformanceTestBase::SendMessageToExtension(
   auto* const web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   for (;;) {
-    const auto result = content::EvalJs(web_contents, javascript);
-    if (result.error.empty()) {
-      return result.value.Clone();
+    auto result = content::EvalJs(web_contents, javascript);
+    if (result.is_ok()) {
+      return std::move(result).TakeValue();
     }
     LOG(INFO) << "Race condition: Waiting for extension to come up, before "
                  "'sendMessage' retry...";
     ContinueBrowserFor(kSendMessageRetryPeriod);
   }
   NOTREACHED();
-  return base::Value();
 }
 
 TabCapturePerformanceTestBase::TraceAnalyzerUniquePtr
 TabCapturePerformanceTestBase::TraceAndObserve(
     const std::string& category_patterns,
-    const std::vector<base::StringPiece>& event_names,
+    const std::vector<std::string_view>& event_names,
     int required_event_count) {
   const base::TimeDelta observation_period = is_full_performance_run_
                                                  ? kFullRunObservationPeriod
@@ -240,7 +241,7 @@ void TabCapturePerformanceTestBase::ContinueBrowserFor(
 // static
 void TabCapturePerformanceTestBase::QueryTraceEvents(
     trace_analyzer::TraceAnalyzer* analyzer,
-    base::StringPiece event_name,
+    std::string_view event_name,
     trace_analyzer::TraceEventVector* events) {
   const trace_analyzer::Query kQuery =
       trace_analyzer::Query::EventNameIs(std::string(event_name)) &&

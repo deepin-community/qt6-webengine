@@ -50,31 +50,21 @@ VisitContentModelAnnotations::Category::Category(const std::string& id,
 VisitContentModelAnnotations::Category::Category() = default;
 
 // static
-absl::optional<VisitContentModelAnnotations::Category>
+std::optional<VisitContentModelAnnotations::Category>
 VisitContentModelAnnotations::Category::FromStringVector(
     const std::vector<std::string>& vector) {
   if (vector.size() != 2)
-    return absl::nullopt;
+    return std::nullopt;
 
   VisitContentModelAnnotations::Category category;
   category.id = vector[0];
   if (!base::StringToInt(vector[1], &category.weight))
-    return absl::nullopt;
+    return std::nullopt;
   return category;
 }
 
 std::string VisitContentModelAnnotations::Category::ToString() const {
   return base::StrCat({id, ":", base::NumberToString(weight)});
-}
-
-bool VisitContentModelAnnotations::Category::operator==(
-    const VisitContentModelAnnotations::Category& other) const {
-  return id == other.id && weight == other.weight;
-}
-
-bool VisitContentModelAnnotations::Category::operator!=(
-    const VisitContentModelAnnotations::Category& other) const {
-  return !(*this == other);
 }
 
 VisitContentModelAnnotations::VisitContentModelAnnotations(
@@ -159,28 +149,11 @@ URLResult::URLResult(const URLRow& url_row) : URLRow(url_row) {}
 
 URLResult::URLResult(const URLResult& other) = default;
 
-// TODO(bug 706963) this should be implemented as "= default" when Android
-// toolchain is updated.
-URLResult::URLResult(URLResult&& other) noexcept
-    : URLRow(std::move(other)),
-      visit_time_(other.visit_time_),
-      content_annotations_(other.content_annotations_),
-      snippet_(std::move(other.snippet_)),
-      title_match_positions_(std::move(other.title_match_positions_)),
-      blocked_visit_(other.blocked_visit_) {}
+URLResult::URLResult(URLResult&& other) noexcept = default;
 
 URLResult::~URLResult() = default;
 
 URLResult& URLResult::operator=(const URLResult&) = default;
-
-void URLResult::SwapResult(URLResult* other) {
-  URLRow::Swap(other);
-  std::swap(visit_time_, other->visit_time_);
-  std::swap(content_annotations_, other->content_annotations_);
-  snippet_.Swap(&other->snippet_);
-  title_match_positions_.swap(other->title_match_positions_);
-  std::swap(blocked_visit_, other->blocked_visit_);
-}
 
 // static
 bool URLResult::CompareVisitTime(const URLResult& lhs, const URLResult& rhs) {

@@ -4,7 +4,12 @@
 
 #include "quiche/quic/core/quic_connection_id_manager.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "quiche/quic/core/quic_clock.h"
 #include "quiche/quic/core/quic_connection_id.h"
@@ -374,6 +379,8 @@ QuicErrorCode QuicSelfIssuedConnectionIdManager::OnRetireConnectionIdFrame(
 std::vector<QuicConnectionId>
 QuicSelfIssuedConnectionIdManager::GetUnretiredConnectionIds() const {
   std::vector<QuicConnectionId> unretired_ids;
+  unretired_ids.reserve(to_be_retired_connection_ids_.size() +
+                        active_connection_ids_.size());
   for (const auto& cid_pair : to_be_retired_connection_ids_) {
     unretired_ids.push_back(cid_pair.first);
   }

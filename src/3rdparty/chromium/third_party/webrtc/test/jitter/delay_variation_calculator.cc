@@ -10,13 +10,16 @@
 
 #include "test/jitter/delay_variation_calculator.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
-#include "absl/types/optional.h"
+#include "api/numerics/samples_stats_counter.h"
+#include "api/units/data_size.h"
 #include "api/units/frequency.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
-#include "rtc_base/logging.h"
+#include "api/video/video_frame_type.h"
 
 namespace webrtc {
 namespace test {
@@ -29,9 +32,9 @@ void DelayVariationCalculator::Insert(
     uint32_t rtp_timestamp,
     Timestamp arrival_time,
     DataSize size,
-    absl::optional<int> spatial_layer,
-    absl::optional<int> temporal_layer,
-    absl::optional<VideoFrameType> frame_type) {
+    std::optional<int> spatial_layer,
+    std::optional<int> temporal_layer,
+    std::optional<VideoFrameType> frame_type) {
   Frame frame{.rtp_timestamp = rtp_timestamp,
               .unwrapped_rtp_timestamp = unwrapper_.Unwrap(rtp_timestamp),
               .arrival_time = arrival_time,

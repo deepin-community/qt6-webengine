@@ -5,7 +5,8 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_DEVTOOLS_DEVTOOLS_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_DEVTOOLS_DEVTOOLS_UI_H_
 
-#ifndef TOOLKIT_QT
+#include "build/build_config.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
 #endif
 #include "content/public/browser/web_ui_controller.h"
@@ -24,7 +25,7 @@ class DevToolsUI : public content::WebUIController {
   ~DevToolsUI() override;
 
  private:
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   DevToolsUIBindings bindings_;
 #endif
 };

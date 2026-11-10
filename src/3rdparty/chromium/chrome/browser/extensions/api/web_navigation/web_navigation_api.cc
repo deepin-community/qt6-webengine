@@ -8,12 +8,12 @@
 
 #include <memory>
 
+#include "base/lazy_instance.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api_constants.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api_helpers.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/common/extensions/api/web_navigation.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_handle.h"
@@ -26,6 +26,12 @@
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "net/base/net_errors.h"
+#include "pdf/buildflags.h"
+
+#if BUILDFLAG(ENABLE_PDF)
+#include "components/pdf/common/pdf_util.h"
+#include "pdf/pdf_features.h"
+#endif  // BUILDFLAG(ENABLE_PDF)
 
 namespace GetFrame = extensions::api::web_navigation::GetFrame;
 namespace GetAllFrames = extensions::api::web_navigation::GetAllFrames;
@@ -37,7 +43,7 @@ namespace web_navigation = api::web_navigation;
 // WebNavigtionEventRouter -------------------------------------------
 
 WebNavigationEventRouter::PendingWebContents::PendingWebContents() = default;
-WebNavigationEventRouter::PendingWebContents::~PendingWebContents() {}
+WebNavigationEventRouter::PendingWebContents::~PendingWebContents() = default;
 
 void WebNavigationEventRouter::PendingWebContents::Set(
     int source_tab_id,
@@ -67,8 +73,9 @@ WebNavigationEventRouter::WebNavigationEventRouter(Profile* profile)
 
 WebNavigationEventRouter::~WebNavigationEventRouter() = default;
 
-bool WebNavigationEventRouter::ShouldTrackBrowser(Browser* browser) {
-  return profile_->IsSameOrParent(browser->profile());
+bool WebNavigationEventRouter::ShouldTrackBrowser(
+    BrowserWindowInterface* browser) {
+  return profile_->IsSameOrParent(browser->GetProfile());
 }
 
 void WebNavigationEventRouter::OnTabStripModelChanged(
@@ -173,7 +180,7 @@ WebNavigationTabObserver::WebNavigationTabObserver(
     : WebContentsObserver(web_contents),
       content::WebContentsUserData<WebNavigationTabObserver>(*web_contents) {}
 
-WebNavigationTabObserver::~WebNavigationTabObserver() {}
+WebNavigationTabObserver::~WebNavigationTabObserver() = default;
 
 // static
 WebNavigationTabObserver* WebNavigationTabObserver::Get(
@@ -350,7 +357,7 @@ void WebNavigationTabObserver::DidOpenRequestedURL(
   bool new_contents_is_present_in_tabstrip = ExtensionTabUtil::GetTabStripModel(
       new_contents, &ignored_tab_strip_model, &ignored_tab_index);
   router->RecordNewWebContents(
-      web_contents(), source_render_frame_host->GetProcess()->GetID(),
+      web_contents(), source_render_frame_host->GetProcess()->GetDeprecatedID(),
       source_render_frame_host->GetRoutingID(), url, new_contents,
       !new_contents_is_present_in_tabstrip);
 }
@@ -573,6 +580,19 @@ ExtensionFunction::ResponseAction WebNavigationGetAllFramesFunction::Run() {
                   kSkipChildren;
             }
 
+#if BUILDFLAG(ENABLE_PDF)
+            if (chrome_pdf::features::IsOopifPdfEnabled()) {
+              // Don't expose any child frames of the PDF extension frame, such
+              // as the PDF content frame.
+              content::RenderFrameHost* parent = render_frame_host->GetParent();
+              if (parent &&
+                  IsPdfExtensionOrigin(parent->GetLastCommittedOrigin())) {
+                return content::RenderFrameHost::FrameIterationAction::
+                    kSkipChildren;
+              }
+            }
+#endif  // BUILDFLAG(ENABLE_PDF)
+
             auto* navigation_state =
                 FrameNavigationState::GetForCurrentDocument(render_frame_host);
 
@@ -609,7 +629,8 @@ ExtensionFunction::ResponseAction WebNavigationGetAllFramesFunction::Run() {
                 ExtensionApiFrameIdMap::GetFrameType(render_frame_host);
             frame.document_lifecycle =
                 ExtensionApiFrameIdMap::GetDocumentLifecycle(render_frame_host);
-            frame.process_id = render_frame_host->GetProcess()->GetID();
+            frame.process_id =
+                render_frame_host->GetProcess()->GetDeprecatedID();
             frame.error_occurred = navigation_state->GetErrorOccurredInFrame();
             result_list.push_back(std::move(frame));
             return content::RenderFrameHost::FrameIterationAction::kContinue;
@@ -639,7 +660,7 @@ WebNavigationAPI::WebNavigationAPI(content::BrowserContext* context)
                                  web_navigation::OnTabReplaced::kEventName);
 }
 
-WebNavigationAPI::~WebNavigationAPI() {}
+WebNavigationAPI::~WebNavigationAPI() = default;
 
 void WebNavigationAPI::Shutdown() {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);

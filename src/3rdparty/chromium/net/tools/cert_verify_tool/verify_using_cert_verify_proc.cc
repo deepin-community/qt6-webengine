@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <string_view>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -64,8 +65,6 @@ void PrintCertVerifyResult(const net::CertVerifyResult& result) {
     std::cout << "has_sha1\n";
   if (result.is_issued_by_known_root)
     std::cout << "is_issued_by_known_root\n";
-  if (result.is_issued_by_additional_trust_anchor)
-    std::cout << "is_issued_by_additional_trust_anchor\n";
 
   if (result.verified_cert) {
     std::cout << "chain:\n "
@@ -87,7 +86,7 @@ bool VerifyUsingCertVerifyProc(
     const std::vector<CertInput>& intermediate_der_certs,
     const std::vector<CertInputWithTrustSetting>& der_certs_with_trust_settings,
     const base::FilePath& dump_path) {
-  std::vector<base::StringPiece> der_cert_chain;
+  std::vector<std::string_view> der_cert_chain;
   der_cert_chain.push_back(target_der_cert.der_cert);
   for (const auto& cert : intermediate_der_certs)
     der_cert_chain.push_back(cert.der_cert);
@@ -110,8 +109,8 @@ bool VerifyUsingCertVerifyProc(
   std::vector<net::ScopedTestRoot> scoped_test_roots;
   for (const auto& cert_input_with_trust : der_certs_with_trust_settings) {
     scoped_refptr<net::X509Certificate> x509_root =
-        net::X509Certificate::CreateFromBytes(base::as_bytes(
-            base::make_span(cert_input_with_trust.cert_input.der_cert)));
+        net::X509Certificate::CreateFromBytes(
+            base::as_byte_span(cert_input_with_trust.cert_input.der_cert));
 
     if (!x509_root) {
       PrintCertError("ERROR: X509Certificate::CreateFromBytes failed:",
@@ -124,7 +123,7 @@ bool VerifyUsingCertVerifyProc(
   // TODO(mattm): add command line flags to configure VerifyFlags.
   int flags = 0;
 
-  // TODO(crbug.com/634484): use a real netlog and print the results?
+  // TODO(crbug.com/40479281): use a real netlog and print the results?
   net::CertVerifyResult result;
   int rv = cert_verify_proc->Verify(
       x509_target_and_intermediates.get(), hostname,

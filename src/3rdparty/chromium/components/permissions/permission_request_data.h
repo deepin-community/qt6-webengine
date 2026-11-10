@@ -5,9 +5,14 @@
 #ifndef COMPONENTS_PERMISSIONS_PERMISSION_REQUEST_DATA_H_
 #define COMPONENTS_PERMISSIONS_PERMISSION_REQUEST_DATA_H_
 
+#include <optional>
+#include <variant>
+
+#include "base/values.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/request_type.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/permissions/resolvers/permission_prompt_options.h"
+#include "components/permissions/resolvers/permission_resolver.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
@@ -26,18 +31,22 @@ struct PermissionRequestData {
       PermissionContextBase* context,
       const PermissionRequestID& id,
       const content::PermissionRequestDescription& request_description,
-      const GURL& canonical_requesting_origin);
+      const GURL& canonical_requesting_origin,
+      const GURL& embedding_origin = GURL(),
+      int request_description_permission_index = 0);
 
-  PermissionRequestData(PermissionContextBase* context,
-                        const PermissionRequestID& id,
-                        bool user_gesture,
-                        const GURL& requesting_origin,
-                        const GURL& embedding_origin = GURL());
+  PermissionRequestData(
+      std::unique_ptr<permissions::PermissionResolver> resolver,
+      const PermissionRequestID& id,
+      bool user_gesture,
+      const GURL& requesting_origin,
+      const GURL& embedding_origin = GURL());
 
-  PermissionRequestData(RequestType request_type,
-                        bool user_gesture,
-                        const GURL& requesting_origin,
-                        const GURL& embedding_origin = GURL());
+  PermissionRequestData(
+      std::unique_ptr<permissions::PermissionResolver> resolver,
+      bool user_gesture,
+      const GURL& requesting_origin,
+      const GURL& embedding_origin = GURL());
 
   PermissionRequestData& operator=(const PermissionRequestData&) = delete;
   PermissionRequestData(const PermissionRequestData&) = delete;
@@ -57,8 +66,11 @@ struct PermissionRequestData {
     return *this;
   }
 
-  // The type of request.
-  absl::optional<RequestType> request_type;
+  // The request type if it exists.
+  std::optional<RequestType> request_type;
+
+  // The permission resolver associated with the request.
+  std::unique_ptr<permissions::PermissionResolver> resolver;
 
   //  Uniquely identifier of particular permission request.
   PermissionRequestID id;
@@ -78,10 +90,12 @@ struct PermissionRequestData {
   // Anchor element position (in screen coordinates), gennerally when the
   // permission request is made from permission element. Used to calculate
   // position where the secondary prompt UI is expected to be shown.
-  absl::optional<gfx::Rect> anchor_element_position;
+  std::optional<gfx::Rect> anchor_element_position;
 
   std::vector<std::string> requested_audio_capture_device_ids;
   std::vector<std::string> requested_video_capture_device_ids;
+
+  PromptOptions prompt_options = std::monostate();
 };
 
 }  // namespace permissions

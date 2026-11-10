@@ -4,8 +4,7 @@
 
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
 
-#include <memory>
-
+#include "base/compiler_specific.h"
 #include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -14,22 +13,25 @@
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hasher.h"
+#include "third_party/skia/include/private/chromium/SkPMColor.h"
 
 namespace blink {
 
-scoped_refptr<SharedBuffer> ReadFile(StringView file_name) {
+Vector<char> ReadFile(StringView file_name) {
   StringBuilder file_path;
   file_path.Append(test::BlinkWebTestsDir());
   file_path.Append(file_name);
-  return test::ReadFromFile(file_path.ToString());
+  std::optional<Vector<char>> data = test::ReadFromFile(file_path.ToString());
+  CHECK(data && data->size());
+  return *data;
 }
 
-scoped_refptr<SharedBuffer> ReadFile(const char* dir, const char* file_name) {
+Vector<char> ReadFile(const char* dir, const char* file_name) {
   StringBuilder file_path;
-  if (strncmp(dir, "web_tests/", 10) == 0) {
+  if (UNSAFE_TODO(strncmp(dir, "web_tests/", 10)) == 0) {
     file_path.Append(test::BlinkWebTestsDir());
     file_path.Append('/');
-    file_path.Append(dir + 10);
+    file_path.Append(UNSAFE_TODO(dir + 10));
   } else {
     file_path.Append(test::BlinkRootDir());
     file_path.Append('/');
@@ -37,19 +39,24 @@ scoped_refptr<SharedBuffer> ReadFile(const char* dir, const char* file_name) {
   }
   file_path.Append('/');
   file_path.Append(file_name);
-  return test::ReadFromFile(file_path.ToString());
+  std::optional<Vector<char>> data = test::ReadFromFile(file_path.ToString());
+  CHECK(data && data->size());
+  return *data;
+}
+
+scoped_refptr<SharedBuffer> ReadFileToSharedBuffer(StringView file_name) {
+  return SharedBuffer::Create(ReadFile(file_name));
+}
+
+scoped_refptr<SharedBuffer> ReadFileToSharedBuffer(const char* dir,
+                                                   const char* file_name) {
+  return SharedBuffer::Create(ReadFile(dir, file_name));
 }
 
 unsigned HashBitmap(const SkBitmap& bitmap) {
-  return StringHasher::HashMemory(bitmap.getPixels(), bitmap.computeByteSize());
-}
-
-static unsigned CreateDecodingBaseline(DecoderCreator create_decoder,
-                                       SharedBuffer* data) {
-  std::unique_ptr<ImageDecoder> decoder = create_decoder();
-  decoder->SetData(data, true);
-  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
-  return HashBitmap(frame->Bitmap());
+  return StringHasher::HashMemory(
+      UNSAFE_TODO({static_cast<const uint8_t*>(bitmap.getPixels()),
+                   bitmap.computeByteSize()}));
 }
 
 void CreateDecodingBaseline(DecoderCreator create_decoder,
@@ -81,12 +88,14 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
   // Pass data to decoder byte by byte.
   scoped_refptr<SharedBuffer> source_data[2] = {SharedBuffer::Create(),
                                                 SharedBuffer::Create()};
-  const char* source = data.data();
+  base::span<const char> source(data);
 
   for (size_t length = 1; length <= data.size() && !decoder->Failed();
        ++length) {
-    source_data[0]->Append(source, 1u);
-    source_data[1]->Append(source++, 1u);
+    auto [single_byte, rest] = source.split_at(1u);
+    source = rest;
+    source_data[0]->Append(single_byte);
+    source_data[1]->Append(single_byte);
     // Alternate the buffers to cover the JPEGImageDecoder::OnSetData restart
     // code.
     decoder->SetData(source_data[length & 1].get(), length == data.size());
@@ -106,6 +115,7 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
       // only then both frames could be completely decoded.
       ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
       if (frame && frame->GetStatus() == ImageFrame::kFrameComplete) {
+        EXPECT_EQ(baseline_hashes[i], HashBitmap(frame->Bitmap()));
         ++frames_decoded;
       }
     }
@@ -121,39 +131,6 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
     ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
     EXPECT_EQ(baseline_hashes[i], HashBitmap(frame->Bitmap()));
   }
-}
-
-// This test verifies that calling SharedBuffer::MergeSegmentsIntoBuffer() does
-// not break decoding at a critical point: in between a call to decode the size
-// (when the decoder stops while it may still have input data to read) and a
-// call to do a full decode.
-static void TestMergeBuffer(DecoderCreator create_decoder,
-                            SharedBuffer* shared_data) {
-  const unsigned hash = CreateDecodingBaseline(create_decoder, shared_data);
-  const Vector<char> data = shared_data->CopyAs<Vector<char>>();
-
-  // In order to do any verification, this test needs to move the data owned
-  // by the SharedBuffer. A way to guarantee that is to create a new one, and
-  // then append a string of characters greater than kSegmentSize. This
-  // results in writing the data into a segment, skipping the internal
-  // contiguous buffer.
-  scoped_refptr<SharedBuffer> segmented_data = SharedBuffer::Create();
-  segmented_data->Append(data.data(), data.size());
-
-  std::unique_ptr<ImageDecoder> decoder = create_decoder();
-  decoder->SetData(segmented_data.get(), true);
-
-  ASSERT_TRUE(decoder->IsSizeAvailable());
-
-  // This will call SharedBuffer::MergeSegmentsIntoBuffer, copying all
-  // segments into the contiguous buffer. If the ImageDecoder was pointing to
-  // data in a segment, its pointer would no longer be valid.
-  segmented_data->Data();
-
-  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
-  ASSERT_FALSE(decoder->Failed());
-  EXPECT_EQ(frame->GetStatus(), ImageFrame::kFrameComplete);
-  EXPECT_EQ(HashBitmap(frame->Bitmap()), hash);
 }
 
 static void TestRandomFrameDecode(DecoderCreator create_decoder,
@@ -218,7 +195,7 @@ static void TestDecodeAfterReallocatingData(DecoderCreator create_decoder,
   // ... and then decode frames from 'reallocated_data'.
   Vector<char> copy = data->CopyAs<Vector<char>>();
   scoped_refptr<SharedBuffer> reallocated_data =
-      SharedBuffer::AdoptVector(copy);
+      SharedBuffer::Create(std::move(copy));
   ASSERT_TRUE(reallocated_data.get());
   data->Clear();
   decoder->SetData(reallocated_data.get(), true);
@@ -242,9 +219,11 @@ static void TestByteByByteSizeAvailable(DecoderCreator create_decoder,
   // offset is reached. Also check other decoder state.
   scoped_refptr<SharedBuffer> temp_data = SharedBuffer::Create();
   const Vector<char> source_buffer = data->CopyAs<Vector<char>>();
-  const char* source = source_buffer.data();
+  base::span<const char> source(source_buffer);
   for (size_t length = 1; length <= frame_offset; ++length) {
-    temp_data->Append(source++, 1u);
+    auto [single_byte, rest] = source.split_at(1u);
+    source = rest;
+    temp_data->Append(single_byte);
     decoder->SetData(temp_data.get(), false);
 
     if (length < frame_offset) {
@@ -279,10 +258,12 @@ static void TestProgressiveDecoding(DecoderCreator create_decoder,
 
   // Compute hashes when the file is truncated.
   scoped_refptr<SharedBuffer> data = SharedBuffer::Create();
-  const char* source = full_data.data();
+  base::span<const char> source(full_data);
   for (size_t i = 1; i <= full_length; i += increment) {
     decoder = create_decoder();
-    data->Append(source++, 1u);
+    auto [single_byte, rest] = source.split_at(1u);
+    source = rest;
+    data->Append(single_byte);
     decoder->SetData(data.get(), i == full_length);
     ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
     if (!frame) {
@@ -295,9 +276,12 @@ static void TestProgressiveDecoding(DecoderCreator create_decoder,
   // Compute hashes when the file is progressively decoded.
   decoder = create_decoder();
   data = SharedBuffer::Create();
-  source = full_data.data();
+  source = base::span(full_data);
+
   for (size_t i = 1; i <= full_length; i += increment) {
-    data->Append(source++, 1u);
+    auto [single_byte, rest] = source.split_at(1u);
+    source = rest;
+    data->Append(single_byte);
     decoder->SetData(data.get(), i == full_length);
     ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
     if (!frame) {
@@ -321,9 +305,11 @@ void TestUpdateRequiredPreviousFrameAfterFirstDecode(
   // Give it data that is enough to parse but not decode in order to check the
   // status of RequiredPreviousFrameIndex before decoding.
   scoped_refptr<SharedBuffer> data = SharedBuffer::Create();
-  const char* source = full_data.data();
+  base::span<const char> source(full_data);
   do {
-    data->Append(source++, 1u);
+    auto [single_byte, rest] = source.split_at(1u);
+    source = rest;
+    data->Append(single_byte);
     decoder->SetData(data.get(), false);
   } while (!decoder->FrameCount() ||
            decoder->DecodeFrameBufferAtIndex(0)->GetStatus() ==
@@ -351,7 +337,7 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
                           size_t expected_frame_count,
                           int expected_repetition_count) {
   SCOPED_TRACE(file);
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   TestByteByByteDecode(create_decoder, data.get(), expected_frame_count,
                        expected_repetition_count);
@@ -362,30 +348,16 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
                           size_t expected_frame_count,
                           int expected_repetition_count) {
   SCOPED_TRACE(file);
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   TestByteByByteDecode(create_decoder, data.get(), expected_frame_count,
                        expected_repetition_count);
 }
 
-void TestMergeBuffer(DecoderCreator create_decoder, const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
-  ASSERT_TRUE(data.get());
-  TestMergeBuffer(create_decoder, data.get());
-}
-
-void TestMergeBuffer(DecoderCreator create_decoder,
-                     const char* dir,
-                     const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
-  ASSERT_TRUE(data.get());
-  TestMergeBuffer(create_decoder, data.get());
-}
-
 void TestRandomFrameDecode(DecoderCreator create_decoder,
                            const char* file,
                            size_t skipping_step) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   SCOPED_TRACE(file);
   TestRandomFrameDecode(create_decoder, data.get(), skipping_step);
@@ -394,7 +366,7 @@ void TestRandomFrameDecode(DecoderCreator create_decoder,
                            const char* dir,
                            const char* file,
                            size_t skipping_step) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   SCOPED_TRACE(file);
   TestRandomFrameDecode(create_decoder, data.get(), skipping_step);
@@ -403,7 +375,7 @@ void TestRandomFrameDecode(DecoderCreator create_decoder,
 void TestRandomDecodeAfterClearFrameBufferCache(DecoderCreator create_decoder,
                                                 const char* file,
                                                 size_t skipping_step) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   SCOPED_TRACE(file);
   TestRandomDecodeAfterClearFrameBufferCache(create_decoder, data.get(),
@@ -414,7 +386,7 @@ void TestRandomDecodeAfterClearFrameBufferCache(DecoderCreator create_decoder,
                                                 const char* dir,
                                                 const char* file,
                                                 size_t skipping_step) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   SCOPED_TRACE(file);
   TestRandomDecodeAfterClearFrameBufferCache(create_decoder, data.get(),
@@ -423,7 +395,7 @@ void TestRandomDecodeAfterClearFrameBufferCache(DecoderCreator create_decoder,
 
 void TestDecodeAfterReallocatingData(DecoderCreator create_decoder,
                                      const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   TestDecodeAfterReallocatingData(create_decoder, data.get());
 }
@@ -431,7 +403,7 @@ void TestDecodeAfterReallocatingData(DecoderCreator create_decoder,
 void TestDecodeAfterReallocatingData(DecoderCreator create_decoder,
                                      const char* dir,
                                      const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   TestDecodeAfterReallocatingData(create_decoder, data.get());
 }
@@ -441,7 +413,7 @@ void TestByteByByteSizeAvailable(DecoderCreator create_decoder,
                                  size_t frame_offset,
                                  bool has_color_space,
                                  int expected_repetition_count) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   TestByteByByteSizeAvailable(create_decoder, data.get(), frame_offset,
                               has_color_space, expected_repetition_count);
@@ -453,7 +425,7 @@ void TestByteByByteSizeAvailable(DecoderCreator create_decoder,
                                  size_t frame_offset,
                                  bool has_color_space,
                                  int expected_repetition_count) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   TestByteByByteSizeAvailable(create_decoder, data.get(), frame_offset,
                               has_color_space, expected_repetition_count);
@@ -462,7 +434,7 @@ void TestByteByByteSizeAvailable(DecoderCreator create_decoder,
 void TestProgressiveDecoding(DecoderCreator create_decoder,
                              const char* file,
                              size_t increment) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   TestProgressiveDecoding(create_decoder, data.get(), increment);
 }
@@ -471,7 +443,7 @@ void TestProgressiveDecoding(DecoderCreator create_decoder,
                              const char* dir,
                              const char* file,
                              size_t increment) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   TestProgressiveDecoding(create_decoder, data.get(), increment);
 }
@@ -480,7 +452,7 @@ void TestUpdateRequiredPreviousFrameAfterFirstDecode(
     DecoderCreator create_decoder,
     const char* dir,
     const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(dir, file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(dir, file);
   ASSERT_TRUE(data.get());
   TestUpdateRequiredPreviousFrameAfterFirstDecode(create_decoder, data.get());
 }
@@ -488,14 +460,20 @@ void TestUpdateRequiredPreviousFrameAfterFirstDecode(
 void TestUpdateRequiredPreviousFrameAfterFirstDecode(
     DecoderCreator create_decoder,
     const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
   TestUpdateRequiredPreviousFrameAfterFirstDecode(create_decoder, data.get());
 }
 
-static uint32_t PremultiplyColor(uint32_t c) {
-  return SkPremultiplyARGBInline(SkGetPackedA32(c), SkGetPackedR32(c),
-                                 SkGetPackedG32(c), SkGetPackedB32(c));
+// Takes in a pixel encoded as 8888 and returns it as a premultiplied
+// pixel encoded in Skia's N32 format.
+static SkPMColor PremultiplyColor(uint32_t pixel, SkColorType ct) {
+  // If this assumption is false, then SkPreMultiplyARGB will return
+  // a wrongly-encoded pixel.
+  CHECK(ct == SkColorType::kN32_SkColorType);
+
+  return SkPreMultiplyARGB(SkPMColorGetA(pixel), SkPMColorGetR(pixel),
+                           SkPMColorGetG(pixel), SkPMColorGetB(pixel));
 }
 
 static void VerifyFramesMatch(const char* file,
@@ -511,16 +489,17 @@ static void VerifyFramesMatch(const char* file,
     for (int x = 0; x < bitmap_a.width(); ++x) {
       uint32_t color_a = *bitmap_a.getAddr32(x, y);
       if (!a->PremultiplyAlpha()) {
-        color_a = PremultiplyColor(color_a);
+        color_a = PremultiplyColor(color_a, bitmap_a.colorType());
       }
       uint32_t color_b = *bitmap_b.getAddr32(x, y);
       if (!b->PremultiplyAlpha()) {
-        color_b = PremultiplyColor(color_b);
+        color_b = PremultiplyColor(color_b, bitmap_b.colorType());
       }
       uint8_t* pixel_a = reinterpret_cast<uint8_t*>(&color_a);
       uint8_t* pixel_b = reinterpret_cast<uint8_t*>(&color_b);
       for (int channel = 0; channel < 4; ++channel) {
-        const int difference = abs(pixel_a[channel] - pixel_b[channel]);
+        const int difference =
+            abs(UNSAFE_TODO(pixel_a[channel]) - UNSAFE_TODO(pixel_b[channel]));
         if (difference > max_difference) {
           max_difference = difference;
         }
@@ -537,7 +516,7 @@ static void VerifyFramesMatch(const char* file,
 // AlphaNotPremultiplied cases.
 void TestAlphaBlending(DecoderCreatorWithAlpha create_decoder,
                        const char* file) {
-  scoped_refptr<SharedBuffer> data = ReadFile(file);
+  scoped_refptr<SharedBuffer> data = ReadFileToSharedBuffer(file);
   ASSERT_TRUE(data.get());
 
   std::unique_ptr<ImageDecoder> decoder_a =
@@ -561,10 +540,10 @@ void TestBppHistogram(DecoderCreator create_decoder,
                       const char* image_type,
                       const char* image_name,
                       const char* histogram_name,
-                      base::HistogramBase::Sample sample) {
+                      base::HistogramBase::Sample32 sample) {
   base::HistogramTester histogram_tester;
   std::unique_ptr<ImageDecoder> decoder = create_decoder();
-  decoder->SetData(ReadFile(image_name), true);
+  decoder->SetData(ReadFileToSharedBuffer(image_name), true);
   ASSERT_TRUE(decoder->IsSizeAvailable());
   if (histogram_name) {
     histogram_tester.ExpectTotalCount(histogram_name, 0);

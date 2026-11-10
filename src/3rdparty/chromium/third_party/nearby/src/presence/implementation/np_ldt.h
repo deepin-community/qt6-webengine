@@ -1,3 +1,6 @@
+#ifndef THIRD_PARTY_NEARBY_PRESENCE_IMPLEMENTATION_NP_LDT_H_
+#define THIRD_PARTY_NEARBY_PRESENCE_IMPLEMENTATION_NP_LDT_H_
+
 // Copyright 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,12 +18,6 @@
 // BLE 4.2 legacy format advertisement parsing usecase.
 //
 // [1] https://eprint.iacr.org/2017/841.pdf
-
-// TODO pluggable memory allocation for embedded
-
-// TODO include guard name based on final file location
-#ifndef NP_LDT_H_
-#define NP_LDT_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,4 +122,4 @@ NP_LDT_RESULT NpLdtDecryptAndVerify(NpLdtDecryptHandle handle, uint8_t* buffer,
 }  // extern "C"
 #endif
 
-#endif  // NP_LDT_H_
+#endif  // THIRD_PARTY_NEARBY_PRESENCE_IMPLEMENTATION_NP_LDT_H_

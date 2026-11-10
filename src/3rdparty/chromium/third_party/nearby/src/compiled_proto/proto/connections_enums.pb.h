@@ -136,11 +136,13 @@ enum Medium : int {
   WIFI_DIRECT = 8,
   WEB_RTC = 9,
   BLE_L2CAP = 10,
-  USB = 11
+  USB = 11,
+  WEB_RTC_NON_CELLULAR = 12,
+  AWDL = 13
 };
 bool Medium_IsValid(int value);
 constexpr Medium Medium_MIN = UNKNOWN_MEDIUM;
-constexpr Medium Medium_MAX = USB;
+constexpr Medium Medium_MAX = AWDL;
 constexpr int Medium_ARRAYSIZE = Medium_MAX + 1;
 
 const std::string& Medium_Name(Medium value);
@@ -207,6 +209,46 @@ inline const std::string& ConnectionBand_Name(T enum_t_value) {
 }
 bool ConnectionBand_Parse(
     ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, ConnectionBand* value);
+enum ConnectionMode : int {
+  LEGACY = 0,
+  INSTANT = 1
+};
+bool ConnectionMode_IsValid(int value);
+constexpr ConnectionMode ConnectionMode_MIN = LEGACY;
+constexpr ConnectionMode ConnectionMode_MAX = INSTANT;
+constexpr int ConnectionMode_ARRAYSIZE = ConnectionMode_MAX + 1;
+
+const std::string& ConnectionMode_Name(ConnectionMode value);
+template<typename T>
+inline const std::string& ConnectionMode_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, ConnectionMode>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function ConnectionMode_Name.");
+  return ConnectionMode_Name(static_cast<ConnectionMode>(enum_t_value));
+}
+bool ConnectionMode_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, ConnectionMode* value);
+enum InstantConnectionResult : int {
+  UNKNOWN_INSTANT_CONNECTION_RESULT = 0,
+  INSTANT_CONNECTION_SUCCESS = 1,
+  INSTANT_CONNECTION_FAILURE = 2,
+  INSTANT_CONNECTION_TIMEOUT = 3
+};
+bool InstantConnectionResult_IsValid(int value);
+constexpr InstantConnectionResult InstantConnectionResult_MIN = UNKNOWN_INSTANT_CONNECTION_RESULT;
+constexpr InstantConnectionResult InstantConnectionResult_MAX = INSTANT_CONNECTION_TIMEOUT;
+constexpr int InstantConnectionResult_ARRAYSIZE = InstantConnectionResult_MAX + 1;
+
+const std::string& InstantConnectionResult_Name(InstantConnectionResult value);
+template<typename T>
+inline const std::string& InstantConnectionResult_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, InstantConnectionResult>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function InstantConnectionResult_Name.");
+  return InstantConnectionResult_Name(static_cast<InstantConnectionResult>(enum_t_value));
+}
+bool InstantConnectionResult_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, InstantConnectionResult* value);
 enum ConnectionRequestResponse : int {
   UNKNOWN_CONNECTION_REQUEST_RESPONSE = 0,
   ACCEPTED = 1,
@@ -481,11 +523,15 @@ enum LogSource : int {
   INTERNAL_DEVICES = 2,
   BETA_TESTER_DEVICES = 3,
   OEM_DEVICES = 4,
-  DEBUG_DEVICES = 5
+  DEBUG_DEVICES = 5,
+  NEARBY_MODULE_FOOD_DEVICES = 6,
+  BETO_DOGFOOD_DEVICES = 7,
+  NEARBY_DOGFOOD_DEVICES = 8,
+  NEARBY_TEAMFOOD_DEVICES = 9
 };
 bool LogSource_IsValid(int value);
 constexpr LogSource LogSource_MIN = UNSPECIFIED_SOURCE;
-constexpr LogSource LogSource_MAX = DEBUG_DEVICES;
+constexpr LogSource LogSource_MAX = NEARBY_TEAMFOOD_DEVICES;
 constexpr int LogSource_ARRAYSIZE = LogSource_MAX + 1;
 
 const std::string& LogSource_Name(LogSource value);
@@ -530,11 +576,12 @@ enum OperationResultCategory : int {
   CATEGORY_NEARBY_ERROR = 6,
   CATEGORY_CONNECTIVITY_ERROR = 7,
   CATEGORY_MISCELLANEOUS = 8,
-  CATEGORY_IO_ERROR = 9
+  CATEGORY_IO_ERROR = 9,
+  CATEGORY_DCT_ERROR = 10
 };
 bool OperationResultCategory_IsValid(int value);
 constexpr OperationResultCategory OperationResultCategory_MIN = CATEGORY_UNKNOWN;
-constexpr OperationResultCategory OperationResultCategory_MAX = CATEGORY_IO_ERROR;
+constexpr OperationResultCategory OperationResultCategory_MAX = CATEGORY_DCT_ERROR;
 constexpr int OperationResultCategory_ARRAYSIZE = OperationResultCategory_MAX + 1;
 
 const std::string& OperationResultCategory_Name(OperationResultCategory value);
@@ -618,6 +665,14 @@ enum OperationResultCode : int {
   MEDIUM_UNAVAILABLE_REJECT_L2CAP_ON_GATT_MULTIPLEX_CONNECTION = 1536,
   MEDIUM_UNAVAILABLE_UPGRADE_ON_SAME_MEDIUM = 1537,
   MEDIUM_UNAVAILABLE_WEB_RTC_NO_INTERNET = 1538,
+  MEDIUM_UNAVAILABLE_STA_DISRUPTIVE_FALSE = 1539,
+  MEDIUM_UNAVAILABLE_STA_USER_NOT_ALLOW = 1540,
+  MEDIUM_UNAVAILABLE_DUPLICATE_FAST_ADVERTISING = 1541,
+  MEDIUM_UNAVAILABLE_NSD_NOT_AVAILABLE = 1542,
+  MEDIUM_UNAVAILABLE_MDNS_NOT_AVAILABLE = 1543,
+  MEDIUM_UNAVAILABLE_LAN_BLOCKED = 1544,
+  MEDIUM_UNAVAILABLE_POOR_SIGNAL = 1545,
+  MEDIUM_UNAVAILABLE_BT_MULTIPLEX_DISABLED = 1546,
   CLIENT_WIFI_DIRECT_ALREADY_HOSTING_DIRECT_GROUP_FOR_THIS_CLIENT = 2000,
   CLIENT_WIFI_HOTSPOT_ALREADY_HOSTING_HOTSPOT_FOR_THIS_CLIENT = 2001,
   CLIENT_DUPLICATE_ACCEPTING_BLE_CONNECTION_REQUEST = 2002,
@@ -635,6 +690,25 @@ enum OperationResultCode : int {
   CLIENT_DUPLICATE_WIFI_HOTSPOT_CONNECTION_REQUEST = 2014,
   CLIENT_DUPLICATE_WIFI_AWARE_SUBSCRIBING_REQUEST = 2015,
   CLIENT_UNSUPPORTED_USB_TO_BE_UPGRADE_MEDIUM = 2016,
+  CLIENT_PROCESS_TIE_BREAK_LOSS = 2017,
+  CLIENT_BLE_DUPLICATE_ADVERTISING = 2018,
+  CLIENT_BLUETOOTH_DUPLICATE_ADVERTISING = 2019,
+  CLIENT_NFC_DUPLICATE_ADVERTISING = 2020,
+  CLIENT_WIFI_LAN_DUPLICATE_ADVERTISING = 2021,
+  CLIENT_USB_DUPLICATE_ADVERTISING = 2022,
+  CLIENT_BLE_DUPLICATE_DISCOVERING = 2023,
+  CLIENT_BLUETOOTH_DUPLICATE_DISCOVERING = 2024,
+  CLIENT_NFC_DUPLICATE_DISCOVERING = 2025,
+  CLIENT_WIFI_LAN_DUPLICATE_DISCOVERING = 2026,
+  CLIENT_USB_DUPLICATE_DISCOVERING = 2027,
+  CLIENT_PERMISSION_FAILURE = 2028,
+  CLIENT_BLE_NO_LISTENING = 2029,
+  CLIENT_ALREADY_CONNECTED_TO_TARGET = 2030,
+  CLIENT_FAILED_INCOMING_CONNECTION_DUE_TO_TOPOLOGICAL_LIMIT = 2031,
+  CLIENT_OUT_OF_ORDER_API_CALL = 2032,
+  CLIENT_WRONG_CONNECTING_PERMISSIONS = 2033,
+  CLIENT_ALREADY_CONNECTED_TO_ENDPOINT = 2034,
+  CLIENT_CONNECT_TO_UNKNOWN_ENDPOINT = 2035,
   MISCELLEANEOUS_BLUETOOTH_MAC_ADDRESS_NULL = 2500,
   MISCELLEANEOUS_MOVE_TO_NEW_MEDIUM = 2501,
   MISCELLEANEOUS_WIFI_HOTSPOT_SOFT_AP_BLOCKED_BY_PROVISION = 2502,
@@ -648,21 +722,25 @@ enum OperationResultCode : int {
   MISCELLEANEOUS_BT_NOT_ACCEPTING_CONNECTION_FOR_WORK_PROFILE = 2510,
   MISCELLEANEOUS_WEB_RTC_GET_DROIDGUARD_RESULT_FAILURE = 2511,
   MISCELLEANEOUS_WEB_RTC_TACHYON_SIGNALING_MESSENGER_NULL = 2512,
+  MISCELLEANEOUS_WEB_RTC_FAILED_TO_RECEIVE_MESSAGE = 2513,
+  MISCELLEANEOUS_BLUETOOTH_CHANGE_DEVICE_NAME_FAILURE = 2514,
+  MISCELLEANEOUS_WEB_RTC_ICE_SERVER_NULL = 2515,
+  MISCELLEANEOUS_WORK_SOURCE_NULL = 2516,
   IO_FILE_OPENING_ERROR = 3000,
   IO_FILE_READING_ERROR = 3001,
   IO_FILE_WRITING_ERROR = 3002,
   IO_FOLDER_CREATION_ERROR = 3003,
   IO_STREAM_CREATE_PIPE_FAILURE = 3004,
-  IO_ENDPOINT_IO_ERROR_ON_BLE = 3005,
-  IO_ENDPOINT_IO_ERROR_ON_BLE_L2CAP = 3006,
-  IO_ENDPOINT_IO_ERROR_ON_BT = 3007,
-  IO_ENDPOINT_IO_ERROR_ON_WEB_RTC = 3008,
-  IO_ENDPOINT_IO_ERROR_ON_LAN = 3009,
-  IO_ENDPOINT_IO_ERROR_ON_WIFI_DIRECT = 3010,
-  IO_ENDPOINT_IO_ERROR_ON_WIFI_HOTSPOT = 3011,
-  IO_ENDPOINT_IO_ERROR_ON_WIFI_AWARE = 3012,
-  IO_ENDPOINT_IO_ERROR_ON_NFC = 3013,
-  IO_ENDPOINT_IO_ERROR_ON_USB = 3014,
+  IO_ENDPOINT_IO_ERROR_ON_BLE PROTOBUF_DEPRECATED_ENUM = 3005,
+  IO_ENDPOINT_IO_ERROR_ON_BLE_L2CAP PROTOBUF_DEPRECATED_ENUM = 3006,
+  IO_ENDPOINT_IO_ERROR_ON_BT PROTOBUF_DEPRECATED_ENUM = 3007,
+  IO_ENDPOINT_IO_ERROR_ON_WEB_RTC PROTOBUF_DEPRECATED_ENUM = 3008,
+  IO_ENDPOINT_IO_ERROR_ON_LAN PROTOBUF_DEPRECATED_ENUM = 3009,
+  IO_ENDPOINT_IO_ERROR_ON_WIFI_DIRECT PROTOBUF_DEPRECATED_ENUM = 3010,
+  IO_ENDPOINT_IO_ERROR_ON_WIFI_HOTSPOT PROTOBUF_DEPRECATED_ENUM = 3011,
+  IO_ENDPOINT_IO_ERROR_ON_WIFI_AWARE PROTOBUF_DEPRECATED_ENUM = 3012,
+  IO_ENDPOINT_IO_ERROR_ON_NFC PROTOBUF_DEPRECATED_ENUM = 3013,
+  IO_ENDPOINT_IO_ERROR_ON_USB PROTOBUF_DEPRECATED_ENUM = 3014,
   CONNECTIVITY_WIFI_AWARE_ATTACH_FAILURE = 3500,
   CONNECTIVITY_BLUETOOTH_DEVICE_OBTAIN_FAILURE = 3501,
   CONNECTIVITY_BLE_CLIENT_SOCKET_CREATION_FAILURE = 3502,
@@ -721,6 +799,50 @@ enum OperationResultCode : int {
   CONNECTIVITY_BT_SERVER_SOCKET_CREATION_SECURITY_EXCEPTION_FAILURE = 3555,
   CONNECTIVITY_L2CAP_CLIENT_SOCKET_CREATION_TIMEOUT_FAILURE = 3556,
   CONNECTIVITY_WEB_RTC_UNSATISFIED_LINK_ERROR = 3557,
+  CONNECTIVITY_DIRECT_GROUP_MCC_FAILURE = 3558,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_BLE = 3559,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_BLE_L2CAP = 3560,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_BT = 3561,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_WEB_RTC = 3562,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_LAN = 3563,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_WIFI_DIRECT = 3564,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_WIFI_HOTSPOT = 3565,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_WIFI_AWARE = 3566,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_NFC = 3567,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_USB = 3568,
+  CONNECTIVITY_CHANNEL_IO_ERROR_ON_UNKNOWN_MEDIUM = 3569,
+  CONNECTIVITY_BT_SOCKET_CREATION_IO_EXCEPTION = 3570,
+  CONNECTIVITY_BT_SOCKET_CONNECT_IO_EXCEPTION = 3571,
+  CONNECTIVITY_BT_CONNECTION_INTERRUPTED_EXCEPTION = 3572,
+  CONNECTIVITY_BT_CONNECTION_EXECUTION_EXCEPTION = 3573,
+  CONNECTIVITY_BT_CONNECTION_TIMEOUT_EXCEPTION = 3574,
+  CONNECTIVITY_WIFI_DIRECT_P2P_CONNECTION_FAILURE = 3575,
+  CONNECTIVITY_WFD_CONNECTION_INTERRUPTED_EXCEPTION = 3576,
+  CONNECTIVITY_WFD_CONNECTION_EXECUTION_EXCEPTION = 3577,
+  CONNECTIVITY_WFD_CONNECTION_TIMEOUT_EXCEPTION = 3578,
+  CONNECTIVITY_WFD_CONNECTION_HOSTED_ADDRESS_NULL = 3579,
+  CONNECTIVITY_WIFI_HOTSPOT_SPECIFIER_FAILURE = 3580,
+  CONNECTIVITY_WIFI_HOTSPOT_LEGACY_STA_CONNECTION_FAILURE = 3581,
+  CONNECTIVITY_WIFI_LAN_SOCKET_CONNECT_TIMEOUT = 3582,
+  CONNECTIVITY_WIFI_LAN_SOCKET_CONNECT_IO_EXCEPTION = 3583,
+  CONNECTIVITY_BLE_START_GATT_SERVER_FAILURE = 3584,
+  CONNECTIVITY_BLE_ADD_GATT_ADVERTISEMENT_FAILURE = 3585,
+  CONNECTIVITY_BLE_START_ADVERTISING_FAILURE = 3586,
+  CONNECTIVITY_BLUETOOTH_START_ADVERTISING_FAILURE = 3587,
+  CONNECTIVITY_WIFI_LAN_START_ADVERTISING_FAILURE = 3588,
+  CONNECTIVITY_WIFI_AWARE_START_ADVERTISING_FAILURE = 3589,
+  CONNECTIVITY_BLUETOOTH_SCAN_FAILURE = 3590,
+  CONNECTIVITY_BLE_SCAN_FAILURE = 3591,
+  CONNECTIVITY_MDNS_SCAN_FAILURE = 3592,
+  CONNECTIVITY_NFC_START_DISCOVERY_FAILURE = 3593,
+  CONNECTIVITY_WIFI_LAN_START_DISCOVERY_FAILURE = 3594,
+  CONNECTIVITY_WIFI_AWARE_START_DISCOVERY_FAILURE = 3595,
+  CONNECTIVITY_UWB_START_DISCOVERY_FAILURE = 3596,
+  CONNECTIVITY_LAN_MDNS_REGISTER_FAILURE = 3597,
+  CONNECTIVITY_BLUETOOTH_CHANGE_SCAN_MODE_FAILURE = 3598,
+  CONNECTIVITY_AUTO_RESUME_FAILURE = 3599,
+  CONNECTIVITY_INSTANT_CONNECTION_LISTENING_TIMEOUT = 3600,
+  CONNECTIVITY_MEDIUM_INVALID_CREDENTIAL = 3601,
   NEARBY_BLE_ADVERTISEMENT_MAPPING_TO_MAC_ERROR = 4500,
   NEARBY_BLUETOOTH_MAC_ADDRESS_INVALID_FOR_CONNECT = 4501,
   NEARBY_WEB_RTC_CONNECTION_FLOW_NULL = 4502,
@@ -751,7 +873,7 @@ enum OperationResultCode : int {
   NEARBY_WIFI_DIRECT_NULL_CALLBACK = 4527,
   NEARBY_WIFI_DIRECT_NULL_SSID = 4528,
   NEARBY_WIFI_DIRECT_NULL_PASSWORD = 4529,
-  NEARBY_BT_MULTIPLEX_SOCKET_DISABLED = 4530,
+  NEARBY_BT_MULTIPLEX_SOCKET_DISABLED PROTOBUF_DEPRECATED_ENUM = 4530,
   NEARBY_LAN_MULTIPLEX_SOCKET_DISABLED = 4531,
   NEARBY_GENERIC_NEW_ENDPOINT_CHANNEL_NULL = 4532,
   NEARBY_WIFI_DIRECT_NO_GROUP_FOR_LISTENING = 4533,
@@ -787,11 +909,79 @@ enum OperationResultCode : int {
   NEARBY_BT_VIRTUAL_SOCKET_CREATION_FAILURE = 4563,
   NEARBY_LAN_VIRTUAL_SOCKET_CREATION_FAILURE = 4564,
   NEARBY_WIFI_LAN_IP_ADDRESS_ERROR = 4565,
-  NEARBY_L2CAP_PSM_NOT_POSITIVE = 4566
+  NEARBY_L2CAP_PSM_NOT_POSITIVE = 4566,
+  NEARBY_ENCRYPTION_FAILURE = 4567,
+  NEARBY_AUTHENTICATION_FAILURE = 4568,
+  NEARBY_LAN_VIRTUAL_SOCKET_NULL = 4569,
+  NEARBY_BLUETOOTH_ADVERTISE_TO_BYTES_FAILURE = 4570,
+  NEARBY_BLE_ADVERTISE_TO_BYTES_FAILURE = 4571,
+  NEARBY_BLE_FAST_ADVERTISE_TO_BYTES_FAILURE = 4572,
+  NEARBY_NFC_ADVERTISE_TO_BYTES_FAILURE = 4573,
+  NEARBY_WIFI_LAN_ADVERTISE_TO_BYTES_FAILURE = 4574,
+  NEARBY_WIFI_AWARE_ADVERTISE_TO_BYTES_FAILURE = 4575,
+  NEARBY_USB_ADVERTISE_TO_BYTES_FAILURE = 4576,
+  NEARBY_NFC_INVALID_PCP_OPTIONS = 4577,
+  NEARBY_BLUETOOTH_INVALID_PCP_OPTIONS = 4578,
+  NEARBY_BLE_INVALID_PCP_OPTIONS = 4579,
+  NEARBY_WIFI_LAN_INVALID_PCP_OPTIONS = 4580,
+  NEARBY_WIFI_AWARE_INVALID_PCP_OPTIONS = 4581,
+  NEARBY_USB_INVALID_PCP_OPTIONS = 4582,
+  NEARBY_UWB_INVALID_PCP_OPTIONS = 4583,
+  NEARBY_WEB_RTC_INVALID_PCP_OPTIONS = 4584,
+  NEARBY_BLUETOOTH_NO_CLIENT_REGISTER_FOR_SCAN = 4585,
+  NEARBY_INSTANT_CONNECTION_WRONG_CONNECTIVITY_INFO = 4586,
+  NEARBY_NEED_METHOD_OVERRIDE = 4587,
+  NEARBY_GENERIC_INCOMING_PAYLOAD_CREATION_FAILURE = 4588,
+  NEARBY_WEB_RTC_NO_LISTENING_PEER_FOUND = 4589,
+  NEARBY_UPGRADE_PATH_ON_WRONG_MEDIUM = 4590,
+  NEARBY_CONNECT_TO_ALL_MEDIUMS_FAILURE = 4591,
+  NEARBY_BLUETOOTH_RECONNECT_MAC_NULL = 4592,
+  NEARBY_LAN_RECONNECT_CONNECTION_INFO_NULL = 4593,
+  NEARBY_LAN_RECONNECT_IP_NULL = 4594,
+  NEARBY_WIFI_DIRECT_RECONNECT_META_DATA_NULL = 4595,
+  NEARBY_WIFI_DIRECT_RECONNECT_CONNECT_META_DATA_NULL = 4596,
+  NEARBY_WIFI_HOTSPOT_RECONNECT_META_DATA_NULL = 4597,
+  NEARBY_WIFI_HOTSPOT_RECONNECT_CONNECT_META_DATA_NULL = 4598,
+  NEARBY_WEB_RTC_RECONNECT_PEER_ID_NULL = 4599,
+  NEARBY_WIFI_AWARE_RECONNECT_META_DATA_NULL = 4600,
+  NEARBY_NOT_ADVERTISING_OR_LISTENING = 4601,
+  NEARBY_CAN_NOT_OBTAIN_DEVICE_PROVIDER = 4602,
+  NEARBY_SETUP_STRATEGY_FAILURE = 4603,
+  NEARBY_TX_ADVERTISEMENT_NULL = 4604,
+  NEARBY_ENDPOINT_ID_MISMATCH = 4605,
+  NEARBY_CONNECTIVITY_INFO_NULL_OR_WRONG = 4606,
+  NEARBY_LOCAL_CLIENT_STATE_WRONG = 4607,
+  NEARBY_REMOTE_EXCEPTION_WHEN_PROCESSING_RECEIVED_PAYLOAD = 4608,
+  NEARBY_BAD_FILE_DESCRIPTION_WHEN_PROCESSING_RECEIVED_PAYLOAD = 4609,
+  DCT_ERROR_BLE_DISABLED = 5000,
+  DCT_ERROR_BLE_ADV_FAILED = 5001,
+  DCT_ERROR_BLE_SCAN_FAILED = 5002,
+  DCT_ERROR_L2CAP_SERVER_FAILED = 5003,
+  DCT_ERROR_L2CAP_CLIENT_FAILED = 5004,
+  DCT_ERROR_MDNS_DISCOVERY_TIMEOUT = 5005,
+  DCT_ERROR_MDNS_REGISTER_SERVICE = 5006,
+  DCT_ERROR_INITIAL_TLS_SPAKE = 5007,
+  DCT_ERROR_SUBSEQUENT_TLS_SPAKE = 5008,
+  DCT_ERROR_REQUEST_FAILED = 5009,
+  DCT_ERROR_RESPONSE_FAILED = 5010,
+  DCT_ERROR_CONTROL_MESSAGE_EXCHANGE = 5011,
+  DCT_ERROR_CAPABILITY_MISMATCH = 5012,
+  DCT_ERROR_HIGH_SPEED_MEDIUM_UNAVAILABLE = 5013,
+  DCT_ERROR_WIFI_DISABLED = 5014,
+  DCT_ERROR_WIFI_DISCONNECTED = 5015,
+  DCT_ERROR_WIFI_CREDENTIAL_TRANSFER = 5016,
+  DCT_ERROR_WIFI_INTERNET_CONNECTION = 5017,
+  DCT_ERROR_UPGRADE_HIGH_SPEED_MEDIUM_FAILED = 5018,
+  DCT_ERROR_KEEPALIVE_TIMEOUT = 5019,
+  DCT_ERROR_ESTABLISHED_CONNECTION_LOST = 5020,
+  DCT_ERROR_USER_CANCELLED = 5021,
+  DCT_ERROR_SERVICE_CANCELLED = 5022,
+  DCT_ERROR_UNVERIFIED_INTEGRITY = 5023,
+  DCT_ERROR_HTTP_SERVER_CLOSED = 5024
 };
 bool OperationResultCode_IsValid(int value);
 constexpr OperationResultCode OperationResultCode_MIN = DETAIL_UNKNOWN;
-constexpr OperationResultCode OperationResultCode_MAX = NEARBY_L2CAP_PSM_NOT_POSITIVE;
+constexpr OperationResultCode OperationResultCode_MAX = DCT_ERROR_HTTP_SERVER_CLOSED;
 constexpr int OperationResultCode_ARRAYSIZE = OperationResultCode_MAX + 1;
 
 const std::string& OperationResultCode_Name(OperationResultCode value);
@@ -804,6 +994,67 @@ inline const std::string& OperationResultCode_Name(T enum_t_value) {
 }
 bool OperationResultCode_Parse(
     ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, OperationResultCode* value);
+enum StopAdvertisingReason : int {
+  STOP_ADVERTISING_REASON_UNKNOWN = 0,
+  CLIENT_STOP_ADVERTISING = 1,
+  FINISH_SESSION_STOP_ADVERTISING = 2
+};
+bool StopAdvertisingReason_IsValid(int value);
+constexpr StopAdvertisingReason StopAdvertisingReason_MIN = STOP_ADVERTISING_REASON_UNKNOWN;
+constexpr StopAdvertisingReason StopAdvertisingReason_MAX = FINISH_SESSION_STOP_ADVERTISING;
+constexpr int StopAdvertisingReason_ARRAYSIZE = StopAdvertisingReason_MAX + 1;
+
+const std::string& StopAdvertisingReason_Name(StopAdvertisingReason value);
+template<typename T>
+inline const std::string& StopAdvertisingReason_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, StopAdvertisingReason>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function StopAdvertisingReason_Name.");
+  return StopAdvertisingReason_Name(static_cast<StopAdvertisingReason>(enum_t_value));
+}
+bool StopAdvertisingReason_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, StopAdvertisingReason* value);
+enum StopDiscoveringReason : int {
+  STOP_DISCOVERING_REASON_UNKNOWN = 0,
+  CLIENT_STOP_DISCOVERING = 1,
+  FINISH_SESSION_STOP_DISCOVERING = 2
+};
+bool StopDiscoveringReason_IsValid(int value);
+constexpr StopDiscoveringReason StopDiscoveringReason_MIN = STOP_DISCOVERING_REASON_UNKNOWN;
+constexpr StopDiscoveringReason StopDiscoveringReason_MAX = FINISH_SESSION_STOP_DISCOVERING;
+constexpr int StopDiscoveringReason_ARRAYSIZE = StopDiscoveringReason_MAX + 1;
+
+const std::string& StopDiscoveringReason_Name(StopDiscoveringReason value);
+template<typename T>
+inline const std::string& StopDiscoveringReason_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, StopDiscoveringReason>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function StopDiscoveringReason_Name.");
+  return StopDiscoveringReason_Name(static_cast<StopDiscoveringReason>(enum_t_value));
+}
+bool StopDiscoveringReason_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, StopDiscoveringReason* value);
+enum DeviceType : int {
+  UNKNOWN_TYPE = 0,
+  NEARBY_CONNECTION = 1,
+  NEARBY_PRESENCE = 2,
+  DCT = 3
+};
+bool DeviceType_IsValid(int value);
+constexpr DeviceType DeviceType_MIN = UNKNOWN_TYPE;
+constexpr DeviceType DeviceType_MAX = DCT;
+constexpr int DeviceType_ARRAYSIZE = DeviceType_MAX + 1;
+
+const std::string& DeviceType_Name(DeviceType value);
+template<typename T>
+inline const std::string& DeviceType_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, DeviceType>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function DeviceType_Name.");
+  return DeviceType_Name(static_cast<DeviceType>(enum_t_value));
+}
+bool DeviceType_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, DeviceType* value);
 // ===================================================================
 
 
@@ -835,6 +1086,8 @@ template <> struct is_proto_enum< ::location::nearby::proto::connections::Sessio
 template <> struct is_proto_enum< ::location::nearby::proto::connections::Medium> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionTechnology> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionBand> : ::std::true_type {};
+template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionMode> : ::std::true_type {};
+template <> struct is_proto_enum< ::location::nearby::proto::connections::InstantConnectionResult> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionRequestResponse> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionAttemptResult> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::ConnectionAttemptDirection> : ::std::true_type {};
@@ -849,6 +1102,9 @@ template <> struct is_proto_enum< ::location::nearby::proto::connections::LogSou
 template <> struct is_proto_enum< ::location::nearby::proto::connections::PowerLevel> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::OperationResultCategory> : ::std::true_type {};
 template <> struct is_proto_enum< ::location::nearby::proto::connections::OperationResultCode> : ::std::true_type {};
+template <> struct is_proto_enum< ::location::nearby::proto::connections::StopAdvertisingReason> : ::std::true_type {};
+template <> struct is_proto_enum< ::location::nearby::proto::connections::StopDiscoveringReason> : ::std::true_type {};
+template <> struct is_proto_enum< ::location::nearby::proto::connections::DeviceType> : ::std::true_type {};
 
 PROTOBUF_NAMESPACE_CLOSE
 

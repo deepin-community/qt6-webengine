@@ -3,30 +3,30 @@
 // found in the LICENSE file.
 
 import 'chrome://resources/polymer/v3_0/paper-spinner/paper-spinner-lite.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
-import 'chrome://chrome-signin/arc_account_picker/arc_account_picker_app.js';
-import './gaia_action_buttons/gaia_action_buttons.js';
+import 'chrome://resources/ash/common/cr_elements/cr_view_manager/cr_view_manager.js';
+import 'chrome://chrome-signin/gaia_action_buttons/gaia_action_buttons.js';
 import './signin_blocked_by_policy_page.js';
 import './signin_error_page.js';
 import './welcome_page_app.js';
-import './strings.m.js';
+import '/strings.m.js';
 
-import {getAccountAdditionOptionsFromJSON} from 'chrome://chrome-signin/arc_account_picker/arc_util.js';
-import {AuthCompletedCredentials, Authenticator, AuthParams} from 'chrome://chrome-signin/gaia_auth_host/authenticator.js';
-import {CrViewManagerElement} from 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import type {AuthCompletedCredentials, AuthParams} from 'chrome://chrome-signin/gaia_auth_host/authenticator.js';
+import {Authenticator} from 'chrome://chrome-signin/gaia_auth_host/authenticator.js';
+import type {CrViewManagerElement} from 'chrome://resources/ash/common/cr_elements/cr_view_manager/cr_view_manager.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {isRTL} from 'chrome://resources/js/util.js';
-import {PaperSpinnerLiteElement} from 'chrome://resources/polymer/v3_0/paper-spinner/paper-spinner-lite.js';
+import type {PaperSpinnerLiteElement} from 'chrome://resources/polymer/v3_0/paper-spinner/paper-spinner-lite.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './inline_login_app.html.js';
-import {InlineLoginBrowserProxy, InlineLoginBrowserProxyImpl} from './inline_login_browser_proxy.js';
+import type {InlineLoginBrowserProxy} from './inline_login_browser_proxy.js';
+import {InlineLoginBrowserProxyImpl} from './inline_login_browser_proxy.js';
 
 /**
  * @fileoverview Inline login WebUI in various signin flows for ChromeOS and
@@ -35,7 +35,6 @@ import {InlineLoginBrowserProxy, InlineLoginBrowserProxyImpl} from './inline_log
 
 export enum View {
   ADD_ACCOUNT = 'addAccount',
-  ARC_ACCOUNT_PICKER = 'arcAccountPicker',
   SIGNIN_BLOCKED_BY_POLICY = 'signinBlockedByPolicy',
   SIGNIN_ERROR = 'signinError',
   WELCOME = 'welcome',
@@ -123,28 +122,9 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
       },
 
       /*
-       * True if `kArcAccountRestrictions` feature is enabled.
-       */
-      isArcAccountRestrictionsEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('isArcAccountRestrictionsEnabled');
-        },
-        readOnly: true,
-      },
-
-      /*
        * True if the dialog is open for reauthentication.
        */
       isReauthentication_: {
-        type: Boolean,
-        value: false,
-      },
-
-      /*
-       * True if the account should be available in ARC++ after addition.
-       */
-      isAvailableInArc_: {
         type: Boolean,
         value: false,
       },
@@ -184,9 +164,7 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
   private authenticator_: Authenticator|null;
 
   private shouldSkipWelcomePage_: boolean;
-  private isArcAccountRestrictionsEnabled_: boolean;
   private isReauthentication_: boolean;
-  private isAvailableInArc_: boolean;
   private email_: string;
   private hostedDomain_: string;
   private isSecondaryGoogleAccountSigninAllowed_: boolean;
@@ -277,11 +255,6 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
   private onAuthCompleted_(e: CustomEvent<AuthCompletedCredentials>) {
     this.verifyingAccount_ = true;
     const credentials = e.detail;
-
-    if (this.isArcAccountRestrictionsEnabled_ && !this.isReauthentication_) {
-      credentials.isAvailableInArc = this.isAvailableInArc_;
-    }
-
     this.browserProxy_.completeLogin(credentials);
   }
 
@@ -337,13 +310,6 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
   }
 
   /**
-   * Navigates to the welcome screen.
-   */
-  private goToWelcomeScreen_() {
-    this.switchView_(View.WELCOME);
-  }
-
-  /**
    * Navigates back in the web view if possible. Otherwise closes the dialog.
    */
   private handleGoBack_() {
@@ -360,18 +326,6 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
 
   private getBackButtonIcon_(): string {
     return isRTL() ? 'cr:chevron-right' : 'cr:chevron-left';
-  }
-
-  private getNextButtonLabel_(
-      currentView: View, isArcAccountRestrictionsEnabled: boolean): string {
-    if (currentView === View.SIGNIN_BLOCKED_BY_POLICY ||
-        currentView === View.SIGNIN_ERROR) {
-      return this.i18n('ok');
-    }
-    if (!isArcAccountRestrictionsEnabled) {
-      return this.i18n('ok');
-    }
-    return this.i18n('nextButtonLabel');
   }
 
   /**
@@ -399,36 +353,12 @@ export class InlineLoginAppElement extends InlineLoginAppElementBase {
    */
   private switchToDefaultView_() {
     const view = this.getDefaultView_();
-
-    if (this.isArcAccountRestrictionsEnabled_ &&
-        view === View.ARC_ACCOUNT_PICKER) {
-      const arcAccountPickerApp =
-          this.shadowRoot!.querySelector('arc-account-picker-app');
-      assert(arcAccountPickerApp);
-      arcAccountPickerApp.loadAccounts().then(
-          (accountsFound: boolean) => {
-            this.switchView_(
-                accountsFound ? View.ARC_ACCOUNT_PICKER : View.WELCOME);
-          },
-          (_error: Error) => {
-            this.switchView_(View.WELCOME);
-          });
-      return;
-    }
-
     this.switchView_(view);
   }
 
   private getDefaultView_(): View {
     if (this.isReauthentication_) {
       return View.ADD_ACCOUNT;
-    }
-    if (this.isArcAccountRestrictionsEnabled_) {
-      const options = getAccountAdditionOptionsFromJSON(
-          InlineLoginBrowserProxyImpl.getInstance().getDialogArguments());
-      if (!!options && options.showArcAvailabilityPicker) {
-        return View.ARC_ACCOUNT_PICKER;
-      }
     }
     return this.shouldSkipWelcomePage_ ? View.ADD_ACCOUNT : View.WELCOME;
   }

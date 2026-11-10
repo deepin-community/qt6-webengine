@@ -28,6 +28,7 @@ class MockSharedResources : public WebRtcVideoFrameAdapter::SharedResources {
               (const media::VideoFrame& src_frame,
                media::VideoFrame& dest_frame));
 
+  MOCK_METHOD(void, RequestRasterContextProvider, ());
   MOCK_METHOD(scoped_refptr<viz::RasterContextProvider>,
               GetRasterContextProvider,
               ());
@@ -60,8 +61,9 @@ class MockSharedResources : public WebRtcVideoFrameAdapter::SharedResources {
         }));
   }
 
- private:
-  friend class base::RefCountedThreadSafe<MockSharedResources>;
+ protected:
+  friend class ThreadSafeRefCounted<MockSharedResources>;
+  ~MockSharedResources() override = default;
 };
 
 }  // namespace blink

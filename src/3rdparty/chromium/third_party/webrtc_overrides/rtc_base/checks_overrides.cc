@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/webrtc/rtc_base/checks.h"
+#include <string_view>
 
 #include "base/logging.h"
+#include "base/logging/log_severity.h"
+#include "third_party/webrtc/rtc_base/checks.h"
 
-namespace rtc::webrtc_checks_impl {
+namespace webrtc::webrtc_checks_impl {
 
-RTC_NORETURN void WriteFatalLog(absl::string_view output) {
+RTC_NORETURN void WriteFatalLog(std::string_view output) {
   LOG(FATAL) << output;
 #if !defined(_MSC_VER) || defined(__clang__)
   __builtin_unreachable();
@@ -19,7 +21,7 @@ RTC_NORETURN void WriteFatalLog(absl::string_view output) {
 
 RTC_NORETURN void WriteFatalLog(const char* file,
                                 int line,
-                                absl::string_view output) {
+                                std::string_view output) {
   {
     logging::LogMessage msg(file, line, logging::LOGGING_FATAL);
     msg.stream() << output;
@@ -31,4 +33,4 @@ RTC_NORETURN void WriteFatalLog(const char* file,
 #endif
 }
 
-}  // namespace rtc::webrtc_checks_impl
+}  // namespace webrtc::webrtc_checks_impl

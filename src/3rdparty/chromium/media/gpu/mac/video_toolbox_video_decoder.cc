@@ -47,13 +47,12 @@ bool SupportsH264() {
 
 bool InitializeVP9() {
 #if BUILDFLAG(IS_MAC)
-  // TODO(crbug.com/1449877): Enable VP9 on iOS.
-  if (__builtin_available(macOS 11.0, *)) {
-    VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
-    return VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9);
-  }
-#endif
+  VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
+  return VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9);
+#else
+  // TODO(crbug.com/40269929): Enable VP9 on iOS.
   return false;
+#endif
 }
 
 bool SupportsVP9() {
@@ -67,14 +66,7 @@ bool SupportsAV1() {
 
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 bool SupportsHEVC() {
-  // HEVC should be supported with 10.13+, but per crbug.com/1300444#c9 it is
-  // only reliable on Intel hardware with 11+.
-  if (base::FeatureList::IsEnabled(media::kPlatformHEVCDecoderSupport)) {
-    if (__builtin_available(macOS 11.0, *)) {
-      return true;
-    }
-  }
-  return false;
+  return base::FeatureList::IsEnabled(media::kPlatformHEVCDecoderSupport);
 }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 
@@ -139,11 +131,11 @@ void VideoToolboxVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
-  // TODO(crbug.com/1331597): Distinguish unsupported profile from unsupported
+  // TODO(crbug.com/40227557): Distinguish unsupported profile from unsupported
   // codec.
-  // TODO(crbug.com/1331597): Make sure that config.profile() matches
+  // TODO(crbug.com/40227557): Make sure that config.profile() matches
   // config.codec().
-  // TODO(crbug.com/1331597): Check that the size is supported.
+  // TODO(crbug.com/40227557): Check that the size is supported.
   bool profile_supported = false;
   for (const auto& supported_config :
        GetSupportedVideoDecoderConfigs(gpu_workarounds_)) {
@@ -156,7 +148,7 @@ void VideoToolboxVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   // If we don't have support support for a given codec, try to initialize
   // anyways -- otherwise we're certain to fail playback.
-  if (!profile_supported && IsBuiltInVideoCodec(config.codec())) {
+  if (!profile_supported && IsDecoderBuiltInVideoCodec(config.codec())) {
     task_runner_->PostTask(
         FROM_HERE, base::BindOnce(std::move(init_cb),
                                   DecoderStatus::Codes::kUnsupportedProfile));
@@ -239,7 +231,7 @@ void VideoToolboxVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
 void VideoToolboxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                                       DecodeCB decode_cb) {
-  DVLOG(3) << __func__;
+  DVLOG(3) << __func__ << " pts=" << buffer->timestamp().InMilliseconds();
 
   if (has_error_) {
     task_runner_->PostTask(
@@ -264,7 +256,7 @@ void VideoToolboxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   }
 
   decode_cbs_.push(std::move(decode_cb));
-  accelerator_->SetStream(-1, *buffer);
+  accelerator_->SetStream(-1, buffer);
   while (true) {
     // `active_decode_` is used in OnAcceleratorDecode() callbacks to look up
     // decode metadata.
@@ -331,13 +323,14 @@ void VideoToolboxVideoDecoder::ResetInternal(DecoderStatus status) {
 
   // Drop in-flight conversions.
   converter_weak_this_factory_.InvalidateWeakPtrs();
+  num_conversions_ = 0;
 }
 
 void VideoToolboxVideoDecoder::ReleaseDecodeCallbacks() {
   DVLOG(4) << __func__;
   DCHECK(!has_error_);
 
-  while (decode_cbs_.size() > video_toolbox_.NumDecodes()) {
+  while (decode_cbs_.size() > video_toolbox_.NumDecodes() + num_conversions_) {
     task_runner_->PostTask(FROM_HERE,
                            base::BindOnce(std::move(decode_cbs_.front()),
                                           DecoderStatus::Codes::kOk));
@@ -349,7 +342,8 @@ void VideoToolboxVideoDecoder::OnAcceleratorDecode(
     base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample,
     VideoToolboxDecompressionSessionMetadata session_metadata,
     scoped_refptr<CodecPicture> picture) {
-  DVLOG(4) << __func__;
+  DVLOG(4) << __func__
+           << " pts=" << active_decode_->timestamp().InMilliseconds();
   DCHECK(active_decode_);
 
   auto metadata = std::make_unique<VideoToolboxDecodeMetadata>();
@@ -364,6 +358,7 @@ void VideoToolboxVideoDecoder::OnAcceleratorDecode(
     // to them.
     metadata->color_space = config_.color_space_info().ToGfxColorSpace();
   }
+
   metadata->hdr_metadata = accelerator_->GetHDRMetadata();
   if (!metadata->hdr_metadata) {
     // Note: The VP9 accelerator contains this same logic so that the format
@@ -386,17 +381,16 @@ void VideoToolboxVideoDecoder::OnAcceleratorOutput(
 void VideoToolboxVideoDecoder::OnVideoToolboxOutput(
     base::apple::ScopedCFTypeRef<CVImageBufferRef> image,
     std::unique_ptr<VideoToolboxDecodeMetadata> metadata) {
-  DVLOG(4) << __func__;
+  DVLOG(4) << __func__ << " pts=" << metadata->timestamp.InMilliseconds();
 
   if (has_error_) {
     return;
   }
 
-  // Presumably there is at least one decode callback to release.
-  ReleaseDecodeCallbacks();
-
   // Check if the frame was dropped.
+  // TODO(crbug.com/40227557): Notify the output queue of dropped frames.
   if (!image) {
+    ReleaseDecodeCallbacks();
     return;
   }
 
@@ -415,6 +409,8 @@ void VideoToolboxVideoDecoder::OnVideoToolboxOutput(
               task_runner_,
               base::BindOnce(&VideoToolboxVideoDecoder::OnConverterOutput,
                              converter_weak_this_factory_.GetWeakPtr()))));
+
+  ++num_conversions_;
 }
 
 void VideoToolboxVideoDecoder::OnVideoToolboxError(DecoderStatus status) {
@@ -425,7 +421,7 @@ void VideoToolboxVideoDecoder::OnVideoToolboxError(DecoderStatus status) {
 void VideoToolboxVideoDecoder::OnConverterOutput(
     scoped_refptr<VideoFrame> frame,
     std::unique_ptr<VideoToolboxDecodeMetadata> metadata) {
-  DVLOG(4) << __func__;
+  DVLOG(4) << __func__ << " pts=" << metadata->timestamp.InMilliseconds();
 
   if (has_error_) {
     return;
@@ -437,6 +433,17 @@ void VideoToolboxVideoDecoder::OnConverterOutput(
     return;
   }
 
+  CHECK_GT(num_conversions_, 0u);
+  --num_conversions_;
+
+  // The output queue expects that all decode callbacks have been called at the
+  // time that a flush completes (all outputs are fulfilled), so we must release
+  // before fulfilling pictures (at least during a flush).
+  //
+  // It would be possible to obtain tighter bounds on the backpressure by moving
+  // responsibility for releasing callbacks to the output queue implementation.
+  ReleaseDecodeCallbacks();
+
   output_queue_.FulfillPicture(std::move(metadata->picture), std::move(frame));
 }
 
@@ -446,15 +453,24 @@ VideoToolboxVideoDecoder::GetSupportedVideoDecoderConfigs(
     const gpu::GpuDriverBugWorkarounds& gpu_workarounds) {
   std::vector<SupportedVideoDecoderConfig> supported;
 
-  // TODO(crbug.com/1331597): Test support for other H.264 profiles.
-  // TODO(crbug.com/1331597): Exclude resolutions that are not accelerated.
-  // TODO(crbug.com/1331597): Check if higher resolutions are supported.
+#ifdef ARCH_CPU_X86_FAMILY
+  constexpr gfx::Size kMinSize(16, 16);
+#else
+  constexpr gfx::Size kMinSize(64, 64);
+#endif
+
+  constexpr gfx::Size kLegacyMaxSize(4096, 4096);
+  constexpr gfx::Size kModernMaxSize(8192, 8192);
+
+  // TODO(crbug.com/40227557): Test support for other H.264 profiles.
+  // TODO(crbug.com/40227557): Exclude resolutions that are not accelerated.
+  // TODO(crbug.com/40227557): Check if higher resolutions are supported.
   if (!gpu_workarounds.disable_accelerated_h264_decode && SupportsH264()) {
     supported.emplace_back(
         /*profile_min=*/H264PROFILE_BASELINE,
         /*profile_max=*/H264PROFILE_HIGH,
-        /*coded_size_min=*/gfx::Size(16, 16),
-        /*coded_size_max=*/gfx::Size(4096, 4096),
+        /*coded_size_min=*/kMinSize,
+        /*coded_size_max=*/kLegacyMaxSize,
         /*allow_encrypted=*/false,
         /*require_encrypted=*/false);
   }
@@ -463,46 +479,49 @@ VideoToolboxVideoDecoder::GetSupportedVideoDecoderConfigs(
     supported.emplace_back(
         /*profile_min=*/VP9PROFILE_PROFILE0,
         /*profile_max=*/VP9PROFILE_PROFILE0,
-        /*coded_size_min=*/gfx::Size(16, 16),
-        /*coded_size_max=*/gfx::Size(4096, 4096),
+        /*coded_size_min=*/kMinSize,
+        /*coded_size_max=*/kLegacyMaxSize,
         /*allow_encrypted=*/false,
         /*require_encrypted=*/false);
     if (!gpu_workarounds.disable_accelerated_vp9_profile2_decode) {
       supported.emplace_back(
           /*profile_min=*/VP9PROFILE_PROFILE2,
           /*profile_max=*/VP9PROFILE_PROFILE2,
-          /*coded_size_min=*/gfx::Size(16, 16),
-          /*coded_size_max=*/gfx::Size(4096, 4096),
+          /*coded_size_min=*/kMinSize,
+          /*coded_size_max=*/kLegacyMaxSize,
           /*allow_encrypted=*/false,
           /*require_encrypted=*/false);
     }
   }
 
-  if (base::FeatureList::IsEnabled(kVideoToolboxAv1Decoding) &&
-      !gpu_workarounds.disable_accelerated_av1_decode && SupportsAV1()) {
+  if (!gpu_workarounds.disable_accelerated_av1_decode && SupportsAV1()) {
     supported.emplace_back(
         /*profile_min=*/AV1PROFILE_PROFILE_MAIN,
         /*profile_max=*/AV1PROFILE_PROFILE_MAIN,
-        /*coded_size_min=*/gfx::Size(16, 16),
-        /*coded_size_max=*/gfx::Size(8192, 8192),
+        /*coded_size_min=*/kMinSize,
+        /*coded_size_max=*/kModernMaxSize,
         /*allow_encrypted=*/false,
         /*require_encrypted=*/false);
   }
 
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
   if (!gpu_workarounds.disable_accelerated_hevc_decode && SupportsHEVC()) {
+    // HEVC hardware decoding is limited to kMinSize, but because we allow the
+    // OS software decoder we report the minimum possible HEVC encode size.
+    constexpr gfx::Size kHevcMinSize(16, 16);
+
     supported.emplace_back(
         /*profile_min=*/HEVCPROFILE_MIN,
         /*profile_max=*/HEVCPROFILE_MAX,
-        /*coded_size_min=*/gfx::Size(16, 16),
-        /*coded_size_max=*/gfx::Size(8192, 8192),
+        /*coded_size_min=*/kHevcMinSize,
+        /*coded_size_max=*/kModernMaxSize,
         /*allow_encrypted=*/false,
         /*require_encrypted=*/false);
     supported.emplace_back(
         /*profile_min=*/HEVCPROFILE_REXT,
         /*profile_max=*/HEVCPROFILE_REXT,
-        /*coded_size_min=*/gfx::Size(16, 16),
-        /*coded_size_max=*/gfx::Size(8192, 8192),
+        /*coded_size_min=*/kHevcMinSize,
+        /*coded_size_max=*/kModernMaxSize,
         /*allow_encrypted=*/false,
         /*require_encrypted=*/false);
   }

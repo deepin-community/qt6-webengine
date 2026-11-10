@@ -6,9 +6,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <tuple>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback_helpers.h"
@@ -42,7 +44,6 @@
 #include "crypto/sha2.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -403,7 +404,7 @@ class StorageTest
         base::flat_map<std::tuple<Priority,
                                   int64_t /*generation id*/,
                                   int64_t /*sequencing id*/>,
-                       absl::optional<std::string /*digest*/>>;
+                       std::optional<std::string /*digest*/>>;
 
     // Helper class for setting up mock uploader expectations of a successful
     // completion.
@@ -542,7 +543,7 @@ class StorageTest
           // unique_ptr and pass to SequenceBoundUpload to own.
           // MockUpload outlives TestUploader and is destructed together with
           // SequenceBoundUpload (on a sequenced task runner).
-          mock_upload_(new ::testing::NiceMock<const MockUpload>()),
+          mock_upload_(new ::testing::NiceMock<MockUpload>()),
           sequence_bound_upload_(self->main_task_runner_,
                                  base::WrapUnique(mock_upload_.get())),
           decryptor_(self->decryptor_) {
@@ -628,7 +629,7 @@ class StorageTest
           std::make_tuple(sequence_information.priority(),
                           sequence_information.sequencing_id(),
                           sequence_information.generation_id()),
-          absl::nullopt);
+          std::nullopt);
 
       sequence_bound_upload_.AsyncCall(&SequenceBoundUpload::DoUploadGap)
           .WithArgs(uploader_id_, sequence_information.priority(),
@@ -758,7 +759,7 @@ class StorageTest
     // match the expected uploader.
     const int64_t uploader_id_;
 
-    absl::optional<int64_t> generation_id_;
+    std::optional<int64_t> generation_id_;
     const raw_ptr<base::flat_map<Priority, int64_t>> last_upload_generation_id_;
     const raw_ptr<LastRecordDigestMap> last_record_digest_map_;
 
@@ -979,9 +980,10 @@ class StorageTest
     signed_encryption_key.set_public_key_id(public_key_id);
     // Sign public key.
     uint8_t value_to_sign[sizeof(Encryptor::PublicKeyId) + kKeySize];
-    memcpy(value_to_sign, &public_key_id, sizeof(Encryptor::PublicKeyId));
-    memcpy(value_to_sign + sizeof(Encryptor::PublicKeyId), public_value,
-           kKeySize);
+    UNSAFE_TODO(
+        memcpy(value_to_sign, &public_key_id, sizeof(Encryptor::PublicKeyId)));
+    UNSAFE_TODO(memcpy(value_to_sign + sizeof(Encryptor::PublicKeyId),
+                       public_value, kKeySize));
     uint8_t signature[kSignatureSize];
     test::SignMessage(
         signing_private_key_,
@@ -1086,7 +1088,7 @@ class StorageTest
 constexpr std::array<const char*, 3> kData = {"Rec1111", "Rec222", "Rec33"};
 constexpr std::array<const char*, 3> kMoreData = {"More1111", "More222",
                                                   "More33"};
-constexpr std::array<char, (1024 * 1024 / 3)* 2> kBigData = {'A'};
+constexpr std::array<char, (1024 * 1024 / 3) * 2> kBigData = {'A'};
 constexpr std::string_view xBigData(&kBigData.front(), kBigData.size());
 
 TEST_P(StorageTest, WriteIntoNewStorageAndReopen) {

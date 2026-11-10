@@ -1,5 +1,6 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebengineframe.h"
 
@@ -16,7 +17,7 @@ QT_BEGIN_NAMESPACE
 #define LOCK_ADAPTER(adapter_variable, return_value)                                               \
     auto adapter = m_adapter.lock();                                                               \
     if (!adapter)                                                                                  \
-    return return_value
+        return return_value
 
 /*!
     \class QWebEngineFrame
@@ -46,7 +47,8 @@ QWebEngineFrame::QWebEngineFrame(QWeakPointer<QtWebEngineCore::WebContentsAdapte
 }
 
 /*!
-    Returns \c{true} if this object represents an existing frame; \c{false} otherwise.
+    \property QWebEngineFrame::isValid
+    \brief Whether this object represents an existing frame.
 
     Once a frame is invalid, it never becomes valid again.
 */
@@ -57,7 +59,8 @@ bool QWebEngineFrame::isValid() const
 }
 
 /*!
-    Returns the frame name; that is, what would be returned by \c window.name in JavaScript.
+    \property QWebEngineFrame::name
+    \brief The frame name; that is, what would be returned by \c window.name in JavaScript.
 
     If the frame could not be found, returns a null QString.
 
@@ -70,7 +73,8 @@ QString QWebEngineFrame::name() const
 }
 
 /*!
-    Returns the value of the frame's \c name HTML attribute, or an empty string if it has none.
+    \property QWebEngineFrame::htmlName
+    \brief The value of the frame's \c name HTML attribute, or an empty string if it has none.
 
     If the frame could not be found, returns a null QString.
 
@@ -83,7 +87,8 @@ QString QWebEngineFrame::htmlName() const
 }
 
 /*!
-    Returns a list of the frame's children in an arbitrary order.
+    \property QWebEngineFrame::children
+    \brief A list of the frame's children in an arbitrary order.
 
     If the frame could not be found, returns an empty list.
  */
@@ -97,7 +102,8 @@ QList<QWebEngineFrame> QWebEngineFrame::children() const
 }
 
 /*!
-    Returns the URL of the content currently loaded in this frame.
+    \property QWebEngineFrame::url
+    \brief The URL of the content currently loaded in this frame.
 
     If the frame could not be found, returns an empty QUrl.
  */
@@ -108,7 +114,12 @@ QUrl QWebEngineFrame::url() const
 }
 
 /*!
-    Returns the size of the frame within the viewport.
+    \property QWebEngineFrame::size
+    \brief The size of the frame within the viewport, measured in logical pixels.
+
+    On devices with a scale factor other than 100%, this will not correspond to the on-screen size;
+    instead, it will be the size before scaling is applied. In such cases, the size may contain
+    fractional values.
 
     If the frame could not be found, returns QSizeF().
  */
@@ -119,7 +130,8 @@ QSizeF QWebEngineFrame::size() const
 }
 
 /*!
-    Returns \c{true} if this object represents the page's main frame; \c{false} otherwise.
+    \property QWebEngineFrame::isMainFrame
+    \brief Whether this object represents the page's main frame.
 */
 bool QWebEngineFrame::isMainFrame() const
 {
@@ -127,10 +139,9 @@ bool QWebEngineFrame::isMainFrame() const
     return adapter->mainFrameId() == m_id;
 }
 
-/*! \fn void QWebEngineFrame::runJavaScript(const QString &script, const std::function<void(const QVariant &)> &callback)
-    \fn void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId)
-    \fn void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId, const
-   std::function<void(const QVariant &)> &callback)
+/*! \fn void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId)
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true> void QWebEngineFrame::runJavaScript(const QString &script, Functor &&callback)
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true> void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId, Functor &&callback)
 
     Runs the JavaScript code contained in \a script on this frame, without checking
     whether the DOM of the page has been constructed.
@@ -149,6 +160,8 @@ bool QWebEngineFrame::isMainFrame() const
     Supported data types include all of the JSON data types as well as, for
     example, \c{Date} and \c{ArrayBuffer}. Unsupported data types include, for
     example, \c{Function} and \c{Promise}.
+
+    \note In Qt versions prior to 6.12, the callback had to be copyable.
     \warning Do not execute lengthy routines in the callback function, because it might block the
     rendering of the web engine page.
     \warning We guarantee that the \a callback is always called, but it might be
@@ -157,24 +170,27 @@ bool QWebEngineFrame::isMainFrame() const
    instance inside it.
     \sa QWebEngineScript::ScriptWorldId, QWebEnginePage::runJavaScript, {Script Injection}
  */
-void QWebEngineFrame::runJavaScript(const QString &script,
-                                    const std::function<void(const QVariant &)> &callback)
-{
-    runJavaScript(script, QWebEngineScript::MainWorld, callback);
-}
 
-void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId,
-                                    const std::function<void(const QVariant &)> &callback)
+/*! \fn void QWebEngineFrame::runJavaScript(const QString &script, std::nullptr_t)
+    \fn void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId, std::nullptr_t)
+
+    \overload
+    \deprecated [6.12] Use QWebEngineFrame::runJavaScript without callback argument instead.
+*/
+
+void QWebEngineFrame::runJavaScriptImpl(const QString &script, quint32 worldId, QtPrivate::QSlotObjectBase *callback)
 {
+    QtPrivate::SlotObjUniquePtr callbackUniquePtr(callback);
     LOCK_ADAPTER(adapter, );
-    adapter->runJavaScript(script, worldId, m_id, callback);
+    adapter->runJavaScript(script, worldId, m_id, std::move(callbackUniquePtr));
 }
 
 void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId)
 {
-    runJavaScript(script, worldId, std::function<void(const QVariant &)>{});
+    runJavaScriptImpl(script, worldId, nullptr);
 }
 
+#if QT_DEPRECATED_SINCE(6, 10)
 void QWebEngineFrame::runJavaScript(const QString &script, const QJSValue &callback)
 {
     runJavaScript(script, QWebEngineScript::MainWorld, callback);
@@ -184,10 +200,9 @@ void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId,
                                     const QJSValue &callback)
 {
     LOCK_ADAPTER(adapter, );
-    std::function<void(const QVariant &)> wrappedCallback;
     if (!callback.isUndefined()) {
         const QObject *holdingObject = adapter->adapterClient()->holdingQObject();
-        wrappedCallback = [holdingObject, callback](const QVariant &result) {
+        auto wrappedCallback = [holdingObject, callback](const QVariant &result) {
             if (auto engine = qmlEngine(holdingObject)) {
                 QJSValueList args;
                 args.append(engine->toScriptValue(result));
@@ -196,9 +211,12 @@ void QWebEngineFrame::runJavaScript(const QString &script, quint32 worldId,
                 qWarning("No QML engine found to execute runJavaScript() callback");
             }
         };
+        runJavaScript(script, worldId, std::move(wrappedCallback));
+    } else {
+        runJavaScript(script, worldId);
     }
-    runJavaScript(script, worldId, wrappedCallback);
 }
+#endif // QT_DEPRECATED_SINCE(6, 10)
 
 /*!
     Renders the current content of the frame into a PDF document and saves it in the location
@@ -224,33 +242,34 @@ void QWebEngineFrame::printToPdf(const QString &filePath)
 }
 
 /*!
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QByteArray &> = true> void QWebEngineFrame::printToPdf(Functor &&resultCallback)
     Renders the current content of the frame into a PDF document and returns a byte array containing
-    the PDF data as parameter to \a callback. Printing uses a page size of A4, portrait layout, and
+    the PDF data as parameter to \a resultCallback. Printing uses a page size of A4, portrait layout, and
     includes the full range of pages.
 
-    The \a callback must take a const reference to a QByteArray as parameter. If printing was
+    The \a resultCallback must take a const reference to a QByteArray as parameter. If printing was
     successful, this byte array will contain the PDF data, otherwise, the byte array will be empty.
+
+    \note Before Qt 6.12 \a resultCallback had to be copyable.
 
     \note The \l QWebEnginePage::Stop web action can be used to interrupt this operation.
 */
-void QWebEngineFrame::printToPdf(const std::function<void(const QByteArray &)> &callback)
+void QWebEngineFrame::printToPdfImpl(QtPrivate::QSlotObjectBase *callback)
 {
     LOCK_ADAPTER(adapter, );
-    std::function wrappedCallback = [callback](QSharedPointer<QByteArray> result) {
-        if (callback)
-            callback(result ? *result : QByteArray());
-    };
+    QtPrivate::SlotObjUniquePtr callbackUniquePtr(callback);
     QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF());
-    adapter->adapterClient()->printToPdf(std::move(wrappedCallback), layout, QPageRanges(), m_id);
+    adapter->adapterClient()->printToPdf(std::move(callbackUniquePtr), layout, QPageRanges(), m_id);
 }
 
+#if QT_DEPRECATED_SINCE(6, 10)
 void QWebEngineFrame::printToPdf(const QJSValue &callback)
 {
     LOCK_ADAPTER(adapter, );
-    std::function<void(QSharedPointer<QByteArray>)> wrappedCallback;
+    std::function<void(std::shared_ptr<QByteArray>)> wrappedCallback;
     if (!callback.isUndefined()) {
         const QObject *holdingObject = adapter->adapterClient()->holdingQObject();
-        wrappedCallback = [holdingObject, callback](QSharedPointer<QByteArray> result) {
+        wrappedCallback = [holdingObject, callback](std::shared_ptr<QByteArray> result) {
             if (auto engine = qmlEngine(holdingObject)) {
                 QJSValueList args;
                 args.append(engine->toScriptValue(result ? *result : QByteArray()));
@@ -260,9 +279,12 @@ void QWebEngineFrame::printToPdf(const QJSValue &callback)
             }
         };
     }
+    QtPrivate::SlotObjUniquePtr slotCallback(
+            QtPrivate::makeCallableObject<void(*)(std::shared_ptr<QByteArray>)>(std::move(wrappedCallback)));
     QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF());
-    adapter->adapterClient()->printToPdf(std::move(wrappedCallback), layout, QPageRanges(), m_id);
+    adapter->adapterClient()->printToPdf(std::move(slotCallback), layout, QPageRanges(), m_id);
 }
+#endif // QT_DEPRECATED_SINCE(6, 10)
 
 /*! \fn bool QWebEngineFrame::operator==(const QWebEngineFrame &left, const QWebEngineFrame &right) noexcept
 

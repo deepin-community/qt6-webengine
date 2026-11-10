@@ -29,7 +29,6 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
     ~RecursionState();
 
     std::set<const uint8_t*> parsed_set;
-    int form_count = 0;
   };
 
   // Helper method to choose the first non-null resources dictionary.
@@ -37,10 +36,10 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
                                               CPDF_Dictionary* pParentResources,
                                               CPDF_Dictionary* pPageResources);
 
-  CPDF_Form(CPDF_Document* pDocument,
+  CPDF_Form(CPDF_Document* document,
             RetainPtr<CPDF_Dictionary> pPageResources,
             RetainPtr<CPDF_Stream> pFormStream);
-  CPDF_Form(CPDF_Document* pDocument,
+  CPDF_Form(CPDF_Document* document,
             RetainPtr<CPDF_Dictionary> pPageResources,
             RetainPtr<CPDF_Stream> pFormStream,
             CPDF_Dictionary* pParentResources);
@@ -50,7 +49,7 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
   void ParseContentForType3Char(CPDF_Type3Char* pType3Char) override;
   bool HasPageObjects() const override;
   CFX_FloatRect CalcBoundingBox() const override;
-  absl::optional<std::pair<RetainPtr<CFX_DIBitmap>, CFX_Matrix>>
+  std::optional<std::pair<RetainPtr<CFX_DIBitmap>, CFX_Matrix>>
   GetBitmapAndMatrixFromSoleImageOfForm() const override;
 
   void ParseContent();
@@ -66,8 +65,8 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
                             CPDF_Type3Char* pType3Char,
                             RecursionState* recursion_state);
 
-  RecursionState m_RecursionState;
-  RetainPtr<CPDF_Stream> const m_pFormStream;
+  RecursionState recursion_state_;
+  RetainPtr<CPDF_Stream> const form_stream_;
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_FORM_H_

@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <sstream>
+#include <vector>
+
 #include "quiche/quic/core/frames/quic_ack_frame.h"
 #include "quiche/quic/core/frames/quic_blocked_frame.h"
 #include "quiche/quic/core/frames/quic_connection_close_frame.h"
+#include "quiche/quic/core/frames/quic_datagram_frame.h"
 #include "quiche/quic/core/frames/quic_frame.h"
 #include "quiche/quic/core/frames/quic_goaway_frame.h"
+#include "quiche/quic/core/frames/quic_handshake_done_frame.h"
+#include "quiche/quic/core/frames/quic_immediate_ack_frame.h"
 #include "quiche/quic/core/frames/quic_mtu_discovery_frame.h"
 #include "quiche/quic/core/frames/quic_new_connection_id_frame.h"
 #include "quiche/quic/core/frames/quic_padding_frame.h"
@@ -39,8 +45,50 @@ TEST_F(QuicFramesTest, AckFrameToString) {
   std::ostringstream stream;
   stream << frame;
   EXPECT_EQ(
-      "{ largest_acked: 5, ack_delay_time: 3, packets: [ 4 5  ], "
+      "{ largest_acked: 5, ack_delay_time: 3, packets: [ 4...5  ], "
       "received_packets: [ 6 at 7  ], ecn_counters_populated: 0 }\n",
+      stream.str());
+  QuicFrame quic_frame(&frame);
+  EXPECT_FALSE(IsControlFrame(quic_frame.type));
+}
+
+TEST_F(QuicFramesTest, AckFrameToStringMultipleIntervals) {
+  QuicAckFrame frame;
+  frame.largest_acked = QuicPacketNumber(6);
+  frame.ack_delay_time = QuicTime::Delta::FromMicroseconds(3);
+  frame.packets.Add(QuicPacketNumber(1));
+  frame.packets.Add(QuicPacketNumber(2));
+  frame.packets.Add(QuicPacketNumber(3));
+  frame.packets.Add(QuicPacketNumber(5));
+  frame.packets.Add(QuicPacketNumber(6));
+  frame.received_packet_times = {
+      {QuicPacketNumber(7),
+       QuicTime::Zero() + QuicTime::Delta::FromMicroseconds(7)}};
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ(
+      "{ largest_acked: 6, ack_delay_time: 3, packets: [ 1...3 5...6  ], "
+      "received_packets: [ 7 at 7  ], ecn_counters_populated: 0 }\n",
+      stream.str());
+  QuicFrame quic_frame(&frame);
+  EXPECT_FALSE(IsControlFrame(quic_frame.type));
+}
+
+TEST_F(QuicFramesTest, AckFrameToStringMultipleIntervalsSinglePacketRange) {
+  QuicAckFrame frame;
+  frame.largest_acked = QuicPacketNumber(6);
+  frame.ack_delay_time = QuicTime::Delta::FromMicroseconds(3);
+  frame.packets.Add(QuicPacketNumber(1));
+  frame.packets.Add(QuicPacketNumber(5));
+  frame.packets.Add(QuicPacketNumber(6));
+  frame.received_packet_times = {
+      {QuicPacketNumber(7),
+       QuicTime::Zero() + QuicTime::Delta::FromMicroseconds(7)}};
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ(
+      "{ largest_acked: 6, ack_delay_time: 3, packets: [ 1 5...6  ], "
+      "received_packets: [ 7 at 7  ], ecn_counters_populated: 0 }\n",
       stream.str());
   QuicFrame quic_frame(&frame);
   EXPECT_FALSE(IsControlFrame(quic_frame.type));
@@ -281,12 +329,13 @@ TEST_F(QuicFramesTest, HandshakeDoneFrameToString) {
   EXPECT_TRUE(IsControlFrame(frame.type));
 }
 
-TEST_F(QuicFramesTest, QuicAckFreuqncyFrameToString) {
+TEST_F(QuicFramesTest, QuicAckFrequencyFrameToString) {
   QuicAckFrequencyFrame ack_frequency_frame;
   ack_frequency_frame.sequence_number = 1;
-  ack_frequency_frame.packet_tolerance = 2;
-  ack_frequency_frame.max_ack_delay = QuicTime::Delta::FromMilliseconds(25);
-  ack_frequency_frame.ignore_order = false;
+  ack_frequency_frame.ack_eliciting_threshold = 2;
+  ack_frequency_frame.requested_max_ack_delay =
+      QuicTime::Delta::FromMilliseconds(25);
+  ack_frequency_frame.reordering_threshold = false;
   QuicFrame frame(&ack_frequency_frame);
   ASSERT_EQ(ACK_FREQUENCY_FRAME, frame.type);
   SetControlFrameId(6, &frame);
@@ -294,10 +343,19 @@ TEST_F(QuicFramesTest, QuicAckFreuqncyFrameToString) {
   std::ostringstream stream;
   stream << *frame.ack_frequency_frame;
   EXPECT_EQ(
-      "{ control_frame_id: 6, sequence_number: 1, packet_tolerance: 2, "
-      "max_ack_delay_ms: 25, ignore_order: 0 }\n",
+      "{ control_frame_id: 6, sequence_number: 1, ack_eliciting_threshold: 2, "
+      "requested_max_ack_delay_ms: 25, reordering_threshold: 0 }\n",
       stream.str());
   EXPECT_TRUE(IsControlFrame(frame.type));
+}
+
+TEST_F(QuicFramesTest, QuicImmediateAckFrameToString) {
+  QuicImmediateAckFrame immediate_ack_frame;
+  QuicFrame frame(immediate_ack_frame);
+  std::ostringstream stream;
+  stream << frame.immediate_ack_frame;
+  EXPECT_EQ("{ }\n", stream.str());
+  EXPECT_FALSE(IsControlFrame(frame.type));
 }
 
 TEST_F(QuicFramesTest, StreamFrameToString) {
@@ -616,6 +674,12 @@ TEST_F(QuicFramesTest, CopyQuicFrames) {
       case ACK_FREQUENCY_FRAME:
         frames.push_back(QuicFrame(new QuicAckFrequencyFrame()));
         break;
+      case IMMEDIATE_ACK_FRAME:
+        frames.push_back(QuicFrame(QuicImmediateAckFrame()));
+        break;
+      case RESET_STREAM_AT_FRAME:
+        frames.push_back(QuicFrame(new QuicResetStreamAtFrame()));
+        break;
       default:
         ASSERT_TRUE(false)
             << "Please fix CopyQuicFrames if a new frame type is added.";
@@ -839,6 +903,34 @@ TEST_F(PacketNumberQueueTest, IntervalLengthAndRemoveInterval) {
   EXPECT_EQ(10u, queue.LastIntervalLength());
   EXPECT_EQ(QuicPacketNumber(25u), queue.Min());
   EXPECT_EQ(QuicPacketNumber(49u), queue.Max());
+}
+
+TEST_F(QuicFramesTest, HasMessageFrame) {
+  QuicFrames frames;
+
+  frames.push_back(QuicFrame(QuicHandshakeDoneFrame()));
+  EXPECT_FALSE(HasMessageFrame(frames));
+
+  frames.push_back(
+      QuicFrame(new QuicMessageFrame(1, MemSliceFromString("message"))));
+  EXPECT_TRUE(HasMessageFrame(frames));
+
+  DeleteFrames(&frames);
+}
+
+TEST_F(QuicFramesTest, HasOnlyDatagramFrame) {
+  QuicFrames frames;
+
+  EXPECT_FALSE(HasOnlyDatagramFrame(frames));
+
+  frames.push_back(QuicFrame(
+      new QuicDatagramFrame(1, quiche::QuicheMemSlice::Copy("datagram"))));
+  EXPECT_TRUE(HasOnlyDatagramFrame(frames));
+
+  frames.push_back(QuicFrame(QuicHandshakeDoneFrame()));
+  EXPECT_FALSE(HasOnlyDatagramFrame(frames));
+
+  DeleteFrames(&frames);
 }
 
 }  // namespace

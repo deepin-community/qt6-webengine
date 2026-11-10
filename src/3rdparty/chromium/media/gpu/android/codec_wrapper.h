@@ -78,13 +78,13 @@ class MEDIA_GPU_EXPORT CodecOutputBuffer {
                     int64_t id,
                     const gfx::Size& size,
                     const gfx::ColorSpace& color_space,
-                    absl::optional<gfx::Size> coded_size_alignment);
+                    std::optional<gfx::Size> coded_size_alignment);
 
   // For testing, since CodecWrapperImpl isn't available.  Uses nullptr.
   CodecOutputBuffer(int64_t id,
                     const gfx::Size& size,
                     const gfx::ColorSpace& color_space,
-                    absl::optional<gfx::Size> coded_size_alignment);
+                    std::optional<gfx::Size> coded_size_alignment);
 
   scoped_refptr<CodecWrapperImpl> codec_;
   int64_t id_;
@@ -94,7 +94,7 @@ class MEDIA_GPU_EXPORT CodecOutputBuffer {
   gfx::ColorSpace color_space_;
 
   // The alignment to use for width, height when guessing coded size.
-  const absl::optional<gfx::Size> coded_size_alignment_;
+  const std::optional<gfx::Size> coded_size_alignment_;
 };
 
 // This wraps a MediaCodecBridge and provides higher level features and tracks
@@ -113,11 +113,6 @@ class MEDIA_GPU_EXPORT CodecWrapper {
   // OutputReleasedCB will be called with a bool indicating if CodecWrapper is
   // currently draining, is drained, or has run out of output buffers.
   //
-  // If not null, then we will only release codec buffers without rendering
-  // on |release_task_runner|, posting if needed.  This does not change where
-  // we release them with rendering; that has to be done inline.  This helps
-  // us avoid a common case of hanging up the GPU main thread.
-  //
   // `coded_size_alignment` describes how to translate a CodecOutputBuffer's
   // visible size into its coded size. It's used to improve coded size guesses
   // when rendering the output buffer early isn't allowed. During guessing, the
@@ -127,9 +122,9 @@ class MEDIA_GPU_EXPORT CodecWrapper {
   using OutputReleasedCB = base::RepeatingCallback<void(bool)>;
   CodecWrapper(CodecSurfacePair codec_surface_pair,
                OutputReleasedCB output_buffer_release_cb,
-               scoped_refptr<base::SequencedTaskRunner> release_task_runner,
                const gfx::Size& initial_expected_size,
-               absl::optional<gfx::Size> coded_size_alignment);
+               const gfx::ColorSpace& config_color_space,
+               std::optional<gfx::Size> coded_size_alignment);
 
   CodecWrapper(const CodecWrapper&) = delete;
   CodecWrapper& operator=(const CodecWrapper&) = delete;

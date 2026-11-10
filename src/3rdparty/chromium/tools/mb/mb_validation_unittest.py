@@ -150,7 +150,7 @@ class UnitTest(unittest.TestCase):
     configs = ast.literal_eval(mb_unittest.TEST_CONFIG)
     all_configs = validation.GetAllConfigs(configs['builder_groups'])
     self.assertEqual(all_configs['rel_bot'], 'fake_builder_group')
-    self.assertEqual(all_configs['debug_goma'], 'fake_builder_group')
+    self.assertEqual(all_configs['debug_remoteexec'], 'fake_builder_group')
 
   def test_CheckAllConfigsAndMixinsReferenced_ok(self):
     configs = ast.literal_eval(mb_unittest.TEST_CONFIG)
@@ -228,7 +228,6 @@ class UnitTest(unittest.TestCase):
                                      mb.FlattenConfig)
     self.assertEqual(errs, [])
 
-  @unittest.skip('bla')
   def test_CheckDuplicateConfigs_dups(self):
     configs = ast.literal_eval(mb_unittest.TEST_DUP_CONFIG)
     config_configs = configs['configs']

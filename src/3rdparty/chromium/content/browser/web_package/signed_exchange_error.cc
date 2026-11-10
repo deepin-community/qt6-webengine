@@ -41,7 +41,6 @@ SignedExchangeError::GetFieldFromSignatureVerifierResult(
   }
 
   NOTREACHED();
-  return std::nullopt;
 }
 
 SignedExchangeError::SignedExchangeError(const std::string& message,

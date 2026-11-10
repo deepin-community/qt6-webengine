@@ -10,9 +10,9 @@
 #include "ui/message_center/views/notification_view_base.h"
 #include "ui/message_center/views/notification_view_util.h"
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 #include "ui/views/background.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 namespace message_center {
 
@@ -20,10 +20,10 @@ LargeImageView::LargeImageView(const gfx::Size& max_size)
     : max_size_(max_size), min_size_(max_size_.width(), /*height=*/0) {
   SetID(NotificationViewBase::kLargeImageView);
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-  SetBackground(views::CreateThemedSolidBackground(
-      ui::kColorNotificationImageBackground));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
+  SetBackground(
+      views::CreateSolidBackground(ui::kColorNotificationImageBackground));
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 LargeImageView::~LargeImageView() = default;
@@ -90,7 +90,7 @@ gfx::ImageSkia LargeImageView::CalculateDrawnImage() const {
   const gfx::ImageSkia cropped_image = gfx::ImageSkiaOperations::ExtractSubset(
       resized_image, gfx::Rect(clamed_size));
 
-  if (const absl::optional<size_t> corner_radius =
+  if (const std::optional<size_t> corner_radius =
           notification_view_util::GetLargeImageCornerRadius()) {
     // Return the cropped image decorated with rounded corners if necessary.
     return gfx::ImageSkiaOperations::CreateImageWithRoundRectClip(
@@ -100,7 +100,7 @@ gfx::ImageSkia LargeImageView::CalculateDrawnImage() const {
   return cropped_image;
 }
 
-BEGIN_METADATA(LargeImageView, views::View)
+BEGIN_METADATA(LargeImageView)
 END_METADATA
 
 }  // namespace message_center

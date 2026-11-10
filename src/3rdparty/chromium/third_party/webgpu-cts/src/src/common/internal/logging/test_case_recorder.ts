@@ -44,9 +44,7 @@ export class TestCaseRecorder {
   private startTime = -1;
   private logs: LogMessageWithStack[] = [];
   private logLinesAtCurrentSeverity = 0;
-  private debugging = false;
-  /** Used to dedup log messages which have identical stacks. */
-  private messagesForPreviouslySeenStacks = new Map<string, LogMessageWithStack>();
+  public debugging = false;
 
   constructor(result: LiveTestCaseResult, debugging: boolean) {
     this.result = result;
@@ -143,13 +141,15 @@ export class TestCaseRecorder {
       this.skipped(ex);
       return;
     }
-    this.logImpl(LogSeverity.ThrewException, 'EXCEPTION', ex);
+    // logImpl will discard the original error's ex.name. Preserve it here.
+    const name = ex instanceof Error ? `EXCEPTION: ${ex.name}` : 'EXCEPTION';
+    this.logImpl(LogSeverity.ThrewException, name, ex);
   }
 
   private logImpl(level: LogSeverity, name: string, baseException: unknown): void {
     assert(baseException instanceof Error, 'test threw a non-Error object');
     globalTestConfig.testHeartbeatCallback();
-    const logMessage = new LogMessageWithStack(name, baseException);
+    const logMessage = LogMessageWithStack.wrapError(name, baseException);
 
     // Final case status should be the "worst" of all log entries.
     if (this.inSubCase) {
@@ -180,5 +180,44 @@ export class TestCaseRecorder {
     }
 
     this.logs.push(logMessage);
+  }
+
+  /**
+   * Make a recorder that will defer all calls until `deferUntilPromise` resolves.
+   * This is used for running subcases, which run concurrently, to ensure that
+   * logs from all the previous subcases have been flushed before flushing new logs,
+   * so all logs are in order as if the subcases had not been concurrent.
+   */
+  makeDeferredSubRecorder(prefix: string, deferUntilPromise: Promise<void>) {
+    return new Proxy(this, {
+      get: (target, k) => {
+        switch (k) {
+          case 'logImpl':
+            return function (level: LogSeverity, name: string, baseException: unknown) {
+              globalTestConfig.testHeartbeatCallback();
+              void deferUntilPromise.then(() => {
+                target.logImpl(level, prefix + name, baseException);
+              });
+            };
+          case 'beginSubCase':
+            return function () {
+              globalTestConfig.testHeartbeatCallback();
+              void deferUntilPromise.then(() => {
+                target.beginSubCase();
+              });
+            };
+          case 'endSubCase':
+            return function (expectedStatus: Expectation) {
+              globalTestConfig.testHeartbeatCallback();
+              void deferUntilPromise.then(() => {
+                target.endSubCase(expectedStatus);
+              });
+            };
+          default:
+            /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+            return (target as any)[k];
+        }
+      },
+    });
   }
 }

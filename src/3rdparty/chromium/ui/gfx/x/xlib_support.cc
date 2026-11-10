@@ -8,10 +8,11 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "build/build_config.h"
 #include "library_loaders/xlib_loader.h"
 #include "library_loaders/xlib_xcb_loader.h"
 
-#ifdef TOOLKIT_QT
+#if BUILDFLAG(IS_QTWEBENGINE)
 extern void* GetQtXDisplay();
 #endif
 
@@ -72,7 +73,7 @@ DISABLE_CFI_DLSYM
 XlibDisplay::XlibDisplay(const std::string& address) {
   InitXlib();
 
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   display_ = GetXlibLoader()->XOpenDisplay(address.empty() ? nullptr
                                                            : address.c_str());
 #else
@@ -82,7 +83,7 @@ XlibDisplay::XlibDisplay(const std::string& address) {
 
 DISABLE_CFI_DLSYM
 XlibDisplay::~XlibDisplay() {
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   if (!display_) {
     return;
   }

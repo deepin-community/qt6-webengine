@@ -8,9 +8,9 @@
 #include "bench/Benchmark.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkColorPriv.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
+#include "include/core/SkPathBuilder.h"
 #include "include/core/SkPathUtils.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkShader.h"
@@ -18,6 +18,7 @@
 #include "include/private/base/SkTArray.h"
 #include "include/private/base/SkTDArray.h"
 #include "src/base/SkRandom.h"
+#include "src/core/SkColorPriv.h"
 
 #include "src/core/SkDraw.h"
 #include "src/core/SkMatrixPriv.h"
@@ -306,7 +307,7 @@ private:
 class RandomPathBench : public Benchmark {
 public:
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
 protected:
@@ -326,8 +327,8 @@ protected:
         fVerbs.reset(kNumVerbs);
         for (int i = 0; i < kNumVerbs; ++i) {
             do {
-                fVerbs[i] = static_cast<SkPath::Verb>(fRandom.nextULessThan(SkPath::kDone_Verb));
-            } while (!allowMoves && SkPath::kMove_Verb == fVerbs[i]);
+                fVerbs[i] = static_cast<SkPathVerb>(fRandom.nextULessThan((int)SkPathVerb::kClose));
+            } while (!allowMoves && SkPathVerb::kMove == fVerbs[i]);
         }
         fPoints.reset(kNumPoints);
         for (int i = 0; i < kNumPoints; ++i) {
@@ -346,32 +347,32 @@ protected:
     void makePath(SkPath* path) {
         int vCount = fVerbCnts[(fCurrPath++) & (kNumVerbCnts - 1)];
         for (int v = 0; v < vCount; ++v) {
-            int verb = fVerbs[(fCurrVerb++) & (kNumVerbs - 1)];
+            SkPathVerb verb = fVerbs[(fCurrVerb++) & (kNumVerbs - 1)];
             switch (verb) {
-                case SkPath::kMove_Verb:
+                case SkPathVerb::kMove:
                     path->moveTo(fPoints[(fCurrPoint++) & (kNumPoints - 1)]);
                     break;
-                case SkPath::kLine_Verb:
+                case SkPathVerb::kLine:
                     path->lineTo(fPoints[(fCurrPoint++) & (kNumPoints - 1)]);
                     break;
-                case SkPath::kQuad_Verb:
+                case SkPathVerb::kQuad:
                     path->quadTo(fPoints[(fCurrPoint + 0) & (kNumPoints - 1)],
                                  fPoints[(fCurrPoint + 1) & (kNumPoints - 1)]);
                     fCurrPoint += 2;
                     break;
-                case SkPath::kConic_Verb:
+                case SkPathVerb::kConic:
                     path->conicTo(fPoints[(fCurrPoint + 0) & (kNumPoints - 1)],
                                   fPoints[(fCurrPoint + 1) & (kNumPoints - 1)],
                                   SK_ScalarHalf);
                     fCurrPoint += 2;
                     break;
-                case SkPath::kCubic_Verb:
+                case SkPathVerb::kCubic:
                     path->cubicTo(fPoints[(fCurrPoint + 0) & (kNumPoints - 1)],
                                   fPoints[(fCurrPoint + 1) & (kNumPoints - 1)],
                                   fPoints[(fCurrPoint + 2) & (kNumPoints - 1)]);
                     fCurrPoint += 3;
                     break;
-                case SkPath::kClose_Verb:
+                case SkPathVerb::kClose:
                     path->close();
                     break;
                 default:
@@ -394,13 +395,13 @@ private:
         kNumVerbs    = 1 << 5,
         kNumPoints   = 1 << 5,
     };
-    AutoTArray<int>           fVerbCnts;
-    AutoTArray<SkPath::Verb>  fVerbs;
-    AutoTArray<SkPoint>       fPoints;
-    int                         fCurrPath;
-    int                         fCurrVerb;
-    int                         fCurrPoint;
-    SkRandom                    fRandom;
+    AutoTArray<int>         fVerbCnts;
+    AutoTArray<SkPathVerb>  fVerbs;
+    AutoTArray<SkPoint>     fPoints;
+    int                     fCurrPath;
+    int                     fCurrVerb;
+    int                     fCurrPoint;
+    SkRandom                fRandom;
     using INHERITED = Benchmark;
 };
 
@@ -843,7 +844,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
 private:
@@ -908,7 +909,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
 private:
@@ -998,10 +999,12 @@ protected:
         // The large y scale factor produces a tiny error threshold.
         const SkMatrix mtx = SkMatrix::MakeAll(3.07294035f, 0.833333373f, 361.111115f, 0.0f,
                                                6222222.5f, 28333.334f, 0.0f, 0.0f, 1.0f);
+        const SkScalar scale = SkMatrixPriv::ComputeResScaleForStroking(mtx);
+        const SkMatrix mx = SkMatrix::Scale(scale, scale);
+
         for (int i = 0; i < loops; ++i) {
-            SkPath dst;
-            skpathutils::FillPathWithPaint(path, paint, &dst, nullptr,
-                                           SkMatrixPriv::ComputeResScaleForStroking(mtx));
+            SkPathBuilder dst;
+            skpathutils::FillPathWithPaint(path, paint, &dst, nullptr, mx);
         }
     }
 
@@ -1033,7 +1036,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
 protected:
@@ -1136,7 +1139,7 @@ public:
 
 protected:
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     const char* onGetName() override { return fName.c_str(); }
@@ -1224,9 +1227,6 @@ DEF_BENCH( return new ConservativelyContainsBench(ConservativelyContainsBench::k
 
 DEF_BENCH( return new TightBoundsBench([](const SkPath& path){ return path.computeTightBounds();},
                                        "priv"); )
-DEF_BENCH( return new TightBoundsBench([](const SkPath& path) {
-        SkRect bounds; TightBounds(path, &bounds); return bounds;
-    }, "pathops"); )
 
 // These seem to be optimized away, which is troublesome for timing.
 /*

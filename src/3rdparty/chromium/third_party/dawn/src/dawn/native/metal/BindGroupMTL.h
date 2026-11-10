@@ -28,6 +28,9 @@
 #ifndef SRC_DAWN_NATIVE_METAL_BINDGROUPMTL_H_
 #define SRC_DAWN_NATIVE_METAL_BINDGROUPMTL_H_
 
+#import <Metal/Metal.h>
+
+#include "dawn/common/NSRef.h"
 #include "dawn/common/PlacementAllocated.h"
 #include "dawn/native/BindGroup.h"
 
@@ -37,14 +40,21 @@ class Device;
 
 class BindGroup final : public BindGroupBase, public PlacementAllocated {
   public:
-    static Ref<BindGroup> Create(Device* device, const BindGroupDescriptor* descriptor);
+    static ResultOrError<Ref<BindGroup>> Create(Device* device,
+                                                const BindGroupDescriptor* descriptor);
 
     BindGroup(Device* device, const BindGroupDescriptor* descriptor);
+
+    NSPRef<id<MTLBuffer>> GetArgumentBuffer() const;
 
   private:
     ~BindGroup() override;
 
-    void DestroyImpl() override;
+    MaybeError InitializeImpl() override;
+
+    void DeleteThis() override;
+
+    NSPRef<id<MTLBuffer>> mArgumentBuffer;
 };
 
 }  // namespace dawn::native::metal

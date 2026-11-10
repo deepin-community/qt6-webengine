@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -30,7 +31,7 @@ class Q_WEBENGINECORE_EXPORT PrinterWorker : public QObject
 {
     Q_OBJECT
 public:
-    PrinterWorker(QSharedPointer<QByteArray> data, QPagedPaintDevice *device);
+    PrinterWorker(std::shared_ptr<QByteArray> data, QPagedPaintDevice *device);
     virtual ~PrinterWorker();
 
     int m_deviceResolution;
@@ -47,7 +48,7 @@ Q_SIGNALS:
 private:
     Q_DISABLE_COPY(PrinterWorker)
 
-    QSharedPointer<QByteArray> m_data;
+    std::shared_ptr<QByteArray> m_data;
     QPagedPaintDevice *m_device;
 };
 

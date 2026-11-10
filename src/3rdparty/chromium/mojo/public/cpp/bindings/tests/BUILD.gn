@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
+import("//build/nocompile.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 
 source_set("tests") {
@@ -20,6 +21,7 @@ source_set("tests") {
     "constant_unittest.cc",
     "container_test_util.cc",
     "container_test_util.h",
+    "containers_of_nullable_types_unittest.cc",
     "data_view_unittest.cc",
     "default_construct_unittest.cc",
     "direct_receiver_unittest.cc",
@@ -33,7 +35,6 @@ source_set("tests") {
     "hash_unittest.cc",
     "idle_tracking_unittest.cc",
     "interface_unittest.cc",
-    "lazy_serialization_unittest.cc",
     "map_unittest.cc",
     "message_queue.cc",
     "message_queue.h",
@@ -48,9 +49,12 @@ source_set("tests") {
     "remote_unittest.cc",
     "report_bad_message_unittest.cc",
     "request_response_unittest.cc",
+    "result_response_unittest.cc",
+    "result_response_unittest_mojom_traits.h",
     "router_test_util.cc",
     "router_test_util.h",
     "sample_service_unittest.cc",
+    "serialization_death_unittest.cc",
     "serialization_warning_unittest.cc",
     "service_factory_unittest.cc",
     "struct_headers_unittest.cc",
@@ -84,6 +88,7 @@ source_set("tests") {
     "//mojo/public/interfaces/bindings/tests:test_export_component2",
     "//mojo/public/interfaces/bindings/tests:test_exported_import",
     "//mojo/public/interfaces/bindings/tests:test_interfaces",
+    "//mojo/public/interfaces/bindings/tests:test_interfaces_for_containers_of_optionals",
     "//mojo/public/interfaces/bindings/tests:test_struct_traits_interfaces",
     "//testing/gtest",
     "//third_party/ipcz/src:ipcz_test_support_chromium",
@@ -109,6 +114,25 @@ source_set("tests") {
       ":struct_with_traits_impl",
       "//mojo/public/interfaces/bindings/tests:test_interfaces_blink",
     ]
+    defines = [ "BLINK_MOJO_IMPL=1" ]
+  }
+
+  if (enable_nocompile_tests) {
+    deps += [ ":bindings_nocompile_tests" ]
+  }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
+}
+
+if (enable_nocompile_tests) {
+  nocompile_source_set("bindings_nocompile_tests") {
+    sources = [ "binder_map_nocompile.nc" ]
+    deps = [
+      ":test_mojom",
+      "//mojo/public/cpp/bindings",
+    ]
   }
 }
 
@@ -130,6 +154,8 @@ if (use_blink) {
       "wtf_types_unittest.cc",
     ]
 
+    defines = [ "BLINK_MOJO_IMPL=1" ]
+
     deps = [
       "//base/test:test_support",
       "//mojo/public/cpp/bindings",
@@ -142,6 +168,10 @@ if (use_blink) {
       "//mojo/public/interfaces/bindings/tests:test_wtf_types_blink",
       "//testing/gtest",
     ]
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 }
 
@@ -153,7 +183,7 @@ source_set("struct_with_traits_impl") {
 
   deps = [
     "//base",
-    "//mojo/public/cpp/system:system",
+    "//mojo/public/cpp/system",
   ]
 }
 
@@ -168,6 +198,7 @@ mojom("test_extra_cpp_template_mojom") {
 mojom("test_mojom") {
   testonly = true
   sources = [
+    "associated_interface_unittest.test-mojom",
     "binder_map_unittest.test-mojom",
     "connection_group_unittest.test-mojom",
     "default_construct_unittest.test-mojom",
@@ -181,6 +212,8 @@ mojom("test_mojom") {
     "interface_unittest.test-mojom",
     "receiver_unittest.test-mojom",
     "remote_unittest.test-mojom",
+    "result_response.test-mojom",
+    "serialization_death.test-mojom",
     "service_factory_unittest.test-mojom",
     "struct_headers_unittest.test-mojom",
     "supports_urgent_attribute_unittest.test-mojom",
@@ -195,8 +228,6 @@ mojom("test_mojom") {
     "//mojo/public/mojom/base",
   ]
 
-  support_lazy_serialization = true
-
   cpp_typemaps = [
     {
       types = [
@@ -207,6 +238,19 @@ mojom("test_mojom") {
         },
       ]
       traits_headers = [ "default_construct_unittest_mojom_traits.h" ]
+    },
+    {
+      types = [
+        {
+          mojom = "mojo.test.mojom.ResultValue"
+          cpp = "::mojo::test::MappedResultValue"
+        },
+        {
+          mojom = "mojo.test.mojom.ResultError"
+          cpp = "::mojo::test::MappedResultError"
+        },
+      ]
+      traits_headers = [ "result_response_unittest_mojom_traits.h" ]
     },
   ]
 }

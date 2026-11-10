@@ -8,16 +8,18 @@
 #include "modules/skottie/src/text/TextAnimator.h"
 
 #include "include/core/SkColor.h"
-#include "include/core/SkPoint.h"
-#include "include/private/SkColorData.h"
+#include "include/private/base/SkCPUTypes.h"
+#include "modules/jsonreader/SkJSONReader.h"
 #include "modules/skottie/src/SkottieValue.h"
 #include "modules/skottie/src/animator/Animator.h"
 #include "modules/skottie/src/text/RangeSelector.h"
 #include "src/base/SkVx.h"
 #include "src/core/SkSwizzlePriv.h"
-#include "src/utils/SkJSON.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <utility>
 
 namespace skottie {
 namespace internal {

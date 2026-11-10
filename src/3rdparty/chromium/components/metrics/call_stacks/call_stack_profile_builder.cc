@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/metrics/call_stacks/call_stack_profile_builder.h"
 
-#include <stdint.h>
 #include <algorithm>
 #include <iterator>
 #include <map>
@@ -18,10 +22,10 @@
 #include "base/logging.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/no_destructor.h"
-#include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/metrics/call_stacks/call_stack_profile_encoding.h"
+#include "components/sampling_profiler/call_stack_profile_params.h"
 
 namespace metrics {
 
@@ -58,7 +62,7 @@ uint64_t HashModuleFilename(const base::FilePath& filename) {
 }  // namespace
 
 CallStackProfileBuilder::CallStackProfileBuilder(
-    const CallStackProfileParams& profile_params,
+    const sampling_profiler::CallStackProfileParams& profile_params,
     const WorkIdRecorder* work_id_recorder,
     base::OnceClosure completed_callback)
     : work_id_recorder_(work_id_recorder) {
@@ -160,9 +164,6 @@ void CallStackProfileBuilder::OnSampleCompleted(
   CallStackProfile::Stack stack;
 
   for (const auto& frame : frames) {
-    // The function name should never be provided in UMA profiler usage.
-    DCHECK(frame.function_name.empty());
-
     // keep the frame information even if its module is invalid so we have
     // visibility into how often this issue is happening on the server.
     CallStackProfile::Location* location = stack.add_frame();
@@ -172,7 +173,7 @@ void CallStackProfileBuilder::OnSampleCompleted(
     // Dedup modules.
     auto module_loc = module_index_.find(frame.module);
     if (module_loc == module_index_.end()) {
-      modules_.push_back(frame.module);
+      modules_.push_back(frame.module.get());
       size_t index = modules_.size() - 1;
       module_loc = module_index_.emplace(frame.module, index).first;
     }
@@ -180,14 +181,14 @@ void CallStackProfileBuilder::OnSampleCompleted(
     // Write CallStackProfile::Location protobuf message.
     uintptr_t instruction_pointer = frame.instruction_pointer;
 #if BUILDFLAG(IS_IOS)
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
     // Some iOS devices enable pointer authentication, which uses the
     // higher-order bits of pointers to store a signature. Strip that signature
     // off before computing the module_offset.
-    // TODO(crbug.com/1084272): Use the ptrauth_strip() macro once it is
+    // TODO(crbug.com/40131654): Use the ptrauth_strip() macro once it is
     // available.
     instruction_pointer &= 0xFFFFFFFFF;
-#endif  // !TARGET_IPHONE_SIMULATOR
+#endif  // !TARGET_OS_SIMULATOR
 #endif  // BUILDFLAG(IS_IOS)
 
     ptrdiff_t module_offset =
@@ -196,6 +197,10 @@ void CallStackProfileBuilder::OnSampleCompleted(
     DCHECK_GE(module_offset, 0);
     location->set_address(static_cast<uint64_t>(module_offset));
     location->set_module_id_index(module_loc->second);
+
+    if (!frame.function_name.empty()) {
+      location->set_function_name(frame.function_name);
+    }
   }
 
   CallStackProfile* call_stack_profile =
@@ -231,15 +236,6 @@ void CallStackProfileBuilder::OnSampleCompleted(
   if (profile_start_time_.is_null())
     profile_start_time_ = sample_timestamp;
 
-  // Write timestamps to protobuf message. Currently the timestamps are only
-  // used for browser process to apply LCP tags. The browser process will clear
-  // the timestamps information once it is done with LCP tagging. Timestamps
-  // will not be included in the final profile sent to UMA.
-  const int64_t offset =
-      (sample_timestamp - profile_start_time_).InMilliseconds();
-  stack_sample_proto->set_sample_time_offset_ms(
-      base::saturated_cast<int32_t>(offset));
-
   sample_timestamps_.push_back(sample_timestamp);
 }
 
@@ -252,14 +248,6 @@ void CallStackProfileBuilder::OnProfileCompleted(
   call_stack_profile->set_profile_duration_ms(
       profile_duration.InMilliseconds());
   call_stack_profile->set_sampling_period_ms(sampling_period.InMilliseconds());
-
-  // Heap profiler sets `profile_time_offset_ms` through constructor.
-  // For CPU profiles, `profile_time_offset_ms` is the time of the first
-  // sample.
-  if (!call_stack_profile->has_profile_time_offset_ms()) {
-    call_stack_profile->set_profile_time_offset_ms(
-        profile_start_time_.since_origin().InMilliseconds());
-  }
 
   // Write CallStackProfile::ModuleIdentifier protobuf message.
   for (const base::ModuleCache::Module* module : modules_) {
@@ -290,6 +278,7 @@ void CallStackProfileBuilder::OnProfileCompleted(
   module_index_.clear();
   modules_.clear();
   sample_timestamps_.clear();
+  work_id_recorder_ = nullptr;
 }
 
 // static

@@ -4,21 +4,25 @@
 
 #include "base/apple/foundation_util.h"
 
+#include <CoreFoundation/CoreFoundation.h>
+#import <Foundation/Foundation.h>
 #include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
 
+#include <algorithm>
 #include <vector>
 
+#include "base/apple/bridging.h"
 #include "base/apple/bundle_locations.h"
 #include "base/apple/osstatus_logging.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/containers/adapters.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/notreached.h"
+#include "base/no_destructor.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "build/branding_buildflags.h"
@@ -55,6 +59,12 @@ bool UncachedAmIBundled() {
 #endif
 }
 
+bool CFURLIsFileURL(CFURLRef url) {
+  ScopedCFTypeRef<CFStringRef> scheme(CFURLCopyScheme(url));
+  return CFStringCompare(scheme.get(), CFSTR("file"),
+                         kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+}
+
 }  // namespace
 
 bool AmIBundled() {
@@ -75,9 +85,7 @@ bool AmIBundled() {
 void SetOverrideAmIBundled(bool value) {
 #if BUILDFLAG(IS_IOS)
   // It doesn't make sense not to be bundled on iOS.
-  if (!value) {
-    NOTREACHED();
-  }
+  CHECK(value);
 #endif
   g_override_am_i_bundled = true;
   g_override_am_i_bundled_value = value;
@@ -226,7 +234,7 @@ FilePath GetInnermostAppBundlePath(const FilePath& exec_name) {
     return FilePath();
   }
 
-  auto app = ranges::find_if(
+  auto app = std::ranges::find_if(
       Reversed(components), [](const std::string& component) -> bool {
         return component.size() > kExtLength && EndsWith(component, kExt);
       });
@@ -285,11 +293,17 @@ TYPE_NAME_FOR_CF_TYPE_DEFN(SecPolicy)
 
 #undef TYPE_NAME_FOR_CF_TYPE_DEFN
 
-static const char* base_bundle_id;
+namespace {
+std::optional<std::string>& GetBaseBundleIDOverrideValue() {
+  static NoDestructor<std::optional<std::string>> base_bundle_id;
+  return *base_bundle_id;
+}
+}  // namespace
 
-const char* BaseBundleID() {
-  if (base_bundle_id) {
-    return base_bundle_id;
+std::string_view BaseBundleID() {
+  std::optional<std::string>& override = GetBaseBundleIDOverrideValue();
+  if (override.has_value()) {
+    return override.value();
   }
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -299,29 +313,26 @@ const char* BaseBundleID() {
 #endif
 }
 
-void SetBaseBundleID(const char* new_base_bundle_id) {
-  if (new_base_bundle_id != base_bundle_id) {
-    free((void*)base_bundle_id);
-    base_bundle_id = new_base_bundle_id ? strdup(new_base_bundle_id) : nullptr;
-  }
+void SetBaseBundleIDOverride(std::string_view new_base_bundle_id) {
+  GetBaseBundleIDOverrideValue() = std::string(new_base_bundle_id);
 }
 
 #define CF_CAST_DEFN(TypeCF)                                       \
   template <>                                                      \
   TypeCF##Ref CFCast<TypeCF##Ref>(const CFTypeRef& cf_val) {       \
-    if (cf_val == NULL) {                                          \
-      return NULL;                                                 \
+    if (cf_val == nullptr) {                                       \
+      return nullptr;                                              \
     }                                                              \
     if (CFGetTypeID(cf_val) == TypeCF##GetTypeID()) {              \
       return (TypeCF##Ref)(cf_val);                                \
     }                                                              \
-    return NULL;                                                   \
+    return nullptr;                                                \
   }                                                                \
                                                                    \
   template <>                                                      \
   TypeCF##Ref CFCastStrict<TypeCF##Ref>(const CFTypeRef& cf_val) { \
     TypeCF##Ref rv = CFCast<TypeCF##Ref>(cf_val);                  \
-    DCHECK(cf_val == NULL || rv);                                  \
+    CHECK(cf_val == nullptr || rv);                                \
     return rv;                                                     \
   }
 
@@ -365,51 +376,68 @@ std::string GetValueFromDictionaryErrorMessage(CFStringRef key,
 }
 
 NSURL* FilePathToNSURL(const FilePath& path) {
-  if (NSString* path_string = FilePathToNSString(path)) {
-    return [NSURL fileURLWithPath:path_string];
-  }
-  return nil;
+  return apple::CFToNSOwnershipCast(FilePathToCFURL(path).release());
 }
 
 NSString* FilePathToNSString(const FilePath& path) {
-  if (path.empty()) {
-    return nil;
-  }
-  return @(path.value().c_str());  // @() does UTF8 conversion.
+  return apple::CFToNSOwnershipCast(FilePathToCFString(path).release());
 }
 
 FilePath NSStringToFilePath(NSString* str) {
-  if (!str.length) {
-    return FilePath();
-  }
-  return FilePath(str.fileSystemRepresentation);
+  return CFStringToFilePath(apple::NSToCFPtrCast(str));
 }
 
 FilePath NSURLToFilePath(NSURL* url) {
-  if (!url.fileURL) {
-    return FilePath();
-  }
-  return NSStringToFilePath(url.path);
+  return CFURLToFilePath(apple::NSToCFPtrCast(url));
 }
 
 ScopedCFTypeRef<CFURLRef> FilePathToCFURL(const FilePath& path) {
-  DCHECK(!path.empty());
+  if (path.empty()) {
+    return ScopedCFTypeRef<CFURLRef>();
+  }
 
-  // The function's docs promise that it does not require an NSAutoreleasePool.
-  // A straightforward way to accomplish this is to use *Create* functions,
-  // combined with ScopedCFTypeRef.
-  const std::string& path_string = path.value();
-  ScopedCFTypeRef<CFStringRef> path_cfstring(CFStringCreateWithBytes(
-      kCFAllocatorDefault, reinterpret_cast<const UInt8*>(path_string.data()),
-      checked_cast<CFIndex>(path_string.length()), kCFStringEncodingUTF8,
-      /*isExternalRepresentation=*/FALSE));
-  if (!path_cfstring) {
+  ScopedCFTypeRef<CFStringRef> path_string(
+      CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault,
+                                                 path.value().c_str()));
+  if (!path_string) {
     return ScopedCFTypeRef<CFURLRef>();
   }
 
   return ScopedCFTypeRef<CFURLRef>(CFURLCreateWithFileSystemPath(
-      kCFAllocatorDefault, path_cfstring.get(), kCFURLPOSIXPathStyle,
+      kCFAllocatorDefault, path_string.get(), kCFURLPOSIXPathStyle,
       /*isDirectory=*/FALSE));
+}
+
+ScopedCFTypeRef<CFStringRef> FilePathToCFString(const FilePath& path) {
+  if (path.empty()) {
+    return ScopedCFTypeRef<CFStringRef>();
+  }
+
+  return ScopedCFTypeRef<CFStringRef>(
+      CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault,
+                                                 path.value().c_str()));
+}
+
+FilePath CFStringToFilePath(CFStringRef str) {
+  if (!str || CFStringGetLength(str) == 0) {
+    return FilePath();
+  }
+
+  return FilePath(FilePath::GetHFSDecomposedForm(str));
+}
+
+FilePath CFURLToFilePath(CFURLRef url) {
+  if (!url || !CFURLIsFileURL(url)) {
+    return FilePath();
+  }
+
+  ScopedCFTypeRef<CFStringRef> path(
+      CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle));
+  if (!path) {
+    return FilePath();
+  }
+
+  return CFStringToFilePath(path.get());
 }
 
 bool CFRangeToNSRange(CFRange range, NSRange* range_out) {
@@ -423,6 +451,14 @@ bool CFRangeToNSRange(CFRange range, NSRange* range_out) {
     return true;
   }
   return false;
+}
+
+span<const uint8_t> CFDataToSpan(CFDataRef data) {
+  return NSDataToSpan(apple::CFToNSPtrCast(data));
+}
+
+span<uint8_t> CFMutableDataToSpan(CFMutableDataRef data) {
+  return NSMutableDataToSpan(apple::CFToNSPtrCast(data));
 }
 
 }  // namespace base::apple

@@ -4,64 +4,23 @@
  * found in the LICENSE file.
  */
 
-.file-system-header {
+.excluded-folder-header {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  flex: auto;
-  margin: 10px 0;
+  flex-direction: column;
+  min-height: var(--sys-size-16);
+  padding: var(--sys-size-4) var(--sys-size-6);
+  gap: var(--sys-size-4);
+
+  & > .excluded-folder-url {
+    color: var(--sys-color-on-surface-subtle);
+    overflow-wrap: break-word;
+  }
 }
 
-.file-system-header-text {
-  flex: 1 0 auto;
+.exclude-subfolders-table {
+  padding: var(--sys-size-4) 0;
 }
 
-.add-button {
-  margin-left: 10px;
-  align-self: flex-start;
-}
-
-.file-system-list {
-  flex: auto;
-}
-
-.file-system-list-empty {
-  flex: auto;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.file-system-list-item {
-  padding: 3px 5px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  flex: auto 1 1;
-}
-
-.file-system-value {
-  flex: 1 1 0;
-}
-
-.list-item .file-system-value {
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  user-select: none;
-  overflow: hidden;
-}
-
-.file-system-edit-row {
-  flex: none;
-  display: flex;
-  flex-direction: row;
-  margin: 6px 5px;
-  align-items: center;
-}
-
-.file-system-edit-row input {
-  width: 100%;
-  text-align: inherit;
+.excluded-folder-error {
+  color: var(--sys-color-error);
 }

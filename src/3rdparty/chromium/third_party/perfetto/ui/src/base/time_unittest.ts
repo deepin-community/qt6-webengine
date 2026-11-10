@@ -17,7 +17,11 @@ import {
   Time,
   Timecode,
   TimeSpan,
+  formatDate,
+  formatTimezone,
 } from '../base/time';
+
+const t = Time.fromRaw;
 
 test('Duration.format', () => {
   expect(Duration.format(0n)).toEqual('0s');
@@ -25,12 +29,12 @@ test('Duration.format', () => {
   expect(Duration.format(60_000_000_000n)).toEqual('1m');
   expect(Duration.format(63_000_000_000n)).toEqual('1m 3s');
   expect(Duration.format(63_200_000_000n)).toEqual('1m 3s 200ms');
-  expect(Duration.format(63_222_100_000n)).toEqual('1m 3s 222ms 100us');
-  expect(Duration.format(63_222_111_100n)).toEqual('1m 3s 222ms 111us 100ns');
-  expect(Duration.format(222_111_100n)).toEqual('222ms 111us 100ns');
-  expect(Duration.format(1_000n)).toEqual('1us');
-  expect(Duration.format(3_000n)).toEqual('3us');
-  expect(Duration.format(1_000_001_000n)).toEqual('1s 1us');
+  expect(Duration.format(63_222_100_000n)).toEqual('1m 3s 222ms 100µs');
+  expect(Duration.format(63_222_111_100n)).toEqual('1m 3s 222ms 111µs 100ns');
+  expect(Duration.format(222_111_100n)).toEqual('222ms 111µs 100ns');
+  expect(Duration.format(1_000n)).toEqual('1µs');
+  expect(Duration.format(3_000n)).toEqual('3µs');
+  expect(Duration.format(1_000_001_000n)).toEqual('1s 1µs');
   expect(Duration.format(200_000_000_030n)).toEqual('3m 20s 30ns');
   expect(Duration.format(3_600_000_000_000n)).toEqual('1h');
   expect(Duration.format(3_600_000_000_001n)).toEqual('1h 1ns');
@@ -43,19 +47,19 @@ test('Duration.format', () => {
 test('Duration.humanise', () => {
   expect(Duration.humanise(0n)).toEqual('0s');
   expect(Duration.humanise(123n)).toEqual('123ns');
-  expect(Duration.humanise(1_234n)).toEqual('1.2us');
-  expect(Duration.humanise(12_345n)).toEqual('12.3us');
+  expect(Duration.humanise(1_234n)).toEqual('1.234µs');
+  expect(Duration.humanise(12_345n)).toEqual('12.35µs');
   expect(Duration.humanise(3_000_000_000n)).toEqual('3s');
   expect(Duration.humanise(60_000_000_000n)).toEqual('60s');
   expect(Duration.humanise(63_000_000_000n)).toEqual('63s');
-  expect(Duration.humanise(63_200_000_000n)).toEqual('63.2s');
-  expect(Duration.humanise(63_222_100_000n)).toEqual('63.2s');
-  expect(Duration.humanise(63_222_111_100n)).toEqual('63.2s');
+  expect(Duration.humanise(63_200_000_000n)).toEqual('63.20s');
+  expect(Duration.humanise(63_222_100_000n)).toEqual('63.22s');
+  expect(Duration.humanise(63_222_111_100n)).toEqual('63.22s');
   expect(Duration.humanise(222_111_100n)).toEqual('222.1ms');
-  expect(Duration.humanise(1_000n)).toEqual('1us');
-  expect(Duration.humanise(3_000n)).toEqual('3us');
-  expect(Duration.humanise(1_000_001_000n)).toEqual('1s');
-  expect(Duration.humanise(200_000_000_030n)).toEqual('200s');
+  expect(Duration.humanise(1_000n)).toEqual('1µs');
+  expect(Duration.humanise(3_000n)).toEqual('3µs');
+  expect(Duration.humanise(1_000_001_000n)).toEqual('1.000s');
+  expect(Duration.humanise(200_000_000_030n)).toEqual('200.0s');
   expect(Duration.humanise(3_600_000_000_000n)).toEqual('3600s');
   expect(Duration.humanise(86_400_000_000_000n)).toEqual('86400s');
   expect(Duration.humanise(31_536_000_000_000_000n)).toEqual('31536000s');
@@ -68,24 +72,25 @@ test('Duration.fromMillis', () => {
 });
 
 test('timecode', () => {
-  expect(new Timecode(Time.fromRaw(0n)).toString(' '))
-      .toEqual('00:00:00.000 000 000');
-  expect(new Timecode(Time.fromRaw(123n)).toString(' '))
-      .toEqual('00:00:00.000 000 123');
-  expect(new Timecode(Time.fromRaw(60_000_000_000n)).toString(' '))
-      .toEqual('00:01:00.000 000 000');
-  expect(new Timecode(Time.fromRaw(12_345_678_910n)).toString(' '))
-      .toEqual('00:00:12.345 678 910');
-  expect(new Timecode(Time.fromRaw(86_400_000_000_000n)).toString(' '))
-      .toEqual('1d00:00:00.000 000 000');
-  expect(new Timecode(Time.fromRaw(31_536_000_000_000_000n)).toString(' '))
-      .toEqual('365d00:00:00.000 000 000');
-  expect(new Timecode(Time.fromRaw(-123n)).toString(' '))
-      .toEqual('-00:00:00.000 000 123');
+  expect(new Timecode(t(0n)).toString(' ')).toEqual('00:00:00.000 000 000');
+  expect(new Timecode(t(123n)).toString(' ')).toEqual('00:00:00.000 000 123');
+  expect(new Timecode(t(60_000_000_000n)).toString(' ')).toEqual(
+    '00:01:00.000 000 000',
+  );
+  expect(new Timecode(t(12_345_678_910n)).toString(' ')).toEqual(
+    '00:00:12.345 678 910',
+  );
+  expect(new Timecode(t(86_400_000_000_000n)).toString(' ')).toEqual(
+    '1d00:00:00.000 000 000',
+  );
+  expect(new Timecode(t(31_536_000_000_000_000n)).toString(' ')).toEqual(
+    '365d00:00:00.000 000 000',
+  );
+  expect(new Timecode(t(-123n)).toString(' ')).toEqual('-00:00:00.000 000 123');
 });
 
 function mkSpan(start: bigint, end: bigint) {
-  return new TimeSpan(Time.fromRaw(start), Time.fromRaw(end));
+  return new TimeSpan(t(start), t(end));
 }
 
 describe('TimeSpan', () => {
@@ -113,49 +118,78 @@ describe('TimeSpan', () => {
   it('checks containment', () => {
     const x = mkSpan(10n, 20n);
 
-    expect(x.contains(Time.fromRaw(9n))).toBeFalsy();
-    expect(x.contains(Time.fromRaw(10n))).toBeTruthy();
-    expect(x.contains(Time.fromRaw(15n))).toBeTruthy();
-    expect(x.contains(Time.fromRaw(20n))).toBeFalsy();
-    expect(x.contains(Time.fromRaw(21n))).toBeFalsy();
-
-    expect(x.contains(mkSpan(12n, 18n))).toBeTruthy();
-    expect(x.contains(mkSpan(5n, 25n))).toBeFalsy();
-    expect(x.contains(mkSpan(5n, 15n))).toBeFalsy();
-    expect(x.contains(mkSpan(15n, 25n))).toBeFalsy();
-    expect(x.contains(mkSpan(0n, 10n))).toBeFalsy();
-    expect(x.contains(mkSpan(20n, 30n))).toBeFalsy();
+    expect(x.contains(t(9n))).toBeFalsy();
+    expect(x.contains(t(10n))).toBeTruthy();
+    expect(x.contains(t(15n))).toBeTruthy();
+    expect(x.contains(t(20n))).toBeFalsy();
+    expect(x.contains(t(21n))).toBeFalsy();
   });
 
-  it('checks intersection with span', () => {
+  it('checks containment of another span', () => {
     const x = mkSpan(10n, 20n);
 
-    expect(x.intersectsInterval(mkSpan(0n, 10n))).toBeFalsy();
-    expect(x.intersectsInterval(mkSpan(5n, 15n))).toBeTruthy();
-    expect(x.intersectsInterval(mkSpan(12n, 18n))).toBeTruthy();
-    expect(x.intersectsInterval(mkSpan(15n, 25n))).toBeTruthy();
-    expect(x.intersectsInterval(mkSpan(20n, 30n))).toBeFalsy();
-    expect(x.intersectsInterval(mkSpan(5n, 25n))).toBeTruthy();
+    expect(x.containsSpan(t(12n), t(18n))).toBeTruthy();
+    expect(x.containsSpan(t(5n), t(25n))).toBeFalsy();
+    expect(x.containsSpan(t(5n), t(15n))).toBeFalsy();
+    expect(x.containsSpan(t(15n), t(25n))).toBeFalsy();
+    expect(x.containsSpan(t(0n), t(10n))).toBeFalsy();
+    expect(x.containsSpan(t(20n), t(30n))).toBeFalsy();
   });
 
-  it('checks intersection', () => {
+  it('checks overlap', () => {
     const x = mkSpan(10n, 20n);
 
-    expect(x.intersects(Time.fromRaw(0n), Time.fromRaw(10n))).toBeFalsy();
-    expect(x.intersects(Time.fromRaw(5n), Time.fromRaw(15n))).toBeTruthy();
-    expect(x.intersects(Time.fromRaw(12n), Time.fromRaw(18n))).toBeTruthy();
-    expect(x.intersects(Time.fromRaw(15n), Time.fromRaw(25n))).toBeTruthy();
-    expect(x.intersects(Time.fromRaw(20n), Time.fromRaw(30n))).toBeFalsy();
-    expect(x.intersects(Time.fromRaw(5n), Time.fromRaw(25n))).toBeTruthy();
+    expect(x.overlaps(t(0n), t(10n))).toBeFalsy();
+    expect(x.overlaps(t(5n), t(15n))).toBeTruthy();
+    expect(x.overlaps(t(12n), t(18n))).toBeTruthy();
+    expect(x.overlaps(t(15n), t(25n))).toBeTruthy();
+    expect(x.overlaps(t(20n), t(30n))).toBeFalsy();
+    expect(x.overlaps(t(5n), t(25n))).toBeTruthy();
   });
 
   it('can add', () => {
     const x = mkSpan(10n, 20n);
-    expect(x.add(5n)).toEqual(mkSpan(15n, 25n));
+    expect(x.translate(5n)).toEqual(mkSpan(15n, 25n));
   });
 
   it('can pad', () => {
     const x = mkSpan(10n, 20n);
     expect(x.pad(5n)).toEqual(mkSpan(5n, 25n));
   });
+});
+
+test('formatTimezone', () => {
+  expect(formatTimezone(0)).toEqual('UTC+00:00');
+  expect(formatTimezone(60)).toEqual('UTC+01:00');
+  expect(formatTimezone(-60)).toEqual('UTC-01:00');
+  expect(formatTimezone(330)).toEqual('UTC+05:30');
+  expect(formatTimezone(-420)).toEqual('UTC-07:00');
+  expect(formatTimezone(14 * 60)).toEqual('UTC+14:00');
+  expect(formatTimezone(-12 * 60)).toEqual('UTC-12:00');
+});
+
+test('formatDate', () => {
+  const date = new Date('2025-06-15T00:00:00.000Z');
+
+  // Formatting
+  expect(formatDate(date)).toBe('2025-06-15 00:00:00.000 UTC+00:00');
+  expect(formatDate(date, {printDate: false})).toBe('00:00:00.000 UTC+00:00');
+  expect(formatDate(date, {printTime: false})).toBe('2025-06-15 UTC+00:00');
+  expect(formatDate(date, {printTimezone: false})).toBe(
+    '2025-06-15 00:00:00.000',
+  );
+
+  // Specific timezone: UTC+5:30 (IST)
+  expect(
+    formatDate(date, {
+      tzOffsetMins: 330,
+    }),
+  ).toBe('2025-06-15 05:30:00.000 UTC+05:30');
+
+  // Specific timezone: UTC-7 (PDT)
+  expect(
+    formatDate(date, {
+      tzOffsetMins: -420,
+    }),
+  ).toEqual('2025-06-14 17:00:00.000 UTC-07:00');
 });

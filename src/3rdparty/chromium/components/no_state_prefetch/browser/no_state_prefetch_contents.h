@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,13 +19,12 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_contents_delegate.h"
+#include "components/no_state_prefetch/common/no_state_prefetch_canceler.mojom.h"
 #include "components/no_state_prefetch/common/no_state_prefetch_final_status.h"
-#include "components/no_state_prefetch/common/prerender_canceler.mojom.h"
-#include "components/no_state_prefetch/common/prerender_origin.h"
+#include "components/no_state_prefetch/common/no_state_prefetch_origin.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/referrer.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/origin.h"
 
@@ -48,19 +48,20 @@ namespace prerender {
 
 class NoStatePrefetchManager;
 
-class NoStatePrefetchContents : public content::WebContentsObserver,
-                                public prerender::mojom::PrerenderCanceler {
+class NoStatePrefetchContents
+    : public content::WebContentsObserver,
+      public prerender::mojom::NoStatePrefetchCanceler {
  public:
   // NoStatePrefetchContents::Create uses the currently registered Factory to
   // create the NoStatePrefetchContents. Factory is intended for testing.
   class Factory {
    public:
-    Factory() {}
+    Factory() = default;
 
     Factory(const Factory&) = delete;
     Factory& operator=(const Factory&) = delete;
 
-    virtual ~Factory() {}
+    virtual ~Factory() = default;
 
     // Ownership is not transferred through this interface as
     // no_state_prefetch_manager and browser_context are stored as weak
@@ -71,7 +72,7 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
         content::BrowserContext* browser_context,
         const GURL& url,
         const content::Referrer& referrer,
-        const absl::optional<url::Origin>& initiator_origin,
+        const std::optional<url::Origin>& initiator_origin,
         Origin origin) = 0;
   };
 
@@ -88,13 +89,8 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
     // OnPrefetchStop before being destroyed.
     virtual void OnPrefetchStop(NoStatePrefetchContents* contents) {}
 
-    // Signals that a resource finished loading and altered the running byte
-    // count.
-    virtual void OnPrefetchNetworkBytesChanged(
-        NoStatePrefetchContents* contents) {}
-
    protected:
-    Observer() {}
+    Observer() = default;
     virtual ~Observer() = 0;
   };
 
@@ -182,25 +178,20 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
   // NoStatePrefetchManager's pending deletes list.
   void Destroy(FinalStatus reason);
 
-  absl::optional<base::Value::Dict> GetAsDict() const;
+  std::optional<base::Value::Dict> GetAsDict() const;
 
   // This function is not currently called in production since prerendered
   // contents are never used (only prefetch is supported), but it may be used in
   // the future: https://crbug.com/1126305
   void MarkAsUsedForTesting();
 
-  // Increments the number of bytes fetched over the network for this prerender.
-  void AddNetworkBytes(int64_t bytes);
-
   bool prefetching_has_been_cancelled() const {
     return prefetching_has_been_cancelled_;
   }
 
-  // Running byte count. Increased when each resource completes loading.
-  int64_t network_bytes() { return network_bytes_; }
-
-  void AddPrerenderCancelerReceiver(
-      mojo::PendingReceiver<prerender::mojom::PrerenderCanceler> receiver);
+  void AddNoStatePrefetchCancelerReceiver(
+      mojo::PendingReceiver<prerender::mojom::NoStatePrefetchCanceler>
+          receiver);
 
  protected:
   NoStatePrefetchContents(
@@ -209,7 +200,7 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
       content::BrowserContext* browser_context,
       const GURL& url,
       const content::Referrer& referrer,
-      const absl::optional<url::Origin>& initiator_origin,
+      const std::optional<url::Origin>& initiator_origin,
       Origin origin);
 
   // Set the final status for how the NoStatePrefetchContents was used. This
@@ -256,14 +247,14 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
   // |attempt_|.
   void SetPreloadingFailureReason(FinalStatus status);
 
-  // prerender::mojom::PrerenderCanceler:
-  void CancelPrerenderForUnsupportedScheme() override;
-  void CancelPrerenderForNoStatePrefetch() override;
+  // prerender::mojom::NoStatePrefetchCanceler:
+  void CancelNoStatePrefetchForUnsupportedScheme() override;
+  void CancelNoStatePrefetchAfterSubresourcesDiscovered() override;
 
-  mojo::ReceiverSet<prerender::mojom::PrerenderCanceler>
-      prerender_canceler_receiver_set_;
+  mojo::ReceiverSet<prerender::mojom::NoStatePrefetchCanceler>
+      no_state_prefetch_canceler_receiver_set_;
 
-  base::ObserverList<Observer>::Unchecked observer_list_;
+  base::ObserverList<Observer>::UncheckedAndDanglingUntriaged observer_list_;
 
   // The prefetch manager owning this object.
   raw_ptr<NoStatePrefetchManager> no_state_prefetch_manager_;
@@ -284,7 +275,7 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
 
   // The origin of the page requesting the prerender. Empty when the prerender
   // is browser initiated.
-  const absl::optional<url::Origin> initiator_origin_;
+  const std::optional<url::Origin> initiator_origin_;
 
   // The browser context being used
   raw_ptr<content::BrowserContext> browser_context_;
@@ -314,10 +305,6 @@ class NoStatePrefetchContents : public content::WebContentsObserver,
 
   // The bounds of the WebView from the launching page.
   gfx::Rect bounds_;
-
-  // A running tally of the number of bytes this prerender has caused to be
-  // transferred over the network for resources.  Updated with AddNetworkBytes.
-  int64_t network_bytes_;
 
   base::WeakPtrFactory<NoStatePrefetchContents> weak_factory_{this};
 };

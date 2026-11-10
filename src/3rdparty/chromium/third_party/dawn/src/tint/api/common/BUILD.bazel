@@ -39,17 +39,45 @@ load("@bazel_skylib//lib:selects.bzl", "selects")
 cc_library(
   name = "common",
   srcs = [
-    "common.cc",
+    "vertex_pulling_config.cc",
   ],
   hdrs = [
     "binding_point.h",
     "override_id.h",
+    "vertex_pulling_config.h",
   ],
   deps = [
+    "//src/tint/utils",
+    "//src/tint/utils/containers",
+    "//src/tint/utils/ice",
     "//src/tint/utils/macros",
     "//src/tint/utils/math",
-    "//src/tint/utils/reflection",
-    "//src/tint/utils/traits",
+    "//src/tint/utils/memory",
+    "//src/tint/utils/rtti",
+    "//src/utils",
+  ],
+  copts = COPTS,
+  visibility = ["//visibility:public"],
+)
+cc_library(
+  name = "test",
+  alwayslink = True,
+  srcs = [
+    "binding_point_test.cc",
+    "override_id_test.cc",
+    "vertex_pulling_config_test.cc",
+  ],
+  deps = [
+    "//src/tint/api/common",
+    "//src/tint/utils",
+    "//src/tint/utils/containers",
+    "//src/tint/utils/ice",
+    "//src/tint/utils/macros",
+    "//src/tint/utils/math",
+    "//src/tint/utils/memory",
+    "//src/tint/utils/rtti",
+    "@gtest",
+    "//src/utils",
   ],
   copts = COPTS,
   visibility = ["//visibility:public"],

@@ -15,7 +15,6 @@
 #include "base/values.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/extensions/api/preference/preference_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/content_settings.h"
@@ -37,13 +36,13 @@
 #include "extensions/common/api/extension_types.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
+#include "net/cookies/site_for_cookies.h"
 
 using content::BrowserThread;
 
 namespace Clear = extensions::api::content_settings::ContentSetting::Clear;
 namespace Get = extensions::api::content_settings::ContentSetting::Get;
 namespace Set = extensions::api::content_settings::ContentSetting::Set;
-namespace pref_helpers = extensions::preference_helpers;
 
 namespace {
 
@@ -81,14 +80,14 @@ namespace extensions {
 ExtensionFunction::ResponseAction
 ContentSettingsContentSettingClearFunction::Run() {
   ContentSettingsType content_type;
-  EXTENSION_FUNCTION_VALIDATE(RemoveContentType(mutable_args(), &content_type));
+  EXTENSION_FUNCTION_VALIDATE(
+      RemoveContentType(GetMutableArgs(), &content_type));
 
   std::optional<Clear::Params> params = Clear::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   if (content_type == ContentSettingsType::DEPRECATED_PPAPI_BROKER) {
     NOTREACHED();
-    return RespondNow(Error(kUnknownErrorDoNotUse));
   }
 
   ChromeSettingScope scope = ChromeSettingScope::kRegular;
@@ -119,14 +118,14 @@ ContentSettingsContentSettingClearFunction::Run() {
 ExtensionFunction::ResponseAction
 ContentSettingsContentSettingGetFunction::Run() {
   ContentSettingsType content_type;
-  EXTENSION_FUNCTION_VALIDATE(RemoveContentType(mutable_args(), &content_type));
+  EXTENSION_FUNCTION_VALIDATE(
+      RemoveContentType(GetMutableArgs(), &content_type));
 
   std::optional<Get::Params> params = Get::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   if (content_type == ContentSettingsType::DEPRECATED_PPAPI_BROKER) {
     NOTREACHED();
-    return RespondNow(Error(kUnknownErrorDoNotUse));
   }
 
   GURL primary_url(params->details.primary_url);
@@ -167,13 +166,17 @@ ContentSettingsContentSettingGetFunction::Run() {
     cookie_settings = CookieSettingsFactory::GetForProfile(profile);
   }
 
-  // TODO(crbug.com/1386190): Consider whether the following check should
+  // TODO(crbug.com/40247160): Consider whether the following check should
   // somehow determine real CookieSettingOverrides rather than default to none.
+  net::SiteForCookies site_for_cookies =
+      net::SiteForCookies::FromUrl(secondary_url);
+  site_for_cookies.CompareWithFrameTreeSiteAndRevise(
+      net::SchemefulSite(primary_url));
   ContentSetting setting =
       content_type == ContentSettingsType::COOKIES
-          ? cookie_settings->GetCookieSetting(primary_url, secondary_url,
-                                              net::CookieSettingOverrides(),
-                                              nullptr)
+          ? cookie_settings->GetCookieSetting(
+                primary_url, site_for_cookies, secondary_url,
+                net::CookieSettingOverrides(), nullptr)
           : map->GetContentSetting(primary_url, secondary_url, content_type);
 
   base::Value::Dict result;
@@ -188,14 +191,14 @@ ContentSettingsContentSettingGetFunction::Run() {
 ExtensionFunction::ResponseAction
 ContentSettingsContentSettingSetFunction::Run() {
   ContentSettingsType content_type;
-  EXTENSION_FUNCTION_VALIDATE(RemoveContentType(mutable_args(), &content_type));
+  EXTENSION_FUNCTION_VALIDATE(
+      RemoveContentType(GetMutableArgs(), &content_type));
 
   std::optional<Set::Params> params = Set::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   if (content_type == ContentSettingsType::DEPRECATED_PPAPI_BROKER) {
     NOTREACHED();
-    return RespondNow(Error(kUnknownErrorDoNotUse));
   }
 
   std::string primary_error;

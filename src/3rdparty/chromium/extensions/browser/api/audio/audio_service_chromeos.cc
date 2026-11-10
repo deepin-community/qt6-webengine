@@ -65,7 +65,6 @@ api::audio::DeviceType GetAsAudioApiDeviceType(AudioDeviceType type) {
   }
 
   NOTREACHED();
-  return api::audio::DeviceType::kOther;
 }
 
 }  // namespace

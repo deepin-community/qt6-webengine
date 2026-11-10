@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "media/gpu/v4l2/v4l2_framerate_control.h"
 
 #include <linux/videodev2.h>
@@ -168,6 +173,18 @@ void V4L2FrameRateControl::AttachToVideoFrame(
     return;
 
   video_frame->AddDestructionObserver(
+      base::BindOnce(&V4L2FrameRateControl::RecordFrameDurationThunk,
+                     weak_this_factory_.GetWeakPtr(), task_runner_));
+}
+
+void V4L2FrameRateControl::AttachToFrameResource(
+    scoped_refptr<FrameResource>& frame) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!framerate_control_present_) {
+    return;
+  }
+
+  frame->AddDestructionObserver(
       base::BindOnce(&V4L2FrameRateControl::RecordFrameDurationThunk,
                      weak_this_factory_.GetWeakPtr(), task_runner_));
 }

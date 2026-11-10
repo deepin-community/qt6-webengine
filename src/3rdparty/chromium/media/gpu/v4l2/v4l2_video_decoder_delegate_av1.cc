@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/v4l2/v4l2_video_decoder_delegate_av1.h"
 
 #include <linux/v4l2-controls.h>
 #include <linux/videodev2.h>
 
+#include "base/memory/scoped_refptr.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/v4l2_decode_surface.h"
 #include "media/gpu/v4l2/v4l2_decode_surface_handler.h"
 #include "third_party/libgav1/src/src/obu_parser.h"
+#include "third_party/libgav1/src/src/utils/common.h"
 #include "third_party/libgav1/src/src/warp_prediction.h"
 
 namespace media {
@@ -33,7 +40,7 @@ class V4L2AV1Picture : public AV1Picture {
   ~V4L2AV1Picture() override = default;
 
   scoped_refptr<AV1Picture> CreateDuplicate() override {
-    return new V4L2AV1Picture(dec_surface_);
+    return base::MakeRefCounted<V4L2AV1Picture>(dec_surface_);
   }
 
   scoped_refptr<V4L2DecodeSurface> dec_surface_;
@@ -758,7 +765,7 @@ scoped_refptr<AV1Picture> V4L2VideoDecoderDelegateAV1::CreateAV1Picture(
   if (!dec_surface)
     return nullptr;
 
-  return new V4L2AV1Picture(std::move(dec_surface));
+  return base::MakeRefCounted<V4L2AV1Picture>(std::move(dec_surface));
 }
 
 scoped_refptr<AV1Picture> V4L2VideoDecoderDelegateAV1::CreateAV1PictureSecure(
@@ -770,7 +777,7 @@ scoped_refptr<AV1Picture> V4L2VideoDecoderDelegateAV1::CreateAV1PictureSecure(
     return nullptr;
   }
 
-  return new V4L2AV1Picture(std::move(dec_surface));
+  return base::MakeRefCounted<V4L2AV1Picture>(std::move(dec_surface));
 }
 
 DecodeStatus V4L2VideoDecoderDelegateAV1::SubmitDecode(

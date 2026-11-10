@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/feature_list.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/values.h"
 #include "build/build_config.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -17,18 +22,14 @@
 #include "net/base/features.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/network/public/cpp/features.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
 namespace {
 
 bool SupportsSharedWorker() {
-#if BUILDFLAG(IS_ANDROID)
-  // SharedWorkers are not enabled on Android. https://crbug.com/154571
-  return false;
-#else
-  return true;
-#endif
+  return base::FeatureList::IsEnabled(blink::features::kSharedWorker);
 }
 
 }  // namespace
@@ -94,7 +95,7 @@ class WorkerNetworkIsolationKeyBrowserTest : public ContentBrowserTest {
     EvalJsResult result = EvalJs(
         shell()->web_contents()->GetPrimaryMainFrame(),
         JsReplace("createFrame($1, $2)", subframe_url.spec(), subframe_name));
-    DCHECK(result.error.empty());
+    DCHECK(result.is_ok());
     navigation_observer.Wait();
 
     RenderFrameHost* subframe_rfh = FrameMatchingPredicate(
@@ -127,9 +128,10 @@ class WorkerNetworkIsolationKeyBrowserTest : public ContentBrowserTest {
                                    "{\"updateViaCache\": \"all\"}")));
         break;
       case WorkerType::kSharedWorker:
-        EXPECT_EQ(nullptr, EvalJs(subframe_rfh,
-                                  JsReplace("let worker = new SharedWorker($1)",
-                                            main_script_file_with_param)));
+        EXPECT_EQ(
+            base::Value(),
+            EvalJs(subframe_rfh, JsReplace("let worker = new SharedWorker($1)",
+                                           main_script_file_with_param)));
         break;
     }
   }
@@ -148,19 +150,6 @@ class WorkerImportScriptsAndFetchRequestNetworkIsolationKeyBrowserTest
     : public WorkerNetworkIsolationKeyBrowserTest,
       public ::testing::WithParamInterface<
           std::tuple<bool /* test_same_network_isolation_key */, WorkerType>> {
- public:
-  WorkerImportScriptsAndFetchRequestNetworkIsolationKeyBrowserTest() {
-    // This test was written assuming that iframes/workers corresponding to
-    // different cross-origin frames (same top-level site) would not share an
-    // HTTP cache partition, but this is not the case when the experiment to
-    // replace the frame origin with an "is-cross-site" bit in the Network
-    // Isolation Key is active. Therefore, disable it for this test.
-    feature_list_.InitAndDisableFeature(
-        net::features::kEnableCrossSiteFlagNetworkIsolationKey);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 // Test that network isolation key is filled in correctly for service/shared
@@ -244,7 +233,7 @@ class ServiceWorkerMainScriptRequestNetworkIsolationKeyBrowserTest
     : public WorkerNetworkIsolationKeyBrowserTest {
  public:
   ServiceWorkerMainScriptRequestNetworkIsolationKeyBrowserTest() {
-    // TODO(crbug.com/1147281): Tests under this class fail when
+    // TODO(crbug.com/40053828): Tests under this class fail when
     // kThirdPartyStoragePartitioning is enabled.
     feature_list_.InitAndDisableFeature(
         net::features::kThirdPartyStoragePartitioning);
@@ -270,7 +259,7 @@ class ServiceWorkerMainScriptRequestNetworkIsolationKeyBrowserTest
 // are different as in that case the two script urls must be different and it
 // also won't trigger an update.
 //
-// TODO(crbug.com/1147281): Update test to not depend on
+// TODO(crbug.com/40053828): Update test to not depend on
 // kThirdPartyStoragePartitioning being disabled.
 IN_PROC_BROWSER_TEST_F(
     ServiceWorkerMainScriptRequestNetworkIsolationKeyBrowserTest,

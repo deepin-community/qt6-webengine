@@ -12,6 +12,8 @@
 #include "xfa/fwl/cfwl_message.h"
 #include "xfa/fwl/fwl_widgetdef.h"
 
+namespace pdfium {
+
 class CFWL_MessageMouse final : public CFWL_Message {
  public:
   enum class MouseCommand : uint8_t {
@@ -33,9 +35,14 @@ class CFWL_MessageMouse final : public CFWL_Message {
                     CFX_PointF pos);
   ~CFWL_MessageMouse() override;
 
-  const MouseCommand m_dwCmd;
-  Mask<XFA_FWL_KeyFlag> m_dwFlags;
-  CFX_PointF m_pos;
+  const MouseCommand cmd_;
+  Mask<XFA_FWL_KeyFlag> flags_;
+  CFX_PointF pos_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_MessageMouse;
 
 #endif  // XFA_FWL_CFWL_MESSAGEMOUSE_H_

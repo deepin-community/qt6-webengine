@@ -28,7 +28,7 @@
 #ifndef SRC_TINT_LANG_WGSL_WRITER_OPTIONS_H_
 #define SRC_TINT_LANG_WGSL_WRITER_OPTIONS_H_
 
-#include "src/tint/utils/reflection/reflection.h"
+#include "src/tint/utils/reflection.h"
 
 namespace tint::wgsl::writer {
 
@@ -48,7 +48,7 @@ struct Options {
     /// Set to `true` to use the syntax tree writer
     bool use_syntax_tree_writer = false;
 
-    TINT_REFLECT(use_syntax_tree_writer);
+    TINT_REFLECT(Options, use_syntax_tree_writer);
 #endif
 };
 

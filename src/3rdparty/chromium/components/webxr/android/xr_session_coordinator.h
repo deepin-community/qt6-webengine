@@ -48,6 +48,7 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
       device::JavaShutdownCallback destroyed_callback,
       device::XrSessionButtonTouchedCallback button_touched_callback) override;
   void EndSession() override;
+  void EndSession(device::JavaShutdownCallback destroyed_callback) override;
   bool EnsureARCoreLoaded() override;
   base::android::ScopedJavaLocalRef<jobject> GetCurrentActivityContext()
       override;
@@ -55,33 +56,30 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
       int render_process_id,
       int render_frame_id) override;
 
-  void RequestXrSession(ActivityReadyCallback ready_callback,
+  void RequestXrSession(int render_process_id,
+                        int render_frame_id,
+                        bool needs_separate_activity,
+                        ActivityReadyCallback ready_callback,
                         device::JavaShutdownCallback shutdown_callback);
 
   // Methods called from the Java side.
   void OnDrawingSurfaceReady(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& surface,
       const base::android::JavaParamRef<jobject>& root_window,
       int rotation,
       int width,
       int height);
   void OnDrawingSurfaceTouch(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
                              bool primary,
                              bool touching,
                              int32_t pointer_id,
                              float x,
                              float y);
-  void OnJavaShutdown(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj);
-  void OnXrSessionButtonTouched(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  void OnJavaShutdown(JNIEnv* env);
+  void OnXrSessionButtonTouched(JNIEnv* env);
   void OnXrHostActivityReady(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& activity);
 
  private:

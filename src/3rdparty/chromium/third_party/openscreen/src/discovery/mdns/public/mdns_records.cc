@@ -11,8 +11,8 @@
 #include <sstream>
 #include <vector>
 
-#include "absl/strings/str_join.h"
 #include "discovery/mdns/public/mdns_writer.h"
+#include "util/string_util.h"
 
 namespace openscreen::discovery {
 
@@ -57,8 +57,8 @@ bool IsGreaterThan(const Rdata& lhs, const Rdata& rhs) {
 
   const bool lhs_write = lhs_writer.Write(lhs_cast);
   const bool rhs_write = rhs_writer.Write(rhs_cast);
-  OSP_DCHECK(lhs_write);
-  OSP_DCHECK(rhs_write);
+  OSP_CHECK(lhs_write);
+  OSP_CHECK(rhs_write);
 
   // Skip the size bits.
   const size_t min_size = std::min(lhs_writer.offset(), rhs_writer.offset());
@@ -169,7 +169,8 @@ size_t DomainName::MaxWireSize() const {
 }
 
 std::ostream& operator<<(std::ostream& os, const DomainName& domain_name) {
-  return os << absl::StrJoin(domain_name.labels_, ".");
+  return os << string_util::Join(domain_name.labels_.cbegin(),
+                                 domain_name.labels_.cend(), ".");
 }
 
 // static
@@ -186,7 +187,7 @@ RawRecordRdata::RawRecordRdata() = default;
 RawRecordRdata::RawRecordRdata(std::vector<uint8_t> rdata)
     : rdata_(std::move(rdata)) {
   // Ensure RDATA length does not exceed the maximum allowed.
-  OSP_DCHECK(rdata_.size() <= kMaxRawRecordSize);
+  OSP_CHECK_LE(rdata_.size(), kMaxRawRecordSize);
 }
 
 RawRecordRdata::RawRecordRdata(const uint8_t* begin, size_t size)
@@ -402,7 +403,7 @@ NsecRecordRdata::NsecRecordRdata(DomainName next_domain_name,
     const uint8_t byte_mask = 0x80 >> (block_position & 0x07);  // Last 3 bits.
 
     // If the block has changed, write the previous block's info and all of its
-    // contents to the |encoded_types_| vector.
+    // contents to the `encoded_types_` vector.
     if (block > current_block) {
       if (!block_contents.empty()) {
         encoded_types_.push_back(current_block);
@@ -414,7 +415,7 @@ NsecRecordRdata::NsecRecordRdata(DomainName next_domain_name,
       current_block = block;
     }
 
-    // Make sure |block_contents| is large enough to hold the bit representing
+    // Make sure `block_contents` is large enough to hold the bit representing
     // the new type , then set it.
     if (block_contents.size() <= byte_bit_is_at) {
       block_contents.insert(block_contents.end(),
@@ -559,7 +560,7 @@ MdnsRecord::MdnsRecord(DomainName name,
       record_type_(record_type),
       ttl_(ttl),
       rdata_(std::move(rdata)) {
-  OSP_DCHECK(IsValidConfig(name_, dns_type, ttl_, rdata_));
+  OSP_CHECK(IsValidConfig(name_, dns_type, ttl_, rdata_));
 }
 
 MdnsRecord::MdnsRecord(const MdnsRecord& other) = default;
@@ -778,10 +779,10 @@ MdnsMessage::MdnsMessage(uint16_t id,
       answers_(std::move(answers)),
       authority_records_(std::move(authority_records)),
       additional_records_(std::move(additional_records)) {
-  OSP_DCHECK(questions_.size() < kMaxMessageFieldEntryCount);
-  OSP_DCHECK(answers_.size() < kMaxMessageFieldEntryCount);
-  OSP_DCHECK(authority_records_.size() < kMaxMessageFieldEntryCount);
-  OSP_DCHECK(additional_records_.size() < kMaxMessageFieldEntryCount);
+  OSP_DCHECK_LT(questions_.size(), kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(answers_.size(), kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(authority_records_.size(), kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(additional_records_.size(), kMaxMessageFieldEntryCount);
 
   for (const MdnsQuestion& question : questions_) {
     max_wire_size_ += question.MaxWireSize();
@@ -835,25 +836,25 @@ size_t MdnsMessage::MaxWireSize() const {
 }
 
 void MdnsMessage::AddQuestion(MdnsQuestion question) {
-  OSP_DCHECK(questions_.size() < kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(questions_.size(), kMaxMessageFieldEntryCount);
   max_wire_size_ += question.MaxWireSize();
   questions_.emplace_back(std::move(question));
 }
 
 void MdnsMessage::AddAnswer(MdnsRecord record) {
-  OSP_DCHECK(answers_.size() < kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(answers_.size(), kMaxMessageFieldEntryCount);
   max_wire_size_ += record.MaxWireSize();
   answers_.emplace_back(std::move(record));
 }
 
 void MdnsMessage::AddAuthorityRecord(MdnsRecord record) {
-  OSP_DCHECK(authority_records_.size() < kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(authority_records_.size(), kMaxMessageFieldEntryCount);
   max_wire_size_ += record.MaxWireSize();
   authority_records_.emplace_back(std::move(record));
 }
 
 void MdnsMessage::AddAdditionalRecord(MdnsRecord record) {
-  OSP_DCHECK(additional_records_.size() < kMaxMessageFieldEntryCount);
+  OSP_CHECK_LT(additional_records_.size(), kMaxMessageFieldEntryCount);
   max_wire_size_ += record.MaxWireSize();
   additional_records_.emplace_back(std::move(record));
 }

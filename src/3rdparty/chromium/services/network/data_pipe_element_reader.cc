@@ -4,10 +4,14 @@
 
 #include "services/network/data_pipe_element_reader.h"
 
+#include <algorithm>
+
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mojo/public/c/system/types.h"
 #include "net/base/io_buffer.h"
@@ -85,8 +89,12 @@ int DataPipeElementReader::Read(net::IOBuffer* buf,
 }
 
 void DataPipeElementReader::ReadCallback(int32_t status, uint64_t size) {
-  if (status == net::OK)
+  if (status == net::OK) {
     size_ = size;
+  } else if (status > 0 || status == net::ERR_IO_PENDING) {
+    mojo::ReportBadMessage("Only net::Errors allowed.");
+    status = net::ERR_INVALID_ARGUMENT;
+  }
   if (init_callback_)
     std::move(init_callback_).Run(status);
 }
@@ -117,12 +125,15 @@ int DataPipeElementReader::ReadInternal(net::IOBuffer* buf, int buf_length) {
   if (BytesRemaining() == 0)
     return net::OK;
 
-  uint32_t num_bytes = buf_length;
-  MojoResult rv =
-      data_pipe_->ReadData(buf->data(), &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+  // Don't try to read more bytes than the advertised size of the element.
+  size_t max_bytes = std::min(base::checked_cast<size_t>(buf_length),
+                              base::checked_cast<size_t>(BytesRemaining()));
+  size_t bytes_received;
+  MojoResult rv = data_pipe_->ReadData(MOJO_READ_DATA_FLAG_NONE,
+                                       buf->first(max_bytes), bytes_received);
   if (rv == MOJO_RESULT_OK) {
-    bytes_read_ += num_bytes;
-    return num_bytes;
+    bytes_read_ += bytes_received;
+    return base::checked_cast<int>(bytes_received);
   }
 
   if (rv == MOJO_RESULT_SHOULD_WAIT) {

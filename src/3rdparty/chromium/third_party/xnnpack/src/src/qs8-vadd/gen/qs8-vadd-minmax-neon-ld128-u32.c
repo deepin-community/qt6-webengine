@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vadd/neon.c.in
 //   Generator: tools/xngen
@@ -7,11 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_qs8_vadd_minmax_ukernel__neon_ld128_u32(
@@ -19,7 +23,7 @@ void xnn_qs8_vadd_minmax_ukernel__neon_ld128_u32(
     const int8_t* input_a,
     const int8_t* input_b,
     int8_t* output,
-    const union xnn_qs8_add_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_qs8_add_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
@@ -28,18 +32,18 @@ void xnn_qs8_vadd_minmax_ukernel__neon_ld128_u32(
   assert(output != NULL);
 
   #if XNN_ARCH_ARM64
-    const int8x16_t va_zero_point = vld1q_dup_s8(&params->neon.a_zero_point);
-    const int8x16_t vb_zero_point = vld1q_dup_s8(&params->neon.b_zero_point);
+    const int8x16_t va_zero_point = vdupq_n_s8(params->scalar.a_zero_point);
+    const int8x16_t vb_zero_point = vdupq_n_s8(params->scalar.b_zero_point);
   #else
-    const int8x8_t va_zero_point = vld1_dup_s8(&params->neon.a_zero_point);
-    const int8x8_t vb_zero_point = vld1_dup_s8(&params->neon.b_zero_point);
+    const int8x8_t va_zero_point = vdup_n_s8(params->scalar.a_zero_point);
+    const int8x8_t vb_zero_point = vdup_n_s8(params->scalar.b_zero_point);
   #endif
-  const int32x4_t va_multiplier = vld1q_dup_s32(&params->neon.a_multiplier);
-  const int32x4_t vb_multiplier = vld1q_dup_s32(&params->neon.b_multiplier);
-  const int32x4_t vright_shift = vld1q_dup_s32(&params->neon.right_shift);
-  const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->neon.output_zero_point);
-  const int8x16_t voutput_min = vld1q_dup_s8(&params->neon.output_min);
-  const int8x16_t voutput_max = vld1q_dup_s8(&params->neon.output_max);
+  const int32x4_t va_multiplier = vdupq_n_s32(params->scalar.a_multiplier);
+  const int32x4_t vb_multiplier = vdupq_n_s32(params->scalar.b_multiplier);
+  const int32x4_t vright_shift = vdupq_n_s32(-params->scalar.shift);
+  const int16x8_t voutput_zero_point = vdupq_n_s16(params->scalar.output_zero_point);
+  const int8x16_t voutput_min = vdupq_n_s8(params->scalar.output_min);
+  const int8x16_t voutput_max = vdupq_n_s8(params->scalar.output_max);
 
   for (; batch >= 32 * sizeof(int8_t); batch -= 32 * sizeof(int8_t)) {
     const int8x16_t va0123456789ABCDEF = vld1q_s8(input_a); input_a += 16;

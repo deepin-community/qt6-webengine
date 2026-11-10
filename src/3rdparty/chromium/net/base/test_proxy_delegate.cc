@@ -34,6 +34,18 @@ ProxyChain TestProxyDelegate::proxy_chain() const {
   CHECK(proxy_chain_) << "No proxy chain has been set via 'set_proxy_chain()'";
   return *proxy_chain_;
 }
+void TestProxyDelegate::set_proxy_list(const ProxyList& proxy_list) {
+  proxy_list_ = proxy_list;
+}
+
+ProxyList TestProxyDelegate::proxy_list() const {
+  CHECK(proxy_list_) << "No proxy list has been set via 'set_proxy_list()'";
+  return *proxy_list_;
+}
+
+void TestProxyDelegate::MakeOnTunnelHeadersReceivedFail(Error result) {
+  on_tunnel_headers_received_result_ = result;
+}
 
 void TestProxyDelegate::VerifyOnTunnelHeadersReceived(
     const ProxyChain& proxy_chain,
@@ -65,10 +77,16 @@ void TestProxyDelegate::OnResolveProxy(
     const std::string& method,
     const ProxyRetryInfoMap& proxy_retry_info,
     ProxyInfo* result) {
-  if (proxy_chain_) {
+  if (proxy_list_) {
+    CHECK(!proxy_chain_) << "Cannot set both a proxy list and a proxy chain.";
+    result->OverrideProxyList(*proxy_list_);
+  } else if (proxy_chain_) {
     result->UseProxyChain(*proxy_chain_);
   }
 }
+
+void TestProxyDelegate::OnSuccessfulRequestAfterFailures(
+    const ProxyRetryInfoMap& proxy_retry_info) {}
 
 void TestProxyDelegate::OnFallback(const ProxyChain& bad_chain, int net_error) {
 }
@@ -79,7 +97,7 @@ std::string TestProxyDelegate::GetExtraHeaderValue(
   return ProxyServerToProxyUri(proxy_server);
 }
 
-void TestProxyDelegate::OnBeforeTunnelRequest(
+Error TestProxyDelegate::OnBeforeTunnelRequest(
     const ProxyChain& proxy_chain,
     size_t chain_index,
     HttpRequestHeaders* extra_headers) {
@@ -90,6 +108,8 @@ void TestProxyDelegate::OnBeforeTunnelRequest(
         *extra_header_name_,
         GetExtraHeaderValue(proxy_chain.GetProxyServer(chain_index)));
   }
+
+  return OK;
 }
 
 Error TestProxyDelegate::OnTunnelHeadersReceived(
@@ -102,10 +122,17 @@ Error TestProxyDelegate::OnTunnelHeadersReceived(
 
   on_tunnel_headers_received_proxy_chains_.push_back(proxy_chain);
   on_tunnel_headers_received_chain_indices_.push_back(chain_index);
-  return OK;
+  return on_tunnel_headers_received_result_;
 }
 
 void TestProxyDelegate::SetProxyResolutionService(
     ProxyResolutionService* proxy_resolution_service) {}
+
+bool TestProxyDelegate::AliasRequiresProxyOverride(
+    const std::string scheme,
+    const std::vector<std::string>& dns_aliases,
+    const net::NetworkAnonymizationKey& network_anonymization_key) {
+  return false;
+}
 
 }  // namespace net

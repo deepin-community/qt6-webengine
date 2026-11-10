@@ -18,7 +18,6 @@
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/widget/root_view.h"
-#include "ui/views/widget/unique_widget_ptr.h"
 
 namespace views {
 
@@ -41,6 +40,15 @@ class TestingView : public View, public ViewTargeterDelegate {
   bool TestDoesIntersectRect(const View* target, const gfx::Rect& rect) const {
     return DoesIntersectRect(target, rect);
   }
+
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    ++mouse_press_count_;
+    return false;
+  }
+  int mouse_press_count() const { return mouse_press_count_; }
+
+ private:
+  int mouse_press_count_ = 0;
 };
 
 BEGIN_METADATA(TestingView)
@@ -126,9 +134,10 @@ gfx::Rect ConvertRectFromWidgetToView(View* view, const gfx::Rect& r) {
 // and ViewTargeter::FindNextBestTarget() are implemented correctly
 // for key events.
 TEST_F(ViewTargeterTest, ViewTargeterForKeyEvents) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
+  auto widget = std::make_unique<Widget>();
   Widget::InitParams init_params =
-      CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+      CreateParams(Widget::InitParams::CLIENT_OWNS_WIDGET,
+                   Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   widget->Init(std::move(init_params));
   widget->Show();
 
@@ -168,9 +177,9 @@ TEST_F(ViewTargeterTest, ViewTargeterForKeyEvents) {
 // and ViewTargeter::FindNextBestTarget() are implemented correctly
 // for scroll events.
 TEST_F(ViewTargeterTest, ViewTargeterForScrollEvents) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
-  init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget->Init(std::move(init_params));
 
@@ -190,7 +199,7 @@ TEST_F(ViewTargeterTest, ViewTargeterForScrollEvents) {
 
   // The event falls within the bounds of |child| and |content| but not
   // |grandchild|, so |child| should be the initial target for the event.
-  ui::ScrollEvent scroll(ui::ET_SCROLL, gfx::Point(60, 60),
+  ui::ScrollEvent scroll(ui::EventType::kScroll, gfx::Point(60, 60),
                          ui::EventTimeForNow(), 0, 0, 3, 0, 3, 2);
   ui::EventTarget* current_target =
       targeter->FindTargetForEvent(root_view, &scroll);
@@ -209,7 +218,7 @@ TEST_F(ViewTargeterTest, ViewTargeterForScrollEvents) {
   // |child|, and |grandchild|. But since |content| is the contents view,
   // and contents views are resized to fill the entire area of the root
   // view, the event's initial target should still be |content|.
-  scroll = ui::ScrollEvent(ui::ET_SCROLL, gfx::Point(150, 150),
+  scroll = ui::ScrollEvent(ui::EventType::kScroll, gfx::Point(150, 150),
                            ui::EventTimeForNow(), 0, 0, 3, 0, 3, 2);
   current_target = targeter->FindTargetForEvent(root_view, &scroll);
   EXPECT_EQ(content, static_cast<View*>(current_target));
@@ -227,8 +236,9 @@ ui::GestureEvent CreateTestGestureEvent(
 // and ViewTargeter::FindNextBestTarget() are implemented correctly
 // for gesture events.
 TEST_F(ViewTargeterTest, ViewTargeterForGestureEvents) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget->Init(std::move(init_params));
 
@@ -246,13 +256,13 @@ TEST_F(ViewTargeterTest, ViewTargeterForGestureEvents) {
 
   // Define some gesture events for testing.
   gfx::RectF bounding_box(gfx::PointF(46.f, 46.f), gfx::SizeF(8.f, 8.f));
-  ui::GestureEventDetails details(ui::ET_GESTURE_TAP);
+  ui::GestureEventDetails details(ui::EventType::kGestureTap);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent tap = CreateTestGestureEvent(details);
-  details = ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_BEGIN);
+  details = ui::GestureEventDetails(ui::EventType::kGestureScrollBegin);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent scroll_begin = CreateTestGestureEvent(details);
-  details = ui::GestureEventDetails(ui::ET_GESTURE_END);
+  details = ui::GestureEventDetails(ui::EventType::kGestureEnd);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent end = CreateTestGestureEvent(details);
 
@@ -304,13 +314,13 @@ TEST_F(ViewTargeterTest, ViewTargeterForGestureEvents) {
   // again (calls to FindTargetForEvent() and FindNextBestTarget()
   // mutate the location of the gesture events to be in the coordinate
   // space of the returned view).
-  details = ui::GestureEventDetails(ui::ET_GESTURE_TAP);
+  details = ui::GestureEventDetails(ui::EventType::kGestureTap);
   details.set_bounding_box(bounding_box);
   tap = CreateTestGestureEvent(details);
-  details = ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_BEGIN);
+  details = ui::GestureEventDetails(ui::EventType::kGestureScrollBegin);
   details.set_bounding_box(bounding_box);
   scroll_begin = CreateTestGestureEvent(details);
-  details = ui::GestureEventDetails(ui::ET_GESTURE_END);
+  details = ui::GestureEventDetails(ui::EventType::kGestureEnd);
   details.set_bounding_box(bounding_box);
   end = CreateTestGestureEvent(details);
 
@@ -332,8 +342,9 @@ TEST_F(ViewTargeterTest, ViewTargeterForGestureEvents) {
 // tests that the root view is targeted for gesture events which should
 // not be targeted to any other view in the views tree.
 TEST_F(ViewTargeterTest, TargetContentsAndRootView) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget->Init(std::move(init_params));
 
@@ -349,7 +360,7 @@ TEST_F(ViewTargeterTest, TargetContentsAndRootView) {
   // A gesture event located entirely within the contents view should
   // target the contents view.
   gfx::RectF bounding_box(gfx::PointF(96.f, 96.f), gfx::SizeF(8.f, 8.f));
-  ui::GestureEventDetails details(ui::ET_GESTURE_TAP);
+  ui::GestureEventDetails details(ui::EventType::kGestureTap);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent tap = CreateTestGestureEvent(details);
 
@@ -413,8 +424,9 @@ TEST_F(ViewTargeterTest, TargetContentsAndRootView) {
 // Tests that calls to FindTargetForEvent() and FindNextBestTarget() change
 // the location of a gesture event to be in the correct coordinate space.
 TEST_F(ViewTargeterTest, GestureEventCoordinateConversion) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget->Init(std::move(init_params));
 
@@ -436,7 +448,7 @@ TEST_F(ViewTargeterTest, GestureEventCoordinateConversion) {
   // in root view coordinates with width and height of 4.
   gfx::RectF bounding_box(gfx::PointF(58.f, 58.f), gfx::SizeF(4.f, 4.f));
   gfx::PointF center_point(bounding_box.CenterPoint());
-  ui::GestureEventDetails details(ui::ET_GESTURE_TAP);
+  ui::GestureEventDetails details(ui::EventType::kGestureTap);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent tap = CreateTestGestureEvent(details);
 
@@ -502,8 +514,9 @@ TEST_F(ViewTargeterTest, GestureEventCoordinateConversion) {
 // Also verifies that ViewTargeterDelegate::DoesIntersectRect() can
 // be called from the ViewTargeter installed on RootView.
 TEST_F(ViewTargeterTest, DoesIntersectRect) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   params.bounds = gfx::Rect(0, 0, 650, 650);
   widget->Init(std::move(params));
 
@@ -555,8 +568,9 @@ TEST_F(ViewTargeterTest, DoesIntersectRect) {
 // (HitTestPoint(), HitTestRect(), etc.) return the correct values.
 TEST_F(ViewTargeterTest, HitTestCallsOnView) {
   // The coordinates in this test are in the coordinate space of the root view.
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   widget->Init(std::move(params));
   View* root_view = widget->GetRootView();
   root_view->SetBoundsRect(gfx::Rect(0, 0, 500, 500));
@@ -625,8 +639,9 @@ TEST_F(ViewTargeterTest, HitTestCallsOnView) {
 }
 
 TEST_F(ViewTargeterTest, FavorChildContainingHitBounds) {
-  UniqueWidgetPtr widget = std::make_unique<Widget>();
-  Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget->Init(std::move(init_params));
 
@@ -640,11 +655,53 @@ TEST_F(ViewTargeterTest, FavorChildContainingHitBounds) {
   ui::EventTargeter* targeter = root_view->targeter();
 
   gfx::RectF bounding_box(gfx::PointF(4.f, 4.f), gfx::SizeF(42.f, 42.f));
-  ui::GestureEventDetails details(ui::ET_GESTURE_TAP);
+  ui::GestureEventDetails details(ui::EventType::kGestureTap);
   details.set_bounding_box(bounding_box);
   ui::GestureEvent tap = CreateTestGestureEvent(details);
 
   EXPECT_EQ(child, targeter->FindTargetForEvent(root_view, &tap));
+}
+
+TEST_F(ViewTargeterTest, DisabledViewShouldBlockEvents) {
+  auto widget = std::make_unique<Widget>();
+  Widget::InitParams init_params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
+  init_params.bounds = gfx::Rect(0, 0, 200, 200);
+  widget->Init(std::move(init_params));
+
+  View* content = widget->SetContentsView(std::make_unique<View>());
+  content->SetBounds(0, 0, 50, 50);
+  View* child_enabled = content->AddChildView(std::make_unique<View>());
+  TestingView* child_disabled =
+      content->AddChildView(std::make_unique<TestingView>());
+  child_disabled->SetEnabled(false);
+
+  const gfx::Rect child_bounds(2, 2, 50, 50);
+  // Disabled child fully overlaps enabled child.
+  child_enabled->SetBoundsRect(child_bounds);
+  child_disabled->SetBoundsRect(child_bounds);
+
+  internal::RootView* root_view =
+      static_cast<internal::RootView*>(widget->GetRootView());
+  auto* targeter = static_cast<views::ViewTargeter*>(root_view->targeter());
+
+  gfx::Rect event_bounds = child_disabled->bounds();
+  event_bounds.ClampToCenteredSize({10, 10});
+  const views::View* target_view =
+      targeter->TargetForRect(root_view, event_bounds);
+  // Overrlapped (by disabled view) child view should not be target for event.
+  EXPECT_NE(child_enabled, target_view);
+  // Parent view should not be target for event.
+  EXPECT_NE(content, target_view);
+
+  // Disabled view should be target for event.
+  EXPECT_EQ(child_disabled, target_view);
+
+  ui::MouseEvent event(ui::EventType::kMousePressed, gfx::Point(10, 10),
+                       gfx::Point(10, 10), ui::EventTimeForNow(), 0, 0);
+  child_disabled->OnEvent(&event);
+  // Disabled view should ignore events.
+  EXPECT_EQ(0, child_disabled->mouse_press_count());
 }
 
 }  // namespace test

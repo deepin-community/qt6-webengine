@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -28,8 +29,8 @@ std::string SerializeBitfield(unsigned long* bitmap, int max) {
   std::string ret;
 
   for (int i = EVDEV_BITS_TO_GROUPS(max) - 1; i >= 0; i--) {
-    if (bitmap[i] || ret.size()) {
-      base::StringAppendF(&ret, "%lx", bitmap[i]);
+    if (UNSAFE_TODO(bitmap[i]) || ret.size()) {
+      base::StringAppendF(&ret, "%lx", UNSAFE_TODO(bitmap[i]));
 
       if (i > 0)
         ret += " ";
@@ -1531,6 +1532,32 @@ const DeviceCapabilities kRexHeatmapTouchScreen = {
     std::size(kRexHeatmapTouchScreenAbsAxes),
 };
 
+const DeviceCapabilities kSplitModifierKeyboard = {
+    /* path */ "/sys/devices/platform/i8042/serio0/input/input3/event3",
+    /* name */ "AT Translated Set 2 keyboard",
+    /* phys */ "isa0060/serio0/input0",
+    /* uniq */ "",
+    /* bustype */ "0011",
+    /* vendor */ "0001",
+    /* product */ "0001",
+    /* version */ "ab83",
+    /* prop */ "0",
+    /* ev */ "120013",
+    /* key */
+    "80 0 10000 0 10000000000000 0 100006300000000 180201040004000 "
+    "3d1ebfdf53cfff9f fbfffffffffffffe",
+    /* rel */ "0",
+    /* abs */ "0",
+    /* msc */ "10",
+    /* sw */ "0",
+    /* led */ "7",
+    /* ff */ "0",
+    /* abs_axis */ nullptr,
+    /* abs_axis_count */ 0,
+    /* kbd_function_row_physmap */ "EA E7 91 92 93 94 95 97 98 9A 9B A0 B0 AE",
+    /* kbd_top_row_layout */ "",
+};
+
 // NB: Please use the capture_device_capabilities.py script to add more
 // test data here. This will help ensure the data matches what the kernel
 // reports for a real device and is entered correctly.
@@ -1589,7 +1616,7 @@ bool CapabilitiesToDeviceInfo(const DeviceCapabilities& capabilities,
   devinfo->SetProps(&prop_bits[0], prop_bits.size());
 
   for (size_t i = 0; i < capabilities.abs_axis_count; ++i) {
-    const DeviceAbsoluteAxis& axis = capabilities.abs_axis[i];
+    const DeviceAbsoluteAxis& axis = UNSAFE_TODO(capabilities.abs_axis[i]);
     devinfo->SetAbsInfo(axis.code, axis.absinfo);
   }
 
@@ -1606,10 +1633,10 @@ bool CapabilitiesToDeviceInfo(const DeviceCapabilities& capabilities,
   }
 
   input_id id = {};
-  sscanf(capabilities.vendor, "%" SCNx16, &id.vendor);
-  sscanf(capabilities.product, "%" SCNx16, &id.product);
-  sscanf(capabilities.bustype, "%" SCNx16, &id.bustype);
-  sscanf(capabilities.version, "%" SCNx16, &id.version);
+  UNSAFE_TODO(sscanf(capabilities.vendor, "%" SCNx16, &id.vendor));
+  UNSAFE_TODO(sscanf(capabilities.product, "%" SCNx16, &id.product));
+  UNSAFE_TODO(sscanf(capabilities.bustype, "%" SCNx16, &id.bustype));
+  UNSAFE_TODO(sscanf(capabilities.version, "%" SCNx16, &id.version));
   devinfo->SetId(id);
   devinfo->SetDeviceType(EventDeviceInfo::GetInputDeviceTypeFromId(id));
   devinfo->SetName(capabilities.name);

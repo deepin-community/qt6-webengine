@@ -6,16 +6,17 @@
 
 #include <sstream>
 
+#include "base/containers/span.h"
 #include "base/functional/callback.h"
 #include "base/test/bind.h"
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_font_face_descriptors.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview_string.h"
 #include "third_party/blink/renderer/core/css/css_default_style_sheets.h"
 #include "third_party/blink/renderer/core/css/font_face_set_document.h"
-#include "third_party/blink/renderer/core/frame/csp/conversion_util.h"
+#include "third_party/blink/renderer/core/frame/csp/test_util.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -25,7 +26,9 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
+#include "third_party/blink/renderer/platform/loader/fetch/policy_container_utils.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -72,7 +75,7 @@ void ToSimpleLayoutTree(std::ostream& ostream,
 }  // namespace
 
 PageTestBase::MockClipboardHostProvider::MockClipboardHostProvider(
-    blink::BrowserInterfaceBrokerProxy& interface_broker) {
+    const blink::BrowserInterfaceBrokerProxy& interface_broker) {
   Install(interface_broker);
 }
 
@@ -86,13 +89,13 @@ PageTestBase::MockClipboardHostProvider::~MockClipboardHostProvider() {
 }
 
 void PageTestBase::MockClipboardHostProvider::Install(
-    blink::BrowserInterfaceBrokerProxy& interface_broker) {
+    const blink::BrowserInterfaceBrokerProxy& interface_broker) {
   interface_broker_ = &interface_broker;
   interface_broker_->SetBinderForTesting(
       blink::mojom::blink::ClipboardHost::Name_,
       WTF::BindRepeating(
           &PageTestBase::MockClipboardHostProvider::BindClipboardHost,
-          base::Unretained(this)));
+          WTF::Unretained(this)));
 }
 
 void PageTestBase::MockClipboardHostProvider::BindClipboardHost(
@@ -108,11 +111,12 @@ PageTestBase::PageTestBase(base::test::TaskEnvironment::TimeSource time_source)
 
 PageTestBase::~PageTestBase() {
   dummy_page_holder_.reset();
-  if (task_environment_) {
-    MemoryCache::Get()->EvictResources();
-    // Clear lazily loaded style sheets.
-    CSSDefaultStyleSheets::Instance().PrepareForLeakDetection();
-  }
+  MemoryCache::Get()->EvictResources();
+  // Clear lazily loaded style sheets.
+  CSSDefaultStyleSheets::Instance().PrepareForLeakDetection();
+  // Run garbage collection before the task environment is destroyed so task
+  // time observers shutdown during GC can unregister themselves.
+  ThreadState::Current()->CollectAllGarbageForTesting();
 }
 
 void PageTestBase::EnableCompositing() {
@@ -227,10 +231,11 @@ void PageTestBase::LoadFontFromFile(LocalFrame& frame,
                                     String font_path,
                                     const AtomicString& family_name) {
   Document& document = *frame.DomWindow()->document();
-  scoped_refptr<SharedBuffer> shared_buffer = test::ReadFromFile(font_path);
+  std::optional<Vector<char>> data = test::ReadFromFile(font_path);
+  ASSERT_TRUE(data);
   auto* buffer =
       MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferViewOrString>(
-          DOMArrayBuffer::Create(shared_buffer));
+          DOMArrayBuffer::Create(base::as_byte_span(*data)));
   FontFace* ahem = FontFace::Create(frame.DomWindow(), family_name, buffer,
                                     FontFaceDescriptors::Create());
 
@@ -253,7 +258,7 @@ void PageTestBase::LoadNoto(LocalFrame& frame) {
 
 // Both sets the inner html and runs the document lifecycle.
 void PageTestBase::SetBodyInnerHTML(const String& body_content) {
-  GetDocument().body()->setInnerHTML(body_content, ASSERT_NO_EXCEPTION);
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(body_content);
   UpdateAllLifecyclePhasesForTest();
 }
 
@@ -262,7 +267,8 @@ void PageTestBase::SetBodyContent(const std::string& body_content) {
 }
 
 void PageTestBase::SetHtmlInnerHTML(const std::string& html_content) {
-  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      String::FromUTF8(html_content));
   UpdateAllLifecyclePhasesForTest();
 }
 
@@ -272,14 +278,13 @@ void PageTestBase::InsertStyleElement(const std::string& style_rules) {
   DCHECK_EQ(head, GetOrCreateElement(&GetDocument(), html_names::kHeadTag));
   Element* const style = GetDocument().CreateRawElement(
       html_names::kStyleTag, CreateElementFlags::ByCreateElement());
-  style->setTextContent(String(style_rules.data(), style_rules.size()));
+  style->setTextContent(String(style_rules));
   head->appendChild(style);
 }
 
 void PageTestBase::NavigateTo(const KURL& url,
                               const WTF::HashMap<String, String>& headers) {
-  auto params = WebNavigationParams::CreateWithHTMLBufferForTesting(
-      SharedBuffer::Create(), url);
+  auto params = WebNavigationParams::CreateWithEmptyHTMLForTesting(url);
 
   for (const auto& header : headers)
     params->response.SetHttpHeaderField(header.key, header.value);
@@ -296,7 +301,7 @@ void PageTestBase::NavigateTo(const KURL& url,
            network::mojom::blink::ContentSecurityPolicyType::kEnforce,
            network::mojom::blink::ContentSecurityPolicySource::kHTTP, url)) {
     params->policy_container->policies.content_security_policies.emplace_back(
-        ConvertToPublic(std::move(csp)));
+        ToWebContentSecurityPolicy(*csp));
   }
 
   GetFrame().Loader().CommitNavigation(std::move(params),
@@ -318,6 +323,10 @@ Element* PageTestBase::GetElementById(const char* id) const {
   return GetDocument().getElementById(AtomicString(id));
 }
 
+Element* PageTestBase::QuerySelector(const char* selector) const {
+  return GetDocument().QuerySelector(AtomicString(selector));
+}
+
 AnimationClock& PageTestBase::GetAnimationClock() {
   return GetDocument().GetAnimationClock();
 }
@@ -331,15 +340,9 @@ FocusController& PageTestBase::GetFocusController() const {
 }
 
 void PageTestBase::EnablePlatform() {
-  DCHECK(!platform_ && !platform_with_scheduler_);
-  if (task_environment_) {
-    platform_ = std::make_unique<
-        ScopedTestingPlatformSupport<TestingPlatformSupport>>();
-  } else {
-    platform_with_scheduler_ = std::make_unique<ScopedTestingPlatformSupport<
-        TestingPlatformSupportWithMockScheduler>>();
-    (*platform_with_scheduler_)->SetAutoAdvanceNowToPendingTasks(false);
-  }
+  DCHECK(!platform_);
+  platform_ =
+      std::make_unique<ScopedTestingPlatformSupport<TestingPlatformSupport>>();
 }
 
 // See also LayoutTreeAsText to dump with geometry and paint layers.
@@ -357,37 +360,19 @@ void PageTestBase::SetPreferCompositingToLCDText(bool enable) {
 }
 
 const base::TickClock* PageTestBase::GetTickClock() {
-  return platform_with_scheduler_ ? platform()->GetTickClock()
-                                  : base::DefaultTickClock::GetInstance();
+  return base::DefaultTickClock::GetInstance();
 }
 
 void PageTestBase::FastForwardBy(base::TimeDelta delta) {
-  if (task_environment_) {
-    return task_environment_->FastForwardBy(delta);
-  } else {
-    DCHECK(platform_with_scheduler_);
-    return (*platform_with_scheduler_)->RunForPeriod(delta);
-  }
+  return task_environment_.FastForwardBy(delta);
 }
 
 void PageTestBase::FastForwardUntilNoTasksRemain() {
-  if (task_environment_) {
-    return task_environment_->FastForwardUntilNoTasksRemain();
-  } else {
-    DCHECK(platform_with_scheduler_);
-    return (*platform_with_scheduler_)
-        ->test_task_runner()
-        ->FastForwardUntilNoTasksRemain();
-  }
+  return task_environment_.FastForwardUntilNoTasksRemain();
 }
 
 void PageTestBase::AdvanceClock(base::TimeDelta delta) {
-  if (task_environment_) {
-    return task_environment_->AdvanceClock(delta);
-  } else {
-    DCHECK(platform_with_scheduler_);
-    return (*platform_with_scheduler_)->AdvanceClock(delta);
-  }
+  return task_environment_.AdvanceClock(delta);
 }
 
 }  // namespace blink

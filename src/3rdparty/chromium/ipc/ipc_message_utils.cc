@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ipc/ipc_message_utils.h"
 
 #include <stddef.h>
@@ -34,6 +39,7 @@
 
 #if BUILDFLAG(IS_WIN)
 #include <tchar.h>
+
 #include "ipc/handle_win.h"
 #include "ipc/ipc_platform_file.h"
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -305,7 +311,6 @@ bool ReadValue(const base::Pickle* pickle,
     }
     default:
       NOTREACHED();
-      return false;
   }
 
   return true;
@@ -427,7 +432,6 @@ bool ParamTraits<double>::Read(const base::Pickle* m,
   const char *data;
   if (!iter->ReadBytes(&data, sizeof(*r))) {
     NOTREACHED();
-    return false;
   }
   memcpy(r, data, sizeof(param_type));
   return true;
@@ -1340,31 +1344,19 @@ void ParamTraits<base::UnguessableToken>::Log(const param_type& p,
 
 void ParamTraits<IPC::ChannelHandle>::Write(base::Pickle* m,
                                             const param_type& p) {
-#if BUILDFLAG(IS_NACL)
-  WriteParam(m, p.socket);
-#else
   WriteParam(m, p.mojo_handle);
-#endif
 }
 
 bool ParamTraits<IPC::ChannelHandle>::Read(const base::Pickle* m,
                                            base::PickleIterator* iter,
                                            param_type* r) {
-#if BUILDFLAG(IS_NACL)
-  return ReadParam(m, iter, &r->socket);
-#else
   return ReadParam(m, iter, &r->mojo_handle);
-#endif
 }
 
 void ParamTraits<IPC::ChannelHandle>::Log(const param_type& p,
                                           std::string* l) {
   l->append("ChannelHandle(");
-#if BUILDFLAG(IS_NACL)
-  ParamTraits<base::FileDescriptor>::Log(p.socket, l);
-#else
   LogParam(p.mojo_handle, l);
-#endif
   l->append(")");
 }
 
@@ -1406,7 +1398,7 @@ void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
   DCHECK(!p.HasAttachments());
 #endif
 
-  // Don't just write out the message. This is used to send messages between
+  // Don't just write out the message. This used to send messages between
   // NaCl (Posix environment) and the browser (could be on Windows). The message
   // header formats differ between these systems (so does handle sharing, but
   // we already asserted we don't have any handles). So just write out the
@@ -1416,10 +1408,11 @@ void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
   // could be 64-bit and the host browser could be 32-bits. The nested message
   // may or may not be safe to send between 32-bit and 64-bit systems, but we
   // leave that up to the code sending the message to ensure.
+  // TODO(crbug.com/40511454): remove this code.
   m->WriteUInt32(static_cast<uint32_t>(p.routing_id()));
   m->WriteUInt32(p.type());
   m->WriteUInt32(p.flags());
-  m->WriteData(p.payload(), p.payload_size());
+  m->WriteData(p.payload_bytes());
 }
 
 bool ParamTraits<Message>::Read(const base::Pickle* m,
@@ -1479,7 +1472,6 @@ bool ParamTraits<MSG>::Read(const base::Pickle* m,
   if (result && data_size == sizeof(MSG)) {
     memcpy(r, data, sizeof(MSG));
   } else {
-    result = false;
     NOTREACHED();
   }
 

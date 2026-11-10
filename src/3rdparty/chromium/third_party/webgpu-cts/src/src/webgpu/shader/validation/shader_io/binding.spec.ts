@@ -110,26 +110,9 @@ var<storage> a: i32;
 
 g.test('binding_f16')
   .desc(`Test validation of binding with f16`)
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(t => {
     const code = `
 @group(1) @binding(1h)
-var<storage> a: i32;
-
-@workgroup_size(1, 1, 1)
-@compute fn main() {
-  _ = a;
-}`;
-    t.expectCompileResult(false, code);
-  });
-
-g.test('binding_without_group')
-  .desc(`Test validation of binding without group`)
-  .fn(t => {
-    const code = `
-@binding(1)
 var<storage> a: i32;
 
 @workgroup_size(1, 1, 1)

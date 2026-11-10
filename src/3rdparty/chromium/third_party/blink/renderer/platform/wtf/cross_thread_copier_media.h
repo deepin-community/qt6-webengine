@@ -31,16 +31,59 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_MEDIA_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_MEDIA_H_
 
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 
 namespace media {
+class AudioBus;
+class AudioParameters;
+struct AudioGlitchInfo;
 class VideoFrame;
 struct VideoCaptureFeedback;
 struct VideoTransformation;
 }  // namespace media
 
-namespace WTF {
+namespace blink {
+
+class VideoTrackAdapterSettings;
+struct MediaStreamVideoSourceCallbacks;
+
+template <>
+struct CrossThreadCopier<LocalFrameToken>
+    : public CrossThreadCopierPassThrough<LocalFrameToken> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<VideoTrackAdapterSettings>
+    : public CrossThreadCopierPassThrough<VideoTrackAdapterSettings> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<MediaStreamVideoSourceCallbacks>
+    : public CrossThreadCopierPassThrough<MediaStreamVideoSourceCallbacks> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<media::AudioBus>
+    : public CrossThreadCopierByValuePassThrough<media::AudioBus> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<media::AudioParameters>
+    : public CrossThreadCopierByValuePassThrough<media::AudioParameters> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<media::AudioGlitchInfo>
+    : public CrossThreadCopierPassThrough<media::AudioGlitchInfo> {
+  STATIC_ONLY(CrossThreadCopier);
+};
 
 template <>
 struct CrossThreadCopier<media::VideoCaptureFeedback>
@@ -61,6 +104,6 @@ struct CrossThreadCopier<media::VideoTransformation>
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_MEDIA_H_

@@ -8,13 +8,15 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
+#include "base/time/time.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/events/event_handler.h"
+#include "ui/gfx/geometry/point.h"
 #include "ui/views/corewm/tooltip.h"
 #include "ui/views/views_export.h"
 #include "ui/wm/public/activation_change_observer.h"
@@ -24,19 +26,14 @@ namespace aura {
 class Window;
 }
 
-namespace base {
-class TimeDelta;
-}
-
 namespace gfx {
-class Point;
 class Rect;
 }  // namespace gfx
 
 namespace wm {
 class ActivationClient;
 class TooltipObserver;
-}
+}  // namespace wm
 
 namespace views::corewm {
 
@@ -82,7 +79,7 @@ class VIEWS_EXPORT TooltipController
   void OnMouseEvent(ui::MouseEvent* event) override;
   void OnTouchEvent(ui::TouchEvent* event) override;
   void OnCancelMode(ui::CancelModeEvent* event) override;
-  base::StringPiece GetLogContext() const override;
+  std::string_view GetLogContext() const override;
 
   // Overridden from aura::client::CursorClientObserver.
   void OnCursorVisibilityChanged(bool is_visible) override;
@@ -108,15 +105,6 @@ class VIEWS_EXPORT TooltipController
 
   // Sets show tooltip delay for `target` window.
   void SetShowTooltipDelay(aura::Window* target, base::TimeDelta delay);
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // Called when tooltip is shown/hidden on server.
-  // This is only used for Lacros whose tooltip is handled on server-side.
-  void OnTooltipShownOnServer(aura::Window* window,
-                              const std::u16string& text,
-                              const gfx::Rect& bounds);
-  void OnTooltipHiddenOnServer();
-#endif  // BUILDFLA(IS_CHROMEOS_LACROS)
 
  private:
   friend class test::TooltipControllerTestHelper;
@@ -201,9 +189,9 @@ class VIEWS_EXPORT TooltipController
   // tooltip's show timer from being restarted on each event.
   bool is_duplicate_pen_hover_event_ = false;
   // The last tooltip text that was shown when the pen was hovering.
-  // TODO(crbug.com/1383844): Replace this with a unique tooltip identifier when
-  // one is implemented. For now, the tooltip text is the closest thing to a
-  // tooltip identifier there is.
+  // TODO(crbug.com/40246278): Replace this with a unique tooltip identifier
+  // when one is implemented. For now, the tooltip text is the closest thing to
+  // a tooltip identifier there is.
   std::u16string last_pen_tooltip_text_;
 
   // Whether tooltips can be displayed or not.
@@ -214,8 +202,11 @@ class VIEWS_EXPORT TooltipController
   // Do NOT override this value except from TooltipControllerTestHelper.
   bool skip_show_delay_for_testing_ = false;
 
-  // The show delay before showing tooltip may differ for external app's tooltip
-  // such as Lacros. This map specifies the show delay for each target window.
+  // The show delay before showing tooltip may differ for external app's
+  // tooltip. This map specifies the show delay for each target window.
+  // TODO(crbug.com/c/374244480): consider removing this when removing lacros
+  // support code from //c/exo. This is only used by aura shell to show tooltips
+  // with delays for external apps.
   std::map<aura::Window*, base::TimeDelta> show_tooltip_delay_map_;
 
   // Web content tooltips should be shown indefinitely and those added on Views

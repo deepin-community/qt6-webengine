@@ -10,7 +10,7 @@ import("features.gni")
 import("//build/config/cronet/config.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
-if (is_android || is_robolectric) {
+if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
@@ -23,8 +23,12 @@ component("url") {
   sources = [
     "gurl.cc",
     "gurl.h",
+    "gurl_debug.cc",
+    "gurl_debug.h",
     "origin.cc",
     "origin.h",
+    "origin_debug.cc",
+    "origin_debug.h",
     "scheme_host_port.cc",
     "scheme_host_port.h",
     "third_party/mozilla/url_parse.cc",
@@ -49,7 +53,6 @@ component("url") {
     "url_canon_stdstring.cc",
     "url_canon_stdstring.h",
     "url_canon_stdurl.cc",
-    "url_constants.cc",
     "url_constants.h",
     "url_features.cc",
     "url_features.h",
@@ -65,7 +68,7 @@ component("url") {
 
   defines = [ "IS_URL_IMPL" ]
 
-  deps = [ "//base/third_party/dynamic_annotations" ]
+  deps = []
 
   public_deps = [
     "//base",
@@ -182,6 +185,10 @@ source_set("url_test_support") {
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 test("url_unittests") {
@@ -243,6 +250,10 @@ test("url_unittests") {
       "//url/mojom:test_url_mojom_gurl",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 test("url_perftests") {
@@ -267,15 +278,6 @@ fuzzer_test("gurl_fuzzer") {
     "//base:i18n",
   ]
   dict = "gurl_fuzzer.dict"
-}
-
-fuzzer_test("url_idna_icu_fuzzer") {
-  sources = [ "url_idna_icu_fuzzer.cc" ]
-  deps = [
-    ":url",
-    "//third_party/icu:icuuc",
-    "//third_party/icu/fuzzers:fuzzer_support",
-  ]
 }
 
 fuzzer_test("url_canon_icu_fuzzer") {
@@ -337,6 +339,7 @@ if (is_android && !is_cronet_build) {
         ":url_java",
         "//base:base_java",
         "//base:base_java_test_support",
+        "//build/android:build_java",
         "//content/public/test/android:content_java_test_support",
         "//mojo/public/mojom/base:base_java",
         "//third_party/androidx:androidx_core_core_java",

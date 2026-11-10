@@ -41,21 +41,19 @@ namespace dawn::native::metal {
 
 class Device;
 
-class API_AVAILABLE(macos(10.14), ios(12.0)) SharedFence final : public SharedFenceBase {
+class SharedFence final : public SharedFenceBase {
   public:
-    static ResultOrError<Ref<SharedFence>> Create(
-        Device* device,
-        const char* label,
-        const SharedFenceMTLSharedEventDescriptor* descriptor);
+    static ResultOrError<Ref<SharedFence>>
+    Create(Device* device, StringView label, const SharedFenceMTLSharedEventDescriptor* descriptor);
 
     id<MTLSharedEvent> GetMTLSharedEvent() const;
 
   private:
-    SharedFence(Device* device, const char* label, id<MTLSharedEvent> sharedEvent);
+    SharedFence(Device* device, StringView label, id<MTLSharedEvent> sharedEvent);
 
     MaybeError ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const override;
 
-    NSPRef<id<MTLSharedEvent>> mSharedEvent;
+    NSPRef<id> mSharedEvent;
 };
 
 }  // namespace dawn::native::metal

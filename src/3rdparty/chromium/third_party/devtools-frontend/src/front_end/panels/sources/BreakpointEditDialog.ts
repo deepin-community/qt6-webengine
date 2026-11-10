@@ -1,15 +1,19 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
-import type * as BreakpointManager from '../../models/breakpoints/breakpoints.js';
+import '../../ui/legacy/legacy.js';
+
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import type * as BreakpointManager from '../../models/breakpoints/breakpoints.js';
 import * as CodeMirror from '../../third_party/codemirror.next/codemirror.next.js';
 import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as TextEditor from '../../ui/components/text_editor/text_editor.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import breakpointEditDialogStyles from './breakpointEditDialog.css.js';
 
@@ -59,7 +63,7 @@ const UIStrings = {
    *@description Type selector element title in Breakpoint Edit Dialog of the Sources panel
    */
   logAMessageToConsoleDoNotBreak: 'Log a message to Console, do not break',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/sources/BreakpointEditDialog.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -82,12 +86,16 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
   constructor(
       editorLineNumber: number, oldCondition: string, isLogpoint: boolean,
       onFinish: (result: BreakpointEditDialogResult) => void) {
-    super(true);
+    super({
+      jslog: `${VisualLogging.dialog('edit-breakpoint')}`,
+      useShadowDom: true,
+    });
+    this.registerRequiredCSS(breakpointEditDialogStyles);
 
     const editorConfig = [
       CodeMirror.javascript.javascriptLanguage,
       TextEditor.Config.baseConfiguration(oldCondition || ''),
-      TextEditor.Config.closeBrackets,
+      TextEditor.Config.closeBrackets.instance(),
       TextEditor.Config.autocompletion.instance(),
       CodeMirror.EditorView.lineWrapping,
       TextEditor.Config.showCompletionHint,
@@ -105,11 +113,11 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
 
     this.element.classList.add('sources-edit-breakpoint-dialog');
     const header = this.contentElement.createChild('div', 'dialog-header');
-    const toolbar = new UI.Toolbar.Toolbar('source-frame-breakpoint-toolbar', header);
+    const toolbar = header.createChild('devtools-toolbar', 'source-frame-breakpoint-toolbar');
     toolbar.appendText(`Line ${editorLineNumber + 1}:`);
 
-    this.typeSelector =
-        new UI.Toolbar.ToolbarComboBox(this.onTypeChanged.bind(this), i18nString(UIStrings.breakpointType));
+    this.typeSelector = new UI.Toolbar.ToolbarComboBox(
+        this.onTypeChanged.bind(this), i18nString(UIStrings.breakpointType), undefined, 'type');
     this.typeSelector.createOption(
         i18nString(UIStrings.breakpoint), SDK.DebuggerModel.BreakpointType.REGULAR_BREAKPOINT);
     const conditionalOption = this.typeSelector.createOption(
@@ -121,7 +129,7 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
 
     const content = oldCondition || '';
     const finishIfComplete = (view: CodeMirror.EditorView): boolean => {
-      void TextEditor.JavaScript.isExpressionComplete(view.state.doc.toString()).then((complete): void => {
+      void TextEditor.JavaScript.isExpressionComplete(view.state.doc.toString()).then(complete => {
         if (complete) {
           this.finishEditing(true, this.editor.state.doc.toString());
         } else {
@@ -131,10 +139,10 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
       return true;
     };
     const keymap = [
-      {key: 'ArrowUp', run: (): boolean => this.#editorHistory.moveHistory(Direction.BACKWARD)},
-      {key: 'ArrowDown', run: (): boolean => this.#editorHistory.moveHistory(Direction.FORWARD)},
-      {mac: 'Ctrl-p', run: (): boolean => this.#editorHistory.moveHistory(Direction.BACKWARD, true)},
-      {mac: 'Ctrl-n', run: (): boolean => this.#editorHistory.moveHistory(Direction.FORWARD, true)},
+      {key: 'ArrowUp', run: () => this.#editorHistory.moveHistory(Direction.BACKWARD)},
+      {key: 'ArrowDown', run: () => this.#editorHistory.moveHistory(Direction.FORWARD)},
+      {mac: 'Ctrl-p', run: () => this.#editorHistory.moveHistory(Direction.BACKWARD, true)},
+      {mac: 'Ctrl-n', run: () => this.#editorHistory.moveHistory(Direction.FORWARD, true)},
       {
         key: 'Mod-Enter',
         run: finishIfComplete,
@@ -149,7 +157,7 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
       },
       {
         key: 'Escape',
-        run: (): boolean => {
+        run: () => {
           this.finishEditing(false, '');
           return true;
         },
@@ -160,6 +168,7 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
 
     const editorWrapper = this.contentElement.appendChild(document.createElement('div'));
     editorWrapper.classList.add('condition-editor');
+    editorWrapper.setAttribute('jslog', `${VisualLogging.textField().track({change: true})}`);
 
     this.editor = new TextEditor.TextEditor.TextEditor(CodeMirror.EditorState.create({
       doc: content,
@@ -172,23 +181,22 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
     }));
     editorWrapper.appendChild(this.editor);
 
-    const closeIcon = new IconButton.Icon.Icon();
-    closeIcon.name = 'cross';
+    const closeIcon = IconButton.Icon.create('cross');
     closeIcon.title = i18nString(UIStrings.closeDialog);
-    closeIcon.onclick = (): void => this.finishEditing(true, this.editor.state.doc.toString());
+    closeIcon.setAttribute('jslog', `${VisualLogging.close().track({click: true})}`);
+    closeIcon.onclick = () => this.finishEditing(true, this.editor.state.doc.toString());
     header.appendChild(closeIcon);
 
     this.#history = new TextEditor.AutocompleteHistory.AutocompleteHistory(
-        Common.Settings.Settings.instance().createLocalSetting('breakpointConditionHistory', []));
+        Common.Settings.Settings.instance().createLocalSetting('breakpoint-condition-history', []));
     this.#editorHistory = new TextEditor.TextEditorHistory.TextEditorHistory(this.editor, this.#history);
 
     const linkWrapper = this.contentElement.appendChild(document.createElement('div'));
     linkWrapper.classList.add('link-wrapper');
-    const link = UI.Fragment.html`<x-link class="link devtools-link" tabindex="0" href='https://goo.gle/devtools-loc'>${
+    const link = UI.Fragment.html`<x-link class="link devtools-link" tabindex="0" href="https://goo.gle/devtools-loc"
+                                          jslog="${VisualLogging.link('learn-more')}">${
                      i18nString(UIStrings.learnMoreOnBreakpointTypes)}</x-link>` as UI.XLink.XLink;
-    const linkIcon = new IconButton.Icon.Icon();
-    linkIcon.name = 'open-externally';
-    linkIcon.classList.add('link-icon');
+    const linkIcon = IconButton.Icon.create('open-externally', 'link-icon');
     link.prepend(linkIcon);
     linkWrapper.appendChild(link);
 
@@ -247,11 +255,6 @@ export class BreakpointEditDialog extends UI.Widget.Widget {
     this.#history.pushHistoryItem(condition);
     const isLogpoint = this.breakpointType === SDK.DebuggerModel.BreakpointType.LOGPOINT;
     this.onFinish({committed, condition: condition as BreakpointManager.BreakpointManager.UserCondition, isLogpoint});
-  }
-
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([breakpointEditDialogStyles]);
   }
 
   get editorForTest(): TextEditor.TextEditor.TextEditor {

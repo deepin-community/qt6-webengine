@@ -7,7 +7,6 @@
 #ifndef CORE_FPDFAPI_CMAPS_JAPAN1_CMAPS_JAPAN1_H_
 #define CORE_FPDFAPI_CMAPS_JAPAN1_CMAPS_JAPAN1_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "core/fpdfapi/cmaps/fpdf_cmaps.h"
@@ -35,9 +34,9 @@ extern const uint16_t kUniJIS_UCS2_HW_V_4[];
 extern const uint16_t kUniJIS_UTF16_H_0[];
 extern const uint16_t kUniJIS_UTF16_H_0_DWord[];
 extern const uint16_t kUniJIS_UTF16_V_0[];
-extern const uint16_t kJapan1CID2Unicode_4[15444];
-extern const CMap kJapan1_cmaps[];
-extern const size_t kJapan1_cmaps_size;
+
+#include "Adobe-Japan1-UCS2_4.inc"
+#include "cmaps_japan1.inc"
 
 }  // namespace fxcmap
 

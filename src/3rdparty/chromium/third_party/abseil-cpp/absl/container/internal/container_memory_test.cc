@@ -280,6 +280,68 @@ TEST(MapSlotPolicy, TransferReturnsTrue) {
   }
 }
 
+TEST(MapSlotPolicy, DestroyReturnsTrue) {
+  {
+    using slot_policy = map_slot_policy<int, float>;
+    EXPECT_TRUE(
+        (std::is_same<decltype(slot_policy::destroy<std::allocator<char>>(
+                          nullptr, nullptr)),
+                      std::true_type>::value));
+  }
+  {
+    EXPECT_FALSE(std::is_trivially_destructible<std::unique_ptr<int>>::value);
+    using slot_policy = map_slot_policy<int, std::unique_ptr<int>>;
+    EXPECT_TRUE(
+        (std::is_same<decltype(slot_policy::destroy<std::allocator<char>>(
+                          nullptr, nullptr)),
+                      std::false_type>::value));
+  }
+}
+
+TEST(ApplyTest, TypeErasedApplyToSlotFn) {
+  size_t x = 7;
+  size_t seed = 100;
+  auto fn = [](size_t v) { return v * 2; };
+  EXPECT_EQ(
+      (TypeErasedApplyToSlotFn<decltype(fn), size_t, /*kIsDefault=*/false>(
+          &fn, &x, seed)),
+      (HashElement<decltype(fn), /*kIsDefault=*/false>(fn, seed)(x)));
+}
+
+TEST(ApplyTest, TypeErasedDerefAndApplyToSlotFn) {
+  size_t x = 7;
+  size_t seed = 100;
+  auto fn = [](size_t v) { return v * 2; };
+  size_t* x_ptr = &x;
+  EXPECT_EQ((TypeErasedDerefAndApplyToSlotFn<decltype(fn), size_t,
+                                             /*kIsDefault=*/false>(&fn, &x_ptr,
+                                                                   seed)),
+            (HashElement<decltype(fn), /*kIsDefault=*/false>(fn, seed)(x)));
+}
+
+TEST(HashElement, DefaultHash) {
+  size_t x = 7;
+  size_t seed = 100;
+  struct HashWithSeed {
+    size_t operator()(size_t v) const { return v * 2; }
+    size_t hash_with_seed(size_t v, size_t seed) const {
+      return v * 2 + seed * 3;
+    }
+  } hash;
+  EXPECT_EQ((HashElement<HashWithSeed, /*kIsDefault=*/true>(hash, seed)(x)),
+            hash.hash_with_seed(x, seed));
+}
+
+TEST(HashElement, NonDefaultHash) {
+  size_t x = 7;
+  size_t seed = 100;
+  auto fn = [](size_t v) { return v * 2; };
+  EXPECT_EQ(
+      (HashElement<decltype(fn), /*kIsDefault=*/false>(
+          fn, seed)(x)),
+      fn(x) ^ seed);
+}
+
 }  // namespace
 }  // namespace container_internal
 ABSL_NAMESPACE_END

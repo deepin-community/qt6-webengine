@@ -4,6 +4,9 @@
 
 #include "chrome/renderer/extensions/api/extension_hooks_delegate.h"
 
+#include <string_view>
+
+#include "base/strings/string_util.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/constants.h"
@@ -55,7 +58,8 @@ void GetAliasedFeature(v8::Local<v8::Name> property_name,
                        const v8::PropertyCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context = info.Holder()->GetCreationContextChecked();
+  v8::Local<v8::Context> context =
+      info.HolderV2()->GetCreationContextChecked(isolate);
 
   v8::TryCatch try_catch(isolate);
   v8::Local<v8::Value> chrome;
@@ -103,12 +107,21 @@ void ThrowDeprecatedAccessError(
       v8::Exception::Error(gin::StringToV8(isolate, kError)));
 }
 
+void EmptySetterCallback(v8::Local<v8::Name> name,
+                         v8::Local<v8::Value> value,
+                         const v8::PropertyCallbackInfo<void>& info) {
+  // Empty setter is required to keep the native data property in "accessor"
+  // state even in case the value is updated by user code.
+  // TODO(337075390): consider not using empty setter and let the property
+  // be reconfigured to a data property on write.
+}
+
 }  // namespace
 
 ExtensionHooksDelegate::ExtensionHooksDelegate(
     NativeRendererMessagingService* messaging_service)
     : messaging_service_(messaging_service) {}
-ExtensionHooksDelegate::~ExtensionHooksDelegate() {}
+ExtensionHooksDelegate::~ExtensionHooksDelegate() = default;
 
 RequestResult ExtensionHooksDelegate::HandleRequest(
     const std::string& method_name,
@@ -122,7 +135,7 @@ RequestResult ExtensionHooksDelegate::HandleRequest(
       ScriptContext*, const APISignature::V8ParseResult&);
   static struct {
     Handler handler;
-    base::StringPiece method;
+    std::string_view method;
   } kHandlers[] = {
       {&ExtensionHooksDelegate::HandleSendRequest, kSendExtensionRequest},
       {&ExtensionHooksDelegate::HandleGetURL, kGetURL},
@@ -145,8 +158,8 @@ RequestResult ExtensionHooksDelegate::HandleRequest(
     return RequestResult(RequestResult::NOT_HANDLED);
 
   if (method_name == kSendExtensionRequest) {
-    messaging_util::MassageSendMessageArguments(context->GetIsolate(), false,
-                                                arguments);
+    messaging_util::MassageSendMessageArguments(v8::Isolate::GetCurrent(),
+                                                false, arguments);
   }
 
   APISignature::V8ParseResult parse_result =
@@ -172,7 +185,7 @@ void ExtensionHooksDelegate::InitializeTemplate(
 void ExtensionHooksDelegate::InitializeInstance(
     v8::Local<v8::Context> context,
     v8::Local<v8::Object> instance) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   ScriptContext* script_context = GetScriptContextFromV8ContextChecked(context);
 
   // Throw access errors for deprecated sendRequest-related properties. This
@@ -182,9 +195,9 @@ void ExtensionHooksDelegate::InitializeInstance(
     static constexpr const char* kDeprecatedSendRequestProperties[] = {
         "sendRequest", "onRequest", "onRequestExternal"};
     for (const char* property : kDeprecatedSendRequestProperties) {
-      v8::Maybe<bool> success =
-          instance->SetAccessor(context, gin::StringToV8(isolate, property),
-                                &ThrowDeprecatedAccessError);
+      v8::Maybe<bool> success = instance->SetNativeDataProperty(
+          context, gin::StringToV8(isolate, property),
+          &ThrowDeprecatedAccessError, &EmptySetterCallback);
       DCHECK(success.IsJust());
       DCHECK(success.FromJust());
     }
@@ -201,8 +214,9 @@ void ExtensionHooksDelegate::InitializeInstance(
     };
 
     for (const auto* alias : kAliases) {
-      v8::Maybe<bool> success = instance->SetAccessor(
-          context, gin::StringToV8(isolate, alias), &GetAliasedFeature);
+      v8::Maybe<bool> success = instance->SetNativeDataProperty(
+          context, gin::StringToV8(isolate, alias), &GetAliasedFeature,
+          &EmptySetterCallback);
       DCHECK(success.IsJust());
       DCHECK(success.FromJust());
     }
@@ -288,7 +302,6 @@ APIBindingHooks::RequestResult ExtensionHooksDelegate::HandleGetViews(
         !options_dict.Get("type", &v8_view_type)) {
       NOTREACHED()
           << "Unexpected exception: argument parsing produces plain objects";
-      return RequestResult(RequestResult::THROWN);
     }
 
     if (!v8_window_id->IsUndefined()) {

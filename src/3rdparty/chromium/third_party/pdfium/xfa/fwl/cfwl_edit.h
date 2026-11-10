@@ -16,6 +16,10 @@
 #include "xfa/fwl/cfwl_scrollbar.h"
 #include "xfa/fwl/cfwl_widget.h"
 
+class CFX_RenderDevice;
+
+namespace pdfium {
+
 #define FWL_STYLEEXT_EDT_ReadOnly (1L << 0)
 #define FWL_STYLEEXT_EDT_MultiLine (1L << 1)
 #define FWL_STYLEEXT_EDT_WantReturn (1L << 2)
@@ -41,7 +45,6 @@
 class CFWL_MessageKey;
 class CFWL_MessageMouse;
 class CFWL_Caret;
-class CFX_RenderDevice;
 
 class CFWL_Edit : public CFWL_Widget, public CFDE_TextEditEngine::Delegate {
  public:
@@ -80,8 +83,8 @@ class CFWL_Edit : public CFWL_Widget, public CFDE_TextEditEngine::Delegate {
   int32_t GetLimit() const;
   void SetLimit(int32_t nLimit);
   void SetAliasChar(wchar_t wAlias);
-  absl::optional<WideString> Copy();
-  absl::optional<WideString> Cut();
+  std::optional<WideString> Copy();
+  std::optional<WideString> Cut();
   bool Paste(const WideString& wsPaste);
   bool Undo();
   bool Redo();
@@ -102,8 +105,8 @@ class CFWL_Edit : public CFWL_Widget, public CFDE_TextEditEngine::Delegate {
 
   void ShowCaret(CFX_RectF* pRect);
   void HideCaret(CFX_RectF* pRect);
-  const CFX_RectF& GetRTClient() const { return m_ClientRect; }
-  CFDE_TextEditEngine* GetTxtEdtEngine() { return m_pEditEngine.get(); }
+  const CFX_RectF& GetRTClient() const { return client_rect_; }
+  CFDE_TextEditEngine* GetTxtEdtEngine() { return edit_engine_.get(); }
 
  private:
   void RenderText(CFX_RenderDevice* pRenderDev,
@@ -145,22 +148,27 @@ class CFWL_Edit : public CFWL_Widget, public CFDE_TextEditEngine::Delegate {
                 CFWL_EventScroll::Code dwCode,
                 float fPos);
 
-  CFX_RectF m_ClientRect;
-  CFX_RectF m_EngineRect;
-  CFX_RectF m_StaticRect;
-  CFX_RectF m_CaretRect;
-  bool m_bLButtonDown = false;
-  int32_t m_nLimit = -1;
-  float m_fVAlignOffset = 0.0f;
-  float m_fScrollOffsetX = 0.0f;
-  float m_fScrollOffsetY = 0.0f;
-  float m_fFontSize = 0.0f;
-  size_t m_CursorPosition = 0;
-  std::unique_ptr<CFDE_TextEditEngine> const m_pEditEngine;
-  cppgc::Member<CFWL_ScrollBar> m_pVertScrollBar;
-  cppgc::Member<CFWL_Caret> m_pCaret;
-  WideString m_wsCache;
-  WideString m_wsFont;
+  CFX_RectF client_rect_;
+  CFX_RectF engine_rect_;
+  CFX_RectF static_rect_;
+  CFX_RectF caret_rect_;
+  bool lbutton_down_ = false;
+  int32_t limit_ = -1;
+  float valign_offset_ = 0.0f;
+  float scroll_offset_x_ = 0.0f;
+  float scroll_offset_y_ = 0.0f;
+  float font_size_ = 0.0f;
+  size_t cursor_position_ = 0;
+  std::unique_ptr<CFDE_TextEditEngine> const edit_engine_;
+  cppgc::Member<CFWL_ScrollBar> vert_scroll_bar_;
+  cppgc::Member<CFWL_Caret> caret_;
+  WideString cache_;
+  WideString font_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_Edit;
 
 #endif  // XFA_FWL_CFWL_EDIT_H_

@@ -13,8 +13,8 @@
 #include "libANGLE/Image.h"
 #include "libANGLE/renderer/vulkan/ContextVk.h"
 #include "libANGLE/renderer/vulkan/ImageVk.h"
-#include "libANGLE/renderer/vulkan/RendererVk.h"
 #include "libANGLE/renderer/vulkan/TextureVk.h"
+#include "libANGLE/renderer/vulkan/vk_renderer.h"
 
 namespace rx
 {
@@ -46,7 +46,7 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
                                              gl::MultisamplingMode mode)
 {
     ContextVk *contextVk            = vk::GetImpl(context);
-    RendererVk *renderer            = contextVk->getRenderer();
+    vk::Renderer *renderer          = contextVk->getRenderer();
     const vk::Format &format        = renderer->getFormat(internalformat);
     angle::FormatID textureFormatID = format.getActualRenderableImageFormatID();
 
@@ -75,7 +75,6 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     {
         mImage              = new vk::ImageHelper();
         mOwnsImage          = true;
-        mImageSiblingSerial = {};
         mImageObserverBinding.bind(mImage);
         mImageViews.init(renderer);
     }
@@ -86,8 +85,7 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
 
     const bool isRenderToTexture = mode == gl::MultisamplingMode::MultisampledRenderToTexture;
     const bool hasRenderToTextureEXT =
-        renderer->getFeatures().supportsMultisampledRenderToSingleSampled.enabled ||
-        renderer->getFeatures().supportsMultisampledRenderToSingleSampledGOOGLEX.enabled;
+        renderer->getFeatures().supportsMultisampledRenderToSingleSampled.enabled;
 
     // Transfer and sampled usage are used for various utilities such as readback or blit.
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -104,7 +102,9 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     }
 
     // For framebuffer fetch and advanced blend emulation, color will be read as input attachment.
-    if (!isDepthStencilFormat)
+    // For depth/stencil framebuffer fetch, depth/stencil will also be read as input attachment.
+    if (!isDepthStencilFormat ||
+        renderer->getFeatures().supportsShaderFramebufferFetchDepthStencil.enabled)
     {
         usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
     }
@@ -126,10 +126,10 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     bool robustInit = contextVk->isRobustResourceInitEnabled();
 
     VkExtent3D extents = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
-    ANGLE_TRY(mImage->initExternal(contextVk, gl::TextureType::_2D, extents,
-                                   format.getIntendedFormatID(), textureFormatID, imageSamples,
-                                   usage, createFlags, vk::ImageLayout::Undefined, nullptr,
-                                   gl::LevelIndex(0), 1, 1, robustInit, false));
+    ANGLE_TRY(mImage->initExternal(
+        contextVk, gl::TextureType::_2D, extents, format.getIntendedFormatID(), textureFormatID,
+        imageSamples, usage, createFlags, vk::ImageLayout::Undefined, nullptr, gl::LevelIndex(0), 1,
+        1, robustInit, false, vk::YcbcrConversionDesc{}, nullptr));
 
     VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     ANGLE_TRY(contextVk->initImageAllocation(mImage, false, renderer->getMemoryProperties(), flags,
@@ -144,15 +144,14 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
 
         ANGLE_TRY(mMultisampledImage.initImplicitMultisampledRenderToTexture(
             contextVk, false, renderer->getMemoryProperties(), gl::TextureType::_2D, samples,
-            *mImage, robustInit));
+            *mImage, mImage->getExtents(), robustInit));
 
         mRenderTarget.init(&mMultisampledImage, &mMultisampledImageViews, mImage, &mImageViews,
-                           mImageSiblingSerial, gl::LevelIndex(0), 0, 1,
-                           RenderTargetTransience::MultisampledTransient);
+                           gl::LevelIndex(0), 0, 1, RenderTargetTransience::MultisampledTransient);
     }
     else
     {
-        mRenderTarget.init(mImage, &mImageViews, nullptr, nullptr, mImageSiblingSerial,
+        mRenderTarget.init(mImage, &mImageViews, nullptr, nullptr,
                            gl::LevelIndex(0), 0, 1, RenderTargetTransience::Default);
     }
 
@@ -183,8 +182,8 @@ angle::Result RenderbufferVk::setStorageMultisample(const gl::Context *context,
 angle::Result RenderbufferVk::setStorageEGLImageTarget(const gl::Context *context,
                                                        egl::Image *image)
 {
-    ContextVk *contextVk = vk::GetImpl(context);
-    RendererVk *renderer = contextVk->getRenderer();
+    ContextVk *contextVk   = vk::GetImpl(context);
+    vk::Renderer *renderer = contextVk->getRenderer();
 
     ANGLE_TRY(contextVk->getShareGroup()->lockDefaultContextsPriority(contextVk));
 
@@ -193,32 +192,22 @@ angle::Result RenderbufferVk::setStorageEGLImageTarget(const gl::Context *contex
     ImageVk *imageVk    = vk::GetImpl(image);
     mImage              = imageVk->getImage();
     mOwnsImage          = false;
-    mImageSiblingSerial = imageVk->generateSiblingSerial();
     mImageObserverBinding.bind(mImage);
     mImageViews.init(renderer);
 
-    const vk::Format &vkFormat = renderer->getFormat(image->getFormat().info->sizedInternalFormat);
-    const angle::Format &textureFormat = vkFormat.getActualRenderableImageFormat();
-
-    VkImageAspectFlags aspect = vk::GetFormatAspectFlags(textureFormat);
-
-    // Transfer the image to this queue if needed
-    uint32_t rendererQueueFamilyIndex = contextVk->getRenderer()->getQueueFamilyIndex();
-    if (mImage->isQueueChangeNeccesary(rendererQueueFamilyIndex))
+    // Update ImageViewHelper's colorspace related state
+    EGLenum imageColorspaceAttribute = image->getColorspaceAttribute();
+    if (imageColorspaceAttribute != EGL_GL_COLORSPACE_DEFAULT_EXT)
     {
-        vk::OutsideRenderPassCommandBuffer *commandBuffer;
-        vk::CommandBufferAccess access;
-        access.onExternalAcquireRelease(mImage);
-        ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
-        mImage->changeLayoutAndQueue(contextVk, aspect, vk::ImageLayout::ColorWrite,
-                                     rendererQueueFamilyIndex, commandBuffer);
-
-        ANGLE_TRY(contextVk->onEGLImageQueueChange());
+        egl::ImageColorspace imageColorspace =
+            (imageColorspaceAttribute == EGL_GL_COLORSPACE_SRGB_KHR) ? egl::ImageColorspace::SRGB
+                                                                     : egl::ImageColorspace::Linear;
+        ASSERT(mImage != nullptr);
+        mImageViews.updateEglImageColorspace(*mImage, imageColorspace);
     }
 
-    mRenderTarget.init(mImage, &mImageViews, nullptr, nullptr, mImageSiblingSerial,
-                       imageVk->getImageLevel(), imageVk->getImageLayer(), 1,
-                       RenderTargetTransience::Default);
+    mRenderTarget.init(mImage, &mImageViews, nullptr, nullptr, imageVk->getImageLevel(),
+                       imageVk->getImageLayer(), 1, RenderTargetTransience::Default);
 
     return angle::Result::Continue;
 }
@@ -298,8 +287,6 @@ void RenderbufferVk::releaseOwnershipOfImage(const gl::Context *context)
 {
     ContextVk *contextVk = vk::GetImpl(context);
 
-    ASSERT(!mImageSiblingSerial.valid());
-
     mOwnsImage = false;
     releaseAndDeleteImage(contextVk);
 }
@@ -313,7 +300,9 @@ void RenderbufferVk::releaseAndDeleteImage(ContextVk *contextVk)
 
 void RenderbufferVk::releaseImage(ContextVk *contextVk)
 {
-    RendererVk *renderer = contextVk->getRenderer();
+    vk::Renderer *renderer = contextVk->getRenderer();
+    ShareGroupVk *shareGroupVk = contextVk->getShareGroup();
+
     if (mImage == nullptr)
     {
         ASSERT(mImageViews.isImageViewGarbageEmpty() &&
@@ -326,24 +315,24 @@ void RenderbufferVk::releaseImage(ContextVk *contextVk)
         mMultisampledImageViews.release(renderer, mImage->getResourceUse());
     }
 
-    if (mImage && mOwnsImage)
+    if (mImage)
     {
-        mImage->releaseImageFromShareContexts(renderer, contextVk, mImageSiblingSerial);
-        mImage->releaseStagedUpdates(renderer);
-    }
-    else
-    {
-        if (mImage)
+        if (mOwnsImage)
         {
-            mImage->finalizeImageLayoutInShareContexts(renderer, contextVk, mImageSiblingSerial);
+            mImage->releaseImage(contextVk);
+            mImage->releaseStagedUpdates(renderer);
         }
-        mImage = nullptr;
-        mImageObserverBinding.bind(nullptr);
+        else
+        {
+            mImageObserverBinding.bind(nullptr);
+            mImage = nullptr;
+        }
     }
 
     if (mMultisampledImage.valid())
     {
-        mMultisampledImage.releaseImageFromShareContexts(renderer, contextVk, mImageSiblingSerial);
+        shareGroupVk->finalizeImageLayoutInAllSharedContexts(&mMultisampledImage);
+        mMultisampledImage.releaseImage(contextVk);
     }
 }
 
@@ -390,8 +379,8 @@ angle::Result RenderbufferVk::getRenderbufferImage(const gl::Context *context,
 
 angle::Result RenderbufferVk::ensureImageInitialized(const gl::Context *context)
 {
-    ANGLE_TRY(setStorage(context, mState.getFormat().info->internalFormat, mState.getWidth(),
-                         mState.getHeight()));
+    ANGLE_TRY(setStorageImpl(context, mState.getSamples(), mState.getFormat().info->internalFormat,
+                             mState.getWidth(), mState.getHeight(), mState.getMultisamplingMode()));
 
     return mImage->flushAllStagedUpdates(vk::GetImpl(context));
 }
@@ -399,8 +388,7 @@ angle::Result RenderbufferVk::ensureImageInitialized(const gl::Context *context)
 void RenderbufferVk::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)
 {
     ASSERT(index == kRenderbufferImageSubjectIndex &&
-           (message == angle::SubjectMessage::SubjectChanged ||
-            message == angle::SubjectMessage::InitializationComplete));
+           message == angle::SubjectMessage::SubjectChanged);
 
     // Forward the notification to the parent class that the staging buffer changed.
     if (message == angle::SubjectMessage::SubjectChanged)

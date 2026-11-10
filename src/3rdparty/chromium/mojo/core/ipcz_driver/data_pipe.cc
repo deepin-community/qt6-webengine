@@ -9,16 +9,18 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <tuple>
 
-#include <optional>
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/numerics/safe_math.h"
 #include "base/synchronization/lock.h"
 #include "mojo/core/ipcz_api.h"
 #include "mojo/core/ipcz_driver/ring_buffer.h"
+#include "mojo/core/ipcz_driver/validate_enum.h"
 #include "third_party/ipcz/include/ipcz/ipcz.h"
 
 namespace mojo::core::ipcz_driver {
@@ -225,7 +227,7 @@ MojoResult DataPipe::WriteData(const void* elements,
 
   FlushUpdatesFromPeer();
   const base::span<const uint8_t> input_bytes =
-      base::make_span(static_cast<const uint8_t*>(elements), num_bytes);
+      UNSAFE_TODO(base::span(static_cast<const uint8_t*>(elements), num_bytes));
   scoped_refptr<PortalWrapper> portal;
   size_t write_size;
   {
@@ -334,8 +336,20 @@ MojoResult DataPipe::ReadData(void* elements,
   }
 
   FlushUpdatesFromPeer();
-  const base::span<uint8_t> output_bytes =
-      base::make_span(static_cast<uint8_t*>(elements), num_bytes);
+  base::span<uint8_t> output_bytes;
+  if (!(discard || query)) {
+    // `elements` can be null in the `discard` or `query` cases and would result
+    // in creating a non-empty, dangling `span` (hitting a `DCHECK` in `span`'s
+    // constructor).  OTOH, `elements` and `num_bytes` need to describe a valid
+    // span in all the other cases.
+    if (!elements && num_bytes > 0) {
+      return MOJO_RESULT_INVALID_ARGUMENT;
+    }
+
+    output_bytes =
+        UNSAFE_TODO(base::span(static_cast<uint8_t*>(elements), num_bytes));
+  }
+
   size_t read_size = num_bytes;
   scoped_refptr<PortalWrapper> portal;
   {
@@ -351,10 +365,6 @@ MojoResult DataPipe::ReadData(void* elements,
     }
 
     if (num_bytes % element_size_ != 0 || !portal_) {
-      return MOJO_RESULT_INVALID_ARGUMENT;
-    }
-
-    if (!discard && !elements && data_size > 0) {
       return MOJO_RESULT_INVALID_ARGUMENT;
     }
 
@@ -492,7 +502,7 @@ bool DataPipe::Serialize(Transport& transmitter,
   // SharedBuffer object.
   DCHECK_GE(data.size(), sizeof(DataPipeHeader));
   auto& header = *reinterpret_cast<DataPipeHeader*>(data.data());
-  memset(&header, 0, sizeof(header));
+  UNSAFE_TODO(memset(&header, 0, sizeof(header)));
   header.size = sizeof(header);
   header.endpoint_type = endpoint_type_;
   header.element_size = base::checked_cast<uint32_t>(element_size_);
@@ -519,6 +529,10 @@ scoped_refptr<DataPipe> DataPipe::Deserialize(
   const auto& header = *reinterpret_cast<const DataPipeHeader*>(data.data());
   const size_t header_size = header.size;
   if (header_size < sizeof(header) || header_size % 8 != 0) {
+    return nullptr;
+  }
+
+  if (!ValidateEnum(header.endpoint_type)) {
     return nullptr;
   }
 
@@ -657,9 +671,9 @@ bool DataPipe::DeserializeRingBuffer(const RingBuffer::SerializedState& state) {
 
 DataPipe::Pair::Pair() = default;
 
-DataPipe::Pair::Pair(const Pair&) = default;
+DataPipe::Pair::Pair(Pair&&) = default;
 
-DataPipe::Pair& DataPipe::Pair::operator=(const Pair&) = default;
+DataPipe::Pair& DataPipe::Pair::operator=(Pair&&) = default;
 
 DataPipe::Pair::~Pair() = default;
 

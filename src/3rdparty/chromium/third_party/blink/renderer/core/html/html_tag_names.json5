@@ -211,6 +211,11 @@
       interfaceName: "HTMLFrameSetElement",
     },
     {
+      name: "geolocation",
+      interfaceName: "HTMLGeolocationElement",
+      runtimeEnabled: "GeolocationElement",
+    },
+    {
       name: "h1",
       interfaceName: "HTMLHeadingElement",
     },
@@ -303,12 +308,6 @@
       constructorNeedsCreateElementFlags: true,
     },
     {
-      name: "listbox",
-      interfaceName: "HTMLListboxElement",
-      runtimeEnabled: "HTMLSelectListElement",
-      interfaceHeaderDir: "third_party/blink/renderer/core/html/forms",
-    },
-    {
       name: "listing",
       interfaceName: "HTMLPreElement",
     },
@@ -323,6 +322,24 @@
     },
     "marquee",
     "menu",
+    {
+      name: "menubar",
+      interfaceName: "HTMLMenuBarElement",
+      interfaceHeaderDir: "third_party/blink/renderer/core/html",
+      runtimeEnabled: "MenuElements",
+    },
+    {
+      name: "menuitem",
+      interfaceName: "HTMLMenuItemElement",
+      interfaceHeaderDir: "third_party/blink/renderer/core/html",
+      runtimeEnabled: "MenuElements",
+    },
+    {
+      name: "menulist",
+      interfaceName: "HTMLMenuListElement",
+      interfaceHeaderDir: "third_party/blink/renderer/core/html",
+      runtimeEnabled: "MenuElements",
+    },
     {
       name: "meta",
       constructorNeedsCreateElementFlags: true,
@@ -355,6 +372,7 @@
     {
       name: "object",
       constructorNeedsCreateElementFlags: true,
+      noTypeHelpers: true,
     },
     {
       name: "ol",
@@ -382,6 +400,8 @@
       name: "permission",
       interfaceName: "HTMLPermissionElement",
       runtimeEnabled: "PermissionElement",
+      runtimeFlagHasOriginTrial: true,
+      noTypeHelpers: true,
     },
     {
       name: "picture",
@@ -410,8 +430,7 @@
     },
     {
       name: "rt",
-      JSInterfaceName: "HTMLElement",
-      interfaceName: "HTMLRTElement",
+      interfaceName: "HTMLElement",
     },
     {
       name: "rtc",
@@ -419,8 +438,7 @@
     },
     {
       name: "ruby",
-      JSInterfaceName: "HTMLElement",
-      interfaceName: "HTMLRubyElement",
+      interfaceName: "HTMLElement",
     },
     {
       name: "s",
@@ -436,8 +454,7 @@
     },
     {
       name: "search",
-      interfaceName: "HTMLElement",
-      runtimeEnabled: "HTMLSearchElement",
+      interfaceName: "HTMLSearchElement",
     },
     {
       name: "section",
@@ -448,15 +465,10 @@
       interfaceHeaderDir: "third_party/blink/renderer/core/html/forms",
     },
     {
-      name: "selectedoption",
-      interfaceName: "HTMLElement",
-      runtimeEnabled: "HTMLSelectListElement",
-    },
-    {
-      name: "selectlist",
-      interfaceName: "HTMLSelectListElement",
-      runtimeEnabled: "HTMLSelectListElement",
+      name: "selectedcontent",
+      interfaceName: "HTMLSelectedContentElement",
       interfaceHeaderDir: "third_party/blink/renderer/core/html/forms",
+      runtimeEnabled: "CustomizableSelect",
     },
     {
       name: "slot",

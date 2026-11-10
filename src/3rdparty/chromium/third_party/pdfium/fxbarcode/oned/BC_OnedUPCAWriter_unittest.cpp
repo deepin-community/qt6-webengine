@@ -4,9 +4,8 @@
 
 #include "fxbarcode/oned/BC_OnedUPCAWriter.h"
 
-#include <string.h>
-
 #include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/span.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -22,7 +21,7 @@ TEST(OnedUPCAWriterTest, Encode) {
   EXPECT_TRUE(writer.Encode("12345678901").empty());
   EXPECT_TRUE(writer.Encode("1234567890123").empty());
 
-  static const char kExpected1[] =
+  static constexpr auto kExpected1 = pdfium::span_from_cstring(
       "# #"      // Start
       "  ##  #"  // 1 L
       "  #  ##"  // 2 L
@@ -37,14 +36,15 @@ TEST(OnedUPCAWriterTest, Encode) {
       "###  # "  // 0 R
       "##  ## "  // 1 R
       "## ##  "  // 2 R
-      "# #";     // End
+      "# #");    // End
   DataVector<uint8_t> encoded = writer.Encode("123456789012");
-  ASSERT_EQ(strlen(kExpected1), encoded.size());
-  for (size_t i = 0; i < strlen(kExpected1); i++)
+  ASSERT_EQ(kExpected1.size(), encoded.size());
+  for (size_t i = 0; i < kExpected1.size(); i++) {
     EXPECT_EQ(kExpected1[i] != ' ', !!encoded[i]) << i;
+  }
 
   encoded = writer.Encode("777666555440");
-  static const char kExpected2[] =
+  static constexpr auto kExpected2 = pdfium::span_from_cstring(
       "# #"      // Start
       " ### ##"  // 7 L
       " ### ##"  // 7 L
@@ -59,10 +59,11 @@ TEST(OnedUPCAWriterTest, Encode) {
       "# ###  "  // 4 R
       "# ###  "  // 4 R
       "###  # "  // 0 R
-      "# #";     // End
-  ASSERT_EQ(strlen(kExpected2), encoded.size());
-  for (size_t i = 0; i < strlen(kExpected2); i++)
+      "# #");    // End
+  ASSERT_EQ(kExpected2.size(), encoded.size());
+  for (size_t i = 0; i < kExpected2.size(); i++) {
     EXPECT_EQ(kExpected2[i] != ' ', !!encoded[i]) << i;
+  }
 }
 
 TEST(OnedUPCAWriterTest, Checksum) {

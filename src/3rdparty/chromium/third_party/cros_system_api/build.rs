@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-use chromeos_dbus_bindings::{self, generate_module, BindingsType};
+use chromeos_dbus_bindings::{generate_module, BindingsType, CROSSROADS_SERVER_OPTS};
 
 // The parent path of system_api.
 const SOURCE_DIR: &str = "..";
@@ -43,6 +43,11 @@ const BINDINGS_TO_GENERATE: &[(&str, &str, BindingsType)] = &[
     (
         "org_chromium_flimflam_service",
         "shill/dbus_bindings/org.chromium.flimflam.Service.dbus-xml",
+        BindingsType::Client(OPTS),
+    ),
+    (
+        "org_chromium_permission_broker",
+        "permission_broker/dbus_bindings/org.chromium.PermissionBroker.xml",
         BindingsType::Client(OPTS),
     ),
     (
@@ -76,8 +81,18 @@ const BINDINGS_TO_GENERATE: &[(&str, &str, BindingsType)] = &[
         BindingsType::Client(OPTS),
     ),
     (
+        "org_chromium_vhostuserstarter",
+        "vm_tools/dbus_bindings/org.chromium.VhostUserStarter.xml",
+        BindingsType::Server(CROSSROADS_SERVER_OPTS),
+    ),
+    (
         "org_chromium_vm_concierge",
         "vm_tools/dbus_bindings/org.chromium.VmConcierge.xml",
+        BindingsType::Client(OPTS),
+    ),
+    (
+        "org_chromium_vm_cicerone",
+        "vm_tools/dbus_bindings/org.chromium.VmCicerone.xml",
         BindingsType::Client(OPTS),
     ),
     (
@@ -91,6 +106,7 @@ const BINDINGS_TO_GENERATE: &[(&str, &str, BindingsType)] = &[
 // When adding additional protos, remember to include the source project and subtree in the
 // ebuild. Otherwise, the source files will not be accessible when building dev-rust/system_api.
 const PROTOS_TO_GENERATE: &[(&str, &str)] = &[
+    ("apps", "system_api/dbus/vm_applications/apps.proto"),
     ("arc", "system_api/dbus/arc/arc.proto"),
     (
         "auth_factor",
@@ -99,6 +115,14 @@ const PROTOS_TO_GENERATE: &[(&str, &str)] = &[
     (
         "battery_saver",
         "system_api/dbus/power_manager/battery_saver.proto",
+    ),
+    (
+        "chunneld_service",
+        "system_api/dbus/chunneld/chunneld_service.proto",
+    ),
+    (
+        "cicerone_service",
+        "system_api/dbus/vm_cicerone/cicerone_service.proto",
     ),
     (
         "concierge_service",
@@ -119,7 +143,12 @@ const PROTOS_TO_GENERATE: &[(&str, &str)] = &[
         "resource_manager",
         "system_api/dbus/resource_manager/resource_manager.proto",
     ),
+    ("launch", "system_api/dbus/vm_launch/launch.proto"),
     ("rpc", "system_api/dbus/cryptohome/rpc.proto"),
+    (
+        "seneschal_service",
+        "system_api/dbus/seneschal/seneschal_service.proto",
+    ),
     (
         "shadercached",
         "system_api/dbus/shadercached/shadercached.proto",
@@ -130,8 +159,16 @@ const PROTOS_TO_GENERATE: &[(&str, &str)] = &[
         "system_api/dbus/cryptohome/UserDataAuth.proto",
     ),
     (
+        "vhost_user_starter",
+        "system_api/dbus/vhost_user_starter/vhost_user_starter.proto",
+    ),
+    (
         "vm_memory_management",
         "system_api/non_standard_ipc/vm_memory_management/vm_memory_management.proto",
+    ),
+    (
+        "vm_plugin_dispatcher",
+        "system_api/dbus/vm_plugin_dispatcher/vm_plugin_dispatcher.proto",
     ),
     ("vtpm_interface", "vtpm/vtpm_interface.proto"),
     (

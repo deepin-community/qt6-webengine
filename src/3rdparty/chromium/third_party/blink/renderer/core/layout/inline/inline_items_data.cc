@@ -6,12 +6,15 @@
 
 namespace blink {
 
-void InlineItemsData::GetOpenTagItems(wtf_size_t size,
+void InlineItemsData::GetOpenTagItems(wtf_size_t start_index,
+                                      wtf_size_t size,
                                       OpenTagItems* open_items) const {
   DCHECK_LE(size, items.size());
-  for (const InlineItem& item : base::make_span(items.data(), size)) {
+  for (const Member<InlineItem>& item_ptr :
+       base::span(items).subspan(start_index, size)) {
+    const InlineItem& item = *item_ptr;
     if (item.Type() == InlineItem::kOpenTag) {
-      open_items->push_back(&item);
+      open_items->push_back(item_ptr);
     } else if (item.Type() == InlineItem::kCloseTag) {
       open_items->pop_back();
     }
@@ -20,8 +23,8 @@ void InlineItemsData::GetOpenTagItems(wtf_size_t size,
 
 #if DCHECK_IS_ON()
 void InlineItemsData::CheckConsistency() const {
-  for (const InlineItem& item : items) {
-    item.CheckTextType(text_content);
+  for (const Member<InlineItem>& item : items) {
+    item->CheckTextType(text_content);
   }
 }
 #endif

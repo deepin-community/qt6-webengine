@@ -115,17 +115,22 @@ void SVGResource::InvalidateCycleCache() {
 void SVGResource::NotifyContentChanged() {
   InvalidateCycleCache();
 
-  HeapVector<Member<SVGResourceClient>> clients;
-  CopyKeysToVector(clients_, clients);
-
+  HeapVector<Member<SVGResourceClient>> clients(clients_.Keys());
   for (SVGResourceClient* client : clients)
     client->ResourceContentChanged(this);
 }
 
+Element* SVGResource::Target() const {
+  UpdateContentLifecycleForUse();
+  return target_.Get();
+}
+
 LayoutSVGResourceContainer* SVGResource::ResourceContainerNoCycleCheck() const {
-  if (!target_)
+  Element* target = Target();
+  if (!target) {
     return nullptr;
-  return DynamicTo<LayoutSVGResourceContainer>(target_->GetLayoutObject());
+  }
+  return DynamicTo<LayoutSVGResourceContainer>(target->GetLayoutObject());
 }
 
 LayoutSVGResourceContainer* SVGResource::ResourceContainer(
@@ -202,9 +207,7 @@ void LocalSVGResource::Unregister() {
 void LocalSVGResource::NotifyFilterPrimitiveChanged(
     SVGFilterPrimitiveStandardAttributes& primitive,
     const QualifiedName& attribute) {
-  HeapVector<Member<SVGResourceClient>> clients;
-  CopyKeysToVector(clients_, clients);
-
+  HeapVector<Member<SVGResourceClient>> clients(clients_.Keys());
   for (SVGResourceClient* client : clients)
     client->FilterPrimitiveChanged(this, primitive, attribute);
 }
@@ -228,9 +231,13 @@ void LocalSVGResource::Trace(Visitor* visitor) const {
   SVGResource::Trace(visitor);
 }
 
-ExternalSVGResource::ExternalSVGResource(const KURL& url) : url_(url) {}
+ExternalSVGResourceDocumentContent::ExternalSVGResourceDocumentContent(
+    const KURL& url)
+    : url_(url) {}
 
-void ExternalSVGResource::Load(Document& document) {
+void ExternalSVGResourceDocumentContent::Load(
+    Document& document,
+    CrossOriginAttributeValue cross_origin) {
   if (document_content_)
     return;
   // Loading SVG resources should not trigger script, see
@@ -241,11 +248,22 @@ void ExternalSVGResource::Load(Document& document) {
   ResourceLoaderOptions options(execution_context->GetCurrentWorld());
   options.initiator_info.name = fetch_initiator_type_names::kCSS;
   FetchParameters params(ResourceRequest(url_), options);
-  document_content_ = SVGResourceDocumentContent::Fetch(params, document, this);
+  if (cross_origin == kCrossOriginAttributeNotSet) {
+    params.MutableResourceRequest().SetMode(
+        network::mojom::blink::RequestMode::kSameOrigin);
+  } else {
+    params.SetCrossOriginAccessControl(execution_context->GetSecurityOrigin(),
+                                       cross_origin);
+  }
+  document_content_ = SVGResourceDocumentContent::Fetch(params, document);
+  if (!document_content_) {
+    return;
+  }
+  document_content_->AddObserver(this);
   target_ = ResolveTarget();
 }
 
-void ExternalSVGResource::LoadWithoutCSP(Document& document) {
+void ExternalSVGResourceDocumentContent::LoadWithoutCSP(Document& document) {
   if (document_content_)
     return;
   // Loading SVG resources should not trigger script, see
@@ -258,23 +276,44 @@ void ExternalSVGResource::LoadWithoutCSP(Document& document) {
   FetchParameters params(ResourceRequest(url_), options);
   params.SetContentSecurityCheck(
       network::mojom::blink::CSPDisposition::DO_NOT_CHECK);
-  document_content_ = SVGResourceDocumentContent::Fetch(params, document, this);
+  params.MutableResourceRequest().SetMode(
+      network::mojom::blink::RequestMode::kSameOrigin);
+  document_content_ = SVGResourceDocumentContent::Fetch(params, document);
+  if (!document_content_) {
+    return;
+  }
+  document_content_->AddObserver(this);
   target_ = ResolveTarget();
 }
 
-void ExternalSVGResource::NotifyFinished(Resource*) {
+void ExternalSVGResourceDocumentContent::ResourceNotifyFinished(
+    SVGResourceDocumentContent* document_content) {
+  DCHECK_EQ(document_content_, document_content);
   Element* new_target = ResolveTarget();
-  if (new_target == target_)
+  // If no target was found when resolving in Load(), we want to notify clients
+  // regardless of if a target was found or not, to be able to update rendering
+  // based on loading state.
+  if (target_ && new_target == target_) {
     return;
+  }
   target_ = new_target;
   NotifyContentChanged();
 }
 
-String ExternalSVGResource::DebugName() const {
-  return "ExternalSVGResource";
+void ExternalSVGResourceDocumentContent::ResourceContentChanged(
+    SVGResourceDocumentContent* document_content) {
+  DCHECK_EQ(document_content_, document_content);
+  if (!target_) {
+    return;
+  }
+  NotifyContentChanged();
 }
 
-Element* ExternalSVGResource::ResolveTarget() {
+bool ExternalSVGResourceDocumentContent::IsLoading() const {
+  return !document_content_ || document_content_->IsLoading();
+}
+
+Element* ExternalSVGResourceDocumentContent::ResolveTarget() {
   if (!document_content_)
     return nullptr;
   if (!url_.HasFragmentIdentifier())
@@ -287,10 +326,16 @@ Element* ExternalSVGResource::ResolveTarget() {
   return external_document->getElementById(decoded_fragment);
 }
 
-void ExternalSVGResource::Trace(Visitor* visitor) const {
+void ExternalSVGResourceDocumentContent::UpdateContentLifecycleForUse() const {
+  if (!document_content_) {
+    return;
+  }
+  document_content_->UpdateLifecycleForUse();
+}
+
+void ExternalSVGResourceDocumentContent::Trace(Visitor* visitor) const {
   visitor->Trace(document_content_);
   SVGResource::Trace(visitor);
-  ResourceClient::Trace(visitor);
 }
 
 ExternalSVGResourceImageContent::ExternalSVGResourceImageContent(
@@ -303,6 +348,10 @@ ExternalSVGResourceImageContent::ExternalSVGResourceImageContent(
 void ExternalSVGResourceImageContent::Prefinalize() {
   image_content_->DidRemoveObserver();
   image_content_ = nullptr;
+}
+
+bool ExternalSVGResourceImageContent::IsLoading() const {
+  return image_content_->IsLoading();
 }
 
 Element* ExternalSVGResourceImageContent::ResolveTarget() {
@@ -318,13 +367,26 @@ Element* ExternalSVGResourceImageContent::ResolveTarget() {
   }
   AtomicString decoded_fragment(
       DecodeURLEscapeSequences(fragment_, DecodeURLMode::kUTF8OrIsomorphic));
-  return svg_image->GetResourceElement(decoded_fragment);
+  return svg_image->GetResourceElement(
+      base::PassKey<ExternalSVGResourceImageContent>(), decoded_fragment);
+}
+
+void ExternalSVGResourceImageContent::UpdateContentLifecycleForUse() const {
+  auto* svg_image = DynamicTo<SVGImage>(image_content_->GetImage());
+  if (!svg_image) {
+    return;
+  }
+  svg_image->UpdateLifecycleForUse(
+      base::PassKey<ExternalSVGResourceImageContent>());
 }
 
 void ExternalSVGResourceImageContent::ImageNotifyFinished(
     ImageResourceContent*) {
   Element* new_target = ResolveTarget();
-  if (new_target == target_) {
+  // If no target was found when resolving in Load(), we want to notify clients
+  // regardless of if a target was found or not, to be able to update rendering
+  // based on loading state.
+  if (target_ && new_target == target_) {
     return;
   }
   target_ = new_target;

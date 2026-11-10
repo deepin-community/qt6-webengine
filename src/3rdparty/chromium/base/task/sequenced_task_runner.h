@@ -7,9 +7,10 @@
 
 #include <memory>
 
-#include "base/auto_reset.h"
 #include "base/base_export.h"
 #include "base/functional/callback.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/task/delay_policy.h"
 #include "base/task/delayed_task_handle.h"
 #include "base/task/sequenced_task_runner_helpers.h"
@@ -18,10 +19,11 @@
 
 namespace blink {
 class LowPrecisionTimer;
+class ScriptedIdleTaskController;
 class TimerBase;
 class TimerBasedTickProvider;
 class WebRtcTaskQueue;
-}
+}  // namespace blink
 namespace IPC {
 class ChannelAssociatedGroupController;
 }  // namespace IPC
@@ -30,19 +32,25 @@ class AlsaPcmOutputStream;
 class AlsaPcmInputStream;
 class FakeAudioWorker;
 }  // namespace media
+namespace viz {
+class ExternalBeginFrameSourceWin;
+}  // namespace viz
 namespace webrtc {
 class ThreadWrapper;
 }  // namespace webrtc
 
 namespace base {
 
+namespace android {
+class PreFreezeBackgroundMemoryTrimmer;
+}
 namespace internal {
 class DelayTimerBase;
 class DelayedTaskManager;
-}
+}  // namespace internal
 class DeadlineTimer;
 class MetronomeTimer;
-class PreFreezeBackgroundMemoryTrimmer;
+class SingleThreadTaskRunner;
 class TimeDelta;
 class TimeTicks;
 
@@ -52,13 +60,14 @@ namespace subtle {
 class PostDelayedTaskPassKey {
  private:
   // Avoid =default to disallow creation by uniform initialization.
-  PostDelayedTaskPassKey() {}
+  PostDelayedTaskPassKey() = default;
 
   friend class base::internal::DelayTimerBase;
   friend class base::internal::DelayedTaskManager;
   friend class base::DeadlineTimer;
   friend class base::MetronomeTimer;
   friend class blink::LowPrecisionTimer;
+  friend class blink::ScriptedIdleTaskController;
   friend class blink::TimerBase;
   friend class blink::TimerBasedTickProvider;
   friend class blink::WebRtcTaskQueue;
@@ -68,7 +77,7 @@ class PostDelayedTaskPassKey {
   friend class media::AlsaPcmInputStream;
   friend class media::FakeAudioWorker;
 #if BUILDFLAG(IS_ANDROID)
-  friend class base::PreFreezeBackgroundMemoryTrimmer;
+  friend class base::android::PreFreezeBackgroundMemoryTrimmer;
 #endif
 };
 
@@ -76,10 +85,11 @@ class PostDelayedTaskPassKey {
 class RunOrPostTaskPassKey {
  private:
   // Avoid =default to disallow creation by uniform initialization.
-  RunOrPostTaskPassKey() {}
+  RunOrPostTaskPassKey() = default;
 
   friend class IPC::ChannelAssociatedGroupController;
   friend class RunOrPostTaskPassKeyForTesting;
+  friend class viz::ExternalBeginFrameSourceWin;
 };
 
 class PostDelayedTaskPassKeyForTesting : public PostDelayedTaskPassKey {};
@@ -228,8 +238,8 @@ class BASE_EXPORT SequencedTaskRunner : public TaskRunner {
   // implementation of PostCancelableDelayedTaskAt(). The default behavior
   // subtracts TimeTicks::Now() from |delayed_run_time| to get a delay. See
   // base::Timer to post precise/repeating timeouts.
-  // TODO(1153139): Make pure virtual once all SequencedTaskRunners implement
-  // this.
+  // TODO(crbug.com/40158967): Make pure virtual once all SequencedTaskRunners
+  // implement this.
   virtual bool PostDelayedTaskAt(subtle::PostDelayedTaskPassKey,
                                  const Location& from_here,
                                  OnceClosure task,
@@ -243,8 +253,8 @@ class BASE_EXPORT SequencedTaskRunner : public TaskRunner {
   // `PostTask`. Since `task` may run synchronously, it is generally not
   // appropriate to invoke this if `task` may take a long time to run.
   //
-  // TODO(crbug.com/1503967): This API is still in development. It doesn't yet
-  // support SEQUENCE_CHECKER or SequenceLocalStorage.
+  // TODO(crbug.com/40944462): This API is still in development. It doesn't yet
+  // support SequenceLocalStorage.
   virtual bool RunOrPostTask(subtle::RunOrPostTaskPassKey,
                              const Location& from_here,
                              OnceClosure task);
@@ -286,8 +296,9 @@ class BASE_EXPORT SequencedTaskRunner : public TaskRunner {
   // task_runner->ReleaseSoon(std::move(foo_scoped_refptr));
   template <class T>
   void ReleaseSoon(const Location& from_here, scoped_refptr<T>&& object) {
-    if (!object)
+    if (!object) {
       return;
+    }
 
     DeleteOrReleaseSoonInternal(from_here, &ReleaseHelper<T>::DoRelease,
                                 object.release());
@@ -330,9 +341,10 @@ class BASE_EXPORT SequencedTaskRunner : public TaskRunner {
 
   class BASE_EXPORT CurrentDefaultHandle {
    public:
-    // Binds `task_runner` to the current thread so that it is returned by
-    // GetCurrentDefault() in the scope of the constructed
-    // `CurrentDefaultHandle`.
+    // Sets the value returned by `SequencedTaskRunner::GetCurrentDefault()` to
+    // `task_runner` within its scope. `task_runner` must belong to the current
+    // sequence. There must not already be a current default
+    // `SequencedTaskRunner` on this thread.
     explicit CurrentDefaultHandle(
         scoped_refptr<SequencedTaskRunner> task_runner);
 
@@ -343,23 +355,33 @@ class BASE_EXPORT SequencedTaskRunner : public TaskRunner {
 
    private:
     friend class SequencedTaskRunner;
-    friend class CurrentHandleOverride;
 
-    const AutoReset<CurrentDefaultHandle*> resetter_;
+    // Overriding an existing current default SingleThreadTaskRunner should only
+    // be needed under special circumstances. Require them to be enumerated as
+    // friends to require //base/OWNERS review. Use
+    // SingleThreadTaskRunner::CurrentHandleOverrideForTesting in unit tests to
+    // avoid the friend requirement.
+    friend class SingleThreadTaskRunner;
+    FRIEND_TEST_ALL_PREFIXES(SequencedTaskRunnerCurrentDefaultHandleTest,
+                             OverrideWithNull);
+    FRIEND_TEST_ALL_PREFIXES(SequencedTaskRunnerCurrentDefaultHandleTest,
+                             OverrideWithNonNull);
+
+    struct MayAlreadyExist {};
+
+    // Same as the public constructor, but there may already be a current
+    // default `SequencedTaskRunner` on this thread.
+    CurrentDefaultHandle(scoped_refptr<SequencedTaskRunner> task_runner,
+                         MayAlreadyExist);
 
     scoped_refptr<SequencedTaskRunner> task_runner_;
+    // RAW_PTR_EXCLUSION: Performance reasons (based on analysis of
+    // speedometer3).
+    RAW_PTR_EXCLUSION CurrentDefaultHandle* previous_handle_ = nullptr;
   };
 
  protected:
   ~SequencedTaskRunner() override = default;
-
-  // Helper to allow SingleThreadTaskRunner::CurrentDefaultHandle to double as a
-  // SequencedTaskRunner::CurrentDefaultHandle.
-  static void SetCurrentDefaultHandleTaskRunner(
-      CurrentDefaultHandle& current_default,
-      scoped_refptr<SequencedTaskRunner> task_runner) {
-    current_default.task_runner_ = task_runner;
-  }
 
   virtual bool DeleteOrReleaseSoonInternal(const Location& from_here,
                                            void (*deleter)(const void*),
@@ -381,8 +403,9 @@ struct BASE_EXPORT OnTaskRunnerDeleter {
   // For compatibility with std:: deleters.
   template <typename T>
   void operator()(const T* ptr) {
-    if (ptr)
+    if (ptr) {
       task_runner_->DeleteSoon(FROM_HERE, ptr);
+    }
   }
 
   scoped_refptr<SequencedTaskRunner> task_runner_;

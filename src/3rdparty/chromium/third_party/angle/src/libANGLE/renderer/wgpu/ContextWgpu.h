@@ -10,18 +10,64 @@
 #ifndef LIBANGLE_RENDERER_WGPU_CONTEXTWGPU_H_
 #define LIBANGLE_RENDERER_WGPU_CONTEXTWGPU_H_
 
+#include <webgpu/webgpu.h>
+
+#include "image_util/loadimage.h"
 #include "libANGLE/renderer/ContextImpl.h"
+#include "libANGLE/renderer/wgpu/DisplayWgpu.h"
+#include "libANGLE/renderer/wgpu/wgpu_command_buffer.h"
+#include "libANGLE/renderer/wgpu/wgpu_format_utils.h"
+#include "libANGLE/renderer/wgpu/wgpu_helpers.h"
+#include "libANGLE/renderer/wgpu/wgpu_pipeline_state.h"
+#include "libANGLE/renderer/wgpu/wgpu_utils.h"
 
 namespace rx
 {
 
 class ContextWgpu : public ContextImpl
 {
+  private:
+    // Must keep this in sync with DriverUniform::createUniformFields in:
+    // src/compiler/translator/tree_util/DriverUniform.cpp
+    // For shader uniforms such as gl_DepthRange and the viewport size.
+    //
+    // Note: this struct was originally for Vulkan, but may be able to be pared down for WGSL.
+    struct DriverUniforms
+    {
+        std::array<uint32_t, 2> acbBufferOffsets;
+
+        // .x is near, .y is far
+        std::array<float, 2> depthRange;
+
+        // Used to flip gl_FragCoord.  Packed uvec2
+        uint32_t renderArea;
+
+        // Packed vec4 of snorm8
+        uint32_t flipXY;
+
+        // Only the lower 16 bits used
+        uint32_t dither;
+
+        // Various bits of state:
+        // - Surface rotation
+        // - Advanced blend equation
+        // - Sample count
+        // - Enabled clip planes
+        // - Depth transformation
+        // - layered FBO
+        uint32_t misc;
+    };
+    static_assert(sizeof(DriverUniforms) % (sizeof(uint32_t) * 4) == 0,
+                  "DriverUniforms should be 16 bytes aligned");
+
   public:
-    ContextWgpu(const gl::State &state, gl::ErrorSet *errorSet);
+    static constexpr size_t kDriverUniformSize = sizeof(DriverUniforms);
+    ContextWgpu(const gl::State &state, gl::ErrorSet *errorSet, DisplayWgpu *display);
     ~ContextWgpu() override;
 
-    angle::Result initialize() override;
+    angle::Result initialize(const angle::ImageLoadContext &imageLoadContext) override;
+
+    void onDestroy(const gl::Context *context) override;
 
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
@@ -208,12 +254,13 @@ class ContextWgpu : public ContextImpl
     BufferImpl *createBuffer(const gl::BufferState &state) override;
 
     // Vertex Array creation
-    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data) override;
+    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data,
+                                       const gl::VertexArrayBuffers &vertexArrayBuffers) override;
 
     // Query and Fence creation
     QueryImpl *createQuery(gl::QueryType type) override;
     FenceNVImpl *createFenceNV() override;
-    SyncImpl *createSync() override;
+    SyncImpl *createSync(const gl::Context *context) override;
 
     // Transform Feedback creation
     TransformFeedbackImpl *createTransformFeedback(
@@ -249,12 +296,143 @@ class ContextWgpu : public ContextImpl
                      const char *function,
                      unsigned int line);
 
+    const angle::ImageLoadContext &getImageLoadContext() const { return mImageLoadContext; }
+
+    DisplayWgpu *getDisplay() const { return mDisplay; }
+    const angle::FeaturesWgpu &getFeatures() const { return mDisplay->getFeatures(); }
+    const DawnProcTable *getProcs() const { return mDisplay->getProcs(); }
+    webgpu::DeviceHandle getDevice() const { return mDisplay->getDevice(); }
+    webgpu::QueueHandle getQueue() const { return mDisplay->getQueue(); }
+    webgpu::InstanceHandle getInstance() const { return mDisplay->getInstance(); }
+    angle::ImageLoadContext &getImageLoadContext() { return mImageLoadContext; }
+    const webgpu::Format &getFormat(GLenum internalFormat) const
+    {
+        return mDisplay->getFormat(internalFormat);
+    }
+    angle::Result startRenderPass(const webgpu::PackedRenderPassDescriptor &desc);
+    angle::Result endRenderPass(webgpu::RenderPassClosureReason closureReason);
+
+    bool hasActiveRenderPass() { return mCurrentRenderPass != nullptr; }
+
+    angle::Result onFramebufferChange(FramebufferWgpu *framebufferWgpu, gl::Command command);
+
+    angle::Result flush(webgpu::RenderPassClosureReason);
+
+    void setColorAttachmentFormat(size_t colorIndex, WGPUTextureFormat format);
+    void setColorAttachmentFormats(const gl::DrawBuffersArray<WGPUTextureFormat> &formats);
+    void setDepthStencilFormat(WGPUTextureFormat format);
+    void setVertexAttribute(size_t attribIndex, webgpu::PackedVertexAttribute newAttrib);
+
+    void invalidateVertexBuffer(size_t slot);
+    void invalidateVertexBuffers();
+    void invalidateIndexBuffer();
+    void invalidateCurrentTextures();
+    void invalidateDriverUniforms();
+
+    void ensureCommandEncoderCreated();
+    webgpu::CommandEncoderHandle &getCurrentCommandEncoder();
+
+    // Driver uniforms are managed by ContextWgpu.
+    webgpu::BindGroupLayoutHandle getDriverUniformBindGroupLayout()
+    {
+        ASSERT(mDriverUniformsBindGroupLayout);
+        return mDriverUniformsBindGroupLayout;
+    }
+
   private:
-    gl::Caps mCaps;
-    gl::TextureCapsMap mTextureCaps;
-    gl::Extensions mExtensions;
-    gl::Limitations mLimitations;
-    ShPixelLocalStorageOptions mPLSOptions;
+    // Dirty bits.
+    enum DirtyBitType : size_t
+    {
+        // The pipeline has changed and needs to be recreated.
+        DIRTY_BIT_RENDER_PIPELINE_DESC,
+
+        DIRTY_BIT_RENDER_PASS,
+
+        DIRTY_BIT_RENDER_PIPELINE_BINDING,
+        DIRTY_BIT_VIEWPORT,
+        DIRTY_BIT_SCISSOR,
+        DIRTY_BIT_BLEND_CONSTANT,
+
+        DIRTY_BIT_VERTEX_BUFFERS,
+        DIRTY_BIT_INDEX_BUFFER,
+
+        DIRTY_BIT_DRIVER_UNIFORMS,
+        DIRTY_BIT_BIND_GROUPS,
+
+        DIRTY_BIT_MAX,
+    };
+
+    static_assert(DIRTY_BIT_RENDER_PIPELINE_BINDING > DIRTY_BIT_RENDER_PIPELINE_DESC,
+                  "Pipeline binding must be handled after the pipeline desc dirty bit");
+
+    // Dirty bit handlers that record commands or otherwise expect to manipulate the render pass
+    // that will be used for the draw call must be specified after DIRTY_BIT_RENDER_PASS.
+    static_assert(DIRTY_BIT_RENDER_PIPELINE_BINDING > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+
+    static_assert(DIRTY_BIT_BIND_GROUPS > DIRTY_BIT_DRIVER_UNIFORMS,
+                  "Bind group creation must be handled after editing driver uniforms");
+
+    using DirtyBits = angle::BitSet<DIRTY_BIT_MAX>;
+
+    DirtyBits mDirtyBits;
+    gl::AttributesMask mDirtyVertexBuffers;
+
+    DirtyBits mNewRenderPassDirtyBits;
+
+    ANGLE_INLINE void invalidateCurrentRenderPipeline()
+    {
+        mDirtyBits.set(DIRTY_BIT_RENDER_PIPELINE_DESC);
+    }
+
+    angle::Result setupDraw(const gl::Context *context,
+                            gl::PrimitiveMode mode,
+                            GLint firstVertexOrInvalid,
+                            GLsizei vertexOrIndexCount,
+                            GLsizei instanceCount,
+                            gl::DrawElementsType indexTypeOrInvalid,
+                            const void *indices,
+                            GLint baseVertex,
+                            uint32_t *outFirstIndex,
+                            uint32_t *indexCountOut);
+
+    angle::Result handleDirtyRenderPipelineDesc(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyRenderPipelineBinding(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyViewport(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyScissor(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyBlendConstant(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyVertexBuffers(const gl::AttributesMask &slots,
+                                           DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyIndexBuffer(gl::DrawElementsType indexType,
+                                         DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyBindGroups(DirtyBits::Iterator *dirtyBitsIterator);
+    angle::Result handleDirtyDriverUniforms(DirtyBits::Iterator *dirtyBitsIterator);
+
+    angle::Result handleDirtyRenderPass(DirtyBits::Iterator *dirtyBitsIterator);
+
+    angle::ImageLoadContext mImageLoadContext;
+
+    DisplayWgpu *mDisplay;
+
+    webgpu::CommandEncoderHandle mCurrentCommandEncoder;
+    webgpu::RenderPassEncoderHandle mCurrentRenderPass;
+
+    webgpu::CommandBuffer mCommandBuffer;
+
+    webgpu::RenderPipelineDesc mRenderPipelineDesc;
+    webgpu::RenderPipelineHandle mCurrentGraphicsPipeline;
+    gl::AttributesMask mCurrentRenderPipelineAllAttributes;
+
+    gl::DrawElementsType mCurrentIndexBufferType = gl::DrawElementsType::InvalidEnum;
+
+    // Actual struct of driver uniforms that is copied to the GPU. Only stored to check if the next
+    // set of driver uniforms has changed.
+    DriverUniforms mDriverUniforms;
+    // Holds the binding group layout for the driver uniforms.
+    webgpu::BindGroupLayoutHandle mDriverUniformsBindGroupLayout;
+    // Holds the most recent driver uniforms BindGroup. Note there may be others in the
+    // command buffer.
+    webgpu::BindGroupHandle mDriverUniformsBindGroup;
 };
 
 }  // namespace rx

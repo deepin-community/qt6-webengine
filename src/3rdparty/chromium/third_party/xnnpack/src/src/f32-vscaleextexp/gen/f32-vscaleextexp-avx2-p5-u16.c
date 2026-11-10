@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vscaleextexp/avx2-p5.c.in
 //   Generator: tools/xngen
@@ -8,14 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vscaleextexp.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/vscaleextexp.h"
 
-
-static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
 void xnn_f32_vscaleextexp_ukernel__avx2_p5_u16(
     size_t batch,
@@ -28,6 +29,8 @@ void xnn_f32_vscaleextexp_ukernel__avx2_p5_u16(
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
+
+  static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
   const __m256 vlog2e = _mm256_set1_ps(0x1.715476p+0f);
   const __m256 vminus_ln2_hi = _mm256_set1_ps(-0x1.62E43p-1f);
@@ -193,5 +196,4 @@ void xnn_f32_vscaleextexp_ukernel__avx2_p5_u16(
     // Store up to 7 inputs at a time.
     _mm256_maskstore_ps(output, vmask, vf);
   }
-  _mm256_zeroupper();
 }

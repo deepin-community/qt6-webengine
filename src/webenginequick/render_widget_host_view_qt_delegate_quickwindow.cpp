@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "render_widget_host_view_qt_delegate_quickwindow_p.h"
 
@@ -7,35 +8,33 @@
 
 namespace QtWebEngineCore {
 
-static inline QPoint getOffset(QQuickItem *item)
-{
-    // get parent window (scene) offset
-    QPointF offset = item->mapFromScene(QPoint(0, 0));
-    offset = item->mapToGlobal(offset);
-    // get local offset
-    offset -= item->mapToScene(QPoint(0, 0));
-    return offset.toPoint();
-}
+struct ItemTransform {
+    qreal rotation = 0.;
+    qreal scale = 1.;
+};
 
-static inline QPointF transformPoint(const QPointF &point, const QTransform &transform,
-                                     const QPointF &offset, const QQuickItem *parent)
+// Helper function to calculate the cumulative rotation and scale.
+static inline struct ItemTransform getTransformValuesFromItemTree(QQuickItem *item)
 {
-    // make scene vector
-    QPointF a = point - offset;
-    // apply local transformation
-    a = transform.map(a);
-    // make screen coordinates
-    a = parent->mapFromScene(a);
-    a = parent->mapToGlobal(a);
-    return a;
+    struct ItemTransform returnValue;
+
+    while (item) {
+        returnValue.rotation += item->rotation();
+        returnValue.scale *= item->scale();
+        item = item->parentItem();
+    }
+
+    return returnValue;
 }
 
 RenderWidgetHostViewQtDelegateQuickWindow::RenderWidgetHostViewQtDelegateQuickWindow(
         RenderWidgetHostViewQtDelegateItem *realDelegate, QWindow *parent)
-    : QQuickWindow(parent), m_realDelegate(realDelegate), m_virtualParent(nullptr), m_rotated(false)
+    : QQuickWindow(), m_realDelegate(realDelegate), m_virtualParent(nullptr), m_transformed(false)
 {
-    setFlags(Qt::Tool | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
+    setFlags(Qt::Popup | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint
+             | Qt::WindowDoesNotAcceptFocus);
     realDelegate->setParentItem(contentItem());
+    setTransientParent(parent);
 }
 
 RenderWidgetHostViewQtDelegateQuickWindow::~RenderWidgetHostViewQtDelegateQuickWindow()
@@ -52,55 +51,59 @@ void RenderWidgetHostViewQtDelegateQuickWindow::setVirtualParent(QQuickItem *vir
     m_virtualParent = virtualParent;
 }
 
-// rect is window geometry in form of parent window offset + offset in scene coordinates
-// chromium knows nothing about local transformation
+// rect is visual geometry in form of global screen coordinates
+// if menu is transformed screen rect is simply given in screen
+// coordinates where parent geometry is simply QRect(0,0,size())
 void RenderWidgetHostViewQtDelegateQuickWindow::InitAsPopup(const QRect &rect)
 {
-    m_rotated = m_virtualParent->rotation() > 0 || m_virtualParent->parentItem()->rotation() > 0;
-    if (m_rotated) {
-        // code below tries to cover the case where webengine view is rotated,
+    // To decide if there is a scale or rotation, we check it from the transfrom
+    // to also cover the case where the scale is higher up in the item tree.
+    QTransform transform = m_virtualParent->itemTransform(nullptr, nullptr);
+    m_transformed = transform.type() > QTransform::TxTranslate;
+
+    if (m_transformed) {
+        // code below tries to cover the case where webengine view is rotated or scaled,
         // the code assumes the rotation is in the form of  90, 180, 270 degrees
         // to archive that we keep chromium unaware of transformation and we transform
         // just the window content.
-        m_rect = rect;
-        // get parent window (scene) offset
-        QPointF offset = m_virtualParent->mapFromScene(QPoint(0, 0));
-        offset = m_virtualParent->mapToGlobal(offset);
-        // get local transform
-        QTransform transform = m_virtualParent->itemTransform(nullptr, nullptr);
-        QPointF tl = transformPoint(rect.topLeft(), transform, offset, m_virtualParent);
-        QPointF br = transformPoint(rect.bottomRight(), transform, offset, m_virtualParent);
-        QRectF popupRect(tl, br);
-        popupRect = popupRect.normalized();
-        // include offset from parent window
-        popupRect.moveTo(popupRect.topLeft() - offset);
-        setGeometry(popupRect.adjusted(0, 0, 1, 1).toRect());
-        // add offset since screenRect and transformed popupRect one are different and
-        // we want to rotate in center.
+        QRectF popupRect = transform.mapRect(rect);
+        // adjust for scene offset
+        const QPointF offset =
+                m_virtualParent->mapToGlobal(m_virtualParent->mapFromScene(QPoint(0, 0)));
+        popupRect.translate(offset);
+        setGeometry(popupRect.normalized().toRect());
         m_realDelegate->setX(-rect.width() / 2.0 + geometry().width() / 2.0);
         m_realDelegate->setY(-rect.height() / 2.0 + geometry().height() / 2.0);
         m_realDelegate->setTransformOrigin(QQuickItem::Center);
-        m_realDelegate->setRotation(m_virtualParent->parentItem()->rotation());
+        // We need to read the values for scale and rotation from the item tree as it is not
+        // sufficient to only use the virtual parent item and its parent for the case that the
+        // scale or rotation is applied higher up the item tree.
+        struct ItemTransform transformValues = getTransformValuesFromItemTree(m_virtualParent);
+        m_realDelegate->setRotation(transformValues.rotation);
+        m_realDelegate->setScale(transformValues.scale);
     } else {
-        QRect geometry(rect);
-        geometry.moveTo(rect.topLeft() - getOffset(m_virtualParent));
-        setGeometry(geometry);
+        setGeometry(rect);
     }
     m_realDelegate->show();
+    m_realDelegate->forceActiveFocus(Qt::FocusReason::PopupFocusReason);
     raise();
     show();
 }
 
 void RenderWidgetHostViewQtDelegateQuickWindow::Resize(int width, int height)
 {
-    if (!m_rotated)
+    if (!m_transformed)
         QQuickWindow::resize(width, height);
 }
 
 void RenderWidgetHostViewQtDelegateQuickWindow::MoveWindow(const QPoint &screenPos)
 {
-    if (!m_rotated)
-        QQuickWindow::setPosition(screenPos - getOffset(m_virtualParent));
+    if (!m_transformed) {
+        // Note we assume popup is frameless (no decorations), as screenPos is from
+        // visual gemometry and not window gemetry, however here we set
+        // positon of window frame.
+        QQuickWindow::setPosition(screenPos);
+    }
 }
 
 void RenderWidgetHostViewQtDelegateQuickWindow::SetClearColor(const QColor &color)

@@ -32,6 +32,7 @@ namespace gpu {
 
 namespace gles2 {
 class QueryTracker;
+class GLES2ImplementationTest;
 }
 
 class CommandBufferHelper;
@@ -159,10 +160,20 @@ class GLES2_IMPL_EXPORT ImplementationBase
                           const char* function_name,
                           const char* msg) = 0;
 
+  friend class gles2::GLES2ImplementationTest;
+
   raw_ptr<CommandBufferHelper> helper_;
 
   base::WeakPtrFactory<ImplementationBase> weak_ptr_factory_{this};
 };
+
+// Helper for copying 2D pixel data without touching the padding between rows.
+GLES2_IMPL_EXPORT void RelaxedAtomicWriteMemcpyImageRowsSkippingPadding(
+    base::span<uint8_t> dst,
+    base::span<uint8_t> src,
+    size_t row_bytes,
+    size_t height,
+    size_t stride);
 
 }  // namespace gpu
 

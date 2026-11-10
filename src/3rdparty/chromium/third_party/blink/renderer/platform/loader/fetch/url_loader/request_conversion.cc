@@ -4,12 +4,14 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/request_conversion.h"
 
+#include <string_view>
+
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/load_flags.h"
 #include "net/base/request_priority.h"
-#include "net/filter/source_stream.h"
+#include "net/filter/source_stream_type.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_util.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
@@ -19,9 +21,11 @@
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom-blink.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom-blink.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
+#include "services/network/public/mojom/fetch_retry_options.mojom-shared.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "third_party/blink/public/common/loader/network_utils.h"
+#include "third_party/blink/public/common/navigation/preloading_headers.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
@@ -42,18 +46,19 @@ namespace {
 
 // TODO(yhirano): Unify these with variables in
 // content/public/common/content_constants.h.
-constexpr char kCorsExemptPurposeHeaderName[] = "Purpose";
 constexpr char kCorsExemptRequestedWithHeaderName[] = "X-Requested-With";
 
 // TODO(yhirano) Dedupe this and the same-name function in
 // web_url_request_util.cc.
-std::string TrimLWSAndCRLF(const base::StringPiece& input) {
-  base::StringPiece string = net::HttpUtil::TrimLWS(input);
-  const char* begin = string.data();
-  const char* end = string.data() + string.size();
-  while (begin < end && (end[-1] == '\r' || end[-1] == '\n'))
-    --end;
-  return std::string(base::StringPiece(begin, end - begin));
+std::string TrimLWSAndCRLF(const std::string_view& input) {
+  std::string_view string = net::HttpUtil::TrimLWS(input);
+  size_t last_crlf = string.size();
+  while (last_crlf > 0 &&
+         (string[last_crlf - 1] == '\r' || string[last_crlf - 1] == '\n')) {
+    --last_crlf;
+  }
+  string.remove_suffix(string.size() - last_crlf);
+  return std::string(string);
 }
 
 mojom::ResourceType RequestContextToResourceType(
@@ -151,11 +156,9 @@ mojom::ResourceType RequestContextToResourceType(
     case mojom::blink::RequestContextType::FRAME:
     case mojom::blink::RequestContextType::IFRAME:
       NOTREACHED();
-      return mojom::ResourceType::kSubResource;
 
     default:
       NOTREACHED();
-      return mojom::ResourceType::kSubResource;
   }
 }
 
@@ -164,7 +167,7 @@ void PopulateResourceRequestBody(const EncodedFormData& src,
   for (const auto& element : src.Elements()) {
     switch (element.type_) {
       case FormDataElement::kData:
-        dest->AppendBytes(element.data_.data(), element.data_.size());
+        dest->AppendCopyOfBytes(base::as_byte_span(element.data_));
         break;
       case FormDataElement::kEncodedFile:
         if (element.file_length_ == -1) {
@@ -181,9 +184,9 @@ void PopulateResourceRequestBody(const EncodedFormData& src,
         }
         break;
       case FormDataElement::kEncodedBlob: {
-        DCHECK(element.optional_blob_data_handle_);
+        CHECK(element.blob_data_handle_);
         mojo::Remote<mojom::blink::Blob> blob_remote(
-            element.optional_blob_data_handle_->CloneBlobRemote());
+            element.blob_data_handle_->CloneBlobRemote());
         mojo::PendingRemote<network::mojom::blink::DataPipeGetter>
             data_pipe_getter_remote;
         blob_remote->AsDataPipeGetter(
@@ -248,9 +251,6 @@ scoped_refptr<network::ResourceRequestBody> NetworkResourceRequestBodyFor(
         ToCrossVariantMojoType(std::move(stream_body)),
         network::ResourceRequestBody::ReadOnlyOnce(true));
   }
-  if (dest_body) {
-    dest_body->SetAllowHTTP1ForStreamingUpload(false);
-  }
   return dest_body;
 }
 
@@ -263,10 +263,9 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   dest->upgrade_if_insecure = src.UpgradeIfInsecure();
   dest->is_revalidating = src.IsRevalidating();
   if (src.GetDevToolsAcceptedStreamTypes()) {
-    dest->devtools_accepted_stream_types =
-        std::vector<net::SourceStream::SourceType>(
-            src.GetDevToolsAcceptedStreamTypes()->data.begin(),
-            src.GetDevToolsAcceptedStreamTypes()->data.end());
+    dest->devtools_accepted_stream_types = std::vector<net::SourceStreamType>(
+        src.GetDevToolsAcceptedStreamTypes()->data.begin(),
+        src.GetDevToolsAcceptedStreamTypes()->data.end());
   }
   if (src.RequestorOrigin()->ToString() == "null") {
     // "file:" origin is treated like an opaque unique origin when
@@ -310,8 +309,17 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   // Set Purpose header to cors_exempt_headers rather than headers to be
   // exempted from CORS checks.
   if (!src.GetPurposeHeader().empty()) {
-    dest->cors_exempt_headers.SetHeader(kCorsExemptPurposeHeaderName,
+    dest->cors_exempt_headers.SetHeader(kPurposeHeaderName,
                                         src.GetPurposeHeader().Utf8());
+  }
+  // Set Last-Event-ID header to cors_exempt_headers for EventSource.
+  // HTTP headers are Latin-1 byte strings, but the Last-Event-ID header is
+  // encoded as UTF-8.
+  // TODO(davidben): This should be captured in the type of
+  // setHTTPHeaderField's arguments.
+  if (!src.GetEventSourceLastEventId().empty()) {
+    dest->cors_exempt_headers.SetHeader("Last-Event-ID",
+                                        src.GetEventSourceLastEventId().Utf8());
   }
 
   // TODO(yhirano): Remove this WrappedResourceRequest.
@@ -327,9 +335,14 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   dest->credentials_mode = src.GetCredentialsMode();
   dest->redirect_mode = src.GetRedirectMode();
   dest->fetch_integrity = src.GetFetchIntegrity().Utf8();
+  dest->expected_public_keys.reserve(src.GetExpectedPublicKeys().size());
+  for (const auto& public_key : src.GetExpectedPublicKeys()) {
+    dest->expected_public_keys.emplace_back(public_key.begin(),
+                                            public_key.end());
+  }
   if (src.GetWebBundleTokenParams().has_value()) {
     dest->web_bundle_token_params =
-        absl::make_optional(network::ResourceRequest::WebBundleTokenParams(
+        std::make_optional(network::ResourceRequest::WebBundleTokenParams(
             GURL(src.GetWebBundleTokenParams()->bundle_url),
             src.GetWebBundleTokenParams()->token,
             ToCrossVariantMojoType(
@@ -360,9 +373,12 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   dest->throttling_profile_id = src.GetDevToolsToken();
   dest->trust_token_params = ConvertTrustTokenParams(src.TrustTokenParams());
   dest->required_ip_address_space = src.GetTargetAddressSpace();
+  if (src.HasFetchRetryOptions()) {
+    dest->fetch_retry_options = src.FetchRetryOptions();
+  }
 
   if (base::UnguessableToken window_id = src.GetFetchWindowId())
-    dest->fetch_window_id = absl::make_optional(window_id);
+    dest->fetch_window_id = std::make_optional(window_id);
 
   if (!src.GetDevToolsId().IsNull()) {
     dest->devtools_request_id = src.GetDevToolsId().Ascii();
@@ -390,9 +406,6 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
 
   dest->original_destination = src.GetOriginalDestination();
 
-  if (dest->load_flags & net::LOAD_PREFETCH)
-    dest->corb_detachable = true;
-
   if (src.GetURLRequestExtraData()) {
     src.GetURLRequestExtraData()->CopyToResourceRequest(dest);
   }
@@ -412,21 +425,23 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
     dest->load_flags |= net::LOAD_DO_NOT_USE_EMBEDDED_IDENTITY;
   }
 
-  dest->has_storage_access = src.GetHasStorageAccess();
+  dest->storage_access_api_status = src.GetStorageAccessApiStatus();
 
   dest->attribution_reporting_support = src.GetAttributionReportingSupport();
 
   dest->attribution_reporting_eligibility =
       src.GetAttributionReportingEligibility();
 
-  dest->attribution_reporting_runtime_features =
-      src.GetAttributionReportingRuntimeFeatures();
-
   dest->attribution_reporting_src_token = src.GetAttributionSrcToken();
+
+  dest->keepalive_token = src.GetKeepaliveToken();
 
   dest->shared_dictionary_writer_enabled = src.SharedDictionaryWriterEnabled();
 
   dest->is_ad_tagged = src.IsAdResource();
+
+  dest->allows_device_bound_session_registration =
+      src.AllowsDeviceBoundSessionRegistration();
 }
 
 }  // namespace blink

@@ -9,12 +9,14 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/idle/idle_manager.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_idle_options.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_screen_idle_state.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_user_idle_state.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -91,61 +93,70 @@ bool IdleDetector::HasPendingActivity() const {
   return GetExecutionContext() && HasEventListeners();
 }
 
-String IdleDetector::userState() const {
-  if (!has_state_)
-    return String();
+std::optional<V8UserIdleState> IdleDetector::userState() const {
+  if (!has_state_) {
+    return std::nullopt;
+  }
 
-  return user_idle_ ? "idle" : "active";
+  return user_idle_ ? V8UserIdleState(V8UserIdleState::Enum::kIdle)
+                    : V8UserIdleState(V8UserIdleState::Enum::kActive);
 }
 
-String IdleDetector::screenState() const {
-  if (!has_state_)
-    return String();
+std::optional<V8ScreenIdleState> IdleDetector::screenState() const {
+  if (!has_state_) {
+    return std::nullopt;
+  }
 
-  return screen_locked_ ? "locked" : "unlocked";
+  return screen_locked_ ? V8ScreenIdleState(V8ScreenIdleState::Enum::kLocked)
+                        : V8ScreenIdleState(V8ScreenIdleState::Enum::kUnlocked);
 }
 
 // static
-ScriptPromise IdleDetector::requestPermission(ScriptState* script_state,
-                                              ExceptionState& exception_state) {
-  if (!script_state->ContextIsValid())
-    return ScriptPromise();
+ScriptPromise<V8PermissionState> IdleDetector::requestPermission(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
+  if (!script_state->ContextIsValid()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "Execution context is detached.");
+    return EmptyPromise();
+  }
 
   auto* context = ExecutionContext::From(script_state);
   return IdleManager::From(context)->RequestPermission(script_state,
                                                        exception_state);
 }
 
-ScriptPromise IdleDetector::start(ScriptState* script_state,
-                                  const IdleOptions* options,
-                                  ExceptionState& exception_state) {
+ScriptPromise<IDLUndefined> IdleDetector::start(
+    ScriptState* script_state,
+    const IdleOptions* options,
+    ExceptionState& exception_state) {
   if (!GetExecutionContext() || GetExecutionContext()->IsContextDestroyed()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Execution context is detached.");
-    return ScriptPromise();
+    return EmptyPromise();
   }
 
   ExecutionContext* context = ExecutionContext::From(script_state);
   DCHECK(context->IsContextThread());
 
   if (!context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kIdleDetection,
+          network::mojom::PermissionsPolicyFeature::kIdleDetection,
           ReportOptions::kReportOnFailure)) {
     exception_state.ThrowSecurityError(kFeaturePolicyBlocked);
-    return ScriptPromise();
+    return EmptyPromise();
   }
 
   if (receiver_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Idle detector is already started.");
-    return ScriptPromise();
+    return EmptyPromise();
   }
 
   if (options->hasThreshold()) {
     auto threshold = base::Milliseconds(options->threshold());
     if (threshold < kMinimumThreshold) {
       exception_state.ThrowTypeError("Minimum threshold is 1 minute.");
-      return ScriptPromise();
+      return EmptyPromise();
     }
     threshold_ = threshold;
   }
@@ -153,7 +164,8 @@ ScriptPromise IdleDetector::start(ScriptState* script_state,
   signal_ = options->getSignalOr(nullptr);
   if (signal_) {
     if (signal_->aborted()) {
-      return ScriptPromise::Reject(script_state, signal_->reason(script_state));
+      return ScriptPromise<IDLUndefined>::Reject(script_state,
+                                                 signal_->reason(script_state));
     }
     // If there was a previous algorithm, it should have been removed when we
     // reached the "stopped" state.
@@ -167,9 +179,9 @@ ScriptPromise IdleDetector::start(ScriptState* script_state,
   receiver_.set_disconnect_handler(WTF::BindOnce(
       &IdleDetector::OnMonitorDisconnected, WrapWeakPersistent(this)));
 
-  resolver_ = MakeGarbageCollected<ScriptPromiseResolver>(
+  resolver_ = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
-  ScriptPromise promise = resolver_->Promise();
+  auto promise = resolver_->Promise();
   IdleManager::From(context)->AddMonitor(
       std::move(remote),
       WTF::BindOnce(&IdleDetector::OnAddMonitor, WrapWeakPersistent(this),
@@ -210,7 +222,7 @@ void IdleDetector::OnMonitorDisconnected() {
   Clear();
 }
 
-void IdleDetector::OnAddMonitor(ScriptPromiseResolver* resolver,
+void IdleDetector::OnAddMonitor(ScriptPromiseResolver<IDLUndefined>* resolver,
                                 IdleManagerError error,
                                 mojom::blink::IdleStatePtr state) {
   if (resolver_ != resolver) {

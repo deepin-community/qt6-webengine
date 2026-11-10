@@ -14,7 +14,7 @@
 #include "base/containers/span.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/common/gpu_command_buffer_common_export.h"
 
 // From glextchromium.h.
 #ifndef GL_SYNC_TOKEN_SIZE_CHROMIUM
@@ -23,11 +23,25 @@
 
 namespace gpu {
 
+struct GPU_COMMAND_BUFFER_COMMON_EXPORT SyncPointClientId {
+  SyncPointClientId() = default;
+  SyncPointClientId(CommandBufferNamespace in_namespace_id,
+                    CommandBufferId in_command_buffer_id);
+
+  bool operator<(const SyncPointClientId& other) const {
+    return std::tie(namespace_id, command_buffer_id) <
+           std::tie(other.namespace_id, other.command_buffer_id);
+  }
+
+  CommandBufferNamespace namespace_id = CommandBufferNamespace::INVALID;
+  CommandBufferId command_buffer_id;
+};
+
 // A Sync Token is a binary blob which represents a waitable fence sync
 // on a particular command buffer namespace and id.
 // See src/gpu/GLES2/extensions/CHROMIUM/CHROMIUM_sync_point.txt for more
 // details.
-struct GPU_EXPORT SyncToken {
+struct GPU_COMMAND_BUFFER_COMMON_EXPORT SyncToken {
   SyncToken();
 
   SyncToken(CommandBufferNamespace namespace_id,
@@ -87,6 +101,10 @@ struct GPU_EXPORT SyncToken {
   bool operator!=(const SyncToken& other) const { return !(*this == other); }
   std::string ToDebugString() const;
 
+  SyncPointClientId GetClientId() const {
+    return SyncPointClientId(namespace_id_, command_buffer_id_);
+  }
+
  private:
   bool verified_flush_;
   CommandBufferNamespace namespace_id_;
@@ -99,7 +117,7 @@ static_assert(sizeof(SyncToken) <= GL_SYNC_TOKEN_SIZE_CHROMIUM,
 
 // Remove redundant tokens such that it should be equivalent to wait on all
 // tokens in the output instead of waiting on all input `tokens`.
-GPU_EXPORT std::vector<SyncToken> ReduceSyncTokens(
+GPU_COMMAND_BUFFER_COMMON_EXPORT std::vector<SyncToken> ReduceSyncTokens(
     base::span<const SyncToken> tokens);
 
 }  // namespace gpu

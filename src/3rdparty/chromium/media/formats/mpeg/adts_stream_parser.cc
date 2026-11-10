@@ -42,7 +42,7 @@ int ADTSStreamParser::ParseFrameHeader(const uint8_t* data,
   int profile;
   size_t sample_rate_index;
   size_t channel_layout_index;
-  int frame_length;
+  size_t frame_length;
   size_t num_data_blocks;
   int unused;
 
@@ -67,10 +67,10 @@ int ADTSStreamParser::ParseFrameHeader(const uint8_t* data,
            << " sample_rate_index 0x" << sample_rate_index
            << " channel_layout_index 0x" << channel_layout_index;
 
-  const int bytes_read = reader.bits_read() / 8;
+  const size_t bytes_read = reader.bits_read() / 8;
   if (sync != 0xfff || layer != 0 || frame_length < bytes_read ||
-      sample_rate_index >= kADTSFrequencyTableSize ||
-      channel_layout_index >= kADTSChannelLayoutTableSize) {
+      sample_rate_index >= kADTSFrequencyTable.size() ||
+      channel_layout_index >= kADTSChannelLayoutTable.size()) {
     if (media_log()) {
       LIMITED_MEDIA_LOG(DEBUG, media_log(), adts_parse_error_limit_, 5)
           << "Invalid header data :" << std::hex << " sync 0x" << sync

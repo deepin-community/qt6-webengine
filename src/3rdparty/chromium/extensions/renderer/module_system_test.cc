@@ -101,8 +101,7 @@ class GetAPINatives : public ObjectBackedNativeHandler {
   }
 
  private:
-  raw_ptr<NativeExtensionBindingsSystem, ExperimentalRenderer>
-      bindings_system_ = nullptr;
+  raw_ptr<NativeExtensionBindingsSystem> bindings_system_ = nullptr;
 };
 
 }  // namespace
@@ -151,11 +150,11 @@ ModuleSystemTestEnvironment::ModuleSystemTestEnvironment(
     ScriptContextSet* context_set,
     scoped_refptr<const Extension> extension)
     : isolate_(isolate),
-      context_holder_(new gin::ContextHolder(isolate_)),
       handle_scope_(isolate_),
+      context_holder_(std::make_unique<gin::ContextHolder>(isolate_)),
       extension_(extension),
       context_set_(context_set),
-      source_map_(new StringSourceMap()) {
+      source_map_(std::make_unique<StringSourceMap>()) {
   context_holder_->SetContext(v8::Context::New(
       isolate, TestV8ExtensionConfiguration::GetConfiguration()));
 
@@ -164,6 +163,7 @@ ModuleSystemTestEnvironment::ModuleSystemTestEnvironment(
         context_holder_->context(),
         nullptr,  // WebFrame
         GenerateHostIdFromExtensionId(extension_->id()), extension_.get(),
+        /*blink_isolated_world_id=*/std::nullopt,
         mojom::ContextType::kPrivilegedExtension, extension_.get(),
         mojom::ContextType::kPrivilegedExtension);
     context_ = context.get();

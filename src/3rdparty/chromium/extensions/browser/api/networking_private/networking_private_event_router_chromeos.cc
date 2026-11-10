@@ -34,7 +34,7 @@ api::networking_private::CaptivePortalStatus GetCaptivePortalStatus(
   if (!network->IsConnectedState()) {
     return api::networking_private::CaptivePortalStatus::kOffline;
   }
-  switch (network->GetPortalState()) {
+  switch (network->portal_state()) {
     case NetworkState::PortalState::kUnknown:
       return api::networking_private::CaptivePortalStatus::kUnknown;
     case NetworkState::PortalState::kOnline:
@@ -43,8 +43,6 @@ api::networking_private::CaptivePortalStatus GetCaptivePortalStatus(
     case NetworkState::PortalState::kPortal:
     case NetworkState::PortalState::kNoInternet:
       return api::networking_private::CaptivePortalStatus::kPortal;
-    case NetworkState::PortalState::kProxyAuthRequired:
-      return api::networking_private::CaptivePortalStatus::kProxyAuthRequired;
   }
 }
 

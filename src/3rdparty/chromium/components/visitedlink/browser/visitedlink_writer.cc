@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/visitedlink/browser/visitedlink_writer.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -31,11 +37,13 @@
 #include "content/public/browser/browser_thread.h"
 #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 #if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
 #include <io.h>
 #include <shlobj.h>
-#include <windows.h>
 #endif  // BUILDFLAG(IS_WIN)
 
 using content::BrowserThread;
@@ -122,14 +130,18 @@ void AsyncTruncate(base::ScopedFILE* file) {
 }
 
 // These values are logged to UMA. Entries should not be renumbered and
-// numeric values should never be reused. Please keep in sync with
-// "AddFingerprint" in tools/metrics/histograms/enums.xml.
+// numeric values should never be reused. NOTE: Please also keep in line with
+// components/visitedlink/browser/partitioned_visitedlink_writer.cc:
+// AddFingerprint.
+//
+// LINT.IfChange(AddFingerprint)
 enum class AddFingerprint {
   kNewVisit = 0,
   kAlreadyVisited = 1,
   kTableError = 2,
   kMaxValue = kTableError,
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/history/enums.xml:AddFingerprint)
 
 }  // namespace
 
@@ -168,7 +180,7 @@ VisitedLinkWriter::LoadFromFileResult::LoadFromFileResult(
   memcpy(this->salt, salt, LINK_SALT_LENGTH);
 }
 
-VisitedLinkWriter::LoadFromFileResult::~LoadFromFileResult() {}
+VisitedLinkWriter::LoadFromFileResult::~LoadFromFileResult() = default;
 
 // TableBuilder ---------------------------------------------------------------
 
@@ -208,7 +220,7 @@ class VisitedLinkWriter::TableBuilder
   void OnComplete(bool succeed) override;
 
  private:
-  ~TableBuilder() override {}
+  ~TableBuilder() override = default;
 
   // OnComplete mashals to this function on the main thread to do the
   // notification.
@@ -323,7 +335,6 @@ VisitedLinkWriter::Hash VisitedLinkWriter::TryToAddURL(const GURL& url) {
   // removed from BrowserContext.
   if (browser_context_ && browser_context_->IsOffTheRecord()) {
     NOTREACHED();
-    return null_hash_;
   }
 
   if (!url.is_valid())
@@ -410,6 +421,24 @@ VisitedLinkDelegate* VisitedLinkWriter::GetDelegate() {
   return delegate_;
 }
 
+std::optional<uint64_t> VisitedLinkWriter::GetOrAddOriginSalt(
+    const url::Origin& origin) {
+  // To avoid race conditions, we should not get from or add to the salt map
+  // while the hashtable is building.
+  if (table_builder_ || table_is_loading_from_file_) {
+    return std::nullopt;
+  }
+  // Obtain the salt for this origin if it already exists.
+  auto it = salts_.find(origin);
+  if (it != salts_.end()) {
+    return it->second;
+  }
+  // Otherwise, generate a new salt for this origin.
+  const uint64_t generated_salt = base::RandUint64();
+  salts_.insert({origin, generated_salt});
+  return generated_salt;
+}
+
 void VisitedLinkWriter::DeleteURLs(URLIterator* urls) {
   if (!urls->HasNextURL())
     return;
@@ -462,7 +491,6 @@ VisitedLinkWriter::Hash VisitedLinkWriter::AddFingerprint(
     UMA_HISTOGRAM_ENUMERATION("History.VisitedLinks.TryToAddFingerprint",
                               AddFingerprint::kTableError);
     NOTREACHED();  // Not initialized.
-    return null_hash_;
   }
 
   Hash cur_hash = HashFingerprint(fingerprint);
@@ -496,7 +524,6 @@ VisitedLinkWriter::Hash VisitedLinkWriter::AddFingerprint(
       UMA_HISTOGRAM_ENUMERATION("History.VisitedLinks.TryToAddFingerprint",
                                 AddFingerprint::kTableError);
       NOTREACHED();
-      return null_hash_;
     }
   }
 }
@@ -522,7 +549,6 @@ bool VisitedLinkWriter::DeleteFingerprint(Fingerprint fingerprint,
                                           bool update_file) {
   if (!hash_table_ || table_length_ == 0) {
     NOTREACHED();  // Not initialized.
-    return false;
   }
   if (!IsVisited(fingerprint))
     return false;  // Not in the database to delete.
@@ -994,20 +1020,21 @@ uint32_t VisitedLinkWriter::DefaultTableSize() const {
 uint32_t VisitedLinkWriter::NewTableSizeForCount(int32_t item_count) const {
   // These table sizes are selected to be the maximum prime number less than
   // a "convenient" multiple of 1K.
-  static const int table_sizes[] = {
-      16381,      // 16K  = 16384   <- don't shrink below this table size
-                  //                   (should be == default_table_size)
-      32767,      // 32K  = 32768
-      65521,      // 64K  = 65536
-      130051,     // 128K = 131072
-      262127,     // 256K = 262144
-      524269,     // 512K = 524288
-      1048549,    // 1M   = 1048576
-      2097143,    // 2M   = 2097152
-      4194301,    // 4M   = 4194304
-      8388571,    // 8M   = 8388608
-      16777199,   // 16M  = 16777216
-      33554347};  // 32M  = 33554432
+  static const auto table_sizes = std::to_array<int>({
+      16381,     // 16K  = 16384   <- don't shrink below this table size
+                 //                   (should be == default_table_size)
+      32767,     // 32K  = 32768
+      65521,     // 64K  = 65536
+      130051,    // 128K = 131072
+      262127,    // 256K = 262144
+      524269,    // 512K = 524288
+      1048549,   // 1M   = 1048576
+      2097143,   // 2M   = 2097152
+      4194301,   // 4M   = 4194304
+      8388571,   // 8M   = 8388608
+      16777199,  // 16M  = 16777216
+      33554347,
+  });  // 32M  = 33554432
 
   // Try to leave the table 33% full.
   int desired = item_count * 3;
@@ -1178,7 +1205,7 @@ void VisitedLinkWriter::TableBuilder::OnCompleteMainThread() {
 
 // static
 VisitedLinkCommon::Fingerprint* VisitedLinkWriter::GetHashTableFromMapping(
-    const base::WritableSharedMemoryMapping& hash_table_mapping) {
+    base::WritableSharedMemoryMapping& hash_table_mapping) {
   DCHECK(hash_table_mapping.IsValid());
   // Our table pointer is just the data immediately following the header.
   return reinterpret_cast<Fingerprint*>(

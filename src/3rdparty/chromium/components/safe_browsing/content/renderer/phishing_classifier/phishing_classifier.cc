@@ -62,23 +62,23 @@ PhishingClassifier::~PhishingClassifier() {
   // The RenderView should have called CancelPendingClassification() before
   // we are destroyed.
   DCHECK(done_callback_.is_null());
-  DCHECK(!page_text_);
+  if (!base::FeatureList::IsEnabled(
+          kClientSideDetectionOnlyExtractVisualFeatures)) {
+    DCHECK(!page_text_);
+  }
 }
 
 bool PhishingClassifier::is_ready() const {
   return !!ScorerStorage::GetInstance()->GetScorer();
 }
 
-void PhishingClassifier::BeginClassification(const std::u16string* page_text,
-                                             DoneCallback done_callback) {
+void PhishingClassifier::BeginClassification(
+    scoped_refptr<const base::RefCountedString16> page_text,
+    DoneCallback done_callback) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("safe_browsing", "PhishingClassification",
                                     this);
   DCHECK(is_ready());
 
-  // The RenderView should have called CancelPendingClassification() before
-  // starting a new classification, so DCHECK this.
-  DCHECK(done_callback_.is_null());
-  DCHECK(!page_text_);
   // However, in an opt build, we will go ahead and clean up the pending
   // classification so that we can start in a known state.
   CancelPendingClassification();
@@ -91,19 +91,14 @@ void PhishingClassifier::BeginClassification(const std::u16string* page_text,
       scorer->max_words_per_term(), scorer->murmurhash3_seed(),
       scorer->max_shingles_per_page(), scorer->shingle_size());
   visual_extractor_ = std::make_unique<PhishingVisualFeatureExtractor>();
-  page_text_ = page_text;
+  // To be safe, we should not set it in case the pointer become lossy through
+  // destruction or observer on the delegate or the classifier level.
+  if (!base::FeatureList::IsEnabled(
+          kClientSideDetectionOnlyExtractVisualFeatures)) {
+    page_text_ = std::move(page_text);
+  }
   done_callback_ = std::move(done_callback);
 
-  // For consistency, we always want to invoke the DoneCallback
-  // asynchronously, rather than directly from this method.  To ensure that
-  // this is the case, post a task to begin feature extraction on the next
-  // iteration of the message loop.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(&PhishingClassifier::BeginFeatureExtraction,
-                                weak_factory_.GetWeakPtr()));
-}
-
-void PhishingClassifier::BeginFeatureExtraction() {
   blink::WebLocalFrame* frame = render_frame_->GetWebFrame();
 
   // Check whether the URL is one that we should classify.
@@ -119,6 +114,27 @@ void PhishingClassifier::BeginFeatureExtraction() {
     RunFailureCallback(Result::kInvalidDocumentLoader);
     return;
   }
+
+  // For consistency, we always want to invoke the DoneCallback
+  // asynchronously, rather than directly from this method.  To ensure that
+  // this is the case, post a task to begin feature extraction on the next
+  // iteration of the message loop.
+  if (base::FeatureList::IsEnabled(
+          kClientSideDetectionOnlyExtractVisualFeatures)) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&PhishingClassifier::ExtractVisualFeatures,
+                                  weak_factory_.GetWeakPtr()));
+  } else {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&PhishingClassifier::BeginFeatureExtraction,
+                                  weak_factory_.GetWeakPtr()));
+  }
+}
+
+void PhishingClassifier::BeginFeatureExtraction() {
+  blink::WebLocalFrame* frame = render_frame_->GetWebFrame();
+
+  GURL url(frame->GetDocument().Url());
 
   features_ = std::make_unique<FeatureMap>();
   if (!url_extractor_->ExtractFeatures(url, features_.get())) {
@@ -151,7 +167,7 @@ void PhishingClassifier::DOMExtractionFinished(bool success) {
     // Term feature extraction can take awhile, so it runs asynchronously
     // in several chunks of work and invokes the callback when finished.
     term_extractor_->ExtractFeatures(
-        page_text_, features_.get(), shingle_hashes_.get(),
+        &page_text_->as_string(), features_.get(), shingle_hashes_.get(),
         base::BindOnce(&PhishingClassifier::TermExtractionFinished,
                        base::Unretained(this)));
   } else {
@@ -168,6 +184,13 @@ void PhishingClassifier::TermExtractionFinished(bool success) {
   } else {
     RunFailureCallback(Result::kTermExtractionFailed);
   }
+}
+
+void PhishingClassifier::ExtractVisualFeatures() {
+  visual_extractor_->ExtractFeatures(
+      render_frame_->GetWebFrame(),
+      base::BindOnce(&PhishingClassifier::OnPlaybackDone,
+                     base::Unretained(this)));
 }
 
 void PhishingClassifier::OnPlaybackDone(std::unique_ptr<SkBitmap> bitmap) {
@@ -203,28 +226,37 @@ void PhishingClassifier::VisualExtractionFinished(bool success) {
   // Hash all of the features so that they match the model, then compute
   // the score.
   Scorer* scorer = ScorerStorage::GetInstance()->GetScorer();
-  FeatureMap hashed_features;
   std::unique_ptr<ClientPhishingRequest> verdict =
       std::make_unique<ClientPhishingRequest>();
   verdict->set_model_version(scorer->model_version());
-  verdict->set_dom_model_version(scorer->dom_model_version());
   verdict->set_url(main_frame->GetDocument().Url().GetString().Utf8());
-  for (const auto& it : features_->features()) {
-    bool result = hashed_features.AddRealFeature(
-        crypto::SHA256HashString(it.first), it.second);
-    DCHECK(result);
-    ClientPhishingRequest::Feature* feature = verdict->add_feature_map();
-    feature->set_name(it.first);
-    feature->set_value(it.second);
+
+  if (!base::FeatureList::IsEnabled(
+          kClientSideDetectionOnlyExtractVisualFeatures)) {
+    verdict->set_dom_model_version(scorer->dom_model_version());
+    FeatureMap hashed_features;
+    for (const auto& it : features_->features()) {
+      bool result = hashed_features.AddRealFeature(
+          crypto::SHA256HashString(it.first), it.second);
+      DCHECK(result);
+      ClientPhishingRequest::Feature* feature = verdict->add_feature_map();
+      feature->set_name(it.first);
+      feature->set_value(it.second);
+    }
+    for (const auto& it : *shingle_hashes_) {
+      verdict->add_shingle_hashes(it);
+    }
+    float score = static_cast<float>(scorer->ComputeScore(hashed_features));
+    verdict->set_client_score(score);
+    bool is_dom_match = (score >= scorer->threshold_probability());
+    verdict->set_is_phishing(is_dom_match);
+    verdict->set_is_dom_match(is_dom_match);
+  } else {
+    // Because the client_score is required, set a dummy value so that it can be
+    // parsed in the browser host class.
+    verdict->set_client_score(0);
   }
-  for (const auto& it : *shingle_hashes_) {
-    verdict->add_shingle_hashes(it);
-  }
-  float score = static_cast<float>(scorer->ComputeScore(hashed_features));
-  verdict->set_client_score(score);
-  bool is_dom_match = (score >= scorer->threshold_probability());
-  verdict->set_is_phishing(is_dom_match);
-  verdict->set_is_dom_match(is_dom_match);
+
   if (visual_features_) {
     verdict->mutable_visual_features()->Swap(visual_features_.get());
   }
@@ -234,7 +266,7 @@ void PhishingClassifier::VisualExtractionFinished(bool success) {
       *bitmap_, base::BindOnce(&PhishingClassifier::OnVisualTfLiteModelDone,
                                weak_factory_.GetWeakPtr(), std::move(verdict)));
 #else
-  RunCallback(*verdict);
+  RunFailureCallback(Result::kVisualExtractionFailed);
 #endif
 }
 

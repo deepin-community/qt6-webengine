@@ -28,8 +28,8 @@
 #ifndef SRC_TINT_LANG_WGSL_READER_OPTIONS_H_
 #define SRC_TINT_LANG_WGSL_READER_OPTIONS_H_
 
-#include "src/tint/lang/wgsl/common/allowed_features.h"
-#include "src/tint/utils/reflection/reflection.h"
+#include "src/tint/lang/wgsl/allowed_features.h"
+#include "src/tint/utils/reflection.h"
 
 namespace tint::wgsl::reader {
 
@@ -39,7 +39,7 @@ struct Options {
     AllowedFeatures allowed_features{};
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField().
-    TINT_REFLECT(allowed_features);
+    TINT_REFLECT(Options, allowed_features);
 };
 
 }  // namespace tint::wgsl::reader

@@ -25,6 +25,7 @@ constexpr uint64_t kUint64One = 1;
 constexpr uint64_t kQ32x32Time1000ms = kUint64One << 32;
 constexpr uint64_t kQ32x32Time1250ms = kQ32x32Time1000ms | kUint64One << 30;
 constexpr uint64_t kQ32x32Time1500ms = kQ32x32Time1000ms | kUint64One << 31;
+constexpr int64_t kQ32x32TimeNegative500ms = -(kUint64One << 31);
 
 }  // namespace
 
@@ -41,11 +42,11 @@ TEST(RtcRtpSource, BasicPropertiesAreSetAndReturned) {
 }
 
 // The Timestamp() function relies on the fact that Base::TimeTicks() and
-// rtc::TimeMicros() share the same implementation.
+// webrtc::TimeMicros() share the same implementation.
 TEST(RtcRtpSource, BaseTimeTicksAndRtcMicrosAreTheSame) {
   base::TimeTicks first_chromium_timestamp = base::TimeTicks::Now();
   base::TimeTicks webrtc_timestamp =
-      ConvertToBaseTimeTicks(webrtc::Timestamp::Micros(rtc::TimeMicros()));
+      ConvertToBaseTimeTicks(webrtc::Timestamp::Micros(webrtc::TimeMicros()));
   base::TimeTicks second_chromium_timestamp = base::TimeTicks::Now();
 
   // Test that the timestamps are correctly ordered, which they can only be if
@@ -92,6 +93,18 @@ TEST(RtcRtpSource, AbsoluteCaptureTimeSetAndReturnedWithPositiveOffset) {
   EXPECT_EQ(rtc_rtp_source.CaptureTimestamp(), 1250);
   ASSERT_TRUE(rtc_rtp_source.SenderCaptureTimeOffset().has_value());
   EXPECT_EQ(rtc_rtp_source.SenderCaptureTimeOffset(), 1500);
+}
+
+TEST(RtcRtpSource, AbsoluteCaptureTimeSetAndReturnedWithNegativeOffset) {
+  constexpr webrtc::AbsoluteCaptureTime kAbsCaptureTime{
+      .absolute_capture_timestamp = kQ32x32Time1250ms,
+      .estimated_capture_clock_offset = kQ32x32TimeNegative500ms};
+  webrtc::RtpSource rtp_source(
+      kTimestamp, kSourceId, kSourceType, kRtpTimestamp,
+      /*extensions=*/{.absolute_capture_time = kAbsCaptureTime});
+  RTCRtpSource rtc_rtp_source(rtp_source);
+  EXPECT_EQ(rtc_rtp_source.CaptureTimestamp(), 1250);
+  EXPECT_EQ(rtc_rtp_source.SenderCaptureTimeOffset(), -500);
 }
 
 }  // namespace blink

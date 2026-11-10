@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-qs8-vcvt/neonv8.c.in
 //   Generator: tools/xngen
@@ -7,30 +8,30 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_f32_qu8_vcvt_ukernel__neonv8_u8(
     size_t batch,
     const float* input,
     uint8_t* output,
-    const union xnn_f32_qu8_cvt_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_qu8_cvt_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const float32x4_t vscale = vld1q_dup_f32(&params->neonv8.scale);
-  const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->neonv8.output_zero_point);
-  const uint8x8_t voutput_min = vld1_dup_u8(&params->neonv8.output_min);
-  const uint8x8_t voutput_max = vld1_dup_u8(&params->neonv8.output_max);
+  const float32x4_t vscale = vdupq_n_f32(params->scalar.scale);
+  const int16x8_t voutput_zero_point = vdupq_n_s16(params->scalar.output_zero_point);
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     float32x4_t vx_lo = vld1q_f32(input); input += 4;
     float32x4_t vx_hi = vld1q_f32(input); input += 4;
@@ -45,8 +46,6 @@ void xnn_f32_qu8_vcvt_ukernel__neonv8_u8(
     vacc = vqaddq_s16(vacc, voutput_zero_point);
 
     uint8x8_t vy = vqmovun_s16(vacc);
-    vy = vmax_u8(vy, voutput_min);
-    vy = vmin_u8(vy, voutput_max);
     vst1_u8(output, vy); output += 8;
   }
   if XNN_UNLIKELY(batch != 0) {
@@ -66,8 +65,6 @@ void xnn_f32_qu8_vcvt_ukernel__neonv8_u8(
     vacc = vqaddq_s16(vacc, voutput_zero_point);
 
     uint8x8_t vy = vqmovun_s16(vacc);
-    vy = vmax_u8(vy, voutput_min);
-    vy = vmin_u8(vy, voutput_max);
 
     if (batch & (4 * sizeof(float))) {
       vst1_lane_u32((void*) output, vreinterpret_u32_u8(vy), 0); output += 4;

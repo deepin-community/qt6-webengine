@@ -109,6 +109,19 @@ const char kNinjaExecutable_Help[] =
   post-processing on the generated files for more consistent builds.
 )";
 
+const char kIgnoreAsserts[] = "ignore-asserts";
+const char kIgnoreAsserts_HelpShort[] =
+    "Set the list of identifiers to ignore in single-identifier asserts.";
+const char kIgonreAsserts_Help[] =
+    R"(--ignore-asserts: Set the list of asserts to ignore.
+
+  In same cases  it is convenient to ignore asserts as
+  they are evaluated on generate step and not on actual build step,
+  meaning they can be triggered even though build target does not
+  require their evaluation. The list is a list of identifiers from
+  assert expression 'assert(identifier [, message])'
+)";
+
 const char kScriptExecutable[] = "script-executable";
 const char kScriptExecutable_HelpShort[] =
     "--script-executable: Set the executable used to execute scripts.";
@@ -233,9 +246,12 @@ Runtime deps output file
   an output file "bar.so", GN will create a file "bar.so.runtime_deps" in the
   build directory.
 
-  If a source set, action, copy, or group is listed, the runtime deps file will
-  correspond to the .stamp file corresponding to that target. This is probably
-  not useful; the use-case for this feature is generally executable targets.
+  For targets that don't generate an output file (such as source set, action,
+  copy or group), the runtime deps file will be in the output directory where an
+  output file would have been located. For example, the source_set target
+  "//foo:bar" would result in a runtime dependency file being written to
+  "<output_dir>/obj/foo/bar.runtime_deps". This is probably not useful; the
+  use-case for this feature is generally executable targets.
 
   The runtime dependency file will list one file per line, with no escaping.
   The files will be relative to the root_build_dir. The first line of the file
@@ -335,6 +351,7 @@ const SwitchInfoMap& GetSwitches() {
     INSERT_VARIABLE(NinjaExecutable)
     INSERT_VARIABLE(NoColor)
     INSERT_VARIABLE(Root)
+    INSERT_VARIABLE(RootPattern)
     INSERT_VARIABLE(RootTarget)
     INSERT_VARIABLE(Quiet)
     INSERT_VARIABLE(RuntimeDepsListFile)

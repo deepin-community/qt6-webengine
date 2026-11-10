@@ -96,14 +96,15 @@ struct GeoHint {
 };
 
 // ServiceType allows verifiers to differentiate and apply service specific
-// policies at verification time. Only a single ID representing the Chrome
-// IP Protection project is supported at this time.
+// policies at verification time.
 // This struct and its implementation should be considered the registry of
 // service type identifier mappings.
 // Represents a private extension using id 0xF001.
 struct ServiceType {
   typedef uint8_t ServiceTypeId;
   static constexpr ServiceTypeId kChromeIpBlinding = 0x01;
+  static constexpr ServiceTypeId kCronetIpBlinding = 0x02;
+  static constexpr ServiceTypeId kWebviewIpBlinding = 0x03;
   ServiceTypeId service_type_id;
 
   // Derived in FromExtension from service_type_id.
@@ -129,6 +130,7 @@ struct DebugMode {
   typedef uint8_t Mode;
   static constexpr Mode kProd = 0x00;
   static constexpr Mode kDebug = 0x01;
+  static constexpr Mode kAdmin = 0x02;
   Mode mode;
 
   absl::StatusOr<Extension> AsExtension() const;
@@ -257,7 +259,7 @@ UnmarshalExtendedTokenRequest(absl::string_view extended_token_request);
 // This method takes in an Extensions struct, checks that the ordering matches
 // the given ordering in expected_types, and validates extension values.
 absl::Status ValidateExtensionsOrderAndValues(
-    const Extensions& extensions, absl::Span<uint16_t> expected_types,
+    const Extensions& extensions, absl::Span<const uint16_t> expected_types,
     absl::Time now);
 
 // This method takes in an Extensions struct and validates extension values by

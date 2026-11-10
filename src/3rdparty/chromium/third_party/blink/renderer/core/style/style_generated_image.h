@@ -51,11 +51,12 @@ class CORE_EXPORT StyleGeneratedImage final : public StyleImage {
 
   CSSValue* CssValue() const override;
   CSSValue* ComputedCSSValue(const ComputedStyle&,
-                             bool allow_visited_style) const override;
+                             bool allow_visited_style,
+                             CSSValuePhase value_phase) const override;
 
   bool IsAccessAllowed(String&) const override { return true; }
 
-  IntrinsicSizingInfo GetNaturalSizingInfo(
+  NaturalSizingInfo GetNaturalSizingInfo(
       float multiplier,
       RespectImageOrientationEnum) const override;
   gfx::SizeF ImageSize(float multiplier,
@@ -66,7 +67,7 @@ class CORE_EXPORT StyleGeneratedImage final : public StyleImage {
   void RemoveClient(ImageResourceObserver*) override;
   // The |target_size| is the desired image size
   scoped_refptr<Image> GetImage(const ImageResourceObserver&,
-                                const Document&,
+                                const Node&,
                                 const ComputedStyle&,
                                 const gfx::SizeF& target_size) const override;
   bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override;
@@ -74,6 +75,8 @@ class CORE_EXPORT StyleGeneratedImage final : public StyleImage {
   bool IsUsingCustomProperty(const AtomicString& custom_property_name,
                              const Document&) const;
   bool IsUsingCurrentColor() const;
+
+  bool DependsOnCurrentColor() const override { return IsUsingCurrentColor(); }
 
   void Trace(Visitor*) const override;
 

@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -21,6 +22,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/containers/span.h"
 #include "components/autofill/content/browser/content_autofill_client.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 
 #include <QScopedPointer>
@@ -39,27 +41,30 @@ public:
     static void CreateForWebContents(content::WebContents *contents);
 
     // autofill::AutofillClient overrides:
-    autofill::PersonalDataManager *GetPersonalDataManager() override;
     autofill::AutocompleteHistoryManager *GetAutocompleteHistoryManager() override;
     PrefService *GetPrefs() override;
     const PrefService *GetPrefs() const override;
 
-    void ShowAutofillPopup(const autofill::AutofillClient::PopupOpenArgs &open_args,
-                           base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
-    void UpdateAutofillPopupDataListValues(
+    SuggestionUiSessionId
+    ShowAutofillSuggestions(const PopupOpenArgs &open_args,
+                            base::WeakPtr<autofill::AutofillSuggestionDelegate> delegate) override;
+    void UpdateAutofillDataListValues(
             base::span<const autofill::SelectOption> datalist) override;
-    void PinPopupView() override;
-    PopupOpenArgs GetReopenPopupArgs(
-            autofill::AutofillSuggestionTriggerSource trigger_source) const override;
-    std::vector<autofill::Suggestion> GetPopupSuggestions() const override;
-    void UpdatePopup(const std::vector<autofill::Suggestion> &suggestions,
-                     autofill::FillingProduct main_filling_product,
-                     autofill::AutofillSuggestionTriggerSource trigger_source) override{};
-    void HideAutofillPopup(autofill::PopupHidingReason reason) override;
+    base::span<const autofill::Suggestion> GetAutofillSuggestions() const override;
+    void HideAutofillSuggestions(autofill::SuggestionHidingReason reason) override;
+
+    bool IsAutofillEnabled() const override;
+    bool IsAutofillProfileEnabled() const override;
+    bool IsAutofillPaymentMethodsEnabled() const override;
     bool IsAutocompleteEnabled() const override;
-    bool IsPasswordManagerEnabled() override;
-    bool IsOffTheRecord() override;
+    bool IsPasswordManagerEnabled() const override;
+
+    bool IsOffTheRecord() const override;
     scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
+    std::unique_ptr<autofill::AutofillManager> CreateManager(base::PassKey<autofill::ContentAutofillDriver>, autofill::ContentAutofillDriver&) override;
+    base::WeakPtr<autofill::AutofillClient> GetWeakPtr() override;
+
+    const std::string& GetAppLocale() const override;
 
 private:
     explicit AutofillClientQt(content::WebContents *webContents);
@@ -67,6 +72,7 @@ private:
     WebContentsAdapterClient *adapterClient();
 
     QScopedPointer<AutofillPopupController> m_popupController;
+    base::WeakPtrFactory<AutofillClientQt> weak_ptr_factory_{this};
 };
 
 } // namespace QtWebEngineCore

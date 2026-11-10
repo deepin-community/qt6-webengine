@@ -29,6 +29,7 @@
 #include "encode.h"
 #include "bytestream.h"
 #include "libavutil/lfg.h"
+#include "libavutil/mem.h"
 #include "elbg.h"
 #include "libavutil/imgutils.h"
 /**
@@ -78,7 +79,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     int skips = 0;
     int quality = 24;
 
-    if ((ret = ff_alloc_packet(avctx, pkt, avctx->width*avctx->height*9 + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
+    if ((ret = ff_alloc_packet(avctx, pkt, avctx->width*avctx->height*9 + FF_INPUT_BUFFER_MIN_SIZE)) < 0)
         return ret;
     dst= buf= pkt->data;
 
@@ -314,5 +315,5 @@ const FFCodec ff_msvideo1_encoder = {
     .init           = encode_init,
     FF_CODEC_ENCODE_CB(encode_frame),
     .close          = encode_end,
-    .p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_RGB555, AV_PIX_FMT_NONE},
+    CODEC_PIXFMTS(AV_PIX_FMT_RGB555),
 };

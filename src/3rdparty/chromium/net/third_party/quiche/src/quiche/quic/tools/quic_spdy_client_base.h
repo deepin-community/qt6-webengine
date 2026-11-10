@@ -17,7 +17,7 @@
 #include "quiche/quic/core/quic_config.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 #include "quiche/quic/tools/quic_client_base.h"
-#include "quiche/spdy/core/http2_header_block.h"
+#include "quiche/common/http/http_header_block.h"
 
 namespace quic {
 
@@ -34,7 +34,7 @@ class QuicSpdyClientBase : public QuicClientBase,
     ResponseListener() {}
     virtual ~ResponseListener() {}
     virtual void OnCompleteResponse(
-        QuicStreamId id, const spdy::Http2HeaderBlock& response_headers,
+        QuicStreamId id, const quiche::HttpHeaderBlock& response_headers,
         absl::string_view response_body) = 0;
   };
 
@@ -59,11 +59,11 @@ class QuicSpdyClientBase : public QuicClientBase,
   void InitializeSession() override;
 
   // Sends an HTTP request and does not wait for response before returning.
-  void SendRequest(const spdy::Http2HeaderBlock& headers,
+  void SendRequest(const quiche::HttpHeaderBlock& headers,
                    absl::string_view body, bool fin);
 
   // Sends an HTTP request and waits for response before returning.
-  void SendRequestAndWaitForResponse(const spdy::Http2HeaderBlock& headers,
+  void SendRequestAndWaitForResponse(const quiche::HttpHeaderBlock& headers,
                                      absl::string_view body, bool fin);
 
   // Sends a request simple GET for each URL in |url_list|, and then waits for
@@ -83,7 +83,7 @@ class QuicSpdyClientBase : public QuicClientBase,
   int latest_response_code() const;
   const std::string& latest_response_headers() const;
   const std::string& preliminary_response_headers() const;
-  const spdy::Http2HeaderBlock& latest_response_header_block() const;
+  const quiche::HttpHeaderBlock& latest_response_header_block() const;
   const std::string& latest_response_body() const;
   const std::string& latest_response_trailers() const;
 
@@ -103,11 +103,6 @@ class QuicSpdyClientBase : public QuicClientBase,
     enable_web_transport_ = enable_web_transport;
   }
   bool enable_web_transport() const { return enable_web_transport_; }
-
-  void set_use_datagram_contexts(bool use_datagram_contexts) {
-    use_datagram_contexts_ = use_datagram_contexts;
-  }
-  bool use_datagram_contexts() const { return use_datagram_contexts_; }
 
   // QuicClientBase methods.
   bool goaway_received() const override;
@@ -129,14 +124,10 @@ class QuicSpdyClientBase : public QuicClientBase,
       const quic::ParsedQuicVersionVector& supported_versions,
       QuicConnection* connection) override;
 
-  void ClearDataToResend() override {}
-
-  void ResendSavedData() override {}
-
   bool HasActiveRequests() override;
 
  private:
-  void SendRequestInternal(spdy::Http2HeaderBlock sanitized_headers,
+  void SendRequestInternal(quiche::HttpHeaderBlock sanitized_headers,
                            absl::string_view body, bool fin);
 
   // If true, store the latest response code, headers, and body.
@@ -148,7 +139,7 @@ class QuicSpdyClientBase : public QuicClientBase,
   // preliminary 100 Continue HTTP/2 headers from most recent response, if any.
   std::string preliminary_response_headers_;
   // HTTP/2 headers from most recent response.
-  spdy::Http2HeaderBlock latest_response_header_block_;
+  quiche::HttpHeaderBlock latest_response_header_block_;
   // Body of most recent response.
   std::string latest_response_body_;
   // HTTP/2 trailers from most recent response.
@@ -162,7 +153,6 @@ class QuicSpdyClientBase : public QuicClientBase,
 
   bool drop_response_body_ = false;
   bool enable_web_transport_ = false;
-  bool use_datagram_contexts_ = false;
   // If not zero, used to set client's max inbound header size before session
   // initialize.
   size_t max_inbound_header_list_size_ = 0;

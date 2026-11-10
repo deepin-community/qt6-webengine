@@ -4,6 +4,7 @@
 
 #include "gpu/command_buffer/client/readback_buffer_shadow_tracker.h"
 
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
@@ -30,6 +31,10 @@ uint32_t ReadbackBufferShadowTracker::Buffer::Alloc(int32_t* shm_id,
   if (!readback_shm_address_) {
     readback_shm_address_ =
         mapped_memory_->Alloc(size_, &shm_id_, &shm_offset_);
+    if (!readback_shm_address_) {
+      shm_id_ = -1;
+      shm_offset_ = 0;
+    }
   }
   *shm_id = shm_id_;
   *shm_offset = shm_offset_;
@@ -61,7 +66,7 @@ void* ReadbackBufferShadowTracker::Buffer::MapReadbackShm(uint32_t offset,
     return nullptr;
   }
   is_mapped_ = true;
-  return &static_cast<uint8_t*>(readback_shm_address_)[offset];
+  return &UNSAFE_TODO(static_cast<uint8_t*>(readback_shm_address_)[offset]);
 }
 
 bool ReadbackBufferShadowTracker::Buffer::UnmapReadbackShm() {

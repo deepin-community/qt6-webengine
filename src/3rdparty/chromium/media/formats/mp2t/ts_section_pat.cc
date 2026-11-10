@@ -56,6 +56,7 @@ bool TsSectionPat::ParsePsiSection(BitReader* bit_reader) {
 
   // Both the program table and the CRC have a size multiple of 4.
   // Note for pmt_pid_count: minus 4 to account for the CRC.
+  RCHECK(section_length > 0);
   RCHECK((section_length % 4) == 0);
   int pmt_pid_count = (section_length - 4) / 4;
 
@@ -67,7 +68,7 @@ bool TsSectionPat::ParsePsiSection(BitReader* bit_reader) {
     RCHECK(bit_reader->ReadBits(3, &reserved));
     RCHECK(bit_reader->ReadBits(13, &pmt_pid_array[k]));
   }
-  int crc32;
+  size_t crc32;
   RCHECK(bit_reader->ReadBits(32, &crc32));
 
   // Just ignore the PAT if not applicable yet.

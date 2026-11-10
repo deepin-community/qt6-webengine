@@ -24,17 +24,18 @@
  * 3D Lookup table filter
  */
 
+#include <float.h>
+
 #include "config_components.h"
 
-#include "float.h"
-
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/file_open.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 #include "lut3d.h"
 
@@ -47,12 +48,12 @@
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 #define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 #define COMMON_OPTIONS \
-    { "interp", "select interpolation mode", OFFSET(interpolation), AV_OPT_TYPE_INT, {.i64=INTERPOLATE_TETRAHEDRAL}, 0, NB_INTERP_MODE-1, TFLAGS, "interp_mode" }, \
-        { "nearest",     "use values from the nearest defined points",            0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_NEAREST},     0, 0, TFLAGS, "interp_mode" }, \
-        { "trilinear",   "interpolate values using the 8 points defining a cube", 0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_TRILINEAR},   0, 0, TFLAGS, "interp_mode" }, \
-        { "tetrahedral", "interpolate values using a tetrahedron",                0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_TETRAHEDRAL}, 0, 0, TFLAGS, "interp_mode" }, \
-        { "pyramid",     "interpolate values using a pyramid",                    0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_PYRAMID},     0, 0, TFLAGS, "interp_mode" }, \
-        { "prism",       "interpolate values using a prism",                      0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_PRISM},       0, 0, TFLAGS, "interp_mode" }, \
+    { "interp", "select interpolation mode", OFFSET(interpolation), AV_OPT_TYPE_INT, {.i64=INTERPOLATE_TETRAHEDRAL}, 0, NB_INTERP_MODE-1, TFLAGS, .unit = "interp_mode" }, \
+        { "nearest",     "use values from the nearest defined points",            0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_NEAREST},     0, 0, TFLAGS, .unit = "interp_mode" }, \
+        { "trilinear",   "interpolate values using the 8 points defining a cube", 0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_TRILINEAR},   0, 0, TFLAGS, .unit = "interp_mode" }, \
+        { "tetrahedral", "interpolate values using a tetrahedron",                0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_TETRAHEDRAL}, 0, 0, TFLAGS, .unit = "interp_mode" }, \
+        { "pyramid",     "interpolate values using a pyramid",                    0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_PYRAMID},     0, 0, TFLAGS, .unit = "interp_mode" }, \
+        { "prism",       "interpolate values using a prism",                      0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_PRISM},       0, 0, TFLAGS, .unit = "interp_mode" }, \
     { NULL }
 
 #define EXPONENT_MASK 0x7F800000
@@ -702,7 +703,8 @@ try_again:
                                 else if (!strncmp(line + 7, "MAX ", 4)) vals = max;
                                 if (!vals)
                                     return AVERROR_INVALIDDATA;
-                                av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2);
+                                if (av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2) != 3)
+                                    return AVERROR_INVALIDDATA;
                                 av_log(ctx, AV_LOG_DEBUG, "min: %f %f %f | max: %f %f %f\n",
                                        min[0], min[1], min[2], max[0], max[1], max[2]);
                                 goto try_again;
@@ -1004,7 +1006,7 @@ static int parse_cinespace(AVFilterContext *ctx, FILE *f)
 
             ret = allocate_3dlut(ctx, size, prelut);
             if (ret < 0)
-                return ret;
+                goto end;
 
             for (int k = 0; k < size; k++) {
                 for (int j = 0; j < size; j++) {
@@ -1110,6 +1112,8 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_NONE
 };
 
+#if CONFIG_LUT3D_FILTER || CONFIG_HALDCLUT_FILTER
+
 static int config_input(AVFilterLink *inlink)
 {
     int depth, is16bit, isfloat, planar;
@@ -1174,6 +1178,9 @@ static AVFrame *apply_lut(AVFilterLink *inlink, AVFrame *in)
         av_frame_copy_props(out, in);
     }
 
+    av_frame_side_data_remove_by_props(&out->side_data, &out->nb_side_data,
+                                       AV_SIDE_DATA_PROP_COLOR_DEPENDENT);
+
     td.in  = in;
     td.out = out;
     ff_filter_execute(ctx, lut3d->interp, &td, NULL,
@@ -1206,8 +1213,6 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
     return config_input(ctx->inputs[0]);
 }
 
-#if CONFIG_LUT3D_FILTER || CONFIG_HALDCLUT_FILTER
-
 /* These options are shared between several filters;
  * &lut3d_haldclut_options[COMMON_OPTIONS_OFFSET] must always
  * point to the first of the COMMON_OPTIONS. */
@@ -1217,9 +1222,9 @@ static const AVOption lut3d_haldclut_options[] = {
     { "file", "set 3D LUT file name", OFFSET(file), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
 #endif
 #if CONFIG_HALDCLUT_FILTER
-    { "clut", "when to process CLUT", OFFSET(clut), AV_OPT_TYPE_INT, {.i64=1}, 0, 1, .flags = TFLAGS, "clut" },
-    {   "first", "process only first CLUT, ignore rest", 0, AV_OPT_TYPE_CONST, {.i64=0}, .flags = TFLAGS, "clut" },
-    {   "all",   "process all CLUTs",                    0, AV_OPT_TYPE_CONST, {.i64=1}, .flags = TFLAGS, "clut" },
+    { "clut", "when to process CLUT", OFFSET(clut), AV_OPT_TYPE_INT, {.i64=1}, 0, 1, .flags = TFLAGS, .unit = "clut" },
+    {   "first", "process only first CLUT, ignore rest", 0, AV_OPT_TYPE_CONST, {.i64=0}, .flags = TFLAGS, .unit = "clut" },
+    {   "all",   "process all CLUTs",                    0, AV_OPT_TYPE_CONST, {.i64=1}, .flags = TFLAGS, .unit = "clut" },
 #endif
     COMMON_OPTIONS
 };
@@ -1301,17 +1306,18 @@ static const AVFilterPad lut3d_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_lut3d = {
-    .name          = "lut3d",
-    .description   = NULL_IF_CONFIG_SMALL("Adjust colors using a 3D LUT."),
+const FFFilter ff_vf_lut3d = {
+    .p.name        = "lut3d",
+    .p.description = NULL_IF_CONFIG_SMALL("Adjust colors using a 3D LUT."),
+    .p.priv_class  = &lut3d_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(LUT3DContext),
     .init          = lut3d_init,
     .uninit        = lut3d_uninit,
     FILTER_INPUTS(lut3d_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .priv_class    = &lut3d_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 #endif
@@ -1566,9 +1572,12 @@ static const AVFilterPad haldclut_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_haldclut = {
-    .name          = "haldclut",
-    .description   = NULL_IF_CONFIG_SMALL("Adjust colors using a Hald CLUT."),
+const FFFilter ff_vf_haldclut = {
+    .p.name        = "haldclut",
+    .p.description = NULL_IF_CONFIG_SMALL("Adjust colors using a Hald CLUT."),
+    .p.priv_class  = &haldclut_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(LUT3DContext),
     .preinit       = haldclut_framesync_preinit,
     .init          = haldclut_init,
@@ -1577,8 +1586,6 @@ const AVFilter ff_vf_haldclut = {
     FILTER_INPUTS(haldclut_inputs),
     FILTER_OUTPUTS(haldclut_outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .priv_class    = &haldclut_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 #endif
@@ -1733,12 +1740,14 @@ try_again:
                         else if (!strncmp(line + 7, "MAX ", 4)) vals = max;
                         if (!vals)
                             return AVERROR_INVALIDDATA;
-                        av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2);
+                        if (av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2) != 3)
+                            return AVERROR_INVALIDDATA;
                         av_log(ctx, AV_LOG_DEBUG, "min: %f %f %f | max: %f %f %f\n",
                                min[0], min[1], min[2], max[0], max[1], max[2]);
                         goto try_again;
                     } else if (!strncmp(line, "LUT_1D_INPUT_RANGE ", 19)) {
-                        av_sscanf(line + 19, "%f %f", min, max);
+                        if (av_sscanf(line + 19, "%f %f", min, max) != 2)
+                            return AVERROR_INVALIDDATA;
                         min[1] = min[2] = min[0];
                         max[1] = max[2] = max[0];
                         goto try_again;
@@ -1762,12 +1771,12 @@ try_again:
 
 static const AVOption lut1d_options[] = {
     { "file", "set 1D LUT file name", OFFSET(file), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = TFLAGS },
-    { "interp", "select interpolation mode", OFFSET(interpolation),    AV_OPT_TYPE_INT, {.i64=INTERPOLATE_1D_LINEAR}, 0, NB_INTERP_1D_MODE-1, TFLAGS, "interp_mode" },
-        { "nearest", "use values from the nearest defined points", 0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_NEAREST},   0, 0, TFLAGS, "interp_mode" },
-        { "linear",  "use values from the linear interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_LINEAR},    0, 0, TFLAGS, "interp_mode" },
-        { "cosine",  "use values from the cosine interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_COSINE},    0, 0, TFLAGS, "interp_mode" },
-        { "cubic",   "use values from the cubic interpolation",    0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_CUBIC},     0, 0, TFLAGS, "interp_mode" },
-        { "spline",  "use values from the spline interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_SPLINE},    0, 0, TFLAGS, "interp_mode" },
+    { "interp", "select interpolation mode", OFFSET(interpolation),    AV_OPT_TYPE_INT, {.i64=INTERPOLATE_1D_LINEAR}, 0, NB_INTERP_1D_MODE-1, TFLAGS, .unit = "interp_mode" },
+        { "nearest", "use values from the nearest defined points", 0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_NEAREST},   0, 0, TFLAGS, .unit = "interp_mode" },
+        { "linear",  "use values from the linear interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_LINEAR},    0, 0, TFLAGS, .unit = "interp_mode" },
+        { "cosine",  "use values from the cosine interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_COSINE},    0, 0, TFLAGS, .unit = "interp_mode" },
+        { "cubic",   "use values from the cubic interpolation",    0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_CUBIC},     0, 0, TFLAGS, .unit = "interp_mode" },
+        { "spline",  "use values from the spline interpolation",   0, AV_OPT_TYPE_CONST, {.i64=INTERPOLATE_1D_SPLINE},    0, 0, TFLAGS, .unit = "interp_mode" },
     { NULL }
 };
 
@@ -2225,16 +2234,17 @@ static const AVFilterPad lut1d_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_lut1d = {
-    .name          = "lut1d",
-    .description   = NULL_IF_CONFIG_SMALL("Adjust colors using a 1D LUT."),
+const FFFilter ff_vf_lut1d = {
+    .p.name        = "lut1d",
+    .p.description = NULL_IF_CONFIG_SMALL("Adjust colors using a 1D LUT."),
+    .p.priv_class  = &lut1d_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(LUT1DContext),
     .init          = lut1d_init,
     FILTER_INPUTS(lut1d_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .priv_class    = &lut1d_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = lut1d_process_command,
 };
 #endif

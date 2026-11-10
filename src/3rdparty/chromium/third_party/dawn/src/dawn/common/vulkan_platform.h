@@ -95,8 +95,7 @@ class alignas(detail::kNativeVkHandleAlignment) VkHandle {
     VkHandle& operator=(const VkHandle<Tag, HandleType>&) = default;
 
     // Comparisons between handles
-    bool operator==(VkHandle<Tag, HandleType> other) const { return mHandle == other.mHandle; }
-    bool operator!=(VkHandle<Tag, HandleType> other) const { return mHandle != other.mHandle; }
+    bool operator==(const VkHandle<Tag, HandleType>& other) const = default;
 
     // Comparisons between handles and VK_NULL_HANDLE
     bool operator==(std::nullptr_t) const { return mHandle == 0; }
@@ -105,7 +104,7 @@ class alignas(detail::kNativeVkHandleAlignment) VkHandle {
     // Implicit conversion to real Vulkan types.
     operator HandleType() const { return GetHandle(); }
 
-    HandleType GetHandle() const { return mHandle; }
+    const HandleType& GetHandle() const { return mHandle; }
 
     HandleType& operator*() { return mHandle; }
 
@@ -149,7 +148,9 @@ HandleType* AsVkArray(detail::VkHandle<Tag, HandleType>* handle) {
 #endif  // DAWN_PLATFORM_IS(WINDOWS)
 
 #if defined(DAWN_USE_X11)
+#ifndef VK_USE_PLATFORM_XLIB_KHR
 #define VK_USE_PLATFORM_XLIB_KHR
+#endif
 #ifndef VK_USE_PLATFORM_XCB_KHR
 #define VK_USE_PLATFORM_XCB_KHR
 #endif

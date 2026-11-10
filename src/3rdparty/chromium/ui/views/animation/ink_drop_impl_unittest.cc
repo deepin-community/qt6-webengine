@@ -35,7 +35,7 @@ class InkDropImplTest : public ViewsTestBase {
 
   void SetUp() override {
     ViewsTestBase::SetUp();
-    widget_ = CreateTestWidget();
+    widget_ = CreateTestWidget(Widget::InitParams::CLIENT_OWNS_WIDGET);
     widget_->SetContentsView(
         std::make_unique<TestInkDropHost>(auto_highlight_mode_));
     InkDrop::Get(ink_drop_host())->SetMode(views::InkDropHost::InkDropMode::ON);
@@ -198,8 +198,9 @@ TEST_F(InkDropImplTest, LayersRemovedFromHostAfterHighlight) {
 TEST_F(InkDropImplTest, LayersRemovedFromHostAfterInkDrop) {
   // TODO(bruthig): Re-enable! For some reason these tests fail on some win
   // trunk builds. See crbug.com/731811.
-  if (!gfx::Animation::ShouldRenderRichAnimation())
+  if (!gfx::Animation::ShouldRenderRichAnimation()) {
     return;
+  }
 
   EXPECT_FALSE(AreLayersAddedToHost());
 
@@ -278,15 +279,11 @@ TEST_F(InkDropImplTest, RippleAndHighlightRecreatedOnSizeChange) {
   ink_drop()->AnimateToState(InkDropState::ACTIVATED);
   EXPECT_EQ(1, ink_drop_host()->num_ink_drop_ripples_created());
   EXPECT_EQ(1, ink_drop_host()->num_ink_drop_highlights_created());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_ripple(), ink_drop_ripple());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_highlight(), ink_drop_highlight());
 
   const gfx::Rect bounds(5, 6, 7, 8);
   ink_drop_host()->SetBoundsRect(bounds);
   EXPECT_EQ(2, ink_drop_host()->num_ink_drop_ripples_created());
   EXPECT_EQ(2, ink_drop_host()->num_ink_drop_highlights_created());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_ripple(), ink_drop_ripple());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_highlight(), ink_drop_highlight());
   EXPECT_EQ(bounds.size(), ink_drop_ripple()->GetRootLayer()->size());
   EXPECT_EQ(bounds.size(), ink_drop_highlight()->layer()->size());
 }
@@ -298,16 +295,12 @@ TEST_F(InkDropImplTest, RippleAndHighlightRecreatedOnHostThemeChange) {
   ink_drop()->AnimateToState(InkDropState::ACTIVATED);
   EXPECT_EQ(1, ink_drop_host()->num_ink_drop_ripples_created());
   EXPECT_EQ(1, ink_drop_host()->num_ink_drop_highlights_created());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_ripple(), ink_drop_ripple());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_highlight(), ink_drop_highlight());
 
   ui::TestNativeTheme native_theme;
   native_theme.SetDarkMode(true);
   widget()->SetNativeThemeForTest(&native_theme);
   EXPECT_EQ(2, ink_drop_host()->num_ink_drop_ripples_created());
   EXPECT_EQ(2, ink_drop_host()->num_ink_drop_highlights_created());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_ripple(), ink_drop_ripple());
-  EXPECT_EQ(ink_drop_host()->last_ink_drop_highlight(), ink_drop_highlight());
   DestroyWidget();
 }
 
@@ -516,8 +509,9 @@ TEST_P(InkDropImplHideAutoHighlightTest,
 TEST_P(InkDropImplHideAutoHighlightTest, DeactivatedAnimatesWhenNotFocused) {
   // TODO(bruthig): Re-enable! For some reason these tests fail on some win
   // trunk builds. See crbug.com/731811.
-  if (!gfx::Animation::ShouldRenderRichAnimation())
+  if (!gfx::Animation::ShouldRenderRichAnimation()) {
     return;
+  }
 
   test_api().SetShouldHighlight(false);
 

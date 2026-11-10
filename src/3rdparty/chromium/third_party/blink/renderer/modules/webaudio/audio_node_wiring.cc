@@ -17,7 +17,7 @@ namespace {
 using AudioNodeOutputSet = HashSet<AudioNodeOutput*>;
 
 struct FindOutputResult {
-  const raw_ref<AudioNodeOutputSet, ExperimentalRenderer> output_set;
+  const raw_ref<AudioNodeOutputSet> output_set;
   AudioNodeOutputSet::const_iterator iterator;
   bool is_disabled;
 };
@@ -43,7 +43,6 @@ FindOutputResult FindOutput(AudioNodeOutput& output,
   }
 
   NOTREACHED() << "The output must be connected to the input.";
-  return {raw_ref(outputs), {}, false};
 }
 
 }  // namespace

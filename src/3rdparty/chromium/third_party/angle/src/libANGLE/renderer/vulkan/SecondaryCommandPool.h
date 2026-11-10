@@ -11,6 +11,7 @@
 #define LIBANGLE_RENDERER_VULKAN_SECONDARYCOMMANDPOOL_H_
 
 #include "common/FixedQueue.h"
+#include "common/SimpleMutex.h"
 #include "libANGLE/renderer/vulkan/vk_command_buffer_utils.h"
 #include "libANGLE/renderer/vulkan/vk_wrapper.h"
 
@@ -18,7 +19,7 @@ namespace rx
 {
 namespace vk
 {
-class Context;
+class ErrorContext;
 class VulkanSecondaryCommandBuffer;
 
 // VkCommandPool must be externally synchronized when its Command Buffers are: allocated, freed,
@@ -30,16 +31,17 @@ class SecondaryCommandPool final : angle::NonCopyable
     SecondaryCommandPool();
     ~SecondaryCommandPool();
 
-    angle::Result init(Context *context, uint32_t queueFamilyIndex, ProtectionType protectionType);
+    angle::Result init(ErrorContext *context,
+                       uint32_t queueFamilyIndex,
+                       ProtectionType protectionType);
     void destroy(VkDevice device);
 
     bool valid() const { return mCommandPool.valid(); }
 
     // Call only from the Context thread that owns the SecondaryCommandPool instance.
-    angle::Result allocate(Context *context, VulkanSecondaryCommandBuffer *buffer);
+    angle::Result allocate(ErrorContext *context, VulkanSecondaryCommandBuffer *buffer);
 
     // Single threaded - use external synchronization.
-    // Example threads: any Context thread or "asyncCommandQueue" thread.
     void collect(VulkanSecondaryCommandBuffer *buffer);
 
   private:
@@ -59,7 +61,7 @@ class SecondaryCommandPool final : angle::NonCopyable
 
     // Overflow vector to use in cases when FixedQueue is filled.
     std::vector<VkCommandBuffer> mCollectedBuffersOverflow;
-    std::mutex mOverflowMutex;
+    angle::SimpleMutex mOverflowMutex;
     std::atomic<bool> mHasOverflow;
 };
 

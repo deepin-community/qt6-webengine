@@ -18,7 +18,7 @@
 
 #include <cstddef>
 #include <queue>
-#include <thread>  // NOLINT(build/c++11)
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -27,9 +27,9 @@
 #include "absl/log/check.h"
 #include "absl/synchronization/mutex.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
-// A simple ThreadPool implementation.
+// A simple thread pool implementation based on `std::thread`.
 class ThreadPool {
  public:
   // Initializes this ThreadPool by starting the requested number of worker
@@ -72,8 +72,8 @@ class ThreadPool {
     return !queue_.empty();
   }
 
-  // The work loop that every worker thread iterates over, waiting and executing
-  // newly scheduled work.
+  // The work loop that every worker thread iterates over, waiting and
+  // executing newly scheduled work.
   void WorkLoop() {
     while (true) {
       absl::AnyInvocable<void()> func;
@@ -95,6 +95,6 @@ class ThreadPool {
   std::vector<std::thread> threads_;
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_THREAD_POOL_H_

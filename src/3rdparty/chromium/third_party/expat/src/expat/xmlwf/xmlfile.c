@@ -11,10 +11,12 @@
    Copyright (c) 2002-2003 Fred L. Drake, Jr. <fdrake@users.sourceforge.net>
    Copyright (c) 2004-2006 Karl Waclawek <karl@waclawek.net>
    Copyright (c) 2005-2007 Steven Solie <steven@solie.ca>
-   Copyright (c) 2016-2021 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2016-2025 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2017      Rhodri James <rhodri@wildebeest.org.uk>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
-   Copyright (c) 2021      Dong-hee Na <donghee.na@python.org>
+   Copyright (c) 2021      Donghee Na <donghee.na@python.org>
+   Copyright (c) 2024      Hanno Böck <hanno@gentoo.org>
+   Copyright (c) 2025      Alfonso Gregory <gfunni234@gmail.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -37,7 +39,7 @@
    USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include <expat_config.h>
+#include "expat_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,12 +57,19 @@
 #include "xmltchar.h"
 #include "filemap.h"
 
+/* Function "read": */
 #if defined(_MSC_VER)
 #  include <io.h>
-#endif
-
-#ifdef HAVE_UNISTD_H
+/* https://msdn.microsoft.com/en-us/library/wyssk1bs(v=vs.100).aspx */
+#  define EXPAT_read _read
+#  define EXPAT_read_count_t int
+#  define EXPAT_read_req_t unsigned int
+#else /* POSIX */
 #  include <unistd.h>
+/* https://pubs.opengroup.org/onlinepubs/009695399/functions/read.html */
+#  define EXPAT_read read
+#  define EXPAT_read_count_t ssize_t
+#  define EXPAT_read_req_t size_t
 #endif
 
 #ifndef O_BINARY
@@ -71,11 +80,7 @@
 #  endif
 #endif
 
-#ifdef _DEBUG
-#  define READ_SIZE 16
-#else
-#  define READ_SIZE (1024 * 8)
-#endif
+int g_read_size_bytes = 1024 * 8;
 
 typedef struct {
   XML_Parser parser;
@@ -92,10 +97,11 @@ reportError(XML_Parser parser, const XML_Char *filename) {
     ftprintf(stdout,
              T("%s") T(":%") T(XML_FMT_INT_MOD) T("u") T(":%")
                  T(XML_FMT_INT_MOD) T("u") T(": %s\n"),
-             filename, XML_GetErrorLineNumber(parser),
-             XML_GetErrorColumnNumber(parser), message);
+             filename, XML_GetCurrentLineNumber(parser),
+             XML_GetCurrentColumnNumber(parser), message);
   else
-    ftprintf(stderr, T("%s: (unknown message %d)\n"), filename, code);
+    ftprintf(stderr, T("%s: (unknown message %u)\n"), filename,
+             (unsigned int)code);
 }
 
 /* This implementation will give problems on files larger than INT_MAX. */
@@ -132,8 +138,7 @@ resolveSystemId(const XML_Char *base, const XML_Char *systemId,
 #endif
   )
     return systemId;
-  *toFree = (XML_Char *)malloc((tcslen(base) + tcslen(systemId) + 2)
-                               * sizeof(XML_Char));
+  *toFree = malloc((tcslen(base) + tcslen(systemId) + 2) * sizeof(XML_Char));
   if (! *toFree)
     return systemId;
   tcscpy(*toFree, base);
@@ -194,8 +199,8 @@ processStream(const XML_Char *filename, XML_Parser parser) {
     }
   }
   for (;;) {
-    int nread;
-    char *buf = (char *)XML_GetBuffer(parser, READ_SIZE);
+    EXPAT_read_count_t nread;
+    char *buf = (char *)XML_GetBuffer(parser, g_read_size_bytes);
     if (! buf) {
       if (filename != NULL)
         close(fd);
@@ -203,14 +208,14 @@ processStream(const XML_Char *filename, XML_Parser parser) {
                filename != NULL ? filename : T("xmlwf"));
       return 0;
     }
-    nread = read(fd, buf, READ_SIZE);
+    nread = EXPAT_read(fd, buf, (EXPAT_read_req_t)g_read_size_bytes);
     if (nread < 0) {
       tperror(filename != NULL ? filename : T("STDIN"));
       if (filename != NULL)
         close(fd);
       return 0;
     }
-    if (XML_ParseBuffer(parser, nread, nread == 0) == XML_STATUS_ERROR) {
+    if (XML_ParseBuffer(parser, (int)nread, nread == 0) == XML_STATUS_ERROR) {
       reportError(parser, filename != NULL ? filename : T("STDIN"));
       if (filename != NULL)
         close(fd);
@@ -220,7 +225,6 @@ processStream(const XML_Char *filename, XML_Parser parser) {
       if (filename != NULL)
         close(fd);
       break;
-      ;
     }
   }
   return 1;

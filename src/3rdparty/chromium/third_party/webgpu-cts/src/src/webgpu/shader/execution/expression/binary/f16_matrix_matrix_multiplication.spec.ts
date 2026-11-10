@@ -3,14 +3,14 @@ Execution Tests for matrix-matrix f16 multiplication expression
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../gpu_test.js';
-import { TypeF16, TypeMat } from '../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
+import { Type } from '../../../../util/conversion.js';
 import { allInputSources, run } from '../expression.js';
 
 import { binary, compoundBinary } from './binary.js';
 import { d } from './f16_matrix_matrix_multiplication.cache.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('matrix_matrix')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
@@ -27,10 +27,8 @@ Accuracy: Correctly rounded
       .combine('x_rows', [2, 3, 4] as const)
       .combine('y_cols', [2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const x_cols = t.params.common_dim;
     const x_rows = t.params.x_rows;
     const y_cols = t.params.y_cols;
@@ -44,8 +42,8 @@ Accuracy: Correctly rounded
     await run(
       t,
       binary('*'),
-      [TypeMat(x_cols, x_rows, TypeF16), TypeMat(y_cols, y_rows, TypeF16)],
-      TypeMat(y_cols, x_rows, TypeF16),
+      [Type.mat(x_cols, x_rows, Type.f16), Type.mat(y_cols, y_rows, Type.f16)],
+      Type.mat(y_cols, x_rows, Type.f16),
       t.params,
       cases
     );
@@ -65,10 +63,8 @@ Accuracy: Correctly rounded
       .combine('common_dim', [2, 3, 4] as const)
       .combine('x_rows', [2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const x_cols = t.params.common_dim;
     const x_rows = t.params.x_rows;
     const y_cols = x_cols;
@@ -82,8 +78,8 @@ Accuracy: Correctly rounded
     await run(
       t,
       compoundBinary('*='),
-      [TypeMat(x_cols, x_rows, TypeF16), TypeMat(y_cols, y_rows, TypeF16)],
-      TypeMat(y_cols, x_rows, TypeF16),
+      [Type.mat(x_cols, x_rows, Type.f16), Type.mat(y_cols, y_rows, Type.f16)],
+      Type.mat(y_cols, x_rows, Type.f16),
       t.params,
       cases
     );

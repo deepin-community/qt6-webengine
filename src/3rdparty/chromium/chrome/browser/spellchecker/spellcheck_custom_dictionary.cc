@@ -24,6 +24,7 @@
 #include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
+#include "build/build_config.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/common/chrome_constants.h"
 #endif
@@ -33,6 +34,7 @@
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_change_processor.h"
 #include "components/sync/protocol/dictionary_specifics.pb.h"
+#include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #endif
 #include "content/public/browser/browser_task_traits.h"
@@ -210,11 +212,9 @@ int SanitizeWordsToRemove(const std::set<std::string>& existing,
 
 }  // namespace
 
-SpellcheckCustomDictionary::Change::Change() {
-}
+SpellcheckCustomDictionary::Change::Change() = default;
 
-SpellcheckCustomDictionary::Change::~Change() {
-}
+SpellcheckCustomDictionary::Change::~Change() = default;
 
 void SpellcheckCustomDictionary::Change::AddWord(const std::string& word) {
   to_add_.insert(word);
@@ -251,8 +251,7 @@ SpellcheckCustomDictionary::SpellcheckCustomDictionary(
           dictionary_directory_name.Append(chrome::kCustomDictionaryFileName)),
       is_loaded_(false) {}
 
-SpellcheckCustomDictionary::~SpellcheckCustomDictionary() {
-}
+SpellcheckCustomDictionary::~SpellcheckCustomDictionary() = default;
 
 const std::set<std::string>& SpellcheckCustomDictionary::GetWords() const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -344,7 +343,7 @@ void SpellcheckCustomDictionary::WaitUntilReadyToSync(base::OnceClosure done) {
 
 std::optional<syncer::ModelError>
 SpellcheckCustomDictionary::MergeDataAndStartSyncing(
-    syncer::ModelType type,
+    syncer::DataType type,
     const syncer::SyncDataList& initial_sync_data,
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -374,14 +373,14 @@ SpellcheckCustomDictionary::MergeDataAndStartSyncing(
   return Sync(to_change_remotely);
 }
 
-void SpellcheckCustomDictionary::StopSyncing(syncer::ModelType type) {
+void SpellcheckCustomDictionary::StopSyncing(syncer::DataType type) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(syncer::DICTIONARY, type);
   sync_processor_.reset();
 }
 
 syncer::SyncDataList SpellcheckCustomDictionary::GetAllSyncDataForTesting(
-    syncer::ModelType type) const {
+    syncer::DataType type) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(syncer::DICTIONARY, type);
   syncer::SyncDataList data;
@@ -415,8 +414,7 @@ SpellcheckCustomDictionary::ProcessSyncChanges(
       case syncer::SyncChange::ACTION_UPDATE:
         return syncer::ModelError(
             FROM_HERE,
-            "Processing sync changes failed on change type " +
-                syncer::SyncChange::ChangeTypeToString(change.change_type()));
+            syncer::ModelError::Type::kSpellcheckCustomDictionaryUpdateFailed);
     }
   }
 
@@ -431,12 +429,18 @@ SpellcheckCustomDictionary::ProcessSyncChanges(
 base::WeakPtr<syncer::SyncableService> SpellcheckCustomDictionary::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
+
+std::string SpellcheckCustomDictionary::GetClientTag(
+    const syncer::EntityData& entity_data) const {
+  DCHECK(entity_data.specifics.has_dictionary());
+  return entity_data.specifics.dictionary().word();
+}
 #endif  // BUILDFLAG(IS_QTWEBENGINE)
 
 SpellcheckCustomDictionary::LoadFileResult::LoadFileResult()
     : is_valid_file(false) {}
 
-SpellcheckCustomDictionary::LoadFileResult::~LoadFileResult() {}
+SpellcheckCustomDictionary::LoadFileResult::~LoadFileResult() = default;
 
 // static
 std::unique_ptr<SpellcheckCustomDictionary::LoadFileResult>

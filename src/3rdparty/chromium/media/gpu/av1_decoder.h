@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/containers/span.h"
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
@@ -20,7 +21,7 @@
 
 // For libgav1::RefCountedBufferPtr.
 #include "third_party/libgav1/src/src/buffer_pool.h"
-// For libgav1::ObuSequenceHeader. absl::optional demands ObuSequenceHeader to
+// For libgav1::ObuSequenceHeader. std::optional demands ObuSequenceHeader to
 // fulfill std::is_trivially_constructible if it is forward-declared. But
 // ObuSequenceHeader doesn't.
 #include "third_party/libgav1/src/src/obu_parser.h"
@@ -118,6 +119,14 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
     // called for them beforehand).
     // Returns true when successful, false otherwise.
     virtual bool OutputPicture(const AV1Picture& pic) = 0;
+
+    // Notifies the accelerater whenever there is a new stream to process.
+    // The lifetime of the stream is determined by the caller of
+    // AV1Decoder::SetStream(). `data` spans passed to SubmitDecode() will be
+    // contained in `stream` (in fact exactly the same span as `stream` in the
+    // current implementation).
+    virtual Status SetStream(base::span<const uint8_t> stream,
+                             const DecryptConfig* decrypt_config);
   };
 
   AV1Decoder(std::unique_ptr<AV1Accelerator> accelerator,
@@ -128,7 +137,8 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   AV1Decoder& operator=(const AV1Decoder&) = delete;
 
   // AcceleratedVideoDecoder implementation.
-  void SetStream(int32_t id, const DecoderBuffer& decoder_buffer) override;
+  void SetStream(int32_t id,
+                 scoped_refptr<DecoderBuffer> decoder_buffer) override;
   [[nodiscard]] bool Flush() override;
   void Reset() override;
   [[nodiscard]] DecodeResult Decode() override;
@@ -138,7 +148,7 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   uint8_t GetBitDepth() const override;
   VideoChromaSampling GetChromaSampling() const override;
   VideoColorSpace GetVideoColorSpace() const override;
-  absl::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
+  std::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
   size_t GetRequiredNumOfPictures() const override;
   size_t GetNumReferenceFrames() const override;
 
@@ -162,6 +172,7 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
 
   bool on_error_ = false;
 
+  scoped_refptr<media::DecoderBuffer> decoder_buffer_;
   std::unique_ptr<libgav1::BufferPool> buffer_pool_;
   std::unique_ptr<libgav1::DecoderState> state_;
   std::unique_ptr<libgav1::ObuParser> parser_;
@@ -169,8 +180,8 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   const std::unique_ptr<AV1Accelerator> accelerator_;
   AV1ReferenceFrameVector ref_frames_;
 
-  absl::optional<libgav1::ObuSequenceHeader> current_sequence_header_;
-  absl::optional<libgav1::ObuFrameHeader> current_frame_header_;
+  std::optional<libgav1::ObuSequenceHeader> current_sequence_header_;
+  std::optional<libgav1::ObuFrameHeader> current_frame_header_;
   libgav1::RefCountedBufferPtr current_frame_;
 
   gfx::Rect visible_rect_;
@@ -180,11 +191,9 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   VideoColorSpace picture_color_space_;
   uint8_t bit_depth_ = 0;
   VideoChromaSampling chroma_sampling_ = VideoChromaSampling::kUnknown;
-  absl::optional<gfx::HDRMetadata> hdr_metadata_;
+  std::optional<gfx::HDRMetadata> hdr_metadata_;
 
   int32_t stream_id_ = 0;
-  const uint8_t* stream_ = nullptr;
-  size_t stream_size_ = 0;
   std::unique_ptr<DecryptConfig> decrypt_config_;
 
   // Secure handle to pass through to the accelerator when doing secure playback

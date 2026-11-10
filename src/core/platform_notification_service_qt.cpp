@@ -1,5 +1,6 @@
 // Copyright (C) 2017 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "platform_notification_service_qt.h"
 
@@ -54,7 +55,7 @@ struct PersistentNotificationDelegate : UserNotificationController::Delegate {
     virtual void clicked() override {
         Q_ASSERT(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
         if (auto inst = content::NotificationEventDispatcher::GetInstance())
-            inst->DispatchNotificationClickEvent(browser_context, notification_id, origin, absl::nullopt, absl::nullopt, base::DoNothing());
+            inst->DispatchNotificationClickEvent(browser_context, notification_id, origin, std::nullopt, std::nullopt, base::DoNothing());
     }
 
     virtual void closed(bool by_user) override {

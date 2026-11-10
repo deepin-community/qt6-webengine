@@ -6,7 +6,7 @@
 
 #include "xfa/fxfa/cxfa_ffline.h"
 
-#include "third_party/base/notreached.h"
+#include "core/fxcrt/notreached.h"
 #include "xfa/fgas/graphics/cfgas_gecolor.h"
 #include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fgas/graphics/cfgas_gepath.h"
@@ -48,7 +48,7 @@ void CXFA_FFLine::GetRectFromHand(CFX_RectF& rect,
       case XFA_AttributeValue::Even:
         break;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   } else if (rect.width < 1.0f) {
     switch (iHand) {
@@ -61,7 +61,7 @@ void CXFA_FFLine::GetRectFromHand(CFX_RectF& rect,
       case XFA_AttributeValue::Even:
         break;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   } else {
     switch (iHand) {
@@ -74,7 +74,7 @@ void CXFA_FFLine::GetRectFromHand(CFX_RectF& rect,
       case XFA_AttributeValue::Even:
         break;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   }
 }
@@ -82,12 +82,14 @@ void CXFA_FFLine::GetRectFromHand(CFX_RectF& rect,
 void CXFA_FFLine::RenderWidget(CFGAS_GEGraphics* pGS,
                                const CFX_Matrix& matrix,
                                HighlightOption highlight) {
-  if (!HasVisibleStatus())
+  if (!HasVisibleStatus()) {
     return;
+  }
 
-  CXFA_Value* value = m_pNode->GetFormValueIfExists();
-  if (!value)
+  CXFA_Value* value = node_->GetFormValueIfExists();
+  if (!value) {
     return;
+  }
 
   FX_ARGB lineColor = 0xFF000000;
   float fLineWidth = 1.0f;
@@ -96,8 +98,9 @@ void CXFA_FFLine::RenderWidget(CFGAS_GEGraphics* pGS,
   CXFA_Line* line = value->GetLineIfExists();
   if (line) {
     CXFA_Edge* edge = line->GetEdgeIfExists();
-    if (edge && !edge->IsVisible())
+    if (edge && !edge->IsVisible()) {
       return;
+    }
 
     if (edge) {
       lineColor = edge->GetColor();
@@ -111,7 +114,7 @@ void CXFA_FFLine::RenderWidget(CFGAS_GEGraphics* pGS,
   mtRotate.Concat(matrix);
 
   CFX_RectF rtLine = GetRectWithoutRotate();
-  CXFA_Margin* margin = m_pNode->GetMarginIfExists();
+  CXFA_Margin* margin = node_->GetMarginIfExists();
   XFA_RectWithoutMargin(&rtLine, margin);
 
   GetRectFromHand(rtLine, line ? line->GetHand() : XFA_AttributeValue::Left,

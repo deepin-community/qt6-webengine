@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/neon-mlal-lane.c.in
 //   Generator: tools/xngen
@@ -7,13 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/igemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
@@ -28,7 +30,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
     size_t cn_stride,
     size_t a_offset,
     const uint8_t* zero,
-    const union xnn_qu8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qu8_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 4);
@@ -55,7 +57,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
     c3 = c2;
   }
 
-  const uint8x8_t vb_zero_point = vld1_dup_u8(&params->fp32_neon.kernel_zero_point[0]);
+  const uint8x8_t vb_zero_point = vdup_n_u8(params->fp32_neon.kernel_zero_point);
   do {
     int32x4_t vacc0x0123 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
     int32x4_t vacc0x4567 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
@@ -309,7 +311,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
     float32x4_t vfpacc3x0123 = vcvtq_f32_s32(vacc3x0123);
     float32x4_t vfpacc3x4567 = vcvtq_f32_s32(vacc3x4567);
 
-    const float32x4_t vscale = vld1q_dup_f32(&params->fp32_neon.scale);
+    const float32x4_t vscale = vdupq_n_f32(params->fp32_neon.scale);
     vfpacc0x0123 = vmulq_f32(vfpacc0x0123, vscale);
     vfpacc0x4567 = vmulq_f32(vfpacc0x4567, vscale);
     vfpacc1x0123 = vmulq_f32(vfpacc1x0123, vscale);
@@ -319,7 +321,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
     vfpacc3x0123 = vmulq_f32(vfpacc3x0123, vscale);
     vfpacc3x4567 = vmulq_f32(vfpacc3x4567, vscale);
 
-    const float32x4_t vmagic_bias = vld1q_dup_f32(&params->fp32_neon.magic_bias);
+    const float32x4_t vmagic_bias = vdupq_n_f32(params->fp32_neon.magic_bias);
     vacc0x0123 = vreinterpretq_s32_f32(vaddq_f32(vfpacc0x0123, vmagic_bias));
     vacc0x4567 = vreinterpretq_s32_f32(vaddq_f32(vfpacc0x4567, vmagic_bias));
     vacc1x0123 = vreinterpretq_s32_f32(vaddq_f32(vfpacc1x0123, vmagic_bias));
@@ -329,7 +331,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
     vacc3x0123 = vreinterpretq_s32_f32(vaddq_f32(vfpacc3x0123, vmagic_bias));
     vacc3x4567 = vreinterpretq_s32_f32(vaddq_f32(vfpacc3x4567, vmagic_bias));
 
-    const int32x4_t vmagic_bias_less_output_zero_point = vld1q_dup_s32(&params->fp32_neon.magic_bias_less_output_zero_point);
+    const int32x4_t vmagic_bias_less_output_zero_point = vdupq_n_s32(params->fp32_neon.magic_bias_less_output_zero_point);
     vacc0x0123 = vqsubq_s32(vacc0x0123, vmagic_bias_less_output_zero_point);
     vacc0x4567 = vqsubq_s32(vacc0x4567, vmagic_bias_less_output_zero_point);
     vacc1x0123 = vqsubq_s32(vacc1x0123, vmagic_bias_less_output_zero_point);
@@ -359,11 +361,11 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_4x8__neon_mlal_lane(
       uint8x16_t vout2x01234567_3x01234567 = vcombine_u8(vqmovun_s16(vacc2x01234567), vqmovun_s16(vacc3x01234567));
     #endif
 
-    const uint8x16_t voutput_min = vld1q_dup_u8(&params->fp32_neon.output_min);
+    const uint8x16_t voutput_min = vdupq_n_u8(params->fp32_neon.output_min);
     vout0x01234567_1x01234567 = vmaxq_u8(vout0x01234567_1x01234567, voutput_min);
     vout2x01234567_3x01234567 = vmaxq_u8(vout2x01234567_3x01234567, voutput_min);
 
-    const uint8x16_t voutput_max = vld1q_dup_u8(&params->fp32_neon.output_max);
+    const uint8x16_t voutput_max = vdupq_n_u8(params->fp32_neon.output_max);
     vout0x01234567_1x01234567 = vminq_u8(vout0x01234567_1x01234567, voutput_max);
     vout2x01234567_3x01234567 = vminq_u8(vout2x01234567_3x01234567, voutput_max);
 

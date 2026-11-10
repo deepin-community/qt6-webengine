@@ -4,12 +4,12 @@
 
 #include "content/browser/client_hints/client_hints.h"
 
+#include <algorithm>
+
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "content/public/test/mock_client_hints_controller_delegate.h"
 #include "content/public/test/test_browser_context.h"
@@ -20,6 +20,8 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/cpp/client_hints.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "third_party/blink/public/common/client_hints/client_hints.h"
 
 namespace content {
 
@@ -78,10 +80,10 @@ class ClientHintsTest : public RenderViewHostImplTestHarness {
 
     std::vector<std::string> hints_list;
     const auto& map = network::GetClientHintToNameMap();
-    base::ranges::transform(hints.value(), std::back_inserter(hints_list),
-                            [&map](network::mojom::WebClientHintsType hint) {
-                              return map.at(hint);
-                            });
+    std::ranges::transform(hints.value(), std::back_inserter(hints_list),
+                           [&map](network::mojom::WebClientHintsType hint) {
+                             return map.at(hint);
+                           });
 
     return base::JoinString(hints_list, ",");
   }
@@ -220,12 +222,6 @@ TEST_F(ClientHintsTest, DownlinkRandomized) {
 }
 
 TEST_F(ClientHintsTest, IntegrationTestsOnParseLookUp) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      {blink::features::kClientHintsFormFactor,
-       blink::features::kClientHintsPrefersReducedTransparency},
-      {});
-
   GURL url = GURL(ClientHintsTest::kOriginUrl);
   contents()->NavigateAndCommit(url);
   FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
@@ -315,6 +311,74 @@ TEST_F(ClientHintsTest, SubFrame) {
   delegate.GetAllowedClientHintsFromSource(url::Origin::Create(url),
                                            &current_hints);
   EXPECT_EQ(existing_hints, current_hints.GetEnabledHints());
+}
+
+TEST_F(ClientHintsTest, GetEnabledClientHintsMainFrame) {
+  GURL main_url(kOriginUrl);
+  contents()->NavigateAndCommit(main_url);
+  url::Origin origin = url::Origin::Create(main_url);
+
+  FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
+  FrameTreeNode* main_frame_node = frame_tree.root();
+
+  blink::UserAgentMetadata ua_metadata;
+  MockClientHintsControllerDelegate delegate(ua_metadata);
+
+  std::vector<network::mojom::WebClientHintsType> expected_types = {
+      network::mojom::WebClientHintsType::kUAArch,
+      network::mojom::WebClientHintsType::kUAWoW64,
+  };
+  delegate.SetAdditionalClientHints(expected_types);
+  // Add default ClientHints.
+  for (const auto& [hint, _] : network::GetClientHintToNameMap()) {
+    if (blink::IsClientHintSentByDefault(hint)) {
+      expected_types.push_back(hint);
+    }
+  }
+
+  const auto& actual_hints =
+      GetEnabledClientHints(origin, main_frame_node, &delegate);
+
+  EXPECT_EQ(origin, actual_hints.origin);
+  EXPECT_TRUE(actual_hints.is_outermost_main_frame);
+  // We do not care the order of contents.
+  EXPECT_THAT(actual_hints.hints,
+              testing::UnorderedElementsAreArray(expected_types));
+}
+
+TEST_F(ClientHintsTest, GetEnabledClientHintsSubframe) {
+  GURL main_url(kOriginUrl);
+  contents()->NavigateAndCommit(main_url);
+  url::Origin origin = url::Origin::Create(main_url);
+
+  FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
+  FrameTreeNode* main_frame_node = frame_tree.root();
+  AddOneChildNode();
+  FrameTreeNode* sub_frame_node = main_frame_node->child_at(0);
+
+  blink::UserAgentMetadata ua_metadata;
+  MockClientHintsControllerDelegate delegate(ua_metadata);
+
+  // Add default ClientHints.
+  std::vector<network::mojom::WebClientHintsType> expected_types;
+  for (const auto& [hint, _] : network::GetClientHintToNameMap()) {
+    if (blink::IsClientHintSentByDefault(hint)) {
+      expected_types.push_back(hint);
+    }
+  }
+
+  // The origin passed to GetEnabledClientHints is the resource origin.
+  // The origin in the result is the main frame origin.
+  GURL sub_url("https://sub.example.com");
+  const auto& actual_hints = GetEnabledClientHints(url::Origin::Create(sub_url),
+                                                   sub_frame_node, &delegate);
+
+  EXPECT_EQ(origin, actual_hints.origin);
+  EXPECT_FALSE(actual_hints.is_outermost_main_frame);
+  // Just check if the hints has the default low entropy client hints.
+  // We do not care the order of contents.
+  EXPECT_THAT(actual_hints.hints,
+              testing::UnorderedElementsAreArray(expected_types));
 }
 
 }  // namespace content

@@ -110,7 +110,7 @@ protected:
     const RenderNode* onNodeAt(const SkPoint&) const override { return nullptr; }
 
 private:
-    void tick(SkMSec t) {
+    void tick(TimeUtils::MSec t) {
         fSlide->animate(t * 1e6);
         this->invalidate();
     }
@@ -193,7 +193,7 @@ public:
         // Map coords to slide space.
         const auto xform = SkMatrix::RectToRect(fRect, SkRect::MakeSize(fDir->fWinSize),
                                                 SkMatrix::kCenter_ScaleToFit);
-        const auto pt = xform.mapXY(x, y);
+        const auto pt = xform.mapPoint({x, y});
 
         return fTarget->fSlide->onMouse(pt.x(), pt.y(), state, modifiers);
     }
@@ -374,7 +374,7 @@ void SlideDir::draw(SkCanvas* canvas) {
 }
 
 bool SlideDir::animate(double nanos) {
-    SkMSec msec = TimeUtils::NanosToMSec(nanos);
+    TimeUtils::MSec msec = TimeUtils::NanosToMSec(nanos);
     if (fTimeBase == 0) {
         // Reset the animation time.
         fTimeBase = msec;

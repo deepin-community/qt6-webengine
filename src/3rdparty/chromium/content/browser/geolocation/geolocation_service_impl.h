@@ -7,6 +7,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/permission_controller.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -74,12 +75,22 @@ class CONTENT_EXPORT GeolocationServiceImpl
   void HandlePermissionStatusChange(
       blink::mojom::PermissionStatus permission_status);
 
+  void OnDisconnected();
+
  private:
+  // Private helper to manage connection lifetimes.
+  class GeolocationProxy;
+
   // Creates the Geolocation Service.
   void CreateGeolocationWithPermissionStatus(
       mojo::PendingReceiver<device::mojom::Geolocation> receiver,
       CreateGeolocationCallback callback,
       blink::mojom::PermissionStatus permission_status);
+
+  void IncrementActivityCount();
+  void DecrementActivityCount();
+
+  void OnProxyDisconnected(GeolocationProxy* proxy);
 
   raw_ptr<device::mojom::GeolocationContext, DanglingUntriaged>
       geolocation_context_;
@@ -100,6 +111,16 @@ class CONTENT_EXPORT GeolocationServiceImpl
   mojo::ReceiverSet<blink::mojom::GeolocationService,
                     std::unique_ptr<GeolocationServiceImplContext>>
       receiver_set_;
+
+  // Whether this service is dispatching geolocation updates to its listeners.
+  // The creation/destruction of this class is usually the sign of whether
+  // the frame is updating the geolocation information. However, it can also be
+  // stopped because the permission status changed.
+  bool is_sending_updates_ = false;
+
+  // Active proxies managing connections between the renderer and the backing
+  // GeolocationImpl.
+  std::vector<std::unique_ptr<GeolocationProxy>> active_proxies_;
 
   base::WeakPtrFactory<GeolocationServiceImpl> weak_factory_{this};
 };

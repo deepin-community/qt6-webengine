@@ -4,15 +4,17 @@
 
 #include "content/common/service_worker/race_network_request_url_loader_client.h"
 
+#include "base/containers/span.h"
 #include "base/location.h"
 #include "base/run_loop.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "content/common/service_worker/race_network_request_write_buffer_manager.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "net/base/net_errors.h"
-#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/loading_params.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,8 +28,7 @@ MojoResult CreateDataPipe(mojo::ScopedDataPipeProducerHandle& producer_handle,
   options.struct_size = sizeof(MojoCreateDataPipeOptions);
   options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
   options.element_num_bytes = 1;
-  options.capacity_num_bytes =
-      network::features::GetDataPipeDefaultAllocationSize();
+  options.capacity_num_bytes = network::GetDataPipeDefaultAllocationSize();
 
   return mojo::CreateDataPipe(&options, producer_handle, consumer_handle);
 }
@@ -61,8 +62,6 @@ using OnCompletedCallback =
 class MockServiceWorkerResourceLoader : public ServiceWorkerResourceLoader {
  public:
   bool IsMainResourceLoader() override { return true; }
-  void CommitResponseHeaders(
-      const network::mojom::URLResponseHeadPtr& response_head) override {}
   void CommitResponseBody(
       const network::mojom::URLResponseHeadPtr& response_head,
       mojo::ScopedDataPipeConsumerHandle response_body,
@@ -127,14 +126,12 @@ class ResponseBodyDataPipeReader {
       body_watcher_->ArmOrNotify();
       return;
     }
-    const void* buffer;
-    uint32_t num_bytes = 0;
-    MojoResult result = body_->BeginReadData(&buffer, &num_bytes,
-                                             MOJO_BEGIN_READ_DATA_FLAG_NONE);
+    base::span<const uint8_t> buffer;
+    MojoResult result =
+        body_->BeginReadData(MOJO_BEGIN_READ_DATA_FLAG_NONE, buffer);
     switch (result) {
       case MOJO_RESULT_OK:
-        chunk_ = std::string(static_cast<const char*>(buffer), num_bytes);
-        num_bytes_ = num_bytes;
+        chunk_ = std::string(base::as_string_view(buffer));
         state_ = State::kChunkReceived;
         break;
       case MOJO_RESULT_FAILED_PRECONDITION:
@@ -149,8 +146,8 @@ class ResponseBodyDataPipeReader {
 
   std::string ConsumeChunk() {
     const std::string chunk = chunk_;
+    EXPECT_EQ(body_->EndReadData(chunk_.size()), MOJO_RESULT_OK);
     chunk_ = "";
-    EXPECT_EQ(body_->EndReadData(num_bytes_), MOJO_RESULT_OK);
 
     return chunk;
   }
@@ -173,14 +170,13 @@ class ResponseBodyDataPipeReader {
   void AbortBodyConsumerHandle() { body_.reset(); }
 
   bool IsDisconnected() {
-    return body_->EndReadData(num_bytes_) == MOJO_RESULT_FAILED_PRECONDITION;
+    return body_->EndReadData(chunk_.size()) == MOJO_RESULT_FAILED_PRECONDITION;
   }
 
  private:
   std::unique_ptr<mojo::SimpleWatcher> body_watcher_;
   mojo::ScopedDataPipeConsumerHandle body_;
   std::string chunk_;
-  uint32_t num_bytes_;
   State state_ = State::kWaiting;
 };
 
@@ -225,9 +221,10 @@ class ServiceWorkerRaceNetworkRequestURLLoaderClientTest
   // calls |client_|'s OnReceiveResponse(), which will trigger the relay of data
   // chunks in ServiceWorkerRaceNetworkRequestURLLoaderClient.
   void WriteData(const std::string& expected_body) {
-    uint32_t num_bytes = expected_body.size();
-    MojoResult result = producer_->WriteData(expected_body.data(), &num_bytes,
-                                             MOJO_WRITE_DATA_FLAG_NONE);
+    size_t actually_written_bytes = 0;
+    MojoResult result =
+        producer_->WriteData(base::as_byte_span(expected_body),
+                             MOJO_WRITE_DATA_FLAG_NONE, actually_written_bytes);
     ASSERT_EQ(result, MOJO_RESULT_OK);
     network::mojom::URLResponseHeadPtr head(
         network::CreateURLResponseHead(net::HTTP_OK));
@@ -291,7 +288,7 @@ class ServiceWorkerRaceNetworkRequestURLLoaderClientTest
 };
 
 TEST_F(ServiceWorkerRaceNetworkRequestURLLoaderClientTest, Basic) {
-  SetUpURLLoaderClient(network::features::GetDataPipeDefaultAllocationSize());
+  SetUpURLLoaderClient(network::GetDataPipeDefaultAllocationSize());
 
   const std::string kExpectedBody = "abc";
   WriteData(kExpectedBody);
@@ -301,13 +298,12 @@ TEST_F(ServiceWorkerRaceNetworkRequestURLLoaderClientTest, Basic) {
       [](std::string expected_body,
          const network::mojom::URLResponseHeadPtr& response_head,
          mojo::ScopedDataPipeConsumerHandle body) {
-        const void* buffer;
-        uint32_t num_bytes = 0;
-        MojoResult result = body->BeginReadData(&buffer, &num_bytes,
-                                                MOJO_BEGIN_READ_DATA_FLAG_NONE);
+        base::span<const uint8_t> buffer;
+        MojoResult result =
+            body->BeginReadData(MOJO_BEGIN_READ_DATA_FLAG_NONE, buffer);
         ASSERT_EQ(result, MOJO_RESULT_OK);
-        EXPECT_EQ(static_cast<const char*>(buffer), expected_body);
-        result = body->EndReadData(num_bytes);
+        EXPECT_EQ(base::as_string_view(buffer), expected_body);
+        result = body->EndReadData(buffer.size());
         ASSERT_EQ(result, MOJO_RESULT_OK);
       },
       kExpectedBody));

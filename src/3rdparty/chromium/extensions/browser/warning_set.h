@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "extensions/common/extension_id.h"
-#include "url/gurl.h"
 
 namespace base {
 class FilePath;
@@ -52,17 +51,16 @@ class Warning {
   Warning& operator=(const Warning& other);
 
   // Factory methods for various warning types.
-  static Warning CreateNetworkDelayWarning(
-      const std::string& extension_id);
+  static Warning CreateNetworkDelayWarning(const ExtensionId& extension_id);
   static Warning CreateRepeatedCacheFlushesWarning(
-      const std::string& extension_id);
+      const ExtensionId& extension_id);
   static Warning CreateDownloadFilenameConflictWarning(
       const std::string& losing_extension_id,
       const std::string& winning_extension_id,
       const base::FilePath& losing_filename,
       const base::FilePath& winning_filename);
   static Warning CreateReloadTooFrequentWarning(
-      const std::string& extension_id);
+      const ExtensionId& extension_id);
   static Warning CreateRulesetFailedToLoadWarning(
       const ExtensionId& extension_id);
   static Warning CreateEnabledRuleCountExceededWarning(
@@ -83,10 +81,10 @@ class Warning {
   std::string GetLocalizedMessage(const ExtensionSet* extensions) const;
 
  private:
-  // Constructs a warning of type |type| for extension |extension_id|. This
+  // Constructs a warning of type `type` for extension `extension_id`. This
   // could indicate for example the fact that an extension conflicted with
-  // others. The |message_id| refers to an IDS_ string ID. The
-  // |message_parameters| are filled into the message template.
+  // others. The `message_id` refers to an IDS_ string ID. The
+  // `message_parameters` are filled into the message template.
   Warning(WarningType type,
           const ExtensionId& extension_id,
           int message_id,
@@ -96,7 +94,7 @@ class Warning {
   ExtensionId extension_id_;
   // IDS_* resource ID.
   int message_id_;
-  // Parameters to be filled into the string identified by |message_id_|.
+  // Parameters to be filled into the string identified by `message_id_`.
   std::vector<std::string> message_parameters_;
 };
 

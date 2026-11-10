@@ -18,7 +18,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     virtual void performTest() = 0;
@@ -38,28 +38,6 @@ protected:
 
 private:
     using INHERITED = Benchmark;
-};
-
-
-class EqualsMatrixBench : public MatrixBench {
-public:
-    EqualsMatrixBench() : INHERITED("equals") {}
-protected:
-    void performTest() override {
-        SkMatrix m0, m1, m2;
-
-        m0.reset();
-        m1.reset();
-        m2.reset();
-
-        // xor into a volatile prevents these comparisons from being optimized away.
-        [[maybe_unused]] volatile bool junk = false;
-        junk ^= (m0 == m1);
-        junk ^= (m1 == m2);
-        junk ^= (m2 == m0);
-    }
-private:
-    using INHERITED = MatrixBench;
 };
 
 class ScaleMatrixBench : public MatrixBench {
@@ -92,53 +70,6 @@ template <typename T> void init9(T array[9]) {
         array[i] = rand.nextSScalar1();
     }
 }
-
-class GetTypeMatrixBench : public MatrixBench {
-public:
-    GetTypeMatrixBench()
-        : INHERITED("gettype") {
-        fArray[0] = (float) fRnd.nextS();
-        fArray[1] = (float) fRnd.nextS();
-        fArray[2] = (float) fRnd.nextS();
-        fArray[3] = (float) fRnd.nextS();
-        fArray[4] = (float) fRnd.nextS();
-        fArray[5] = (float) fRnd.nextS();
-        fArray[6] = (float) fRnd.nextS();
-        fArray[7] = (float) fRnd.nextS();
-        fArray[8] = (float) fRnd.nextS();
-    }
-protected:
-    // Putting random generation of the matrix inside performTest()
-    // would help us avoid anomalous runs, but takes up 25% or
-    // more of the function time.
-    void performTest() override {
-        fMatrix.setAll(fArray[0], fArray[1], fArray[2],
-                       fArray[3], fArray[4], fArray[5],
-                       fArray[6], fArray[7], fArray[8]);
-        // xoring into a volatile prevents the compiler from optimizing these away
-        [[maybe_unused]] volatile int junk = 0;
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-        fMatrix.dirtyMatrixTypeCache();
-        junk ^= (fMatrix.getType());
-    }
-private:
-    SkMatrix fMatrix;
-    float fArray[9];
-    SkRandom fRnd;
-    using INHERITED = MatrixBench;
-};
 
 class DecomposeMatrixBench : public MatrixBench {
 public:
@@ -225,9 +156,7 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-DEF_BENCH( return new EqualsMatrixBench(); )
 DEF_BENCH( return new ScaleMatrixBench(); )
-DEF_BENCH( return new GetTypeMatrixBench(); )
 DEF_BENCH( return new DecomposeMatrixBench(); )
 
 DEF_BENCH( return new InvertMapRectMatrixBench("invert_maprect_identity", 0); )
@@ -289,7 +218,7 @@ public:
 
     void performTest() override {
         for (int i = 0; i < 1000000; ++i) {
-            fM.mapPoints(fDst, fSrc, N);
+            fM.mapPoints(fDst, fSrc);
         }
     }
 };
@@ -297,6 +226,133 @@ DEF_BENCH( return new MapPointsMatrixBench("mappoints_identity", SkMatrix::I());
 DEF_BENCH( return new MapPointsMatrixBench("mappoints_trans", make_trans()); )
 DEF_BENCH( return new MapPointsMatrixBench("mappoints_scale", make_scale()); )
 DEF_BENCH( return new MapPointsMatrixBench("mappoints_affine", make_afine()); )
+
+class MapSinglePointMatrixBench : public Benchmark {
+public:
+    enum class Use {
+        kPoints,
+        kSingle,
+        kAffine,
+    };
+
+    const SkMatrix fM;
+    const Use      fUse;
+
+    enum { N = 32 };
+    SkPoint fDst[N];
+
+    SkString fName;
+
+    static const char* usename(Use u) {
+        switch (u) {
+            case Use::kPoints: return "p";
+            case Use::kSingle: return "s";
+            case Use::kAffine: return "a";
+        }
+        return "oops";
+    }
+
+    MapSinglePointMatrixBench(const SkMatrix& m, Use use)
+        : fM(m), fUse(use)
+    {
+        const auto t = m.getType();
+
+        fName = "mappt_";
+        fName.append(usename(use));
+        if (use != Use::kAffine) {
+            if (t == SkMatrix::kIdentity_Mask) {
+                fName.append("_identity");
+            } else {
+                if (t & SkMatrix::kAffine_Mask) {
+                    fName.append("_affine");
+                }
+                if (t & SkMatrix::kScale_Mask) {
+                    fName.append("_scale");
+                }
+                if (t & SkMatrix::kTranslate_Mask) {
+                    fName.append("_trans");
+                }
+            }
+        }
+    }
+
+    bool isSuitableFor(Backend backend) override {
+        return backend == Backend::kNonRendering;
+    }
+
+    const char* onGetName() override {
+        return fName.c_str();
+    }
+
+    void onDraw(int loops, SkCanvas*) override {
+        for (int i = 0; i < loops; i++) {
+            this->performTest();
+        }
+    }
+
+    void performTest() {
+        constexpr int K = 1000;
+        SkRandom rand;
+
+        switch (fUse) {
+            case Use::kPoints:
+                for (int i = 0; i < K; ++i) {
+                    auto src = SkPoint{rand.nextSScalar1(), rand.nextSScalar1()};
+                    for (int j = 0; j < N; ++j) {
+                        fM.mapPoints({&fDst[j], 1}, {&src, 1});
+                        src.fX += 1;
+                    }
+                    this->handle(fDst);
+                }
+                break;
+            case Use::kSingle:
+                for (int i = 0; i < K; ++i) {
+                    auto src = SkPoint{rand.nextSScalar1(), rand.nextSScalar1()};
+                    for (int j = 0; j < N; ++j) {
+                        fDst[j] = fM.mapPoint(src);
+                        src.fX += 1;
+                    }
+                    this->handle(fDst);
+                }
+                break;
+            case Use::kAffine:
+                for (int i = 0; i < K; ++i) {
+                    auto src = SkPoint{rand.nextSScalar1(), rand.nextSScalar1()};
+                    for (int j = 0; j < N; ++j) {
+                        fDst[j] = fM.mapPointAffine(src);
+                        src.fX += 1;
+                    }
+                    this->handle(fDst);
+                }
+                break;
+        }
+    }
+
+    virtual void handle(SkPoint[]) {}
+};
+
+const SkMatrix m0 = SkMatrix::I();
+const SkMatrix m1 = SkMatrix::MakeAll(1, 0, 1,
+                                      0, 1, 2,
+                                      0, 0, 1);
+const SkMatrix m2 = SkMatrix::MakeAll(2, 0, 1,
+                                      0, 3, 2,
+                                      0, 0, 1);
+const SkMatrix m3 = SkMatrix::MakeAll(2, 1, 1,
+                                      1, 3, 2,
+                                      0, 0, 1);
+
+DEF_BENCH( return new MapSinglePointMatrixBench(m0, MapSinglePointMatrixBench::Use::kAffine); )
+
+DEF_BENCH( return new MapSinglePointMatrixBench(m0, MapSinglePointMatrixBench::Use::kSingle); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m1, MapSinglePointMatrixBench::Use::kSingle); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m2, MapSinglePointMatrixBench::Use::kSingle); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m3, MapSinglePointMatrixBench::Use::kSingle); )
+
+DEF_BENCH( return new MapSinglePointMatrixBench(m0, MapSinglePointMatrixBench::Use::kPoints); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m1, MapSinglePointMatrixBench::Use::kPoints); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m2, MapSinglePointMatrixBench::Use::kPoints); )
+DEF_BENCH( return new MapSinglePointMatrixBench(m3, MapSinglePointMatrixBench::Use::kPoints); )
 
 ///////////////////////////////////////////////////////////////////////////////
 

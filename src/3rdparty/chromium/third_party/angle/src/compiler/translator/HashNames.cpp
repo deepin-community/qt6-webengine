@@ -45,44 +45,70 @@ void AddToNameMapIfNotMapped(const ImmutableString &name,
         NameMap::const_iterator it = nameMap->find(name.data());
         if (it != nameMap->end())
         {
-            // (How bout returning?)
             return;
         }
-        (*nameMap)[name.data()] = hashedName.data();
+        nameMap->insert(name.data(), hashedName.data());
     }
 }
 
 }  // anonymous namespace
 
 ImmutableString HashName(const ImmutableString &name,
+                         char prefix,
                          ShHashFunction64 hashFunction,
                          NameMap *nameMap)
 {
-    const ImmutableString kUnhashedNamePrefix(kUserDefinedNamePrefix);
-
     if (hashFunction == nullptr)
     {
-        if (name.length() + kUnhashedNamePrefix.length() > kESSLMaxIdentifierLength)
+        size_t kPrefixLength = 2;
+        if (!prefix || name.length() + kPrefixLength > kESSLMaxIdentifierLength)
         {
             // If the identifier length is already close to the limit, we can't prefix it. This is
             // not a problem since there are no builtins or ANGLE's internal variables that would
             // have as long names and could conflict.
             return name;
         }
-        ImmutableStringBuilder prefixedName(kUnhashedNamePrefix.length() + name.length());
-        prefixedName << kUnhashedNamePrefix << name;
-        ImmutableString res = prefixedName;
+        ImmutableString res = BuildConcatenatedImmutableString('_', prefix, name);
         AddToNameMapIfNotMapped(name, res, nameMap);
         return res;
     }
 
-    // Has a hash function
-    ImmutableString hashedName = HashName(name, hashFunction);
-    AddToNameMapIfNotMapped(name, hashedName, nameMap);
+    // Has a hash function. If this name has already been mapped, reuse the
+    // existing entry so the same source identifier always maps to the same
+    // output identifier.
+    if (nameMap)
+    {
+        NameMap::const_iterator it = nameMap->find(name.data());
+        if (it != nameMap->end())
+        {
+            return ImmutableString(it->second);
+        }
+    }
+
+    const ImmutableString baseHashedName = HashName(name, hashFunction);
+    if (!nameMap)
+    {
+        return baseHashedName;
+    }
+
+    // Ensure the chosen output identifier is not already assigned to a
+    // different source identifier. If it is, append a numeric suffix until a
+    // unique name is found.
+    ImmutableString hashedName = baseHashedName;
+    unsigned int suffix        = 0u;
+    while (nameMap->containsHashedName(hashedName.data()))
+    {
+        ++suffix;
+        hashedName = BuildConcatenatedImmutableString(baseHashedName, '_', suffix);
+    }
+    nameMap->insert(name.data(), hashedName.data());
     return hashedName;
 }
 
-ImmutableString HashName(const TSymbol *symbol, ShHashFunction64 hashFunction, NameMap *nameMap)
+ImmutableString HashName(const TSymbol *symbol,
+                         char prefix,
+                         ShHashFunction64 hashFunction,
+                         NameMap *nameMap)
 {
     if (symbol->symbolType() == SymbolType::Empty)
     {
@@ -93,7 +119,7 @@ ImmutableString HashName(const TSymbol *symbol, ShHashFunction64 hashFunction, N
     {
         return symbol->name();
     }
-    return HashName(symbol->name(), hashFunction, nameMap);
+    return HashName(symbol->name(), prefix, hashFunction, nameMap);
 }
 
 }  // namespace sh

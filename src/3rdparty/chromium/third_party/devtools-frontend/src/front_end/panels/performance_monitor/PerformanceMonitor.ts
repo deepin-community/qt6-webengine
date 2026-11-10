@@ -1,13 +1,13 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
-import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as ThemeSupport from '../../ui/legacy/theme_support/theme_support.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
@@ -55,13 +55,13 @@ const UIStrings = {
    *@description Text in Performance Monitor of the Performance monitor tab
    */
   styleRecalcsSec: 'Style recalcs / sec',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/performance_monitor/PerformanceMonitor.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
 export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     SDK.TargetManager.SDKModelObserver<SDK.PerformanceMetricsModel.PerformanceMetricsModel> {
-  private metricsBuffer: {timestamp: number, metrics: Map<string, number>}[];
+  private metricsBuffer: Array<{timestamp: number, metrics: Map<string, number>}>;
   private readonly pixelsPerMs: number;
   private pollIntervalMs: number;
   private readonly scaleHeight: number;
@@ -73,33 +73,34 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
   private width!: number;
   private height!: number;
   private model?: SDK.PerformanceMetricsModel.PerformanceMetricsModel|null;
-  private startTimestamp?: number;
   private pollTimer?: number;
 
-  constructor(pollIntervalMs: number = 500) {
-    super(true);
-
-    this.element.setAttribute('jslog', `${VisualLogging.panel().context('performance-monitor')}`);
+  constructor(pollIntervalMs = 500) {
+    super({
+      jslog: `${VisualLogging.panel('performance.monitor').track({resize: true})}`,
+      useShadowDom: true,
+    });
+    this.registerRequiredCSS(performanceMonitorStyles);
 
     this.contentElement.classList.add('perfmon-pane');
     this.metricsBuffer = [];
-    /** @const */
+    /** @constant */
     this.pixelsPerMs = 10 / 1000;
-    /** @const */
+    /** @constant */
     this.pollIntervalMs = pollIntervalMs;
-    /** @const */
+    /** @constant */
     this.scaleHeight = 16;
-    /** @const */
+    /** @constant */
     this.graphHeight = 90;
     this.gridColor = ThemeSupport.ThemeSupport.instance().getComputedValue('--divider-line');
     this.controlPane = new ControlPane(this.contentElement);
     const chartContainer = this.contentElement.createChild('div', 'perfmon-chart-container');
-    this.canvas = chartContainer.createChild('canvas') as HTMLCanvasElement;
+    this.canvas = chartContainer.createChild('canvas');
     this.canvas.tabIndex = -1;
     UI.ARIAUtils.setLabel(this.canvas, i18nString(UIStrings.graphsDisplayingARealtimeViewOf));
     this.contentElement.createChild('div', 'perfmon-chart-suspend-overlay fill').createChild('div').textContent =
         i18nString(UIStrings.paused);
-    this.controlPane.addEventListener(Events.MetricChanged, this.recalcChartHeight, this);
+    this.controlPane.addEventListener(Events.METRIC_CHANGED, this.recalcChartHeight, this);
     SDK.TargetManager.TargetManager.instance().observeModels(SDK.PerformanceMetricsModel.PerformanceMetricsModel, this);
   }
 
@@ -107,7 +108,6 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     if (!this.model) {
       return;
     }
-    this.registerCSSFiles([performanceMonitorStyles]);
     this.controlPane.instantiateMetricData();
     const themeSupport = ThemeSupport.ThemeSupport.instance();
     themeSupport.addEventListener(ThemeSupport.ThemeChangeEvent.eventName, () => {
@@ -117,7 +117,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
       this.draw();
     });
     SDK.TargetManager.TargetManager.instance().addEventListener(
-        SDK.TargetManager.Events.SuspendStateChanged, this.suspendStateChanged, this);
+        SDK.TargetManager.Events.SUSPEND_STATE_CHANGED, this.suspendStateChanged, this);
     void this.model.enable();
     this.suspendStateChanged();
   }
@@ -127,7 +127,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
       return;
     }
     SDK.TargetManager.TargetManager.instance().removeEventListener(
-        SDK.TargetManager.Events.SuspendStateChanged, this.suspendStateChanged, this);
+        SDK.TargetManager.Events.SUSPEND_STATE_CHANGED, this.suspendStateChanged, this);
     this.stopPolling();
     void this.model.disable();
   }
@@ -163,7 +163,6 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
   }
 
   private startPolling(): void {
-    this.startTimestamp = 0;
     this.pollTimer = window.setInterval(() => this.poll(), this.pollIntervalMs);
     this.onResize();
     const animate = (): void => {
@@ -188,7 +187,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     const data = await this.model.requestMetrics();
     const timestamp = data.timestamp;
     const metrics = data.metrics;
-    this.metricsBuffer.push({timestamp, metrics: metrics});
+    this.metricsBuffer.push({timestamp, metrics});
     const millisPerWidth = this.width / this.pixelsPerMs;
     // Multiply by 2 as the pollInterval has some jitter and to have some extra samples if window is resized.
     const maxCount = Math.ceil(millisPerWidth / this.pollIntervalMs * 2);
@@ -290,7 +289,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     }
     const width = this.width;
     const startTime = performance.now() - this.pollIntervalMs - width / this.pixelsPerMs;
-    let max: number = -Infinity;
+    let max = -Infinity;
     for (const metricInfo of chartInfo.metrics) {
       for (let i = this.metricsBuffer.length - 1; i >= 0; --i) {
         const metrics = this.metricsBuffer[i];
@@ -432,8 +431,8 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
 }
 
 export const enum Format {
-  Percent = 'Percent',
-  Bytes = 'Bytes',
+  PERCENT = 'Percent',
+  BYTES = 'Bytes',
 }
 
 export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> {
@@ -442,14 +441,14 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
   private readonly enabledCharts: Set<string>;
 
   private chartsInfo: ChartInfo[] = [];
-  private indicators: Map<string, MetricIndicator> = new Map();
+  private indicators = new Map<string, MetricIndicator>();
 
   constructor(parent: Element) {
     super();
     this.element = parent.createChild('div', 'perfmon-control-pane');
 
     this.enabledChartsSetting = Common.Settings.Settings.instance().createSetting(
-        'perfmonActiveIndicators2', ['TaskDuration', 'JSHeapTotalSize', 'Nodes']);
+        'perfmon-active-indicators2', ['TaskDuration', 'JSHeapTotalSize', 'Nodes']);
     this.enabledCharts = new Set(this.enabledChartsSetting.get());
   }
 
@@ -488,7 +487,7 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
                 themeSupport.getComputedValue('--override-color-perf-monitor-cpu-recalc-style-duration', this.element),
           },
         ],
-        format: Format.Percent,
+        format: Format.PERCENT,
         smooth: true,
         stacked: true,
         color: themeSupport.getComputedValue('--override-color-perf-monitor-cpu', this.element),
@@ -508,7 +507,7 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
             color: themeSupport.getComputedValue('--override-color-perf-monitor-jsheap-used-size', this.element),
           },
         ],
-        format: Format.Bytes,
+        format: Format.BYTES,
         color: themeSupport.getComputedValue('--override-color-perf-monitor-jsheap'),
       },
       {
@@ -576,7 +575,11 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
       const active = this.enabledCharts.has(chartName);
       const indicator = new MetricIndicator(this.element, chartInfo, active, this.onToggle.bind(this, chartName));
       indicator.element.setAttribute(
-          'jslog', `${VisualLogging.toggle().track({click: true, keydown: 'Enter'}).context(chartName)}`);
+          'jslog',
+          `${
+              VisualLogging.toggle()
+                  .track({click: true, keydown: 'Enter'})
+                  .context(Platform.StringUtilities.toKebabCase(chartName))}`);
       this.indicators.set(chartName, indicator);
     }
   }
@@ -588,7 +591,7 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
       this.enabledCharts.delete(chartName);
     }
     this.enabledChartsSetting.set(Array.from(this.enabledCharts));
-    this.dispatchEventToListeners(Events.MetricChanged);
+    this.dispatchEventToListeners(Events.METRIC_CHANGED);
   }
 
   charts(): ChartInfo[] {
@@ -613,44 +616,37 @@ export class ControlPane extends Common.ObjectWrapper.ObjectWrapper<EventTypes> 
 }
 
 const enum Events {
-  MetricChanged = 'MetricChanged',
+  METRIC_CHANGED = 'MetricChanged',
 }
 
-type EventTypes = {
-  [Events.MetricChanged]: void,
-};
+interface EventTypes {
+  [Events.METRIC_CHANGED]: void;
+}
 
 let numberFormatter: Intl.NumberFormat;
 let percentFormatter: Intl.NumberFormat;
 
 export class MetricIndicator {
   private info: ChartInfo;
-  private active: boolean;
-  private readonly onToggle: (arg0: boolean) => void;
   element: HTMLElement;
-  private readonly swatchElement: IconButton.Icon.Icon;
+  private readonly swatchElement: UI.UIUtils.CheckboxLabel;
   private valueElement: HTMLElement;
   private color: string;
 
   constructor(parent: Element, info: ChartInfo, active: boolean, onToggle: (arg0: boolean) => void) {
     this.color = info.color || info.metrics[0].color;
     this.info = info;
-    this.active = active;
-    this.onToggle = onToggle;
-    this.element = parent.createChild('div', 'perfmon-indicator') as HTMLElement;
-    this.swatchElement = new IconButton.Icon.Icon();
-    this.swatchElement.classList.add('perfmon-indicator-swatch');
-    this.updateSwatchElement();
+    this.element = parent.createChild('div', 'perfmon-indicator');
+    const chartName = info.metrics[0].name;
+    this.swatchElement = UI.UIUtils.CheckboxLabel.create(info.title, active, undefined, chartName);
     this.element.appendChild(this.swatchElement);
-    this.element.createChild('div', 'perfmon-indicator-title').textContent = info.title;
-    this.valueElement = this.element.createChild('div', 'perfmon-indicator-value') as HTMLElement;
+    this.swatchElement.addEventListener('change', () => {
+      onToggle(this.swatchElement.checked);
+      this.element.classList.toggle('active');
+    });
+    this.valueElement = this.element.createChild('div', 'perfmon-indicator-value');
     this.valueElement.style.color = this.color;
-    this.element.addEventListener('click', () => this.toggleIndicator());
-    this.element.addEventListener('keypress', event => this.handleKeypress(event));
     this.element.classList.toggle('active', active);
-    UI.ARIAUtils.markAsCheckbox(this.element);
-    UI.ARIAUtils.setChecked(this.element, this.active);
-    this.element.tabIndex = 0;
   }
 
   static formatNumber(value: number, info: ChartInfo): string {
@@ -659,10 +655,10 @@ export class MetricIndicator {
       percentFormatter = new Intl.NumberFormat('en-US', {maximumFractionDigits: 1, style: 'percent'});
     }
     switch (info.format) {
-      case Format.Percent:
+      case Format.PERCENT:
         return percentFormatter.format(value);
-      case Format.Bytes:
-        return Platform.NumberUtilities.bytesToString(value);
+      case Format.BYTES:
+        return i18n.ByteUtilities.bytesToString(value);
       default:
         return numberFormatter.format(value);
     }
@@ -670,26 +666,6 @@ export class MetricIndicator {
 
   setValue(value: number): void {
     this.valueElement.textContent = MetricIndicator.formatNumber(value, this.info);
-  }
-
-  private updateSwatchElement(): void {
-    const color = this.active ? this.color : 'var(--icon-disabled)';
-    this.swatchElement.data = {iconName: 'checkmark', color, width: '16px', height: '14px'};
-  }
-
-  private toggleIndicator(): void {
-    this.active = !this.active;
-    this.updateSwatchElement();
-    this.element.classList.toggle('active', this.active);
-    UI.ARIAUtils.setChecked(this.element, this.active);
-    this.onToggle(this.active);
-  }
-
-  private handleKeypress(event: Event): void {
-    const keyboardEvent = event as KeyboardEvent;
-    if (keyboardEvent.key === ' ' || keyboardEvent.key === 'Enter') {
-      this.toggleIndicator();
-    }
   }
 }
 
@@ -699,8 +675,8 @@ export interface MetricInfo {
   color: string;
 }
 export interface ChartInfo {
-  title: string;
-  metrics: {name: string, color: string}[];
+  title: Common.UIString.LocalizedString;
+  metrics: Array<{name: string, color: string}>;
   max?: number;
   currentMax?: number;
   format?: Format;

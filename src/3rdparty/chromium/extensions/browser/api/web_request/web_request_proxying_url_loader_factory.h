@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <vector>
+
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
@@ -21,6 +22,7 @@
 #include "extensions/browser/api/web_request/extension_web_request_event_router.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
+#include "ipc/constants.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -41,7 +43,7 @@
 
 namespace content {
 class BrowserContext;
-}
+}  // namespace content
 
 namespace net {
 class HttpRequestHeaders;
@@ -105,8 +107,6 @@ class WebRequestProxyingURLLoaderFactory
         const std::optional<GURL>& new_url) override;
     void SetPriority(net::RequestPriority priority,
                      int32_t intra_priority_value) override;
-    void PauseReadingBodyFromNet() override;
-    void ResumeReadingBodyFromNet() override;
 
     // network::mojom::URLLoaderClient:
     void OnReceiveEarlyHints(
@@ -137,6 +137,10 @@ class WebRequestProxyingURLLoaderFactory
     void OnHeadersReceived(const std::string& headers,
                            const net::IPEndPoint& endpoint,
                            OnHeadersReceivedCallback callback) override;
+
+    // Erases all DNR actions in `info_` that are associated with
+    // `extension_id`.
+    void EraseDNRActionsForExtension(const ExtensionId& extension_id);
 
    private:
     // The state of an InProgressRequest. This is reported via UMA and UKM
@@ -209,8 +213,8 @@ class WebRequestProxyingURLLoaderFactory
     const std::optional<url::Origin> original_initiator_;
     const uint64_t request_id_ = 0;
     const int32_t network_service_request_id_ = 0;
-    const int32_t view_routing_id_ = MSG_ROUTING_NONE;
-    const int32_t frame_routing_id_ = MSG_ROUTING_NONE;
+    const int32_t view_routing_id_ = IPC::mojom::kRoutingIdNone;
+    const int32_t frame_routing_id_ = IPC::mojom::kRoutingIdNone;
     const uint32_t options_ = 0;
     const ukm::SourceIdObj ukm_source_id_;
     const net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
@@ -289,9 +293,7 @@ class WebRequestProxyingURLLoaderFactory
       std::unique_ptr<ExtensionNavigationUIData> navigation_ui_data,
       std::optional<int64_t> navigation_id,
       ukm::SourceIdObj ukm_source_id,
-      mojo::PendingReceiver<network::mojom::URLLoaderFactory> loader_receiver,
-      mojo::PendingRemote<network::mojom::URLLoaderFactory>
-          target_factory_remote,
+      network::URLLoaderFactoryBuilder& factory_builder,
       mojo::PendingReceiver<network::mojom::TrustedURLLoaderHeaderClient>
           header_client_receiver,
       WebRequestAPI::ProxySet* proxies,
@@ -314,9 +316,7 @@ class WebRequestProxyingURLLoaderFactory
       std::unique_ptr<ExtensionNavigationUIData> navigation_ui_data,
       std::optional<int64_t> navigation_id,
       ukm::SourceIdObj ukm_source_id,
-      mojo::PendingReceiver<network::mojom::URLLoaderFactory> loader_receiver,
-      mojo::PendingRemote<network::mojom::URLLoaderFactory>
-          target_factory_remote,
+      network::URLLoaderFactoryBuilder& factory_builder,
       mojo::PendingReceiver<network::mojom::TrustedURLLoaderHeaderClient>
           header_client_receiver,
       WebRequestAPI::ProxySet* proxies,
@@ -351,6 +351,7 @@ class WebRequestProxyingURLLoaderFactory
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       int32_t request_id,
       WebRequestAPI::AuthRequestCallback callback) override;
+  void OnDNRExtensionUnloaded(const Extension* extension) override;
 
   content::ContentBrowserClient::URLLoaderFactoryType loader_factory_type()
       const {

@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/webui/ash/settings/pages/printing/printing_section.h"
 
-#include "ash/constants/ash_features.h"
+#include <array>
+
 #include "ash/webui/settings/public/constants/routes.mojom-forward.h"
-#include "base/no_destructor.h"
+#include "base/containers/span.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/printing/cups_printers_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/search/search_tag_registry.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -17,13 +17,13 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash::settings {
 
 namespace mojom {
 using ::chromeos::settings::mojom::kDeviceSectionPath;
 using ::chromeos::settings::mojom::kPrintingDetailsSubpagePath;
-using ::chromeos::settings::mojom::kPrintingSectionPath;
 using ::chromeos::settings::mojom::Section;
 using ::chromeos::settings::mojom::Setting;
 using ::chromeos::settings::mojom::Subpage;
@@ -31,8 +31,8 @@ using ::chromeos::settings::mojom::Subpage;
 
 namespace {
 
-const std::vector<SearchConcept>& GetPrintingSearchConcepts() {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetPrintingSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_PRINTING_ADD_PRINTER,
        mojom::kPrintingDetailsSubpagePath,
        mojom::SearchResultIcon::kPrinter,
@@ -48,11 +48,11 @@ const std::vector<SearchConcept>& GetPrintingSearchConcepts() {
        {IDS_OS_SETTINGS_TAG_PRINTING_ALT1, IDS_OS_SETTINGS_TAG_PRINTING_ALT2,
         SearchConcept::kAltTagEnd}},
   });
-  return *tags;
+  return tags;
 }
 
-const std::vector<SearchConcept>& GetSavedPrintersSearchConcepts() {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetSavedPrintersSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_PRINTING_SAVED_PRINTERS,
        mojom::kPrintingDetailsSubpagePath,
        mojom::SearchResultIcon::kPrinter,
@@ -60,16 +60,13 @@ const std::vector<SearchConcept>& GetSavedPrintersSearchConcepts() {
        mojom::SearchResultType::kSetting,
        {.setting = mojom::Setting::kSavedPrinters}},
   });
-  return *tags;
+  return tags;
 }
 
-const std::vector<SearchConcept>& GetPrintingManagementSearchConcepts() {
-  const char* url_path = ash::features::IsOsSettingsRevampWayfindingEnabled()
-                             ? mojom::kPrintingDetailsSubpagePath
-                             : mojom::kPrintingSectionPath;
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetPrintingManagementSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_PRINT_MANAGEMENT,
-       url_path,
+       mojom::kPrintingDetailsSubpagePath,
        mojom::SearchResultIcon::kPrinter,
        mojom::SearchResultDefaultRank::kMedium,
        mojom::SearchResultType::kSetting,
@@ -77,22 +74,19 @@ const std::vector<SearchConcept>& GetPrintingManagementSearchConcepts() {
        {IDS_OS_SETTINGS_TAG_PRINT_MANAGEMENT_ALT1,
         IDS_OS_SETTINGS_TAG_PRINT_MANAGEMENT_ALT2, SearchConcept::kAltTagEnd}},
   });
-  return *tags;
+  return tags;
 }
 
-const std::vector<SearchConcept>& GetScanningAppSearchConcepts(
-    const char* section_path) {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetScanningAppSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_SCANNING_APP,
-       section_path,
-       ash::features::IsOsSettingsRevampWayfindingEnabled()
-           ? mojom::SearchResultIcon::kScanner
-           : mojom::SearchResultIcon::kPrinter,
+       mojom::kDeviceSectionPath,
+       mojom::SearchResultIcon::kScanner,
        mojom::SearchResultDefaultRank::kMedium,
        mojom::SearchResultType::kSetting,
        {.setting = mojom::Setting::kScanningApp}},
   });
-  return *tags;
+  return tags;
 }
 
 }  // namespace
@@ -105,7 +99,7 @@ PrintingSection::PrintingSection(Profile* profile,
   SearchTagRegistry::ScopedTagUpdater updater = registry()->StartUpdate();
   updater.AddSearchTags(GetPrintingSearchConcepts());
   updater.AddSearchTags(GetPrintingManagementSearchConcepts());
-  updater.AddSearchTags(GetScanningAppSearchConcepts(GetSectionPath()));
+  updater.AddSearchTags(GetScanningAppSearchConcepts());
 
   // Saved Printers search tags are added/removed dynamically.
   if (printers_manager_) {
@@ -121,26 +115,18 @@ PrintingSection::~PrintingSection() {
 }
 
 void PrintingSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
-  const bool kIsRevampEnabled =
-      ash::features::IsOsSettingsRevampWayfindingEnabled();
-
   webui::LocalizedString kLocalizedStrings[] = {
       {"printingPageTitle", IDS_SETTINGS_PRINT_AND_SCAN},
-      {"cupsPrintTitle", kIsRevampEnabled
-                             ? IDS_OS_SETTINGS_REVAMP_PRINTING_CUPS_PRINT_TITLE
-                             : IDS_SETTINGS_PRINTING_CUPS_PRINTERS},
-      {"cupsPrintDescription",
-       IDS_OS_SETTINGS_REVAMP_PRINTING_CUPS_PRINT_DESCRIPTION},
+      {"cupsPrintTitle", IDS_OS_SETTINGS_PRINTING_CUPS_PRINT_TITLE},
+      {"cupsPrintDescription", IDS_OS_SETTINGS_PRINTING_CUPS_PRINT_DESCRIPTION},
       {"cupsPrintersLearnMoreLabel",
        IDS_SETTINGS_PRINTING_CUPS_PRINTERS_LEARN_MORE_LABEL},
-      {"addCupsPrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTERS_ADD_PRINTER},
       {"addCupsPrinterManually",
        IDS_SETTINGS_PRINTING_CUPS_PRINTERS_ADD_PRINTER_MANUALLY},
       {"editPrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTERS_EDIT},
       {"viewPrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTERS_VIEW},
       {"removePrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTERS_REMOVE},
       {"cupsPrintersViewPpd", IDS_SETTINGS_PRINTING_CUPS_PRINTERS_VIEW_PPD},
-      {"setupPrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTER_SETUP_BUTTON},
       {"savePrinter", IDS_SETTINGS_PRINTING_CUPS_PRINTER_SAVE_BUTTON},
       {"searchLabel", IDS_SETTINGS_PRINTING_CUPS_SEARCH_LABEL},
       {"noSearchResults", IDS_SEARCH_NO_RESULTS},
@@ -178,8 +164,6 @@ void PrintingSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_PRINTING_CUPS_PRINTERS_AVAILABLE_PRINTERS_READY},
       {"availablePrintersReadySubtext",
        IDS_SETTINGS_PRINTING_CUPS_PRINTERS_AVAILABLE_PRINTERS_READY_SUBTEXT},
-      {"nearbyPrintersListTitle",
-       IDS_SETTINGS_PRINTING_CUPS_PRINTERS_AVAILABLE_PRINTERS},
       {"nearbyPrintersCountMany",
        IDS_SETTINGS_PRINTING_CUPS_PRINTERS_AVAILABLE_PRINTERS_COUNT_MANY},
       {"nearbyPrintersCountOne",
@@ -194,8 +178,6 @@ void PrintingSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_PRINTING_ENTERPRISE_PRINTERS_AVAILABLE_PRINTER_COUNT_ONE},
       {"enterprisePrintersCountNone",
        IDS_SETTINGS_PRINTING_ENTERPRISE_PRINTERS_AVAILABLE_PRINTER_COUNT_NONE},
-      {"nearbyPrintersListDescription",
-       IDS_SETTINGS_PRINTING_CUPS_PRINTERS_ADD_DETECTED_OR_NEW_PRINTER},
       {"manufacturerAndModelAdditionalInformation",
        IDS_SETTINGS_PRINTING_CUPS_MANUFACTURER_MODEL_ADDITIONAL_INFORMATION},
       {"addPrinterButtonText",
@@ -224,6 +206,8 @@ void PrintingSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
       {"printerConfiguringMessage",
        IDS_SETTINGS_PRINTING_CUPS_PRINTER_CONFIGURING_MESSAGE},
       {"printerManufacturer", IDS_SETTINGS_PRINTING_CUPS_PRINTER_MANUFACTURER},
+      {"managedPrinterPPD",
+       IDS_SETTINGS_PRINTING_CUPS_PRINTER_MANAGED_PRINTER_PPD},
       {"selectDriver", IDS_SETTINGS_PRINTING_CUPS_PRINTER_SELECT_DRIVER},
       {"advancedConfigSelectDriver",
        IDS_SETTINGS_PRINTING_CUPS_PRINTER_ADVANCED_CONFIG_SELECT_DRIVER},
@@ -329,15 +313,6 @@ void PrintingSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
   html_source->AddString(
       "printingCUPSPrintPpdLearnMoreUrl",
       GetHelpUrlWithBoard(chrome::kCupsPrintPPDLearnMoreURL));
-  html_source->AddBoolean("isPrinterSettingsRevampEnabled",
-                          features::IsPrinterSettingsRevampEnabled());
-  html_source->AddBoolean("isPrinterSettingsPrinterStatusEnabled",
-                          features::IsPrinterSettingsPrinterStatusEnabled());
-  html_source->AddBoolean("isPrintPreviewDiscoveredPrintersEnabled",
-                          features::IsPrintPreviewDiscoveredPrintersEnabled());
-  html_source->AddBoolean(
-      "isLocalPrinterObservingEnabled",
-      base::FeatureList::IsEnabled(::features::kLocalPrinterObserving));
 }
 
 void PrintingSection::AddHandlers(content::WebUI* web_ui) {
@@ -350,9 +325,7 @@ int PrintingSection::GetSectionNameMessageId() const {
 }
 
 mojom::Section PrintingSection::GetSection() const {
-  return ash::features::IsOsSettingsRevampWayfindingEnabled()
-             ? mojom::Section::kDevice
-             : mojom::Section::kPrinting;
+  return mojom::Section::kDevice;
 }
 
 mojom::SearchResultIcon PrintingSection::GetSectionIcon() const {
@@ -360,9 +333,7 @@ mojom::SearchResultIcon PrintingSection::GetSectionIcon() const {
 }
 
 const char* PrintingSection::GetSectionPath() const {
-  return ash::features::IsOsSettingsRevampWayfindingEnabled()
-             ? mojom::kDeviceSectionPath
-             : mojom::kPrintingSectionPath;
+  return mojom::kDeviceSectionPath;
 }
 
 bool PrintingSection::LogMetric(mojom::Setting setting,
@@ -376,7 +347,7 @@ void PrintingSection::RegisterHierarchy(HierarchyGenerator* generator) const {
   generator->RegisterTopLevelSetting(mojom::Setting::kScanningApp);
 
   // Printing details.
-  generator->RegisterTopLevelSubpage(IDS_SETTINGS_PRINTING_CUPS_PRINTERS,
+  generator->RegisterTopLevelSubpage(IDS_OS_SETTINGS_PRINTING_CUPS_PRINT_TITLE,
                                      mojom::Subpage::kPrintingDetails,
                                      mojom::SearchResultIcon::kPrinter,
                                      mojom::SearchResultDefaultRank::kMedium,
@@ -384,6 +355,7 @@ void PrintingSection::RegisterHierarchy(HierarchyGenerator* generator) const {
   static constexpr mojom::Setting kPrintingDetailsSettings[] = {
       mojom::Setting::kAddPrinter,
       mojom::Setting::kSavedPrinters,
+      mojom::Setting::kRemovePrinter,
   };
   RegisterNestedSettingBulk(mojom::Subpage::kPrintingDetails,
                             kPrintingDetailsSettings, generator);

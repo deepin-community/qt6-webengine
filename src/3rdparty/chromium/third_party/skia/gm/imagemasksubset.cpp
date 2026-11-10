@@ -17,7 +17,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "tools/GpuToolUtils.h"
 #include "tools/ToolUtils.h"
@@ -97,15 +97,7 @@ DEF_SIMPLE_GM(imagemasksubset, canvas, 480, 480) {
         if (image) {
             canvas->drawImageRect(image, SkRect::Make(kSubset), kDest, SkSamplingOptions(),
                                   &paint, SkCanvas::kStrict_SrcRectConstraint);
-            sk_sp<SkImage> subset;
-
-            if (auto direct = GrAsDirectContext(canvas->recordingContext())) {
-                subset = image->makeSubset(direct, kSubset);
-            } else {
-#if defined(SK_GRAPHITE)
-                subset = image->makeSubset(canvas->recorder(), kSubset, {});
-#endif
-            }
+            sk_sp<SkImage> subset = image->makeSubset(canvas->baseRecorder(), kSubset, {});
 
             canvas->drawImageRect(subset, kDest.makeOffset(kSize.width() * 1.5f, 0),
                                   SkSamplingOptions(), &paint);

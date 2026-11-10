@@ -6,19 +6,16 @@
 
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "extensions/common/alias.h"
 
 namespace extensions {
 
-static base::LazyInstance<PermissionsInfo>::Leaky g_permissions_info =
-    LAZY_INSTANCE_INITIALIZER;
-
 // static
 PermissionsInfo* PermissionsInfo::GetInstance() {
-  return g_permissions_info.Pointer();
+  static base::NoDestructor<PermissionsInfo> instance;
+  return instance.get();
 }
 
 void PermissionsInfo::RegisterPermissions(
@@ -43,14 +40,14 @@ const APIPermissionInfo* PermissionsInfo::GetByName(
   return (i == name_map_.end()) ? nullptr : i->second;
 }
 
-APIPermissionSet PermissionsInfo::GetAll() const {
+APIPermissionSet PermissionsInfo::GetAllForTest() const {
   APIPermissionSet permissions;
   for (auto i = id_map_.cbegin(); i != id_map_.cend(); ++i)
     permissions.insert(i->second->id());
   return permissions;
 }
 
-APIPermissionSet PermissionsInfo::GetAllByName(
+APIPermissionSet PermissionsInfo::GetAllByNameForTest(
     const std::set<std::string>& permission_names) const {
   APIPermissionSet permissions;
   for (auto i = permission_names.cbegin(); i != permission_names.cend(); ++i) {

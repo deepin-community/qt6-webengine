@@ -30,7 +30,10 @@
 #include "dawn/common/Assert.h"
 
 #if DAWN_PLATFORM_IS(WINDOWS)
-#include <windows.h>
+#include "dawn/common/windows_with_undefs.h"
+#elif DAWN_PLATFORM_IS(FUCHSIA)
+#include <poll.h>
+#include <unistd.h>
 #elif DAWN_PLATFORM_IS(POSIX)
 #include <sys/poll.h>
 #include <unistd.h>
@@ -49,12 +52,17 @@ namespace dawn::native {
 SystemEventReceiver::SystemEventReceiver(SystemHandle primitive)
     : mPrimitive(std::move(primitive)) {}
 
+// static
 SystemEventReceiver SystemEventReceiver::CreateAlreadySignaled() {
     SystemEventPipeSender sender;
     SystemEventReceiver receiver;
     std::tie(sender, receiver) = CreateSystemEventPipe();
     std::move(sender).Signal();
     return receiver;
+}
+
+const SystemHandle& SystemEventReceiver::GetPrimitive() const {
+    return mPrimitive;
 }
 
 // SystemEventPipeSender
@@ -124,12 +132,6 @@ std::pair<SystemEventPipeSender, SystemEventReceiver> CreateSystemEventPipe() {
 // SystemEvent
 
 // static
-Ref<SystemEvent> SystemEvent::CreateSignaled() {
-    auto ev = AcquireRef(new SystemEvent());
-    ev->Signal();
-    return ev;
-}
-
 bool SystemEvent::IsSignaled() const {
     return mSignaled.load(std::memory_order_acquire);
 }

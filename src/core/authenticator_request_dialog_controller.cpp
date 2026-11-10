@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "authenticator_request_dialog_controller.h"
 #include "authenticator_request_dialog_controller_p.h"
@@ -38,8 +39,7 @@ AuthenticatorRequestDialogControllerPrivate::AuthenticatorRequestDialogControlle
 AuthenticatorRequestDialogControllerPrivate::~AuthenticatorRequestDialogControllerPrivate()
 {
     if (m_request) {
-        delete m_request;
-        m_request = nullptr;
+        m_request->deleteLater();
     }
 }
 
@@ -112,7 +112,7 @@ void AuthenticatorRequestDialogControllerPrivate::setCurrentState(
 
     m_currentState = uxState;
 
-    if (m_isConditionalRequest)
+    if (m_uiPresentation == content::AuthenticatorRequestClientDelegate::UIPresentation ::kAutofill)
         return;
 
     if (!m_isDialogCreated) {
@@ -159,16 +159,37 @@ AuthenticatorRequestDialogControllerPrivate::state() const
     return m_currentState;
 }
 
-void AuthenticatorRequestDialogControllerPrivate::startRequest(bool isConditionalRequest)
+void AuthenticatorRequestDialogController::setUiPresentation(content::AuthenticatorRequestClientDelegate::UIPresentation modality)
+{
+    d_ptr->setUiPresentation(modality);
+}
+
+content::AuthenticatorRequestClientDelegate::UIPresentation AuthenticatorRequestDialogController::uiPresentation() const
+{
+    return d_ptr->uiPresentation();
+}
+
+void AuthenticatorRequestDialogControllerPrivate::setUiPresentation(content::AuthenticatorRequestClientDelegate::UIPresentation modality)
+{
+    m_uiPresentation = modality;
+}
+
+content::AuthenticatorRequestClientDelegate::UIPresentation AuthenticatorRequestDialogControllerPrivate::uiPresentation() const
+{
+    return m_uiPresentation;
+}
+
+void AuthenticatorRequestDialogControllerPrivate::startRequest()
 {
     DCHECK(!m_isStarted);
 
     m_isStarted = true;
-    m_isConditionalRequest = isConditionalRequest;
 
     if (m_pendingState) {
         setCurrentState(*m_pendingState);
         m_pendingState.reset();
+    } else {
+        setCurrentState(WebAuthUxState::Discovery);
     }
 }
 
@@ -263,9 +284,9 @@ QWebEngineWebAuthUxRequest::WebAuthUxState AuthenticatorRequestDialogController:
     return d_ptr->state();
 }
 
-void AuthenticatorRequestDialogController::startRequest(bool bIsConditionalRequest)
+void AuthenticatorRequestDialogController::startRequest()
 {
-    d_ptr->startRequest(bIsConditionalRequest);
+    d_ptr->startRequest();
 }
 
 void AuthenticatorRequestDialogController::setRelyingPartyId(const std::string &rpId)

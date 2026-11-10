@@ -12,6 +12,7 @@
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
+#include "net/http/alternative_service.h"
 #include "net/http/http_response_info.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
@@ -23,7 +24,6 @@
 #include "net/ssl/ssl_config.h"
 #include "net/ssl/ssl_info.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
-#include "url/gurl.h"
 
 namespace net {
 
@@ -129,11 +129,9 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
     virtual void SetPriority(RequestPriority priority) = 0;
   };
 
-  // Request will notify |job_controller| when it's destructed.
-  // Thus |job_controller| is valid for the lifetime of the |this| Request.
-  HttpStreamRequest(const GURL& url,
-                    Helper* helper,
-                    HttpStreamRequest::Delegate* delegate,
+  // Request will notify `helper` when it's destructed.
+  // Thus `helper` is valid for the lifetime of the `this` Request.
+  HttpStreamRequest(Helper* helper,
                     WebSocketHandshakeStreamBase::CreateHelper*
                         websocket_handshake_stream_create_helper,
                     const NetLogWithSource& net_log,
@@ -180,18 +178,39 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
   WebSocketHandshakeStreamBase::CreateHelper*
   websocket_handshake_stream_create_helper() const;
 
-  // The GURL from the HttpRequestInfo the started the Request.
-  const GURL& url() const { return url_; }
-
   const NetLogWithSource& net_log() const { return net_log_; }
 
   StreamType stream_type() const { return stream_type_; }
 
   bool completed() const { return completed_; }
 
- private:
-  const GURL url_;
+  void SetDnsResolutionTimeOverrides(
+      base::TimeTicks dns_resolution_start_time_override,
+      base::TimeTicks dns_resolution_end_time_override);
 
+  base::TimeTicks dns_resolution_start_time_override() const {
+    return dns_resolution_start_time_override_;
+  }
+  base::TimeTicks dns_resolution_end_time_override() const {
+    return dns_resolution_end_time_override_;
+  }
+
+  // Sets a new helper for this request so that the new helper can take over
+  // the responsibility of processing this request.
+  //
+  // This *MUST NOT* be used other than switching from HttpStreamFactory to
+  // HttpStreamPool. (Re)setting the helper is extremetely dangerous and can
+  // cause dangling pointers and/or UAFs very easily. This method only exists to
+  // work around the fact that the HttpStreamFactory::JobController performs
+  // proxy resolution for a request. Ideally we should separate proxy resolution
+  // from HttpStreamFactory::JobController and use HttpStreamPool directly from
+  // HttpNetworkTransaction, instead of setting the helper.
+  //
+  // TODO(crbug.com/346835898): Remove this method once we come up with a way
+  // to separate proxy resolution from the HttpStreamFactory::JobController.
+  void SetHelperForSwitchingToPool(Helper* helper);
+
+ private:
   // Unowned. The helper must not be destroyed before this object is.
   raw_ptr<Helper> helper_;
 
@@ -201,13 +220,16 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
 
   bool completed_ = false;
   // Protocol negotiated with the server.
-  NextProto negotiated_protocol_ = kProtoUnknown;
+  NextProto negotiated_protocol_ = NextProto::kProtoUnknown;
   // The reason why Chrome uses a specific transport protocol for HTTP
   // semantics.
   AlternateProtocolUsage alternate_protocol_usage_ =
       AlternateProtocolUsage::ALTERNATE_PROTOCOL_USAGE_UNSPECIFIED_REASON;
   ConnectionAttempts connection_attempts_;
   const StreamType stream_type_;
+
+  base::TimeTicks dns_resolution_start_time_override_;
+  base::TimeTicks dns_resolution_end_time_override_;
 };
 
 }  // namespace net

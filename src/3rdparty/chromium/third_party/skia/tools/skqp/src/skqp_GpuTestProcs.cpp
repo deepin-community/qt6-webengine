@@ -9,7 +9,7 @@
 #include "tools/skqp/src/skqp.h"
 
 #include "include/core/SkStream.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 
 #ifdef SK_VULKAN
 #include "tools/gpu/vk/VkTestContext.h"
@@ -144,7 +144,7 @@ void RunWithGraphiteTestContexts(GraphiteTestFn* test,
         }
 
         ReporterContext ctx(reporter, SkString(skgpu::ContextTypeName(contextType)));
-        (*test)(reporter, ctxInfo.fContext, ctxInfo.fTestContext);
+        (*test)(reporter, ctxInfo.fContext, ctxInfo.fTestContext, options);
     }
 }
 

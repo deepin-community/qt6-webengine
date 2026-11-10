@@ -38,12 +38,12 @@ DomActivityLoggersForIsolatedWorld() {
 void V8DOMActivityLogger::LogMethod(ScriptState* script_state,
                                     const char* api_name,
                                     v8::FunctionCallbackInfo<v8::Value> info) {
-  v8::LocalVector<v8::Value> loggerArgs(info.GetIsolate());
-  loggerArgs.reserve(info.Length());
+  v8::LocalVector<v8::Value> logger_args(info.GetIsolate());
+  logger_args.reserve(info.Length());
   for (int i = 0; i < info.Length(); ++i) {
-    loggerArgs.push_back(info[i]);
+    logger_args.push_back(info[i]);
   }
-  LogMethod(script_state, api_name, info.Length(), loggerArgs.data());
+  LogMethod(script_state, api_name, logger_args);
 }
 
 void V8DOMActivityLogger::SetActivityLogger(
@@ -86,7 +86,7 @@ V8DOMActivityLogger* V8DOMActivityLogger::ActivityLogger(int world_id,
   if (!CommonSchemeRegistry::IsExtensionScheme(url.Protocol().Ascii()))
     return nullptr;
 
-  return ActivityLogger(world_id, url.Host());
+  return ActivityLogger(world_id, url.Host().ToString());
 }
 
 V8DOMActivityLogger* V8DOMActivityLogger::CurrentActivityLogger(
@@ -95,9 +95,8 @@ V8DOMActivityLogger* V8DOMActivityLogger::CurrentActivityLogger(
     return nullptr;
 
   v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-
-  V8PerContextData* context_data = ScriptState::From(context)->PerContextData();
+  V8PerContextData* context_data =
+      ScriptState::ForCurrentRealm(isolate)->PerContextData();
   if (!context_data)
     return nullptr;
 
@@ -109,7 +108,7 @@ V8DOMActivityLogger* V8DOMActivityLogger::CurrentActivityLoggerIfIsolatedWorld(
   if (!isolate->InContext())
     return nullptr;
 
-  ScriptState* script_state = ScriptState::From(isolate->GetCurrentContext());
+  ScriptState* script_state = ScriptState::ForCurrentRealm(isolate);
   if (!script_state->World().IsIsolatedWorld())
     return nullptr;
 

@@ -15,7 +15,8 @@ licenses(["notice"])
 
 cc_library(
     name = "types",
-    copts = ["-Wno-non-virtual-dtor"],
+    hdrs = glob(["**/*.h"]),
+    includes = ["."],
     linkopts = [
         "wininet.lib",
         "advapi32.lib",
@@ -39,13 +40,13 @@ cc_library(
         "dnsapi.lib",
         "wlanapi.lib",
         "shlwapi.lib",
+        "runtimeobject.lib",
     ],
-    textual_hdrs = glob(["**/*.h"]),
     visibility = [
-        "//fastpair:__subpackages__",
         "//internal:__subpackages__",
         "//internal/platform/implementation/windows:__subpackages__",
-        "//location/nearby/cpp/sharing/implementation/internal:__subpackages__",
+        "//location/nearby/apps/better_together/plugins:__subpackages__",
+        "//location/nearby/apps/better_together/windows/nearby_share:__pkg__",
         "//sharing:__subpackages__",
     ],
 )

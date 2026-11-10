@@ -13,7 +13,6 @@
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -118,20 +117,18 @@ void NotificationTesterHandler::HandleGenerateNotificationForm(
       optional_fields, delegate);
 
   ui::ColorId color_id = cros_tokens::kCrosSysPrimary;
-  if (chromeos::features::IsJellyEnabled()) {
-    switch (warning_level) {
-      case message_center::SystemNotificationWarningLevel::NORMAL:
-        color_id = cros_tokens::kCrosSysPrimary;
-        break;
-      case message_center::SystemNotificationWarningLevel::WARNING:
-        color_id = cros_tokens::kCrosSysWarning;
-        break;
-      case message_center::SystemNotificationWarningLevel::CRITICAL_WARNING:
-        color_id = cros_tokens::kCrosSysError;
-        break;
-    }
-    notification->set_accent_color_id(color_id);
+  switch (warning_level) {
+    case message_center::SystemNotificationWarningLevel::NORMAL:
+      color_id = cros_tokens::kCrosSysPrimary;
+      break;
+    case message_center::SystemNotificationWarningLevel::WARNING:
+      color_id = cros_tokens::kCrosSysWarning;
+      break;
+    case message_center::SystemNotificationWarningLevel::CRITICAL_WARNING:
+      color_id = cros_tokens::kCrosSysError;
+      break;
   }
+  notification->set_accent_color_id(color_id);
 
   notification->set_system_notification_warning_level(warning_level);
 
@@ -175,7 +172,7 @@ NotificationTesterHandler::GetRichDataSmallImageFromString(
     return kSmartphoneIcon;
   }
 
-  return gfx::kNoneIcon;
+  return gfx::VectorIcon::EmptyIcon();
 }
 
 std::vector<message_center::ButtonInfo>
@@ -191,7 +188,7 @@ std::vector<message_center::NotificationItem>
 NotificationTesterHandler::GetRichDataNotifItems(int num_items) {
   std::vector<message_center::NotificationItem> items;
   for (int i = 0; i < num_items; i++) {
-    items.push_back({u"Item " + base::NumberToString16(i), u"item message"});
+    items.emplace_back(u"Item " + base::NumberToString16(i), u"item message");
   }
   return items;
 }

@@ -6,6 +6,7 @@
 
 #include <climits>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 
 #include "base/command_line.h"
@@ -15,7 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
@@ -27,7 +28,6 @@
 #include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
-#include "build/chromeos_buildflags.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/renderer_host/back_forward_cache_can_store_document_result.h"
@@ -71,15 +71,21 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/install_default_websocket_handlers.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/scheduler/web_scheduler_tracked_feature.h"
 #include "third_party/blink/public/common/switches.h"
+#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
+#include "third_party/blink/public/mojom/frame/back_forward_cache_controller.mojom.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom.h"
 #include "third_party/blink/public/mojom/render_accessibility.mojom.h"
+#include "third_party/blink/public/mojom/script_source_location.mojom.h"
 
 // This file has too many tests.
 //
@@ -98,39 +104,6 @@ namespace content {
 using NotRestoredReasons =
     BackForwardCacheCanStoreDocumentResult::NotRestoredReasons;
 using NotRestoredReason = BackForwardCacheMetrics::NotRestoredReason;
-
-namespace {
-
-class DOMContentLoadedObserver : public WebContentsObserver {
- public:
-  explicit DOMContentLoadedObserver(RenderFrameHostImpl* render_frame_host)
-      : WebContentsObserver(
-            WebContents::FromRenderFrameHost(render_frame_host)),
-        render_frame_host_(render_frame_host) {}
-
-  void DOMContentLoaded(RenderFrameHost* render_frame_host) override {
-    if (render_frame_host_ == render_frame_host)
-      run_loop_.Quit();
-  }
-
-  [[nodiscard]] bool Wait() {
-    if (render_frame_host_->IsDOMContentLoaded())
-      run_loop_.Quit();
-    run_loop_.Run();
-    return render_frame_host_->IsDOMContentLoaded();
-  }
-
- private:
-  raw_ptr<RenderFrameHostImpl> render_frame_host_;
-  base::RunLoop run_loop_;
-};
-
-}  // namespace
-
-bool WaitForDOMContentLoaded(RenderFrameHostImpl* rfh) {
-  DOMContentLoadedObserver observer(rfh);
-  return observer.Wait();
-}
 
 EvalJsResult GetLocalStorage(RenderFrameHostImpl* rfh, std::string key) {
   return EvalJs(rfh, JsReplace("localStorage.getItem($1)", key));
@@ -166,24 +139,24 @@ BackForwardCacheBrowserTest::BackForwardCacheBrowserTest() = default;
 BackForwardCacheBrowserTest::~BackForwardCacheBrowserTest() {
   if (fail_for_unexpected_messages_while_cached_) {
     // If this is triggered, see MojoInterfaceName in
-    // tools/metrics/histograms/enums.xml for which values correspond which
-    // messages.
+    // tools/metrics/histograms/metadata/navigation/enums.xml for which values
+    // correspond which messages.
     std::vector<base::Bucket> samples = histogram_tester().GetAllSamples(
         "BackForwardCache.UnexpectedRendererToBrowserMessage."
         "InterfaceName");
-    // TODO(https://crbug.com/1379490): Remove this.
+    // TODO(crbug.com/40244391): Remove this.
     // This bucket corresponds to the LocalFrameHost interface. It is known to
     // be flaky due calls to `LocalFrameHost::DidFocusFrame()` after entering
     // BFCache. So we ignore it for now by removing it if it's present until we
     // can fix the root cause.
-    // TODO(https://crbug.com/1470528): Remove this.
+    // TODO(crbug.com/40925798): Remove this.
     // As above but `LocalMainFrameHost::DidFirstVisuallyNonEmptyPaint()`.
     std::erase_if(samples, [](base::Bucket bucket) {
       return bucket.min ==
-                 static_cast<base::HistogramBase::Sample>(base::HashMetricName(
+                 static_cast<base::HistogramBase::Sample32>(base::HashMetricName(
                      blink::mojom::LocalFrameHost::Name_)) ||
              bucket.min ==
-                 static_cast<base::HistogramBase::Sample>(base::HashMetricName(
+                 static_cast<base::HistogramBase::Sample32>(base::HashMetricName(
                      blink::mojom::LocalMainFrameHost::Name_));
     });
 
@@ -198,13 +171,10 @@ void BackForwardCacheBrowserTest::NotifyNotRestoredReasons(
 
 void BackForwardCacheBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
-  ContentBrowserTest::SetUpCommandLine(command_line);
   mock_cert_verifier_.SetUpCommandLine(command_line);
 
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kUseFakeUIForMediaStream);
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableExperimentalWebPlatformFeatures);
+  command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+  command_line->AppendSwitch(switches::kEnableExperimentalWebPlatformFeatures);
   // TODO(sreejakshetty): Initialize ScopedFeatureLists from test constructor.
   EnableFeatureAndSetParams(features::kBackForwardCacheTimeToLiveControl,
                             "time_to_live_seconds", "3600");
@@ -235,14 +205,8 @@ void BackForwardCacheBrowserTest::SetUpCommandLine(
 #endif
     // Allow BackForwardCache for all devices regardless of their memory.
     DisableFeature(features::kBackForwardCacheMemoryControls);
-    // Disables BackForwardCache cache size overwritten by
-    // `content::kBackForwardCacheSize`, as many browser tests here assume
-    // specific or smaller cache size (e.g. 1) rather than 6.
-    DisableFeature(kBackForwardCacheSize);
-
-    // WebSQL is disabled by default as of M119 (crbug/695592). Enable feature
-    // in tests during deprecation trial and enterprise policy support.
-    EnableFeatureAndSetParams(blink::features::kWebSQLAccess, "", "");
+    // Many browser tests assume a cache size of 1.
+    EnableCacheSize(1, std::nullopt);
 
     SetupFeaturesAndParameters();
 
@@ -252,6 +216,7 @@ void BackForwardCacheBrowserTest::SetUpCommandLine(
     // Unfortunately needed for one test on slow bots, TextInputStateUpdated,
     // where deferred commits delays input too much.
     command_line->AppendSwitch(blink::switches::kAllowPreCommitInput);
+    ContentBrowserTest::SetUpCommandLine(command_line);
 }
 
 void BackForwardCacheBrowserTest::SetUpInProcessBrowserTestFixture() {
@@ -280,14 +245,45 @@ void BackForwardCacheBrowserTest::EnableFeatureAndSetParams(
     const base::Feature& feature,
     std::string param_name,
     std::string param_value) {
+  const auto& it = features_with_params_.find(feature);
+  if (it != features_with_params_.end()) {
+    // If the feature-param has been set already, do not update it.
+    if (it->second.contains(param_name)) {
+      return;
+    }
+  }
   features_with_params_[feature][param_name] = param_value;
 }
 
 void BackForwardCacheBrowserTest::DisableFeature(const base::Feature& feature) {
+  if (features_with_params_.contains(feature)) {
+    // If the feature has been explicitly enabled, ignore any subsequent
+    // disables.
+    return;
+  }
   disabled_features_.push_back(feature);
 }
 
+void BackForwardCacheBrowserTest::EnableCacheSize(
+    std::optional<int> cache_size,
+    std::optional<int> foreground_cache_size) {
+  if (cache_size) {
+    EnableFeatureAndSetParams(content::kBackForwardCacheSize,
+                              kBackForwardCacheSizeCacheSize.name,
+                              base::NumberToString(cache_size.value()));
+  }
+  if (foreground_cache_size) {
+    EnableFeatureAndSetParams(
+        content::kBackForwardCacheSize,
+        kBackForwardCacheSizeForegroundCacheSize.name,
+        base::NumberToString(foreground_cache_size.value()));
+  }
+}
+
 void BackForwardCacheBrowserTest::SetUpOnMainThread() {
+  // Set up WebSocket handlers, as a number of tests use them.
+  net::test_server::InstallDefaultWebSocketHandlers(embedded_test_server());
+
   mock_cert_verifier_.mock_cert_verifier()->set_default_result(net::OK);
   host_resolver()->AddRule("*", "127.0.0.1");
   // TestAutoSetUkmRecorder's constructor requires a sequenced context.
@@ -319,7 +315,7 @@ std::string BackForwardCacheBrowserTest::DepictFrameTree(FrameTreeNode* node) {
 }
 
 bool BackForwardCacheBrowserTest::HistogramContainsIntValue(
-    base::HistogramBase::Sample sample,
+    base::HistogramBase::Sample32 sample,
     std::vector<base::Bucket> histogram_values) {
   return base::Contains(histogram_values, static_cast<int>(sample),
                         &base::Bucket::min);
@@ -410,20 +406,20 @@ RenderFrameHostImpl* BackForwardCacheBrowserTest::NavigateToPageWithImage(
 
 void BackForwardCacheBrowserTest::AcquireKeyboardLock(
     RenderFrameHostImpl* rfh) {
-  EXPECT_TRUE(ExecJs(rfh, R"(
+  EXPECT_EQ(42, EvalJs(rfh, R"(
         new Promise(resolve => {
           navigator.keyboard.lock();
-          resolve();
+          resolve(42);
         });
       )"));
 }
 
 void BackForwardCacheBrowserTest::ReleaseKeyboardLock(
     RenderFrameHostImpl* rfh) {
-  EXPECT_TRUE(ExecJs(rfh, R"(
+  EXPECT_EQ(42, EvalJs(rfh, R"(
         new Promise(resolve => {
           navigator.keyboard.unlock();
-          resolve();
+          resolve(42);
         });
       )"));
 }
@@ -448,8 +444,9 @@ ReasonsMatcher BackForwardCacheBrowserTest::MatchesNotRestoredReasons(
     const std::optional<testing::Matcher<std::string>>& id,
     const std::optional<testing::Matcher<std::string>>& name,
     const std::optional<testing::Matcher<std::string>>& src,
-    const std::vector<testing::Matcher<std::string>>& reasons,
+    const std::vector<BlockingDetailsReasonsMatcher>& reasons,
     const std::optional<SameOriginMatcher>& same_origin_details) {
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
   return testing::Pointee(testing::AllOf(
       id.has_value()
           ? testing::Field(
@@ -489,8 +486,9 @@ ReasonsMatcher BackForwardCacheBrowserTest::MatchesNotRestoredReasons(
 }
 
 SameOriginMatcher BackForwardCacheBrowserTest::MatchesSameOriginDetails(
-    const testing::Matcher<std::string>& url,
+    const testing::Matcher<GURL>& url,
     const std::vector<ReasonsMatcher>& children) {
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
   return testing::Pointee(testing::AllOf(
       testing::Field(
           "url", &blink::mojom::SameOriginBfcacheNotRestoredDetails::url, url),
@@ -500,28 +498,53 @@ SameOriginMatcher BackForwardCacheBrowserTest::MatchesSameOriginDetails(
           testing::ElementsAreArray(children))));
 }
 
+BlockingDetailsReasonsMatcher
+BackForwardCacheBrowserTest::MatchesDetailedReason(
+    const testing::Matcher<std::string>& name,
+    const std::optional<SourceLocationMatcher>& source) {
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly
+  // messages.
+  return testing::Pointee(testing::AllOf(
+      testing::Field("name", &blink::mojom::BFCacheBlockingDetailedReason::name,
+                     name),
+      testing::Field(
+          "source", &blink::mojom::BFCacheBlockingDetailedReason::source,
+          source.has_value()
+              ? source.value()
+              : testing::Property(
+                    "is_null", &blink::mojom::ScriptSourceLocationPtr::is_null,
+                    true))));
+}
+
 BlockingDetailsMatcher BackForwardCacheBrowserTest::MatchesBlockingDetails(
-    const std::optional<testing::Matcher<std::string>>& url,
-    const std::optional<testing::Matcher<std::string>>& function_name,
+    const std::optional<SourceLocationMatcher>& source) {
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
+  return testing::Pointee(testing::Field(
+      "source", &blink::mojom::BlockingDetails::source,
+      source.has_value()
+          ? source.value()
+          : testing::Property("is_null",
+                              &blink::mojom::ScriptSourceLocationPtr::is_null,
+                              true)));
+}
+
+SourceLocationMatcher BackForwardCacheBrowserTest::MatchesSourceLocation(
+    const testing::Matcher<GURL>& url,
+    const testing::Matcher<std::string>& function_name,
     const testing::Matcher<uint64_t>& line_number,
     const testing::Matcher<uint64_t>& column_number) {
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly
+  // messages.
   return testing::Pointee(testing::AllOf(
-      url.has_value()
-          ? testing::Field("url", &blink::mojom::BlockingDetails::url,
-                           testing::Optional(url.value()))
-          : testing::Field("url", &blink::mojom::BlockingDetails::url,
-                           std::optional<std::string>(std::nullopt)),
-      function_name.has_value()
-          ? testing::Field("function_name",
-                           &blink::mojom::BlockingDetails::function_name,
-                           testing::Optional(function_name.value()))
-          : testing::Field("function_name",
-                           &blink::mojom::BlockingDetails::function_name,
-                           std::optional<std::string>(std::nullopt)),
-      testing::Field("line_number", &blink::mojom::BlockingDetails::line_number,
+      testing::Field("url", &blink::mojom::ScriptSourceLocation::url, url),
+      testing::Field("function_name",
+                     &blink::mojom::ScriptSourceLocation::function_name,
+                     function_name),
+      testing::Field("line_number",
+                     &blink::mojom::ScriptSourceLocation::line_number,
                      line_number),
       testing::Field("column_number",
-                     &blink::mojom::BlockingDetails::column_number,
+                     &blink::mojom::ScriptSourceLocation::column_number,
                      column_number)));
 }
 
@@ -779,8 +802,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, ResponseHeaders) {
 
 void HighCacheSizeBackForwardCacheBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
-  EnableFeatureAndSetParams(features::kBackForwardCache, "cache_size",
-                            base::NumberToString(kBackForwardCacheSize));
+  EnableCacheSize(kBackForwardCacheSize, std::nullopt);
   BackForwardCacheBrowserTest::SetUpCommandLine(command_line);
 }
 
@@ -866,8 +888,9 @@ IN_PROC_BROWSER_TEST_F(HighCacheSizeBackForwardCacheBrowserTest,
   FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindLambdaForTesting([&]() {
-        root->navigator().BeforeUnloadCompleted(root, true /* proceed */,
-                                                base::TimeTicks::Now());
+        root->navigator().BeforeUnloadCompleted(
+            root, /*proceed=*/true, base::TimeTicks::Now(),
+            /*for_legacy=*/false, /*showed_dialog=*/false);
       }));
 
   // 7) Evict entry B. This will post a task (task #3) to restart the navigation
@@ -1147,9 +1170,17 @@ IN_PROC_BROWSER_TEST_F(
 }
 
 // Make sure we fire DidFirstVisuallyNonEmptyPaint when restoring from bf-cache.
+// TODO(crbug.com/327195951): Re-enable this test
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache \
+  DISABLED_FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache
+#else
+#define MAYBE_FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache \
+  FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache
+#endif
 IN_PROC_BROWSER_TEST_F(
     BackForwardCacheBrowserTest,
-    FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache) {
+    MAYBE_FiresDidFirstVisuallyNonEmptyPaintWhenRestoredFromCache) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_a(embedded_test_server()->GetURL("a.com", "/title1.html"));
   GURL url_b(embedded_test_server()->GetURL("b.com", "/title1.html"));
@@ -1174,9 +1205,15 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_TRUE(web_contents()->CompletedFirstVisuallyNonEmptyPaint());
   EXPECT_TRUE(observer.did_fire());
 }
-
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_SetsThemeColorWhenRestoredFromCache \
+  DISABLED_SetsThemeColorWhenRestoredFromCache
+#else
+#define MAYBE_SetsThemeColorWhenRestoredFromCache \
+  SetsThemeColorWhenRestoredFromCache
+#endif
 IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
-                       SetsThemeColorWhenRestoredFromCache) {
+                       MAYBE_SetsThemeColorWhenRestoredFromCache) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_a(embedded_test_server()->GetURL("a.com", "/theme_color.html"));
   GURL url_b(embedded_test_server()->GetURL("b.com", "/title1.html"));
@@ -1266,7 +1303,6 @@ class BackForwardCacheBrowserTestForLowMemoryDevices
         {{features::kBackForwardCacheMemoryControls,
           {{"memory_threshold_for_back_forward_cache_in_mb",
             memory_threshold}}},
-         {features::kBackForwardCache_NoMemoryLimit_Trial, {}},
          {blink::features::kLoadingTasksUnfreezable, {}}},
         {});
   }
@@ -1275,8 +1311,7 @@ class BackForwardCacheBrowserTestForLowMemoryDevices
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Ensure that the BackForwardCache trial is not activated and the
-// BackForwardCache_NoMemoryLimit_Trial trial got activated as expected on
+// Ensure that the BackForwardCache trial is not activated as expected on
 // low-memory devices.
 IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTestForLowMemoryDevices,
                        DisableBFCacheForLowEndDevices) {
@@ -1284,27 +1319,17 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTestForLowMemoryDevices,
   GURL url_a(embedded_test_server()->GetURL("a.com", "/title1.html"));
   GURL url_b(embedded_test_server()->GetURL("b.com", "/title1.html"));
 
-  // Ensure that the BackForwardCache trial starts inactive, and the
-  // BackForwardCache_NoMemoryLimit_Trial trial starts active.
+  // Ensure that the BackForwardCache trial starts inactive.
   EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 
   EXPECT_FALSE(IsBackForwardCacheEnabled());
 
   // Ensure that we do not activate the BackForwardCache trial when querying
-  // bfcache status, and the BackForwardCache_NoMemoryLimit_Trial trial stays
-  // active.
+  // bfcache status.
   EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 
   // 1) Navigate to A.
@@ -1332,14 +1357,9 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTestForLowMemoryDevices,
       },
       {}, {}, {}, {}, FROM_HERE);
 
-  // Ensure that the BackForwardCache trial still hasn't been activated, and the
-  // BackForwardCache_NoMemoryLimit_Trial trial stays active.
+  // Ensure that the BackForwardCache trial still hasn't been activated.
   EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 }
 
@@ -1428,7 +1448,6 @@ class BackForwardCacheBrowserTestForHighMemoryDevices
         {{features::kBackForwardCacheMemoryControls,
           {{"memory_threshold_for_back_forward_cache_in_mb",
             memory_threshold}}},
-         {features::kBackForwardCache_NoMemoryLimit_Trial, {}},
          {blink::features::kLoadingTasksUnfreezable, {}}},
         {});
   }
@@ -1437,35 +1456,23 @@ class BackForwardCacheBrowserTestForHighMemoryDevices
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Ensure that the BackForwardCache_NoMemoryLimit_Trial and the
-// BackForwardCache trials got activated as expected on high-memory devices
-// when the BackForwardCache feature is enabled.
+// Ensure that the BackForwardCache trial got activated as expected on
+// high-memory devices when the BackForwardCache feature is enabled.
 IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTestForHighMemoryDevices,
                        EnableBFCacheForHighMemoryDevices) {
-  // Ensure that the BackForwardCache and the
-  // BackForwardCache_NoMemoryLimit_Trial trials start active
-  // on high-memory devices when the BackForwardCache feature is enabled,
-  // because IsBackForwardCacheEnabled() got queried already before the test
-  // starts.
+  // Ensure that the BackForwardCache trial starts active on high-memory devices
+  // when the BackForwardCache feature is enabled, because
+  // IsBackForwardCacheEnabled() got queried already before the test starts.
   EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 
   EXPECT_TRUE(IsBackForwardCacheEnabled());
 
-  // Ensure that the BackForwardCache and the
-  // BackForwardCache_NoMemoryLimit_Trial trial stays active after
-  // querying IsBackForwardCacheEnabled().
+  // Ensure that the BackForwardCache trial stays active after querying
+  // IsBackForwardCacheEnabled().
   EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -1483,14 +1490,9 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTestForHighMemoryDevices,
   // greater than the memory threshold.
   EXPECT_TRUE(rfh_a->IsInBackForwardCache());
 
-  // Ensure that the BackForwardCache and the
-  // BackForwardCache_NoMemoryLimit_Trial trial stays active.
+  // Ensure that the BackForwardCache trial stays active.
   EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
       base::FeatureList::GetFieldTrial(features::kBackForwardCache)
-          ->trial_name()));
-  EXPECT_TRUE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
           ->trial_name()));
 }
 
@@ -1571,7 +1573,6 @@ class BackForwardCacheBrowserTestForHighMemoryDevicesWithBFCacheDisabled
         {{features::kBackForwardCacheMemoryControls,
           {{"memory_threshold_for_back_forward_cache_in_mb",
             memory_threshold}}},
-         {features::kBackForwardCache_NoMemoryLimit_Trial, {}},
          {blink::features::kLoadingTasksUnfreezable, {}}},
         /*disabled_features=*/
         {features::kBackForwardCache});
@@ -1581,28 +1582,12 @@ class BackForwardCacheBrowserTestForHighMemoryDevicesWithBFCacheDisabled
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Ensure that the BackForwardCache_NoMemoryLimit_Trial does not get activated
-// on high-memory devices that have the BackForwardCache feature disabled.
 IN_PROC_BROWSER_TEST_F(
     BackForwardCacheBrowserTestForHighMemoryDevicesWithBFCacheDisabled,
     HighMemoryDevicesWithBFacheDisabled) {
-  // Ensure that BackForwardCache_NoMemoryLimit_Trial trials starts inactive
-  // on high-memory devices that have the BackForwardCache feature disabled.
-  EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
-          ->trial_name()));
-
   // Ensure that IsBackForwardCacheEnabled() returns false, because the
   // BackForwardCache feature is disabled.
   EXPECT_FALSE(IsBackForwardCacheEnabled());
-
-  // Ensure that the BackForwardCache_NoMemoryLimit_Trial trial stays inactive
-  // after querying IsBackForwardCacheEnabled().
-  EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
-          ->trial_name()));
 
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_a(embedded_test_server()->GetURL("a.com", "/title1.html"));
@@ -1628,12 +1613,6 @@ IN_PROC_BROWSER_TEST_F(
           BackForwardCacheMetrics::NotRestoredReason::kBackForwardCacheDisabled,
       },
       {}, {}, {}, {}, FROM_HERE);
-
-  // Ensure that the BackForwardCache_NoMemoryLimit_Trial trial stays inactive.
-  EXPECT_FALSE(base::FieldTrialList::IsTrialActive(
-      base::FeatureList::GetFieldTrial(
-          features::kBackForwardCache_NoMemoryLimit_Trial)
-          ->trial_name()));
 }
 
 // Start an inifite dialogs in JS, yielding after each. The first dialog should
@@ -1754,11 +1733,14 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
 // Tests that pagehide handlers of the old RFH are run for bfcached pages even
 // if the page is already hidden (and visibilitychange won't run).
-// Disabled on Linux and Win because of flakiness, see crbug.com/1170802.
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
-// complete.
+// Disabled on Linux and Win because of flakiness, see crbug.com/40165901.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#define MAYBE_PagehideRunsWhenPageIsHidden DISABLED_PagehideRunsWhenPageIsHidden
+#else
+#define MAYBE_PagehideRunsWhenPageIsHidden PagehideRunsWhenPageIsHidden
+#endif
 IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
-                       PagehideRunsWhenPageIsHidden) {
+                       MAYBE_PagehideRunsWhenPageIsHidden) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_1(embedded_test_server()->GetURL("a.com", "/title1.html"));
   GURL url_2(embedded_test_server()->GetURL("b.com", "/title2.html"));
@@ -1826,13 +1808,21 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
 // Tests that we're getting the correct TextInputState and focus updates when a
 // page enters the back-forward cache and when it gets restored.
-IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, TextInputStateUpdated) {
+// TODO(b/324570785): Re-enable the test for Android.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
+#define MAYBE_TextInputStateUpdated DISABLED_TextInputStateUpdated
+#else
+#define MAYBE_TextInputStateUpdated TextInputStateUpdated
+#endif
+IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
+                       MAYBE_TextInputStateUpdated) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_1(embedded_test_server()->GetURL("a.com", "/title1.html"));
   GURL url_2(embedded_test_server()->GetURL("b.com", "/title2.html"));
 
   // 1) Navigate to |url_1| and add a text input with "foo" as the value.
   EXPECT_TRUE(NavigateToURL(shell(), url_1));
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents());
   RenderFrameHostImpl* rfh_1 = current_frame_host();
   EXPECT_TRUE(ExecJs(rfh_1,
                      "document.title='bfcached';"
@@ -1933,6 +1923,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
   // 1) Navigate to |url_1| and add a text input with "foo" as the value in the
   // a.com subframe.
   EXPECT_TRUE(NavigateToURL(shell(), url_1));
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents());
   RenderFrameHostImpl* rfh_a = current_frame_host();
   RenderFrameHostImpl* rfh_b = rfh_a->child_at(0)->current_frame_host();
   RenderFrameHostImpl* rfh_subframe_a =
@@ -2020,7 +2011,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
 // Tests that trying to focus on a BFCached cross-site iframe won't crash.
 // See https://crbug.com/1250218.
-// TODO(crbug.com/1349657): Flaky on linux tsan
+// TODO(crbug.com/40856039): Flaky on linux tsan
 #if BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
 #define MAYBE_FocusSameSiteSubframeOnPagehide \
   DISABLED_FocusSameSiteSubframeOnPagehide
@@ -2162,7 +2153,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ("sandbox", root_csp[0]->header->header_value);
     ASSERT_EQ(network::mojom::WebSandboxFlags::kAll,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 
   // 2) Navigate to B. Expect the previous RenderFrameHost to enter the bfcache.
   EXPECT_TRUE(NavigateToURL(shell(), url_b));
@@ -2177,7 +2168,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ(0u, root_csp.size());
     ASSERT_EQ(network::mojom::WebSandboxFlags::kNone,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 
   // 3) Navigate back and expect the page to be restored, with the correct
   // CSP and sandbox flags.
@@ -2194,7 +2185,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ("sandbox", root_csp[0]->header->header_value);
     ASSERT_EQ(network::mojom::WebSandboxFlags::kAll,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 }
 
 // Check that about:blank is not cached.
@@ -2224,7 +2215,6 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, AboutBlankWillNotBeCached) {
             BackForwardCacheMetrics::NotRestoredReason::kSchemeNotHTTPOrHTTPS,
             BackForwardCacheMetrics::NotRestoredReason::
                 kBrowsingInstanceNotSwapped,
-            BackForwardCacheMetrics::NotRestoredReason::kNoResponseHead,
         },
         {}, {ShouldSwapBrowsingInstance::kNo_DoesNotHaveSite}, {}, {},
         FROM_HERE);
@@ -2276,7 +2266,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, RedirectToSelf) {
   EXPECT_EQ(2, controller.GetEntryCount());
   EXPECT_EQ(url_a, controller.GetLastCommittedEntry()->GetURL());
 
-  // TODO(crbug.com/1198030): Investigate whether these navigation results are
+  // TODO(crbug.com/40760515): Investigate whether these navigation results are
   // expected.
   ExpectNotRestored(
       {
@@ -2327,7 +2317,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, ReloadDoesntAffectCache) {
   // e.g. if the navigation uses a pre-existing RenderFrameHost and SiteInstance
   // for navigation.
   //
-  // TODO(crbug.com/1176061): Tie BrowsingInstanceSwapResult to
+  // TODO(crbug.com/40747698): Tie BrowsingInstanceSwapResult to
   // NavigationRequest instead and move the SetBrowsingInstanceSwapResult call
   // for navigations to happen at commit time instead.
 
@@ -2771,7 +2761,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 class BackForwardCacheBrowserUnloadHandlerTest
     : public BackForwardCacheBrowserTest,
       public ::testing::WithParamInterface<
-          std::tuple<bool, bool, TestFrameType>> {
+          std::tuple<bool, bool, bool, TestFrameType>> {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     if (IsUnloadAllowed()) {
@@ -2784,20 +2774,28 @@ class BackForwardCacheBrowserUnloadHandlerTest
     } else {
       DisableFeature(blink::features::kUnloadBlocklisted);
     }
+    if (IsUnloadDeprecationOptedOut()) {
+      EnableFeatureAndSetParams(blink::features::kDeprecateUnloadOptOut, "",
+                                "");
+    } else {
+      DisableFeature(blink::features::kDeprecateUnloadOptOut);
+    }
+
     BackForwardCacheBrowserTest::SetUpCommandLine(command_line);
   }
 
   bool IsUnloadAllowed() { return std::get<0>(GetParam()); }
   bool IsUnloadBlocklisted() { return std::get<1>(GetParam()); }
+  bool IsUnloadDeprecationOptedOut() { return std::get<2>(GetParam()); }
 
-  TestFrameType GetTestFrameType() { return std::get<2>(GetParam()); }
+  TestFrameType GetTestFrameType() { return std::get<3>(GetParam()); }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Ensure that unload handlers in main frames and subframes block caching or
-// not, depending on the flag setting.
+// Ensure that unload handlers in main frames and subframes block caching,
+// depending on unload deprecation status and OS.
 IN_PROC_BROWSER_TEST_P(BackForwardCacheBrowserUnloadHandlerTest,
                        UnloadHandlerPresent) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -2808,17 +2806,26 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheBrowserUnloadHandlerTest,
   // 1) Navigate to A.
   EXPECT_TRUE(NavigateToURL(shell(), url_a));
 
-  BackForwardCacheMetrics::NotRestoredReason expected_blocking_reason;
+  BackForwardCacheCanStoreDocumentResult::NotRestoredReasons
+      expected_blocking_reasons;
+  std::vector<blink::scheduler::WebSchedulerTrackedFeature>
+      expected_blocklisted_reason;
+  if (IsUnloadBlocklisted()) {
+    expected_blocking_reasons.Put(
+        BackForwardCacheMetrics::NotRestoredReason::kBlocklistedFeatures);
+    expected_blocklisted_reason.push_back(
+        blink::scheduler::WebSchedulerTrackedFeature::kUnloadHandler);
+  }
   switch (GetTestFrameType()) {
     case content::TestFrameType::kMainFrame:
       InstallUnloadHandlerOnMainFrame();
-      expected_blocking_reason = BackForwardCacheMetrics::NotRestoredReason::
-          kUnloadHandlerExistsInMainFrame;
+      expected_blocking_reasons.Put(BackForwardCacheMetrics::NotRestoredReason::
+                                        kUnloadHandlerExistsInMainFrame);
       break;
     case content::TestFrameType::kSubFrame:
       InstallUnloadHandlerOnSubFrame();
-      expected_blocking_reason = BackForwardCacheMetrics::NotRestoredReason::
-          kUnloadHandlerExistsInSubFrame;
+      expected_blocking_reasons.Put(BackForwardCacheMetrics::NotRestoredReason::
+                                        kUnloadHandlerExistsInSubFrame);
       break;
     default:
       NOTREACHED();
@@ -2830,47 +2837,32 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheBrowserUnloadHandlerTest,
   // 3) Go back.
   ASSERT_TRUE(HistoryGoBack(web_contents()));
 
-  if (IsUnloadBlocklisted()) {
+  bool unload_never_blocks = IsUnloadAllowed();
+  bool unload_deprecated_and_not_opted_out =
+      (base::FeatureList::IsEnabled(network::features::kDeprecateUnload) &&
+       !IsUnloadDeprecationOptedOut());
+  if (unload_never_blocks || unload_deprecated_and_not_opted_out) {
     // Pages with unload handlers are eligible for bfcache only if it is
-    // specifically allowed (happens on Android), or when unload handlers are
-    // deprecated.
-    if (BackForwardCacheImpl::IsUnloadAllowed() ||
-        base::FeatureList::IsEnabled(blink::features::kDeprecateUnload)) {
-      ExpectRestored(FROM_HERE);
-      EXPECT_EQ("0", GetUnloadRunCount());
-    } else {
-      // If unload handlers are a blocklisted feature, the blocklisted feature
-      // gets reported in addition to the not restored reason.
-      ExpectNotRestored(
-          {expected_blocking_reason,
-           BackForwardCacheMetrics::NotRestoredReason::kBlocklistedFeatures},
-          {blink::scheduler::WebSchedulerTrackedFeature::kUnloadHandler}, {},
-          {}, {}, FROM_HERE);
-      EXPECT_EQ("1", GetUnloadRunCount());
-    }
+    // specifically allowed (happens on Android). Also, when unload is
+    // deprecated and `kDeprecateUnloadOptOut` doesn't override it, unload
+    // handlers cannot be installed so there should be no blocker for BFCache.
+    ExpectRestored(FROM_HERE);
+    EXPECT_EQ("0", GetUnloadRunCount());
   } else {
-    if (BackForwardCacheImpl::IsUnloadAllowed() ||
-        base::FeatureList::IsEnabled(blink::features::kDeprecateUnload)) {
-      ExpectRestored(FROM_HERE);
-      EXPECT_EQ("0", GetUnloadRunCount());
-    } else {
-      ExpectNotRestored({expected_blocking_reason}, {}, {}, {}, {}, FROM_HERE);
-      EXPECT_EQ("1", GetUnloadRunCount());
-    }
+    ExpectNotRestored(expected_blocking_reasons, expected_blocklisted_reason,
+                      {}, {}, {}, FROM_HERE);
+    EXPECT_EQ("1", GetUnloadRunCount());
   }
-
-  // 4) Go forward.
-  ASSERT_TRUE(HistoryGoForward(web_contents()));
-
-  ExpectRestored(FROM_HERE);
 }
 
-// The first param is to check if unload is allowed, and the second one is to
-// check if unload is a blocklisted feature.
+// First param: whether unload is allowed or not.
+// Second one: whether unload is blocklisted or not.
+// Third one: whether it's opted out from unload deprecation or not.
 INSTANTIATE_TEST_SUITE_P(
     All,
     BackForwardCacheBrowserUnloadHandlerTest,
     ::testing::Combine(::testing::Bool(),
+                       ::testing::Bool(),
                        ::testing::Bool(),
                        ::testing::Values(TestFrameType::kMainFrame,
                                          TestFrameType::kSubFrame)));
@@ -2933,6 +2925,11 @@ class BackForwardCacheEvictionDueToSubframeNavigationBrowserTest
         return "CrossSite";
     }
   }
+
+ protected:
+  bool UseCrossOriginSubframe() const {
+    return GetParam() == SubframeType::CrossSite;
+  }
 };
 
 IN_PROC_BROWSER_TEST_P(
@@ -2940,9 +2937,8 @@ IN_PROC_BROWSER_TEST_P(
     SubframePendingCommitShouldPreventCache) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL a_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
-  bool use_cross_origin_subframe = GetParam() == SubframeType::CrossSite;
   GURL subframe_url = embedded_test_server()->GetURL(
-      use_cross_origin_subframe ? "b.com" : "a.com", "/title1.html");
+      UseCrossOriginSubframe() ? "b.com" : "a.com", "/title1.html");
 
   IsolateOriginsForTesting(embedded_test_server(), web_contents(),
                            std::vector<std::string>{"a.com", "b.com"});
@@ -2977,6 +2973,58 @@ IN_PROC_BROWSER_TEST_P(
   commit_message_delayer.Wait();
 }
 
+// Check that when the main frame gets BFCached while the subframe navigation
+// deferring NavigationThrottles has already ran, the issue that the subframe
+// navigation escapes the throttle deferral is addressed.
+IN_PROC_BROWSER_TEST_P(
+    BackForwardCacheEvictionDueToSubframeNavigationBrowserTest,
+    MainFrameCommitFirstAndSubframePendingCommitShouldBeEvicted) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  // Prepare the main frame and the sub frame, where both of them are same-site.
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(a)"));
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
+  FrameTreeNode* child = root->child_at(0);
+  RenderFrameHostImplWrapper child_rfh(child->current_frame_host());
+
+  // Navigate both frames simultaneously.
+  const std::string subframe_origin =
+      UseCrossOriginSubframe() ? "b.com" : "a.com";
+  GURL new_url_1(
+      embedded_test_server()->GetURL(subframe_origin, "/title1.html"));
+  GURL new_url_2(
+      embedded_test_server()->GetURL(subframe_origin, "/title2.html"));
+  TestNavigationManager manager1(web_contents(), new_url_1);
+  TestNavigationManager manager2(web_contents(), new_url_2);
+  auto script = JsReplace("location = $1; frames[0].location = $2;", new_url_1,
+                          new_url_2);
+  EXPECT_TRUE(ExecJs(web_contents(), script));
+
+  // Wait for main frame request, but don't commit it yet. This should create
+  // a speculative RenderFrameHost.
+  ASSERT_TRUE(manager1.WaitForRequestStart());
+
+  // Wait for subframe request, but don't commit it yet.
+  ASSERT_TRUE(manager2.WaitForRequestStart());
+
+  // Now let the main frame commit.
+  ASSERT_TRUE(manager1.WaitForNavigationFinished());
+  // Make sure the main frame is at the new URL.
+  ASSERT_TRUE(root->current_frame_host()->IsRenderFrameLive());
+  ASSERT_EQ(new_url_1, root->current_frame_host()->GetLastCommittedURL());
+
+  // The subframe should be gone now: it should have been evicted from BFCache
+  // because the subframe is still navigating; otherwise, this will cause a
+  // crash.
+  ASSERT_TRUE(manager2.WaitForNavigationFinished());
+  EXPECT_TRUE(child_rfh.IsDestroyed());
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
+  ExpectNotRestored(
+      {BackForwardCacheMetrics::NotRestoredReason::kSubframeIsNavigating}, {},
+      {}, {}, {}, FROM_HERE);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     All,
     BackForwardCacheEvictionDueToSubframeNavigationBrowserTest,
@@ -2988,9 +3036,7 @@ namespace {
 enum class SubframeNavigationType { WithoutURLLoader, WithURLLoader };
 }
 
-// Test for pages which has subframe(s) with ongoing navigation(s). In these
-// tests, we should enable kEnableBackForwardCacheForOngoingSubframeNavigation
-// flag.
+// Test for pages which has subframe(s) with ongoing navigation(s).
 class BackForwardCacheWithSubframeNavigationBrowserTest
     : public BackForwardCacheBrowserTest {
  protected:
@@ -3000,11 +3046,7 @@ class BackForwardCacheWithSubframeNavigationBrowserTest
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    EnableFeatureAndSetParams(
-        features::kEnableBackForwardCacheForOngoingSubframeNavigation, "",
-        "true");
-    EnableFeatureAndSetParams(features::kBackForwardCache, "cache_size",
-                              base::NumberToString(2));
+    EnableCacheSize(2, std::nullopt);
     BackForwardCacheBrowserTest::SetUpCommandLine(command_line);
   }
 
@@ -3015,7 +3057,7 @@ class BackForwardCacheWithSubframeNavigationBrowserTest
       BeforeUnloadBlockingDelegate& beforeunload_pauser,
       RenderFrameHostImpl* sub_rfh,
       const GURL& subframe_navigate_url,
-      const base::StringPiece iframe_id) {
+      std::string_view iframe_id) {
     ASSERT_TRUE(ExecJs(sub_rfh, R"(
       window.addEventListener('beforeunload', e =>
         e.returnValue='blocked'
@@ -3030,14 +3072,31 @@ class BackForwardCacheWithSubframeNavigationBrowserTest
   }
 
   // Start a subframe navigation and pause it before `DidCommitNavigation`.
-  void NavigateSubframeAndPauseAtDidCommit(RenderFrameHostImpl* sub_rfh,
+  void NavigateSubframeAndPauseAtDidCommit(FrameTreeNode* ftn,
                                            const GURL& subframe_navigate_url) {
+    // Enforce the creation of speculative RFH to correctly wait for
+    // the commit event.
+    SpeculativeRenderFrameHostObserver observer(web_contents(),
+                                                subframe_navigate_url);
     // We have to pause a navigation before `DidCommitNavigation`, so we don't
     // want to wait for the navigation to finish.
-    ASSERT_TRUE(BeginNavigateToURLFromRenderer(sub_rfh, subframe_navigate_url));
+    ASSERT_TRUE(BeginNavigateToURLFromRenderer(ftn, subframe_navigate_url));
+    // Navigation without a URL loader shall always create the speculative RFH
+    // immediately or never create one.
+    // The same-site navigation to the subframe will not create a new
+    // speculative RFH if render document is not enabled for subframes.
+    if (subframe_navigate_url.SchemeIsHTTPOrHTTPS() &&
+        ShouldCreateNewRenderFrameHostOnSameSiteNavigation(
+            /*is_main_frame=*/false, /*is_local_root=*/true)) {
+      observer.Wait();
+    }
 
-    // Wait until the navigation is pending commit.
-    CommitNavigationPauser commit_pauser(sub_rfh);
+    // Wait until the navigation is pending commit. Note that the navigation
+    // might use a speculative RenderFrameHost, so use that if necessary.
+    RenderFrameHostImpl* speculative_rfh =
+        ftn->render_manager()->speculative_frame_host();
+    CommitNavigationPauser commit_pauser(
+        speculative_rfh ? speculative_rfh : ftn->current_frame_host());
     commit_pauser.WaitForCommitAndPause();
   }
 
@@ -3049,7 +3108,7 @@ class BackForwardCacheWithSubframeNavigationBrowserTest
       const GURL& subframe_navigate_url,
       RenderFrameHostImplWrapper& sub_rfh,
       TestNavigationManager& subframe_navigation_manager,
-      const base::StringPiece iframe_id) {
+      std::string_view iframe_id) {
     FrameTreeNode* child_ftn =
         web_contents()->GetPrimaryFrameTree().root()->child_at(0);
     {
@@ -3113,12 +3172,14 @@ IN_PROC_BROWSER_TEST_P(
 
   // Navigate to a page with a cross site iframe.
   ASSERT_TRUE(NavigateToURL(shell(), main_url));
+  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+
   RenderFrameHostImplWrapper main_rfh(current_frame_host());
-  RenderFrameHostImplWrapper sub_rfh(
-      main_rfh.get()->child_at(0)->current_frame_host());
+  FrameTreeNode* child_node = main_rfh.get()->child_at(0);
+  RenderFrameHostImplWrapper sub_rfh(child_node->current_frame_host());
 
   // Pause subframe's navigation before `DidCommitNavigation`.
-  NavigateSubframeAndPauseAtDidCommit(sub_rfh.get(), subframe_navigate_url);
+  NavigateSubframeAndPauseAtDidCommit(child_node, subframe_navigate_url);
 
   // Subframe navigation is ongoing, so `NavigateToURL` cannot be used since
   // this function waits for all frames including subframe to finish loading.
@@ -3177,7 +3238,8 @@ IN_PROC_BROWSER_TEST_F(
                                            /*iframe_id=*/"child-0");
 
     // Pause subframe_c's navigation before `DidCommitNavigation`.
-    NavigateSubframeAndPauseAtDidCommit(sub_rfh_c.get(), subframe_navigate_url);
+    NavigateSubframeAndPauseAtDidCommit(main_rfh.get()->child_at(1),
+                                        subframe_navigate_url);
 
     // Subframe navigation is ongoing, so `NavigateToURL` cannot be used since
     // this function waits for all frames including subframe to finish loading.

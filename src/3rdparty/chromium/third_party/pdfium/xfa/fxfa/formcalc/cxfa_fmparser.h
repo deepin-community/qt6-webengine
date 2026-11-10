@@ -7,11 +7,12 @@
 #ifndef XFA_FXFA_FORMCALC_CXFA_FMPARSER_H_
 #define XFA_FXFA_FORMCALC_CXFA_FMPARSER_H_
 
+#include <optional>
 #include <vector>
 
+#include "core/fxcrt/unowned_ptr.h"
 #include "core/fxcrt/unowned_ptr_exclusion.h"
 #include "fxjs/gc/heap.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "v8/include/cppgc/macros.h"
 #include "v8/include/cppgc/member.h"
 #include "xfa/fxfa/formcalc/cxfa_fmexpression.h"
@@ -29,7 +30,7 @@ class CXFA_FMParser {
   bool HasError() const;
 
   void SetMaxParseDepthForTest(unsigned long max_depth) {
-    m_max_parse_depth = max_depth;
+    max_parse_depth_ = max_depth;
   }
 
  private:
@@ -60,15 +61,15 @@ class CXFA_FMParser {
   CXFA_FMSimpleExpression* ParsePostExpression(CXFA_FMSimpleExpression* e);
   CXFA_FMSimpleExpression* ParseIndexExpression();
   CXFA_FMSimpleExpression* ParseLiteral();
-  absl::optional<std::vector<cppgc::Member<CXFA_FMSimpleExpression>>>
+  std::optional<std::vector<cppgc::Member<CXFA_FMSimpleExpression>>>
   ParseArgumentList();
 
-  UnownedPtr<cppgc::Heap> const m_heap;
-  UNOWNED_PTR_EXCLUSION CXFA_FMLexer* const m_lexer;  // Stack allocated.
-  CXFA_FMLexer::Token m_token;
-  bool m_error = false;
-  unsigned long m_parse_depth = 0;
-  unsigned long m_max_parse_depth;
+  UnownedPtr<cppgc::Heap> const heap_;
+  UNOWNED_PTR_EXCLUSION CXFA_FMLexer* const lexer_;  // Stack allocated.
+  CXFA_FMLexer::Token token_;
+  bool error_ = false;
+  unsigned long parse_depth_ = 0;
+  unsigned long max_parse_depth_;
 };
 
 #endif  // XFA_FXFA_FORMCALC_CXFA_FMPARSER_H_

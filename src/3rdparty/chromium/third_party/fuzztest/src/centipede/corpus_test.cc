@@ -17,19 +17,22 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <sstream>
+#include <filesystem>  // NOLINT
+#include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
 #include "./centipede/binary_info.h"
 #include "./centipede/call_graph.h"
 #include "./centipede/control_flow.h"
-#include "./centipede/defs.h"
 #include "./centipede/feature.h"
 #include "./centipede/feature_set.h"
 #include "./centipede/pc_info.h"
+#include "./centipede/util.h"
+#include "./common/defs.h"
+#include "./common/test_util.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 TEST(Corpus, GetCmpData) {
@@ -42,13 +45,13 @@ TEST(Corpus, GetCmpData) {
   ByteArray cmp_data{2, 0, 1, 2, 3};
   FeatureVec features1 = {10, 20, 30};
   fs.IncrementFrequencies(features1);
-  corpus.Add({1}, features1, /*metadata=*/{.cmp_data = cmp_data}, fs,
-             coverage_frontier);
+  corpus.Add({1}, features1, /*metadata=*/{cmp_data}, fs, coverage_frontier);
   EXPECT_EQ(corpus.NumActive(), 1);
   EXPECT_EQ(corpus.GetMetadata(0).cmp_data, cmp_data);
 }
 
 TEST(Corpus, PrintStats) {
+  const std::filesystem::path test_tmpdir = GetTestTempDir(test_info_->name());
   PCTable pc_table(100);
   CFTable cf_table(100);
   BinaryInfo bin_info{pc_table, {}, cf_table, {}, {}, {}};
@@ -61,10 +64,13 @@ TEST(Corpus, PrintStats) {
   corpus.Add({1, 2, 3}, features1, {}, fs, coverage_frontier);
   fs.IncrementFrequencies(features2);
   corpus.Add({4, 5}, features2, {}, fs, coverage_frontier);
-  std::ostringstream os;
-  corpus.PrintStats(os, fs);
-  EXPECT_EQ(os.str(),
-            R"({
+  const std::string stats_filepath = test_tmpdir / "corpus.txt";
+  corpus.DumpStatsToFile(fs, stats_filepath, "Test corpus");
+  std::string stats_file_contents;
+  ReadFromLocalFile(stats_filepath, stats_file_contents);
+  EXPECT_EQ(stats_file_contents,
+            R"(# Test corpus
+{
   "num_inputs": 2,
   "corpus_stats": [
     {"size": 3, "frequencies": [1, 2, 1]},
@@ -396,4 +402,4 @@ TEST(CoverageFrontierDeath, InvalidIndexToFrontier) {
 }
 
 }  // namespace
-}  // namespace centipede
+}  // namespace fuzztest::internal

@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_track_platform.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace blink {
 
@@ -45,9 +46,9 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
   static WebMediaStreamTrack CreateVideoTrack(
       MediaStreamVideoSource* source,
       const VideoTrackAdapterSettings& adapter_settings,
-      const absl::optional<bool>& noise_reduction,
+      const std::optional<bool>& noise_reduction,
       bool is_screencast,
-      const absl::optional<double>& min_frame_rate,
+      const std::optional<double>& min_frame_rate,
       const ImageCaptureDeviceSettings* image_capture_device_settings,
       bool pan_tilt_zoom_allowed,
       MediaStreamVideoSource::ConstraintsOnceCallback callback,
@@ -63,9 +64,9 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
   MediaStreamVideoTrack(
       MediaStreamVideoSource* source,
       const VideoTrackAdapterSettings& adapter_settings,
-      const absl::optional<bool>& noise_reduction,
+      const std::optional<bool>& noise_reduction,
       bool is_screen_cast,
-      const absl::optional<double>& min_frame_rate,
+      const std::optional<double>& min_frame_rate,
       const ImageCaptureDeviceSettings* image_capture_device_settings,
       bool pan_tilt_zoom_allowed,
       MediaStreamVideoSource::ConstraintsOnceCallback callback,
@@ -124,20 +125,27 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
 
   void OnReadyStateChanged(WebMediaStreamSource::ReadyState state);
 
-  const absl::optional<bool>& noise_reduction() const {
+  // Registers callback that is triggered whenever the delivered frame's
+  // metadata source_size or device_scale_factor changes.
+  void RegisterCaptureSurfaceResolutionChangeCallback(
+      base::RepeatingCallback<void(bool)> callback) {
+    captured_surface_resolution_callback_ = std::move(callback);
+  }
+
+  const std::optional<bool>& noise_reduction() const {
     return noise_reduction_;
   }
   bool is_screencast() const { return is_screencast_; }
-  const absl::optional<double>& min_frame_rate() const {
+  const std::optional<double>& min_frame_rate() const {
     return min_frame_rate_;
   }
-  absl::optional<double> max_frame_rate() const {
+  std::optional<double> max_frame_rate() const {
     return adapter_settings_.max_frame_rate();
   }
   const VideoTrackAdapterSettings& adapter_settings() const {
     return adapter_settings_;
   }
-  const absl::optional<ImageCaptureDeviceSettings>&
+  const std::optional<ImageCaptureDeviceSettings>&
   image_capture_device_settings() const {
     return image_capture_device_settings_;
   }
@@ -153,11 +161,10 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
   // Setting information about the track size.
   // Passed as callback on MediaStreamVideoTrack::AddTrack, and run from
   // VideoFrameResolutionAdapter on frame delivery to update track settings.
-  void SetSizeAndComputedFrameRate(gfx::Size frame_size, double frame_rate) {
-    width_ = frame_size.width();
-    height_ = frame_size.height();
-    computed_frame_rate_ = frame_rate;
-  }
+  void SetVideoFrameSettings(gfx::Size frame_size,
+                             double frame_rate,
+                             std::optional<gfx::Size> metadata_source_size,
+                             std::optional<float> device_scale_factor);
 
   // Setting information about the source format. The format is computed based
   // on incoming frames and it's used for applying constraints for remote video
@@ -244,10 +251,10 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
   scoped_refptr<FrameDeliverer> frame_deliverer_;
 
   VideoTrackAdapterSettings adapter_settings_;
-  absl::optional<bool> noise_reduction_;
+  std::optional<bool> noise_reduction_;
   bool is_screencast_;
-  absl::optional<double> min_frame_rate_;
-  absl::optional<ImageCaptureDeviceSettings> image_capture_device_settings_;
+  std::optional<double> min_frame_rate_;
+  std::optional<ImageCaptureDeviceSettings> image_capture_device_settings_;
   bool pan_tilt_zoom_allowed_ = false;
 
   // Weak ref to the source this tracks is connected to.
@@ -263,9 +270,13 @@ class MODULES_EXPORT MediaStreamVideoTrack : public MediaStreamTrackPlatform {
   // Remembering our desired video size and frame rate.
   int width_ = 0;
   int height_ = 0;
-  absl::optional<double> computed_frame_rate_;
+
+  std::optional<gfx::Size> captured_frame_physical_size_;
+  std::optional<float> device_scale_factor_;
+  std::optional<double> computed_frame_rate_;
   media::VideoCaptureFormat computed_source_format_;
   base::RepeatingTimer refresh_timer_;
+  base::RepeatingCallback<void(bool)> captured_surface_resolution_callback_;
 
   base::WeakPtrFactory<MediaStreamVideoTrack> weak_factory_{this};
 };

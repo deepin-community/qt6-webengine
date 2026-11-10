@@ -308,7 +308,6 @@ void DelayedFakeEmbeddedWorkerInstanceClient::StartWorker(
     case State::kCompleted:
     case State::kBlocked:
       NOTREACHED();
-      break;
   }
   if (quit_closure_for_start_worker_)
     std::move(quit_closure_for_start_worker_).Run();
@@ -329,7 +328,6 @@ void DelayedFakeEmbeddedWorkerInstanceClient::StopWorker() {
       break;
     case State::kCompleted:
       NOTREACHED();
-      break;
   }
   if (quit_closure_for_stop_worker_)
     std::move(quit_closure_for_stop_worker_).Run();

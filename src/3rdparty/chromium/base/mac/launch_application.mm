@@ -4,6 +4,8 @@
 
 #import "base/mac/launch_application.h"
 
+#include <variant>
+
 #include "base/apple/bridging.h"
 #include "base/apple/foundation_util.h"
 #include "base/command_line.h"
@@ -34,7 +36,7 @@ void LogLaunchResult(LaunchResult result) {
 
 NSArray* CommandLineArgsToArgsArray(const CommandLineArgs& command_line_args) {
   if (const CommandLine* command_line =
-          absl::get_if<CommandLine>(&command_line_args)) {
+          std::get_if<CommandLine>(&command_line_args)) {
     const auto& argv = command_line->argv();
     size_t argc = argv.size();
     DCHECK_GT(argc, 0lu);
@@ -50,7 +52,7 @@ NSArray* CommandLineArgsToArgsArray(const CommandLineArgs& command_line_args) {
   }
 
   if (const std::vector<std::string>* string_vector =
-          absl::get_if<std::vector<std::string>>(&command_line_args)) {
+          std::get_if<std::vector<std::string>>(&command_line_args)) {
     NSMutableArray* args_array =
         [NSMutableArray arrayWithCapacity:string_vector->size()];
     for (const auto& arg : *string_vector) {
@@ -69,33 +71,24 @@ NSWorkspaceOpenConfiguration* GetOpenConfiguration(
   NSWorkspaceOpenConfiguration* config =
       [NSWorkspaceOpenConfiguration configuration];
 
+  config.arguments = CommandLineArgsToArgsArray(command_line_args);
+
   config.activates = options.activate;
   config.createsNewApplicationInstance = options.create_new_instance;
   config.promptsUserIfNeeded = options.prompt_user_if_needed;
-  config.arguments = CommandLineArgsToArgsArray(command_line_args);
+
+  if (options.hidden_in_background) {
+    config.addsToRecentItems = NO;
+    config.hides = YES;
+    config._additionalLSOpenOptions = @{
+      apple::CFToNSPtrCast(_kLSOpenOptionBackgroundLaunchKey) : @YES,
+    };
+  }
 
   return config;
 }
 
-NSDictionary* GetOpenOptions(LaunchApplicationOptions options,
-                             const CommandLineArgs& command_line_args) {
-  NSDictionary* dict = @{
-    base::apple::CFToNSPtrCast(_kLSOpenOptionArgumentsKey) :
-        CommandLineArgsToArgsArray(command_line_args),
-    base::apple::CFToNSPtrCast(_kLSOpenOptionHideKey) :
-        @(options.hidden_in_background),
-    base::apple::CFToNSPtrCast(_kLSOpenOptionBackgroundLaunchKey) :
-        @(options.hidden_in_background),
-    base::apple::CFToNSPtrCast(_kLSOpenOptionAddToRecentsKey) :
-        @(!options.hidden_in_background),
-    base::apple::CFToNSPtrCast(_kLSOpenOptionActivateKey) : @(options.activate),
-    base::apple::CFToNSPtrCast(_kLSOpenOptionPreferRunningInstanceKey) :
-        @(!options.create_new_instance),
-  };
-  return dict;
-}
-
-// Sometimes macOS 11 and 12 report an error launching even though the launch
+// Sometimes macOS 12 reports an error launching even though the launch
 // succeeded anyway. This helper returns true for the error codes we have
 // observed where scanning the list of running applications appears to be a
 // usable workaround for this.
@@ -118,13 +111,13 @@ void LogResultAndInvokeCallback(const base::FilePath& app_bundle_path,
                                 LaunchApplicationCallback callback,
                                 NSRunningApplication* app,
                                 NSError* error) {
-  // Sometimes macOS 11 and 12 report an error launching even though the
-  // launch succeeded anyway. To work around such cases, check if we can
-  // find a running application matching the app we were trying to launch.
-  // Only do this if `options.create_new_instance` is false though, as
-  // otherwise we wouldn't know which instance to return.
-  if ((MacOSMajorVersion() == 11 || MacOSMajorVersion() == 12) &&
-      !create_new_instance && !app && ShouldScanRunningAppsForError(error)) {
+  // Sometimes macOS 12 reports an error launching even though the launch
+  // succeeded anyway. To work around such a case, check if we can find a
+  // running application matching the app we were trying to launch. Only do this
+  // if `options.create_new_instance` is false though, as otherwise we wouldn't
+  // know which instance to return.
+  if (MacOSMajorVersion() == 12 && !create_new_instance && !app &&
+      ShouldScanRunningAppsForError(error)) {
     NSArray<NSRunningApplication*>* all_apps =
         NSWorkspace.sharedWorkspace.runningApplications;
     for (NSRunningApplication* running_app in all_apps) {
@@ -181,28 +174,6 @@ void LaunchApplication(const base::FilePath& app_bundle_path,
       [ns_urls
           addObject:[NSURL URLWithString:base::SysUTF8ToNSString(url_spec)]];
     }
-  }
-
-  if (options.hidden_in_background) {
-    _LSOpenCompletionHandler action_block =
-        ^void(LSASNRef asn, Boolean success, CFErrorRef cf_error) {
-          NSRunningApplication* app = nil;
-          if (asn) {
-            app = [[NSRunningApplication alloc]
-                initWithApplicationSerialNumber:asn];
-          }
-          NSError* error = base::apple::CFToNSPtrCast(cf_error);
-          dispatch_async(dispatch_get_main_queue(), ^{
-            std::move(callback_block_access).Run(app, error);
-          });
-        };
-
-    _LSOpenURLsWithCompletionHandler(
-        base::apple::NSToCFPtrCast(ns_urls ? ns_urls : @[]),
-        apple::FilePathToCFURL(app_bundle_path).get(),
-        base::apple::NSToCFPtrCast(GetOpenOptions(options, command_line_args)),
-        action_block);
-    return;
   }
 
   void (^action_block)(NSRunningApplication*, NSError*) =

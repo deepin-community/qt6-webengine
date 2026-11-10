@@ -8,7 +8,7 @@
 #include "bench/Benchmark.h"
 #include "include/core/SkData.h"
 #include "include/core/SkStream.h"
-#include "src/utils/SkJSON.h"
+#include "modules/jsonreader/SkJSONReader.h"
 
 #if defined(SK_BUILD_FOR_ANDROID)
 static constexpr const char* kBenchFile = "/data/local/tmp/bench.json";
@@ -22,7 +22,7 @@ public:
 protected:
     const char* onGetName() override { return "json_skjson"; }
 
-    bool isSuitableFor(Backend backend) override { return backend == kNonRendering_Backend; }
+    bool isSuitableFor(Backend backend) override { return backend == Backend::kNonRendering; }
 
     void onPerCanvasPreDraw(SkCanvas*) override {
         fData = SkData::MakeFromFileName(kBenchFile);
@@ -65,7 +65,7 @@ public:
 protected:
     const char* onGetName() override { return "json_rapidjson"; }
 
-    bool isSuitableFor(Backend backend) override { return backend == kNonRendering_Backend; }
+    bool isSuitableFor(Backend backend) override { return backend == Backend::kNonRendering; }
 
     void onPerCanvasPreDraw(SkCanvas*) override {
         if (auto stream = SkStream::MakeFromFile(kBenchFile)) {
@@ -117,7 +117,7 @@ public:
 protected:
     const char* onGetName() override { return "json_pjson"; }
 
-    bool isSuitableFor(Backend backend) override { return backend == kNonRendering_Backend; }
+    bool isSuitableFor(Backend backend) override { return backend == Backend::kNonRendering; }
 
     void onPerCanvasPreDraw(SkCanvas*) override {
         if (auto stream = SkStream::MakeFromFile(kBenchFile)) {

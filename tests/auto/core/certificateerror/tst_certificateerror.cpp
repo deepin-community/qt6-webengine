@@ -8,6 +8,7 @@
 #include <QWebEngineSettings>
 
 #include <QtTest/QtTest>
+#include <QtTest/private/qtesthelpers_p.h>
 
 class tst_CertificateError : public QObject
 {
@@ -68,6 +69,11 @@ void tst_CertificateError::handleError_data()
 
 void tst_CertificateError::handleError()
 {
+    if (QTestPrivate::isSecureTransportBlockingTest()) {
+        // Built with SDK < 15, with file-based keychains that no longer work on macOS >= 15.
+        QSKIP("SecureTransport will block the test server while accessing the login keychain");
+    }
+
     HttpsServer server(":/resources/server.pem", ":/resources/server.key", "");
     server.setExpectError(false);
     QVERIFY(server.start());

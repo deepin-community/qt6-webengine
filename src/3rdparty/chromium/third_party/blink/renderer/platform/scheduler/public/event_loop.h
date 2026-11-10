@@ -58,7 +58,7 @@ namespace scheduler {
 // This is not correct in terms of the standards conformance, and we'll
 // eventually merge the queues so both Blink and V8 can use the microtask queue
 // allocated in the correct granularity.
-class PLATFORM_EXPORT EventLoop final : public WTF::RefCounted<EventLoop> {
+class PLATFORM_EXPORT EventLoop final : public RefCounted<EventLoop> {
   USING_FAST_MALLOC(EventLoop);
 
  public:
@@ -93,10 +93,6 @@ class PLATFORM_EXPORT EventLoop final : public WTF::RefCounted<EventLoop> {
   // empty.
   static void PerformIsolateGlobalMicrotasksCheckpoint(v8::Isolate* isolate);
 
-  // Disables or enables all controlled frames.
-  void Disable();
-  void Enable();
-
   void AttachScheduler(FrameOrWorkerScheduler*);
   void DetachScheduler(FrameOrWorkerScheduler*);
 
@@ -107,7 +103,7 @@ class PLATFORM_EXPORT EventLoop final : public WTF::RefCounted<EventLoop> {
   bool IsSchedulerAttachedForTest(FrameOrWorkerScheduler*);
 
  private:
-  friend class WTF::RefCounted<EventLoop>;
+  friend class RefCounted<EventLoop>;
   friend blink::Agent;
 
   EventLoop(Delegate* delegate,
@@ -119,7 +115,7 @@ class PLATFORM_EXPORT EventLoop final : public WTF::RefCounted<EventLoop> {
   static void RunEndOfCheckpointTasks(v8::Isolate* isolat, void* data);
 
   WeakPersistent<Delegate> delegate_;
-  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
+  raw_ptr<v8::Isolate> isolate_;
   bool loop_enabled_ = true;
   Deque<base::OnceClosure> pending_microtasks_;
   Vector<base::OnceClosure> end_of_checkpoint_tasks_;

@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -78,7 +79,7 @@ AnimatingSquare::AnimatingSquare(size_t index) : index_(index) {
 void AnimatingSquare::OnPaint(gfx::Canvas* canvas) {
   View::OnPaint(canvas);
   const SkColor color = SkColorSetRGB((5 - index_) * 51, 0, index_ * 51);
-  // TODO(crbug/1308932): Remove this FromColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove this FromColor and make all SkColor4f.
   const SkColor4f colors[2] = {
       SkColor4f::FromColor(color),
       SkColor4f::FromColor(color_utils::HSLShift(color, {-1.0, -1.0, 0.75}))};
@@ -175,15 +176,16 @@ void AnimationExample::CreateExampleView(View* container) {
       BoxLayout::Orientation::kVertical, gfx::Insets(), 10));
 
   View* squares_container = container->AddChildView(std::make_unique<View>());
-  squares_container->SetBackground(CreateThemedSolidBackground(
+  squares_container->SetBackground(CreateSolidBackground(
       ExamplesColorIds::kColorAnimationExampleBackground));
   squares_container->SetPaintToLayer();
   squares_container->layer()->SetMasksToBounds(true);
   squares_container->layer()->SetFillsBoundsOpaquely(true);
 
   squares_container->SetLayoutManager(std::make_unique<SquaresLayoutManager>());
-  for (size_t i = 0; i < 5; ++i)
+  for (size_t i = 0; i < 5; ++i) {
     squares_container->AddChildView(std::make_unique<AnimatingSquare>(i));
+  }
 
   {
     gfx::RoundedCornersF rounded_corners(12.0f, 12.0f, 12.0f, 12.0f);

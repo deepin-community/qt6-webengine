@@ -28,8 +28,7 @@
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/tracing/default_socket.h"
 
-#include "src/traced/probes/ftrace/ftrace_procfs.h"
-#include "src/traced/probes/kmem_activity_trigger.h"
+#include "src/traced/probes/ftrace/tracefs.h"
 #include "src/traced/probes/probes_producer.h"
 
 namespace perfetto {
@@ -108,10 +107,10 @@ int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
   // due to permissions.
   const char* env = getenv("ANDROID_FILE__dev_kmsg");
   if (env) {
-    FtraceProcfs::g_kmesg_fd = atoi(env);
+    Tracefs::g_kmesg_fd = atoi(env);
     // The file descriptor passed by init doesn't have the FD_CLOEXEC bit set.
     // Set it so we don't leak this fd while invoking atrace.
-    int res = fcntl(FtraceProcfs::g_kmesg_fd, F_SETFD, FD_CLOEXEC);
+    int res = fcntl(Tracefs::g_kmesg_fd, F_SETFD, FD_CLOEXEC);
     PERFETTO_DCHECK(res == 0);
   }
 
@@ -130,11 +129,6 @@ int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
     });
   }
   producer.ConnectWithRetries(GetProducerSocket(), &task_runner);
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  // Start the thread that polls mm_event instance and triggers
-  KmemActivityTrigger kmem_activity_trigger;
-#endif
 
   task_runner.Run();
   return 0;

@@ -19,12 +19,11 @@
 
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/webui_url_constants.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/url_constants.h"
 #include "net/net_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 
 namespace chrome {
 
@@ -53,13 +52,35 @@ inline constexpr char kAdvancedProtectionDownloadLearnMoreURL[] =
 inline constexpr char kAppNotificationsBrowserSettingsURL[] =
     "chrome://settings/content/notifications";
 
+// "Chrome Settings" URL for the appearance page.
+inline constexpr char kBrowserSettingsSearchEngineURL[] =
+    "chrome://settings/search";
+
+// "Learn more" URL for App Parental Controls.
+// char16_t is used here because this constant may be used to set the src
+// attribute of iframe elements.
+inline constexpr char16_t kAppParentalControlsLearnMoreUrl[] =
+    u"https://support.google.com/chromebook?p=local_app_controls";
+
 // "Learn more" URL for Battery Saver Mode.
-inline constexpr char kBatterySaverModeLearnMoreUrl[] =
-    "https://support.google.com/chrome?p=chrome_battery_saver";
+inline constexpr const char16_t kBatterySaverModeLearnMoreUrl[] =
+    u"https://support.google.com/chrome?p=chrome_battery_saver";
 
 // The URL for providing help when the Bluetooth adapter is off.
 inline constexpr char kBluetoothAdapterOffHelpURL[] =
     "https://support.google.com/chrome?p=bluetooth";
+
+// "Chrome Settings" URL for website camera access permissions.
+inline constexpr char kBrowserCameraPermissionsSettingsURL[] =
+    "chrome://settings/content/camera";
+
+// "Chrome Settings" URL for website location access permissions.
+inline constexpr char kBrowserLocationPermissionsSettingsURL[] =
+    "chrome://settings/content/location";
+
+// "Chrome Settings" URL for website microphone access permissions.
+inline constexpr char kBrowserMicrophonePermissionsSettingsURL[] =
+    "chrome://settings/content/microphone";
 
 // "Learn more" URL shown in the dialog to enable cloud services for Cast.
 inline constexpr char kCastCloudServicesHelpURL[] =
@@ -92,7 +113,7 @@ inline constexpr char16_t kChromeFixUpdateProblems[] =
 
 // General help links for Chrome, opened using various actions.
 inline constexpr char kChromeHelpViaKeyboardURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
@@ -100,10 +121,10 @@ inline constexpr char kChromeHelpViaKeyboardURL[] =
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #else
     "https://support.google.com/chrome?p=help&ctx=keyboard";
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 inline constexpr char kChromeHelpViaMenuURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
@@ -111,18 +132,18 @@ inline constexpr char kChromeHelpViaMenuURL[] =
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #else
     "https://support.google.com/chrome?p=help&ctx=menu";
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 inline constexpr char kChromeHelpViaWebUIURL[] =
     "https://support.google.com/chrome?p=help&ctx=settings";
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 inline constexpr char kChromeOsHelpViaWebUIURL[] =
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
     "https://support.google.com/chromebook?p=help&ctx=settings";
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // The isolated-app: scheme is used for Isolated Web Apps. A public explainer
 // can be found here: https://github.com/reillyeon/isolated-web-apps
@@ -179,6 +200,12 @@ inline constexpr char kChromeUIUntrustedNewTabPageUrl[] =
 // The URL for the Chromium project used in the About dialog.
 inline constexpr char16_t kChromiumProjectURL[] = u"https://www.chromium.org/";
 
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+// The URL for the "Clear browsing data in Chrome" help center article.
+inline constexpr char16_t kClearBrowsingDataHelpCenterURL[] =
+    u"https://support.google.com/chrome?p=delete_browsing_data";
+#endif
+
 inline constexpr char16_t kContentSettingsExceptionsLearnMoreURL[] =
     u"https://support.google.com/chrome?p=settings_manage_exceptions";
 
@@ -188,7 +215,7 @@ inline constexpr char kCookiesSettingsHelpCenterURL[] =
 
 // "Learn more" URL for "Aw snap" page when showing "Reload" button.
 inline constexpr char kCrashReasonURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=e_awsnap";
 #else
     "https://support.google.com/chrome?p=e_awsnap";
@@ -196,15 +223,19 @@ inline constexpr char kCrashReasonURL[] =
 
 // "Learn more" URL for "Aw snap" page when showing "Send feedback" button.
 inline constexpr char kCrashReasonFeedbackDisplayedURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=e_awsnap_rl";
 #else
     "https://support.google.com/chrome?p=e_awsnap_rl";
 #endif
 
+// "Learn more" URL for the inactive tabs appearance setting.
+inline constexpr const char16_t kDiscardRingTreatmentLearnMoreUrl[] =
+    u"https://support.google.com/chrome?p=performance_personalization";
+
 // "Learn more" URL for the "Do not track" setting in the privacy section.
 inline constexpr char16_t kDoNotTrackLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     u"https://support.google.com/chromebook?p=settings_do_not_track";
 #else
     u"https://support.google.com/chrome?p=settings_do_not_track";
@@ -229,10 +260,6 @@ inline constexpr char kDownloadBlockedLearnMoreURL[] =
 inline constexpr char kExtensionControlledSettingLearnMoreURL[] =
     "https://support.google.com/chrome?p=ui_settings_api_extension";
 
-// URL used to indicate that an extension resource load request was invalid.
-inline constexpr char kExtensionInvalidRequestURL[] =
-    "chrome-extension://invalid/";
-
 // Link for creating family group with Google Families.
 inline constexpr char16_t kFamilyGroupCreateURL[] =
     u"https://myaccount.google.com/family/create?utm_source=cpwd";
@@ -241,10 +268,17 @@ inline constexpr char16_t kFamilyGroupCreateURL[] =
 inline constexpr char16_t kFamilyGroupViewURL[] =
     u"https://myaccount.google.com/family/details?utm_source=cpwd";
 
-// "Learn more" URL for first party sets.
-inline constexpr char kFirstPartySetsLearnMoreURL[] =
-    "https://support.google.com/chrome?p=cpn_cookies"
-    "#zippy=%2Callow-related-sites-to-access-your-activity";
+// "Learn more" URL for related website sets.
+inline constexpr char kRelatedWebsiteSetsLearnMoreURL[] =
+    "https://support.google.com/"
+    "chrome?p=cpn_cookies&rd=1#allow_block_cookies&zippy=%2Callow-or-block-"
+    "third-party-cookies%2Callow-related-sites-to-access-your-activity%2Cabout-"
+    "embedded-content";
+
+// "Learn more" URL for Incognito tracking protections.
+// TODO(crbug.com/408036586): Update learn more URL when finalized
+inline constexpr char kIncognitoTrackingProtectionsLearnMoreUrl[] =
+    "https://support.google.com/chrome?p=incognito_tracking_protections";
 
 // Url to a blogpost about Flash deprecation.
 inline constexpr char kFlashDeprecationLearnMoreURL[] =
@@ -264,6 +298,10 @@ inline constexpr char kGoogleAccountActivityControlsURLInPrivacyGuide[] =
     "https://myaccount.google.com/activitycontrols/"
     "search&utm_source=chrome&utm_medium=privacy-guide";
 
+// URL of the 'Linked services' section of the privacy settings page.
+inline constexpr char kGoogleAccountLinkedServicesURL[] =
+    "https://myaccount.google.com/linked-services?utm_source=chrome_s";
+
 // URL of the Google Account.
 inline constexpr char kGoogleAccountURL[] = "https://myaccount.google.com";
 
@@ -275,6 +313,20 @@ inline constexpr char kGoogleAccountChooserURL[] =
 inline constexpr char kGoogleAccountDeviceActivityURL[] =
     "https://myaccount.google.com/device-activity?utm_source=chrome";
 
+// URL of the Google Account home address page.
+inline constexpr char kGoogleAccountHomeAddressURL[] =
+    "https://myaccount.google.com/address/"
+    "home?utm_source=chrome&utm_campaign=manage_addresses";
+
+// URL of the Google Account work address page.
+inline constexpr char kGoogleAccountWorkAddressURL[] =
+    "https://myaccount.google.com/address/"
+    "work?utm_source=chrome&utm_campaign=manage_addresses";
+
+// URL of the two factor authentication setup required intersitial.
+inline constexpr char kGoogleTwoFactorIntersitialURL[] =
+    "https://myaccount.google.com/interstitials/twosvrequired";
+
 // URL of the Google Password Manager.
 inline constexpr char kGooglePasswordManagerURL[] =
     "https://passwords.google.com";
@@ -283,8 +335,8 @@ inline constexpr char kGooglePasswordManagerURL[] =
 inline constexpr char kGooglePhotosURL[] = "https://photos.google.com";
 
 // The URL for the "Learn more" link for the Memory Saver Mode.
-inline constexpr char kMemorySaverModeLearnMoreUrl[] =
-    "https://support.google.com/chrome?p=chrome_memory_saver";
+inline constexpr const char16_t kMemorySaverModeLearnMoreUrl[] =
+    u"https://support.google.com/chrome?p=chrome_memory_saver";
 
 // The URL in the help text for the Memory Saver Mode tab discarding
 // exceptions add dialog.
@@ -295,8 +347,12 @@ inline constexpr char16_t kMemorySaverModeTabDiscardingHelpUrl[] =
 inline constexpr char16_t kIncognitoHelpCenterURL[] =
     u"https://support.google.com/chrome?p=incognito";
 
+// The URL for the Help Center page about IP Protection.
+inline constexpr char kIpProtectionHelpCenterURL[] =
+    "https://support.google.com/chrome?p=ip_protection";
+
 // The URL for "Learn more" page for Isolated Web Apps.
-// TODO(crbug.com/1480695): Update this URL with proper user-facing explainer.
+// TODO(crbug.com/40281470): Update this URL with proper user-facing explainer.
 inline constexpr char16_t kIsolatedWebAppsLearnMoreUrl[] =
     u"https://github.com/WICG/isolated-web-apps/blob/main/README.md";
 
@@ -309,9 +365,13 @@ inline constexpr char kLearnMoreReportingURL[] =
 inline constexpr char kManage3pcHelpCenterURL[] =
     "https://support.google.com/chrome?p=manage_tp_cookies";
 
+// The URL for the tab group sync help center page.
+inline constexpr char kTabGroupsLearnMoreURL[] =
+    "https://support.google.com/chrome?p=desktop_tab_groups";
+
 // The URL for the Learn More page about policies and enterprise enrollment.
 inline constexpr char16_t kManagedUiLearnMoreUrl[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     u"https://support.google.com/chromebook?p=is_chrome_managed";
 #else
     u"https://support.google.com/chrome?p=is_chrome_managed";
@@ -325,9 +385,13 @@ inline constexpr char kInsecureDownloadBlockingLearnMoreUrl[] =
 inline constexpr char16_t kMyActivityUrlInClearBrowsingData[] =
     u"https://myactivity.google.com/myactivity?utm_source=chrome_cbd";
 
+// The URL for "Your Gemini Apps Activity" page.
+inline constexpr char16_t kMyActivityGeminiAppsUrl[] =
+    u"https://myactivity.google.com/product/gemini";
+
 // Help URL for the Omnibox setting.
 inline constexpr char16_t kOmniboxLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     u"https://support.google.com/chromebook?p=settings_omnibox";
 #else
     u"https://support.google.com/chrome?p=settings_omnibox";
@@ -335,7 +399,7 @@ inline constexpr char16_t kOmniboxLearnMoreURL[] =
 
 // "What do these mean?" URL for the Page Info bubble.
 inline constexpr char kPageInfoHelpCenterURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=ui_security_indicator";
 #else
     "https://support.google.com/chrome?p=ui_security_indicator";
@@ -343,7 +407,7 @@ inline constexpr char kPageInfoHelpCenterURL[] =
 
 // Help URL for the bulk password check.
 inline constexpr char kPasswordCheckLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook/"
     "?p=settings_password#leak_detection_privacy";
 #else
@@ -356,7 +420,7 @@ inline constexpr char kPasswordGenerationLearnMoreURL[] =
     "https://support.google.com/chrome?p=generate_password";
 
 inline constexpr char16_t kPasswordManagerLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     u"https://support.google.com/chromebook?p=settings_password";
 #else
     u"https://support.google.com/chrome?p=settings_password";
@@ -376,22 +440,54 @@ inline constexpr char kPasswordSharingTroubleshootURL[] =
 
 // The URL for the "Fill out forms automatically" support page.
 inline constexpr char kAddressesAndPaymentMethodsLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=settings_autofill";
 #else
     "https://support.google.com/chrome?p=settings_autofill";
 #endif
 
+// The URL for the "Pay over time" support page.
+// TODO(crbug.com/395027230): Change URL once official support page is
+// finalized.
+inline constexpr char16_t kPayOverTimeLearnMoreUrl[] =
+    u"https://support.google.com/googlepay?p=bnpl_autofill_chrome";
+
+// Help URL for Autofill AI.
+inline constexpr char16_t kAutofillAiLearnMoreURL[] =
+    u"https://support.google.com/chrome?p=autofill_ai";
+
+// "Learn more" URL for the autofill show card benefits setting.
+inline constexpr char16_t kCardBenefitsLearnMoreURL[] =
+    u"https://support.google.com/googlepay?p=card_benefits_chrome";
+
+// "Learn more" URL for the performance intervention notification setting.
+inline constexpr const char16_t kPerformanceInterventionLearnMoreUrl[] =
+    u"https://support.google.com/chrome?p=performance_personalization";
+
 // "Learn more" URL for the preloading section in Performance settings.
-inline constexpr char kPreloadingLearnMoreUrl[] =
-    "https://support.google.com/chrome/?p=performance_preload_pages";
+inline constexpr const char16_t kPreloadingLearnMoreUrl[] =
+    u"https://support.google.com/chrome/?p=performance_preload_pages";
 
 // "Learn more" URL for the Privacy section under Options.
 inline constexpr char kPrivacyLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=settings_privacy";
 #else
     "https://support.google.com/chrome?p=settings_privacy";
+#endif
+
+// "Chrome Settings" URL for Ad Topics page
+inline constexpr char kPrivacySandboxAdTopicsURL[] =
+    "chrome://settings/adPrivacy/interests";
+
+// "Chrome Settings" URL for Managing Topics page
+inline constexpr char kPrivacySandboxManageTopicsURL[] =
+    "chrome://settings/adPrivacy/interests/manage";
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+// The Privacy Sandbox homepage.
+inline constexpr char16_t kPrivacySandboxURL[] =
+    u"https://www.privacysandbox.com/";
 #endif
 
 // The URL for the Learn More link of the non-CWS bubble.
@@ -418,6 +514,10 @@ inline constexpr char16_t kSafeBrowsingInChromeHelpCenterURL[] =
 inline constexpr char16_t kSafeBrowsingUseInChromeURL[] =
     u"https://support.google.com/chrome/answer/9890866";
 
+// "Learn more" URL for Safety Check page.
+inline constexpr char16_t kSafetyHubHelpCenterURL[] =
+    u"https://support.google.com/chrome?p=safety_check";
+
 // "Learn more" URL for safety tip bubble.
 inline constexpr char kSafetyTipHelpCenterURL[] =
     "https://support.google.com/chrome?p=safety_tip";
@@ -442,7 +542,7 @@ inline constexpr char kSyncAndGoogleServicesLearnMoreURL[] =
 
 // The URL for the "Learn more" page on sync encryption.
 inline constexpr char16_t kSyncEncryptionHelpURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     u"https://support.google.com/chromebook?p=settings_encryption";
 #else
     u"https://support.google.com/chrome?p=settings_encryption";
@@ -459,6 +559,53 @@ inline constexpr char kSyncGoogleDashboardURL[] =
 inline constexpr char16_t kSyncLearnMoreURL[] =
     u"https://support.google.com/chrome?p=settings_sign_in";
 
+// The URL for the "Learn more" page for signing in to chrome with expanded
+// section on "Sign in and turn on sync" in the Computer/Desktop tab.
+inline constexpr char kSigninOnDesktopLearnMoreURL[] =
+    "https://support.google.com/"
+    "chrome?p=settings_sign_in#zippy=sign-in-turn-on-sync";
+
+// The URL for the "Learn more" page for adding a new profile to Chrome.
+inline constexpr char kAddNewProfileOnDesktopLearnMoreURL[] =
+    "https://support.google.com/chrome/?p=add_profile";
+
+// The URL for the "Learn more" page for AI settings for managed users.
+inline constexpr char16_t kAiSettingsLearnMorePageManagedUrl[] =
+    u"https://support.google.com/chrome/a?p=generative_ai_settings";
+
+// The URL for the "Learn more" page for Help me Write.
+inline constexpr char kComposeLearnMorePageURL[] =
+    "https://support.google.com/chrome?p=help_me_write";
+
+// The URL for the "Learn more" page for Help me Write for managed users.
+inline constexpr char kComposeLearnMorePageManagedURL[] =
+    "https://support.google.com/chrome/a?p=help_me_write_settings";
+
+// The URL for the "Learn more" links for pages related to History search.
+inline constexpr char kHistorySearchLearnMorePageURL[] =
+    "https://support.google.com/chrome?p=ai_history_search";
+
+// The URL for the "Learn more" links for pages related to History search for
+// managed users.
+inline constexpr char kHistorySearchLearnMorePageManagedURL[] =
+    "https://support.google.com/chrome/a?p=search_history";
+
+// The URL for the Settings page to enable history search.
+inline constexpr char16_t kHistorySearchSettingURL[] =
+    u"chrome://settings/ai/historySearch";
+
+// The URL for the "Learn more" page for Wallpaper Search.
+inline constexpr char kWallpaperSearchLearnMorePageURL[] =
+    "https://support.google.com/chrome?p=create_themes_with_ai";
+
+// The URL for the "Learn more" page for Tab Organization.
+inline constexpr char kTabOrganizationLearnMorePageURL[] =
+    "https://support.google.com/chrome?p=auto_tab_group";
+
+// The URL for the "Learn more" page for Tab Organization for managed users.
+inline constexpr char kTabOrganizationLearnMorePageManagedURL[] =
+    "https://support.google.com/chrome/a?p=tab_organizer_settings";
+
 // The URL for the "Learn more" link in the enterprise disclaimer for managed
 // profile in the Signin Intercept bubble.
 inline constexpr char kSigninInterceptManagedDisclaimerLearnMoreURL[] =
@@ -474,10 +621,6 @@ inline constexpr char kSyncTrustedVaultOptInURL[] =
 // The URL for the "Learn more" link for the trusted vault sync passphrase.
 inline constexpr char kSyncTrustedVaultLearnMoreURL[] =
     "https://support.google.com/accounts?p=settings_password_ode";
-
-// The URL for the Help Center page about Tracking Protection settings.
-inline constexpr char16_t kTrackingProtectionHelpCenterURL[] =
-    u"https://support.google.com/chrome?p=tracking_protection";
 
 // The URL for the Help Center page about User Bypass.
 inline constexpr char16_t kUserBypassHelpCenterURL[] =
@@ -499,10 +642,26 @@ inline constexpr char16_t kWhoIsMyAdministratorHelpURL[] =
 inline constexpr char16_t kCwsEnhancedSafeBrowsingLearnMoreURL[] =
     u"https://support.google.com/chrome?p=cws_enhanced_safe_browsing";
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH)
+// The URL path to Google's Privacy Policy page.
+inline constexpr char kPrivacyPolicyURL[] =
+    "https://policies.google.com/privacy";
+
+// The URL path to Google's Privacy Policy page for users in China.
+inline constexpr char kPrivacyPolicyURLChina[] =
+    "https://policies.google.cn/privacy";
+
+// The URL path to Google's Embedded Privacy Policy page.
+inline constexpr char kPrivacyPolicyOnlineURLPath[] =
+    "https://policies.google.com/privacy/embedded";
+
+// The URL path to Google's Embedded Privacy Policy page for users in China.
+inline constexpr char kPrivacyPolicyEmbeddedURLPathChina[] =
+    "https://policies.google.cn/privacy/embedded";
+
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
 // "Learn more" URL for the enhanced playback notification dialog.
 inline constexpr char kEnhancedPlaybackNotificationLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     "https://support.google.com/chromebook?p=enhanced_playback";
 #else
     // Keep in sync with
@@ -511,15 +670,13 @@ inline constexpr char kEnhancedPlaybackNotificationLearnMoreURL[] =
 #endif
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 // Chrome OS default pre-defined custom handlers
 inline constexpr char kChromeOSDefaultMailtoHandler[] =
     "https://mail.google.com/mail/?extsrc=mailto&amp;url=%s";
 inline constexpr char kChromeOSDefaultWebcalHandler[] =
     "https://www.google.com/calendar/render?cid=%s";
-#endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 // Help center URL for Chrome OS Account Manager.
 inline constexpr char kAccountManagerLearnMoreURL[] =
     "https://support.google.com/chromebook?p=google_accounts";
@@ -607,14 +764,6 @@ inline constexpr char kEchoLearnMoreURL[] =
 // The URL for EOL notification
 inline constexpr char16_t kEolNotificationURL[] =
     u"https://www.google.com/chromebook/older/";
-
-// The URL for the EOL incentive with offer.
-inline constexpr char kEolIncentiveNotificationOfferURL[] =
-    "https://www.google.com/chromebook/renew-chromebook-offer";
-
-// The URL for the EOL incentive with no offer.
-inline constexpr char kEolIncentiveNotificationNoOfferURL[] =
-    "https://www.google.com/chromebook/renew-chromebook";
 
 // The URL for Auto Update Policy.
 inline constexpr char16_t kAutoUpdatePolicyURL[] =
@@ -707,11 +856,7 @@ inline constexpr char kCrosEulaOnlineURLPath[] =
 
 // The URL path to online ARC++ terms of service.
 inline constexpr char kArcTosOnlineURLPath[] =
-    "https://play.google.com/about/play-terms/embedded/";
-
-// The URL path to online privacy policy.
-inline constexpr char kPrivacyPolicyOnlineURLPath[] =
-    "https://policies.google.com/privacy/embedded";
+    "https://play.google/play-terms/embedded/";
 
 // The URL for the "learn more" link for TPM firmware update.
 inline constexpr char kTPMFirmwareUpdateLearnMoreURL[] =
@@ -744,8 +889,13 @@ inline constexpr char kSpeakOnMuteDetectionLearnMoreURL[] =
 
 // The URL for the "Learn more" page for the geolocation area in the privacy
 // hub page.
-inline constexpr char kGeolocationAreaLearnMoreURL[] =
-    "https://support.google.com/chromebook?p=cpn_location_sharing";
+inline constexpr char kPrivacyHubGeolocationLearnMoreURL[] =
+    "https://support.google.com/chromebook/?p=manage_your_location";
+
+// The URL for the "Learn more" page for the Location Accuracy setting under the
+// privacy hub location subpage.
+inline constexpr char16_t kPrivacyHubGeolocationAccuracyLearnMoreURL[] =
+    u"https://support.google.com/android/?p=location_accuracy";
 
 // The URL for the "Learn more" page for Suggested Content in the privacy page.
 inline constexpr char kSuggestedContentLearnMoreURL[] =
@@ -758,6 +908,11 @@ inline constexpr char kSuggestedContentLearnMoreURL[] =
 // favour of the gestures in question).
 inline constexpr char kTabletModeGesturesLearnMoreURL[] =
     "https://support.google.com/chromebook?p=tablet_mode_gestures";
+
+// The URL for the help center article about video chat enhanced features.
+inline constexpr char kVcLearnMoreURL[] =
+    "https://support.google.com/chromebook/answer/10264237"
+    "#zippy=enhanced-features-available-on-chromebook-plus";
 
 // The URL for the help center article about Wi-Fi sync.
 inline constexpr char kWifiSyncLearnMoreURL[] =
@@ -782,8 +937,25 @@ inline constexpr char kFingerprintLearnMoreURL[] =
 // The URL for the help center article about local data recovery on Chrome OS
 // devices.
 inline constexpr char kRecoveryLearnMoreURL[] =
-    "https://support.google.com/chrome?p=local_data_recovery";
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+    "https://support.google.com/chromebook?p=local_data_recovery";
+
+// The URL for the learn more link about extended automatic updates for
+// ChromeOS devices.
+inline constexpr char16_t kDeviceExtendedUpdatesLearnMoreURL[] =
+    u"https://www.google.com/chromebook/autoupdates-opt-in/";
+
+// The URL for the YoutTube Music Premium signup page.
+inline constexpr char kYoutubeMusicPremiumURL[] =
+    "https://music.youtube.com/music_premium";
+
+// The URL for the Chromebook Perks page for YouTube.
+inline constexpr char kChromebookPerksYouTubePage[] =
+    "https://www.google.com/chromebook/perks/?id=youtube.2020";
+
+// The URL for the "Learn more" page for the Face control feature on Chrome OS.
+inline constexpr char kFaceGazeLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=face_control";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_MAC)
 // "Learn more" URL for the enterprise sign-in confirmation dialog.
@@ -821,8 +993,7 @@ inline constexpr char kOutdatedPluginLearnMoreURL[] =
 inline constexpr char kPhoneHubPermissionLearnMoreURL[] =
     "https://support.google.com/chromebook?p=multidevice";
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 // "Learn more" URL for the chrome apps deprecation dialog.
 inline constexpr char kChromeAppsDeprecationLearnMoreURL[] =
     "https://support.google.com/chrome?p=chrome_app_deprecation";

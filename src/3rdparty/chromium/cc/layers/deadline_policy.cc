@@ -24,7 +24,6 @@ const char* PolicyToString(DeadlinePolicy::Type type) {
       return "UseInfiniteDeadline";
   }
   NOTREACHED();
-  return "";
 }
 
 }  // namespace

@@ -7,15 +7,14 @@ $assert NR >= 4
 $assert NR % 4 == 0
 $assert KBLOCK == 4
 $ABC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/packw.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/packw.h"
 
 
 void xnn_x32_packw_gemm_goi_ukernel_x${NR}s4__wasmsimd_u${KBLOCK}(

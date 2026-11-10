@@ -9,8 +9,10 @@
 #define skgpu_VulkanInterface_DEFINED
 
 #include "include/core/SkRefCnt.h"
-
 #include "include/gpu/vk/VulkanTypes.h"
+#include "include/private/gpu/vk/SkiaVulkan.h"
+
+#include <cstdint>
 
 namespace skgpu {
 
@@ -219,9 +221,34 @@ public:
         // Functions for VK_KHR_external_memory_capabilities
         VkPtr<PFN_vkGetPhysicalDeviceExternalBufferProperties> fGetPhysicalDeviceExternalBufferProperties;
 
-        // Functions for YCBCRConversion
+        // Functions for VK_EXT_extended_dynamic_state or 1.3
+        VkPtr<PFN_vkCmdBindVertexBuffers2> fCmdBindVertexBuffers2;
+        VkPtr<PFN_vkCmdSetCullMode> fCmdSetCullMode;
+        VkPtr<PFN_vkCmdSetDepthBoundsTestEnable> fCmdSetDepthBoundsTestEnable;
+        VkPtr<PFN_vkCmdSetDepthCompareOp> fCmdSetDepthCompareOp;
+        VkPtr<PFN_vkCmdSetDepthTestEnable> fCmdSetDepthTestEnable;
+        VkPtr<PFN_vkCmdSetDepthWriteEnable> fCmdSetDepthWriteEnable;
+        VkPtr<PFN_vkCmdSetFrontFace> fCmdSetFrontFace;
+        VkPtr<PFN_vkCmdSetPrimitiveTopology> fCmdSetPrimitiveTopology;
+        VkPtr<PFN_vkCmdSetScissorWithCount> fCmdSetScissorWithCount;
+        VkPtr<PFN_vkCmdSetStencilOp> fCmdSetStencilOp;
+        VkPtr<PFN_vkCmdSetStencilTestEnable> fCmdSetStencilTestEnable;
+        VkPtr<PFN_vkCmdSetViewportWithCount> fCmdSetViewportWithCount;
+
+        // Functions for VK_EXT_extended_dynamic_state2 or 1.3
+        VkPtr<PFN_vkCmdSetDepthBiasEnable> fCmdSetDepthBiasEnable;
+        VkPtr<PFN_vkCmdSetPrimitiveRestartEnable> fCmdSetPrimitiveRestartEnable;
+        VkPtr<PFN_vkCmdSetRasterizerDiscardEnable> fCmdSetRasterizerDiscardEnable;
+
+        // Functions for VK_EXT_vertex_input_dynamic_state
+        VkPtr<PFN_vkCmdSetVertexInputEXT> fCmdSetVertexInput;
+
+        // Functions for VK_KHR_sampler_ycbcr_conversion
         VkPtr<PFN_vkCreateSamplerYcbcrConversion> fCreateSamplerYcbcrConversion;
         VkPtr<PFN_vkDestroySamplerYcbcrConversion> fDestroySamplerYcbcrConversion;
+
+        // Functions for VK_EXT_device_fault
+        VkPtr<PFN_vkGetDeviceFaultInfoEXT> fGetDeviceFaultInfo;
 
 #ifdef SK_BUILD_FOR_ANDROID
         // Functions for VK_ANDROID_external_memory_android_hardware_buffer

@@ -10,9 +10,10 @@
 namespace search_provider_logos {
 
 // Receives updates when the search provider's logo is available.
+// TODO(crbug.com/423883582): Need to be removed once LogoController is removed.
 class LogoObserver {
  public:
-  virtual ~LogoObserver() {}
+  virtual ~LogoObserver() = default;
 
   // Called when the cached logo is available and possibly when a freshly
   // downloaded logo is available. |logo| will be NULL if no logo is available.

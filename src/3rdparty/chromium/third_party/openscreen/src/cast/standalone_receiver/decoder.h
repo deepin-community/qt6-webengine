@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "cast/standalone_receiver/avcodec_glue.h"
-#include "cast/streaming/frame_id.h"
+#include "cast/streaming/public/frame_id.h"
 #include "platform/base/span.h"
 
 namespace openscreen::cast {
@@ -37,25 +37,25 @@ class Decoder {
   // Interface for receiving decoded frames and/or errors.
   class Client {
    public:
-
     virtual void OnFrameDecoded(FrameId frame_id, const AVFrame& frame) = 0;
-    virtual void OnDecodeError(FrameId frame_id, std::string message) = 0;
-    virtual void OnFatalError(std::string message) = 0;
+    virtual void OnDecodeError(FrameId frame_id,
+                               const std::string& message) = 0;
+    virtual void OnFatalError(const std::string& message) = 0;
 
    protected:
     Client();
     virtual ~Client();
   };
 
-  // |codec_name| should be the codec_name field from an OFFER message.
+  // `codec_name` should be the codec_name field from an OFFER message.
   explicit Decoder(const std::string& codec_name);
   ~Decoder();
 
   Client* client() const { return client_; }
   void set_client(Client* client) { client_ = client; }
 
-  // Starts decoding the data in |buffer|, which should be associated with the
-  // given |frame_id|. This will synchronously call Client::OnFrameDecoded()
+  // Starts decoding the data in `buffer`, which should be associated with the
+  // given `frame_id`. This will synchronously call Client::OnFrameDecoded()
   // and/or Client::OnDecodeError() zero or more times with results. Note that
   // some codecs will have data dependencies that require multiple encoded
   // frame's data before the first decoded frame can be generated.

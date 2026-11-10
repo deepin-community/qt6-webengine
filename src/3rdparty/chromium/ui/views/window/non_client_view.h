@@ -31,25 +31,10 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   METADATA_HEADER(NonClientFrameView, View)
 
  public:
-  enum {
-    // Various edges of the frame border have a 1 px shadow along their edges;
-    // in a few cases we shift elements based on this amount for visual appeal.
-    kFrameShadowThickness = 1,
-
-    // In restored mode, we draw a 1 px edge around the content area inside the
-    // frame border.
-    kClientEdgeThickness = 1,
-  };
-
   NonClientFrameView();
   NonClientFrameView(const NonClientFrameView&) = delete;
   NonClientFrameView& operator=(const NonClientFrameView&) = delete;
   ~NonClientFrameView() override;
-
-  // Used to determine if the frame should be painted as active. Keyed off the
-  // window's actual active state and whether the widget should be rendered as
-  // active.
-  bool ShouldPaintAsActive() const;
 
   // Helper for non-client view implementations to determine which area of the
   // window border the specified |point| falls within. The other parameters are
@@ -72,6 +57,20 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   // applied to the client view. Returns false if no special clip should be
   // used.
   virtual bool GetClientMask(const gfx::Size& size, SkPath* mask) const;
+
+  // Returns whether NonClientFrameView has a custom title.
+  // By default this returns false.
+  // IMPORTANT: When a subclass of NonClientFrameView has a custom title,
+  // HasWindowTitle() and IsWindowTitleVisible() need to be implemented to
+  // ensure synchronization of title visibility when Widget::UpdateWindowTitle()
+  // is called.
+  virtual bool HasWindowTitle() const;
+
+  // Returns whether the NonClientFrameView's window title is visible.
+  // By default this returns false.
+  // TODO(crbug.com/330198011): Implemented in subclasses of NonClientFrameView
+  // when needed.
+  virtual bool IsWindowTitleVisible() const;
 
 #if BUILDFLAG(IS_WIN)
   // Returns the point in screen physical coordinates at which the system menu
@@ -98,16 +97,20 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   // Whether the widget can be resized or maximized has changed.
   virtual void SizeConstraintsChanged() {}
 
-  // View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnThemeChanged() override;
-  void Layout() override;
-  Views GetChildrenInZOrder() override;
-
   // Inserts the passed client view into this NonClientFrameView. Subclasses can
   // override this method to indicate a specific insertion spot for the client
   // view.
   virtual void InsertClientView(ClientView* client_view);
+
+  // View:
+  void OnThemeChanged() override;
+  void Layout(PassKey) override;
+  Views GetChildrenInZOrder() override;
+
+ protected:
+  // Used to determine if the frame should be painted as active. Convenience
+  // method; equivalent to GetWidget()->ShouldPaintAsActive().
+  bool ShouldPaintAsActive() const;
 
  private:
 #if BUILDFLAG(IS_WIN)
@@ -207,15 +210,21 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   // Called when the size constraints of the window change.
   void SizeConstraintsChanged();
 
+  // Returns whether NonClientFrameView has a custom title.
+  bool HasWindowTitle() const;
+
+  // Returns whether the NonClientFrameView's window title is visible.
+  bool IsWindowTitleVisible() const;
+
   // Get/Set client_view property.
   ClientView* client_view() const { return client_view_; }
 
   // NonClientView, View overrides:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
-  void Layout() override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void Layout(PassKey) override;
   views::View* GetTooltipHandlerForPoint(const gfx::Point& point) override;
 
  protected:
@@ -235,7 +244,7 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   // A ClientView object or subclass, responsible for sizing the contents view
   // of the window, hit testing and perhaps other tasks depending on the
   // implementation.
-  const raw_ptr<ClientView> client_view_;
+  const raw_ptr<ClientView, DanglingUntriaged> client_view_;
 
   // The overlay view, when non-NULL and visible, takes up the entire widget and
   // is placed on top of the ClientView and NonClientFrameView.

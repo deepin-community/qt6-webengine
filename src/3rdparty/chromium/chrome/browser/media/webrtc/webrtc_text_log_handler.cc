@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "chrome/browser/media/webrtc/webrtc_text_log_handler.h"
 
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,7 +26,6 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/media/audio_service_util.h"
 #endif
@@ -60,7 +61,7 @@
 #include "base/mac/mac_util.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/system/statistics_provider.h"
 #endif
 
@@ -135,6 +136,21 @@ std::string IPAddressToSensitiveString(const net::IPAddress& address) {
 #endif
 }
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class StartError {
+  kRendererClosing = 0,
+  kLogAlreadyOpen = 1,
+  kApplyForStartFailed = 2,
+  kCancelled = 3,
+  kRendererClosingInStartDone = 4,
+  kMaxValue = kRendererClosingInStartDone,
+};
+
+void RecordStartError(StartError error) {
+  base::UmaHistogramEnumeration("WebRtcTextLogging.StartError", error);
+}
+
 }  // namespace
 
 WebRtcTextLogHandler::WebRtcTextLogHandler(int render_process_id)
@@ -196,16 +212,19 @@ void WebRtcTextLogHandler::SetMetaData(
 bool WebRtcTextLogHandler::StartLogging(GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
+  base::UmaHistogramBoolean("WebRtcTextLogging.StartCalled", true);
 
   if (channel_is_closing_) {
     FireGenericDoneCallback(std::move(callback), false,
                             "The renderer is closing.");
+    RecordStartError(StartError::kRendererClosing);
     return false;
   }
 
   if (logging_state_ != CLOSED) {
     FireGenericDoneCallback(std::move(callback), false,
                             "A log is already open.");
+    RecordStartError(StartError::kLogAlreadyOpen);
     return false;
   }
 
@@ -214,6 +233,7 @@ bool WebRtcTextLogHandler::StartLogging(GenericDoneCallback callback) {
     FireGenericDoneCallback(std::move(callback), false,
                             "Cannot start, maybe the maximum number of "
                             "simultaneuos logs has been reached.");
+    RecordStartError(StartError::kApplyForStartFailed);
     return false;
   }
 
@@ -238,12 +258,13 @@ void WebRtcTextLogHandler::StartDone(GenericDoneCallback callback) {
   if (channel_is_closing_) {
     FireGenericDoneCallback(std::move(callback), false,
                             "Failed to start log. Renderer is closing.");
+    RecordStartError(StartError::kRendererClosingInStartDone);
     return;
   }
 
   DCHECK_EQ(STARTING, logging_state_);
 
-  base::UmaHistogramSparse("WebRtcTextLogging.Start", web_app_id_);
+  base::UmaHistogramSparse("WebRtcTextLogging.Started", web_app_id_);
 
   logging_started_time_ = base::Time::Now();
   logging_state_ = STARTED;
@@ -329,7 +350,7 @@ void WebRtcTextLogHandler::ReleaseLog(
 
   // Checking log_buffer_ here due to seeing some crashes out in the wild.
   // See crbug/699960 for more details.
-  // TODO(crbug/807547): Remove if condition.
+  // TODO(crbug.com/41368009): Remove if condition.
   if (log_buffer_) {
     log_buffer_->SetComplete();
     *log_buffer = std::move(log_buffer_);
@@ -405,7 +426,7 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
       case LoggingState::STOPPED:
         return "stopped";
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   };
 
   std::string error_message_with_state =
@@ -445,6 +466,7 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
 
   if (logging_state_ != STARTING || channel_is_closing_) {
     FireGenericDoneCallback(std::move(callback), false, "Logging cancelled.");
+    RecordStartError(StartError::kCancelled);
     return;
   }
 
@@ -487,8 +509,8 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
   std::string computer_model = "Not available";
 #if BUILDFLAG(IS_MAC)
   computer_model = base::SysInfo::HardwareModelName();
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
-  if (const std::optional<base::StringPiece> computer_model_statistic =
+#elif BUILDFLAG(IS_CHROMEOS)
+  if (const std::optional<std::string_view> computer_model_statistic =
           ash::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
               ash::system::kHardwareClassKey)) {
     computer_model = std::string(computer_model_statistic.value());
@@ -532,27 +554,11 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
        ""}));
 #endif  // !BUILDFLAG(IS_QTWEBENGINE)
 
-#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
-  if (media::IsChromeWideEchoCancellationEnabled()) {
-    LogToCircularBuffer(base::StrCat(
-        {"ChromeWideEchoCancellation : Enabled", ", minimize_resampling = ",
-         media::kChromeWideEchoCancellationMinimizeResampling.Get() ? "true"
-                                                                    : "false",
-         ", allow_all_sample_rates = ",
-         media::kChromeWideEchoCancellationAllowAllSampleRates.Get()
-             ? "true"
-             : "false"}));
-  } else {
-    LogToCircularBuffer("ChromeWideEchoCancellation : Disabled");
-  }
-
-  if (base::FeatureList::IsEnabled(media::kDecreaseProcessingAudioFifoSize)) {
-    LogToCircularBuffer(base::StrCat(
-        {"DecreaseProcessingAudioFifoSize : Enabled", ", fifo_size = ",
-         base::NumberToString(media::GetProcessingAudioFifoSize())}));
-  } else {
-    LogToCircularBuffer("DecreaseProcessingAudioFifoSize : Disabled");
-  }
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION) && !BUILDFLAG(IS_QTWEBENGINE)
+  LogToCircularBuffer(
+      base::StrCat({"ChromeWideEchoCancellation : ",
+                    enabled_or_disabled_bool_string(
+                        media::IsChromeWideEchoCancellationEnabled())}));
 #endif
 
   // Audio manager

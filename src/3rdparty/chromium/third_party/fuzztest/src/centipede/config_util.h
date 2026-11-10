@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace centipede::config {
+namespace fuzztest::internal {
 
 // A set of overloads to cast argv between vector<string> and main()-compatible
 // vector<char*> or argc/argv pair in both directions. The result can be used
@@ -51,10 +51,10 @@ using FlagInfosPerSource =
     std::map<std::string /*source_filename*/, std::set<FlagInfo>>;
 
 // Returns a per-source map of all compiled-in flags defined by sources whose
-// relative workspace paths start with `source_prefix`. An empty `source_prefix`
-// returns flags from all sources.
+// relative workspace paths contain `source_fragment`. An empty
+// `source_fragment` returns flags from all sources.
 FlagInfosPerSource GetFlagsPerSource(
-    std::string_view source_prefix = "",
+    std::string_view source_fragment = "",
     const std::set<std::string_view>& exclude_flags = {});
 
 // Returns a string with newline-separated --flag=value tokens for all
@@ -95,6 +95,6 @@ std::string FormatFlagfileString(
     DefaultedFlags defaulted = DefaultedFlags::kIncluded,
     FlagComments comments = FlagComments::kNone);
 
-}  // namespace centipede::config
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_CONFIG_UTIL_H_

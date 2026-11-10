@@ -62,6 +62,7 @@ export class SharePasswordConfirmationDialogElement extends
     return {
       dialogStage_: {
         type: Number,
+        value: ConfirmationDialogStage.LOADING,
         observer: 'stateChange_',
       },
 
@@ -82,12 +83,11 @@ export class SharePasswordConfirmationDialogElement extends
     };
   }
 
-  password: chrome.passwordsPrivate.PasswordUiEntry;
-  passwordName: string;
-  iconUrl: string;
-  recipients: chrome.passwordsPrivate.RecipientInfo[];
-  private dialogStage_: ConfirmationDialogStage =
-      ConfirmationDialogStage.LOADING;
+  declare password: chrome.passwordsPrivate.PasswordUiEntry;
+  declare passwordName: string;
+  declare iconUrl: string;
+  declare recipients: chrome.passwordsPrivate.RecipientInfo[];
+  declare private dialogStage_: ConfirmationDialogStage;
   private passwordManager_: PasswordManagerProxy =
       PasswordManagerImpl.getInstance();
 
@@ -115,6 +115,10 @@ export class SharePasswordConfirmationDialogElement extends
   }
 
   private stateChange_() {
+    // Don't reset focus on loading stage. Initially it is set correctly.
+    if (this.isStage_(ConfirmationDialogStage.LOADING)) {
+      return;
+    }
     // Force the screen reader to focus on the updated dialog header.
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();

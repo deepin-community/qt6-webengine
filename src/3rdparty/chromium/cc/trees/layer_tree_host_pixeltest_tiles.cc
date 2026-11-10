@@ -5,7 +5,6 @@
 #include <stddef.h>
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/paint/display_item_list.h"
@@ -238,9 +237,9 @@ INSTANTIATE_TEST_SUITE_P(All,
                          ::testing::ValuesIn(kTestCases),
                          ::testing::PrintToStringParamName());
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || defined(MEMORY_SANITIZER) || \
+#if BUILDFLAG(IS_CHROMEOS) || defined(MEMORY_SANITIZER) || \
     defined(ADDRESS_SANITIZER)
-// TODO(crbug.com/1045521): Flakes on all slower bots.
+// TODO(crbug.com/40116070): Flakes on all slower bots.
 #define MAYBE_PartialRaster DISABLED_PartialRaster
 #else
 #define MAYBE_PartialRaster PartialRaster
@@ -297,9 +296,9 @@ GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(
 #if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && defined(THREAD_SANITIZER)
 // Flaky on Linux TSAN. https://crbug.com/707711
 #define MAYBE_PartialRaster DISABLED_PartialRaster
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || defined(MEMORY_SANITIZER) || \
+#elif BUILDFLAG(IS_CHROMEOS) || defined(MEMORY_SANITIZER) || \
     defined(ADDRESS_SANITIZER)
-// TODO(crbug.com/1045521): Flakes on all slower bots.
+// TODO(crbug.com/40116070): Flakes on all slower bots.
 #define MAYBE_PartialRaster DISABLED_PartialRaster
 #else
 #define MAYBE_PartialRaster PartialRaster
@@ -384,7 +383,7 @@ TEST_P(LayerTreeHostTilesTestRasterColorSpace, CustomColorSpace) {
 // This test doesn't work on Vulkan because on our hardware we can't render to
 // RGBA4444 format using either SwiftShader or native Vulkan. See
 // crbug.com/987278 for details.
-// TODO(crbug.com/1151490) : Re-enable after this is supported for OOPR.
+// TODO(crbug.com/40042400) : Re-enable after this is supported for OOPR.
 #if BUILDFLAG(ENABLE_GL_BACKEND_TESTS)
 class LayerTreeHostTilesTestPartialInvalidationLowBitDepth
     : public LayerTreeHostTilesTestPartialInvalidation {
@@ -392,7 +391,6 @@ class LayerTreeHostTilesTestPartialInvalidationLowBitDepth
   void InitializeSettings(LayerTreeSettings* settings) override {
     LayerTreeHostTilesPixelTest::InitializeSettings(settings);
     settings->use_rgba_4444 = true;
-    settings->unpremultiply_and_dither_low_bit_depth_tiles = true;
   }
 };
 

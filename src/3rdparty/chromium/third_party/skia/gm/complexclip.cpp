@@ -289,6 +289,43 @@ DEF_SIMPLE_GM(clip_shader_nested, canvas, 256, 256) {
     p.setColor(SK_ColorRED);
     canvas->drawRect(SkRect::MakeWH(w, h), p);
     canvas->restore();
+
+    canvas->translate(2.f * w, -2.f * h);
+
+    // A small green rect, with clip shader and rrect clipping
+    canvas->save();
+    canvas->clipShader(s);
+    canvas->clipRRect(SkRRect::MakeRectXY(SkRect::MakeWH(w, h), 10, 10), /*doAntiAlias=*/true);
+    p.setColor(SK_ColorGREEN);
+    canvas->drawRect(SkRect::MakeWH(w, h), p);
+    canvas->restore();
+
+    canvas->translate(0.f, 2.f * h);
+
+    // A small blue rect, with clip shader and path clipping
+    SkPath starPath;
+    starPath.moveTo(0.0f, -33.3333f);
+    starPath.lineTo(9.62f, -16.6667f);
+    starPath.lineTo(28.867f, -16.6667f);
+    starPath.lineTo(19.24f, 0.0f);
+    starPath.lineTo(28.867f, 16.6667f);
+    starPath.lineTo(9.62f, 16.6667f);
+    starPath.lineTo(0.0f, 33.3333f);
+    starPath.lineTo(-9.62f, 16.6667f);
+    starPath.lineTo(-28.867f, 16.6667f);
+    starPath.lineTo(-19.24f, 0.0f);
+    starPath.lineTo(-28.867f, -16.6667f);
+    starPath.lineTo(-9.62f, -16.6667f);
+    starPath.close();
+
+    canvas->save();
+    canvas->clipShader(s);
+    canvas->translate(w/2, h/2);
+    canvas->clipPath(starPath);
+    p.setColor(SK_ColorBLUE);
+    canvas->translate(-w/2, -h/2);
+    canvas->drawRect(SkRect::MakeWH(w, h), p);
+    canvas->restore();
 }
 
 namespace {
@@ -371,14 +408,13 @@ DEF_SIMPLE_GM(clip_shader_persp, canvas, 1370, 1030) {
     // Scale factor always applied to the image shader so that it tiles
     SkMatrix scale = SkMatrix::Scale(1.f / 4.f, 1.f / 4.f);
     // The perspective matrix applied wherever needed
-    SkPoint src[4];
-    SkRect::Make(img->dimensions()).toQuad(src);
+    const std::array<SkPoint, 4> src = SkRect::Make(img->dimensions()).toQuad();
     SkPoint dst[4] = {{0, 80.f},
                       {img->width() + 28.f, -100.f},
                       {img->width() - 28.f, img->height() + 100.f},
                       {0.f, img->height() - 80.f}};
     SkMatrix persp;
-    SkAssertResult(persp.setPolyToPoly(src, dst, 4));
+    SkAssertResult(persp.setPolyToPoly(src, dst));
 
     SkMatrix perspScale = SkMatrix::Concat(persp, scale);
 

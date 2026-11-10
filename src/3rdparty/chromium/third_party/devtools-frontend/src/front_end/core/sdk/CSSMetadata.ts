@@ -37,27 +37,20 @@
 import * as Protocol from '../../generated/protocol.js';
 import * as SupportedCSSProperties from '../../generated/SupportedCSSProperties.js';
 import * as Common from '../common/common.js';
-import * as Platform from '../platform/platform.js';
 
 export class CSSMetadata {
-  readonly #values: string[];
-  readonly #longhands: Map<string, string[]>;
-  readonly #shorthands: Map<string, string[]>;
-  readonly #inherited: Set<string>;
-  readonly #svgProperties: Set<string>;
-  readonly #propertyValues: Map<string, string[]>;
-  readonly #aliasesFor: Map<string, string>;
+  readonly #values: string[] = [];
+  readonly #longhands = new Map<string, string[]>();
+  readonly #shorthands = new Map<string, string[]>();
+  readonly #inherited = new Set<string>();
+  readonly #svgProperties = new Set<string>();
+  readonly #propertyValues = new Map<string, string[]>();
+  readonly #aliasesFor = new Map<string, string>();
+  readonly #nameValuePresets: string[] = [];
+  readonly #nameValuePresetsIncludingSVG: string[] = [];
   #valuesSet: Set<string>;
-  readonly #nameValuePresetsInternal: string[];
-  readonly #nameValuePresetsIncludingSVG: string[];
 
   constructor(properties: CSSPropertyDefinition[], aliasesFor: Map<string, string>) {
-    this.#values = [];
-    this.#longhands = new Map();
-    this.#shorthands = new Map();
-    this.#inherited = new Set();
-    this.#svgProperties = new Set();
-    this.#propertyValues = new Map();
     this.#aliasesFor = aliasesFor;
     for (let i = 0; i < properties.length; ++i) {
       const property = properties[i];
@@ -98,12 +91,12 @@ export class CSSMetadata {
       propertyValueSets.set(propertyName, new Set(basisValueObj.values));
     }
     // and add manually maintained map of extra prop-value pairs
-    for (const [propertyName, extraValueObj] of Object.entries(extraPropertyValues)) {
+    for (const [propertyName, extraValues] of extraPropertyValues) {
       const propertyValueSet = propertyValueSets.get(propertyName);
       if (propertyValueSet) {
-        Platform.SetUtilities.addAll(propertyValueSet, extraValueObj.values);
+        propertyValueSets.set(propertyName, propertyValueSet.union(extraValues));
       } else {
-        propertyValueSets.set(propertyName, new Set(extraValueObj.values));
+        propertyValueSets.set(propertyName, extraValues);
       }
     }
     // finally add common keywords to value sets and convert property #values
@@ -118,23 +111,29 @@ export class CSSMetadata {
       this.#propertyValues.set(propertyName, [...values]);
     }
 
-    this.#nameValuePresetsInternal = [];
-    this.#nameValuePresetsIncludingSVG = [];
     for (const name of this.#valuesSet) {
       const values = this.specificPropertyValues(name)
                          .filter(value => CSS.supports(name, value))
                          .sort(CSSMetadata.sortPrefixesAndCSSWideKeywordsToEnd);
       const presets = values.map(value => `${name}: ${value}`);
       if (!this.isSVGProperty(name)) {
-        this.#nameValuePresetsInternal.push(...presets);
+        this.#nameValuePresets.push(...presets);
       }
       this.#nameValuePresetsIncludingSVG.push(...presets);
     }
   }
 
+  static isCSSWideKeyword(a: string): a is CSSWideKeyword {
+    return CSSWideKeywords.includes(a as CSSWideKeyword);
+  }
+
+  static isPositionTryOrderKeyword(a: string): a is PositionTryOrderKeyword {
+    return PositionTryOrderKeywords.includes(a as PositionTryOrderKeyword);
+  }
+
   private static sortPrefixesAndCSSWideKeywordsToEnd(a: string, b: string): 1|- 1|0 {
-    const aIsCSSWideKeyword = CSSWideKeywords.includes(a);
-    const bIsCSSWideKeyword = CSSWideKeywords.includes(b);
+    const aIsCSSWideKeyword = CSSMetadata.isCSSWideKeyword(a);
+    const bIsCSSWideKeyword = CSSMetadata.isCSSWideKeyword(b);
 
     if (aIsCSSWideKeyword && !bIsCSSWideKeyword) {
       return 1;
@@ -163,7 +162,7 @@ export class CSSMetadata {
   }
 
   nameValuePresets(includeSVG?: boolean): string[] {
-    return includeSVG ? this.#nameValuePresetsIncludingSVG : this.#nameValuePresetsInternal;
+    return includeSVG ? this.#nameValuePresetsIncludingSVG : this.#nameValuePresets;
   }
 
   isSVGProperty(name: string): boolean {
@@ -197,6 +196,26 @@ export class CSSMetadata {
   isGridAreaDefiningProperty(propertyName: string): boolean {
     propertyName = propertyName.toLowerCase();
     return propertyName === 'grid' || propertyName === 'grid-template' || propertyName === 'grid-template-areas';
+  }
+
+  isGridColumnNameAwareProperty(propertyName: string): boolean {
+    propertyName = propertyName.toLowerCase();
+    return ['grid-column', 'grid-column-start', 'grid-column-end'].includes(propertyName);
+  }
+
+  isGridRowNameAwareProperty(propertyName: string): boolean {
+    propertyName = propertyName.toLowerCase();
+    return ['grid-row', 'grid-row-start', 'grid-row-end'].includes(propertyName);
+  }
+
+  isGridAreaNameAwareProperty(propertyName: string): boolean {
+    propertyName = propertyName.toLowerCase();
+    return propertyName === 'grid-area';
+  }
+
+  isGridNameAwareProperty(propertyName: string): boolean {
+    return this.isGridAreaNameAwareProperty(propertyName) || this.isGridColumnNameAwareProperty(propertyName) ||
+        this.isGridRowNameAwareProperty(propertyName);
   }
 
   isLengthProperty(propertyName: string): boolean {
@@ -335,10 +354,48 @@ export class CSSMetadata {
   }
 }
 
+export const CubicBezierKeywordValues = new Map([
+  ['linear', 'cubic-bezier(0, 0, 1, 1)'],
+  ['ease', 'cubic-bezier(0.25, 0.1, 0.25, 1)'],
+  ['ease-in', 'cubic-bezier(0.42, 0, 1, 1)'],
+  ['ease-in-out', 'cubic-bezier(0.42, 0, 0.58, 1)'],
+  ['ease-out', 'cubic-bezier(0, 0, 0.58, 1)'],
+]);
+
 // CSS-wide keywords.
+export const enum CSSWideKeyword {
+  INHERIT = 'inherit',
+  INITIAL = 'initial',
+  REVERT = 'revert',
+  REVERT_LAYER = 'revert-layer',
+  UNSET = 'unset',
+}
 // Spec: https://drafts.csswg.org/css-cascade/#defaulting-keywords
 // https://drafts.csswg.org/css-cascade-5/#revert-layer
-export const CSSWideKeywords = ['inherit', 'initial', 'revert', 'revert-layer', 'unset'];
+export const CSSWideKeywords: CSSWideKeyword[] = [
+  CSSWideKeyword.INHERIT,
+  CSSWideKeyword.INITIAL,
+  CSSWideKeyword.REVERT,
+  CSSWideKeyword.REVERT_LAYER,
+  CSSWideKeyword.UNSET,
+];
+
+// https://www.w3.org/TR/css-anchor-position-1/#typedef-try-size
+export const enum PositionTryOrderKeyword {
+  NORMAL = 'normal',
+  MOST_HEIGHT = 'most-height',
+  MOST_WIDTH = 'most-width',
+  MOST_BLOCK_SIZE = 'most-block-size',
+  MOST_INLINE_SIZE = 'most-inline-size',
+}
+
+export const PositionTryOrderKeywords: PositionTryOrderKeyword[] = [
+  PositionTryOrderKeyword.NORMAL,
+  PositionTryOrderKeyword.MOST_HEIGHT,
+  PositionTryOrderKeyword.MOST_WIDTH,
+  PositionTryOrderKeyword.MOST_BLOCK_SIZE,
+  PositionTryOrderKeyword.MOST_INLINE_SIZE,
+];
 
 export const VariableNameRegex = /(\s*--.*?)/gs;
 export const VariableRegex = /(var\(\s*--.*?\))/gs;
@@ -390,6 +447,11 @@ const filterValuePresetMap = new Map([
   ['url', 'url(||)'],
 ]);
 
+const cornerShapeValuePresetMap = new Map([
+  ['superellipse(0.5)', 'superellipse(|0.5|)'],
+  ['superellipse(infinity)', 'superellipse(|infinity|)'],
+]);
+
 const valuePresets = new Map([
   ['filter', filterValuePresetMap],
   ['backdrop-filter', filterValuePresetMap],
@@ -421,6 +483,7 @@ const valuePresets = new Map([
       ['perspective', 'perspective(|10px|)'],
     ]),
   ],
+  ['corner-shape', cornerShapeValuePresetMap],
 ]);
 
 const distanceProperties = new Set<string>([
@@ -476,6 +539,18 @@ const colorAwareProperties = new Set<string>([
   'border-right-color',
   'border-top',
   'border-top-color',
+  'border-block',
+  'border-block-color',
+  'border-block-end',
+  'border-block-end-color',
+  'border-block-start',
+  'border-block-start-color',
+  'border-inline',
+  'border-inline-color',
+  'border-inline-end',
+  'border-inline-end-color',
+  'border-inline-start',
+  'border-inline-start-color',
   'box-shadow',
   'caret-color',
   'color',
@@ -484,6 +559,10 @@ const colorAwareProperties = new Set<string>([
   'content',
   'fill',
   'list-style-image',
+  'mask',
+  'mask-image',
+  'mask-border',
+  'mask-border-source',
   'outline',
   'outline-color',
   'scrollbar-color',
@@ -491,6 +570,8 @@ const colorAwareProperties = new Set<string>([
   'stroke',
   'text-decoration-color',
   'text-shadow',
+  'text-emphasis',
+  'text-emphasis-color',
   '-webkit-border-after',
   '-webkit-border-after-color',
   '-webkit-border-before',
@@ -512,6 +593,10 @@ const colorAwareProperties = new Set<string>([
   '-webkit-text-fill-color',
   '-webkit-text-stroke',
   '-webkit-text-stroke-color',
+  // For SVG
+  'flood-color',
+  'lighting-color',
+  'stop-color',
 ]);
 
 // In addition to `_colorAwareProperties`, the following properties contain CSS <angle> units.
@@ -528,40 +613,59 @@ const angleAwareProperties = new Set<string>([
   'font-style',
 ]);
 
+const textEmphasisPosition = new Set([
+  'over',
+  'under',
+  'over right',  // Initial value
+  'over left',
+  'under right',
+  'under left',
+]);
+
+// https://drafts.csswg.org/css-text-decor/#text-emphasis-style-property
+const textEmphasisStyle = new Set([
+  'none', 'dot', 'circle', 'double-circle', 'triangle', 'sesame', 'filled', 'open', 'dot open', 'circle open',
+  'double-circle open', 'triangle open', 'sesame open',
+  '"❤️"',  // <string>
+]);
+
 // manually maintained list of property #values to add into autocomplete list
-const extraPropertyValues = {
-  'background-repeat': {values: ['repeat', 'repeat-x', 'repeat-y', 'no-repeat', 'space', 'round']},
-  'content': {values: ['normal', 'close-quote', 'no-close-quote', 'no-open-quote', 'open-quote']},
-  'baseline-shift': {values: ['baseline']},
-  'max-height': {values: ['min-content', 'max-content', '-webkit-fill-available', 'fit-content']},
-  'color': {values: ['black']},
-  'background-color': {values: ['white']},
-  'box-shadow': {values: ['inset']},
-  'text-shadow': {values: ['0 0 black']},
-  '-webkit-writing-mode': {values: ['horizontal-tb', 'vertical-rl', 'vertical-lr']},
-  'writing-mode': {values: ['lr', 'rl', 'tb', 'lr-tb', 'rl-tb', 'tb-rl']},
-  'page-break-inside': {values: ['avoid']},
-  'cursor': {values: ['-webkit-zoom-in', '-webkit-zoom-out', '-webkit-grab', '-webkit-grabbing']},
-  'border-width': {values: ['medium', 'thick', 'thin']},
-  'border-style': {values: ['hidden', 'inset', 'groove', 'ridge', 'outset', 'dotted', 'dashed', 'solid', 'double']},
-  'size': {values: ['a3', 'a4', 'a5', 'b4', 'b5', 'landscape', 'ledger', 'legal', 'letter', 'portrait']},
-  'overflow': {values: ['hidden', 'visible', 'overlay', 'scroll']},
-  'overscroll-behavior': {values: ['contain']},
-  'text-rendering': {values: ['optimizeSpeed', 'optimizeLegibility', 'geometricPrecision']},
-  'text-align': {values: ['-webkit-auto', '-webkit-match-parent']},
-  'clip-path': {values: ['circle', 'ellipse', 'inset', 'polygon', 'url']},
-  'color-interpolation': {values: ['sRGB', 'linearRGB']},
-  'word-wrap': {values: ['normal', 'break-word']},
-  'font-weight': {values: ['100', '200', '300', '400', '500', '600', '700', '800', '900']},
-  '-webkit-text-emphasis': {values: ['circle', 'filled', 'open', 'dot', 'double-circle', 'triangle', 'sesame']},
-  'color-rendering': {values: ['optimizeSpeed', 'optimizeQuality']},
-  '-webkit-text-combine': {values: ['horizontal']},
-  'text-orientation': {values: ['sideways-right']},
-  'outline': {
-    values: ['inset', 'groove', 'ridge', 'outset', 'dotted', 'dashed', 'solid', 'double', 'medium', 'thick', 'thin'],
-  },
-  'font': {
-    values: [
+const extraPropertyValues = new Map<string, Set<string>>([
+  ['background-repeat', new Set(['repeat', 'repeat-x', 'repeat-y', 'no-repeat', 'space', 'round'])],
+  ['content', new Set(['normal', 'close-quote', 'no-close-quote', 'no-open-quote', 'open-quote'])],
+  ['baseline-shift', new Set(['baseline'])],
+  ['max-height', new Set(['min-content', 'max-content', '-webkit-fill-available', 'fit-content'])],
+  ['color', new Set(['black'])],
+  ['background-color', new Set(['white'])],
+  ['box-shadow', new Set(['inset'])],
+  ['text-shadow', new Set(['0 0 black'])],
+  ['-webkit-writing-mode', new Set(['horizontal-tb', 'vertical-rl', 'vertical-lr'])],
+  ['writing-mode', new Set(['lr', 'rl', 'tb', 'lr-tb', 'rl-tb', 'tb-rl'])],
+  ['page-break-inside', new Set(['avoid'])],
+  ['cursor', new Set(['-webkit-zoom-in', '-webkit-zoom-out', '-webkit-grab', '-webkit-grabbing'])],
+  ['border-width', new Set(['medium', 'thick', 'thin'])],
+  ['border-style', new Set(['hidden', 'inset', 'groove', 'ridge', 'outset', 'dotted', 'dashed', 'solid', 'double'])],
+  ['size', new Set(['a3', 'a4', 'a5', 'b4', 'b5', 'landscape', 'ledger', 'legal', 'letter', 'portrait'])],
+  ['overflow', new Set(['hidden', 'visible', 'overlay', 'scroll', 'clip'])],
+  ['overscroll-behavior', new Set(['contain'])],
+  ['text-rendering', new Set(['optimizeSpeed', 'optimizeLegibility', 'geometricPrecision'])],
+  ['text-align', new Set(['-webkit-auto', '-webkit-match-parent'])],
+  ['clip-path', new Set(['circle', 'ellipse', 'inset', 'polygon', 'url'])],
+  ['color-interpolation', new Set(['sRGB', 'linearRGB'])],
+  ['word-wrap', new Set(['normal', 'break-word'])],
+  ['font-weight', new Set(['100', '200', '300', '400', '500', '600', '700', '800', '900'])],
+  ['text-emphasis', textEmphasisStyle],
+  ['-webkit-text-emphasis', textEmphasisStyle],
+  ['color-rendering', new Set(['optimizeSpeed', 'optimizeQuality'])],
+  ['-webkit-text-combine', new Set(['horizontal'])],
+  ['text-orientation', new Set(['sideways-right'])],
+  [
+    'outline',
+    new Set(['inset', 'groove', 'ridge', 'outset', 'dotted', 'dashed', 'solid', 'double', 'medium', 'thick', 'thin']),
+  ],
+  [
+    'font',
+    new Set([
       'caption',
       'icon',
       'menu',
@@ -571,18 +675,22 @@ const extraPropertyValues = {
       '-webkit-small-control',
       '-webkit-control',
       'status-bar',
-    ],
-  },
-  'dominant-baseline': {values: ['text-before-edge', 'text-after-edge', 'use-script', 'no-change', 'reset-size']},
-  '-webkit-text-emphasis-position': {values: ['over', 'under']},
-  'alignment-baseline': {values: ['before-edge', 'after-edge', 'text-before-edge', 'text-after-edge', 'hanging']},
-  'page-break-before': {values: ['left', 'right', 'always', 'avoid']},
-  'border-image': {values: ['repeat', 'stretch', 'space', 'round']},
-  'text-decoration':
-      {values: ['blink', 'line-through', 'overline', 'underline', 'wavy', 'double', 'solid', 'dashed', 'dotted']},
+    ]),
+  ],
+  ['dominant-baseline', new Set(['text-before-edge', 'text-after-edge', 'use-script', 'no-change', 'reset-size'])],
+  ['text-emphasis-position', textEmphasisPosition],
+  ['-webkit-text-emphasis-position', textEmphasisPosition],
+  ['alignment-baseline', new Set(['before-edge', 'after-edge', 'text-before-edge', 'text-after-edge', 'hanging'])],
+  ['page-break-before', new Set(['left', 'right', 'always', 'avoid'])],
+  ['border-image', new Set(['repeat', 'stretch', 'space', 'round'])],
+  [
+    'text-decoration',
+    new Set(['blink', 'line-through', 'overline', 'underline', 'wavy', 'double', 'solid', 'dashed', 'dotted']),
+  ],
   // List taken from https://drafts.csswg.org/css-fonts-4/#generic-font-families
-  'font-family': {
-    values: [
+  [
+    'font-family',
+    new Set([
       'serif',
       'sans-serif',
       'cursive',
@@ -597,13 +705,14 @@ const extraPropertyValues = {
       'ui-monospace',
       'ui-rounded',
       '-webkit-body',
-    ],
-  },
-  'zoom': {values: ['normal']},
-  'max-width': {values: ['min-content', 'max-content', '-webkit-fill-available', 'fit-content']},
-  '-webkit-font-smoothing': {values: ['antialiased', 'subpixel-antialiased']},
-  'border': {
-    values: [
+    ]),
+  ],
+  ['zoom', new Set(['normal'])],
+  ['max-width', new Set(['min-content', 'max-content', '-webkit-fill-available', 'fit-content'])],
+  ['-webkit-font-smoothing', new Set(['antialiased', 'subpixel-antialiased'])],
+  [
+    'border',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -616,10 +725,11 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'font-variant': {
-    values: [
+    ]),
+  ],
+  [
+    'font-variant',
+    new Set([
       'small-caps',
       'normal',
       'common-ligatures',
@@ -652,20 +762,23 @@ const extraPropertyValues = {
       'full-width',
       'proportional-width',
       'ruby',
-    ],
-  },
-  'vertical-align': {values: ['top', 'bottom', '-webkit-baseline-middle']},
-  'page-break-after': {values: ['left', 'right', 'always', 'avoid']},
-  '-webkit-text-emphasis-style': {values: ['circle', 'filled', 'open', 'dot', 'double-circle', 'triangle', 'sesame']},
-  'transform': {
-    values: [
+    ]),
+  ],
+  ['vertical-align', new Set(['top', 'bottom', '-webkit-baseline-middle'])],
+  ['page-break-after', new Set(['left', 'right', 'always', 'avoid'])],
+  ['text-emphasis-style', textEmphasisStyle],
+  ['-webkit-text-emphasis-style', textEmphasisStyle],
+  [
+    'transform',
+    new Set([
       'scale',      'scaleX',     'scaleY',      'scale3d', 'rotate',   'rotateX',     'rotateY',
       'rotateZ',    'rotate3d',   'skew',        'skewX',   'skewY',    'translate',   'translateX',
       'translateY', 'translateZ', 'translate3d', 'matrix',  'matrix3d', 'perspective',
-    ],
-  },
-  'align-content': {
-    values: [
+    ]),
+  ],
+  [
+    'align-content',
+    new Set([
       'normal',
       'baseline',
       'space-between',
@@ -677,10 +790,11 @@ const extraPropertyValues = {
       'end',
       'flex-start',
       'flex-end',
-    ],
-  },
-  'justify-content': {
-    values: [
+    ]),
+  ],
+  [
+    'justify-content',
+    new Set([
       'normal',
       'space-between',
       'space-around',
@@ -693,10 +807,11 @@ const extraPropertyValues = {
       'flex-end',
       'left',
       'right',
-    ],
-  },
-  'place-content': {
-    values: [
+    ]),
+  ],
+  [
+    'place-content',
+    new Set([
       'normal',
       'space-between',
       'space-around',
@@ -708,14 +823,27 @@ const extraPropertyValues = {
       'flex-start',
       'flex-end',
       'baseline',
-    ],
-  },
-  'align-items': {
-    values:
-        ['normal', 'stretch', 'baseline', 'center', 'start', 'end', 'self-start', 'self-end', 'flex-start', 'flex-end'],
-  },
-  'justify-items': {
-    values: [
+    ]),
+  ],
+  [
+    'align-items',
+    new Set([
+      'normal',
+      'stretch',
+      'baseline',
+      'center',
+      'start',
+      'end',
+      'self-start',
+      'self-end',
+      'flex-start',
+      'flex-end',
+      'anchor-center',
+    ]),
+  ],
+  [
+    'justify-items',
+    new Set([
       'normal',
       'stretch',
       'baseline',
@@ -729,18 +857,44 @@ const extraPropertyValues = {
       'left',
       'right',
       'legacy',
-    ],
-  },
-  'place-items': {
-    values:
-        ['normal', 'stretch', 'baseline', 'center', 'start', 'end', 'self-start', 'self-end', 'flex-start', 'flex-end'],
-  },
-  'align-self': {
-    values:
-        ['normal', 'stretch', 'baseline', 'center', 'start', 'end', 'self-start', 'self-end', 'flex-start', 'flex-end'],
-  },
-  'justify-self': {
-    values: [
+      'anchor-center',
+    ]),
+  ],
+  [
+    'place-items',
+    new Set([
+      'normal',
+      'stretch',
+      'baseline',
+      'center',
+      'start',
+      'end',
+      'self-start',
+      'self-end',
+      'flex-start',
+      'flex-end',
+      'anchor-center',
+    ]),
+  ],
+  [
+    'align-self',
+    new Set([
+      'normal',
+      'stretch',
+      'baseline',
+      'center',
+      'start',
+      'end',
+      'self-start',
+      'self-end',
+      'flex-start',
+      'flex-end',
+      'anchor-center',
+    ]),
+  ],
+  [
+    'justify-self',
+    new Set([
       'normal',
       'stretch',
       'baseline',
@@ -753,24 +907,38 @@ const extraPropertyValues = {
       'flex-end',
       'left',
       'right',
-    ],
-  },
-  'place-self': {
-    values:
-        ['normal', 'stretch', 'baseline', 'center', 'start', 'end', 'self-start', 'self-end', 'flex-start', 'flex-end'],
-  },
-  'perspective-origin': {values: ['left', 'center', 'right', 'top', 'bottom']},
-  'transform-origin': {values: ['left', 'center', 'right', 'top', 'bottom']},
-  'transition-timing-function': {values: ['cubic-bezier', 'steps']},
-  'animation-timing-function': {values: ['cubic-bezier', 'steps']},
-  '-webkit-backface-visibility': {values: ['visible', 'hidden']},
-  '-webkit-column-break-after': {values: ['always', 'avoid']},
-  '-webkit-column-break-before': {values: ['always', 'avoid']},
-  '-webkit-column-break-inside': {values: ['avoid']},
-  '-webkit-column-span': {values: ['all']},
-  '-webkit-column-gap': {values: ['normal']},
-  'filter': {
-    values: [
+      'anchor-center',
+    ]),
+  ],
+  [
+    'place-self',
+    new Set([
+      'normal',
+      'stretch',
+      'baseline',
+      'center',
+      'start',
+      'end',
+      'self-start',
+      'self-end',
+      'flex-start',
+      'flex-end',
+      'anchor-center',
+    ]),
+  ],
+  ['perspective-origin', new Set(['left', 'center', 'right', 'top', 'bottom'])],
+  ['transform-origin', new Set(['left', 'center', 'right', 'top', 'bottom'])],
+  ['transition-timing-function', new Set(['cubic-bezier', 'steps'])],
+  ['animation-timing-function', new Set(['cubic-bezier', 'steps'])],
+  ['-webkit-backface-visibility', new Set(['visible', 'hidden'])],
+  ['-webkit-column-break-after', new Set(['always', 'avoid'])],
+  ['-webkit-column-break-before', new Set(['always', 'avoid'])],
+  ['-webkit-column-break-inside', new Set(['avoid'])],
+  ['-webkit-column-span', new Set(['all'])],
+  ['-webkit-column-gap', new Set(['normal'])],
+  [
+    'filter',
+    new Set([
       'url',
       'blur',
       'brightness',
@@ -782,10 +950,11 @@ const extraPropertyValues = {
       'opacity',
       'saturate',
       'sepia',
-    ],
-  },
-  'backdrop-filter': {
-    values: [
+    ]),
+  ],
+  [
+    'backdrop-filter',
+    new Set([
       'url',
       'blur',
       'brightness',
@@ -797,13 +966,14 @@ const extraPropertyValues = {
       'opacity',
       'saturate',
       'sepia',
-    ],
-  },
-  'grid-template-columns': {values: ['min-content', 'max-content']},
-  'grid-template-rows': {values: ['min-content', 'max-content']},
-  'grid-auto-flow': {values: ['dense']},
-  'background': {
-    values: [
+    ]),
+  ],
+  ['grid-template-columns', new Set(['min-content', 'max-content'])],
+  ['grid-template-rows', new Set(['min-content', 'max-content'])],
+  ['grid-auto-flow', new Set(['dense'])],
+  [
+    'background',
+    new Set([
       'repeat',
       'repeat-x',
       'repeat-y',
@@ -826,17 +996,20 @@ const extraPropertyValues = {
       'repeating-linear-gradient',
       'repeating-radial-gradient',
       'url',
-    ],
-  },
-  'background-image':
-      {values: ['linear-gradient', 'radial-gradient', 'repeating-linear-gradient', 'repeating-radial-gradient', 'url']},
-  'background-position': {values: ['top', 'bottom', 'left', 'right', 'center']},
-  'background-position-x': {values: ['left', 'right', 'center']},
-  'background-position-y': {values: ['top', 'bottom', 'center']},
-  'background-repeat-x': {values: ['repeat', 'no-repeat']},
-  'background-repeat-y': {values: ['repeat', 'no-repeat']},
-  'border-bottom': {
-    values: [
+    ]),
+  ],
+  [
+    'background-image',
+    new Set(['linear-gradient', 'radial-gradient', 'repeating-linear-gradient', 'repeating-radial-gradient', 'url']),
+  ],
+  ['background-position', new Set(['top', 'bottom', 'left', 'right', 'center'])],
+  ['background-position-x', new Set(['left', 'right', 'center'])],
+  ['background-position-y', new Set(['top', 'bottom', 'center'])],
+  ['background-repeat-x', new Set(['repeat', 'no-repeat'])],
+  ['background-repeat-y', new Set(['repeat', 'no-repeat'])],
+  [
+    'border-bottom',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -849,10 +1022,11 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'border-left': {
-    values: [
+    ]),
+  ],
+  [
+    'border-left',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -865,10 +1039,11 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'border-right': {
-    values: [
+    ]),
+  ],
+  [
+    'border-right',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -881,10 +1056,11 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'border-top': {
-    values: [
+    ]),
+  ],
+  [
+    'border-top',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -897,12 +1073,13 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'buffered-rendering': {values: ['static', 'dynamic']},
-  'color-interpolation-filters': {values: ['srgb', 'linearrgb']},
-  'column-rule': {
-    values: [
+    ]),
+  ],
+  ['buffered-rendering', new Set(['static', 'dynamic'])],
+  ['color-interpolation-filters', new Set(['srgb', 'linearrgb'])],
+  [
+    'column-rule',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -915,13 +1092,14 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  'flex-flow': {values: ['nowrap', 'row', 'row-reverse', 'column', 'column-reverse', 'wrap', 'wrap-reverse']},
-  'height': {values: ['-webkit-fill-available']},
-  'inline-size': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'list-style': {
-    values: [
+    ]),
+  ],
+  ['flex-flow', new Set(['nowrap', 'row', 'row-reverse', 'column', 'column-reverse', 'wrap', 'wrap-reverse'])],
+  ['height', new Set(['-webkit-fill-available'])],
+  ['inline-size', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  [
+    'list-style',
+    new Set([
       'outside',
       'inside',
       'disc',
@@ -979,18 +1157,19 @@ const extraPropertyValues = {
       'katakana',
       'hiragana-iroha',
       'katakana-iroha',
-    ],
-  },
-  'max-block-size': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'max-inline-size': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'min-block-size': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'min-height': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'min-inline-size': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'min-width': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  'object-position': {values: ['top', 'bottom', 'left', 'right', 'center']},
-  'shape-outside': {values: ['border-box', 'content-box', 'padding-box', 'margin-box']},
-  '-webkit-appearance': {
-    values: [
+    ]),
+  ],
+  ['max-block-size', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['max-inline-size', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['min-block-size', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['min-height', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['min-inline-size', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['min-width', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['object-position', new Set(['top', 'bottom', 'left', 'right', 'center'])],
+  ['shape-outside', new Set(['border-box', 'content-box', 'padding-box', 'margin-box'])],
+  [
+    '-webkit-appearance',
+    new Set([
       'checkbox',
       'radio',
       'push-button',
@@ -1014,10 +1193,11 @@ const extraPropertyValues = {
       'searchfield-cancel-button',
       'textfield',
       'textarea',
-    ],
-  },
-  '-webkit-border-after': {
-    values: [
+    ]),
+  ],
+  [
+    '-webkit-border-after',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -1030,13 +1210,16 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  '-webkit-border-after-style':
-      {values: ['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']},
-  '-webkit-border-after-width': {values: ['medium', 'thick', 'thin']},
-  '-webkit-border-before': {
-    values: [
+    ]),
+  ],
+  [
+    '-webkit-border-after-style',
+    new Set(['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']),
+  ],
+  ['-webkit-border-after-width', new Set(['medium', 'thick', 'thin'])],
+  [
+    '-webkit-border-before',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -1049,13 +1232,16 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  '-webkit-border-before-style':
-      {values: ['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']},
-  '-webkit-border-before-width': {values: ['medium', 'thick', 'thin']},
-  '-webkit-border-end': {
-    values: [
+    ]),
+  ],
+  [
+    '-webkit-border-before-style',
+    new Set(['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']),
+  ],
+  ['-webkit-border-before-width', new Set(['medium', 'thick', 'thin'])],
+  [
+    '-webkit-border-end',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -1068,13 +1254,16 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  '-webkit-border-end-style':
-      {values: ['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']},
-  '-webkit-border-end-width': {values: ['medium', 'thick', 'thin']},
-  '-webkit-border-start': {
-    values: [
+    ]),
+  ],
+  [
+    '-webkit-border-end-style',
+    new Set(['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']),
+  ],
+  ['-webkit-border-end-width', new Set(['medium', 'thick', 'thin'])],
+  [
+    '-webkit-border-start',
+    new Set([
       'hidden',
       'inset',
       'groove',
@@ -1087,18 +1276,21 @@ const extraPropertyValues = {
       'medium',
       'thick',
       'thin',
-    ],
-  },
-  '-webkit-border-start-style':
-      {values: ['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']},
-  '-webkit-border-start-width': {values: ['medium', 'thick', 'thin']},
-  '-webkit-logical-height': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-logical-width': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-mask-box-image': {values: ['repeat', 'stretch', 'space', 'round']},
-  '-webkit-mask-box-image-repeat': {values: ['repeat', 'stretch', 'space', 'round']},
-  '-webkit-mask-clip': {values: ['text', 'border', 'border-box', 'content', 'content-box', 'padding', 'padding-box']},
-  '-webkit-mask-composite': {
-    values: [
+    ]),
+  ],
+  [
+    '-webkit-border-start-style',
+    new Set(['hidden', 'inset', 'groove', 'outset', 'ridge', 'dotted', 'dashed', 'solid', 'double']),
+  ],
+  ['-webkit-border-start-width', new Set(['medium', 'thick', 'thin'])],
+  ['-webkit-logical-height', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-logical-width', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-mask-box-image', new Set(['repeat', 'stretch', 'space', 'round'])],
+  ['-webkit-mask-box-image-repeat', new Set(['repeat', 'stretch', 'space', 'round'])],
+  ['-webkit-mask-clip', new Set(['text', 'border', 'border-box', 'content', 'content-box', 'padding', 'padding-box'])],
+  [
+    '-webkit-mask-composite',
+    new Set([
       'clear',
       'copy',
       'source-over',
@@ -1111,48 +1303,81 @@ const extraPropertyValues = {
       'destination-atop',
       'xor',
       'plus-lighter',
-    ],
-  },
-  '-webkit-mask-image':
-      {values: ['linear-gradient', 'radial-gradient', 'repeating-linear-gradient', 'repeating-radial-gradient', 'url']},
-  '-webkit-mask-origin': {values: ['border', 'border-box', 'content', 'content-box', 'padding', 'padding-box']},
-  '-webkit-mask-position': {values: ['top', 'bottom', 'left', 'right', 'center']},
-  '-webkit-mask-position-x': {values: ['left', 'right', 'center']},
-  '-webkit-mask-position-y': {values: ['top', 'bottom', 'center']},
-  '-webkit-mask-repeat': {values: ['repeat', 'repeat-x', 'repeat-y', 'no-repeat', 'space', 'round']},
-  '-webkit-mask-size': {values: ['contain', 'cover']},
-  '-webkit-max-logical-height': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-max-logical-width': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-min-logical-height': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-min-logical-width': {values: ['-webkit-fill-available', 'min-content', 'max-content', 'fit-content']},
-  '-webkit-perspective-origin-x': {values: ['left', 'right', 'center']},
-  '-webkit-perspective-origin-y': {values: ['top', 'bottom', 'center']},
-  '-webkit-text-decorations-in-effect': {values: ['blink', 'line-through', 'overline', 'underline']},
-  '-webkit-text-stroke': {values: ['medium', 'thick', 'thin']},
-  '-webkit-text-stroke-width': {values: ['medium', 'thick', 'thin']},
-  '-webkit-transform-origin-x': {values: ['left', 'right', 'center']},
-  '-webkit-transform-origin-y': {values: ['top', 'bottom', 'center']},
-  'width': {values: ['-webkit-fill-available']},
-  'contain-intrinsic-width': {values: ['auto none', 'auto 100px']},
-  'contain-intrinsic-height': {values: ['auto none', 'auto 100px']},
-  'contain-intrinsic-size': {values: ['auto none', 'auto 100px']},
-  'contain-intrinsic-inline-size': {values: ['auto none', 'auto 100px']},
-  'contain-intrinsic-block-size': {values: ['auto none', 'auto 100px']},
+    ]),
+  ],
+  [
+    '-webkit-mask-image',
+    new Set(['linear-gradient', 'radial-gradient', 'repeating-linear-gradient', 'repeating-radial-gradient', 'url']),
+  ],
+  ['-webkit-mask-origin', new Set(['border', 'border-box', 'content', 'content-box', 'padding', 'padding-box'])],
+  ['-webkit-mask-position', new Set(['top', 'bottom', 'left', 'right', 'center'])],
+  ['-webkit-mask-position-x', new Set(['left', 'right', 'center'])],
+  ['-webkit-mask-position-y', new Set(['top', 'bottom', 'center'])],
+  ['-webkit-mask-repeat', new Set(['repeat', 'repeat-x', 'repeat-y', 'no-repeat', 'space', 'round'])],
+  ['-webkit-mask-size', new Set(['contain', 'cover'])],
+  ['-webkit-max-logical-height', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-max-logical-width', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-min-logical-height', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-min-logical-width', new Set(['-webkit-fill-available', 'min-content', 'max-content', 'fit-content'])],
+  ['-webkit-perspective-origin-x', new Set(['left', 'right', 'center'])],
+  ['-webkit-perspective-origin-y', new Set(['top', 'bottom', 'center'])],
+  ['-webkit-text-decorations-in-effect', new Set(['blink', 'line-through', 'overline', 'underline'])],
+  ['-webkit-text-stroke', new Set(['medium', 'thick', 'thin'])],
+  ['-webkit-text-stroke-width', new Set(['medium', 'thick', 'thin'])],
+  ['-webkit-transform-origin-x', new Set(['left', 'right', 'center'])],
+  ['-webkit-transform-origin-y', new Set(['top', 'bottom', 'center'])],
+  ['width', new Set(['-webkit-fill-available'])],
+  ['contain-intrinsic-width', new Set(['auto none', 'auto 100px'])],
+  ['contain-intrinsic-height', new Set(['auto none', 'auto 100px'])],
+  ['contain-intrinsic-size', new Set(['auto none', 'auto 100px'])],
+  ['contain-intrinsic-inline-size', new Set(['auto none', 'auto 100px'])],
+  ['contain-intrinsic-block-size', new Set(['auto none', 'auto 100px'])],
   // Due to some compatibility issues[1] with Chrome's implementation[2],
   // only a few legacy values are added here.
   // [1]: https://github.com/w3c/csswg-drafts/issues/9102#issuecomment-1807453214
   // [2]: https://chromium-review.googlesource.com/c/chromium/src/+/4232738
-  'white-space': {
-    values: [
+  [
+    'white-space',
+    new Set([
       'normal',        // equal to: `collapse wrap`
       'pre',           // equal to: `preserve nowrap`
       'pre-wrap',      // equal to: `preserve wrap`
       'pre-line',      // equal to: `preserve-breaks wrap`
       'nowrap',        // equal to: `collapse nowrap`
       'break-spaces',  // equal to: `break-spaces wrap`, Chrome 76, crbug.com/767634#c28
-    ],
-  },
-};
+    ]),
+  ],
+  // https://drafts.csswg.org/css-inline-3/#text-box-edge
+  // Now we're going to allow the following rule:
+  // auto | [ text | cap | ex ] [ text | alphabetic ]?
+  // ideographic and ideographic-ink are not implemented yet.
+  // We don't add values like `cap text` because that is equivalent to `text`.
+  [
+    'text-box-edge',
+    new Set([
+      'auto',
+      'text',
+      'cap',
+      'ex',
+      'text alphabetic',
+      'cap alphabetic',
+      'ex alphabetic',
+    ]),
+  ],
+  [
+    'corner-shape',
+    new Set([
+      'round',
+      'scoop',
+      'bevel',
+      'notch',
+      'square',
+      'squircle',
+      'superellipse(0.5)',
+      'superellipse(infinity)',
+    ]),
+  ],
+]);
 
 // Weight of CSS properties based on their usage from https://www.chromestatus.com/metrics/css/popularity
 const Weight = new Map([

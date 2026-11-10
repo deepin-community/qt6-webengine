@@ -23,7 +23,6 @@
 
 #include "avfilter.h"
 #include "filters.h"
-#include "internal.h"
 #include "video.h"
 
 typedef struct DedotContext {
@@ -363,9 +362,9 @@ static av_cold void uninit(AVFilterContext *ctx)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
 
 static const AVOption dedot_options[] = {
-    { "m",   "set filtering mode",                          OFFSET( m), AV_OPT_TYPE_FLAGS, {.i64=3},    0, 3, FLAGS, "m" },
-    { "dotcrawl",                                           0,       0, AV_OPT_TYPE_CONST, {.i64=1},    0, 0, FLAGS, "m" },
-    { "rainbows",                                           0,       0, AV_OPT_TYPE_CONST, {.i64=2},    0, 0, FLAGS, "m" },
+    { "m",   "set filtering mode",                          OFFSET( m), AV_OPT_TYPE_FLAGS, {.i64=3},    0, 3, FLAGS, .unit = "m" },
+    { "dotcrawl",                                           0,       0, AV_OPT_TYPE_CONST, {.i64=1},    0, 0, FLAGS, .unit = "m" },
+    { "rainbows",                                           0,       0, AV_OPT_TYPE_CONST, {.i64=2},    0, 0, FLAGS, .unit = "m" },
     { "lt",  "set spatial luma threshold",                  OFFSET(lt), AV_OPT_TYPE_FLOAT, {.dbl=.079}, 0, 1, FLAGS },
     { "tl",  "set tolerance for temporal luma",             OFFSET(tl), AV_OPT_TYPE_FLOAT, {.dbl=.079}, 0, 1, FLAGS },
     { "tc",  "set tolerance for chroma temporal variation", OFFSET(tc), AV_OPT_TYPE_FLOAT, {.dbl=.058}, 0, 1, FLAGS },
@@ -383,15 +382,15 @@ static const AVFilterPad outputs[] = {
 
 AVFILTER_DEFINE_CLASS(dedot);
 
-const AVFilter ff_vf_dedot = {
-    .name          = "dedot",
-    .description   = NULL_IF_CONFIG_SMALL("Reduce cross-luminance and cross-color."),
+const FFFilter ff_vf_dedot = {
+    .p.name        = "dedot",
+    .p.description = NULL_IF_CONFIG_SMALL("Reduce cross-luminance and cross-color."),
+    .p.priv_class  = &dedot_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(DedotContext),
-    .priv_class    = &dedot_class,
     .activate      = activate,
     .uninit        = uninit,
     FILTER_INPUTS(ff_video_default_filterpad),
     FILTER_OUTPUTS(outputs),
     FILTER_PIXFMTS_ARRAY(pixel_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
 };

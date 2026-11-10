@@ -1,6 +1,7 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as IconButton from '../../../components/icon_button/icon_button.js';
 import * as UI from '../../legacy.js';
@@ -9,28 +10,26 @@ import {getRegisteredProviders, Provider, registerProvider, type ProviderRegistr
 import {QuickOpenImpl} from './QuickOpen.js';
 
 export class HelpQuickOpen extends Provider {
-  private providers: {
+  private providers: Array<{
     prefix: string,
     iconName: string,
-    iconWidth: string,
     title: string,
-  }[];
+    jslogContext: string,
+  }>;
 
-  constructor() {
-    super();
+  constructor(jslogContext: string) {
+    super(jslogContext);
     this.providers = [];
     getRegisteredProviders().forEach(this.addProvider.bind(this));
   }
 
-  private addProvider(extension: ProviderRegistration): void {
-    if (extension.titleSuggestion) {
-      this.providers.push({
-        prefix: extension.prefix || '',
-        iconName: extension.iconName,
-        iconWidth: extension.iconWidth,
-        title: extension.titlePrefix() + ' ' + extension.titleSuggestion(),
-      });
-    }
+  private async addProvider(extension: ProviderRegistration): Promise<void> {
+    this.providers.push({
+      prefix: extension.prefix || '',
+      iconName: extension.iconName,
+      title: extension.helpTitle(),
+      jslogContext: (await extension.provider()).jslogContext,
+    });
   }
 
   override itemCount(): number {
@@ -52,11 +51,15 @@ export class HelpQuickOpen extends Provider {
     iconElement.data = {
       iconName: provider.iconName,
       color: 'var(--icon-default)',
-      width: provider.iconWidth,
+      width: '18px',
     };
     titleElement.parentElement?.parentElement?.insertBefore(iconElement, titleElement.parentElement);
 
     UI.UIUtils.createTextChild(titleElement, provider.title);
+  }
+
+  override jslogContextAt(itemIndex: number): string {
+    return this.providers[itemIndex].jslogContext;
   }
 
   override selectItem(itemIndex: number|null, _promptValue: string): void {
@@ -73,8 +76,8 @@ export class HelpQuickOpen extends Provider {
 registerProvider({
   prefix: '?',
   iconName: 'help',
-  iconWidth: '20px',
-  provider: () => Promise.resolve(new HelpQuickOpen()),
+  provider: () => Promise.resolve(new HelpQuickOpen('help')),
+  helpTitle: () => 'Help',
   titlePrefix: () => 'Help',
   titleSuggestion: undefined,
 });

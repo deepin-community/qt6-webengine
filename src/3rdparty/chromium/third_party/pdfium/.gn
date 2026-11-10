@@ -9,6 +9,12 @@ buildconfig = "//build/config/BUILDCONFIG.gn"
 script_executable = "python3"
 
 default_args = {
+  # Use a production-performant allocator.
+  # TODO(tsepez): `enable_pkeys` is a workaround for a partition-alloc build
+  # issue and should be removed.
+  partition_alloc_is_debug = false
+  enable_pkeys = false
+
   # PDFs only need to run JavaScript.
   v8_enable_webassembly = false
 
@@ -18,6 +24,25 @@ default_args = {
   # PDFium is currently incompatible with the V8 Sandbox.
   # See https://crbug.com/v8/13014 for details.
   v8_enable_sandbox = false
+
+  # Suppress V8_DEPRECATE_SOON warnings to match the chromium build
+  # (at the moment). This is why chromium builds including pdfium
+  # currently build against the latest V8, but standalone builds
+  # give warnings.
+  v8_imminent_deprecation_warnings = false
+
+  # PDFium does not include the temporal_rs library.
+  v8_enable_temporal_support = false
+
+  # PDFium has its own unsafe-buffers enforcement directories.
+  clang_unsafe_buffers_paths = "//unsafe_buffers_paths.txt"
+
+  # Needed only for std::atomic_ref<T> for large Ts.
+  # See https://crbug.com/402171653 for details.
+  use_llvm_libatomic = false
+
+  # PDFium bots only have 14.x. Override Chromium's 15.x requirement.
+  mac_sdk_min = "14"
 }
 
 no_check_targets = [

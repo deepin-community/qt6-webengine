@@ -29,8 +29,10 @@
 #define SRC_DAWN_NATIVE_VULKAN_UTILSVULKAN_H_
 
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "dawn/common/StackAllocated.h"
 #include "dawn/common/vulkan_platform.h"
 #include "dawn/native/Commands.h"
 #include "dawn/native/dawn_platform.h"
@@ -43,6 +45,7 @@ union OverrideScalar;
 namespace dawn::native::vulkan {
 
 class Device;
+struct VulkanFunctions;
 
 // A Helper type used to build a pNext chain of extension structs.
 // Usage is:
@@ -66,7 +69,12 @@ class Device;
 //     featuresChain.Add(&featuresExtensions.subgroupSizeControl,
 //                       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT);
 //
-struct PNextChainBuilder {
+// Note:
+//   The build option `use_asan_unowned_ptr` checks the pointer to the current
+//   tail it is not dangling. So every structs in the chain must be declared
+//   before `PNextChainBuilder`.
+//
+struct PNextChainBuilder : public StackAllocated {
     // Constructor takes the address of a Vulkan structure instance, and
     // walks its pNext chain to record the current location of its tail.
     //
@@ -102,10 +110,12 @@ struct PNextChainBuilder {
     }
 
   private:
-    VkBaseOutStructure* mCurrent;
+    raw_ptr<VkBaseOutStructure> mCurrent;
 };
 
 VkCompareOp ToVulkanCompareOp(wgpu::CompareFunction op);
+
+VkFilter ToVulkanSamplerFilter(wgpu::FilterMode filter);
 
 VkImageAspectFlags VulkanAspectMask(const Aspect& aspects);
 
@@ -114,7 +124,7 @@ Extent3D ComputeTextureCopyExtent(const TextureCopy& textureCopy, const Extent3D
 VkBufferImageCopy ComputeBufferImageCopyRegion(const BufferCopy& bufferCopy,
                                                const TextureCopy& textureCopy,
                                                const Extent3D& copySize);
-VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayout,
+VkBufferImageCopy ComputeBufferImageCopyRegion(const TexelCopyBufferLayout& dataLayout,
                                                const TextureCopy& textureCopy,
                                                const Extent3D& copySize);
 
@@ -126,7 +136,7 @@ void SetDebugNameInternal(Device* device,
                           VkObjectType objectType,
                           uint64_t objectHandle,
                           const char* prefix,
-                          std::string label);
+                          std::string_view label);
 
 // The majority of Vulkan handles are "non-dispatchable". Dawn wraps these by overriding
 // VK_DEFINE_NON_DISPATCHABLE_HANDLE to add some capabilities like making null comparisons
@@ -136,7 +146,7 @@ template <typename Tag, typename HandleType>
 void SetDebugName(Device* device,
                   detail::VkHandle<Tag, HandleType> objectHandle,
                   const char* prefix,
-                  std::string label = "") {
+                  std::string_view label = {}) {
     uint64_t handle;
     if constexpr (std::is_same_v<HandleType, uint64_t>) {
         handle = objectHandle.GetHandle();
@@ -154,13 +164,37 @@ void SetDebugName(Device* device,
                   VkObjectType objectType,
                   HandleType objectHandle,
                   const char* prefix,
-                  std::string label = "") {
+                  std::string_view label = {}) {
     SetDebugNameInternal(device, objectType, reinterpret_cast<uint64_t>(objectHandle), prefix,
                          label);
 }
 
 std::string GetNextDeviceDebugPrefix();
 std::string GetDeviceDebugPrefixFromDebugName(const char* debugName);
+
+// Get the properties for the given format.
+// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkDrmFormatModifierPropertiesEXT.html
+std::vector<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format);
+
+// Get the properties for the (format, modifier) pair.
+// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkDrmFormatModifierPropertiesEXT.html
+ResultOrError<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format,
+    uint64_t modifier);
+
+ResultOrError<VkSamplerYcbcrConversion> CreateSamplerYCbCrConversionCreateInfo(
+    YCbCrVkDescriptor yCbCrDescriptor,
+    Device* device);
+
+// TODO(42240963): properly surface the limit.
+// Linux nearly always exposes 4096.
+// https://vulkan.gpuinfo.org/displayextensionproperty.php?platform=linux&extensionname=VK_EXT_external_memory_host&extensionproperty=minImportedHostPointerAlignment
+constexpr uint32_t kMinimumHostMappedPointerAlignment = 4096u;
 
 }  // namespace dawn::native::vulkan
 

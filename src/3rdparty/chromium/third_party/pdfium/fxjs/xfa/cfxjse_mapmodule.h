@@ -10,9 +10,9 @@
 #include <stdint.h>
 
 #include <map>
+#include <optional>
 
 #include "core/fxcrt/widestring.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CXFA_Measurement;
 
@@ -27,18 +27,18 @@ class CFXJSE_MapModule {
   void SetValue(uint32_t key, int32_t value);
   void SetString(uint32_t key, const WideString& wsString);
   void SetMeasurement(uint32_t key, const CXFA_Measurement& measurement);
-  absl::optional<int32_t> GetValue(uint32_t key) const;
-  absl::optional<WideString> GetString(uint32_t key) const;
-  absl::optional<CXFA_Measurement> GetMeasurement(uint32_t key) const;
+  std::optional<int32_t> GetValue(uint32_t key) const;
+  std::optional<WideString> GetString(uint32_t key) const;
+  std::optional<CXFA_Measurement> GetMeasurement(uint32_t key) const;
   bool HasKey(uint32_t key) const;
   void RemoveKey(uint32_t key);
   void MergeDataFrom(const CFXJSE_MapModule* pSrc);
 
  private:
   // keyed by result of GetMapKey_*().
-  std::map<uint32_t, int32_t> m_ValueMap;
-  std::map<uint32_t, WideString> m_StringMap;
-  std::map<uint32_t, CXFA_Measurement> m_MeasurementMap;
+  std::map<uint32_t, int32_t> value_map_;
+  std::map<uint32_t, WideString> string_map_;
+  std::map<uint32_t, CXFA_Measurement> measurement_map_;
 };
 
 #endif  // FXJS_XFA_CFXJSE_MAPMODULE_H_

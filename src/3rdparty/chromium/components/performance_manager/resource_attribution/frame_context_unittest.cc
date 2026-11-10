@@ -5,12 +5,13 @@
 #include "components/performance_manager/public/resource_attribution/frame_context.h"
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/weak_ptr.h"
 #include "components/performance_manager/public/graph/frame_node.h"
 #include "components/performance_manager/public/performance_manager.h"
+#include "components/performance_manager/resource_attribution/performance_manager_aliases.h"
 #include "components/performance_manager/test_support/performance_manager_test_harness.h"
-#include "components/performance_manager/test_support/run_in_graph.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -18,14 +19,14 @@
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
-namespace performance_manager::resource_attribution {
+namespace resource_attribution {
 
 namespace {
 
-using ResourceAttrFrameContextTest = PerformanceManagerTestHarness;
+using ResourceAttrFrameContextTest =
+    performance_manager::PerformanceManagerTestHarness;
 using ResourceAttrFrameContextNoPMTest = content::RenderViewHostTestHarness;
 
 TEST_F(ResourceAttrFrameContextTest, FrameContexts) {
@@ -38,7 +39,7 @@ TEST_F(ResourceAttrFrameContextTest, FrameContexts) {
   ASSERT_TRUE(rfh);
   const content::GlobalRenderFrameHostId rfh_id = rfh->GetGlobalId();
 
-  absl::optional<FrameContext> frame_context =
+  std::optional<FrameContext> frame_context =
       FrameContext::FromRenderFrameHost(rfh);
   ASSERT_TRUE(frame_context.has_value());
   EXPECT_EQ(rfh, frame_context->GetRenderFrameHost());
@@ -47,18 +48,15 @@ TEST_F(ResourceAttrFrameContextTest, FrameContexts) {
   base::WeakPtr<FrameNode> frame_node = frame_context->GetWeakFrameNode();
   base::WeakPtr<FrameNode> frame_node_from_pm =
       PerformanceManager::GetFrameNodeForRenderFrameHost(rfh);
-  RunInGraph([&] {
-    ASSERT_TRUE(frame_node);
-    ASSERT_TRUE(frame_node_from_pm);
-    EXPECT_EQ(frame_node.get(), frame_node_from_pm.get());
+  ASSERT_TRUE(frame_node);
+  ASSERT_TRUE(frame_node_from_pm);
+  EXPECT_EQ(frame_node.get(), frame_node_from_pm.get());
 
-    EXPECT_EQ(frame_node.get(), frame_context->GetFrameNode());
-    EXPECT_EQ(frame_context.value(), frame_node->GetResourceContext());
-    EXPECT_EQ(frame_context.value(),
-              FrameContext::FromFrameNode(frame_node.get()));
-    EXPECT_EQ(frame_context.value(),
-              FrameContext::FromWeakFrameNode(frame_node));
-  });
+  EXPECT_EQ(frame_node.get(), frame_context->GetFrameNode());
+  EXPECT_EQ(frame_context.value(), frame_node->GetResourceContext());
+  EXPECT_EQ(frame_context.value(),
+            FrameContext::FromFrameNode(frame_node.get()));
+  EXPECT_EQ(frame_context.value(), FrameContext::FromWeakFrameNode(frame_node));
 
   // Make sure a second frame gets a different context.
   std::unique_ptr<content::WebContents> web_contents2 = CreateTestWebContents();
@@ -68,7 +66,7 @@ TEST_F(ResourceAttrFrameContextTest, FrameContexts) {
   EXPECT_TRUE(rfh2);
   EXPECT_NE(rfh, rfh2);
 
-  absl::optional<FrameContext> frame_context2 =
+  std::optional<FrameContext> frame_context2 =
       FrameContext::FromRenderFrameHost(rfh2);
   EXPECT_TRUE(frame_context2.has_value());
   EXPECT_NE(frame_context2, frame_context);
@@ -78,11 +76,9 @@ TEST_F(ResourceAttrFrameContextTest, FrameContexts) {
   EXPECT_EQ(nullptr, frame_context->GetRenderFrameHost());
   EXPECT_EQ(rfh_id, frame_context->GetRenderFrameHostId());
 
-  RunInGraph([&] {
-    EXPECT_FALSE(frame_node);
-    EXPECT_EQ(nullptr, frame_context->GetFrameNode());
-    EXPECT_EQ(absl::nullopt, FrameContext::FromWeakFrameNode(frame_node));
-  });
+  EXPECT_FALSE(frame_node);
+  EXPECT_EQ(nullptr, frame_context->GetFrameNode());
+  EXPECT_EQ(std::nullopt, FrameContext::FromWeakFrameNode(frame_node));
 }
 
 TEST_F(ResourceAttrFrameContextNoPMTest, FrameContextWithoutPM) {
@@ -99,9 +95,9 @@ TEST_F(ResourceAttrFrameContextNoPMTest, FrameContextWithoutPM) {
   ASSERT_TRUE(rfh);
 
   // Verify that PM didn't see the frame.
-  RunInGraph([node = PerformanceManager::GetFrameNodeForRenderFrameHost(rfh)] {
-    EXPECT_FALSE(node);
-  });
+  base::WeakPtr<FrameNode> node =
+      PerformanceManager::GetFrameNodeForRenderFrameHost(rfh);
+  EXPECT_FALSE(node);
 
   // FromRenderFrameHost() should return nullopt, not a context that's missing
   // PM info.
@@ -110,4 +106,4 @@ TEST_F(ResourceAttrFrameContextNoPMTest, FrameContextWithoutPM) {
 
 }  // namespace
 
-}  // namespace performance_manager::resource_attribution
+}  // namespace resource_attribution

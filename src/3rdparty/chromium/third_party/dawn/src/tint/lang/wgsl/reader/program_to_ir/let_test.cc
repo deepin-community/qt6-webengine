@@ -25,11 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "gmock/gmock.h"
-#include "src/tint/lang/core/constant/scalar.h"
-#include "src/tint/lang/wgsl/ast/case_selector.h"
-#include "src/tint/lang/wgsl/ast/int_literal_expression.h"
-#include "src/tint/lang/wgsl/helpers/ir_program_test.h"
+#include "src/tint/lang/wgsl/reader/program_to_ir/ir_program_test.h"
 
 namespace tint::wgsl::reader {
 namespace {
@@ -44,9 +40,9 @@ TEST_F(ProgramToIRLetTest, Constant) {
     auto m = Build();
     ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()),
-              R"(%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(Dis(m.Get()),
+              R"(%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
     %a:i32 = let 42i
     ret
   }
@@ -60,9 +56,9 @@ TEST_F(ProgramToIRLetTest, BinaryOp) {
     auto m = Build();
     ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()),
-              R"(%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(Dis(m.Get()),
+              R"(%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
     %a:i32 = let 3i
     ret
   }
@@ -78,9 +74,9 @@ TEST_F(ProgramToIRLetTest, Chain) {
     auto m = Build();
     ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()),
-              R"(%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(Dis(m.Get()),
+              R"(%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
     %a:i32 = let 1i
     %b:i32 = let %a
     %c:i32 = let %b

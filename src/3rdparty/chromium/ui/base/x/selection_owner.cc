@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "ui/base/x/selection_utils.h"
@@ -254,7 +255,8 @@ bool SelectionOwner::ProcessTarget(x11::Atom target,
       }
     } else {
       auto& mem = it->second;
-      std::vector<uint8_t> data(mem->data(), mem->data() + mem->size());
+      std::vector<uint8_t> data(mem->data(),
+                                UNSAFE_TODO(mem->data() + mem->size()));
       connection_->SetArrayProperty(requestor, property, target, data);
     }
     return true;
@@ -268,8 +270,8 @@ bool SelectionOwner::ProcessTarget(x11::Atom target,
 void SelectionOwner::ProcessIncrementalTransfer(IncrementalTransfer* transfer) {
   size_t remaining = transfer->data->size() - transfer->offset;
   size_t chunk_length = std::min(remaining, GetMaxIncrementalTransferSize());
-  const uint8_t* data = transfer->data->front() + transfer->offset;
-  std::vector<uint8_t> buf(data, data + chunk_length);
+  const uint8_t* data = UNSAFE_TODO(transfer->data->data() + transfer->offset);
+  std::vector<uint8_t> buf(data, UNSAFE_TODO(data + chunk_length));
   connection_->SetArrayProperty(transfer->window, transfer->property,
                                 transfer->target, buf);
   transfer->offset += chunk_length;

@@ -42,7 +42,6 @@ class PersonalizationSection : public OsSettingsSection {
 
  private:
   PrefChangeRegistrar pref_change_registrar_;
-  bool isRevampEnabled_;
 };
 
 }  // namespace ash::settings

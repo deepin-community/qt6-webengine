@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 
 import * as Common from '../../core/common/common.js';
@@ -40,7 +40,7 @@ export const startDebuggerTestPromise = function(quiet) {
 };
 
 export const completeDebuggerTest = function() {
-  Common.Settings.moduleSetting('breakpointsActive').set(true);
+  Common.Settings.moduleSetting('breakpoints-active').set(true);
   resumeExecution(TestRunner.completeTest.bind(TestRunner));
 };
 
@@ -285,9 +285,9 @@ export const captureStackTraceIntoString = async function(callFrames, asyncStack
       const script = location.script();
       const uiLocation =
           await Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance().rawLocationToUILocation(location);
-      const isFramework = uiLocation ?
-          Bindings.IgnoreListManager.IgnoreListManager.instance().isUserIgnoreListedURL(uiLocation.uiSourceCode.url()) :
-          false;
+      const isFramework = uiLocation ? Workspace.IgnoreListManager.IgnoreListManager.instance().isUserIgnoreListedURL(
+                                           uiLocation.uiSourceCode.url()) :
+                                       false;
 
       if (options.dropFrameworkCallFrames && isFramework) {
         continue;
@@ -631,7 +631,7 @@ export const debuggerPlugin = function(sourceFrame) {
 export const setEventListenerBreakpoint = function(id, enabled, targetName) {
   const pane = BrowserDebugger.EventListenerBreakpointsSidebarPane.EventListenerBreakpointsSidebarPane.instance();
 
-  const auxData = {'eventName': id};
+  const auxData = {eventName: id};
 
   if (targetName) {
     auxData.targetName = targetName;

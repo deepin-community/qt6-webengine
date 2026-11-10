@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/avx-broadcast.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/gemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_f32_qc8w_gemm_minmax_ukernel_1x8__avx2_broadcast(
@@ -24,7 +29,7 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_1x8__avx2_broadcast(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -37,6 +42,11 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_1x8__avx2_broadcast(
 
   const float* a0 = a;
   float* c0 = c;
+
+  const __m256 vmin = _mm256_set1_ps(params->scalar.min);
+  const __m256 vmax = _mm256_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   do {
     __m256 vacc0x01234567 = _mm256_loadu_ps((const float*) w + 0);
@@ -59,10 +69,8 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_1x8__avx2_broadcast(
     const __m256 vscale01234567 = _mm256_loadu_ps((const float*) w + 0);
     vacc0x01234567 = _mm256_mul_ps(vacc0x01234567, vscale01234567);
     w = (const float*) w + 8;
-    const __m256 vmin = _mm256_load_ps(params->avx.min);
     vacc0x01234567 = _mm256_max_ps(vmin, vacc0x01234567);
 
-    const __m256 vmax = _mm256_load_ps(params->avx.max);
     vacc0x01234567 = _mm256_min_ps(vmax, vacc0x01234567);
 
     if XNN_LIKELY(nc >= 8) {

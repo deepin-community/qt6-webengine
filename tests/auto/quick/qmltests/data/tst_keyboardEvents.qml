@@ -4,11 +4,14 @@
 import QtQuick
 import QtTest
 import QtWebEngine
+import Test.util
 
 TestWebEngineView {
     id: webEngineView
     width: 350
     height: 480
+
+    PopupWindowUtil { id: popupWindowUtil }
 
     TestCase {
         id: testCase
@@ -50,18 +53,18 @@ TestWebEngineView {
             // Move back to the radio buttons with the Shift+Tab key combination
             for (var i = 0; i < 10; ++i)
                 keyPress(Qt.Key_Tab, Qt.ShiftModifier);
-            verifyElementHasFocus("radio2");
+            verifyElementHasFocus("radio1");
 
             // Test the Space key by checking a radio button
-            verifyElementChecked("radio2", false);
+            verifyElementChecked("radio1", false);
             keyClick(Qt.Key_Space);
-            verifyElementChecked("radio2", true);
+            verifyElementChecked("radio1", true);
 
             // Test the Left key by switching the radio button
-            verifyElementChecked("radio1", false);
+            verifyElementChecked("radio2", false);
             keyPress(Qt.Key_Left);
-            verifyElementHasFocus("radio1");
-            verifyElementChecked("radio1", true);
+            verifyElementHasFocus("radio2");
+            verifyElementChecked("radio2", true);
 
             // Test the Space key by unchecking a checkbox
             setFocusToElement("checkbox1");
@@ -113,6 +116,18 @@ TestWebEngineView {
             setFocusToElement("first_hyperlink");
             keyPress(Qt.Key_Enter);
             verify(webEngineView.waitForLoadSucceeded());
+
+            // Test that keyboard input works for popups
+            if (Qt.platform.pluginName == "offscreen") {
+                skip("Can't test popup on offscreen platform");
+            }
+            setFocusToElement("combobox");
+            keyClick(Qt.Key_Space);
+            tryVerify(function() { return popupWindowUtil.getActivePopupWindow() != undefined; }, 5000, "Popup isn't open");
+            keyPress(Qt.Key_Down);
+            keyClick(Qt.Key_Enter);
+            tryVerify(function() { return popupWindowUtil.getActivePopupWindow() == undefined; }, 5000, "Popup didn't close");
+            compareElementValue("combobox", "b");
         }
     }
 }

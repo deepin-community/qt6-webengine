@@ -39,19 +39,17 @@ class Device;
 
 class SharedTextureMemory final : public SharedTextureMemoryBase {
   public:
-    static ResultOrError<Ref<SharedTextureMemory>> Create(
-        Device* device,
-        const char* label,
-        const SharedTextureMemoryDmaBufDescriptor* descriptor);
+    static ResultOrError<Ref<SharedTextureMemory>>
+    Create(Device* device, StringView label, const SharedTextureMemoryDmaBufDescriptor* descriptor);
 
     static ResultOrError<Ref<SharedTextureMemory>> Create(
         Device* device,
-        const char* label,
+        StringView label,
         const SharedTextureMemoryAHardwareBufferDescriptor* descriptor);
 
     static ResultOrError<Ref<SharedTextureMemory>> Create(
         Device* device,
-        const char* label,
+        StringView label,
         const SharedTextureMemoryOpaqueFDDescriptor* descriptor);
 
     RefCountedVkHandle<VkDeviceMemory>* GetVkDeviceMemory() const;
@@ -60,12 +58,12 @@ class SharedTextureMemory final : public SharedTextureMemoryBase {
 
   private:
     static Ref<SharedTextureMemory> Create(Device* device,
-                                           const char* label,
+                                           StringView label,
                                            const SharedTextureMemoryProperties& properties,
                                            uint32_t queueFamilyIndex);
 
     SharedTextureMemory(Device* device,
-                        const char* label,
+                        StringView label,
                         const SharedTextureMemoryProperties& properties,
                         uint32_t queueFamilyIndex);
     void DestroyImpl() override;
@@ -75,11 +73,18 @@ class SharedTextureMemory final : public SharedTextureMemoryBase {
     MaybeError BeginAccessImpl(TextureBase* texture,
                                const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
     ResultOrError<FenceAndSignalValue> EndAccessImpl(TextureBase* texture,
+                                                     ExecutionSerial lastUsageSerial,
                                                      UnpackedPtr<EndAccessState>& state) override;
+
+    MaybeError GetChainedProperties(
+        UnpackedPtr<SharedTextureMemoryProperties>& properties) const override;
 
     Ref<RefCountedVkHandle<VkImage>> mVkImage;
     Ref<RefCountedVkHandle<VkDeviceMemory>> mVkDeviceMemory;
     const uint32_t mQueueFamilyIndex;
+
+    // Populated if this instance was created from an AHardwareBuffer.
+    YCbCrVkDescriptor mYCbCrAHBInfo;
 };
 
 }  // namespace dawn::native::vulkan

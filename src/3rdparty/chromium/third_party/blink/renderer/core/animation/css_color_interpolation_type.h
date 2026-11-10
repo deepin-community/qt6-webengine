@@ -14,6 +14,7 @@
 
 namespace blink {
 
+class OptionalStyleColor;
 class StyleColor;
 
 class CORE_EXPORT CSSColorInterpolationType : public CSSInterpolationType {
@@ -25,6 +26,8 @@ class CORE_EXPORT CSSColorInterpolationType : public CSSInterpolationType {
 
   InterpolationValue MaybeConvertStandardPropertyUnderlyingValue(
       const ComputedStyle&) const final;
+  InterpolationValue MaybeConvertCustomPropertyUnderlyingValue(
+      const CSSValue&) const final;
   void ApplyStandardPropertyValue(const InterpolableValue&,
                                   const NonInterpolableValue*,
                                   StyleResolverState&) const final;
@@ -39,11 +42,22 @@ class CORE_EXPORT CSSColorInterpolationType : public CSSInterpolationType {
                                                      InterpolableList& list_b);
 
   static InterpolableColor* CreateInterpolableColor(const Color&);
-  static InterpolableColor* CreateInterpolableColor(CSSValueID);
-  static InterpolableColor* CreateInterpolableColor(const StyleColor&);
-  static InterpolableColor* MaybeCreateInterpolableColor(const CSSValue&);
+  static InterpolableColor* CreateInterpolableColor(
+      CSSValueID,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider);
+  static InterpolableColor* CreateInterpolableColor(
+      const StyleColor&,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider);
+  static InterpolableColor* MaybeCreateInterpolableColor(
+      const CSSValue&,
+      const StyleResolverState*);
 
-  static BaseInterpolableColor* CreateBaseInterpolableColor(const StyleColor&);
+  static BaseInterpolableColor* CreateBaseInterpolableColor(
+      const StyleColor&,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider);
 
   static Color ResolveInterpolableColor(
       const InterpolableValue& interpolable_color,
@@ -62,6 +76,7 @@ class CORE_EXPORT CSSColorInterpolationType : public CSSInterpolationType {
   static bool IsNonKeywordColor(const InterpolableValue&);
 
  private:
+  friend class CSSGapColorListInterpolationType;
   InterpolationValue MaybeConvertNeutral(const InterpolationValue& underlying,
                                          ConversionCheckers&) const final;
   InterpolationValue MaybeConvertInitial(const StyleResolverState&,
@@ -69,14 +84,18 @@ class CORE_EXPORT CSSColorInterpolationType : public CSSInterpolationType {
   InterpolationValue MaybeConvertInherit(const StyleResolverState&,
                                          ConversionCheckers&) const final;
   InterpolationValue MaybeConvertValue(const CSSValue&,
-                                       const StyleResolverState*,
+                                       const StyleResolverState&,
                                        ConversionCheckers&) const final;
   static InterpolationValue ConvertStyleColorPair(
-      const absl::optional<StyleColor>&,
-      const absl::optional<StyleColor>&);
+      const OptionalStyleColor&,
+      const OptionalStyleColor&,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider);
   static InterpolationValue ConvertStyleColorPair(
       const StyleColor& unvisited_color,
-      const StyleColor& visited_color);
+      const StyleColor& visited_color,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider);
 
   const CSSValue* CreateCSSValue(const InterpolableValue&,
                                  const NonInterpolableValue*,

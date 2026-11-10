@@ -5,6 +5,7 @@
 #include "content/browser/browsing_topics/browsing_topics_site_data_storage.h"
 
 #include "base/files/file_util.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "sql/database.h"
 #include "sql/recovery.h"
@@ -25,14 +26,6 @@ void RecordInitializationStatus(bool successful) {
 }
 
 }  // namespace
-
-// When enabled, prefer to use the new recovery module to recover the
-// `BrowsingTopicsSiteDataStorage` database. See https://crbug.com/1385500 for
-// details. This is a kill switch and is not intended to be used in a field
-// trial.
-BASE_FEATURE(kBrowsingTopicsSiteDataStorageUseBuiltInRecoveryIfSupported,
-             "BrowsingTopicsSiteDataStorageUseBuiltInRecoveryIfSupported",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BrowsingTopicsSiteDataStorage::BrowsingTopicsSiteDataStorage(
     const base::FilePath& path_to_database)
@@ -244,9 +237,9 @@ bool BrowsingTopicsSiteDataStorage::LazyInit() {
   if (db_init_status_ != InitStatus::kUnattempted)
     return db_init_status_ == InitStatus::kSuccess;
 
-  db_ = std::make_unique<sql::Database>(sql::DatabaseOptions{
-      .exclusive_locking = true, .page_size = 4096, .cache_size = 32});
-  db_->set_histogram_tag("BrowsingTopics");
+  db_ =
+      std::make_unique<sql::Database>(sql::DatabaseOptions().set_cache_size(32),
+                                      sql::Database::Tag("BrowsingTopics"));
 
   // base::Unretained is safe here because this BrowsingTopicsSiteDataStorage
   // owns the sql::Database instance that stores and uses the callback. So,
@@ -260,12 +253,16 @@ bool BrowsingTopicsSiteDataStorage::LazyInit() {
     return false;
   }
 
-  // TODO(yaoxia): measure metrics for the DB file size to have some idea if it
-  // gets too big.
-
   if (!InitializeTables()) {
     HandleInitializationFailure();
     return false;
+  }
+
+  std::optional<int64_t> file_size = base::GetFileSize(path_to_database_);
+  if (file_size.has_value()) {
+    int64_t file_size_kb = file_size.value() / 1024;
+    base::UmaHistogramCounts1M("BrowsingTopics.SiteDataStorage.FileSize.KB",
+                               file_size_kb);
   }
 
   db_init_status_ = InitStatus::kSuccess;
@@ -351,10 +348,9 @@ void BrowsingTopicsSiteDataStorage::DatabaseErrorCallback(
     sql::Statement* stmt) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Attempt to recover a corrupt database, if it is eligible to be recovered.
-  if (sql::BuiltInRecovery::RecoverIfPossible(
+  if (sql::Recovery::RecoverIfPossible(
           db_.get(), extended_error,
-          sql::BuiltInRecovery::Strategy::kRecoverWithMetaVersionOrRaze,
-          &kBrowsingTopicsSiteDataStorageUseBuiltInRecoveryIfSupported)) {
+          sql::Recovery::Strategy::kRecoverWithMetaVersionOrRaze)) {
     // Recovery was attempted. The database handle has been poisoned and the
     // error callback has been reset.
 

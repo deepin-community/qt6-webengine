@@ -21,7 +21,7 @@
 #include "media/capture/video/video_capture_buffer_tracker_factory.h"
 #include "media/capture/video_capture_types.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "media/base/win/dxgi_device_manager.h"
@@ -71,7 +71,6 @@ class CAPTURE_EXPORT VideoCaptureBufferPoolImpl
   void RelinquishConsumerHold(int buffer_id, int num_clients) override;
 
  private:
-  friend class base::RefCountedThreadSafe<VideoCaptureBufferPoolImpl>;
   ~VideoCaptureBufferPoolImpl() override;
 
   VideoCaptureDevice::Client::ReserveResult ReserveForProducerInternal(

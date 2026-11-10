@@ -5,11 +5,13 @@
 #ifndef COMPONENTS_MEDIA_ROUTER_COMMON_PROVIDERS_CAST_CERTIFICATE_CAST_CERT_VALIDATOR_H_
 #define COMPONENTS_MEDIA_ROUTER_COMMON_PROVIDERS_CAST_CERTIFICATE_CAST_CERT_VALIDATOR_H_
 
+#include <atomic>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "base/strings/string_piece.h"
+#include "base/files/file_path.h"
 #include "base/time/time.h"
 
 namespace bssl {
@@ -32,9 +34,17 @@ enum class CastDeviceCertPolicy {
 enum class CRLPolicy {
   // Revocation is checked if a CRL is provided. If CRL is not provided,
   // revocation is checked by fallback CRL.
+  //
+  // DEPRECATED.  A CRL is always required.
+  //
+  // TODO(crbug.com/411575751): Remove this policy.
   CRL_OPTIONAL_WITH_FALLBACK,
 
   // Revocation is only checked if a CRL is provided.
+  //
+  // DEPRECATED.  A CRL is always required.
+  //
+  // TODO(crbug.com/411575751): Remove this policy.
   CRL_OPTIONAL,
 
   // Revocation is always checked. If CRL is not provided, revocation is checked
@@ -85,20 +95,20 @@ enum class CastDigestAlgorithm {
 // certificate.
 class CertVerificationContext {
  public:
-  CertVerificationContext() {}
+  CertVerificationContext();
 
   CertVerificationContext(const CertVerificationContext&) = delete;
   CertVerificationContext& operator=(const CertVerificationContext&) = delete;
 
-  virtual ~CertVerificationContext() {}
+  virtual ~CertVerificationContext();
 
   // Use the public key from the verified certificate to verify an
   // RSASSA-PKCS1-v1_5 |signature| over arbitrary |data|, with the specified
   // |digest_algorithm|. Both |signature| and |data| hold raw binary data.
   // Returns true if the signature was correct.
   virtual bool VerifySignatureOverData(
-      const base::StringPiece& signature,
-      const base::StringPiece& data,
+      std::string_view signature,
+      std::string_view data,
       CastDigestAlgorithm digest_algorithm) const = 0;
 
   // Retrieve the Common Name attribute of the subject's distinguished name from
@@ -107,7 +117,13 @@ class CertVerificationContext {
   virtual std::string GetCommonName() const = 0;
 };
 
-// Verifies a cast device certficate given a chain of DER-encoded certificates,
+// These provide access for tests to change the CastTrustStoreSingleton.
+void CastTrustStoreAddDefaultCertificatesForTesting();
+void CastTrustStoreAddBuiltInCertificatesForTesting();
+void CastTrustStoreAddCertificateFromPathForTesting(base::FilePath cert_path);
+void CastTrustStoreClearForTesting();
+
+// Verifies a cast device certificate given a chain of DER-encoded certificates,
 // using the built-in Cast trust anchors.
 //
 // Inputs:
@@ -144,6 +160,7 @@ class CertVerificationContext {
     std::unique_ptr<CertVerificationContext>* context,
     CastDeviceCertPolicy* policy,
     const CastCRL* crl,
+    const CastCRL* fallback_crl,
     CRLPolicy crl_policy);
 
 // This is an overloaded version of VerifyDeviceCert that allows

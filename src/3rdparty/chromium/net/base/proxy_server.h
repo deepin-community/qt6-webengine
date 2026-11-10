@@ -11,10 +11,14 @@
 #include <ostream>
 #include <string>
 #include <string_view>
-#include <tuple>
 
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
+
+namespace base {
+class Pickle;
+class PickleIterator;
+}  // namespace base
 
 namespace net {
 
@@ -58,6 +62,10 @@ class NET_EXPORT ProxyServer {
   static ProxyServer FromSchemeHostAndPort(Scheme scheme,
                                            std::string_view host,
                                            std::optional<uint16_t> port);
+
+  static ProxyServer CreateFromPickle(base::PickleIterator* pickle_iter);
+
+  void Persist(base::Pickle* pickle) const;
 
   // In URL format (with brackets around IPv6 literals). Must not call for
   // invalid ProxyServers.
@@ -103,18 +111,8 @@ class NET_EXPORT ProxyServer {
   // scheme. Returns -1 if unknown.
   static int GetDefaultPortForScheme(Scheme scheme);
 
-  bool operator==(const ProxyServer& other) const {
-    return scheme_ == other.scheme_ &&
-           host_port_pair_.Equals(other.host_port_pair_);
-  }
-
-  bool operator!=(const ProxyServer& other) const { return !(*this == other); }
-
-  // Comparator function so this can be placed in a std::map.
-  bool operator<(const ProxyServer& other) const {
-    return std::tie(scheme_, host_port_pair_) <
-           std::tie(other.scheme_, other.host_port_pair_);
-  }
+  friend bool operator==(const ProxyServer&, const ProxyServer&) = default;
+  friend auto operator<=>(const ProxyServer&, const ProxyServer&) = default;
 
  private:
   Scheme scheme_ = SCHEME_INVALID;

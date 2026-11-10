@@ -62,8 +62,26 @@
 #define DISABLE_I8MM
 #endif
 
+#if HAVE_AS_ARCHEXT_SVE_DIRECTIVE
+#define ENABLE_SVE  .arch_extension sve
+#define DISABLE_SVE .arch_extension nosve
+#else
+#define ENABLE_SVE
+#define DISABLE_SVE
+#endif
+
+#if HAVE_AS_ARCHEXT_SVE2_DIRECTIVE
+#define ENABLE_SVE2  .arch_extension sve2
+#define DISABLE_SVE2 .arch_extension nosve2
+#else
+#define ENABLE_SVE2
+#define DISABLE_SVE2
+#endif
+
 DISABLE_DOTPROD
 DISABLE_I8MM
+DISABLE_SVE
+DISABLE_SVE2
 
 
 /* Support macros for
@@ -184,7 +202,7 @@ DISABLE_I8MM
         .popsection
 #endif
 
-.macro  function name, export=0, align=2
+.macro  function name, export=0, align=4
     .macro endfunc
 ELF     .size   \name, . - \name
 FUNC    .endfunc
@@ -193,6 +211,16 @@ FUNC    .endfunc
         .text
         .align          \align
     .if \export
+#if defined(_WIN32)
+        .global \name
+ELF     .type   \name, %function
+// Chromium patch to ensure symbols are correctly hidden.
+ELF     .hidden \name
+MACH    .private_extern \name
+FUNC    .func   \name
+\name:
+        AARCH64_VALID_CALL_TARGET
+#else
         .global EXTERN_ASM\name
 ELF     .type   EXTERN_ASM\name, %function
 // Chromium patch to ensure symbols are correctly hidden.
@@ -201,6 +229,7 @@ MACH    .private_extern EXTERN_ASM\name
 FUNC    .func   EXTERN_ASM\name
 EXTERN_ASM\name:
         AARCH64_VALID_CALL_TARGET
+#endif
     .else
 ELF     .type   \name, %function
 FUNC    .func   \name
@@ -208,7 +237,7 @@ FUNC    .func   \name
     .endif
 .endm
 
-.macro  const   name, align=2, relocate=0
+.macro  const   name, align=4, relocate=0
     .macro endconst
 ELF     .size   \name, . - \name
         .purgem endconst

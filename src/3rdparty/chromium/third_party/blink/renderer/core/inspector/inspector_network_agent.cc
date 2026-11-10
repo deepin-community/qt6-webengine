@@ -34,14 +34,18 @@
 #include <utility>
 
 #include "base/containers/span.h"
+#include "base/containers/span_or_size.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
+#include "net/base/features.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cert/ct_sct_to_string.h"
 #include "net/cert/x509_util.h"
+#include "net/filter/source_stream_type.h"
 #include "net/http/http_status_code.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
@@ -69,6 +73,7 @@
 #include "third_party/blink/renderer/core/inspector/network_resources_data.h"
 #include "third_party/blink/renderer/core/inspector/protocol/network.h"
 #include "third_party/blink/renderer/core/inspector/request_debug_header_scope.h"
+#include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/loader/mixed_content_checker.h"
@@ -95,6 +100,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_client.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
@@ -102,6 +108,7 @@
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
@@ -156,7 +163,6 @@ bool LoadsFromCacheOnly(const ResourceRequest& request) {
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 protocol::Network::CertificateTransparencyCompliance
@@ -175,10 +181,8 @@ SerializeCTPolicyCompliance(net::ct::CTPolicyCompliance ct_compliance) {
       return protocol::Network::CertificateTransparencyComplianceEnum::Unknown;
     case net::ct::CTPolicyCompliance::CT_POLICY_COUNT:
       NOTREACHED();
-      // Fallthrough to default.
   }
   NOTREACHED();
-  return protocol::Network::CertificateTransparencyComplianceEnum::Unknown;
 }
 
 static std::unique_ptr<protocol::Network::Headers> BuildObjectForHeaders(
@@ -191,6 +195,39 @@ static std::unique_ptr<protocol::Network::Headers> BuildObjectForHeaders(
   return protocol::Network::Headers::fromValue(headers_object.get(), &errors);
 }
 
+String NetErrorToString(int net_error) {
+  switch (net_error) {
+    case net::ERR_ABORTED:
+      return protocol::Network::ErrorReasonEnum::Aborted;
+    case net::ERR_TIMED_OUT:
+      return protocol::Network::ErrorReasonEnum::TimedOut;
+    case net::ERR_ACCESS_DENIED:
+      return protocol::Network::ErrorReasonEnum::AccessDenied;
+    case net::ERR_CONNECTION_CLOSED:
+      return protocol::Network::ErrorReasonEnum::ConnectionClosed;
+    case net::ERR_CONNECTION_RESET:
+      return protocol::Network::ErrorReasonEnum::ConnectionReset;
+    case net::ERR_CONNECTION_REFUSED:
+      return protocol::Network::ErrorReasonEnum::ConnectionRefused;
+    case net::ERR_CONNECTION_ABORTED:
+      return protocol::Network::ErrorReasonEnum::ConnectionAborted;
+    case net::ERR_CONNECTION_FAILED:
+      return protocol::Network::ErrorReasonEnum::ConnectionFailed;
+    case net::ERR_NAME_NOT_RESOLVED:
+      return protocol::Network::ErrorReasonEnum::NameNotResolved;
+    case net::ERR_INTERNET_DISCONNECTED:
+      return protocol::Network::ErrorReasonEnum::InternetDisconnected;
+    case net::ERR_ADDRESS_UNREACHABLE:
+      return protocol::Network::ErrorReasonEnum::AddressUnreachable;
+    case net::ERR_BLOCKED_BY_CLIENT:
+      return protocol::Network::ErrorReasonEnum::BlockedByClient;
+    case net::ERR_BLOCKED_BY_RESPONSE:
+      return protocol::Network::ErrorReasonEnum::BlockedByResponse;
+    default:
+      return protocol::Network::ErrorReasonEnum::Failed;
+  }
+}
+
 class InspectorFileReaderLoaderClient final
     : public GarbageCollected<InspectorFileReaderLoaderClient>,
       public FileReaderClient {
@@ -198,7 +235,7 @@ class InspectorFileReaderLoaderClient final
   InspectorFileReaderLoaderClient(
       scoped_refptr<BlobDataHandle> blob,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      base::OnceCallback<void(scoped_refptr<SharedBuffer>)> callback)
+      base::OnceCallback<void(std::optional<SegmentedBuffer>)> callback)
       : blob_(std::move(blob)),
         callback_(std::move(callback)),
         loader_(MakeGarbageCollected<FileReaderLoader>(this,
@@ -213,7 +250,6 @@ class InspectorFileReaderLoaderClient final
   ~InspectorFileReaderLoaderClient() override = default;
 
   void Start() {
-    raw_data_ = SharedBuffer::Create();
     loader_->Start(blob_);
   }
 
@@ -221,17 +257,16 @@ class InspectorFileReaderLoaderClient final
     return FileErrorCode::kOK;
   }
 
-  FileErrorCode DidReceiveData(const char* data,
-                               unsigned data_length) override {
-    if (!data_length)
-      return FileErrorCode::kOK;
-    raw_data_->Append(data, data_length);
+  FileErrorCode DidReceiveData(base::span<const uint8_t> data) override {
+    if (!data.empty()) {
+      raw_data_.Append(data);
+    }
     return FileErrorCode::kOK;
   }
 
-  void DidFinishLoading() override { Done(raw_data_); }
+  void DidFinishLoading() override { Done(std::move(raw_data_)); }
 
-  void DidFail(FileErrorCode) override { Done(nullptr); }
+  void DidFail(FileErrorCode) override { Done(std::nullopt); }
 
   void Trace(Visitor* visitor) const override {
     FileReaderClient::Trace(visitor);
@@ -239,8 +274,8 @@ class InspectorFileReaderLoaderClient final
   }
 
  private:
-  void Done(scoped_refptr<SharedBuffer> output) {
-    std::move(callback_).Run(output);
+  void Done(std::optional<SegmentedBuffer> output) {
+    std::move(callback_).Run(std::move(output));
     keep_alive_.Clear();
     loader_ = nullptr;
   }
@@ -248,9 +283,9 @@ class InspectorFileReaderLoaderClient final
   scoped_refptr<BlobDataHandle> blob_;
   String mime_type_;
   String text_encoding_name_;
-  base::OnceCallback<void(scoped_refptr<SharedBuffer>)> callback_;
+  base::OnceCallback<void(std::optional<SegmentedBuffer>)> callback_;
   Member<FileReaderLoader> loader_;
-  scoped_refptr<SharedBuffer> raw_data_;
+  SegmentedBuffer raw_data_;
   SelfKeepAlive<InspectorFileReaderLoaderClient> keep_alive_;
 };
 
@@ -258,7 +293,7 @@ static void ResponseBodyFileReaderLoaderDone(
     const String& mime_type,
     const String& text_encoding_name,
     std::unique_ptr<GetResponseBodyCallback> callback,
-    scoped_refptr<SharedBuffer> raw_data) {
+    std::optional<SegmentedBuffer> raw_data) {
   if (!raw_data) {
     callback->sendFailure(
         protocol::Response::ServerError("Couldn't read BLOB"));
@@ -266,8 +301,9 @@ static void ResponseBodyFileReaderLoaderDone(
   }
   String result;
   bool base64_encoded;
-  if (InspectorPageAgent::SharedBufferContent(
-          raw_data, mime_type, text_encoding_name, &result, &base64_encoded)) {
+  if (InspectorPageAgent::SegmentedBufferContent(&*raw_data, mime_type,
+                                                 text_encoding_name, &result,
+                                                 &base64_encoded)) {
     callback->sendSuccess(result, base64_encoded);
   } else {
     callback->sendFailure(
@@ -275,8 +311,7 @@ static void ResponseBodyFileReaderLoaderDone(
   }
 }
 
-class InspectorPostBodyParser
-    : public WTF::RefCounted<InspectorPostBodyParser> {
+class InspectorPostBodyParser : public RefCounted<InspectorPostBodyParser> {
  public:
   InspectorPostBodyParser(
       std::unique_ptr<GetRequestPostDataCallback> callback,
@@ -297,11 +332,11 @@ class InspectorPostBodyParser
       const FormDataElement& data = request_body->Elements()[i];
       switch (data.type_) {
         case FormDataElement::kData:
-          parts_[i] = String::FromUTF8WithLatin1Fallback(data.data_.data(),
-                                                         data.data_.size());
+          parts_[i] = String::FromUTF8WithLatin1Fallback(
+              base::as_byte_span(data.data_));
           break;
         case FormDataElement::kEncodedBlob:
-          ReadDataBlob(data.optional_blob_data_handle_, &parts_[i]);
+          ReadDataBlob(data.blob_data_handle_, &parts_[i]);
           break;
         case FormDataElement::kEncodedFile:
         case FormDataElement::kDataPipe:
@@ -312,7 +347,7 @@ class InspectorPostBodyParser
   }
 
  private:
-  friend class WTF::RefCounted<InspectorPostBodyParser>;
+  friend class RefCounted<InspectorPostBodyParser>;
 
   ~InspectorPostBodyParser() {
     if (error_)
@@ -324,10 +359,11 @@ class InspectorPostBodyParser
   }
 
   void BlobReadCallback(String* destination,
-                        scoped_refptr<SharedBuffer> raw_data) {
+                        std::optional<SegmentedBuffer> raw_data) {
     if (raw_data) {
-      *destination = String::FromUTF8WithLatin1Fallback(raw_data->Data(),
-                                                        raw_data->size());
+      Vector<char> flattened_data = std::move(*raw_data).CopyAs<Vector<char>>();
+      *destination = String::FromUTF8WithLatin1Fallback(
+          base::as_byte_span(flattened_data));
     } else {
       error_ = true;
     }
@@ -387,7 +423,6 @@ String ResourcePriorityJSON(ResourceLoadPriority priority) {
       break;
   }
   NOTREACHED();
-  return protocol::Network::ResourcePriorityEnum::Medium;
 }
 
 String BuildBlockedReason(ResourceRequestBlockedReason reason) {
@@ -400,6 +435,8 @@ String BuildBlockedReason(ResourceRequestBlockedReason reason) {
       return protocol::Network::BlockedReasonEnum::Origin;
     case ResourceRequestBlockedReason::kInspector:
       return protocol::Network::BlockedReasonEnum::Inspector;
+    case ResourceRequestBlockedReason::kIntegrity:
+      return protocol::Network::BlockedReasonEnum::Integrity;
     case ResourceRequestBlockedReason::kSubresourceFilter:
       return protocol::Network::BlockedReasonEnum::SubresourceFilter;
     case ResourceRequestBlockedReason::kContentType:
@@ -419,28 +456,34 @@ String BuildBlockedReason(ResourceRequestBlockedReason reason) {
         kCorpNotSameOriginAfterDefaultedToSameOriginByCoep:
       return protocol::Network::BlockedReasonEnum::
           CorpNotSameOriginAfterDefaultedToSameOriginByCoep;
+    case blink::ResourceRequestBlockedReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByDip:
+      return protocol::Network::BlockedReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByDip;
+    case blink::ResourceRequestBlockedReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip:
+      return protocol::Network::BlockedReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip;
     case blink::ResourceRequestBlockedReason::kCorpNotSameSite:
       return protocol::Network::BlockedReasonEnum::CorpNotSameSite;
+    case blink::ResourceRequestBlockedReason::kSRIMessageSignatureMismatch:
+      return protocol::Network::BlockedReasonEnum::SriMessageSignatureMismatch;
     case ResourceRequestBlockedReason::kConversionRequest:
       // This is actually never reached, as the conversion request
       // is marked as successful and no blocking reason is reported.
       NOTREACHED();
-      return protocol::Network::BlockedReasonEnum::Other;
-    case blink::ResourceRequestBlockedReason::kSupervisedUserUrlBlocked:
-      return protocol::Network::BlockedReasonEnum::Other;
   }
   NOTREACHED();
-  return protocol::Network::BlockedReasonEnum::Other;
 }
 
-Maybe<String> BuildBlockedReason(const ResourceError& error) {
+std::optional<String> BuildBlockedReason(const ResourceError& error) {
   int error_code = error.ErrorCode();
   if (error_code != net::ERR_BLOCKED_BY_CLIENT &&
       error_code != net::ERR_BLOCKED_BY_RESPONSE) {
-    return Maybe<String>();
+    return std::nullopt;
   }
 
-  absl::optional<ResourceRequestBlockedReason> resource_request_blocked_reason =
+  std::optional<ResourceRequestBlockedReason> resource_request_blocked_reason =
       error.GetResourceRequestBlockedReason();
   if (resource_request_blocked_reason)
     return BuildBlockedReason(*resource_request_blocked_reason);
@@ -557,6 +600,10 @@ String BuildCorsError(network::mojom::CorsError cors_error) {
     case network::mojom::CorsError::kPrivateNetworkAccessPermissionDenied:
       return protocol::Network::CorsErrorEnum::
           PrivateNetworkAccessPermissionDenied;
+
+    case network::mojom::CorsError::kLocalNetworkAccessPermissionDenied:
+      return protocol::Network::CorsErrorEnum::
+          LocalNetworkAccessPermissionDenied;
   }
 }
 
@@ -578,6 +625,25 @@ String BuildServiceWorkerResponseSource(const ResourceResponse& response) {
       return protocol::Network::ServiceWorkerResponseSourceEnum::Network;
     case network::mojom::FetchResponseSource::kUnspecified:
       return protocol::Network::ServiceWorkerResponseSourceEnum::FallbackCode;
+  }
+}
+
+String BuildServiceWorkerRouterSourceType(
+    const network::mojom::ServiceWorkerRouterSourceType& type) {
+  switch (type) {
+    case network::mojom::ServiceWorkerRouterSourceType::kNetwork:
+      return protocol::Network::ServiceWorkerRouterSourceEnum::Network;
+    case network::mojom::ServiceWorkerRouterSourceType::
+        kRaceNetworkAndFetchEvent:
+      return protocol::Network::ServiceWorkerRouterSourceEnum::
+          RaceNetworkAndFetchHandler;
+    case network::mojom::ServiceWorkerRouterSourceType::kFetchEvent:
+      return protocol::Network::ServiceWorkerRouterSourceEnum::FetchEvent;
+    case network::mojom::ServiceWorkerRouterSourceType::kCache:
+      return protocol::Network::ServiceWorkerRouterSourceEnum::Cache;
+    case network::mojom::ServiceWorkerRouterSourceType::kRaceNetworkAndCache:
+      return protocol::Network::ServiceWorkerRouterSourceEnum::
+          RaceNetworkAndCache;
   }
 }
 
@@ -636,17 +702,14 @@ String GetReferrerPolicy(network::mojom::ReferrerPolicy policy) {
 std::unique_ptr<protocol::Network::WebSocketFrame> WebSocketMessageToProtocol(
     int op_code,
     bool masked,
-    const char* payload,
-    size_t payload_length) {
+    base::span<const char> payload) {
   return protocol::Network::WebSocketFrame::create()
       .setOpcode(op_code)
       .setMask(masked)
       // Only interpret the payload as UTF-8 when it's a text message
-      .setPayloadData(
-          op_code == 1
-              ? String::FromUTF8WithLatin1Fallback(payload, payload_length)
-              : Base64Encode(
-                    base::as_bytes(base::make_span(payload, payload_length))))
+      .setPayloadData(op_code == 1 ? String::FromUTF8WithLatin1Fallback(
+                                         base::as_bytes(payload))
+                                   : Base64Encode(base::as_bytes(payload)))
       .build();
 }
 
@@ -700,7 +763,7 @@ void SetNetworkStateOverride(bool offline,
   // have per-frame override instead.
   if (offline || latency || download_throughput || upload_throughput) {
     GetNetworkStateNotifier().SetNetworkConnectionInfoOverride(
-        !offline, type, absl::nullopt, latency,
+        !offline, type, std::nullopt, latency,
         download_throughput / (1024 * 1024 / 8));
   } else {
     GetNetworkStateNotifier().ClearOverride();
@@ -713,14 +776,14 @@ String IPAddressToString(const net::IPAddress& address) {
     return unbracketed;
   }
 
-  return "[" + unbracketed + "]";
+  return StrCat({"[", unbracketed, "]"});
 }
 
 namespace ContentEncodingEnum = protocol::Network::ContentEncodingEnum;
 
-absl::optional<String> AcceptedEncodingFromProtocol(
+String AcceptedEncodingFromProtocol(
     const protocol::Network::ContentEncoding& encoding) {
-  absl::optional<String> result;
+  String result;
   if (ContentEncodingEnum::Gzip == encoding ||
       ContentEncodingEnum::Br == encoding ||
       ContentEncodingEnum::Deflate == encoding ||
@@ -730,19 +793,18 @@ absl::optional<String> AcceptedEncodingFromProtocol(
   return result;
 }
 
-using SourceTypeEnum = net::SourceStream::SourceType;
+using SourceTypeEnum = net::SourceStreamType;
 SourceTypeEnum SourceTypeFromString(const String& type) {
   if (type == ContentEncodingEnum::Gzip)
-    return SourceTypeEnum::TYPE_GZIP;
+    return SourceTypeEnum::kGzip;
   if (type == ContentEncodingEnum::Deflate)
-    return SourceTypeEnum::TYPE_DEFLATE;
+    return SourceTypeEnum::kDeflate;
   if (type == ContentEncodingEnum::Br)
-    return SourceTypeEnum::TYPE_BROTLI;
+    return SourceTypeEnum::kBrotli;
   if (type == ContentEncodingEnum::Zstd) {
-    return SourceTypeEnum::TYPE_ZSTD;
+    return SourceTypeEnum::kZstd;
   }
   NOTREACHED();
-  return SourceTypeEnum::TYPE_UNKNOWN;
 }
 
 }  // namespace
@@ -802,16 +864,14 @@ static bool FormDataToString(
 
   for (const auto& element : body->Elements()) {
     auto data_entry = protocol::Network::PostDataEntry::create().build();
-    auto bytes = protocol::Binary::fromSpan(
-        reinterpret_cast<const uint8_t*>(element.data_.data()),
-        element.data_.size());
-    data_entry->setBytes(std::move(bytes));
+    data_entry->setBytes(
+        protocol::Binary::fromSpan(base::as_byte_span(element.data_)));
     data_entries->push_back(std::move(data_entry));
   }
 
   Vector<char> bytes;
   body->Flatten(bytes);
-  *content = String::FromUTF8WithLatin1Fallback(bytes.data(), bytes.size());
+  *content = String::FromUTF8WithLatin1Fallback(base::as_byte_span(bytes));
   return true;
 }
 
@@ -862,7 +922,7 @@ static std::unique_ptr<protocol::Network::SecurityDetails> BuildSecurityDetails(
     san_list->push_back(StringFromASCII(san));
   }
   for (const std::string& san : san_ip) {
-    net::IPAddress ip(reinterpret_cast<const uint8_t*>(san.data()), san.size());
+    net::IPAddress ip(base::as_byte_span(san));
     san_list->push_back(StringFromASCII(ip.ToString()));
   }
 
@@ -948,8 +1008,9 @@ BuildObjectForResourceRequest(const ResourceRequest& request,
           .setInitialPriority(ResourcePriorityJSON(request.Priority()))
           .setReferrerPolicy(GetReferrerPolicy(request.GetReferrerPolicy()))
           .build();
-  if (url.FragmentIdentifier())
-    result->setUrlFragment("#" + url.FragmentIdentifier());
+  if (url.HasFragmentIdentifier()) {
+    result->setUrlFragment(StrCat({"#", url.FragmentIdentifier().ToString()}));
+  }
   if (!data_string.empty())
     result->setPostData(data_string);
   if (data_entries->size())
@@ -997,6 +1058,7 @@ String AlternateProtocolUsageToString(
 
 static std::unique_ptr<protocol::Network::Response>
 BuildObjectForResourceResponse(const ResourceResponse& response,
+                               const ExecutionContext* context,
                                const Resource* cached_resource = nullptr,
                                bool* is_empty = nullptr) {
   if (response.IsNull())
@@ -1057,6 +1119,12 @@ BuildObjectForResourceResponse(const ResourceResponse& response,
           .setSecurityState(security_state)
           .build();
 
+  // TODO(crbug.com/432716000): Remove this guard once IPP is fully launched.
+  if (net::features::kIpPrivacyEnableIppInDevTools.Get()) {
+    response_object->setIsIpProtectionUsed(response.IsIpProtectionUsed() &&
+                                           !response.WasCached());
+  }
+
   response_object->setFromDiskCache(response.WasCached());
   response_object->setFromServiceWorker(response.WasFetchedViaServiceWorker());
   if (response.WasFetchedViaServiceWorker()) {
@@ -1071,17 +1139,46 @@ BuildObjectForResourceResponse(const ResourceResponse& response,
     response_object->setCacheStorageCacheName(response.CacheStorageCacheName());
   }
   if (response.GetServiceWorkerRouterInfo()) {
-    response_object->setServiceWorkerRouterInfo(
-        protocol::Network::ServiceWorkerRouterInfo::create()
-            .setRuleIdMatched(
-                response.GetServiceWorkerRouterInfo()->RuleIdMatched())
-            .build());
+    auto router_info =
+        protocol::Network::ServiceWorkerRouterInfo::create().build();
+    if (response.GetServiceWorkerRouterInfo()->RuleIdMatched()) {
+      router_info->setRuleIdMatched(
+          *response.GetServiceWorkerRouterInfo()->RuleIdMatched());
+    }
+
+    if (response.GetServiceWorkerRouterInfo()->MatchedSourceType()) {
+      router_info->setMatchedSourceType(BuildServiceWorkerRouterSourceType(
+          *response.GetServiceWorkerRouterInfo()->MatchedSourceType()));
+    }
+
+    if (response.GetServiceWorkerRouterInfo()->ActualSourceType()) {
+      router_info->setActualSourceType(BuildServiceWorkerRouterSourceType(
+          *response.GetServiceWorkerRouterInfo()->ActualSourceType()));
+    }
+    response_object->setServiceWorkerRouterInfo(std::move(router_info));
   }
 
   response_object->setFromPrefetchCache(response.WasInPrefetchCache());
-  if (response.GetResourceLoadTiming())
-    response_object->setTiming(
-        BuildObjectForTiming(*response.GetResourceLoadTiming()));
+  if (auto* resource_load_timing = response.GetResourceLoadTiming()) {
+    auto load_timing = BuildObjectForTiming(*resource_load_timing);
+
+    if (RuntimeEnabledFeatures::ServiceWorkerStaticRouterTimingInfoEnabled(
+            context)) {
+      if (!resource_load_timing->WorkerRouterEvaluationStart().is_null()) {
+        load_timing->setWorkerRouterEvaluationStart(
+            resource_load_timing->CalculateMillisecondDelta(
+                resource_load_timing->WorkerRouterEvaluationStart()));
+      }
+
+      if (!resource_load_timing->WorkerCacheLokupStart().is_null()) {
+        load_timing->setWorkerCacheLookupStart(
+            resource_load_timing->CalculateMillisecondDelta(
+                resource_load_timing->WorkerCacheLokupStart()));
+      }
+    }
+
+    response_object->setTiming(std::move(load_timing));
+  }
 
   const net::IPEndPoint& remote_ip_endpoint = response.RemoteIPEndpoint();
   if (remote_ip_endpoint.address().IsValid()) {
@@ -1090,26 +1187,8 @@ BuildObjectForResourceResponse(const ResourceResponse& response,
     response_object->setRemotePort(remote_ip_endpoint.port());
   }
 
-  String protocol = response.AlpnNegotiatedProtocol();
-  if (protocol.empty() || protocol == "unknown") {
-    if (response.WasFetchedViaSPDY()) {
-      protocol = "h2";
-    } else if (response.IsHTTP()) {
-      protocol = "http";
-      if (response.HttpVersion() ==
-          ResourceResponse::HTTPVersion::kHTTPVersion_0_9)
-        protocol = "http/0.9";
-      else if (response.HttpVersion() ==
-               ResourceResponse::HTTPVersion::kHTTPVersion_1_0)
-        protocol = "http/1.0";
-      else if (response.HttpVersion() ==
-               ResourceResponse::HTTPVersion::kHTTPVersion_1_1)
-        protocol = "http/1.1";
-    } else {
-      protocol = response.CurrentRequestUrl().Protocol();
-    }
-  }
-  response_object->setProtocol(protocol);
+  response_object->setProtocol(
+      InspectorNetworkAgent::GetProtocolAsString(response));
   if (response.AlternateProtocolUsage() !=
       net::AlternateProtocolUsage::
           ALTERNATE_PROTOCOL_USAGE_UNSPECIFIED_REASON) {
@@ -1117,9 +1196,13 @@ BuildObjectForResourceResponse(const ResourceResponse& response,
         AlternateProtocolUsageToString(response.AlternateProtocolUsage()));
   }
 
-  const absl::optional<net::SSLInfo>& ssl_info = response.GetSSLInfo();
+  const std::optional<net::SSLInfo>& ssl_info = response.GetSSLInfo();
   if (ssl_info.has_value()) {
     response_object->setSecurityDetails(BuildSecurityDetails(*ssl_info));
+  }
+
+  if (cached_resource && cached_resource->IsPreloadedByEarlyHints()) {
+    response_object->setFromEarlyHints(true);
   }
 
   return response_object;
@@ -1129,7 +1212,7 @@ InspectorNetworkAgent::~InspectorNetworkAgent() = default;
 
 void InspectorNetworkAgent::Trace(Visitor* visitor) const {
   visitor->Trace(inspected_frames_);
-  visitor->Trace(worker_global_scope_);
+  visitor->Trace(worker_or_worklet_global_scope_);
   visitor->Trace(resources_data_);
   visitor->Trace(replay_xhrs_);
   visitor->Trace(pending_xhr_replay_data_);
@@ -1281,7 +1364,7 @@ void InspectorNetworkAgent::WillSendRequestInternal(
   String documentURL = loader
                            ? UrlWithoutFragment(loader->Url()).GetString()
                            : UrlWithoutFragment(fetch_context_url).GetString();
-  Maybe<String> maybe_frame_id;
+  std::optional<String> maybe_frame_id;
   if (!frame_id.empty())
     maybe_frame_id = frame_id;
   if (loader && loader->GetFrame() && loader->GetFrame()->GetDocument()) {
@@ -1294,8 +1377,9 @@ void InspectorNetworkAgent::WillSendRequestInternal(
       timestamp.since_origin().InSecondsF(),
       base::Time::Now().InSecondsFSinceUnixEpoch(), std::move(initiator_object),
       redirect_response.EmittedExtraInfo(),
-      BuildObjectForResourceResponse(redirect_response), resource_type,
-      std::move(maybe_frame_id), request.HasUserGesture());
+      BuildObjectForResourceResponse(redirect_response,
+                                     GetTargetExecutionContext()),
+      resource_type, std::move(maybe_frame_id), request.HasUserGesture());
   if (options.synchronous_policy == SynchronousPolicy::kRequestSynchronously)
     GetFrontend()->flush();
 
@@ -1304,7 +1388,7 @@ void InspectorNetworkAgent::WillSendRequestInternal(
                                       pending_xhr_replay_data_.Get());
     pending_xhr_replay_data_.Clear();
   }
-  pending_request_type_ = absl::nullopt;
+  pending_request_type_ = std::nullopt;
 }
 
 void InspectorNetworkAgent::WillSendNavigationRequest(
@@ -1326,6 +1410,17 @@ void InspectorNetworkAgent::WillSendNavigationRequest(
   resources_data_->ResourceCreated(request_id, loader_id, url, post_data);
   resources_data_->SetResourceType(request_id,
                                    InspectorPageAgent::kDocumentResource);
+}
+
+void InspectorNetworkAgent::WillSendWorkerMainRequest(uint64_t identifier,
+                                                      const KURL& url) {
+  CHECK(worker_or_worklet_global_scope_);
+  String request_id = RequestId(nullptr, identifier);
+  String loader_id;                          // No loader for worker requests.
+  scoped_refptr<EncodedFormData> post_data;  // No post data.
+  resources_data_->ResourceCreated(request_id, loader_id, url, post_data);
+  resources_data_->SetResourceType(request_id,
+                                   InspectorPageAgent::kScriptResource);
 }
 
 // This method was pulled out of PrepareRequest(), because we want to be able
@@ -1365,7 +1460,7 @@ void InspectorNetworkAgent::PrepareRequest(DocumentLoader* loader,
       // for this request to assure the request will be allowed.
       // TODO: Should we store the referrer header somewhere other than
       // |extra_request_headers_|?
-      if (header_name.LowerASCII() == http_names::kReferer.LowerASCII()) {
+      if (EqualIgnoringASCIICase(header_name, http_names::kReferer)) {
         request.SetReferrerString(value);
         request.SetReferrerPolicy(network::mojom::ReferrerPolicy::kAlways);
       } else {
@@ -1391,8 +1486,8 @@ void InspectorNetworkAgent::PrepareRequest(DocumentLoader* loader,
       // overwriting
       !request.GetDevToolsStackId().has_value()) {
     ExecutionContext* context = nullptr;
-    if (worker_global_scope_) {
-      context = worker_global_scope_.Get();
+    if (worker_or_worklet_global_scope_) {
+      context = worker_or_worklet_global_scope_.Get();
     } else if (loader && loader->GetFrame()) {
       context = loader->GetFrame()->GetDocument()->domWindow();
     }
@@ -1403,12 +1498,11 @@ void InspectorNetworkAgent::PrepareRequest(DocumentLoader* loader,
     }
   }
   if (!accepted_encodings_.IsEmpty()) {
-    scoped_refptr<
-        base::RefCountedData<base::flat_set<net::SourceStream::SourceType>>>
+    scoped_refptr<base::RefCountedData<base::flat_set<net::SourceStreamType>>>
         accepted_stream_types = request.GetDevToolsAcceptedStreamTypes();
     if (!accepted_stream_types) {
-      accepted_stream_types = base::MakeRefCounted<base::RefCountedData<
-          base::flat_set<net::SourceStream::SourceType>>>();
+      accepted_stream_types = base::MakeRefCounted<
+          base::RefCountedData<base::flat_set<net::SourceStreamType>>>();
     }
     if (!accepted_encodings_.Get("none")) {
       for (auto key : accepted_encodings_.Keys())
@@ -1454,8 +1548,8 @@ void InspectorNetworkAgent::DidReceiveResourceResponse(
 
   bool resource_is_empty = true;
   std::unique_ptr<protocol::Network::Response> resource_response =
-      BuildObjectForResourceResponse(response, cached_resource,
-                                     &resource_is_empty);
+      BuildObjectForResourceResponse(response, GetTargetExecutionContext(),
+                                     cached_resource, &resource_is_empty);
 
   InspectorPageAgent::ResourceType type =
       cached_resource
@@ -1473,14 +1567,6 @@ void InspectorNetworkAgent::DidReceiveResourceResponse(
     type = saved_type;
   }
 
-  // Main Worker requests are initiated in the browser, so saved_type will not
-  // be found. We therefore must explicitly set it.
-  if (worker_global_scope_ &&
-      worker_global_scope_->MainResourceIdentifier() == identifier) {
-    DCHECK(saved_type == InspectorPageAgent::kOtherResource);
-    type = InspectorPageAgent::kScriptResource;
-  }
-
   // Resources are added to NetworkResourcesData as a WeakMember here and
   // removed in willDestroyResource() called in the prefinalizer of Resource.
   // Because NetworkResourceData retains weak references only, it
@@ -1494,7 +1580,7 @@ void InspectorNetworkAgent::DidReceiveResourceResponse(
   resources_data_->SetResourceType(request_id, type);
   resources_data_->ResponseReceived(request_id, frame_id, response);
 
-  const absl::optional<net::SSLInfo>& ssl_info = response.GetSSLInfo();
+  const std::optional<net::SSLInfo>& ssl_info = response.GetSSLInfo();
   if (ssl_info.has_value() && ssl_info->cert) {
     resources_data_->SetCertificate(request_id, ssl_info->cert);
   }
@@ -1502,7 +1588,7 @@ void InspectorNetworkAgent::DidReceiveResourceResponse(
   if (IsNavigation(loader, identifier))
     return;
   if (resource_response && !resource_is_empty) {
-    Maybe<String> maybe_frame_id;
+    std::optional<String> maybe_frame_id;
     if (!frame_id.empty())
       maybe_frame_id = frame_id;
     GetFrontend()->responseReceived(
@@ -1516,8 +1602,9 @@ void InspectorNetworkAgent::DidReceiveResourceResponse(
   // following didReceiveResponse as there will be no calls to didReceiveData
   // from the network stack.
   if (is_not_modified && cached_resource && cached_resource->EncodedSize()) {
-    DidReceiveData(identifier, loader, nullptr,
-                   static_cast<int>(cached_resource->EncodedSize()));
+    DidReceiveData(
+        identifier, loader,
+        base::SpanOrSize<const char>(cached_resource->EncodedSize()));
   }
 }
 
@@ -1543,7 +1630,7 @@ protocol::Response InspectorNetworkAgent::streamResourceContent(
 
   streaming_request_ids_.insert(request_id);
 
-  SharedBuffer* data = resource_data->Data();
+  const std::optional<SegmentedBuffer>& data = resource_data->Data();
   if (data) {
     *buffered_data =
         protocol::Binary::fromVector(data->CopyAs<Vector<uint8_t>>());
@@ -1553,31 +1640,29 @@ protocol::Response InspectorNetworkAgent::streamResourceContent(
 
 void InspectorNetworkAgent::DidReceiveData(uint64_t identifier,
                                            DocumentLoader* loader,
-                                           const char* data,
-                                           uint64_t data_length) {
+                                           base::SpanOrSize<const char> data) {
   String request_id = RequestId(loader, identifier);
-  Maybe<protocol::Binary> binary_data;
+  std::optional<protocol::Binary> binary_data;
 
-  if (data) {
+  if (auto data_span = data.span(); data_span) {
     NetworkResourcesData::ResourceData const* resource_data =
         resources_data_->Data(request_id);
     if (resource_data && !resource_data->HasContent() &&
         (!resource_data->CachedResource() ||
          resource_data->CachedResource()->GetDataBufferingPolicy() ==
              kDoNotBufferData ||
-         IsErrorStatusCode(resource_data->HttpStatusCode())))
-      resources_data_->MaybeAddResourceData(request_id, data, data_length);
+         IsErrorStatusCode(resource_data->HttpStatusCode()))) {
+      resources_data_->MaybeAddResourceData(request_id, *data_span);
+    }
 
     if (streaming_request_ids_.Contains(request_id)) {
-      binary_data =
-          protocol::Binary::fromSpan(reinterpret_cast<const uint8_t*>(data),
-                                     base::checked_cast<size_t>(data_length));
+      binary_data = protocol::Binary::fromSpan(base::as_bytes(*data_span));
     }
   }
 
   GetFrontend()->dataReceived(
       request_id, base::TimeTicks::Now().since_origin().InSecondsF(),
-      static_cast<int>(data_length),
+      static_cast<int>(data.size()),
       static_cast<int>(
           resources_data_->GetAndClearPendingEncodedDataLength(request_id)),
       std::move(binary_data));
@@ -1623,7 +1708,8 @@ void InspectorNetworkAgent::DidFinishLoading(
        resource_data->CachedResource()->GetDataBufferingPolicy() ==
            kDoNotBufferData ||
        IsErrorStatusCode(resource_data->HttpStatusCode()))) {
-    resources_data_->MaybeAddResourceData(request_id, "", 0);
+    resources_data_->MaybeAddResourceData(request_id,
+                                          base::span_from_cstring(""));
   }
 
   resources_data_->MaybeDecodeDataToContent(request_id);
@@ -1667,13 +1753,11 @@ void InspectorNetworkAgent::DidFailLoading(
     return;
   }
 
-  resources_data_->ClearData(request_id);
-
   bool canceled = error.IsCancellation();
 
-  protocol::Maybe<String> blocked_reason = BuildBlockedReason(error);
+  std::optional<String> blocked_reason = BuildBlockedReason(error);
   auto cors_error_status = error.CorsErrorStatus();
-  protocol::Maybe<protocol::Network::CorsErrorStatus>
+  std::unique_ptr<protocol::Network::CorsErrorStatus>
       protocol_cors_error_status;
   if (cors_error_status) {
     protocol_cors_error_status = BuildCorsErrorStatus(*cors_error_status);
@@ -1799,9 +1883,10 @@ InspectorNetworkAgent::BuildInitiatorObject(
     }
   }
 
-  while (document && !document->GetScriptableDocumentParser())
+  while (document && !document->GetScriptableDocumentParser()) {
     document = document->LocalOwner() ? document->LocalOwner()->ownerDocument()
                                       : nullptr;
+  }
   if (document && document->GetScriptableDocumentParser()) {
     std::unique_ptr<protocol::Network::Initiator> initiator_object =
         protocol::Network::Initiator::create()
@@ -1829,12 +1914,42 @@ InspectorNetworkAgent::BuildInitiatorObject(
       .build();
 }
 
+String InspectorNetworkAgent::GetProtocolAsString(
+    const ResourceResponse& response) {
+  String protocol = response.AlpnNegotiatedProtocol();
+  if (protocol.empty() || protocol == "unknown") {
+    if (response.WasFetchedViaSPDY()) {
+      protocol = "h2";
+    } else if (response.IsHTTP()) {
+      protocol = "http";
+      if (response.HttpVersion() ==
+          ResourceResponse::HTTPVersion::kHTTPVersion_0_9) {
+        protocol = "http/0.9";
+      } else if (response.HttpVersion() ==
+                 ResourceResponse::HTTPVersion::kHTTPVersion_1_0) {
+        protocol = "http/1.0";
+      } else if (response.HttpVersion() ==
+                 ResourceResponse::HTTPVersion::kHTTPVersion_1_1) {
+        protocol = "http/1.1";
+      }
+    } else {
+      protocol = response.CurrentRequestUrl().Protocol();
+    }
+  }
+  return protocol;
+}
+
+void InspectorNetworkAgent::WillCreateP2PSocketUdp(
+    std::optional<base::UnguessableToken>* devtools_token) {
+  *devtools_token = devtools_token_;
+}
+
 void InspectorNetworkAgent::WillCreateWebSocket(
     ExecutionContext* execution_context,
     uint64_t identifier,
     const KURL& request_url,
     const String&,
-    absl::optional<base::UnguessableToken>* devtools_token) {
+    std::optional<base::UnguessableToken>* devtools_token) {
   *devtools_token = devtools_token_;
   std::unique_ptr<v8_inspector::protocol::Runtime::API::StackTrace>
       current_stack_trace =
@@ -1887,8 +2002,8 @@ void InspectorNetworkAgent::DidReceiveWebSocketHandshakeResponse(
         AtomicString(header->name), AtomicString(header->value));
     if (!add_result.is_new_entry) {
       // Protocol expects the "\n" separated format.
-      add_result.stored_value->value =
-          add_result.stored_value->value + "\n" + header->value;
+      add_result.stored_value->value = AtomicString(
+          StrCat({add_result.stored_value->value, "\n", header->value}));
     }
   }
 
@@ -1937,24 +2052,23 @@ void InspectorNetworkAgent::DidReceiveWebSocketMessage(
   Vector<char> flatten;
   flatten.reserve(base::checked_cast<wtf_size_t>(size));
   for (const auto& span : data) {
-    flatten.Append(span.data(), base::checked_cast<wtf_size_t>(span.size()));
+    flatten.AppendSpan(span);
   }
   GetFrontend()->webSocketFrameReceived(
       IdentifiersFactory::SubresourceRequestId(identifier),
       base::TimeTicks::Now().since_origin().InSecondsF(),
-      WebSocketMessageToProtocol(op_code, masked, flatten.data(),
-                                 flatten.size()));
+      WebSocketMessageToProtocol(op_code, masked, flatten));
 }
 
-void InspectorNetworkAgent::DidSendWebSocketMessage(uint64_t identifier,
-                                                    int op_code,
-                                                    bool masked,
-                                                    const char* payload,
-                                                    size_t payload_length) {
+void InspectorNetworkAgent::DidSendWebSocketMessage(
+    uint64_t identifier,
+    int op_code,
+    bool masked,
+    base::span<const char> payload) {
   GetFrontend()->webSocketFrameSent(
       IdentifiersFactory::SubresourceRequestId(identifier),
       base::TimeTicks::Now().since_origin().InSecondsF(),
-      WebSocketMessageToProtocol(op_code, masked, payload, payload_length));
+      WebSocketMessageToProtocol(op_code, masked, payload));
 }
 
 void InspectorNetworkAgent::DidReceiveWebSocketMessageError(
@@ -2005,14 +2119,189 @@ void InspectorNetworkAgent::WebTransportClosed(uint64_t transport_id) {
       base::TimeTicks::Now().since_origin().InSecondsF());
 }
 
+void InspectorNetworkAgent::DirectTCPSocketCreated(
+    ExecutionContext* execution_context,
+    uint64_t identifier,
+    const String& remote_addr,
+    uint16_t remote_port,
+    protocol::Network::DirectTCPSocketOptions& options) {
+  std::unique_ptr<v8_inspector::protocol::Runtime::API::StackTrace>
+      current_stack_trace =
+          CaptureSourceLocation(execution_context)->BuildInspectorObject();
+
+  std::unique_ptr<protocol::Network::Initiator> initiator_object;
+  if (current_stack_trace) {
+    initiator_object =
+        protocol::Network::Initiator::create()
+            .setType(protocol::Network::Initiator::TypeEnum::Script)
+            .build();
+    initiator_object->setStack(std::move(current_stack_trace));
+  }
+
+  GetFrontend()->directTCPSocketCreated(
+      IdentifiersFactory::SubresourceRequestId(identifier), remote_addr,
+      remote_port, options.Clone(),
+      base::TimeTicks::Now().since_origin().InSecondsF(),
+      std::move(initiator_object));
+}
+
+void InspectorNetworkAgent::DirectTCPSocketOpened(
+    uint64_t identifier,
+    const String& remote_addr,
+    uint16_t remote_port,
+    std::optional<String> local_addr,
+    std::optional<uint16_t> local_port) {
+  GetFrontend()->directTCPSocketOpened(
+      IdentifiersFactory::SubresourceRequestId(identifier), remote_addr,
+      remote_port, base::TimeTicks::Now().since_origin().InSecondsF(),
+      std::move(local_addr), std::move(local_port));
+}
+
+void InspectorNetworkAgent::DirectTCPSocketAborted(uint64_t identifier,
+                                                   int net_error) {
+  GetFrontend()->directTCPSocketAborted(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      NetErrorToString(net_error),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectTCPSocketClosed(uint64_t identifier) {
+  GetFrontend()->directTCPSocketClosed(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectTCPSocketChunkSent(
+    uint64_t identifier,
+    base::span<const uint8_t> data) {
+  if (!report_direct_socket_traffic_.Get()) {
+    return;
+  }
+  GetFrontend()->directTCPSocketChunkSent(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      protocol::Binary::fromSpan(data),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectTCPSocketChunkReceived(
+    uint64_t identifier,
+    base::span<const uint8_t> data) {
+  if (!report_direct_socket_traffic_.Get()) {
+    return;
+  }
+  GetFrontend()->directTCPSocketChunkReceived(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      protocol::Binary::fromSpan(data),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectUDPSocketCreated(
+    ExecutionContext* execution_context,
+    uint64_t identifier,
+    protocol::Network::DirectUDPSocketOptions& options) {
+  std::unique_ptr<v8_inspector::protocol::Runtime::API::StackTrace>
+      current_stack_trace =
+          CaptureSourceLocation(execution_context)->BuildInspectorObject();
+
+  std::unique_ptr<protocol::Network::Initiator> initiator_object;
+  if (current_stack_trace) {
+    initiator_object =
+        protocol::Network::Initiator::create()
+            .setType(protocol::Network::Initiator::TypeEnum::Script)
+            .build();
+    initiator_object->setStack(std::move(current_stack_trace));
+  }
+
+  GetFrontend()->directUDPSocketCreated(
+      IdentifiersFactory::SubresourceRequestId(identifier), options.Clone(),
+      base::TimeTicks::Now().since_origin().InSecondsF(),
+      std::move(initiator_object));
+}
+
+void InspectorNetworkAgent::DirectUDPSocketOpened(
+    uint64_t identifier,
+    const String& local_addr,
+    uint16_t local_port,
+    std::optional<String> remote_addr,
+    std::optional<uint16_t> remote_port) {
+  GetFrontend()->directUDPSocketOpened(
+      IdentifiersFactory::SubresourceRequestId(identifier), local_addr,
+      local_port, base::TimeTicks::Now().since_origin().InSecondsF(),
+      std::move(remote_addr), std::move(remote_port));
+}
+
+void InspectorNetworkAgent::DirectUDPSocketAborted(uint64_t identifier,
+                                                   int net_error) {
+  GetFrontend()->directUDPSocketAborted(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      NetErrorToString(net_error),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectUDPSocketClosed(uint64_t identifier) {
+  GetFrontend()->directUDPSocketClosed(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectUDPSocketChunkSent(
+    uint64_t identifier,
+    base::span<const uint8_t> data,
+    std::optional<String> remote_addr,
+    std::optional<uint16_t> remote_port) {
+  if (!report_direct_socket_traffic_.Get()) {
+    return;
+  }
+  auto probe_message_builder = protocol::Network::DirectUDPMessage::create();
+  if (remote_addr.has_value()) {
+    probe_message_builder.setRemoteAddr(remote_addr.value());
+  }
+  if (remote_port.has_value()) {
+    probe_message_builder.setRemotePort(remote_port.value());
+  }
+  std::unique_ptr<protocol::Network::DirectUDPMessage> probe_message =
+      probe_message_builder.setData(protocol::Binary::fromSpan(data)).build();
+  GetFrontend()->directUDPSocketChunkSent(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      std::move(probe_message),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
+void InspectorNetworkAgent::DirectUDPSocketChunkReceived(
+    uint64_t identifier,
+    base::span<const uint8_t> data,
+    std::optional<String> remote_addr,
+    std::optional<uint16_t> remote_port) {
+  if (!report_direct_socket_traffic_.Get()) {
+    return;
+  }
+  auto probe_message_builder = protocol::Network::DirectUDPMessage::create();
+  if (remote_addr.has_value()) {
+    probe_message_builder.setRemoteAddr(remote_addr.value());
+  }
+  if (remote_port.has_value()) {
+    probe_message_builder.setRemotePort(remote_port.value());
+  }
+  std::unique_ptr<protocol::Network::DirectUDPMessage> probe_message =
+      probe_message_builder.setData(protocol::Binary::fromSpan(data)).build();
+
+  GetFrontend()->directUDPSocketChunkReceived(
+      IdentifiersFactory::SubresourceRequestId(identifier),
+      std::move(probe_message),
+      base::TimeTicks::Now().since_origin().InSecondsF());
+}
+
 protocol::Response InspectorNetworkAgent::enable(
-    Maybe<int> total_buffer_size,
-    Maybe<int> resource_buffer_size,
-    Maybe<int> max_post_data_size) {
+    std::optional<int> total_buffer_size,
+    std::optional<int> resource_buffer_size,
+    std::optional<int> max_post_data_size,
+    std::optional<bool> report_direct_socket_traffic) {
   total_buffer_size_.Set(total_buffer_size.value_or(kDefaultTotalBufferSize));
   resource_buffer_size_.Set(
       resource_buffer_size.value_or(kDefaultResourceBufferSize));
   max_post_data_size_.Set(max_post_data_size.value_or(0));
+  report_direct_socket_traffic_.Set(
+      report_direct_socket_traffic.value_or(false));
   Enable();
   return protocol::Response::Success();
 }
@@ -2065,8 +2354,9 @@ bool InspectorNetworkAgent::CanGetResponseBodyBlob(const String& request_id) {
       resource_data ? resource_data->DownloadedFileBlob() : nullptr;
   if (!blob)
     return false;
-  if (worker_global_scope_)
+  if (worker_or_worklet_global_scope_) {
     return true;
+  }
   LocalFrame* frame = IdentifiersFactory::FrameById(inspected_frames_,
                                                     resource_data->FrameId());
   return frame && frame->GetDocument();
@@ -2169,12 +2459,12 @@ protocol::Response InspectorNetworkAgent::setAcceptedEncodings(
         encodings) {
   HashSet<String> accepted_encodings;
   for (const protocol::Network::ContentEncoding& encoding : *encodings) {
-    absl::optional<String> value = AcceptedEncodingFromProtocol(encoding);
-    if (!value) {
+    String value = AcceptedEncodingFromProtocol(encoding);
+    if (value.IsNull()) {
       return protocol::Response::InvalidParams("Unknown encoding type: " +
                                                encoding.Utf8());
     }
-    accepted_encodings.insert(value.value());
+    accepted_encodings.insert(value);
   }
   // If invoked with an empty list, it means none of the encodings should be
   // accepted. See InspectorNetworkAgent::PrepareRequest.
@@ -2199,7 +2489,10 @@ protocol::Response InspectorNetworkAgent::emulateNetworkConditions(
     double latency,
     double download_throughput,
     double upload_throughput,
-    Maybe<String> connection_type) {
+    std::optional<String> connection_type,
+    std::optional<double> packet_loss,
+    std::optional<int> packet_queue_length,
+    std::optional<bool> packet_reordering) {
   WebConnectionType type = kWebConnectionTypeUnknown;
   if (connection_type.has_value()) {
     type = ToWebConnectionType(connection_type.value());
@@ -2207,9 +2500,9 @@ protocol::Response InspectorNetworkAgent::emulateNetworkConditions(
       return protocol::Response::ServerError("Unknown connection type");
   }
 
-  if (worker_global_scope_) {
-    if (worker_global_scope_->IsServiceWorkerGlobalScope() ||
-        worker_global_scope_->IsSharedWorkerGlobalScope()) {
+  if (worker_or_worklet_global_scope_) {
+    if (worker_or_worklet_global_scope_->IsServiceWorkerGlobalScope() ||
+        worker_or_worklet_global_scope_->IsSharedWorkerGlobalScope()) {
       // In service workers and shared workers, we don't inspect the main thread
       // so we must post a task there to make it possible to use
       // NetworkStateNotifier.
@@ -2323,8 +2616,8 @@ protocol::Response InspectorNetworkAgent::GetResponseBody(
   }
 
   if (resource_data->CachedResource() &&
-      InspectorPageAgent::CachedResourceContent(resource_data->CachedResource(),
-                                                content, base64_encoded)) {
+      InspectorPageAgent::CachedResourceContent(
+          resource_data->CachedResource(), content, base64_encoded, nullptr)) {
     return protocol::Response::Success();
   }
 
@@ -2335,8 +2628,8 @@ protocol::Response InspectorNetworkAgent::GetResponseBody(
 protocol::Response InspectorNetworkAgent::searchInResponseBody(
     const String& request_id,
     const String& query,
-    Maybe<bool> case_sensitive,
-    Maybe<bool> is_regex,
+    std::optional<bool> case_sensitive,
+    std::optional<bool> is_regex,
     std::unique_ptr<
         protocol::Array<v8_inspector::protocol::Debugger::API::SearchMatch>>*
         matches) {
@@ -2367,10 +2660,12 @@ bool InspectorNetworkAgent::FetchResourceContent(Document* document,
   Resource* cached_resource = document->Fetcher()->CachedResource(url);
   if (!cached_resource) {
     cached_resource = MemoryCache::Get()->ResourceForURL(
-        url, document->Fetcher()->GetCacheIdentifier(url));
+        url, document->Fetcher()->GetCacheIdentifier(
+                 url, /*skip_service_worker=*/false));
   }
-  if (cached_resource && InspectorPageAgent::CachedResourceContent(
-                             cached_resource, content, base64_encoded)) {
+  if (cached_resource &&
+      InspectorPageAgent::CachedResourceContent(cached_resource, content,
+                                                base64_encoded, nullptr)) {
     *loadingFailed = cached_resource->ErrorOccurred();
     return true;
   }
@@ -2406,22 +2701,23 @@ String InspectorNetworkAgent::NavigationInitiatorInfo(LocalFrame* frame) {
   }
   std::vector<uint8_t> json;
   ConvertCBORToJSON(SpanFrom(cbor), &json);
-  return String(reinterpret_cast<const char*>(json.data()), json.size());
+  return String(base::span(json));
 }
 
 InspectorNetworkAgent::InspectorNetworkAgent(
     InspectedFrames* inspected_frames,
-    WorkerGlobalScope* worker_global_scope,
+    WorkerOrWorkletGlobalScope* worker_or_worklet_global_scope,
     v8_inspector::V8InspectorSession* v8_session)
     : inspected_frames_(inspected_frames),
-      worker_global_scope_(worker_global_scope),
+      worker_or_worklet_global_scope_(worker_or_worklet_global_scope),
       v8_session_(v8_session),
       resources_data_(MakeGarbageCollected<NetworkResourcesData>(
           kDefaultTotalBufferSize,
           kDefaultResourceBufferSize)),
-      devtools_token_(worker_global_scope_
-                          ? worker_global_scope_->GetParentDevToolsToken()
-                          : inspected_frames->Root()->GetDevToolsFrameToken()),
+      devtools_token_(
+          worker_or_worklet_global_scope_
+              ? worker_or_worklet_global_scope_->GetParentDevToolsToken()
+              : inspected_frames->Root()->GetDevToolsFrameToken()),
       enabled_(&agent_state_, /*default_value=*/false),
       cache_disabled_(&agent_state_, /*default_value=*/false),
       bypass_service_worker_(&agent_state_, /*default_value=*/false),
@@ -2434,9 +2730,14 @@ InspectorNetworkAgent::InspectorNetworkAgent(
                             /*default_value=*/kDefaultResourceBufferSize),
       max_post_data_size_(&agent_state_, /*default_value=*/0),
       accepted_encodings_(&agent_state_,
-                          /*default_value=*/false) {
-  DCHECK((IsMainThread() && !worker_global_scope_) ||
-         (!IsMainThread() && worker_global_scope_));
+                          /*default_value=*/false),
+      report_direct_socket_traffic_(&agent_state_,
+                                    /*default_value=*/false) {
+  DCHECK((IsMainThread() &&
+          (!worker_or_worklet_global_scope_ ||
+           worker_or_worklet_global_scope_->IsWorkletGlobalScope())) ||
+         (!IsMainThread() && worker_or_worklet_global_scope_));
+  DCHECK(worker_or_worklet_global_scope_ || inspected_frames_);
 }
 
 void InspectorNetworkAgent::ShouldForceCorsPreflight(bool* result) {
@@ -2473,8 +2774,9 @@ void InspectorNetworkAgent::getRequestPostData(
 }
 
 ExecutionContext* InspectorNetworkAgent::GetTargetExecutionContext() const {
-  if (worker_global_scope_)
-    return worker_global_scope_.Get();
+  if (worker_or_worklet_global_scope_) {
+    return worker_or_worklet_global_scope_.Get();
+  }
   DCHECK(inspected_frames_);
   return inspected_frames_->Root()->DomWindow();
 }
@@ -2482,6 +2784,13 @@ ExecutionContext* InspectorNetworkAgent::GetTargetExecutionContext() const {
 void InspectorNetworkAgent::IsCacheDisabled(bool* is_cache_disabled) const {
   if (cache_disabled_.Get())
     *is_cache_disabled = true;
+}
+
+void InspectorNetworkAgent::ShouldApplyDevtoolsCookieSettingOverrides(
+    bool* should_apply_devtools_overrides) const {
+  if (enabled_.Get()) {
+    *should_apply_devtools_overrides = true;
+  }
 }
 
 }  // namespace blink

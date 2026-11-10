@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-raddstoreexpminusmax/neon-p5.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,13 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/raddstoreexpminusmax.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/raddstoreexpminusmax.h"
 
 
 void xnn_f32_raddstoreexpminusmax_ukernel__neonfma_rr1_p5_u16_acc4(
@@ -21,7 +23,7 @@ void xnn_f32_raddstoreexpminusmax_ukernel__neonfma_rr1_p5_u16_acc4(
     const float* max,
     float* output,
     float* sum,
-    const union xnn_f32_expminus_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const void* params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
@@ -30,16 +32,28 @@ void xnn_f32_raddstoreexpminusmax_ukernel__neonfma_rr1_p5_u16_acc4(
   assert(output != NULL);
   assert(sum != NULL);
 
+  const float32x4_t vlog2e = vmovq_n_f32(0x1.715476p+0f);
+  const float32x4_t vmagic_bias = vmovq_n_f32(0x1.8000FEp23f);
+  const float32x4_t vc5 = vmovq_n_f32(0x1.0F9F9Cp-7f);
+  const float32x4_t vc4 = vmovq_n_f32(0x1.573A1Ap-5f);
+  const float32x4_t vc3 = vmovq_n_f32(0x1.555A80p-3f);
+  const float32x4_t vc2 = vmovq_n_f32(0x1.FFFDC6p-2f);
+  const float32x4_t vc1 = vmovq_n_f32(0x1.FFFFF6p-1f);
+  const float32x4_t vdenorm_cutoff = vmovq_n_f32(-0x1.5D589Ep6f);
+
+  XNN_FORCE_REALIZATION(vlog2e);
+  XNN_FORCE_REALIZATION(vmagic_bias);
+  XNN_FORCE_REALIZATION(vc5);
+  XNN_FORCE_REALIZATION(vc4);
+  XNN_FORCE_REALIZATION(vc3);
+  XNN_FORCE_REALIZATION(vc2);
+  XNN_FORCE_REALIZATION(vc1);
+  XNN_FORCE_REALIZATION(vdenorm_cutoff);
+
+  const float32x4_t vminus_ln2 = vmovq_n_f32(-0x1.62E430p-1f);
+  XNN_FORCE_REALIZATION(vminus_ln2);
+
   const float32x4_t vi_max = vld1q_dup_f32(max);
-  const float32x4_t vlog2e = vld1q_dup_f32(&params->neonfma_rr1_p5.log2e);
-  const float32x4_t vmagic_bias = vld1q_dup_f32(&params->neonfma_rr1_p5.magic_bias);
-  const float32x4_t vminus_ln2 = vld1q_dup_f32(&params->neonfma_rr1_p5.minus_ln2);
-  const float32x4_t vc5 = vld1q_dup_f32(&params->neonfma_rr1_p5.c5);
-  const float32x4_t vc4 = vld1q_dup_f32(&params->neonfma_rr1_p5.c4);
-  const float32x4_t vc3 = vld1q_dup_f32(&params->neonfma_rr1_p5.c3);
-  const float32x4_t vc2 = vld1q_dup_f32(&params->neonfma_rr1_p5.c2);
-  const float32x4_t vc1 = vld1q_dup_f32(&params->neonfma_rr1_p5.c1);
-  const float32x4_t vdenorm_cutoff = vld1q_dup_f32(&params->neonfma_rr1_p5.denorm_cutoff);
 
   float32x4_t vacc0 = vmovq_n_f32(0.0f);
   float32x4_t vacc1 = vmovq_n_f32(0.0f);

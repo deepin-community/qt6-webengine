@@ -10,10 +10,11 @@
 
 #include "test/pc/e2e/analyzer/video/names_collection.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "absl/types/optional.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 
@@ -76,7 +77,7 @@ TEST(NamesCollectionTest, RemoveRemovesFromCollectionButNotIndex) {
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(2)));
 
   EXPECT_THAT(collection.RemoveIfPresent("bob"),
-              Eq(absl::optional<size_t>(bob_index)));
+              Eq(std::optional<size_t>(bob_index)));
 
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
   EXPECT_FALSE(collection.HasName("bob"));
@@ -94,7 +95,7 @@ TEST(NamesCollectionTest, RemoveOfAliceDoesNotChangeBobIndex) {
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(2)));
 
   EXPECT_THAT(collection.RemoveIfPresent("alice"),
-              Eq(absl::optional<size_t>(alice_index)));
+              Eq(std::optional<size_t>(alice_index)));
 
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
   EXPECT_THAT(collection.index("bob"), Eq(bob_index));
@@ -108,17 +109,17 @@ TEST(NamesCollectionTest, RemoveSecondTimeHasNoEffect) {
 
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
   EXPECT_THAT(collection.RemoveIfPresent("bob"),
-              Eq(absl::optional<size_t>(bob_index)));
+              Eq(std::optional<size_t>(bob_index)));
 
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(0)));
-  EXPECT_THAT(collection.RemoveIfPresent("bob"), Eq(absl::nullopt));
+  EXPECT_THAT(collection.RemoveIfPresent("bob"), Eq(std::nullopt));
 }
 
 TEST(NamesCollectionTest, RemoveOfNotExistingHasNoEffect) {
   NamesCollection collection(std::vector<std::string>{"bob"});
 
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
-  EXPECT_THAT(collection.RemoveIfPresent("alice"), Eq(absl::nullopt));
+  EXPECT_THAT(collection.RemoveIfPresent("alice"), Eq(std::nullopt));
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
 }
 
@@ -129,7 +130,7 @@ TEST(NamesCollectionTest, AddRemoveAddPreserveTheIndex) {
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(1)));
 
   EXPECT_THAT(collection.RemoveIfPresent("alice"),
-              Eq(absl::optional<size_t>(alice_index)));
+              Eq(std::optional<size_t>(alice_index)));
   EXPECT_THAT(collection.size(), Eq(static_cast<size_t>(0)));
 
   EXPECT_THAT(collection.AddIfAbsent("alice"), Eq(alice_index));
@@ -144,7 +145,7 @@ TEST(NamesCollectionTest, GetKnownSizeReturnsForRemovedNames) {
   EXPECT_THAT(collection.GetKnownSize(), Eq(static_cast<size_t>(1)));
 
   EXPECT_THAT(collection.RemoveIfPresent("alice"),
-              Eq(absl::optional<size_t>(alice_index)));
+              Eq(std::optional<size_t>(alice_index)));
   EXPECT_THAT(collection.GetKnownSize(), Eq(static_cast<size_t>(1)));
 }
 

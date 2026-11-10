@@ -7,8 +7,6 @@ module gl.mojom;
 // Maps to its namesake in ui/gl/gl_implementation.h.
 enum GLImplementation {
   kGLImplementationNone,
-  kGLImplementationDesktopGL,
-  kGLImplementationDesktopGLCoreProfile,
   kGLImplementationEGLGLES2,
   kGLImplementationMockGL,
   kGLImplementationStubGL,
@@ -27,6 +25,7 @@ enum ANGLEImplementation {
   kVulkan,
   kSwiftShader,
   kMetal,
+  kD3D11Warp,
   kDefault,
 };
 

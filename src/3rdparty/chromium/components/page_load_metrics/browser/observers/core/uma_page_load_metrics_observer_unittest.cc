@@ -6,11 +6,13 @@
 
 #include <memory>
 
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/power_monitor_test.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_trace_processor.h"
 #include "base/time/time.h"
+#include "components/page_load_metrics/browser/features.h"
 #include "components/page_load_metrics/browser/metrics_web_contents_observer.h"
 #include "components/page_load_metrics/browser/observers/core/largest_contentful_paint_handler.h"
 #include "components/page_load_metrics/browser/observers/page_load_metrics_observer_content_test_harness.h"
@@ -22,6 +24,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/navigation_simulator.h"
+#include "content/public/test/preloading_test_util.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -36,13 +39,17 @@ using UserInteractionLatenciesPtr =
 using UserInteractionLatencies =
     page_load_metrics::mojom::UserInteractionLatencies;
 using UserInteractionLatency = page_load_metrics::mojom::UserInteractionLatency;
-using UserInteractionType = page_load_metrics::mojom::UserInteractionType;
 
 namespace {
 
 const char kDefaultTestUrl[] = "https://google.com";
 const char kDefaultTestUrlAnchor[] = "https://google.com#samepage";
 const char kDefaultTestUrl2[] = "https://whatever.com";
+
+const char kHistogramFirstContentfulPaintDataScheme[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.DataScheme";
+const char kHistogramFirstContentfulPaintFileScheme[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.FileScheme";
 
 }  // namespace
 
@@ -54,15 +61,16 @@ class UmaPageLoadMetricsObserverTest
   using page_load_metrics::PageLoadMetricsObserverContentTestHarness::
       web_contents;
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
-    tracker->AddObserver(std::make_unique<UmaPageLoadMetricsObserver>());
+    tracker->AddObserver(
+        std::make_unique<UmaPageLoadMetricsObserver>(IsIncognito()));
   }
 
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   ::base::test::TracingEnvironment tracing_environment_;
-#endif  // BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
  protected:
   bool WithFencedFrames() { return GetParam(); }
+
+  virtual bool IsIncognito() { return false; }
 
   content::RenderFrameHost* AppendChildFrame(content::RenderFrameHost* parent,
                                              const char* frame_name) {
@@ -87,7 +95,7 @@ class UmaPageLoadMetricsObserverTest
 
   void SetUp() override {
     scoped_feature_list_.InitAndEnableFeature(
-        features::kV8PerFrameMemoryMonitoring);
+        page_load_metrics::features::kV8PerFrameMemoryMonitoring);
     page_load_metrics::PageLoadMetricsObserverContentTestHarness::SetUp();
     page_load_metrics::LargestContentfulPaintHandler::SetTestMode(true);
     WebContentsObserver::Observe(web_contents());
@@ -108,9 +116,13 @@ class UmaPageLoadMetricsObserverTest
         internal::kHistogramLargestContentfulPaintMainFrame, 0);
     tester()->histogram_tester().ExpectTotalCount(
         internal::kHistogramLargestContentfulPaintMainFrameContentType, 0);
+    tester()->histogram_tester().ExpectTotalCount(
+        internal::kHistogramLargestContentfulPaintIncognito, 0);
   }
 
-  void TestAllFramesLCP(int value, LargestContentTextOrImage text_or_image) {
+  void TestAllFramesLCP(int value,
+                        LargestContentTextOrImage text_or_image,
+                        bool is_incognito = false) {
     EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
                     internal::kHistogramLargestContentfulPaint),
                 testing::ElementsAre(base::Bucket(value, 1)));
@@ -118,7 +130,16 @@ class UmaPageLoadMetricsObserverTest
         tester()->histogram_tester().GetAllSamples(
             internal::kHistogramLargestContentfulPaintContentType),
         testing::ElementsAre(base::Bucket(
-            static_cast<base::HistogramBase::Sample>(text_or_image), 1)));
+            static_cast<base::HistogramBase::Sample32>(text_or_image), 1)));
+
+    if (is_incognito) {
+      EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
+                      internal::kHistogramLargestContentfulPaintIncognito),
+                  testing::ElementsAre(base::Bucket(value, 1)));
+    } else {
+      tester()->histogram_tester().ExpectTotalCount(
+          internal::kHistogramLargestContentfulPaintIncognito, 0);
+    }
   }
 
   void TestCrossSiteSubFrameLCP(int value) {
@@ -136,7 +157,7 @@ class UmaPageLoadMetricsObserverTest
         tester()->histogram_tester().GetAllSamples(
             internal::kHistogramLargestContentfulPaintMainFrameContentType),
         testing::ElementsAre(base::Bucket(
-            static_cast<base::HistogramBase::Sample>(text_or_image), 1)));
+            static_cast<base::HistogramBase::Sample32>(text_or_image), 1)));
   }
 
   void TestEmptyMainFrameLCP() {
@@ -151,6 +172,14 @@ class UmaPageLoadMetricsObserverTest
             .GetAllSamples(
                 internal::kHistogramLargestContentfulPaintMainFrameContentType)
             .empty());
+  }
+
+  void TestHistogram(const char* name,
+                     std::vector<base::Bucket> buckets,
+                     const base::Location& location = FROM_HERE) {
+    EXPECT_THAT(tester()->histogram_tester().GetAllSamples(name),
+                base::BucketsAreArray(buckets))
+        << location.ToString();
   }
 
   const base::HistogramTester& histogram_tester() {
@@ -269,6 +298,13 @@ TEST_P(UmaPageLoadMetricsObserverTest, MultipleMetricsAfterCommits) {
   tester()->histogram_tester().ExpectBucketCount(
       internal::kHistogramFirstContentfulPaint,
       first_contentful_paint.InMilliseconds(), 1);
+  tester()->histogram_tester().ExpectTotalCount(
+      kHistogramFirstContentfulPaintDataScheme, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      kHistogramFirstContentfulPaintFileScheme, 0);
+
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaintIncognito, 0);
 
   NavigateAndCommit(GURL(kDefaultTestUrl2));
 
@@ -293,6 +329,9 @@ TEST_P(UmaPageLoadMetricsObserverTest, MultipleMetricsAfterCommits) {
       1);
 
   tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaintIncognito, 0);
+
+  tester()->histogram_tester().ExpectTotalCount(
       internal::kHistogramDomContentLoaded, 1);
   tester()->histogram_tester().ExpectBucketCount(
       internal::kHistogramDomContentLoaded, dom_content.InMilliseconds(), 1);
@@ -300,6 +339,62 @@ TEST_P(UmaPageLoadMetricsObserverTest, MultipleMetricsAfterCommits) {
   tester()->histogram_tester().ExpectTotalCount(internal::kHistogramLoad, 1);
   tester()->histogram_tester().ExpectBucketCount(internal::kHistogramLoad,
                                                  load.InMilliseconds(), 1);
+}
+
+TEST_P(UmaPageLoadMetricsObserverTest,
+       PaintMetricsAreNotRecordedForDataScheme) {
+  base::TimeDelta first_contentful_paint = base::Milliseconds(30);
+
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  timing.parse_timing->parse_start = base::Milliseconds(1);
+  timing.response_start = base::Milliseconds(1);
+  timing.paint_timing->first_paint = first_contentful_paint;
+  timing.paint_timing->first_contentful_paint = first_contentful_paint;
+
+  NavigateAndCommit(GURL("data:text/html,Hello world"));
+  tester()->SimulateTimingUpdate(timing);
+
+  // This class does not observe the data:// scheme,
+  // so FCP and LCP should not be recorded.
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaint, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramLargestContentfulPaint, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaintIncognito, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramLargestContentfulPaintIncognito, 0);
+}
+
+TEST_P(UmaPageLoadMetricsObserverTest,
+       PaintMetricsAreNotRecordedForFileScheme) {
+  base::TimeDelta first_contentful_paint = base::Milliseconds(30);
+
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  timing.parse_timing->parse_start = base::Milliseconds(1);
+  timing.response_start = base::Milliseconds(1);
+  timing.paint_timing->first_paint = first_contentful_paint;
+  timing.paint_timing->first_contentful_paint = first_contentful_paint;
+
+  NavigateAndCommit(GURL("file:///file.txt"));
+  tester()->SimulateTimingUpdate(timing);
+
+  // This class does not observe the file:// scheme,
+  // so FCP and LCP should not be recorded.
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaint, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramLargestContentfulPaint, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramFirstContentfulPaintIncognito, 0);
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::kHistogramLargestContentfulPaintIncognito, 0);
 }
 
 TEST_P(UmaPageLoadMetricsObserverTest, BackgroundDifferentHistogram) {
@@ -331,6 +426,48 @@ TEST_P(UmaPageLoadMetricsObserverTest, BackgroundDifferentHistogram) {
   tester()->histogram_tester().ExpectTotalCount(internal::kHistogramLoad, 0);
   tester()->histogram_tester().ExpectTotalCount(
       internal::kHistogramFirstImagePaint, 0);
+}
+
+TEST_F(UmaPageLoadMetricsObserverTest,
+       RelevantBackgroundMetricsAreRecordedForHttpsScheme) {
+  base::TimeDelta first_contentful_paint = base::Milliseconds(30);
+
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  timing.parse_timing->parse_start = base::Milliseconds(1);
+  timing.response_start = base::Milliseconds(1);
+  timing.paint_timing->first_paint = first_contentful_paint;
+  timing.paint_timing->first_contentful_paint = first_contentful_paint;
+  timing.paint_timing->largest_contentful_paint->largest_text_paint =
+      base::Milliseconds(15);
+  timing.paint_timing->largest_contentful_paint->largest_text_paint_size = 10;
+
+  // Send the page to background.
+  web_contents()->WasHidden();
+
+  NavigateAndCommit(GURL(kDefaultTestUrl));
+  tester()->SimulateTimingUpdate(timing);
+
+  tester()->histogram_tester().ExpectBucketCount(
+      "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.Background."
+      "HttpsOrDataOrFileScheme",
+      first_contentful_paint.InMilliseconds(), 1);
+
+  // Navigate again to force histogram recording.
+  NavigateAndCommit(GURL(kDefaultTestUrl));
+
+  tester()->histogram_tester().ExpectTotalCount(
+      "PageLoad.PaintTiming.NavigationToLargestContentfulPaint2.Background."
+      "HttpsOrDataOrFileScheme",
+      1);
+  tester()->histogram_tester().ExpectBucketCount(
+      "PageLoad.PaintTiming.NavigationToLargestContentfulPaint2.Background."
+      "HttpsOrDataOrFileScheme",
+      timing.paint_timing->largest_contentful_paint->largest_text_paint
+          ->InMilliseconds(),
+      1);
 }
 
 TEST_P(UmaPageLoadMetricsObserverTest, OnlyBackgroundLaterEvents) {
@@ -1065,14 +1202,11 @@ TEST_P(UmaPageLoadMetricsObserverTest, NormalizedResponsivenessMetrics) {
       input_timing.max_event_durations->get_user_interaction_latencies();
   base::TimeTicks current_time = base::TimeTicks::Now();
   max_event_durations.emplace_back(UserInteractionLatency::New(
-      base::Milliseconds(50), UserInteractionType::kKeyboard, 0,
-      current_time + base::Milliseconds(1000)));
+      base::Milliseconds(50), 0, current_time + base::Milliseconds(1000)));
   max_event_durations.emplace_back(UserInteractionLatency::New(
-      base::Milliseconds(100), UserInteractionType::kTapOrClick, 1,
-      current_time + base::Milliseconds(2000)));
+      base::Milliseconds(100), 1, current_time + base::Milliseconds(2000)));
   max_event_durations.emplace_back(UserInteractionLatency::New(
-      base::Milliseconds(150), UserInteractionType::kDrag, 2,
-      current_time + base::Milliseconds(3000)));
+      base::Milliseconds(150), 2, current_time + base::Milliseconds(3000)));
   NavigateAndCommit(GURL(kDefaultTestUrl));
   tester()->SimulateInputTimingUpdate(input_timing);
   // Navigate again to force histogram recording.
@@ -1095,6 +1229,11 @@ TEST_P(UmaPageLoadMetricsObserverTest, NormalizedResponsivenessMetrics) {
         // actual value.
         testing::ElementsAre(base::Bucket(metric.second, 1)));
   }
+
+  tester()->histogram_tester().ExpectTotalCount(
+      internal::
+          kHistogramUserInteractionLatencyHighPercentile2MaxEventDurationIncognito,
+      0);
 }
 
 TEST_P(UmaPageLoadMetricsObserverTest, FirstInputDelayAndTimestamp) {
@@ -1450,7 +1589,6 @@ TEST_P(UmaPageLoadMetricsObserverTest,
 // The following tests are ensure that Page Load metrics are recorded in a
 // trace. Currently enabled only for platforms where USE_PERFETTO_CLIENT_LIBRARY
 // is true (Android, Linux) as test infra (TestTraceProcessor) requires it.
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 TEST_F(UmaPageLoadMetricsObserverTest, TestTracingFirstContentfulPaint) {
   base::test::TestTraceProcessor ttp;
   ttp.StartTrace("interactions");
@@ -1613,4 +1751,119 @@ TEST_F(UmaPageLoadMetricsObserverTest, TestTracingDomContentLoadedEventStart) {
                                      std::vector<std::string>{
                                          base::NumberToString(navigation_id)}));
 }
-#endif
+
+TEST_P(UmaPageLoadMetricsObserverTest, LCPSpeculationRulesPrerender) {
+  const int kExpected = 4780;
+  const char* kHistogram =
+      internal::kHistogramLargestContentfulPaintSetSpeculationRulesPrerender;
+
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  timing.paint_timing->largest_contentful_paint->largest_text_paint =
+      base::Milliseconds(kExpected);
+  timing.paint_timing->largest_contentful_paint->largest_text_paint_size = 120u;
+  PopulateRequiredTimingFields(&timing);
+
+  NavigateAndCommit(GURL("https://a.test"));
+  content::test::SetHasSpeculationRulesPrerender(
+      content::PreloadingData::GetOrCreateForWebContents(web_contents()));
+  tester()->SimulateTimingUpdate(timing);
+  // Navigate again to force histogram recording.
+  NavigateAndCommit(GURL("https://b.test"));
+  TestHistogram(kHistogram, {{kExpected, 1}});
+
+  content::PreloadingData::GetOrCreateForWebContents(web_contents());
+  tester()->SimulateTimingUpdate(timing);
+  // Navigate again to force histogram recording without setting the flag.
+  NavigateAndCommit(GURL("https://c.test"));
+  TestHistogram(kHistogram, {{kExpected, 1}});
+}
+
+class UmaPageLoadMetricsObserverIncognitoTest
+    : public UmaPageLoadMetricsObserverTest {
+ protected:
+  bool IsIncognito() override { return true; }
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         UmaPageLoadMetricsObserverIncognitoTest,
+                         testing::Bool());
+
+TEST_P(UmaPageLoadMetricsObserverIncognitoTest, FirstContentfulPaintIncognito) {
+  base::TimeDelta first_image_paint = base::Milliseconds(30);
+  base::TimeDelta first_contentful_paint = first_image_paint;
+
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  timing.response_start = base::Milliseconds(1);
+  timing.parse_timing->parse_start = base::Milliseconds(1);
+  timing.paint_timing->first_image_paint = first_image_paint;
+  timing.paint_timing->first_contentful_paint = first_contentful_paint;
+  timing.document_timing->dom_content_loaded_event_start =
+      base::Milliseconds(40);
+  timing.document_timing->load_event_start = base::Milliseconds(100);
+  PopulateRequiredTimingFields(&timing);
+
+  NavigateAndCommit(GURL(kDefaultTestUrl));
+  tester()->SimulateTimingUpdate(timing);
+
+  for (auto histogram : {internal::kHistogramFirstContentfulPaint,
+                         internal::kHistogramFirstContentfulPaintIncognito}) {
+    tester()->histogram_tester().ExpectTotalCount(histogram, 1);
+    tester()->histogram_tester().ExpectBucketCount(
+        histogram, first_contentful_paint.InMilliseconds(), 1);
+  }
+}
+
+TEST_P(UmaPageLoadMetricsObserverIncognitoTest,
+       LargestContentfulPaintIncognito) {
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
+  timing.navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
+  // Pick a value that lines up with a histogram bucket.
+  timing.paint_timing->largest_contentful_paint->largest_text_paint =
+      base::Milliseconds(4780);
+  timing.paint_timing->largest_contentful_paint->largest_text_paint_size = 100;
+  PopulateRequiredTimingFields(&timing);
+
+  NavigateAndCommit(GURL(kDefaultTestUrl));
+  tester()->SimulateTimingUpdate(timing);
+  // Navigate again to force histogram recording.
+  NavigateAndCommit(GURL(kDefaultTestUrl2));
+
+  TestAllFramesLCP(4780, LargestContentTextOrImage::kText, true);
+}
+
+TEST_P(UmaPageLoadMetricsObserverIncognitoTest,
+       UserInteractionLatencyIncognito) {
+  page_load_metrics::mojom::InputTiming input_timing;
+  input_timing.num_interactions = 3;
+  input_timing.max_event_durations =
+      UserInteractionLatencies::NewUserInteractionLatencies({});
+  auto& max_event_durations =
+      input_timing.max_event_durations->get_user_interaction_latencies();
+  base::TimeTicks current_time = base::TimeTicks::Now();
+  max_event_durations.emplace_back(UserInteractionLatency::New(
+      base::Milliseconds(50), 0, current_time + base::Milliseconds(1000)));
+  max_event_durations.emplace_back(UserInteractionLatency::New(
+      base::Milliseconds(100), 1, current_time + base::Milliseconds(2000)));
+  max_event_durations.emplace_back(UserInteractionLatency::New(
+      base::Milliseconds(150), 2, current_time + base::Milliseconds(3000)));
+  NavigateAndCommit(GURL(kDefaultTestUrl));
+  tester()->SimulateInputTimingUpdate(input_timing);
+  // Navigate again to force histogram recording.
+  NavigateAndCommit(GURL(kDefaultTestUrl2));
+
+  for (
+      auto histogram :
+      {internal::
+           kHistogramUserInteractionLatencyHighPercentile2MaxEventDuration,
+       internal::
+           kHistogramUserInteractionLatencyHighPercentile2MaxEventDurationIncognito}) {
+    tester()->histogram_tester().ExpectTotalCount(histogram, 1);
+    EXPECT_THAT(tester()->histogram_tester().GetAllSamples(histogram),
+                testing::ElementsAre(base::Bucket(146, 1)));
+  }
+}

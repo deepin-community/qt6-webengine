@@ -8,10 +8,11 @@
 #include <stddef.h>
 
 #include <cstdint>
-#include <limits>
 
+#include "quiche/quic/core/quic_packet_number.h"
+#include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/core/quic_types.h"
-#include "quiche/quic/platform/api/quic_export.h"
+#include "quiche/common/platform/api/quiche_export.h"
 
 // Definitions of constant values used throughout the QUIC code.
 
@@ -30,6 +31,12 @@ inline constexpr uint64_t kNumMicrosPerSecond =
 inline constexpr uint32_t kDefaultNumConnections = 2;
 // Default initial maximum size in bytes of a QUIC packet.
 inline constexpr QuicByteCount kDefaultMaxPacketSize = 1250;
+// Tunnels (such as MASQUE and QBONE) reduce the inner MTU so they work best
+// with a higher outer MTU. This means that outer connections could fail on some
+// networks where the UDP MTU is between 1250 and 1350, but allows inner QUIC
+// connections to still have 1200 bytes of UDP MTU, even if we apply two nested
+// levels of connect-udp proxying, as we do for IP Protection.
+inline constexpr QuicByteCount kDefaultMaxPacketSizeForTunnels = 1350;
 // Default initial maximum size in bytes of a QUIC packet for servers.
 inline constexpr QuicByteCount kDefaultServerMaxPacketSize = 1000;
 // Maximum transmission unit on Ethernet.
@@ -131,10 +138,12 @@ inline constexpr bool kIncludeDiversificationNonce = true;
 // trailing headers over QUIC.
 QUICHE_EXPORT extern const char* const kFinalOffsetHeaderKey;
 
-// Default maximum delayed ack time, in ms.
-// Uses a 25ms delayed ack timer. Helps with better signaling
-// in low-bandwidth (< ~384 kbps), where an ack is sent per packet.
-inline constexpr int64_t kDefaultDelayedAckTimeMs = 25;
+// Returns the local default delayed ack time, in ms.
+QUICHE_EXPORT int64_t GetDefaultDelayedAckTimeMs();
+
+// Delayed ack time that we assume the peer will use by default, in ms. This
+// should be equal to the default value of --quic_default_delayed_ack_time_ms.
+inline constexpr int64_t kDefaultPeerDelayedAckTimeMs = 25;
 
 // Default minimum delayed ack time, in ms (used only for sender control of ack
 // frequency).
@@ -194,9 +203,6 @@ inline constexpr int kPtoRttvarMultiplier = 2;
 // define the minimum RTO to 200ms, we will use the same until we have data to
 // support a higher or lower value.
 inline constexpr const int64_t kMinRetransmissionTimeMs = 200;
-// The delayed ack time must not be greater than half the min RTO.
-static_assert(kDefaultDelayedAckTimeMs <= kMinRetransmissionTimeMs / 2,
-              "Delayed ack time must be less than or equal half the MinRTO");
 
 // We define an unsigned 16-bit floating point value, inspired by IEEE floats
 // (http://en.wikipedia.org/wiki/Half_precision_floating-point_format),
@@ -293,8 +299,10 @@ inline constexpr QuicPacketCount kMaxRetransmittablePacketsBeforeAck = 10;
 // This intends to avoid the beginning of slow start, when CWNDs may be
 // rapidly increasing.
 inline constexpr QuicPacketCount kMinReceivedBeforeAckDecimation = 100;
-// One quarter RTT delay when doing ack decimation.
-inline constexpr float kAckDecimationDelay = 0.25;
+// Ask peer to use one quarter RTT delay when doing ack decimation.
+inline constexpr float kPeerAckDecimationDelay = 0.25;
+// Maximum number of consecutive sent nonretransmittable packets.
+inline constexpr QuicPacketCount kMaxConsecutiveNonRetransmittablePackets = 19;
 
 // The default alarm granularity assumed by QUIC code.
 inline constexpr QuicTime::Delta kAlarmGranularity =
@@ -320,6 +328,9 @@ inline constexpr QuicTime::Delta kDefaultMultiPortProbingInterval =
 inline constexpr size_t kMaxNumMultiPortPaths = 5;
 
 inline constexpr size_t kMaxDuplicatedPacketsSentToServerPreferredAddress = 5;
+
+// Explicit Congestion Notification is the last two bits of the TOS byte.
+constexpr uint8_t kEcnMask = 0x03;
 
 }  // namespace quic
 

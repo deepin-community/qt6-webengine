@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,36 +49,17 @@ struct CONTENT_EXPORT CdmStorageBindingContext {
 // A CDM file for a given storage key can be uniquely identified by its name
 // and CDM type.
 struct CONTENT_EXPORT CdmFileId {
-  CdmFileId(const std::string& name, const media::CdmType& cdm_type);
+  CdmFileId(const std::string& name,
+            const media::CdmType& cdm_type,
+            const blink::StorageKey& storage_key);
   CdmFileId(const CdmFileId&);
   ~CdmFileId();
 
   bool operator==(const CdmFileId& rhs) const {
-    return (name == rhs.name) && (cdm_type == rhs.cdm_type);
-  }
-  bool operator<(const CdmFileId& rhs) const {
-    return std::tie(name, cdm_type) < std::tie(rhs.name, rhs.cdm_type);
-  }
-
-  const std::string name;
-  const media::CdmType cdm_type;
-};
-
-// As above.
-// Only used in the CdmStorage implementation, remove `Two` from name once
-// MediaLicense* code is removed.
-struct CONTENT_EXPORT CdmFileIdTwo {
-  CdmFileIdTwo(const std::string& name,
-               const media::CdmType& cdm_type,
-               const blink::StorageKey& storage_key);
-  CdmFileIdTwo(const CdmFileIdTwo&);
-  ~CdmFileIdTwo();
-
-  bool operator==(const CdmFileIdTwo& rhs) const {
     return (name == rhs.name) && (cdm_type == rhs.cdm_type) &&
            (storage_key == rhs.storage_key);
   }
-  bool operator<(const CdmFileIdTwo& rhs) const {
+  bool operator<(const CdmFileId& rhs) const {
     return std::tie(name, cdm_type, storage_key) <
            std::tie(rhs.name, rhs.cdm_type, rhs.storage_key);
   }
@@ -97,6 +77,11 @@ struct CONTENT_EXPORT CdmFileIdAndContents {
   const CdmFileId file;
   const std::vector<uint8_t> data;
 };
+
+// Called in CdmStorageDatabase and CdmStorageManager to get
+// CdmStorageManager* metric names.
+std::string GetCdmStorageManagerHistogramName(const std::string& operation,
+                                              bool in_memory);
 
 }  // namespace content
 

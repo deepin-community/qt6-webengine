@@ -30,6 +30,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_AUDIO_AUDIO_CHANNEL_H_
 
 #include <memory>
+
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/checked_math.h"
 #include "third_party/blink/renderer/platform/audio/audio_array.h"
@@ -40,7 +43,7 @@ namespace blink {
 // An AudioChannel represents a buffer of non-interleaved floating-point audio
 // samples.
 // The PCM samples are normally assumed to be in a nominal range -1.0 -> +1.0
-class PLATFORM_EXPORT AudioChannel {
+class PLATFORM_EXPORT AudioChannel final {
  public:
   // Memory can be externally referenced, or can be internally allocated with an
   // AudioFloatArray.
@@ -51,12 +54,15 @@ class PLATFORM_EXPORT AudioChannel {
 
   // Manage storage for us.
   explicit AudioChannel(uint32_t length)
-      : length_(length), raw_pointer_(nullptr), silent_(true) {
-    mem_buffer_ = std::make_unique<AudioFloatArray>(length);
+      : length_(0), raw_pointer_(nullptr), silent_(true) {
+    CHECK(TryAllocate(length));
   }
 
   // A "blank" audio channel -- must call Set() before it's useful...
   AudioChannel() : length_(0), raw_pointer_(nullptr), silent_(true) {}
+
+  // Methods for internal allocation.
+  bool TryAllocate(uint32_t length);
 
   // Redefine the memory for this channel. |storage| represents external memory
   // not managed by this object.
@@ -84,6 +90,25 @@ class PLATFORM_EXPORT AudioChannel {
     return raw_pointer_ ? raw_pointer_.get() : mem_buffer_->Data();
   }
 
+  // Span-based access to PCM sample data. Non-const accessor clears silent
+  // flag.
+  base::span<float> MutableSpan() {
+    ClearSilentFlag();
+    if (mem_buffer_) {
+      return mem_buffer_->as_span();
+    }
+    // TODO(crbug.com/375449662): Spanify `raw_pointer_`.
+    return UNSAFE_TODO(base::span<float>(raw_pointer_.get(), length_));
+  }
+
+  base::span<const float> Span() const {
+    if (mem_buffer_) {
+      return mem_buffer_->as_span();
+    }
+    // TODO(crbug.com/375449662): Spanify `raw_pointer_`.
+    return UNSAFE_TODO(base::span<const float>(raw_pointer_.get(), length_));
+  }
+
   // Zeroes out all sample values in buffer.
   void Zero() {
     if (silent_) {
@@ -95,8 +120,8 @@ class PLATFORM_EXPORT AudioChannel {
     if (mem_buffer_.get()) {
       mem_buffer_->Zero();
     } else {
-      memset(raw_pointer_, 0,
-             base::CheckMul(sizeof(float), length_).ValueOrDie());
+      UNSAFE_TODO(memset(raw_pointer_, 0,
+                         base::CheckMul(sizeof(float), length_).ValueOrDie()));
     }
   }
 

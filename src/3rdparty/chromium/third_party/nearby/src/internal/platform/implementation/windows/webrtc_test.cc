@@ -15,11 +15,16 @@
 #include "internal/platform/implementation/windows/webrtc.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
-#include "gmock/gmock.h"
-#include "protobuf-matchers/protocol-buffer-matchers.h"
 #include "gtest/gtest.h"
+
+#include "internal/platform/implementation/webrtc.h"
+#include "webrtc/api/jsep.h"
+#include "webrtc/api/data_channel_interface.h"
+#include "webrtc/api/peer_connection_interface.h"
+#include "webrtc/api/scoped_refptr.h"
 
 namespace nearby {
 namespace windows {
@@ -29,8 +34,8 @@ class MockPeerConnectionObserver : public webrtc::PeerConnectionObserver {
   void OnSignalingChange(
       webrtc::PeerConnectionInterface::SignalingState new_state) override {}
 
-  void OnDataChannel(
-      rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel) override {}
+  void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface>
+                         data_channel) override {}
 
   void OnIceGatheringChange(
       webrtc::PeerConnectionInterface::IceGatheringState new_state) override {}
@@ -58,8 +63,9 @@ TEST(WebrtcTest, CreatePeerConnectionSucceeds) {
   auto observer = std::make_unique<MockPeerConnectionObserver>();
   WebRtcMedium medium;
   medium.CreatePeerConnection(
-      observer.get(), [](rtc::scoped_refptr<webrtc::PeerConnectionInterface>
-                             peer_connection) mutable {
+      std::nullopt, observer.get(),
+      [](webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
+             peer_connection) mutable {
         if (!peer_connection) {
           FAIL() << "Peer connection should have been non-null";
           return;

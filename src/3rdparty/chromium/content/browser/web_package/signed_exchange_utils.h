@@ -7,8 +7,8 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
-#include "base/strings/string_piece.h"
 #include "content/browser/web_package/signed_exchange_consts.h"
 #include "content/browser/web_package/signed_exchange_error.h"
 #include "content/browser/web_package/signed_exchange_signature_verifier.h"
@@ -33,7 +33,7 @@ struct URLWithRawString {
   GURL url;
   std::string raw_string;
   URLWithRawString() = default;
-  URLWithRawString(base::StringPiece url_string)
+  URLWithRawString(std::string_view url_string)
       : url(url_string), raw_string(url_string) {}
 };
 
@@ -68,7 +68,7 @@ bool ShouldHandleAsSignedHTTPExchange(
 // unsupported signed exchange version is found.
 // [1] https://wicg.github.io/webpackage/loading.html#signed-exchange-version
 CONTENT_EXPORT std::optional<SignedExchangeVersion> GetSignedExchangeVersion(
-    const std::string& content_type);
+    std::string_view content_type);
 
 // Returns the matching SignedExchangeLoadResult for the verifier's result.
 // There is a gap between the logic of SignedExchangeSignatureVerifier and the

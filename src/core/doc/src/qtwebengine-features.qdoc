@@ -8,11 +8,11 @@
 
     \brief Summarizes \QWE features.
 
-    \QWE supports the following features:
+    \QWE supports a variety of web content rendering features, most of which are provided
+    by the bundled Chromium engine and exposed via \QWE APIs.
 
     \list
         \li \l{Audio and Video Codecs}
-        \li \l{WebEngineDriver}
         \li \l{Chromium DevTools}
         \li \l{Client Certificates}
         \li \l{Custom Schemes}
@@ -29,11 +29,12 @@
         \li \l{PDF File Viewing}
         \li \l{Page Lifecycle API}
         \li \l{Print to PDF}
-        \li \l{Process Models}
+        \li \l{Push Notifications}
         \li \l{Spellchecker}
         \li \l{Touch}
         \li \l{View Source}
         \li \l{Web Notifications}
+        \li \l{WebEngineDriver}
         \li \l{WebGL}
         \li \l{webrtc_feature}{WebRTC}
     \endlist
@@ -56,6 +57,8 @@
     configure -webengine-proprietary-codecs
     \endcode
 
+    The actual encoding and decoding is performed by Chromium.
+
     For more information, see \l{Qt Configure Options}.
 
     When using cmake to build just the \QWE module, the following
@@ -76,68 +79,6 @@
     codecs, open source implementations, such as \l{OpenH264 Project Homepage}
     {OpenH264}, are available.
 
-    \section1 WebEngineDriver
-
-    With WebEngineDriver, you can automate the testing of web sites across browsers.
-    WebEngineDriver is based on ChromeDriver and can be used the same way.
-    For more information about ChromeDriver and its use, visit
-    \l {https://chromedriver.chromium.org/}{ChromeDriver user site}.
-
-    WebEngineDriver has slight modifications compared to ChromeDriver to be able to connect to
-    \QWE based browsers. It is compatible with \QWE example browsers, such as
-    \l {WebEngine Widgets Simple Browser Example}{Simple Browser} or
-    \l{WebEngine Quick Nano Browser}{Nano Browser}.
-
-    The browser automation is scripted through a WebDriver client like the
-    \l {https://www.selenium.dev/}{Selenium WebDriver}.
-    For example, WebEngineDriver can be used with the Python lanugage bindings of
-    Selenium WebDriver:
-
-    \code
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
-
-    service = Service(executable_path='QTDIR/libexec/webenginedriver')
-    options = webdriver.ChromeOptions()
-    options.binary_location = 'path/to/browser_binary'
-
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.get("http://www.google.com/")
-    driver.quit()
-    \endcode
-
-    In this example,
-    \list
-    \li \c executable_path has to be set to the WebEngineDriver's binary path
-    \li \c QTDIR is the directory where Qt is installed
-    \li \c options.binary_location has to be set to the browser's binary path
-    \endlist
-
-    \note On Windows: \c executable_path='QTDIR/bin/webenginedriver.exe'
-
-    Before executing the script, the \c QTWEBENGINE_REMOTE_DEBUGGING environment variable has to
-    be set. Its value is a port number what is used by both the browser and WebEngineDriver to
-    communicate with each other.
-    \badcode
-    export QTWEBENGINE_REMOTE_DEBUGGING=12345
-    \endcode
-
-    By executing, the script opens the specified web browser and loads the Google web site.
-
-    WebEngineDriver can be also attached to an already running browser if it was started with the
-    remote debugging port set. \c options.debugger_address has to be set to the remote debugging
-    address in the script:
-
-    \code
-    options.debugger_address = 'localhost:12345'
-    \endcode
-
-    In this case, \c options.binary_location should not be set because the browser is already
-    running. The environment variable \c QTWEBENGINE_REMOTE_DEBUGGING is not used by the
-    WebEngineDriver if \c options.debugger_address is set.
-
-    \note WebEngineDriver must be built with the same version of Chromium as \QWE is using.
-
     \section1 Chromium DevTools
 
     The Chromium DevTools provide the ability to inspect and debug layout and
@@ -146,7 +87,8 @@
     This feature can be tested by launching a \QWE application with the
     command line option \c {--remote-debugging-port=[your-port]} or by setting
     the environment variable \c QTWEBENGINE_REMOTE_DEBUGGING and then using a
-    Chromium based browser (such as \l{WebEngine Widgets Simple Browser Example}
+    Chromium-based browser or a \QWE application
+    (such as \l{WebEngine Widgets Simple Browser Example}
     {Simple Browser} or \l{WebEngine Quick Nano Browser}{Nano Browser}) to connect
     to \c {http://localhost:[your-port]}.
 
@@ -201,6 +143,9 @@
     Note that during the \c selectClientCertificate calls, \QWE lists both system
     and in-memory stored clients certificates.
 
+    The actual validation and use of certificates is performed by Chromium
+    libraries.
+
     See also \l{WebEngine Widgets Client Certificate Example}{Client Certificate Example}
     for more implementation details.
 
@@ -213,6 +158,8 @@
     all the usual web security policies, privileged internal schemes for
     displaying user interface components or debugging information, sandboxed
     schemes with extra restrictions, and so on.
+
+    The handling of custom schemes is performed primarily by Chromium.
 
     For more information, see \l QWebEngineUrlScheme and \l
     QWebEngineUrlSchemeHandler.
@@ -227,10 +174,10 @@
     Simple Browser Example}{Simple Browser} or \l{WebEngine Quick Nano Browser}
     {Nano Browser}.
 
-    Dragging files into the browser is not actually part of HTML5, but it is
+    Dragging files into the web view is not actually part of HTML5, but it is
     supported. It can be tested by opening \l{HTML5 Demos - File API}.
 
-    Support for this feature was added in Qt 5.7.0.
+    The actual implementation of this feature is provided by Chromium.
 
     \section1 Favicon
 
@@ -239,6 +186,7 @@
     call or a \l {WebEngineView::icon}{WebEngineView.icon} property for the currently loaded content.
 
     Moreover \QWE provides API for accessing already stored icons in the internal profile's database.
+    The database implementation itself is provided by Chromium.
 
     \note The icon database is not available for off-the-record profiles.
 
@@ -301,32 +249,197 @@
     {Nano Browser}, and clicking the full screen icon to go into fullscreen
     mode.
 
-    Support for this feature was added in Qt 5.6.0.
-
     \section1 Hardware Acceleration
 
-    QtWebEngine tries to use hardware acceleration for rendering the content. It uses
-    \c OpenGL or \c OpenGLES APIs to execute rendering calls on the GPU. As a fallback,
-    software rendering is used whenever the hardware does not meet the required set of
-    OpenGL functionality. A user can check the current hardware acceleration state by
-    loading the \c {chrome://gpu} internal page. Moreover, the acceleration can be explicitly
-    disabled with \c {QTWEBENGINE_CHROMIUM_FLAGS} using the \c {disable-gpu} switch.
-    For example on Linux:
+    \QWE tries to use hardware acceleration for rendering web content whenever possible.
+    The actual rendering is performed by Chromium, and the final image is produced by Chromium's
+    compositor, which makes use of modern GPU APIs such as OpenGL, Vulkan, Metal, or Direct3D,
+    depending on the platform and available drivers.
 
+    This final image is then imported by \QWE into the Qt rendering pipeline using GPU
+    interoperability, allowing efficient sharing of GPU resources without unnecessary copies.
+    The imported image is passed to the \l{Qt Quick Scene Graph}, which also performs
+    hardware-accelerated rendering through the Qt Rendering Hardware Interface (RHI).
+
+    While both Qt and Chromium rely on GPU acceleration, they may not necessarily use the same
+    graphics API. In practice, \QWE attempts to align Chromium’s GPU backend with the one
+    used by Qt when possible, defaulting to Qt’s chosen backend configuration to ensure
+    compatibility and optimal performance, though it is possible to manually override these
+    defaults if needed.
+
+    When hardware acceleration is not available or fails, \QWE automatically tries to fall back to
+    software rendering.
+
+    \section2 Force use of software rendering
+
+    The automatic fallback to software rendering is not always possible, and \QWE may fail to
+    properly display web content or may exit with an error message. In such cases, it maybe
+    necessary to explicitly disable hardware acceleration and use software rendering instead.
+
+    There are multiple ways to force software rendering:
+
+    \list
+    \li Disable hardware acceleration in Chromium:
     \badcode
     export QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
     \endcode
+    \li Disable hardware acceleration in \l{Qt Quick Scene Graph}:
+    \badcode
+    export QT_QUICK_BACKEND=software
+    \endcode
+    \endlist
+
+    \section2 Changing the graphics API backend in Qt
+
+    There are two ways to choose the graphics API backend:
+    \list
+    \li Set \c{QSG_RHI_BACKEND} environment variable before launching application.
+    \li Call \l{QQuickWindow::setGraphicsApi()} in combination with
+        \l{QSGRendererInterface::GraphicsApi} before constructing the first \l{QQuickWindow}.
+    \endlist
+
+    For more details, see
+    \l{Rendering via the Qt Rendering Hardware Interface}.
+
+    \section2 Changing the graphics API backend in Chromium
+
+    Changing Chromium’s graphics API backend is generally not recommended, as it may cause
+    compatibility issues or inconsistent rendering behavior. Whenever possible, prefer using the
+    \c{QSG_RHI_BACKEND} environment variable instead. However, it may be necessary in some cases
+    for debugging or as a temporary workaround for driver-specific problems.
+
+    To override Chromium's backend, set the \c{QTWEBENGINE_CHROMIUM_FLAGS} environment variable to
+    pass the corresponding Chromium command line flags, such as \c{--use-gl=} or \c{--use-angle=}.
+
+    In \QWE, Chromium currently uses the \e{ANGLE} backend by default on all platforms where
+    hardware acceleration is supported. ANGLE is a cross-platform graphics abstraction layer in
+    Chromium which hides the underlying native graphics backend.
+
+    The default configuration \QWE uses is this:
+    \badcode
+    export QTWEBENGINE_CHROMIUM_FLAGS="--use-gl=angle --use-angle=default"
+    \endcode
+
+    If ANGLE crashes under a specific configuration, it can be completely disabled while still using
+    Vulkan for hardware-accelerated rendering:
+    \badcode
+    export QTWEBENGINE_CHROMIUM_FLAGS="--use-gl=stub --enable-features=Vulkan --use-vulkan=native"
+    \endcode
+    \note Certain features such as \l{WebGL} may not work with a custom configuration like this.
+
+    Alternatively, the following configuration uses Vulkan for rendering while keeping ANGLE enabled
+    for \l{WebGL} support:
+    \badcode
+    export QTWEBENGINE_CHROMIUM_FLAGS="--use-gl=angle --enable-features=Vulkan --use-vulkan=native"
+    \endcode
+
+    For more details about the corresponding Chromium command line flags, see Chromium's source
+    code:
+    \l{https://chromium.googlesource.com/experimental/chromium/src/+/lkgr/ui/gl/gl_switches.cc}
+    {//ui/gl/gl_switches.cc}
+
+    \section2 NVIDIA on Linux
+
+    On Linux systems with an NVIDIA GPU, Chromium is forced to use Vulkan for rendering.
+
+    \QWE uses GBM buffer objects to import textures from Chromium into Qt's graphics pipeline.
+    However, NVIDIA drivers currently do not support allocating these buffer objects.
+    As a workaround, \QWE forces Chromium to render with Vulkan and imports the textures using
+    Vulkan interoperability.
+
+    \note Qt itself is not forced to use Vulkan. Chromium uses the
+    \c{--use-gl=angle --enable-features=Vulkan --use-vulkan=native} configuration.
+
+    \section2 Enable logging and troubleshooting
+
+    When a rendering issue occurs, it is important to know the failing configuration and the
+    current state of hardware acceleration in order to investigate and report the problem
+    effectively.
+
+    The easiest way to check this information is to load the \c{chrome://gpu} internal page and
+    analyze its content. However, this page may not always be readable or available during a
+    rendering issue.
+
+    \QWE provides logging categories that can be enabled to dump detailed graphics information:
+
+    \list
+    \li \c{qt.webenginecontext} logs how \QWE was initialized, the detected GPU, and the graphics
+        configuration.
+    \li \c{qt.webengine.compositor} logs the configuration used by Chromium and the steps \QWE takes
+        to import textures into Qt's graphics pipeline.
+    \endlist
+
+    To enable these logs, set the \c{QT_LOGGING_RULES} environment variable, for example:
+    \badcode
+    export QT_LOGGING_RULES="qt.webenginecontext=true;qt.webengine.compositor=true"
+    \endcode
+
+    \note If the \c{QSG RHI Device} used by Qt and the \c{GL Renderer} used by Chromium differ,
+    it indicates that Qt and Chromium are using different GPUs in a multi-GPU system, which is
+    currently not supported.
+
+    This is an example GPU log from \c{qt.webenginecontext}:
+    \badcode
+    Chromium GL Backend: angle
+    Chromium ANGLE Backend: default
+    Chromium Vulkan Backend: disabled
+
+    QSG RHI Backend: OpenGL
+    QSG RHI Backend Supported: yes
+    QSG RHI Device: AMD AMD Radeon Graphics (radeonsi, raphael_mendocino, LLVM 20.1.8, DRM 3.61, 6.12.41-gentoo-x86_64) 4.6 (Compatibility Profile) Mesa 25.1.9
+    QSG RHI GPU Vendor: AMD
+    \endcode
+
+    The first block presents the Chromium configuration:
+    \list
+    \li \c{Chromium GL Backend} shows the value of the \c{--use-gl=} setting.
+    \li \c{Chromium ANGLE Backend} shows the value of the \c{--use-angle=} setting.
+    \li \c{Chromium Vulkan Backend} shows the value of the \c{--use-vulkan=} setting.
+    \endlist
+
+    The second block presents the Qt configuration:
+    \list
+    \li \c{QSG RHI Backend} shows the underlying native graphics API.
+    \li \c{QSG RHI Backend Supported} indicates whether this graphics API is supported by \QWE.
+    \li \c{QSG RHI Device} shows metadata for the graphics device used by the RHI.
+    \li \c{QSG RHI Vendor} shows the vendor of the graphics device used by the RHI.
+    \endlist
+
+    This is an example ANGLE log from \c{qt.webengine.compositor} for the same GPU:
+    \badcode
+    qt.webengine.compositor: ANGLE_OPENGL display is initialized:
+    GL Renderer: ANGLE (AMD, AMD Radeon Graphics (radeonsi raphael_mendocino LLVM 20.1.8), OpenGL 4.6 (Core Profile) Mesa 25.1.9)
+    2 GPU(s) detected:
+      Nvidia, device id: 0x1d01, driver: Mesa 25.1.9, system device id: 0x0, preference: None, active: no
+      AMD, device id: 0x164e, driver: Mesa 25.1.9, system device id: 0x0, preference: None, active: yes
+    NVIDIA Optimus: disabled
+    AMD Switchable: disabled
+    \endcode
+
+    The log entries above indicates:
+    \list
+    \li \c{ANGLE_OPENGL display is initialized} confirms that ANGLE was successfully initialized
+        with the specified display type.
+    \li \c{GL Renderer} shows metadata for the graphics device used by ANGLE (expected to match
+        the \c{QSG RHI Device}).
+    \li \c{2 GPU(s) detected} lists the GPUs detected by ANGLE.
+    \li \c{NVIDIA Optimus} and \c{AMD Switchable} indicate whether ANGLE supports GPU switching
+        at runtime (currently not supported).
+    \endlist
 
     \section1 HTML5 DRM
 
-    \QWE supports viewing DRM protected videos if the \l{Widevine CDM} plugin has been installed.
-    CDM plugin is a replacement of Flash based plugins for displaying DRM-protected content.
-    It comes only in a binary format, so it can hide DRM decryption implementation details.
-    It can be obtained from a third party or from a Google Chrome installation.
+    \QWE supports displaying DRM-protected videos if the \l{Widevine CDM} plugin has been installed.
+    The plugin comes only in a binary format, so it can hide DRM decryption implementation details.
+    You can obtain it from a third party, or from a Google Chrome installation.
 
-    \QWE on startup looks for the \l{Widevine CDM} plugin in well know locations, like
-    default Google Chrome installation directory or Linux distro specific paths. However, plugin
-    location can be also passed with \c {QTWEBENGINE_CHROMIUM_FLAGS} using \c {widevine-path}.
+    The support for HTML5 DRM is provided by Chromium.
+
+    \note The Widevine plugin is not shipped with \QWE.
+
+    On startup, \QWE looks for the \l{Widevine CDM} plugin in several well-known locations, like
+    the default Google Chrome installation directory, or Linux distro-specific paths.
+    You can also pass the plugin location with \c {QTWEBENGINE_CHROMIUM_FLAGS} using \c {widevine-path}.
 
     On Windows:
     \badcode
@@ -343,16 +456,13 @@
     export QTWEBENGINE_CHROMIUM_FLAGS=--widevine-path="/some path/libwidevinecdm.dylib"
     \endcode
 
-
     The video format most commonly used by DRM services, H.264, requires
     proprietary audio and video codecs. For more information about enabling the
     codecs, see \l{Audio and Video Codecs}.
 
-    This feature can be tested by playing a video in \l{WebEngine Widgets Simple Browser
-    Example}{Simple Browser} or \l{WebEngine Quick Nano Browser}{Nano Browser}
-    from \l{castLabs}, \l{Swank Motion Pictures, Inc.}, or \l{Bitmovin Player}.
-
-    Support for this feature was added in Qt 5.7.0.
+    You can test this feature by playing a video from \l{castLabs} or \l{Bitmovin Player}
+    in the \l{WebEngine Widgets Simple Browser Example}{Simple Browser} or
+    \l{WebEngine Quick Nano Browser}{Nano Browser} example projects.
 
     \section1 HTML5 Geolocation
 
@@ -373,16 +483,55 @@
     {Location services}, \uicontrol {Let apps access your location} and \uicontrol
     {Let desktop apps access your location}.
 
+    The JavaScript side of the Geolocation API is implemented and provided by Chromium.
+
     See \l{Qt Positioning} for a possible backend setup like the GPS or IP based positioning.
 
-    Support for this feature was added in Qt 5.5.0.
+    \section1 HTML5 Permissions
+
+    \QWE has support for several types of web feature permissions via the \l QWebEnginePermission API.
+    Permissions can be granted (or denied) to a web domain whenever a page requests
+    potentially sensitive user information, like access to the users' camera or geolocation.
+
+    Application developers can choose whether to ask the end user for permission
+    or automatically make the decision for them. Moreover, they can preemptively
+    grant or deny certain permissions, in cases where a known domain is expected to
+    request them.
+
+    The \l QWebEngineProfile object stores all permissions that have been granted
+    or denied to individual domains. Unless the current profile is off-the-record,
+    those permissions are stored to disk and recalled the next time an application is opened.
+    However, this behavior can be modified, and developers can choose to only store permissions
+    until application exit, or even to make permission requests trigger every time a website asks for them.
+
+    The full list of currently supported web permissions can be found
+    \l {QWebEnginePermission::PermissionType}{in the QWebEnginePermission documentation}.
+
+    The implementation of permissions logic and the JavaScript Permissions API is provided
+    by Chromium.
+
+    \note Web permissions are different from application permissions, which are
+    governed by the QPermissions API. Web permissions are granted to individual
+    web domains, and not to the full application. However, the two APIs are not mutually
+    exclusive. For example, access to the user's camera and microphone may require
+    granting permission through both APIs.
+
+    \section1 Frames
+
+    Using the \l QWebEngineFrame API, developers can inspect and interact with individual
+    \c {<iframe>} elements within a web page. This can be used to inject JavaScript, or to print
+    only the contents of the frame, ignoring the page it's embedded in. Frames can also
+    be accessed recursively, for cases where frames exist inside other frames.
+
+    This capability is provided by Chromium and exposed via the \QWE API.
 
     \section1 HTML5 WebSockets
 
-    \QWE supports the WebSocket JavaScript API to communicate with WebSocket servers
-    using the \c {ws://} or \c {wss://} protocols. Moreover, integration with Qt WebChannel
-    and Qt WebSockets enables communication between JavaScript and the native side of
-    the application.
+    \QWE supports and exposes the Chromium-provided WebSocket JavaScript API to
+    communicate with WebSocket servers using the \c {ws://} or \c {wss://}
+    protocols. Moreover, integration with Qt WebChannel and Qt WebSockets
+    enables communication between JavaScript and the native side of the
+    application.
 
     The Qt WebChannel module has a great example for a
     \l[QtWebChannel]{Qt WebChannel ChatServer Example}{chat server}
@@ -408,7 +557,7 @@
     {https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API/Using_the_Web_Storage_API}
     {Web Storage API}, where a user can access a \c Storage object for the given domains
     using the \c Window.localStorage JavaScript property. The stored data will persist even
-    after the page or the browser application is closed.
+    after the page or the application is closed.
 
     Note that the \c Local Storage can be also disabled with a
     \l QWebEngineSettings::LocalStorageEnabled
@@ -426,6 +575,8 @@
     with \l {Qt WebEngine Developer Tools} by visiting the \uicontrol Application panel
     and expanding the \uicontrol {Local Storage} menu.
 
+    The implementation of this feature is provided by Chromium.
+
     \section1 Native Dialogs
 
     A web page might request dialogs for the following functions:
@@ -441,7 +592,7 @@
     \QWE provides standard dialogs for these functions. In widget-based
     applications, the standard dialogs are based on QDialog, whereas in Qt Quick
     applications, they can be based either on Qt Quick Controls 1 or Qt Quick
-    Controls 2 (since Qt 5.8). The latter are used only on \c eglfs platforms.
+    Controls 2. The latter are used only on \c eglfs platforms.
 
     To explicitly force either dialogs based on Qt Quick Controls 1 or Qt Quick
     Controls 2, set the \c QTWEBENGINE_DIALOG_SET environment variable to either
@@ -452,12 +603,12 @@
     QWebEnginePage::javaScriptConfirm(), and QWebEnginePage::javaScriptPrompt()
     functions.
 
-    Since Qt 5.8, Qt Quick dialogs can be customized by connecting to the
+    Qt Quick dialogs can be customized by connecting to the
     WebEngineView::authenticationDialogRequested(),
     WebEngineView::javaScriptDialogRequested(),
     WebEngineView::colorDialogRequested(),
     WebEngineView::fileDialogRequested(), and
-    WebEngineView::formValidationMessageRequested() signals. For an example,
+    WebEngineView::formValidationMessageRequested() signals.
 
     \section1 PDF File Viewing
 
@@ -466,26 +617,19 @@
     It can be tested in \l{WebEngine Widgets Simple Browser Example}{Simple Browser} or
     \l{WebEngine Quick Nano Browser}{Nano Browser}.
 
-    Loading plugins needs to be enabled using QWebEngineSettings::PluginsEnabled or
-    WebEngineSettings::pluginsEnabled in order to use this feature.
-
     This feature can be turned on (default) or off via the QWebEngineSettings::PdfViewerEnabled or
     WebEngineSettings::pdfViewerEnabled setting.
-
-    Support for this feature was added in Qt 5.13.0.
 
     \section1 Page Lifecycle API
 
     \QWE supports the \l {https://wicg.github.io/page-lifecycle/spec.html}{Page
     Lifecycle API specification}, a work-in-progress extension to the HTML
     standard for allowing user agents to reduce their resource consumption by
-    freezing or discarding background pages. The feature is exposed both in the
-    Widgets and QML APIs.
+    freezing or discarding background pages. The feature is implemented by Chromium,
+    and exposed both in the Widgets and QML APIs.
 
     For an example of the QML API in use, see the \l {WebEngine Lifecycle
     Example}.
-
-    Support for this feature was added in Qt 5.14.0.
 
     \section2 Overview of Lifecycle States
 
@@ -509,7 +653,7 @@
     renderer subprocess shut down. CPU and memory usage in this state is reduced
     virtually to zero. On exiting this state the web page will be automatically
     reloaded. The process of entering and exiting the discarded state is similar
-    to serializing the browsing history of the web view and destroying the view,
+    to serializing the history of the web view and destroying the view,
     then creating a new view and restoring its history.
 
     See also \l {WebEngineView::LifecycleState}. The equivalent in the Widgets
@@ -560,63 +704,18 @@
     This feature can be tested using \l{WebEngine Widgets Html2Pdf Example}
     {Html2Pdf}.
 
-    Support for this feature was added in Qt 5.7.0.
+    The implementation of this feature is provided by Chromium.
 
-    \section1 Process Models
+    \section1 Push Notifications
 
-    \QWE uses multiple OS processes to isolate web sites from each other
-    and from the client application, improving security and robustness. The
-    following process models, or ways to divide web sites between OS processes,
-    are supported:
+    \QWE exposes an API to the JavaScript
+    \l{https://www.w3.org/TR/push-api/}{Push API} to subscribe to and receive
+    push notifications. The implementation of this API is provided by Chromium.
+    For more information, see QWebEngineProfile::setPushServiceEnabled() and
+    \l{WebEngineProfile::isPushServiceEnabled}
+    {WebEngineProfile.setPushServiceEnabled}.
 
-    \list
-      \li \l{Process per Site Instance}
-      \li \l{Process per Site}
-      \li \l{Single Process}
-    \endlist
-
-    \section2 Process per Site Instance
-
-    This is the default model. Pages from separate sites are put into separate
-    processes and separate visits to the same site are also isolated.
-
-    Two web pages are considered as belonging to the same site if they originate
-    from the same registered domain name (for example, \c wikipedia.org) and
-    scheme (for example, \c https). This is similar to the same-origin policy
-    but subdomains are ignored. For example, both \c{https://en.wikipedia.org/}
-    and \c{https://de.wikipedia.org/} would belong to the same site.
-
-    A site instance is a collection of web pages belonging to the same site.
-    When the application explicitly loads a URL into \QWE (via \l
-    QWebEnginePage::setUrl, for example), a new site instance is created for the
-    page. However, when the user clicks same-site links on the page, the
-    existing site instance is merely extended with more pages.
-
-    For instance, in the \l{WebEngine Widgets Simple Browser Example}{Simple
-    Browser} example, when a user opens two tabs and explicitly enters
-    \c{https://en.wikipedia.org/} into the URL bars, both tabs will have their
-    own separate OS processes (because explicitly entering a URL creates a new
-    site instance). However, when the user then middle-clicks some same-site
-    links to open more tabs, these new tabs will share the same OS process
-    (because user interaction extends the existing site instance).
-
-    \section2 Process per Site
-
-    Pages from separate sites are put into separate processes. Unlike Process
-    per Site Instance, all visits to the same site will share an OS process.
-
-    The benefit of this model is reduced memory consumption, because more web
-    pages will share processes. The drawbacks include reduced security,
-    robustness, and responsiveness.
-
-    To enable this model, use the command-line argument \c{--process-per-site}.
-    See \l{Using Command-Line Arguments}.
-
-    \section2 Single Process
-
-    For debugging purposes only, a single process mode can be enabled using the
-    command-line argument \c{--single-process}. See \l{Using Command-Line
-    Arguments} and \l{Qt WebEngine Debugging and Profiling}.
+    This feature can be tested with the \l{WebEngine Push Notifications Example}.
 
     \section1 Spellchecker
 
@@ -624,6 +723,8 @@
     enable users to submit spellchecked messages. When the user clicks on
     an underlined misspelled word, the default context menu displays up to four
     suggestions. Selecting one will replace the misspelled word.
+
+    The spellchecker implementation is mainly provided by Chromium.
 
     To be able to check the spelling, the spellchecker needs dictionaries. It
     supports dictionaries from the \l{Hunspell project}, but they have to be
@@ -643,11 +744,24 @@
     When the \QWE spellchecker initializes, it will try to load the
     \c bdict dictionaries and to check them for consistency.
 
-    If \c QTWEBENGINE_DICTIONARIES_PATH is set, the spellchecker uses the
-    dictionaries in the specified directory without looking anywere else.
-    Otherwise, it uses the \e qtwebengine_dictionaries directory relative to the
-    executable if it exists. If it does not exist, it will look in \c
-    QT_INSTALL_PREFIX/qtwebengine_dictionaries.
+    For CMake, you can use the \l qt_add_webengine_dictionary command to convert
+    Hunspell \c .dic files into the \c .bdic binary format. The command creates
+    a \c qtwebengine_dictionaries target, which your project can use a
+    dependency.
+
+    By default, \QWE searches for dictionaries inside the \e qtwebengine_dictionaries
+    directory relative to the executable if it exists. If it does not exist, it will
+    look in \c QT_INSTALL_PREFIX/qtwebengine_dictionaries.
+
+    Alternatively, a dictionaries directory path can be set as a value of the
+    \c QTWEBENGINE_DICTIONARIES_PATH environment variable, or via the command-line:
+
+    \badcode
+    --webEngineArgs --webengine-dictionaries-path=<path>
+    \endcode
+
+    When an override is set, the application looks for dictionaries only inside the
+    provided directory, and nowhere else.
 
     On macOS, depending on how \QWE is configured at build time, there
     are two possibilities how spellchecking data is found:
@@ -698,23 +812,25 @@
 
     For more information, see \l{Qt Configure Options}.
 
-    Support for this feature was added in Qt 5.8.0.
-
     \section1 Touch
 
     \QWE supports touch devices for navigating and interacting with web pages.
 
-    Applications can prohibit the use of touch events in the following ways:
+    The touch event support in JavaScript API depends on the presence of a touch screen
+    (meaning \c ontouchstart and related handlers will be present in the \c document.window object
+    if a capable touch device is connected to the system).
 
-    \list
-        \li Passing the flag \c --touch-events=disabled on the command line will disable touch event
-        support in JavaScript API (meaning \c ontouchstart and related handlers will not be present
-        in the \c document.window object). Touch events will still be delivered to web pages.
+    Some websites use this API to decide whether they run on a mobile device or on desktop and base their design on it.
+    This can cause unwanted results on touchscreen laptops or other setups that emulate a fake touch device.
 
-       \li Installing an event filter object using \l {QObject::installEventFilter} on the WebEngine
-       view focus proxy object, and filtering out all touch events.
+    Applications can set this feature explicitly with \l {QWebEngineSettings::TouchEventsApiEnabled}.
 
-    \endlist
+    Note that touch events will still be delivered to web pages even if the API is disabled.
+    Dispatching touch events to web pages can be prohibited by installing an event filter object
+    using \l {QObject::installEventFilter} on the WebEngine view focus proxy object,
+    and filtering out all touch events.
+
+    The implementation of this feature is provided by Chromium.
 
     \section1 View Source
 
@@ -742,16 +858,79 @@
     view-source:qt.io
     \endcode
 
-    Support for this feature was added in Qt 5.8.0.
+    The implementation of this feature is provided by Chromium.
 
     \section1 Web Notifications
 
-    Qt WebEngine supports JavaScript \l{Web Notifications API}.
+    \QWE supports JavaScript \l{Web Notifications API}.
     The application has to explicitly allow the feature by using
     QWebEnginePage::Notifications or \l{WebEngineView::Feature}
     {WebEngineView.Notifications}.
 
-    Support for this feature was added in Qt 5.13.0.
+    The implementation of the JavaScript Web Notifications API is provided by
+    Chromium.
+
+    \section1 WebEngineDriver
+
+    With WebEngineDriver, you can automate the testing of web sites.
+    WebEngineDriver is based on the Chromium-provided ChromeDriver and can be
+    used the same way. For more information about ChromeDriver and its use,
+    visit \l {https://chromedriver.chromium.org/}{ChromeDriver user site}.
+
+    WebEngineDriver has slight modifications compared to ChromeDriver to be able to connect to
+    \QWE based applications. It is compatible with \QWE example browsers, such as
+    \l {WebEngine Widgets Simple Browser Example}{Simple Browser} or
+    \l{WebEngine Quick Nano Browser}{Nano Browser}.
+
+    The automation is scripted through a WebDriver client like the
+    \l {https://www.selenium.dev/}{Selenium WebDriver}.
+    For example, WebEngineDriver can be used with the Python lanugage bindings of
+    Selenium WebDriver:
+
+    \code
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+
+    service = Service(executable_path='QTDIR/libexec/webenginedriver')
+    options = webdriver.ChromeOptions()
+    options.binary_location = 'path/to/binary'
+
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.get("http://www.google.com/")
+    driver.quit()
+    \endcode
+
+    In this example,
+    \list
+    \li \c executable_path has to be set to the WebEngineDriver's binary path
+    \li \c QTDIR is the directory where Qt is installed
+    \li \c options.binary_location has to be set to the application's binary path
+    \endlist
+
+    \note On Windows: \c executable_path='QTDIR/bin/webenginedriver.exe'
+
+    Before executing the script, the \c QTWEBENGINE_REMOTE_DEBUGGING environment variable has to
+    be set. Its value is a port number what is used by both the application and WebEngineDriver to
+    communicate with each other.
+    \badcode
+    export QTWEBENGINE_REMOTE_DEBUGGING=12345
+    \endcode
+
+    By executing, the script opens the specified application and loads the Google web site.
+
+    WebEngineDriver can be also attached to an already running application if it was started with the
+    remote debugging port set. \c options.debugger_address has to be set to the remote debugging
+    address in the script:
+
+    \code
+    options.debugger_address = 'localhost:12345'
+    \endcode
+
+    In this case, \c options.binary_location should not be set because the application is already
+    running. The environment variable \c QTWEBENGINE_REMOTE_DEBUGGING is not used by the
+    WebEngineDriver if \c options.debugger_address is set.
+
+    \note WebEngineDriver must be built with the same version of Chromium as \QWE is using.
 
     \section1 WebGL
 
@@ -763,15 +942,19 @@
     The WebGL support is enabled by default. You can disable it with the
     \l QWebEngineSettings::WebGLEnabled setting.
 
+    The implementation of WebGL support is mainly provided by Chromium.
+
     \target webrtc_feature
     \section1 WebRTC
 
-    WebRTC provides browsers with Real-Time Communications (RTC) capabilities
+    WebRTC provides application with Real-Time Communications (RTC) capabilities
     via simple APIs. For more information, see \l{WebEngineView::Feature}
     {WebEngineView.Feature}, and QWebEnginePage::Feature.
 
     This feature can be tested by setting up a webcam or microphone and then
     opening \c https://test.webrtc.org/ in \l{WebEngine Widgets Simple Browser
     Example}{Simple Browser} or \l{WebEngine Quick Nano Browser}{Nano Browser}.
+
+    The implementation of WebRTC support is provided by Chromium libraries.
 
 */

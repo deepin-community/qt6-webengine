@@ -101,9 +101,7 @@ std::u16string PopupBlockedInfoBarDelegate::GetButtonLabel(
       return l10n_util::GetStringUTF16(IDS_PERMISSION_DENY);
     default:
       NOTREACHED();
-      break;
   }
-  return std::u16string();
 }
 
 bool PopupBlockedInfoBarDelegate::Accept() {

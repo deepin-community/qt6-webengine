@@ -17,7 +17,6 @@
 #include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/platform/scheduler/common/task_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/cpu_time_budget_pool.h"
@@ -29,15 +28,6 @@
 #include "third_party/blink/renderer/platform/scheduler/test/web_scheduling_test_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
-
-// TODO(crbug.com/960984): Fix memory leaks in tests and re-enable on LSAN.
-#ifdef LEAK_SANITIZER
-#define MAYBE_PausableTasks DISABLED_PausableTasks
-#define MAYBE_NestedPauseHandlesTasks DISABLED_NestedPauseHandlesTasks
-#else
-#define MAYBE_PausableTasks PausableTasks
-#define MAYBE_NestedPauseHandlesTasks NestedPauseHandlesTasks
-#endif
 
 using testing::ElementsAre;
 using testing::ElementsAreArray;
@@ -85,7 +75,7 @@ class TestObject {
   ~TestObject() { ++(*counter_); }
 
  private:
-  raw_ptr<int, ExperimentalRenderer> counter_;
+  raw_ptr<int> counter_;
 };
 
 }  // namespace
@@ -327,7 +317,7 @@ TEST_F(WorkerSchedulerImplTest,
                                  start_time_ + base::Seconds(40)));
 }
 
-TEST_F(WorkerSchedulerImplTest, MAYBE_PausableTasks) {
+TEST_F(WorkerSchedulerImplTest, PausableTasks) {
   Vector<String> run_order;
   auto pause_handle = worker_scheduler_->Pause();
   // Tests interlacing pausable, throttable and unpausable tasks and
@@ -346,7 +336,7 @@ TEST_F(WorkerSchedulerImplTest, MAYBE_PausableTasks) {
   EXPECT_THAT(run_order, testing::ElementsAre("T3", "T1", "T2"));
 }
 
-TEST_F(WorkerSchedulerImplTest, MAYBE_NestedPauseHandlesTasks) {
+TEST_F(WorkerSchedulerImplTest, NestedPauseHandlesTasks) {
   Vector<String> run_order;
   auto pause_handle = worker_scheduler_->Pause();
   {
@@ -368,13 +358,13 @@ class WorkerSchedulerDelegateForTesting : public WorkerScheduler::Delegate {
 
 MATCHER(BlockingDetailsHasCCNS, "Compares two blocking details.") {
   bool vector_empty =
-      arg.non_sticky_features_and_js_locations.details_list.empty();
+      arg.non_sticky_features_and_js_locations->details_list.empty();
   bool vector_has_ccns =
-      arg.sticky_features_and_js_locations.details_list.Contains(
+      arg.sticky_features_and_js_locations->details_list.Contains(
           FeatureAndJSLocationBlockingBFCache(
               SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore,
               nullptr)) &&
-      arg.sticky_features_and_js_locations.details_list.Contains(
+      arg.sticky_features_and_js_locations->details_list.Contains(
           FeatureAndJSLocationBlockingBFCache(
               SchedulingPolicy::Feature::kMainResourceHasCacheControlNoCache,
               nullptr));

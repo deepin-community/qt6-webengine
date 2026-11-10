@@ -28,6 +28,7 @@
 #ifndef SRC_DAWN_NATIVE_METAL_SHADERMODULEMTL_H_
 #define SRC_DAWN_NATIVE_METAL_SHADERMODULEMTL_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -53,30 +54,31 @@ class ShaderModule final : public ShaderModuleBase {
     static ResultOrError<Ref<ShaderModule>> Create(
         Device* device,
         const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
-        ShaderModuleParseResult* parseResult,
-        OwnedCompilationMessages* compilationMessages);
+        const std::vector<tint::wgsl::Extension>& internalExtensions,
+        ShaderModuleParseResult* parseResult);
 
     struct MetalFunctionData {
+        std::string msl;
         NSPRef<id<MTLFunction>> function;
         bool needsStorageBufferLength;
         std::vector<uint32_t> workgroupAllocations;
         MTLSize localWorkgroupSize;
     };
 
-    MaybeError CreateFunction(
-        SingleShaderStage stage,
-        const ProgrammableStage& programmableStage,
-        const PipelineLayout* layout,
-        MetalFunctionData* out,
-        uint32_t sampleMask = 0xFFFFFFFF,
-        const RenderPipeline* renderPipeline = nullptr,
-        std::optional<uint32_t> maxSubgroupSizeForFullSubgroups = std::nullopt);
+    MaybeError CreateFunction(SingleShaderStage stage,
+                              const ProgrammableStage& programmableStage,
+                              const PipelineLayout* layout,
+                              MetalFunctionData* out,
+                              uint32_t sampleMask = 0xFFFFFFFF,
+                              const RenderPipeline* renderPipeline = nullptr);
 
   private:
-    ShaderModule(Device* device, const UnpackedPtr<ShaderModuleDescriptor>& descriptor);
+    ShaderModule(Device* device,
+                 const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
+                 std::vector<tint::wgsl::Extension> internalExtensions);
     ~ShaderModule() override;
-    MaybeError Initialize(ShaderModuleParseResult* parseResult,
-                          OwnedCompilationMessages* compilationMessages);
+
+    MaybeError Initialize(ShaderModuleParseResult* parseResult);
 };
 
 }  // namespace dawn::native::metal

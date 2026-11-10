@@ -6,8 +6,8 @@
  */
 #include "bench/Benchmark.h"
 #include "include/core/SkString.h"
-#include "include/private/SkColorData.h"
 #include "src/base/SkRandom.h"
+#include "src/core/SkColorData.h"
 
 template <bool kFast, bool kScale>
 class FourByteInterpBench : public Benchmark {
@@ -19,7 +19,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     const char* onGetName() override { return fName.c_str(); }
@@ -58,13 +58,13 @@ public:
                     const unsigned scale = fScales[j];
 
                     if (kFast && kScale) {
-                        junk ^= SkFastFourByteInterp(src, dst, scale);
+                        junk = SkFastFourByteInterp(src, dst, scale);
                     } else if (kFast) {
-                        junk ^= SkFastFourByteInterp256(src, dst, scale);
+                        junk = SkFastFourByteInterp256(src, dst, scale);
                     } else if (kScale) {
-                        junk ^= SkFourByteInterp(src, dst, scale);
+                        junk = SkFourByteInterp(src, dst, scale);
                     } else {
-                        junk ^= SkFourByteInterp256(src, dst, scale);
+                        junk = SkFourByteInterp256(src, dst, scale);
                     }
                 }
             }

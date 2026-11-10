@@ -204,7 +204,6 @@ const char* CredentialTypeToString(CredentialType type) {
       return kPublicKey;
   }
   NOTREACHED();
-  return kPublicKey;
 }
 
 const char kCableHandshakeKeyInfo[] = "FIDO caBLE v1 handshakeKey";

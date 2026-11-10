@@ -28,7 +28,7 @@ enum class TransportType {
 };
 
 // Returns a string representation of the given transport type.
-// The returned StringPiece is static, has no lifetime restrictions.
+// The returned std::string_view is static, has no lifetime restrictions.
 NET_EXPORT std::string_view TransportTypeToString(TransportType type);
 
 // Describes a network transport.
@@ -76,7 +76,7 @@ struct NET_EXPORT TransportInfo {
   //
   // Invariant: if `type` is `kCached` or `kCachedFromProxy`, then this is
   // always kProtoUnknown.
-  NextProto negotiated_protocol = kProtoUnknown;
+  NextProto negotiated_protocol = NextProto::kProtoUnknown;
 };
 
 // Instances of these types are streamable for easier debugging.

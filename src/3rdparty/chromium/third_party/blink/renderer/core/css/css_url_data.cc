@@ -22,6 +22,7 @@
 
 #include "third_party/blink/renderer/core/css/css_markup.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 
@@ -30,24 +31,40 @@ namespace blink {
 CSSUrlData::CSSUrlData(const AtomicString& unresolved_url,
                        const KURL& resolved_url,
                        const Referrer& referrer,
-                       OriginClean origin_clean,
+                       bool is_from_origin_clean_style_sheet,
                        bool is_ad_related)
     : relative_url_(unresolved_url),
       absolute_url_(resolved_url.GetString()),
       referrer_(referrer),
-      is_from_origin_clean_style_sheet_(origin_clean == OriginClean::kTrue),
-      is_ad_related_(is_ad_related),
       is_local_(unresolved_url.StartsWith('#')),
+      is_from_origin_clean_style_sheet_(is_from_origin_clean_style_sheet),
+      is_ad_related_(is_ad_related),
       potentially_dangling_markup_(resolved_url.PotentiallyDanglingMarkup()) {}
+
+CSSUrlData::CSSUrlData(base::PassKey<CSSUrlData>,
+                       const AtomicString& unresolved_url,
+                       const AtomicString& resolved_url,
+                       const Referrer& referrer,
+                       bool is_from_origin_clean_style_sheet,
+                       bool is_ad_related,
+                       bool is_local,
+                       bool potentially_dangling_markup)
+    : relative_url_(unresolved_url),
+      absolute_url_(resolved_url),
+      referrer_(referrer),
+      is_local_(is_local),
+      is_from_origin_clean_style_sheet_(is_from_origin_clean_style_sheet),
+      is_ad_related_(is_ad_related),
+      potentially_dangling_markup_(potentially_dangling_markup) {}
 
 CSSUrlData::CSSUrlData(const AtomicString& resolved_url)
     : CSSUrlData(resolved_url,
                  KURL(resolved_url),
                  Referrer(),
-                 OriginClean::kTrue,
+                 /*is_from_origin_clean_style_sheet=*/true,
                  /*is_ad_related=*/false) {}
 
-KURL CSSUrlData::ResolveUrl(const Document& document) const {
+KURL CSSUrlData::ResolveUrl(const ExecutionContext& context) const {
   if (!potentially_dangling_markup_) {
     return KURL(absolute_url_);
   }
@@ -66,7 +83,15 @@ KURL CSSUrlData::ResolveUrl(const Document& document) const {
   //
   // Having the more spec-compliant behavior for the dangling markup edge case
   // should be fine.
-  return document.CompleteURL(relative_url_);
+  KURL url = context.CompleteURL(relative_url_);
+
+  // Manually propagate the dangling markup flag when resolving from a string
+  // that has already been canonicalized (and thus lost its newlines).
+  // This ensures that URLs that were originally flagged as dangling markup
+  // (e.g. because they contained raw newlines) remain blocked even after
+  // round-tripping through CSS Typed OM or other internal conversions.
+  url.SetPotentiallyDanglingMarkup();
+  return url;
 }
 
 bool CSSUrlData::ReResolveUrl(const Document& document) const {
@@ -82,33 +107,53 @@ bool CSSUrlData::ReResolveUrl(const Document& document) const {
   return true;
 }
 
-CSSUrlData CSSUrlData::MakeAbsolute() const {
-  if (relative_url_.empty()) {
-    return *this;
+const CSSUrlData* CSSUrlData::MakeComputed() const {
+  if (relative_url_.empty() || is_local_ || absolute_url_.empty()) {
+    return this;
   }
-  return CSSUrlData(absolute_url_, KURL(absolute_url_), Referrer(),
-                    GetOriginClean(), is_ad_related_);
+  return MakeGarbageCollected<CSSUrlData>(
+      base::PassKey<CSSUrlData>(), absolute_url_, absolute_url_, Referrer(),
+      is_from_origin_clean_style_sheet_, is_ad_related_, is_local_,
+      potentially_dangling_markup_);
 }
 
-CSSUrlData CSSUrlData::MakeResolved(const KURL& base_url,
-                                    const WTF::TextEncoding& charset) const {
+const CSSUrlData* CSSUrlData::MakeResolved(const KURL& base_url,
+                                           const TextEncoding& charset) const {
   if (relative_url_.empty()) {
-    return *this;
+    return this;
   }
   const KURL resolved_url = charset.IsValid()
                                 ? KURL(base_url, relative_url_, charset)
                                 : KURL(base_url, relative_url_);
   if (is_local_) {
-    return CSSUrlData(relative_url_, resolved_url, Referrer(), GetOriginClean(),
-                      is_ad_related_);
+    return MakeGarbageCollected<CSSUrlData>(
+        relative_url_, resolved_url, Referrer(),
+        is_from_origin_clean_style_sheet_, is_ad_related_);
   }
-  return CSSUrlData(AtomicString(resolved_url.GetString()), resolved_url,
-                    Referrer(), GetOriginClean(), is_ad_related_);
+  return MakeGarbageCollected<CSSUrlData>(
+      AtomicString(resolved_url.GetString()), resolved_url, Referrer(),
+      is_from_origin_clean_style_sheet_, is_ad_related_);
 }
 
-CSSUrlData CSSUrlData::MakeWithoutReferrer() const {
-  return CSSUrlData(relative_url_, KURL(absolute_url_), Referrer(),
-                    GetOriginClean(), is_ad_related_);
+const CSSUrlData* CSSUrlData::MakeResolvedIfDanglingMarkup(
+    const Document& document) const {
+  if (!potentially_dangling_markup_) {
+    return this;
+  }
+  DCHECK(document.GetExecutionContext());
+  return MakeGarbageCollected<CSSUrlData>(
+      relative_url_, ResolveUrl(*document.GetExecutionContext()), referrer_,
+      is_from_origin_clean_style_sheet_, is_ad_related_);
+}
+
+const CSSUrlData* CSSUrlData::MakeWithoutReferrer() const {
+  // Preserve the dangling markup and local flags which might otherwise be lost
+  // when re-parsing the absolute URL.
+
+  return MakeGarbageCollected<CSSUrlData>(
+      base::PassKey<CSSUrlData>(), relative_url_, absolute_url_, Referrer(),
+      is_from_origin_clean_style_sheet_, is_ad_related_, is_local_,
+      potentially_dangling_markup_);
 }
 
 bool CSSUrlData::IsLocal(const Document& document) const {

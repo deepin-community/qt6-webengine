@@ -8,13 +8,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
-#include "base/test/scoped_feature_list.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_index_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
@@ -172,28 +172,6 @@ IN_PROC_BROWSER_TEST_F(ContentIndexTest, BestIconIsChosen) {
         type: 'image/jpg',
       },
     ]))");
-}
-
-class ContentIndexOfflineCapabilityTest : public ContentIndexTest {
-  void SetUp() override {
-    feature_list_.InitFromCommandLine("ContentIndexCheckOffline", "");
-    ContentIndexTest::SetUp();
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(ContentIndexOfflineCapabilityTest,
-                       CheckOfflineCapability) {
-  // Registering content should still work if the url is offline-capable.
-  RunScript("addContent('id1', [{src: '/single_face.jpg'}], 'forcesuccess')");
-
-  // Registering content should fail if the url is not offline-capable.
-  std::string result = RunScriptWithResult(
-      "addContent('id2', [{src: '/single_face.jpg'}], 'forcefail')");
-  EXPECT_EQ(result,
-            "TypeError - The provided launch URL is not offline-capable.");
 }
 
 }  // namespace

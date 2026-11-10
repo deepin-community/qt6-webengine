@@ -8,23 +8,26 @@ import atexit
 import datetime as dt
 import enum
 import subprocess
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Self, Sequence, Type
 
-from crossbench import cli_helper, compat, helper
+from typing_extensions import override
+
+from crossbench.parse import DurationParser
 from crossbench.probes.probe import (Probe, ProbeConfigParser, ProbeContext,
-                                     ResultLocation)
-from crossbench.probes.results import ProbeResult
+                                     ProbeKeyT)
+from crossbench.probes.result_location import ResultLocation
+from crossbench.str_enum_with_help import StrEnumWithHelp
 
 if TYPE_CHECKING:
-  import pathlib
-
   from crossbench.browsers.browser import Browser
-  from crossbench.env import HostEnvironment
+  from crossbench.env.runner_env import RunnerEnv
+  from crossbench.path import AnyPath
+  from crossbench.probes.results import ProbeResult
   from crossbench.runner.run import Run
 
 
 @enum.unique
-class SamplerType(compat.StrEnumWithHelp):
+class SamplerType(StrEnumWithHelp):
   BATTERY = ("battery", "Battery level")
   CPU_POWER = ("cpu_power",
                "CPU power and per-core frequency and idle residency")
@@ -44,18 +47,19 @@ class PowerMetricsProbe(Probe):
 
   NAME = "powermetrics"
   RESULT_LOCATION = ResultLocation.BROWSER
-  SAMPLERS: Tuple[SamplerType,
+  SAMPLERS: tuple[SamplerType,
                   ...] = (SamplerType.BATTERY, SamplerType.CPU_POWER,
                           SamplerType.DISK, SamplerType.GPU_POWER,
                           SamplerType.INTERRUPTS, SamplerType.NETWORK,
                           SamplerType.TASKS, SamplerType.THERMAL)
 
   @classmethod
-  def config_parser(cls) -> ProbeConfigParser:
+  @override
+  def config_parser(cls) -> ProbeConfigParser[Self]:
     parser = super().config_parser()
     parser.add_argument(
         "sampling_interval",
-        type=cli_helper.Duration.parse_non_zero,
+        type=DurationParser.positive_duration,
         default=1000)
     parser.add_argument(
         "samplers", type=SamplerType, default=cls.SAMPLERS, is_list=True)
@@ -63,7 +67,7 @@ class PowerMetricsProbe(Probe):
 
   def __init__(self,
                sampling_interval: dt.timedelta = dt.timedelta(),
-               samplers: Sequence[SamplerType] = SAMPLERS):
+               samplers: Sequence[SamplerType] = SAMPLERS) -> None:
     super().__init__()
     self._sampling_interval = sampling_interval
     if sampling_interval.total_seconds() < 0:
@@ -71,7 +75,8 @@ class PowerMetricsProbe(Probe):
     self._samplers = tuple(samplers)
 
   @property
-  def key(self) -> Tuple[Tuple, ...]:
+  @override
+  def key(self) -> ProbeKeyT:
     return super().key + (
         ("sampling_interval", self.sampling_interval.total_seconds()),
         ("samplers", tuple(map(str, self.samplers))),
@@ -82,24 +87,25 @@ class PowerMetricsProbe(Probe):
     return self._sampling_interval
 
   @property
-  def samplers(self) -> Tuple[SamplerType, ...]:
+  def samplers(self) -> tuple[SamplerType, ...]:
     return self._samplers
 
-  def validate_browser(self, env: HostEnvironment, browser: Browser) -> None:
+  @override
+  def validate_browser(self, env: RunnerEnv, browser: Browser) -> None:
     super().validate_browser(env, browser)
     self.expect_macos(browser)
 
-  def get_context(self, run: Run) -> PowerMetricsProbeContext:
-    return PowerMetricsProbeContext(self, run)
+  @override
+  def get_context_cls(self) -> Type[PowerMetricsProbeContext]:
+    return PowerMetricsProbeContext
 
 
 class PowerMetricsProbeContext(ProbeContext[PowerMetricsProbe]):
 
   def __init__(self, probe: PowerMetricsProbe, run: Run) -> None:
     super().__init__(probe, run)
-    self._power_metrics_process: Optional[subprocess.Popen] = None
-    self._output_plist_file: pathlib.Path = self.result_path.with_suffix(
-        ".plist")
+    self._power_metrics_process: subprocess.Popen | None = None
+    self._output_plist_file: AnyPath = self.result_path.with_suffix(".plist")
 
   def start(self) -> None:
     self._power_metrics_process = self.browser_platform.popen(
@@ -121,11 +127,11 @@ class PowerMetricsProbeContext(ProbeContext[PowerMetricsProbe]):
     if self._power_metrics_process:
       self._power_metrics_process.terminate()
 
-  def tear_down(self) -> ProbeResult:
+  def teardown(self) -> ProbeResult:
     self.stop_process()
     return self.browser_result(file=(self._output_plist_file,))
 
   def stop_process(self) -> None:
     if self._power_metrics_process:
-      helper.wait_and_kill(self._power_metrics_process)
+      self.browser_platform.terminate_gracefully(self._power_metrics_process)
       self._power_metrics_process = None

@@ -9,8 +9,11 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/css/font_face.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_link_element.h"
+#include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/pending_link_preload.h"
 #include "third_party/blink/renderer/core/script/script_element_base.h"
@@ -55,7 +58,11 @@ class ImperativeFontLoadFinishedCallback final
 }  // namespace
 
 RenderBlockingResourceManager::RenderBlockingResourceManager(Document& document)
-    : document_(document),
+    : element_render_blocking_links_(
+          MakeGarbageCollected<RenderBlockingElementLinkMap>(WTF::BindRepeating(
+              &RenderBlockingResourceManager::OnRenderBlockingElementLinkEmpty,
+              WrapWeakPersistent(this)))),
+      document_(document),
       font_preload_max_blocking_timer_(
           document.GetTaskRunner(TaskType::kInternalFrameLifecycleControl),
           this,
@@ -137,11 +144,8 @@ void RenderBlockingResourceManager::FontPreloadingTimerFired(TimerBase*) {
 
 void RenderBlockingResourceManager::AddPendingParsingElementLink(
     const AtomicString& id,
-    const HTMLLinkElement* link) {
-  if (!RuntimeEnabledFeatures::DocumentRenderBlockingEnabled()) {
-    return;
-  }
-
+    const HTMLLinkElement* link,
+    RenderBlockingLevel blocking_level) {
   CHECK(link);
 
   // We can only add resources until the body element is parsed.
@@ -150,75 +154,62 @@ void RenderBlockingResourceManager::AddPendingParsingElementLink(
     return;
   }
 
-  auto it = element_render_blocking_links_.find(id);
-  if (it == element_render_blocking_links_.end()) {
-    auto result = element_render_blocking_links_.insert(
-        id,
-        MakeGarbageCollected<HeapHashSet<WeakMember<const HTMLLinkElement>>>());
-    result.stored_value->value->insert(link);
-  } else {
-    it->value->insert(link);
+  element_render_blocking_links_->AddLinkWithTargetElement(id, link,
+                                                           blocking_level);
+  if (blocking_level == RenderBlockingLevel::kBlock) {
+    document_->SetHasRenderBlockingExpectLinkElements(true);
+  } else if (blocking_level == RenderBlockingLevel::kLimitFrameRate) {
+    document_->SetHasFullFrameRateBlockingExpectLinkElements(true);
   }
-  document_->SetHasRenderBlockingExpectLinkElements(true);
 }
 
 void RenderBlockingResourceManager::RemovePendingParsingElement(
-    const AtomicString& id) {
-  if (!RuntimeEnabledFeatures::DocumentRenderBlockingEnabled()) {
+    const AtomicString& id,
+    Element* element) {
+  // <link rel=expect> matches elements found using "select the indicated part"
+  // https://html.spec.whatwg.org/multipage/browsing-the-web.html#select-the-indicated-part
+  // which only matches elements in the document tree (as in, not in a shadow
+  // tree)
+  if (element->IsInShadowTree() || !element->isConnected()) {
     return;
   }
-
-  if (element_render_blocking_links_.empty() || id.empty()) {
-    return;
-  }
-
-  element_render_blocking_links_.erase(id);
-  if (element_render_blocking_links_.empty()) {
-    document_->SetHasRenderBlockingExpectLinkElements(false);
-    RenderBlockingResourceUnblocked();
-  }
+  element_render_blocking_links_->RemoveTargetElement(id);
 }
 
 void RenderBlockingResourceManager::RemovePendingParsingElementLink(
     const AtomicString& id,
     const HTMLLinkElement* link) {
-  if (!RuntimeEnabledFeatures::DocumentRenderBlockingEnabled()) {
-    return;
-  }
-
-  // We don't add empty ids.
-  if (id.empty()) {
-    return;
-  }
-
-  auto it = element_render_blocking_links_.find(id);
-  if (it == element_render_blocking_links_.end()) {
-    return;
-  }
-
-  it->value->erase(link);
-  if (it->value->empty()) {
-    element_render_blocking_links_.erase(it);
-  }
-
-  if (element_render_blocking_links_.empty()) {
-    document_->SetHasRenderBlockingExpectLinkElements(false);
-    RenderBlockingResourceUnblocked();
-  }
+  element_render_blocking_links_->RemoveLinkWithTargetElement(id, link);
 }
 
 void RenderBlockingResourceManager::ClearPendingParsingElements() {
-  if (!RuntimeEnabledFeatures::DocumentRenderBlockingEnabled()) {
+  if (!element_render_blocking_links_->HasElement(
+          RenderBlockingLevel::kBlock) &&
+      !element_render_blocking_links_->HasElement(
+          RenderBlockingLevel::kLimitFrameRate)) {
     return;
   }
+  element_render_blocking_links_->ForEach(WTF::BindRepeating(
+      [](Document* document, RenderBlockingLevel, const HTMLLinkElement& link) {
+        document->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+            mojom::blink::ConsoleMessageSource::kOther,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            StrCat({"Did not find element expected to be parsed from: <link "
+                    "rel=expect href=\"",
+                    link.FastGetAttribute(html_names::kHrefAttr), "\">"})));
+      },
+      WrapPersistent(document_.Get())));
+  element_render_blocking_links_->Clear();
+}
 
-  if (element_render_blocking_links_.empty()) {
-    return;
+void RenderBlockingResourceManager::OnRenderBlockingElementLinkEmpty(
+    RenderBlockingLevel level) {
+  if (level == RenderBlockingLevel::kBlock) {
+    document_->SetHasRenderBlockingExpectLinkElements(false);
+    RenderBlockingResourceUnblocked();
+  } else if (level == RenderBlockingLevel::kLimitFrameRate) {
+    document_->SetHasFullFrameRateBlockingExpectLinkElements(false);
   }
-
-  document_->SetHasRenderBlockingExpectLinkElements(false);
-  element_render_blocking_links_.clear();
-  RenderBlockingResourceUnblocked();
 }
 
 void RenderBlockingResourceManager::SetFontPreloadTimeoutForTest(

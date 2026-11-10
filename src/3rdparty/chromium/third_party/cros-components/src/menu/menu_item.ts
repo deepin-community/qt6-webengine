@@ -26,6 +26,11 @@ export type MenuItemTriggeredEvent = CustomEvent<{
   menuItem: MenuItem,
 }>;
 
+// Lit analyzer has stricter types then the actual typesceipt lib types, as such
+// we need to cast our strings to this type before setting aria-has-popup to
+// avoid lit analyzer raising a warning.
+type AriaHasPopupValue = 'false'|'true'|'menu'|'listbox'|'tree'|'grid'|'dialog';
+
 /**
  * A cros compliant menu-item component for use in cros-menu.
  */
@@ -135,6 +140,8 @@ export class MenuItem extends LitElement implements MenuItemType {
 
   /** @nocollapse */
   static override properties = {
+    ariaHasPopup: {type: String, reflect: true, attribute: 'aria-haspopup'},
+    ariaLabel: {type: String, reflect: true, attribute: 'aria-label'},
     headline: {type: String},
     itemStart: {type: String},
     itemEnd: {type: String},
@@ -146,6 +153,7 @@ export class MenuItem extends LitElement implements MenuItemType {
     shortcutText: {type: String},
     typeaheadText: {type: String, attribute: 'typeahead-text'},
     selected: {type: Boolean},
+    switchSelected: {type: Boolean},
     type: {type: String},
   };
 
@@ -160,51 +168,51 @@ export class MenuItem extends LitElement implements MenuItemType {
    * md-menu-item.
    * @export
    */
-  headline: string;
+  declare headline: string;
   /**
    * Item to be placed in the start slot if any. 'icon' exposes the start slot.
    * @export
    */
-  itemStart: 'icon'|'';
+  declare itemStart: 'icon'|'';
   /**
    * Item to be placed in the end slot if any. Shortcut allows a text label (set
    * via `shortcutText`), switch uses cros-switch and 'icon' exposes the end
    * slot.
    * @export
    */
-  itemEnd: 'shortcut'|'icon'|'switch'|'';
+  declare itemEnd: 'shortcut'|'icon'|'switch'|'';
 
   /**
    * If true, keeps the menu open when clicked. (used by submenu)
    *
    * @export
    */
-  keepOpen: boolean;
+  declare keepOpen: boolean;
   // The following properties are necessary for wrapping and keyboard
   // navigation
   /**
    * Whether or not the menu-item is disabled.
    * @export
    */
-  disabled: boolean;
+  declare disabled: boolean;
   /** @export */
-  readonly isMenuItem: boolean;
+  declare readonly isMenuItem: boolean;
   /**
    * If true, this will result in a checkmark icon used in the end slot. This
    * overrides any other components in end slot if otherwise specified.
    * @export
    */
-  checked: boolean;
+  declare checked: boolean;
   /**
    * The text that will appear in the end slot if menu-item is of `shortcut`
    * type. Defaults to 'Shortcut' if text is not given.
    * @export
    */
-  shortcutText: string;
+  declare shortcutText: string;
   /**
    * Sets the behavior and role of the menu item, defaults to "menuitem".
    */
-  type: 'menuitem'|'option'|'button'|'link';
+  declare type: 'menuitem'|'option'|'button'|'link';
 
   /**
    * For properties menu-item proxies to a child element via a setter, any
@@ -212,12 +220,17 @@ export class MenuItem extends LitElement implements MenuItemType {
    * dropped since there is no md-menu-item to send the value to. To prevent
    * this we cache these values and set them on first render.
    */
-  protected missedPropertySets: Partial<
-      {selected: boolean, typeaheadText: string, switchSelected: boolean}> = {};
+  protected missedPropertySets: Partial<{
+    selected: boolean,
+    typeaheadText: string,
+    switchSelected: boolean,
+  }> = {};
 
   constructor() {
     super();
 
+    this.ariaHasPopup = 'false';
+    this.ariaLabel = '';
     this.headline = '';
     this.itemStart = '';
     this.itemEnd = '';
@@ -241,6 +254,17 @@ export class MenuItem extends LitElement implements MenuItemType {
     return this.renderRoot.querySelector('slot[name="end"]');
   }
 
+  get mdMenuItem() {
+    return this.renderRoot?.querySelector('md-menu-item');
+  }
+
+  // List item is the interactive element of the menu item and thus the element
+  // in focus by Chromevox. To ensure 'switch' announces correctly we need to
+  // set attributes directly on the list item.
+  get listItem() {
+    return this.mdMenuItem?.renderRoot.querySelector('.list-item');
+  }
+
   override updated(changedProperties: PropertyValues<this>) {
     super.updated(changedProperties);
     if (changedProperties.has('keepOpen') && this.keepOpen) {
@@ -249,8 +273,6 @@ export class MenuItem extends LitElement implements MenuItemType {
     }
     if (changedProperties.has('itemEnd') && this.itemEnd === 'switch') {
       this.addEventListener('keydown', this.keyDownListener);
-      this.setAttribute('role', 'menuitemcheckbox');
-      this.setAttribute('aria-checked', 'false');
       this.addEventListener('click', this.clickListener);
     }
     if (changedProperties.has('itemStart') && this.itemStart === 'icon' &&
@@ -267,16 +289,30 @@ export class MenuItem extends LitElement implements MenuItemType {
         endItem.setAttribute('slot', 'end');
       });
     }
+
+    // MdMenuItem sets the list item role via its controller on update, we need
+    // to do the same here to correct it when itemEnd is 'switch'.
+    if (this.itemEnd === 'switch') {
+      this.listItem?.setAttribute('role', 'menuitemcheckbox');
+      this.listItem?.setAttribute(
+          'aria-checked', this.switchSelected ? 'true' : 'false');
+    }
   }
 
   /**
    * The text that is selectable via typeahead. If not set, defaults to the
    * `headline` property.
+   * @export
    */
   get typeaheadText() {
-    return this.renderRoot?.querySelector('md-menu-item')?.typeaheadText ?? '';
+    const item = this.renderRoot?.querySelector('md-menu-item');
+    if (item) {
+      return item.typeaheadText;
+    }
+    return this.missedPropertySets.typeaheadText ?? '';
   }
 
+  /** @export */
   set typeaheadText(text: string) {
     const item = this.renderRoot?.querySelector('md-menu-item');
     if (!item) {
@@ -288,11 +324,17 @@ export class MenuItem extends LitElement implements MenuItemType {
 
   /**
    * Whether or not to display the menu item in the selected visual state.
+   * @export
    */
   get selected() {
-    return this.renderRoot?.querySelector('md-menu-item')?.selected ?? false;
+    const item = this.renderRoot?.querySelector('md-menu-item');
+    if (item) {
+      return item.selected;
+    }
+    return this.missedPropertySets.selected ?? false;
   }
 
+  /** @export */
   set selected(selected: boolean) {
     const item = this.renderRoot?.querySelector('md-menu-item');
     if (!item) {
@@ -302,18 +344,32 @@ export class MenuItem extends LitElement implements MenuItemType {
     }
   }
 
+  /** @export */
   get switchSelected() {
-    return this.renderRoot?.querySelector('cros-switch')?.selected ?? false;
+    const crosSwitch = this.renderRoot?.querySelector('cros-switch');
+    if (crosSwitch) {
+      return crosSwitch.selected;
+    }
+    return this.missedPropertySets.switchSelected ?? false;
   }
 
+  /** @export */
   set switchSelected(value: boolean) {
-    if (!this.renderRoot) return;
-    const crosSwitch = this.renderRoot.querySelector('cros-switch');
+    const crosSwitch = this.renderRoot?.querySelector('cros-switch');
     if (!crosSwitch) {
       this.missedPropertySets.switchSelected = value;
     } else {
       crosSwitch.selected = value;
     }
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // All aria properties on button just get proxied down to the real <button>
+    // element, as such we set role to presentation so screenreaders ignore
+    // this component and instead only read aria attributes off the inner
+    // interactive element.
+    this.setAttribute('role', 'presentation');
   }
 
   override disconnectedCallback() {
@@ -341,9 +397,9 @@ export class MenuItem extends LitElement implements MenuItemType {
       if (this.disabled) return;
       crosSwitch.selected = !crosSwitch.selected;
       if (crosSwitch.selected) {
-        this.setAttribute('aria-checked', 'true');
+        this.listItem?.setAttribute('aria-checked', 'true');
       } else {
-        this.setAttribute('aria-checked', 'false');
+        this.listItem?.setAttribute('aria-checked', 'false');
       }
     }
     this.fireTriggerEvent();
@@ -423,6 +479,8 @@ export class MenuItem extends LitElement implements MenuItemType {
     }
     return html`
       <md-menu-item
+          aria-haspopup=${(this.ariaHasPopup || 'false') as AriaHasPopupValue}
+          aria-label=${this.ariaLabel ?? ''}
           @close-menu=${(e: CloseMenuEvent) => void this.fireTriggerEvent(e)}
           .keepOpen=${keepOpen}
           .disabled=${this.disabled}

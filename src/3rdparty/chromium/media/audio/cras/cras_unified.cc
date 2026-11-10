@@ -15,7 +15,9 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/typed_macros.h"
 #include "media/audio/cras/audio_manager_cras_base.h"
+#include "media/audio/cras/cras_util.h"
 #include "media/base/audio_glitch_info.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 
 namespace media {
@@ -145,7 +147,7 @@ bool CrasUnifiedStream::Open() {
     return false;
   }
 
-  if (libcras_client_connect(client_)) {
+  if (libcras_client_connect_timeout(client_, kCrasConnectTimeoutMs)) {
     LOG(WARNING) << "Couldn't connect CRAS client.\n";
     ReportStreamOpenResult(
         StreamOpenResult::kCallbackOpenCannotConnectToCrasClient);
@@ -246,7 +248,7 @@ void CrasUnifiedStream::Start(AudioSourceCallback* callback) {
     return;
   }
 
-  // Recreate `peak_detector_` everytime we create a new stream, to
+  // Recreate `peak_detector_` every time we create a new stream, to
   // avoid ThreadChecker DCHECKs.
   peak_detector_ = std::make_unique<AmplitudePeakDetector>(base::BindRepeating(
       &AudioManager::TraceAmplitudePeak, base::Unretained(manager_),
@@ -428,7 +430,7 @@ void CrasUnifiedStream::CalculateAudioGlitches(
   glitch_reporter_.UpdateStats(underrun_glitch_duration);
 
   if (underrun_glitch_duration.is_positive()) {
-    glitch_info_accumulator_.Add(AudioGlitchInfo::SingleBoundedGlitch(
+    glitch_info_accumulator_.Add(AudioGlitchInfo::SingleBoundedSystemGlitch(
         underrun_glitch_duration, AudioGlitchInfo::Direction::kRender));
     TRACE_EVENT_INSTANT("audio", "glitch", [&](perfetto::EventContext ctx) {
       auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();

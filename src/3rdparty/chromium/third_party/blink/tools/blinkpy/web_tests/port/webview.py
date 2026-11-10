@@ -26,7 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from blinkpy.web_tests.port import linux, chrome
+from blinkpy.web_tests.port import linux
 
 
 class WebviewPort(linux.LinuxPort):
@@ -35,10 +35,7 @@ class WebviewPort(linux.LinuxPort):
     SUPPORTED_VERSIONS = ('webview', )
     FALLBACK_PATHS = {}
     FALLBACK_PATHS['webview'] = (
-        ["webview"] + chrome.ChromePort.latest_platform_fallback_path())
-
-    def configuration_specifier_macros(self):
-        return {self.port_name: list(self.SUPPORTED_VERSIONS)}
+        ['webview'] + linux.LinuxPort.latest_platform_fallback_path())
 
     def default_expectations_files(self):
         """Returns a list of paths to expectations files that apply by default.
@@ -52,8 +49,18 @@ class WebviewPort(linux.LinuxPort):
                 self.path_to_generic_test_expectations_file(),
                 self._filesystem.join(self.web_tests_dir(), 'NeverFixTests'),
                 self._filesystem.join(self.web_tests_dir(),
-                                      'MobileTestExpectations'),
-                self._filesystem.join(self.web_tests_dir(),
                                       'StaleTestExpectations'),
                 self._filesystem.join(self.web_tests_dir(), 'SlowTests')
             ]))
+
+    def default_child_processes(self):
+        # Test against a single device by default to avoid timeouts
+        return 1
+
+    def default_smoke_test_only(self):
+        # Test against selected set of tests by default to avoid timeouts
+        return True
+
+    def path_to_smoke_tests_file(self):
+        return self._filesystem.join(self.web_tests_dir(), 'TestLists',
+                                     'webview.filter')

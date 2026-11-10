@@ -21,7 +21,9 @@ class ChromeRemoteImpl : public ChromeImpl {
                    std::vector<std::unique_ptr<DevToolsEventListener>>
                        devtools_event_listeners,
                    std::optional<MobileDevice> mobile_device,
-                   std::string page_load_strategy);
+                   std::string page_load_strategy,
+                   bool autoaccept_beforeunload,
+                   bool enable_extension_targets);
   ~ChromeRemoteImpl() override;
 
   // Overridden from Chrome.

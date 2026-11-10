@@ -24,10 +24,11 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_png_rep.h"
 
-using protocol::Maybe;
 using protocol::Response;
 
 namespace {
@@ -77,7 +78,7 @@ BrowserHandler::BrowserHandler(protocol::UberDispatcher* dispatcher,
 BrowserHandler::~BrowserHandler() = default;
 
 Response BrowserHandler::GetWindowForTarget(
-    protocol::Maybe<std::string> target_id,
+    std::optional<std::string> target_id,
     int* out_window_id,
     std::unique_ptr<protocol::Browser::Bounds>* out_bounds) {
   auto host =
@@ -138,7 +139,7 @@ Response BrowserHandler::SetWindowBounds(
 
   const std::string window_state = window_bounds->GetWindowState("normal");
   if (set_bounds && window_state != "normal") {
-    return Response::ServerError(
+    return Response::InvalidParams(
         "The 'minimized', 'maximized' and 'fullscreen' states cannot be "
         "combined with 'left', 'top', 'width' or 'height'");
   }
@@ -150,7 +151,8 @@ Response BrowserHandler::SetWindowBounds(
           "restore it to normal state first.");
     }
     window->GetExclusiveAccessContext()->EnterFullscreen(
-        GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE, display::kInvalidDisplayId);
+        url::Origin(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE,
+        display::kInvalidDisplayId);
   } else if (window_state == "maximized") {
     if (window->IsMinimized() || window->IsFullscreen()) {
       return Response::ServerError(
@@ -180,9 +182,50 @@ Response BrowserHandler::SetWindowBounds(
   return Response::Success();
 }
 
+protocol::Response BrowserHandler::SetContentsSize(int window_id,
+                                                   std::optional<int> width,
+                                                   std::optional<int> height) {
+  BrowserWindow* window = GetBrowserWindow(window_id);
+  if (!window) {
+    return Response::ServerError("Browser window not found");
+  }
+
+  gfx::Size contents_size = window->GetContentsSize();
+  if (contents_size.IsEmpty()) {
+    return Response::ServerError("Active contents not found");
+  }
+
+  if (window->IsMinimized() || window->IsMaximized() ||
+      window->IsFullscreen()) {
+    return Response::ServerError(
+        "Restore window to normal state before setting content size");
+  }
+
+  if (!width && !height) {
+    return Response::InvalidParams(
+        "At least one of 'width' or 'height' must be specified");
+  }
+
+  if (width && width.value() <= 0) {
+    return Response::InvalidParams("Contents 'width' must be a positive value");
+  }
+
+  if (height && height.value() <= 0) {
+    return Response::InvalidParams(
+        "Contents 'height' must be a positive value");
+  }
+
+  contents_size.set_width(width.value_or(contents_size.width()));
+  contents_size.set_height(height.value_or(contents_size.height()));
+
+  window->SetContentsSize(contents_size);
+
+  return Response::Success();
+}
+
 protocol::Response BrowserHandler::SetDockTile(
-    protocol::Maybe<std::string> label,
-    protocol::Maybe<protocol::Binary> image) {
+    std::optional<std::string> label,
+    std::optional<protocol::Binary> image) {
   std::vector<gfx::ImagePNGRep> reps;
   if (image.has_value()) {
     reps.emplace_back(image.value().bytes(), 1);
@@ -199,7 +242,9 @@ protocol::Response BrowserHandler::ExecuteBrowserCommand(
           {protocol::Browser::BrowserCommandIdEnum::OpenTabSearch,
            IDC_TAB_SEARCH},
           {protocol::Browser::BrowserCommandIdEnum::CloseTabSearch,
-           IDC_TAB_SEARCH_CLOSE}};
+           IDC_TAB_SEARCH_CLOSE},
+          {protocol::Browser::BrowserCommandIdEnum::OpenGlic, IDC_OPEN_GLIC},
+      };
   if (command_id_map.count(command_id) == 0) {
     return Response::InvalidParams("Invalid BrowserCommandId: " + command_id);
   }

@@ -5,10 +5,12 @@
 #include "media/mojo/services/mojo_video_encoder_metrics_provider_service.h"
 
 #include <algorithm>
+#include <string_view>
 
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -102,7 +104,7 @@ class MojoVideoEncoderMetricsProviderService::EncoderMetricsHandler {
     builder.Record(ukm_recorder);
   }
 
-  base::StringPiece UseCaseStr() const {
+  std::string_view UseCaseStr() const {
     switch (encoder_use_case_) {
       case mojom::VideoEncoderUseCase::kCastMirroring:
         return "CastMirroring";
@@ -117,10 +119,10 @@ class MojoVideoEncoderMetricsProviderService::EncoderMetricsHandler {
   }
 
   void ReportUMA() const {
-    const base::StringPiece use_case_str = UseCaseStr();
+    const std::string_view use_case_str = UseCaseStr();
     if (use_case_str.empty()) {
       mojo::ReportBadMessage(base::StrCat(
-          {"Unkown use case",
+          {"Unknown use case",
            base::NumberToString(static_cast<int>(encoder_use_case_))}));
     }
     const std::string uma_prefix =
@@ -203,6 +205,10 @@ void MojoVideoEncoderMetricsProviderService::SetEncodedFrameCount(
 void MojoVideoEncoderMetricsProviderService::SetError(
     uint64_t encoder_id,
     const EncoderStatus& status) {
+  if (status.is_ok()) {
+    // Nothing to do, it's not an error, but success is reported via Complete().
+    return;
+  }
   auto it = encoders_.find(encoder_id);
   if (it == encoders_.end()) {
     mojo::ReportBadMessage(base::StrCat(

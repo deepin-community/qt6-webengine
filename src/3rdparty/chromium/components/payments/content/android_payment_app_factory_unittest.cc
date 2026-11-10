@@ -17,8 +17,8 @@
 #include "components/payments/content/mock_android_app_communication.h"
 #include "components/payments/content/mock_payment_app_factory_delegate.h"
 #include "components/payments/content/payment_app_factory.h"
-#include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/payment_request_spec.h"
+#include "components/payments/content/web_payments_web_data_service.h"
 #include "components/payments/core/android_app_description.h"
 #include "components/webauthn/core/browser/internal_authenticator.h"
 #include "content/public/browser/web_contents.h"
@@ -98,7 +98,7 @@ TEST_F(AndroidPaymentAppFactoryTest, NullRenderFrameHost) {
             apps.back()->activities.back()->name = "com.example.app.Activity2";
             apps.back()->activities.back()->default_payment_method =
                 "https://play.google.com/billing";
-            std::move(callback).Run(absl::nullopt, std::move(apps));
+            std::move(callback).Run(std::nullopt, std::move(apps));
           });
 
   // Now trigger app finding. This should near immediately bail in

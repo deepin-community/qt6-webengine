@@ -28,8 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import type * as Common from '../../core/common/common.js';
+import * as Common from '../../core/common/common.js';
 import type * as Platform from '../../core/platform/platform.js';
+import * as TextUtils from '../text_utils/text_utils.js';
 import * as Workspace from '../workspace/workspace.js';
 
 export interface ChunkedReader {
@@ -43,19 +44,12 @@ export interface ChunkedReader {
 
   error(): DOMError|null;
 }
-interface DecompressionStream extends GenericTransformStream {
-  readonly format: string;
-}
-declare const DecompressionStream: {
-  prototype: DecompressionStream,
-  new (format: string): DecompressionStream,
-};
 
 export class ChunkedFileReader implements ChunkedReader {
   #file: File|null;
   readonly #fileSizeInternal: number;
   #loadedSizeInternal: number;
-  #streamReader: ReadableStreamDefaultReader<Uint8Array>|null;
+  #streamReader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>|null;
   readonly #chunkSize: number;
   readonly #chunkTransferredCallback: ((arg0: ChunkedReader) => void)|undefined;
   readonly #decoder: TextDecoder;
@@ -65,11 +59,11 @@ export class ChunkedFileReader implements ChunkedReader {
   #output?: Common.StringOutputStream.OutputStream;
   #reader?: FileReader|null;
 
-  constructor(file: File, chunkSize: number, chunkTransferredCallback?: ((arg0: ChunkedReader) => void)) {
+  constructor(file: File, chunkSize?: number, chunkTransferredCallback?: ((arg0: ChunkedReader) => void)) {
     this.#file = file;
     this.#fileSizeInternal = file.size;
     this.#loadedSizeInternal = 0;
-    this.#chunkSize = chunkSize;
+    this.#chunkSize = (chunkSize) ? chunkSize : Number.MAX_VALUE;
     this.#chunkTransferredCallback = chunkTransferredCallback;
     this.#decoder = new TextDecoder();
     this.#isCanceled = false;
@@ -83,11 +77,8 @@ export class ChunkedFileReader implements ChunkedReader {
     }
 
     if (this.#file?.type.endsWith('gzip')) {
-      // TypeScript can't tell if to use @types/node or lib.webworker.d.ts
-      // types, so we force it to here.
-      // crbug.com/1392092
-      const fileStream = this.#file.stream() as unknown as ReadableStream<Uint8Array>;
-      const stream = this.decompressStream(fileStream);
+      const fileStream = this.#file.stream();
+      const stream = Common.Gzip.decompressStream(fileStream);
       this.#streamReader = stream.getReader();
     } else {
       this.#reader = new FileReader();
@@ -98,7 +89,7 @@ export class ChunkedFileReader implements ChunkedReader {
     this.#output = output;
     void this.loadChunk();
 
-    return new Promise(resolve => {
+    return await new Promise(resolve => {
       this.#transferFinished = resolve;
     });
   }
@@ -126,13 +117,6 @@ export class ChunkedFileReader implements ChunkedReader {
     return this.#errorInternal;
   }
 
-  // Decompress gzip natively thanks to https://wicg.github.io/compression/
-  private decompressStream(stream: ReadableStream): ReadableStream {
-    const ds = new DecompressionStream('gzip');
-    const decompressionStream = stream.pipeThrough(ds);
-    return decompressionStream;
-  }
-
   private onChunkLoaded(event: Event): void {
     if (this.#isCanceled) {
       return;
@@ -158,7 +142,7 @@ export class ChunkedFileReader implements ChunkedReader {
       return;
     }
     const decodedString = this.#decoder.decode(buffer, {stream: !endOfFile});
-    await this.#output.write(decodedString);
+    await this.#output.write(decodedString, endOfFile);
     if (this.#isCanceled) {
       return;
     }
@@ -190,7 +174,9 @@ export class ChunkedFileReader implements ChunkedReader {
     if (this.#streamReader) {
       const {value, done} = await this.#streamReader.read();
       if (done || !value) {
-        return this.finishRead();
+        // Write empty string to inform of file end
+        await this.#output.write('', true);
+        return await this.finishRead();
       }
       void this.decodeChunkBuffer(value.buffer, false);
     }
@@ -210,7 +196,7 @@ export class ChunkedFileReader implements ChunkedReader {
 }
 
 export class FileOutputStream implements Common.StringOutputStream.OutputStream {
-  #writeCallbacks: (() => void)[];
+  #writeCallbacks: Array<() => void>;
   #fileName!: Platform.DevToolsPath.RawPathString|Platform.DevToolsPath.UrlString;
   #closed?: boolean;
   constructor() {
@@ -221,10 +207,11 @@ export class FileOutputStream implements Common.StringOutputStream.OutputStream 
     this.#closed = false;
     this.#writeCallbacks = [];
     this.#fileName = fileName;
-    const saveResponse = await Workspace.FileManager.FileManager.instance().save(this.#fileName, '', true);
+    const saveResponse = await Workspace.FileManager.FileManager.instance().save(
+        this.#fileName, TextUtils.ContentData.EMPTY_TEXT_CONTENT_DATA, /* forceSaveAs=*/ true);
     if (saveResponse) {
       Workspace.FileManager.FileManager.instance().addEventListener(
-          Workspace.FileManager.Events.AppendedToURL, this.onAppendDone, this);
+          Workspace.FileManager.Events.APPENDED_TO_URL, this.onAppendDone, this);
     }
     return Boolean(saveResponse);
   }
@@ -242,7 +229,7 @@ export class FileOutputStream implements Common.StringOutputStream.OutputStream 
       return;
     }
     Workspace.FileManager.FileManager.instance().removeEventListener(
-        Workspace.FileManager.Events.AppendedToURL, this.onAppendDone, this);
+        Workspace.FileManager.Events.APPENDED_TO_URL, this.onAppendDone, this);
     Workspace.FileManager.FileManager.instance().close(this.#fileName);
   }
 
@@ -261,7 +248,7 @@ export class FileOutputStream implements Common.StringOutputStream.OutputStream 
       return;
     }
     Workspace.FileManager.FileManager.instance().removeEventListener(
-        Workspace.FileManager.Events.AppendedToURL, this.onAppendDone, this);
+        Workspace.FileManager.Events.APPENDED_TO_URL, this.onAppendDone, this);
     Workspace.FileManager.FileManager.instance().close(this.#fileName);
   }
 }

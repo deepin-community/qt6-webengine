@@ -17,13 +17,6 @@
 
 namespace openscreen::cast {
 
-// TODO(crbug.com/openscreen/90): Remove these after Chromium is migrated to
-// openscreen::cast
-using CrlBundle = ::cast::certificate::CrlBundle;
-using Crl = ::cast::certificate::Crl;
-using TbsCrl = ::cast::certificate::TbsCrl;
-using SerialNumberRange = ::cast::certificate::SerialNumberRange;
-
 class ParsedCertificate;
 class TrustStore;
 
@@ -31,17 +24,17 @@ class TrustStore;
 // the binary in a protobuf message.
 class CastCRL {
  public:
-  CastCRL(const TbsCrl& tbs_crl, const DateTime& overall_not_after);
+  CastCRL(const proto::TbsCrl& tbs_crl, const DateTime& overall_not_after);
   ~CastCRL();
 
   // Verifies the revocation status of a cast device certificate given a chain
   // of X.509 certificates.
   //
   // Inputs:
-  // * |trusted_chain| is the chain of verified certificates, starting with
+  // * `trusted_chain` is the chain of verified certificates, starting with
   //   trust anchor.
   //
-  // * |time| is the timestamp to use for determining if the certificate is
+  // * `time` is the timestamp to use for determining if the certificate is
   //   revoked.
   //
   // Output:
@@ -76,9 +69,9 @@ class CastCRL {
 // Cast device certificates, using the built-in Cast CRL trust anchors.
 //
 // Inputs:
-// * |crl_proto| is a serialized cast_certificate.CrlBundle proto.
-// * |time| is the timestamp to use for determining if the CRL is valid.
-// * |trust_store| is the set of trust anchors to use.
+// * `crl_proto` is a serialized cast_certificate.CrlBundle proto.
+// * `time` is the timestamp to use for determining if the CRL is valid.
+// * `trust_store` is the set of trust anchors to use.
 //
 // Output:
 // Returns the CRL object if success, nullptr otherwise.

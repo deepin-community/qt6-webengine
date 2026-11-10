@@ -4,27 +4,35 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <inttypes.h>
 #include <math.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#include <xnnpack.h>
-#include <xnnpack/allocator.h>
-#include <xnnpack/config.h>
-#include <xnnpack/log.h>
-#include <xnnpack/math.h>
-#include <xnnpack/normalization.h>
-#include <xnnpack/operator.h>
+#include "include/xnnpack.h"
+#include "src/xnnpack/allocator.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/compute.h"
+#include "src/xnnpack/config-types.h"
+#include "src/xnnpack/config.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microkernel-type.h"
+#include "src/xnnpack/normalization.h"
+#include "src/xnnpack/operator-type.h"
+#include "src/xnnpack/operator-utils.h"
+#include "src/xnnpack/operator.h"
+#include "src/xnnpack/params.h"
+#include <pthreadpool.h>
 
 /// Reorder the data in array using the indices in loop_order.
 ///
 /// Changing the loop order can have dramatic performance implications.
 static void reorder_array(
     size_t num_dims,
-    const size_t loop_order[ XNN_MIN_ELEMENTS(1) ],
-    size_t array[ XNN_MIN_ELEMENTS(1)])
+    const size_t* restrict loop_order,
+    size_t* restrict array)
 {
   size_t tmp[XNN_MAX_TENSOR_DIMS];
   memcpy(tmp, array, sizeof(size_t) * num_dims);
@@ -59,7 +67,11 @@ static enum xnn_status create_transpose_nd(
   }
 
   const struct xnn_transpose_config* transpose_config = xnn_init_transpose_config();
-  assert(transpose_config != NULL);
+  if (!transpose_config) {
+    xnn_log_error(
+      "failed to create transpose config: unsupported hardware configuration");
+    return xnn_status_unsupported_hardware;
+  }
 
   status = xnn_status_out_of_memory;
   transpose_op = xnn_allocate_zero_simd_memory(sizeof(struct xnn_operator));
@@ -69,6 +81,14 @@ static enum xnn_status create_transpose_nd(
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
     goto error;
   }
+  transpose_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (transpose_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  transpose_op->num_compute_invocations = 1;
 
   init_transpose_nd(flags, transpose_config, operator_type, transpose_op);
   *transpose_op_out = transpose_op;
@@ -142,23 +162,27 @@ static enum xnn_status reshape_transpose_nd(
   enum xnn_status status = xnn_status_invalid_parameter;
   if (num_dims == 0) {
     xnn_log_error(
-      "failed to create %s operator with %zu num_dims: num_dims must be non-zero",
-      xnn_operator_type_to_string(transpose_op->type), num_dims);
+        "failed to create %s operator with %zu num_dims: num_dims must be "
+        "non-zero",
+        xnn_operator_type_to_string_v2(transpose_op), num_dims);
     goto error;
   }
 
   if (num_dims > XNN_MAX_TENSOR_DIMS) {
     xnn_log_error(
-      "failed to create %s operator with %zu num_dims: num_dims must be <= %d",
-      xnn_operator_type_to_string(transpose_op->type), num_dims, XNN_MAX_TENSOR_DIMS);
+        "failed to create %s operator with %zu num_dims: num_dims must be <= "
+        "%d",
+        xnn_operator_type_to_string_v2(transpose_op), num_dims,
+        XNN_MAX_TENSOR_DIMS);
     goto error;
   }
 
   for (size_t i = 0; i < num_dims; ++i) {
     if (perm[i] >= num_dims) {
       xnn_log_error(
-          "failed to create %s operator with %zu perm and %zu num_dims: 0 <= perm < num_dims",
-          xnn_operator_type_to_string(transpose_op->type), perm[i], num_dims);
+          "failed to create %s operator with %zu perm and %zu num_dims: 0 <= "
+          "perm < num_dims",
+          xnn_operator_type_to_string_v2(transpose_op), perm[i], num_dims);
       goto error;
     }
   }
@@ -167,8 +191,9 @@ static enum xnn_status reshape_transpose_nd(
     for (size_t j = i + 1; j < num_dims; ++j) {
       if (perm[i] == perm[j]) {
         xnn_log_error(
-            "failed to create %s operator with duplicate entries in perm",
-            xnn_operator_type_to_string(transpose_op->type));
+            "failed to create %s operator with duplicate entries in perm %zu "
+            "%zu",
+            xnn_operator_type_to_string_v2(transpose_op), perm[i], perm[j]);
         goto error;
       }
     }
@@ -177,16 +202,20 @@ static enum xnn_status reshape_transpose_nd(
   if (input_stride != NULL) {
     if (input_stride[num_dims - 1] != 1) {
       xnn_log_error(
-          "failed to create %s operator with %zu input_stride[num_dims - 1]: input_stride[num_dims - 1] == 1",
-          xnn_operator_type_to_string(transpose_op->type), input_stride[num_dims - 1]);
+          "failed to create %s operator with %zu input_stride[num_dims - 1]: "
+          "input_stride[num_dims - 1] == 1",
+          xnn_operator_type_to_string_v2(transpose_op),
+          input_stride[num_dims - 1]);
       goto error;
     }
     size_t current_stride = 1;
     for (size_t i = num_dims - 1; i > 0; --i) {
       if ((input_stride[i - 1] < input_stride[i] * input_shape[i]) || (input_stride[i - 1] < current_stride)) {
         xnn_log_error(
-            "failed to create %s operator with %zu input_shape and %zu input_stride: input_stride >= input_shape",
-            xnn_operator_type_to_string(transpose_op->type), input_shape[i], input_stride[i]);
+            "failed to create %s operator with %zu input_shape and %zu "
+            "input_stride: input_stride >= input_shape",
+            xnn_operator_type_to_string_v2(transpose_op), input_shape[i],
+            input_stride[i]);
         goto error;
       }
       current_stride *= input_shape[i];
@@ -196,16 +225,20 @@ static enum xnn_status reshape_transpose_nd(
   if (output_stride != NULL) {
     if (output_stride[num_dims - 1] != 1) {
       xnn_log_error(
-          "failed to create %s operator with %zu output_stride[num_dims - 1]: output_stride[num_dims - 1] == 1",
-          xnn_operator_type_to_string(transpose_op->type), output_stride[num_dims - 1]);
+          "failed to create %s operator with %zu output_stride[num_dims - 1]: "
+          "output_stride[num_dims - 1] == 1",
+          xnn_operator_type_to_string_v2(transpose_op),
+          output_stride[num_dims - 1]);
       goto error;
     }
     size_t current_stride = 1;
     for (size_t i = num_dims - 1; i > 0; --i) {
       if ((output_stride[i - 1] < output_stride[i] * input_shape[perm[i]]) || (output_stride[i - 1] < current_stride)) {
         xnn_log_error(
-            "failed to create %s operator with %zu output_shape and %zu output_stride: output_stride >= output_shape",
-            xnn_operator_type_to_string(transpose_op->type), input_shape[perm[i]], output_stride[i]);
+            "failed to create %s operator with %zu output_shape and %zu "
+            "output_stride: output_stride >= output_shape",
+            xnn_operator_type_to_string_v2(transpose_op), input_shape[perm[i]],
+            output_stride[i]);
         goto error;
       }
       current_stride *= input_shape[perm[i]];
@@ -266,46 +299,48 @@ static enum xnn_status reshape_transpose_nd(
       context->const_size_ukernel = transpose_config->x8.const_size_ukernel;
       transpose_op->compute[0].tile[0] = transpose_config->x8.tile_size;
       transpose_op->compute[0].tile[1] = transpose_config->x8.tile_size;
-      if (transpose_config->x8.init.x16 != NULL) {
-        transpose_config->x8.init.x8(&context->params.x8_params);
-      }
       break;
     case 2:
       transpose_op->compute[0].tile[0] = transpose_config->x16.tile_size;
       transpose_op->compute[0].tile[1] = transpose_config->x16.tile_size;
       context->const_size_ukernel = transpose_config->x16.const_size_ukernel;
-      if (transpose_config->x16.init.x16 != NULL) {
-        transpose_config->x16.init.x16(&context->params.x16_params);
-      }
       break;
     case 3:
       transpose_op->compute[0].tile[0] = transpose_config->x24.tile_size;
       transpose_op->compute[0].tile[1] = transpose_config->x24.tile_size;
       context->const_size_ukernel = transpose_config->x24.const_size_ukernel;
-      if (transpose_config->x24.init.x24 != NULL) {
-        transpose_config->x24.init.x24(&context->params.x24_params);
-      }
       break;
     case 4:
       transpose_op->compute[0].tile[0] = transpose_config->x32.tile_size;
       transpose_op->compute[0].tile[1] = transpose_config->x32.tile_size;
       context->const_size_ukernel = transpose_config->x32.const_size_ukernel;
-      if (transpose_config->x32.init.x32 != NULL) {
-        transpose_config->x32.init.x32(&context->params.x32_params);
-      }
       break;
-    default:
-      transpose_op->compute[0].tile[0] = transpose_config->xx.tile_size;
-      transpose_op->compute[0].tile[1] = transpose_config->xx.tile_size;
+    default: {
+      // Chose the tile size such that ~64k of data are processed per
+      // microkernel call.
+      const size_t target_size = (1 << 16);
+      const size_t num_tiles = max(1, target_size / normalized_element_size);
+      if (1 < normalized_dims) {
+        transpose_op->compute[0].tile[1] =
+            min((size_t)sqrtf(num_tiles),
+                transpose_op->compute[0].range[normalized_dims - 1]);
+        transpose_op->compute[0].tile[0] =
+            min(num_tiles / transpose_op->compute[0].tile[1],
+                transpose_op->compute[0].range[normalized_dims - 2]);
+      }
       context->variable_size_ukernel = transpose_config->xx.variable_size_ukernel;
       variable_size_ukernel = true;
+    }
   }
 
   struct univector_contiguous_context* univector_context = &transpose_op->context.univector_contiguous;
   switch (normalized_dims) {
     case 1:
-      transpose_op->compute[0].type = xnn_parallelization_type_1d_tile_1d;
-      transpose_op->compute[0].task_1d_tile_1d = (pthreadpool_task_1d_tile_1d_t) xnn_compute_univector_contiguous;
+      transpose_op->compute[0].type =
+          xnn_parallelization_type_1d_tile_1d_dynamic;
+      transpose_op->compute[0].task_1d_tile_1d_dynamic =
+          (pthreadpool_task_1d_tile_1d_dynamic_t)
+              xnn_compute_univector_contiguous;
       transpose_op->compute[0].range[0] = normalized_element_size;
       transpose_op->compute[0].tile[0] = normalized_element_size;
       univector_context->ukernel = transpose_config->copy;
@@ -313,27 +348,36 @@ static enum xnn_status reshape_transpose_nd(
       univector_context->log2_ysize = 0;
       break;
     case 2:
-      transpose_op->compute[0].type = xnn_parallelization_type_2d_tile_2d;
+      transpose_op->compute[0].type =
+          xnn_parallelization_type_2d_tile_2d_dynamic;
       if (variable_size_ukernel) {
-        transpose_op->compute[0].task_2d_tile_2d = (pthreadpool_task_2d_tile_2d_t) xnn_compute_transposev_2d;
+        transpose_op->compute[0].task_2d_tile_2d_dynamic =
+            (pthreadpool_task_2d_tile_2d_dynamic_t)xnn_compute_transposev_2d;
       } else {
-        transpose_op->compute[0].task_2d_tile_2d = (pthreadpool_task_2d_tile_2d_t) xnn_compute_transposec_2d;
+        transpose_op->compute[0].task_2d_tile_2d_dynamic =
+            (pthreadpool_task_2d_tile_2d_dynamic_t)xnn_compute_transposec_2d;
       }
       break;
     case 3:
-      transpose_op->compute[0].type = xnn_parallelization_type_3d_tile_2d;
+      transpose_op->compute[0].type =
+          xnn_parallelization_type_3d_tile_2d_dynamic;
       if (variable_size_ukernel) {
-        transpose_op->compute[0].task_3d_tile_2d = (pthreadpool_task_3d_tile_2d_t) xnn_compute_transposev_3d;
+        transpose_op->compute[0].task_3d_tile_2d_dynamic =
+            (pthreadpool_task_3d_tile_2d_dynamic_t)xnn_compute_transposev_3d;
       } else {
-        transpose_op->compute[0].task_3d_tile_2d = (pthreadpool_task_3d_tile_2d_t) xnn_compute_transposec_3d;
+        transpose_op->compute[0].task_3d_tile_2d_dynamic =
+            (pthreadpool_task_3d_tile_2d_dynamic_t)xnn_compute_transposec_3d;
       }
       break;
     case 4:
-      transpose_op->compute[0].type = xnn_parallelization_type_4d_tile_2d;
+      transpose_op->compute[0].type =
+          xnn_parallelization_type_4d_tile_2d_dynamic;
       if (variable_size_ukernel) {
-        transpose_op->compute[0].task_4d_tile_2d = (pthreadpool_task_4d_tile_2d_t) xnn_compute_transposev_4d;
+        transpose_op->compute[0].task_4d_tile_2d_dynamic =
+            (pthreadpool_task_4d_tile_2d_dynamic_t)xnn_compute_transposev_4d;
       } else {
-        transpose_op->compute[0].task_4d_tile_2d = (pthreadpool_task_4d_tile_2d_t) xnn_compute_transposec_4d;
+        transpose_op->compute[0].task_4d_tile_2d_dynamic =
+            (pthreadpool_task_4d_tile_2d_dynamic_t)xnn_compute_transposec_4d;
       }
       break;
     case 5:
@@ -379,9 +423,11 @@ enum xnn_status xnn_reshape_transpose_nd_x64(
     pthreadpool_t threadpool)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x64) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x64),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x64),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -399,9 +445,11 @@ enum xnn_status xnn_reshape_transpose_nd_x32(
     pthreadpool_t threadpool)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x32) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x32),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x32),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -419,9 +467,11 @@ enum xnn_status xnn_reshape_transpose_nd_x16(
     pthreadpool_t threadpool)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x16) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x16),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x16),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -439,9 +489,11 @@ enum xnn_status xnn_reshape_transpose_nd_x8(
     pthreadpool_t threadpool)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x8) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x8),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x8),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -470,8 +522,8 @@ static enum xnn_status setup_transpose_nd(
       return xnn_status_success;
     case xnn_run_state_invalid:
       xnn_log_error(
-        "failed to setup %s operator: operator has not been reshaped yet",
-        xnn_operator_type_to_string(transpose_op->type));
+          "failed to setup %s operator: operator has not been reshaped yet",
+          xnn_operator_type_to_string_v2(transpose_op));
       return xnn_status_invalid_state;
     case xnn_run_state_needs_setup:
       // Operator has been reshaped, but not setup, continue with setup.
@@ -499,9 +551,11 @@ enum xnn_status xnn_setup_transpose_nd_x64(
     void* output)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x64) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x64),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x64),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -514,9 +568,11 @@ enum xnn_status xnn_setup_transpose_nd_x32(
     void* output)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x32) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x32),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x32),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -529,9 +585,11 @@ enum xnn_status xnn_setup_transpose_nd_x16(
     void* output)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x16) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x16),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x16),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -544,9 +602,11 @@ enum xnn_status xnn_setup_transpose_nd_x8(
     void* output)
 {
   if (transpose_op->type != xnn_operator_type_transpose_nd_x8) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x8),
-      xnn_operator_type_to_string(transpose_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(xnn_operator_type_transpose_nd_x8),
+        xnn_operator_type_to_string_v2(transpose_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -566,9 +626,15 @@ enum xnn_status run_transpose_nd(
 
   struct xnn_operator transpose_op;
   memset(&transpose_op, 0, sizeof(transpose_op));
+  struct compute_parameters compute;
+  memset(&compute, 0, sizeof(compute));
+  transpose_op.compute = &compute;
+  transpose_op.num_compute_invocations = 1;
 
   const struct xnn_transpose_config* transpose_config = xnn_init_transpose_config();
-  assert(transpose_config != NULL);
+  if (!transpose_config) {
+    return xnn_status_unsupported_hardware;
+  }
 
   init_transpose_nd(flags, transpose_config, operator_type, &transpose_op);
 
@@ -657,9 +723,6 @@ enum xnn_status xnn_run_transpose_nd_x64(
 }
 
 enum xnn_status create_depth_to_space_nchw2nhwc(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     enum xnn_operator_type operator_type,
@@ -675,35 +738,10 @@ enum xnn_status create_depth_to_space_nchw2nhwc(
   }
 
   status = xnn_status_invalid_parameter;
-  if (output_channels == 0) {
-    xnn_log_error("failed to create %s operator with %zu output channels: number of channels must be non-zero",
-      xnn_operator_type_to_string(operator_type), output_channels);
-    goto error;
-  }
-
-  if (output_channel_stride < output_channels) {
-    xnn_log_error(
-      "failed to create %s operator with output channel stride of %zu: "
-      "stride must be at least as large as the number of output channels (%zu)",
-      xnn_operator_type_to_string(operator_type),
-      output_channel_stride, output_channels);
-    goto error;
-  }
-
   if (block_size <= 1) {
     xnn_log_error("failed to create %s operator with %" PRIu32 " block size: block size must be greater than 1",
       xnn_operator_type_to_string(operator_type),
       block_size);
-    goto error;
-  }
-
-  const size_t input_channels = output_channels * block_size * block_size;
-  if (input_channel_stride < input_channels) {
-    xnn_log_error(
-      "failed to create %s operator with input channel stride of %zu: "
-      "stride must be at least as large as the number of input channels (%" PRIu32 "x%" PRIu32 "x%zu)",
-      xnn_operator_type_to_string(operator_type),
-      input_channel_stride, block_size, block_size, input_channels);
     goto error;
   }
 
@@ -716,14 +754,23 @@ enum xnn_status create_depth_to_space_nchw2nhwc(
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
     goto error;
   }
+  depth_to_space_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (depth_to_space_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  depth_to_space_op->num_compute_invocations = 1;
 
   const struct xnn_transpose_config* transpose_config = xnn_init_transpose_config();
-  assert(transpose_config != NULL);
+  if (!transpose_config) {
+    xnn_log_error(
+      "failed to create transpose config: unsupported hardware configuration");
+    return xnn_status_unsupported_hardware;
+  }
 
-  depth_to_space_op->channels = output_channels;
-  depth_to_space_op->input_pixel_stride = input_channel_stride;
-  depth_to_space_op->output_pixel_stride = output_channel_stride;
-  depth_to_space_op->block_size = block_size;
+  depth_to_space_op->depth_to_space.block_size = block_size;
 
   depth_to_space_op->type = operator_type;
   depth_to_space_op->flags = flags;
@@ -740,17 +787,11 @@ error:
 }
 
 enum xnn_status xnn_create_depth_to_space_nchw2nhwc_x16(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* depth_to_space_op_out)
 {
   return create_depth_to_space_nchw2nhwc(
-    output_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_depth_to_space_nchw2nhwc_x16,
@@ -758,17 +799,11 @@ enum xnn_status xnn_create_depth_to_space_nchw2nhwc_x16(
 }
 
 enum xnn_status xnn_create_depth_to_space_nchw2nhwc_x32(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* depth_to_space_op_out)
 {
   return create_depth_to_space_nchw2nhwc(
-    output_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_depth_to_space_nchw2nhwc_x32,
@@ -780,6 +815,7 @@ enum xnn_status reshape_depth_to_space_nchw2nhwc(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     enum xnn_operator_type operator_type,
     size_t element_size,
     size_t* output_height_out,
@@ -788,26 +824,33 @@ enum xnn_status reshape_depth_to_space_nchw2nhwc(
 {
   depth_to_space_op->state = xnn_run_state_invalid;
 
-  if (input_width == 0 || input_height == 0) {
-    xnn_log_error("failed to setup %s operator with %zux%zu input: input dimensions must be non-zero",
+  if (input_width == 0 || input_height == 0 || input_channels == 0) {
+    xnn_log_error("failed to reshape %s operator with %zux%zux%zu input: input dimensions must be non-zero",
+      xnn_operator_type_to_string(operator_type), input_width, input_height, input_channels);
+    return xnn_status_invalid_parameter;
+  }
+
+  const uint32_t block_size = depth_to_space_op->depth_to_space.block_size;
+  if (input_channels % (block_size * block_size) != 0) {
+    xnn_log_error("failed to reshape %s operator with %zu input_channels and %zu block_sizex: "
+                  "input channels must be divisible by block_size * block_size",
       xnn_operator_type_to_string(operator_type), input_width, input_height);
     return xnn_status_invalid_parameter;
   }
+
+  const size_t output_channels = input_channels / block_size / block_size;
 
   if (batch_size == 0) {
     depth_to_space_op->state = xnn_run_state_skip;
     return xnn_status_success;
   }
 
-  const uint32_t block_size = depth_to_space_op->block_size;
-  const size_t channels = depth_to_space_op->channels;
-
-  const size_t input_shape[6] = {batch_size, block_size, block_size, channels, input_height, input_width};
+  const size_t input_shape[6] = {batch_size, block_size, block_size, output_channels, input_height, input_width};
   const size_t perm[6] = {0, 4, 1, 5, 2, 3};
   const size_t area = input_height * input_width;
-  const size_t elements_per_batch = area * channels;
+  const size_t elements_per_batch = area * output_channels;
   const size_t input_stride[6] = {
-    depth_to_space_op->input_pixel_stride * area,
+    input_channels * area,
     block_size * elements_per_batch,
     elements_per_batch,
     area,
@@ -822,15 +865,15 @@ enum xnn_status reshape_depth_to_space_nchw2nhwc(
     *output_width_out = input_width * block_size;
   }
   if (output_channels_out != NULL) {
-    *output_channels_out = channels;
+    *output_channels_out = output_channels;
   }
 
   const size_t output_stride[6] = {
-    input_height * block_size * input_width * block_size * depth_to_space_op->output_pixel_stride,
-    block_size * input_width * block_size * depth_to_space_op->output_pixel_stride,
-    input_width * block_size * depth_to_space_op->output_pixel_stride,
-    block_size * depth_to_space_op->output_pixel_stride,
-    depth_to_space_op->output_pixel_stride,
+    input_height * block_size * input_width * block_size * output_channels,
+    block_size * input_width * block_size * output_channels,
+    input_width * block_size * output_channels,
+    block_size * output_channels,
+    output_channels,
     1
   };
 
@@ -845,21 +888,25 @@ enum xnn_status xnn_reshape_depth_to_space_nchw2nhwc_x16(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
     pthreadpool_t threadpool)
 {
   if (depth_to_space_op->type != xnn_operator_type_depth_to_space_nchw2nhwc_x16) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_depth_to_space_nchw2nhwc_x16),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(
+            xnn_operator_type_depth_to_space_nchw2nhwc_x16),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
 
   return reshape_depth_to_space_nchw2nhwc(
     depth_to_space_op,
-    batch_size, input_height, input_width,
+    batch_size, input_height, input_width, input_channels,
     xnn_operator_type_depth_to_space_nchw2nhwc_x16, /*element_size=*/2,
     output_height_out, output_width_out, output_channels_out);
 }
@@ -869,21 +916,25 @@ enum xnn_status xnn_reshape_depth_to_space_nchw2nhwc_x32(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
     pthreadpool_t threadpool)
 {
   if (depth_to_space_op->type != xnn_operator_type_depth_to_space_nchw2nhwc_x32) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_depth_to_space_nchw2nhwc_x32),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(
+            xnn_operator_type_depth_to_space_nchw2nhwc_x32),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
 
   return reshape_depth_to_space_nchw2nhwc(
     depth_to_space_op,
-    batch_size, input_height, input_width,
+    batch_size, input_height, input_width, input_channels,
     xnn_operator_type_depth_to_space_nchw2nhwc_x32, /*element_size=*/4,
     output_height_out, output_width_out, output_channels_out);
 }
@@ -902,9 +953,12 @@ enum xnn_status xnn_setup_depth_to_space_nchw2nhwc_x16(
     void* output)
 {
   if (depth_to_space_op->type != xnn_operator_type_depth_to_space_nchw2nhwc_x16) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_depth_to_space_nchw2nhwc_x16),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(
+            xnn_operator_type_depth_to_space_nchw2nhwc_x16),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -919,9 +973,12 @@ enum xnn_status xnn_setup_depth_to_space_nchw2nhwc_x32(
     void* output)
 {
   if (depth_to_space_op->type != xnn_operator_type_depth_to_space_nchw2nhwc_x32) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(xnn_operator_type_depth_to_space_nchw2nhwc_x32),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(
+            xnn_operator_type_depth_to_space_nchw2nhwc_x32),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -931,9 +988,6 @@ enum xnn_status xnn_setup_depth_to_space_nchw2nhwc_x32(
 }
 
 static enum xnn_status create_depth_to_space_nhwc(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     enum xnn_operator_type operator_type,
@@ -950,35 +1004,10 @@ static enum xnn_status create_depth_to_space_nhwc(
 
   status = xnn_status_invalid_parameter;
 
-  if (output_channels == 0) {
-    xnn_log_error("failed to create %s operator with %zu output channels: number of channels must be non-zero",
-      xnn_operator_type_to_string(operator_type), output_channels);
-    goto error;
-  }
-
-  if (output_channel_stride < output_channels) {
-    xnn_log_error(
-      "failed to create %s operator with output channel stride of %zu: "
-      "stride must be at least as large as the number of output channels (%zu)",
-      xnn_operator_type_to_string(operator_type),
-      output_channel_stride, output_channels);
-    goto error;
-  }
-
   if (block_size <= 1) {
     xnn_log_error("failed to create %s operator with %" PRIu32 " block size: block size must be greater than 1",
       xnn_operator_type_to_string(operator_type),
       block_size);
-    goto error;
-  }
-
-  const size_t input_channels = output_channels * block_size * block_size;
-  if (input_channel_stride < input_channels) {
-    xnn_log_error(
-      "failed to create %s operator with input channel stride of %zu: "
-      "stride must be at least as large as the number of input channels (%" PRIu32 "x%" PRIu32 "x%zu)",
-      xnn_operator_type_to_string(operator_type),
-      input_channel_stride, block_size, block_size, input_channels);
     goto error;
   }
 
@@ -991,15 +1020,23 @@ static enum xnn_status create_depth_to_space_nhwc(
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
     goto error;
   }
+  depth_to_space_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (depth_to_space_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  depth_to_space_op->num_compute_invocations = 1;
 
   const struct xnn_transpose_config* transpose_config = xnn_init_transpose_config();
-  assert(transpose_config != NULL);
+  if (!transpose_config) {
+    xnn_log_error(
+      "failed to create transpose config: unsupported hardware configuration");
+    return xnn_status_unsupported_hardware;
+  }
 
-  depth_to_space_op->channels = output_channels;
-  depth_to_space_op->input_pixel_stride = input_channel_stride;
-  depth_to_space_op->output_pixel_stride = output_channel_stride;
-  depth_to_space_op->block_size = block_size;
-
+  depth_to_space_op->depth_to_space.block_size = block_size;
   depth_to_space_op->type = operator_type;
   depth_to_space_op->flags = flags;
   depth_to_space_op->transpose_config = transpose_config;
@@ -1015,17 +1052,11 @@ error:
 }
 
 enum xnn_status xnn_create_depth_to_space_nhwc_x8(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* depth_to_space_op_out)
 {
   return create_depth_to_space_nhwc(
-    output_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_depth_to_space_nhwc_x8,
@@ -1033,17 +1064,11 @@ enum xnn_status xnn_create_depth_to_space_nhwc_x8(
 }
 
 enum xnn_status xnn_create_depth_to_space_nhwc_x16(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* depth_to_space_op_out)
 {
   return create_depth_to_space_nhwc(
-    output_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_depth_to_space_nhwc_x16,
@@ -1051,17 +1076,11 @@ enum xnn_status xnn_create_depth_to_space_nhwc_x16(
 }
 
 enum xnn_status xnn_create_depth_to_space_nhwc_x32(
-    size_t output_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* depth_to_space_op_out)
 {
   return create_depth_to_space_nhwc(
-    output_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_depth_to_space_nhwc_x32,
@@ -1074,15 +1093,18 @@ static enum xnn_status reshape_depth_to_space_nhwc(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     uint32_t element_size,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out)
 {
   if (depth_to_space_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
   depth_to_space_op->state = xnn_run_state_invalid;
@@ -1093,30 +1115,36 @@ static enum xnn_status reshape_depth_to_space_nhwc(
     return xnn_status_uninitialized;
   }
 
-  if (input_width == 0 || input_height == 0) {
-    xnn_log_error("failed to setup %s operator with %zux%zu input: input dimensions must be non-zero",
-      xnn_operator_type_to_string(expected_operator_type), input_width, input_height);
+  if (input_width == 0 || input_height == 0 || input_channels == 0) {
+    xnn_log_error("failed to setup %s operator with %zux%zux%zu input: input dimensions must be non-zero",
+      xnn_operator_type_to_string(expected_operator_type), input_width, input_height, input_channels);
     return xnn_status_invalid_parameter;
   }
+
+  const uint32_t block_size = depth_to_space_op->depth_to_space.block_size;
+  if (input_channels % (block_size * block_size) != 0) {
+    xnn_log_error("failed to reshape %s operator with %zu input_channels and %u block_size: "
+                  "input channels must be divisible by block_size * block_size",
+      xnn_operator_type_to_string(expected_operator_type), input_channels, block_size);
+    return xnn_status_invalid_parameter;
+  }
+
+  const size_t output_channels = input_channels / block_size / block_size;
 
   if (batch_size == 0) {
     depth_to_space_op->state = xnn_run_state_skip;
     return xnn_status_success;
   }
 
-  const uint32_t block_size = depth_to_space_op->block_size;
-  const size_t channels = depth_to_space_op->channels;
-  const size_t input_pixel_stride = depth_to_space_op->input_pixel_stride;
-  const size_t output_pixel_stride = depth_to_space_op->output_pixel_stride;
-  const size_t block_output_pixel_stride = block_size * depth_to_space_op->output_pixel_stride;
+  const size_t block_output_pixel_stride = block_size * output_channels;
 
-  const size_t input_shape[5] = {batch_size * input_height, input_width, block_size, block_size, channels};
+  const size_t input_shape[5] = {batch_size * input_height, input_width, block_size, block_size, output_channels};
   const size_t perm[5] = {0, 2, 1, 3, 4};
   const size_t input_stride[5] = {
-    input_width * input_pixel_stride,
-    input_pixel_stride,
-    block_size * channels,
-    channels,
+    input_width * input_channels,
+    input_channels,
+    block_size * output_channels,
+    output_channels,
     1
   };
 
@@ -1127,14 +1155,14 @@ static enum xnn_status reshape_depth_to_space_nhwc(
     *output_width_out = input_width * block_size;
   }
   if (output_channels_out != NULL) {
-    *output_channels_out = channels;
+    *output_channels_out = output_channels;
   }
 
   const size_t output_stride[5] = {
     block_size * input_width * block_output_pixel_stride,
     input_width * block_output_pixel_stride,
     block_output_pixel_stride,
-    output_pixel_stride,
+    output_channels,
     1
   };
 
@@ -1149,6 +1177,7 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x8(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1157,8 +1186,8 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x8(
   return reshape_depth_to_space_nhwc(
     depth_to_space_op,
     xnn_operator_type_depth_to_space_nhwc_x8,
-    batch_size, input_height, input_width,
-    1,
+    batch_size, input_height, input_width, input_channels,
+    /*element_size=*/1,
     output_height_out, output_width_out, output_channels_out);
 }
 
@@ -1167,6 +1196,7 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x16(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1175,8 +1205,8 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x16(
   return reshape_depth_to_space_nhwc(
     depth_to_space_op,
     xnn_operator_type_depth_to_space_nhwc_x16,
-    batch_size, input_height, input_width,
-    2,
+    batch_size, input_height, input_width, input_channels,
+    /*element_size=*/2,
     output_height_out, output_width_out, output_channels_out);
 }
 
@@ -1185,6 +1215,7 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x32(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1193,8 +1224,8 @@ enum xnn_status xnn_reshape_depth_to_space_nhwc_x32(
   return reshape_depth_to_space_nhwc(
     depth_to_space_op,
     xnn_operator_type_depth_to_space_nhwc_x32,
-    batch_size, input_height, input_width,
-    4,
+    batch_size, input_height, input_width, input_channels,
+    /*element_size=*/4,
     output_height_out, output_width_out, output_channels_out);
 }
 
@@ -1205,9 +1236,11 @@ static enum xnn_status setup_depth_to_space_nhwc(
     void* output)
 {
   if (depth_to_space_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(depth_to_space_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(depth_to_space_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -1248,9 +1281,6 @@ enum xnn_status xnn_setup_depth_to_space_nhwc_x32(
 }
 
 static enum xnn_status create_space_to_depth_nhwc(
-    size_t input_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     enum xnn_operator_type operator_type,
@@ -1267,35 +1297,10 @@ static enum xnn_status create_space_to_depth_nhwc(
 
   status = xnn_status_invalid_parameter;
 
-  if (input_channels == 0) {
-    xnn_log_error("failed to create %s operator with %zu input channels: number of channels must be non-zero",
-      xnn_operator_type_to_string(operator_type), input_channels);
-    goto error;
-  }
-
-  if (input_channel_stride < input_channels) {
-    xnn_log_error(
-      "failed to create %s operator with input channel stride of %zu: "
-      "stride must be at least as large as the number of input channels (%zu)",
-      xnn_operator_type_to_string(operator_type),
-      input_channel_stride, input_channels);
-    goto error;
-  }
-
   if (block_size <= 1) {
     xnn_log_error("failed to create %s operator with %" PRIu32 " block size: block size must be greater than 1",
       xnn_operator_type_to_string(operator_type),
       block_size);
-    goto error;
-  }
-
-  const size_t output_channels = input_channels * block_size * block_size;
-  if (output_channel_stride < output_channels) {
-    xnn_log_error(
-      "failed to create %s operator with output channel stride of %zu: "
-      "stride must be at least as large as the number of output channels (%" PRIu32 "x%" PRIu32 "x%zu)",
-      xnn_operator_type_to_string(operator_type),
-      output_channel_stride, block_size, block_size, input_channels);
     goto error;
   }
 
@@ -1308,14 +1313,23 @@ static enum xnn_status create_space_to_depth_nhwc(
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
     goto error;
   }
+  space_to_depth_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (space_to_depth_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  space_to_depth_op->num_compute_invocations = 1;
 
   const struct xnn_transpose_config* transpose_config = xnn_init_transpose_config();
-  assert(transpose_config != NULL);
+  if (!transpose_config) {
+    xnn_log_error(
+      "failed to create transpose config: unsupported hardware configuration");
+    return xnn_status_unsupported_hardware;
+  }
 
-  space_to_depth_op->channels = input_channels;
-  space_to_depth_op->input_pixel_stride = input_channel_stride;
-  space_to_depth_op->output_pixel_stride = output_channel_stride;
-  space_to_depth_op->block_size = block_size;
+  space_to_depth_op->depth_to_space.block_size = block_size;
 
   space_to_depth_op->type = operator_type;
   space_to_depth_op->flags = flags;
@@ -1332,17 +1346,11 @@ error:
 }
 
 enum xnn_status xnn_create_space_to_depth_nhwc_x8(
-    size_t input_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* space_to_depth_op_out)
 {
   return create_space_to_depth_nhwc(
-    input_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_space_to_depth_nhwc_x8,
@@ -1350,17 +1358,11 @@ enum xnn_status xnn_create_space_to_depth_nhwc_x8(
 }
 
 enum xnn_status xnn_create_space_to_depth_nhwc_x16(
-    size_t input_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* space_to_depth_op_out)
 {
   return create_space_to_depth_nhwc(
-    input_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_space_to_depth_nhwc_x16,
@@ -1368,17 +1370,11 @@ enum xnn_status xnn_create_space_to_depth_nhwc_x16(
 }
 
 enum xnn_status xnn_create_space_to_depth_nhwc_x32(
-    size_t input_channels,
-    size_t input_channel_stride,
-    size_t output_channel_stride,
     uint32_t block_size,
     uint32_t flags,
     xnn_operator_t* space_to_depth_op_out)
 {
   return create_space_to_depth_nhwc(
-    input_channels,
-    input_channel_stride,
-    output_channel_stride,
     block_size,
     flags,
     xnn_operator_type_space_to_depth_nhwc_x32,
@@ -1391,15 +1387,18 @@ static enum xnn_status reshape_space_to_depth_nhwc(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     uint32_t element_size,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out)
 {
   if (space_to_depth_op->type != expected_operator_type) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(space_to_depth_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(space_to_depth_op));
     return xnn_status_invalid_parameter;
   }
   space_to_depth_op->state = xnn_run_state_invalid;
@@ -1410,13 +1409,15 @@ static enum xnn_status reshape_space_to_depth_nhwc(
     return xnn_status_uninitialized;
   }
 
-  if (input_width == 0 || input_height == 0) {
-    xnn_log_error("failed to reshape %s operator with %zux%zu input: input dimensions must be non-zero",
-      xnn_operator_type_to_string(expected_operator_type), input_width, input_height);
+  if (input_width == 0 || input_height == 0 || input_channels == 0) {
+    xnn_log_error("failed to reshape %s operator with %zux%zux%zu input: input dimensions must be non-zero",
+      xnn_operator_type_to_string(expected_operator_type), input_width, input_height, input_channels);
     return xnn_status_invalid_parameter;
   }
 
-  const uint32_t block_size = space_to_depth_op->block_size;
+  const uint32_t block_size = space_to_depth_op->depth_to_space.block_size;
+  const size_t output_channels = input_channels * block_size * block_size;
+
   if (input_width % block_size != 0) {
     xnn_log_error(
         "failed to reshape %s operator with %zu input width and %u block size: input width must be divisible by block "
@@ -1438,13 +1439,12 @@ static enum xnn_status reshape_space_to_depth_nhwc(
     return xnn_status_success;
   }
 
-  const size_t channels = space_to_depth_op->channels;
   const size_t input_shape[5] = {
     batch_size * (input_height / block_size),
     block_size,
     input_width / block_size,
     block_size,
-    channels
+    input_channels
   };
   const size_t perm[5] = {0, 2, 1, 3, 4};
 
@@ -1455,21 +1455,21 @@ static enum xnn_status reshape_space_to_depth_nhwc(
     *output_width_out = input_width / block_size;
   }
   if (output_channels_out != NULL) {
-    *output_channels_out = channels * block_size * block_size;
+    *output_channels_out = output_channels;
   }
 
   const size_t input_stride[5] = {
-    block_size * input_width * space_to_depth_op->input_pixel_stride,
-    input_width * space_to_depth_op->input_pixel_stride,
-    block_size * space_to_depth_op->input_pixel_stride,
-    space_to_depth_op->input_pixel_stride,
+    block_size * input_width * input_channels,
+    input_width * input_channels,
+    block_size * input_channels,
+    input_channels,
     1
   };
   const size_t output_stride[5] = {
-    (input_width/block_size) * space_to_depth_op->output_pixel_stride,
-    space_to_depth_op->output_pixel_stride,
-    block_size * channels,
-    channels,
+    (input_width/block_size) * output_channels,
+    output_channels,
+    block_size * input_channels,
+    input_channels,
     1
   };
 
@@ -1484,6 +1484,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x8(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1492,7 +1493,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x8(
   return reshape_space_to_depth_nhwc(
     space_to_depth_op,
     xnn_operator_type_space_to_depth_nhwc_x8,
-    batch_size, input_height, input_width,
+    batch_size, input_height, input_width, input_channels,
     sizeof(uint8_t),
     output_height_out, output_width_out, output_channels_out);
 }
@@ -1502,6 +1503,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x16(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1510,7 +1512,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x16(
   return reshape_space_to_depth_nhwc(
     space_to_depth_op,
     xnn_operator_type_space_to_depth_nhwc_x16,
-    batch_size, input_height, input_width,
+    batch_size, input_height, input_width, input_channels,
     sizeof(uint16_t),
     output_height_out, output_width_out, output_channels_out);
 }
@@ -1520,6 +1522,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x32(
     size_t batch_size,
     size_t input_height,
     size_t input_width,
+    size_t input_channels,
     size_t* output_height_out,
     size_t* output_width_out,
     size_t* output_channels_out,
@@ -1528,7 +1531,7 @@ enum xnn_status xnn_reshape_space_to_depth_nhwc_x32(
   return reshape_space_to_depth_nhwc(
     space_to_depth_op,
     xnn_operator_type_space_to_depth_nhwc_x32,
-    batch_size, input_height, input_width,
+    batch_size, input_height, input_width, input_channels,
     sizeof(uint32_t),
     output_height_out, output_width_out, output_channels_out);
 }
@@ -1540,9 +1543,11 @@ static enum xnn_status setup_space_to_depth_nhwc(
     void* output)
 {
   if (space_to_depth_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(space_to_depth_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(space_to_depth_op));
     return xnn_status_invalid_parameter;
   }
 

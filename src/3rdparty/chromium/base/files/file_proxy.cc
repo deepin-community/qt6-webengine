@@ -5,6 +5,7 @@
 #include "base/files/file_proxy.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/containers/heap_array.h"
@@ -15,12 +16,10 @@
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/task_runner.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
-void FileDeleter(base::File file) {
-}
+void FileDeleter(base::File file) {}
 
 }  // namespace
 
@@ -36,11 +35,12 @@ class FileHelper {
   FileHelper& operator=(const FileHelper&) = delete;
 
   void PassFile() {
-    if (proxy_)
+    if (proxy_) {
       proxy_->SetFile(std::move(file_));
-    else if (file_.IsValid())
+    } else if (file_.IsValid()) {
       task_runner_->PostTask(FROM_HERE,
                              BindOnce(&FileDeleter, std::move(file_)));
+    }
   }
 
  protected:
@@ -72,19 +72,22 @@ class GenericFileHelper : public FileHelper {
   }
 
   void SetLength(int64_t length) {
-    if (file_.SetLength(length))
+    if (file_.SetLength(length)) {
       error_ = File::FILE_OK;
+    }
   }
 
   void Flush() {
-    if (file_.Flush())
+    if (file_.Flush()) {
       error_ = File::FILE_OK;
+    }
   }
 
   void Reply(FileProxy::StatusCallback callback) {
     PassFile();
-    if (!callback.is_null())
+    if (!callback.is_null()) {
       std::move(callback).Run(error_);
+    }
   }
 };
 
@@ -155,8 +158,9 @@ class GetInfoHelper : public FileHelper {
   GetInfoHelper& operator=(const GetInfoHelper&) = delete;
 
   void RunWork() {
-    if (file_.GetInfo(&file_info_))
-      error_  = File::FILE_OK;
+    if (file_.GetInfo(&file_info_)) {
+      error_ = File::FILE_OK;
+    }
   }
 
   void Reply(FileProxy::GetFileInfoCallback callback) {
@@ -182,7 +186,7 @@ class ReadHelper : public FileHelper {
   ReadHelper& operator=(const ReadHelper&) = delete;
 
   void RunWork(int64_t offset) {
-    absl::optional<size_t> result = file_.Read(offset, buffer_);
+    std::optional<size_t> result = file_.Read(offset, buffer_);
     if (!result.has_value()) {
       bytes_read_ = -1;
       error_ = File::FILE_ERROR_FAILED;
@@ -219,7 +223,7 @@ class WriteHelper : public FileHelper {
   WriteHelper& operator=(const WriteHelper&) = delete;
 
   void RunWork(int64_t offset) {
-    absl::optional<size_t> result = file_.Write(offset, buffer_);
+    std::optional<size_t> result = file_.Write(offset, buffer_);
     if (!result.has_value()) {
       bytes_written_ = -1;
       error_ = File::FILE_ERROR_FAILED;
@@ -231,8 +235,9 @@ class WriteHelper : public FileHelper {
 
   void Reply(FileProxy::WriteCallback callback) {
     PassFile();
-    if (!callback.is_null())
+    if (!callback.is_null()) {
       std::move(callback).Run(error_, bytes_written_);
+    }
   }
 
  private:
@@ -245,8 +250,9 @@ class WriteHelper : public FileHelper {
 FileProxy::FileProxy(TaskRunner* task_runner) : task_runner_(task_runner) {}
 
 FileProxy::~FileProxy() {
-  if (file_.IsValid())
+  if (file_.IsValid()) {
     task_runner_->PostTask(FROM_HERE, BindOnce(&FileDeleter, std::move(file_)));
+  }
 }
 
 bool FileProxy::CreateOrOpen(const FilePath& file_path,
@@ -316,8 +322,9 @@ bool FileProxy::GetInfo(GetFileInfoCallback callback) {
 
 bool FileProxy::Read(int64_t offset, int bytes_to_read, ReadCallback callback) {
   DCHECK(file_.IsValid());
-  if (bytes_to_read < 0)
+  if (bytes_to_read < 0) {
     return false;
+  }
 
   ReadHelper* helper = new ReadHelper(weak_ptr_factory_.GetWeakPtr(),
                                       std::move(file_), bytes_to_read);

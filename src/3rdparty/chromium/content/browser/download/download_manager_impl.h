@@ -84,6 +84,7 @@ class CONTENT_EXPORT DownloadManagerImpl
   // retains ownership.
   void CreateSavePackageDownloadItem(
       const base::FilePath& main_file_path,
+      const base::FilePath& main_file_display_name,
       const GURL& page_url,
       const std::string& mime_type,
       int render_process_id,
@@ -178,18 +179,22 @@ class CONTENT_EXPORT DownloadManagerImpl
       mojo::ScopedDataPipeConsumerHandle response_body,
       network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
       net::CertStatus cert_status,
-      int frame_tree_node_id,
+      FrameTreeNodeId frame_tree_node_id,
       bool from_download_cross_origin_redirect);
 
   // DownloadItemImplDelegate overrides.
   download::QuarantineConnectionCallback GetQuarantineConnectionCallback()
       override;
   std::string GetApplicationClientIdForFileScanning() const override;
+  std::unique_ptr<download::DownloadItemRenameHandler>
+  GetRenameHandlerForDownload(
+      download::DownloadItemImpl* download_item) override;
 
  private:
   using DownloadSet = std::set<download::DownloadItem*>;
   using DownloadGuidMap =
-      std::unordered_map<std::string, download::DownloadItemImpl*>;
+      std::unordered_map<std::string,
+                         raw_ptr<download::DownloadItemImpl, CtnExperimental>>;
   using DownloadItemImplVector = std::vector<download::DownloadItemImpl*>;
 
   // For testing.
@@ -198,6 +203,7 @@ class CONTENT_EXPORT DownloadManagerImpl
 
   void CreateSavePackageDownloadItemWithId(
       const base::FilePath& main_file_path,
+      const base::FilePath& main_file_display_name,
       const GURL& page_url,
       const std::string& mime_type,
       int render_process_id,
@@ -221,7 +227,9 @@ class CONTENT_EXPORT DownloadManagerImpl
       std::unique_ptr<download::DownloadCreateInfo> info,
       download::DownloadUrlParameters::OnStartedCallback on_started,
       download::InProgressDownloadManager::StartDownloadItemCallback callback,
-      uint32_t id);
+      uint32_t id,
+      const base::FilePath& duplicate_download_file_path,
+      bool duplicate_file_exists);
 
   // Sets the |next_download_id_| if the |next_id| is larger. Runs all the
   // |id_callbacks_| if both the ID from both history db and in-progress db
@@ -277,7 +285,7 @@ class CONTENT_EXPORT DownloadManagerImpl
       const std::string& serialized_embedder_download_data);
 
   void InterceptNavigationOnChecksComplete(
-      int frame_tree_node_id,
+      FrameTreeNodeId frame_tree_node_id,
       std::unique_ptr<network::ResourceRequest> resource_request,
       std::vector<GURL> url_chain,
       net::CertStatus cert_status,
@@ -315,6 +323,13 @@ class CONTENT_EXPORT DownloadManagerImpl
                                  download::DownloadItem::DownloadState state,
                                  download::DownloadInterruptReason reason,
                                  const base::Time& start_time);
+
+  // Called when Id for a new download item is retrieved.
+  void OnNewDownloadIdRetrieved(
+      std::unique_ptr<download::DownloadCreateInfo> info,
+      download::DownloadUrlParameters::OnStartedCallback on_started,
+      download::InProgressDownloadManager::StartDownloadItemCallback callback,
+      uint32_t id);
 
   // Factory for creation of downloads items.
   std::unique_ptr<download::DownloadItemFactory> item_factory_;

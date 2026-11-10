@@ -6,6 +6,7 @@
 import datetime
 from typing import Any, List, Optional
 
+# //testing imports.
 from flake_suppressor_common import common_typing as ct
 from unexpected_passes_common import data_types as unexpected_dt
 
@@ -33,7 +34,7 @@ class Result():
   for the purposes of the flake finder.
   """
 
-  # TODO(crbug.com/1358735): Refactor this Class to take ResultTupleType as an
+  # TODO(crbug.com/40237087): Refactor this Class to take ResultTupleType as an
   # input.
   def __init__(self,
                suite: str,

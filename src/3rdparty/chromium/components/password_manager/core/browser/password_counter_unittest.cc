@@ -6,6 +6,8 @@
 
 #include <string_view>
 
+#include "base/location.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -148,13 +150,14 @@ TEST_F(PasswordCounterTest, RemoveLogin) {
   EXPECT_EQ(counter.profile_passwords(), 1u);
   EXPECT_EQ(counter.account_passwords(), 1u);
 
-  store()->RemoveLogin(CreateTestPasswordForm("user1", "123"));
+  store()->RemoveLogin(FROM_HERE, CreateTestPasswordForm("user1", "123"));
   EXPECT_CALL(delegate(), OnPasswordCounterChanged);
   RunUntilIdle();
   EXPECT_EQ(counter.profile_passwords(), 0u);
   EXPECT_EQ(counter.account_passwords(), 1u);
 
-  account_store()->RemoveLogin(CreateTestPasswordForm("user2", "123256"));
+  account_store()->RemoveLogin(FROM_HERE,
+                               CreateTestPasswordForm("user2", "123256"));
   EXPECT_CALL(delegate(), OnPasswordCounterChanged);
   RunUntilIdle();
   EXPECT_EQ(counter.profile_passwords(), 0u);
@@ -171,7 +174,7 @@ TEST_F(PasswordCounterTest, RemoveNonexistingLogin) {
   EXPECT_EQ(counter.profile_passwords(), 1u);
   EXPECT_EQ(counter.account_passwords(), 0u);
 
-  store()->RemoveLogin(CreateTestPasswordForm("user2", "123"));
+  store()->RemoveLogin(FROM_HERE, CreateTestPasswordForm("user2", "123"));
   EXPECT_CALL(delegate(), OnPasswordCounterChanged).Times(0);
   RunUntilIdle();
   EXPECT_EQ(counter.profile_passwords(), 1u);
@@ -190,7 +193,8 @@ TEST_F(PasswordCounterTest, RemoveAllLogins) {
   EXPECT_EQ(counter.profile_passwords(), 3u);
   EXPECT_EQ(counter.account_passwords(), 0u);
 
-  store()->RemoveLoginsCreatedBetween(base::Time(), base::Time::Max());
+  store()->RemoveLoginsCreatedBetween(FROM_HERE, base::Time(),
+                                      base::Time::Max());
   EXPECT_CALL(delegate(), OnPasswordCounterChanged);
   RunUntilIdle();
   EXPECT_EQ(counter.profile_passwords(), 0u);
@@ -230,7 +234,7 @@ TEST_F(PasswordCounterTest, IgnoreDeleteBlocklisted) {
   EXPECT_EQ(counter.account_passwords(), 0u);
 
   EXPECT_CALL(delegate(), OnPasswordCounterChanged).Times(0);
-  store()->RemoveLogin(CreateBlocklistedForm("https://abc.com/"));
+  store()->RemoveLogin(FROM_HERE, CreateBlocklistedForm("https://abc.com/"));
   RunUntilIdle();
   EXPECT_EQ(counter.profile_passwords(), 1u);
   EXPECT_EQ(counter.account_passwords(), 0u);

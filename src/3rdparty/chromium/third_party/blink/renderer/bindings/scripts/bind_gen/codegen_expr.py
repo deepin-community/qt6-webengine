@@ -185,6 +185,7 @@ def expr_from_exposure(exposure,
     #         feature_selector-2nd-phase-term))
     # which can be represented in more details as:
     #   (and cross_origin_isolated_term
+    #        injection_mitigated_term
     #        isolated_context_term
     #        secure_context_term
     #        uncond_exposed_term
@@ -197,6 +198,7 @@ def expr_from_exposure(exposure,
     #             feature_selector_term)))
     # where
     #   cross_origin_isolated_term represents [CrossOriginIsolated]
+    #   injection_mitigated_term represents [InjectionMitigated]
     #   isolated_context_term represents [IsolatedContext]
     #   secure_context_term represents [SecureContext=F1]
     #   uncond_exposed_term represents [Exposed=(G1, G2)]
@@ -238,6 +240,13 @@ def expr_from_exposure(exposure,
         ])
     else:
         cross_origin_isolated_term = _Expr(True)
+
+    # [InjectionMitigated]
+    if exposure.only_in_injection_mitigated_contexts:
+        injection_mitigated_context_term = _Expr(
+            "${is_in_injection_mitigated_context}")
+    else:
+        injection_mitigated_context_term = _Expr(True)
 
     # [IsolatedContext]
     if exposure.only_in_isolated_contexts:
@@ -304,8 +313,11 @@ def expr_from_exposure(exposure,
                 # We don't currently have a general way of checking the exposure
                 # of [TargetOfExposed] exposure. If this is actually a global,
                 # add it to GLOBAL_NAME_TO_EXECUTION_CONTEXT_CHECK.
+                # TODO(pbos): Migrate this to use NOTREACHED() directly, or even
+                # better don't generate code that shouldn't be reachable at all.
                 return _Expr(
-                    "(::logging::NotReachedError::NotReached() << "
+                    "(::logging::NotReachedError::NotReached("
+                    "base::NotFatalUntil::NoSpecifiedMilestoneInternal) << "
                     "\"{} exposure test is not supported at runtime\", false)".
                     format(entry.global_name))
 
@@ -342,6 +354,7 @@ def expr_from_exposure(exposure,
     # Build an expression.
     top_level_terms = []
     top_level_terms.append(cross_origin_isolated_term)
+    top_level_terms.append(injection_mitigated_context_term)
     top_level_terms.append(isolated_context_term)
     top_level_terms.append(secure_context_term)
     if uncond_exposed_terms:

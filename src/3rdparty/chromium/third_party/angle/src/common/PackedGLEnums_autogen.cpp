@@ -475,6 +475,79 @@ std::ostream &operator<<(std::ostream &os, ClipOrigin value)
 }
 
 template <>
+CombinerOp FromGLenum<CombinerOp>(GLenum from)
+{
+    switch (from)
+    {
+        case GL_NONE:
+            return CombinerOp::Undefined;
+        case GL_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_EXT:
+            return CombinerOp::Keep;
+        case GL_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_EXT:
+            return CombinerOp::Replace;
+        case GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MIN_EXT:
+            return CombinerOp::Min;
+        case GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MAX_EXT:
+            return CombinerOp::Max;
+        case GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MUL_EXT:
+            return CombinerOp::Mul;
+        default:
+            return CombinerOp::InvalidEnum;
+    }
+}
+
+GLenum ToGLenum(CombinerOp from)
+{
+    switch (from)
+    {
+        case CombinerOp::Undefined:
+            return GL_NONE;
+        case CombinerOp::Keep:
+            return GL_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_EXT;
+        case CombinerOp::Replace:
+            return GL_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_EXT;
+        case CombinerOp::Min:
+            return GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MIN_EXT;
+        case CombinerOp::Max:
+            return GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MAX_EXT;
+        case CombinerOp::Mul:
+            return GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MUL_EXT;
+        default:
+            UNREACHABLE();
+            return 0;
+    }
+}
+
+std::ostream &operator<<(std::ostream &os, CombinerOp value)
+{
+    switch (value)
+    {
+        case CombinerOp::Undefined:
+            os << "GL_NONE";
+            break;
+        case CombinerOp::Keep:
+            os << "GL_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_EXT";
+            break;
+        case CombinerOp::Replace:
+            os << "GL_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_EXT";
+            break;
+        case CombinerOp::Min:
+            os << "GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MIN_EXT";
+            break;
+        case CombinerOp::Max:
+            os << "GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MAX_EXT";
+            break;
+        case CombinerOp::Mul:
+            os << "GL_FRAGMENT_SHADING_RATE_COMBINER_OP_MUL_EXT";
+            break;
+        default:
+            os << "GL_INVALID_ENUM";
+            break;
+    }
+    return os;
+}
+
+template <>
 CullFaceMode FromGLenum<CullFaceMode>(GLenum from)
 {
     switch (from)
@@ -1456,8 +1529,6 @@ QueryType FromGLenum<QueryType>(GLenum from)
             return QueryType::AnySamples;
         case GL_ANY_SAMPLES_PASSED_CONSERVATIVE:
             return QueryType::AnySamplesConservative;
-        case GL_COMMANDS_COMPLETED_CHROMIUM:
-            return QueryType::CommandsCompleted;
         case GL_PRIMITIVES_GENERATED_EXT:
             return QueryType::PrimitivesGenerated;
         case GL_TIME_ELAPSED_EXT:
@@ -1479,8 +1550,6 @@ GLenum ToGLenum(QueryType from)
             return GL_ANY_SAMPLES_PASSED;
         case QueryType::AnySamplesConservative:
             return GL_ANY_SAMPLES_PASSED_CONSERVATIVE;
-        case QueryType::CommandsCompleted:
-            return GL_COMMANDS_COMPLETED_CHROMIUM;
         case QueryType::PrimitivesGenerated:
             return GL_PRIMITIVES_GENERATED_EXT;
         case QueryType::TimeElapsed:
@@ -1504,9 +1573,6 @@ std::ostream &operator<<(std::ostream &os, QueryType value)
             break;
         case QueryType::AnySamplesConservative:
             os << "GL_ANY_SAMPLES_PASSED_CONSERVATIVE";
-            break;
-        case QueryType::CommandsCompleted:
-            os << "GL_COMMANDS_COMPLETED_CHROMIUM";
             break;
         case QueryType::PrimitivesGenerated:
             os << "GL_PRIMITIVES_GENERATED_EXT";
@@ -1652,17 +1718,23 @@ ShadingRate FromGLenum<ShadingRate>(GLenum from)
     {
         case GL_NONE:
             return ShadingRate::Undefined;
-        case GL_SHADING_RATE_1X1_PIXELS_QCOM:
+        case GL_SHADING_RATE_1X1_PIXELS_EXT:
             return ShadingRate::_1x1;
-        case GL_SHADING_RATE_1X2_PIXELS_QCOM:
+        case GL_SHADING_RATE_1X2_PIXELS_EXT:
             return ShadingRate::_1x2;
-        case GL_SHADING_RATE_2X1_PIXELS_QCOM:
+        case GL_SHADING_RATE_1X4_PIXELS_EXT:
+            return ShadingRate::_1x4;
+        case GL_SHADING_RATE_2X1_PIXELS_EXT:
             return ShadingRate::_2x1;
-        case GL_SHADING_RATE_2X2_PIXELS_QCOM:
+        case GL_SHADING_RATE_2X2_PIXELS_EXT:
             return ShadingRate::_2x2;
-        case GL_SHADING_RATE_4X2_PIXELS_QCOM:
+        case GL_SHADING_RATE_2X4_PIXELS_EXT:
+            return ShadingRate::_2x4;
+        case GL_SHADING_RATE_4X1_PIXELS_EXT:
+            return ShadingRate::_4x1;
+        case GL_SHADING_RATE_4X2_PIXELS_EXT:
             return ShadingRate::_4x2;
-        case GL_SHADING_RATE_4X4_PIXELS_QCOM:
+        case GL_SHADING_RATE_4X4_PIXELS_EXT:
             return ShadingRate::_4x4;
         default:
             return ShadingRate::InvalidEnum;
@@ -1676,17 +1748,23 @@ GLenum ToGLenum(ShadingRate from)
         case ShadingRate::Undefined:
             return GL_NONE;
         case ShadingRate::_1x1:
-            return GL_SHADING_RATE_1X1_PIXELS_QCOM;
+            return GL_SHADING_RATE_1X1_PIXELS_EXT;
         case ShadingRate::_1x2:
-            return GL_SHADING_RATE_1X2_PIXELS_QCOM;
+            return GL_SHADING_RATE_1X2_PIXELS_EXT;
+        case ShadingRate::_1x4:
+            return GL_SHADING_RATE_1X4_PIXELS_EXT;
         case ShadingRate::_2x1:
-            return GL_SHADING_RATE_2X1_PIXELS_QCOM;
+            return GL_SHADING_RATE_2X1_PIXELS_EXT;
         case ShadingRate::_2x2:
-            return GL_SHADING_RATE_2X2_PIXELS_QCOM;
+            return GL_SHADING_RATE_2X2_PIXELS_EXT;
+        case ShadingRate::_2x4:
+            return GL_SHADING_RATE_2X4_PIXELS_EXT;
+        case ShadingRate::_4x1:
+            return GL_SHADING_RATE_4X1_PIXELS_EXT;
         case ShadingRate::_4x2:
-            return GL_SHADING_RATE_4X2_PIXELS_QCOM;
+            return GL_SHADING_RATE_4X2_PIXELS_EXT;
         case ShadingRate::_4x4:
-            return GL_SHADING_RATE_4X4_PIXELS_QCOM;
+            return GL_SHADING_RATE_4X4_PIXELS_EXT;
         default:
             UNREACHABLE();
             return 0;
@@ -1701,22 +1779,31 @@ std::ostream &operator<<(std::ostream &os, ShadingRate value)
             os << "GL_NONE";
             break;
         case ShadingRate::_1x1:
-            os << "GL_SHADING_RATE_1X1_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_1X1_PIXELS_EXT";
             break;
         case ShadingRate::_1x2:
-            os << "GL_SHADING_RATE_1X2_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_1X2_PIXELS_EXT";
+            break;
+        case ShadingRate::_1x4:
+            os << "GL_SHADING_RATE_1X4_PIXELS_EXT";
             break;
         case ShadingRate::_2x1:
-            os << "GL_SHADING_RATE_2X1_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_2X1_PIXELS_EXT";
             break;
         case ShadingRate::_2x2:
-            os << "GL_SHADING_RATE_2X2_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_2X2_PIXELS_EXT";
+            break;
+        case ShadingRate::_2x4:
+            os << "GL_SHADING_RATE_2X4_PIXELS_EXT";
+            break;
+        case ShadingRate::_4x1:
+            os << "GL_SHADING_RATE_4X1_PIXELS_EXT";
             break;
         case ShadingRate::_4x2:
-            os << "GL_SHADING_RATE_4X2_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_4X2_PIXELS_EXT";
             break;
         case ShadingRate::_4x4:
-            os << "GL_SHADING_RATE_4X4_PIXELS_QCOM";
+            os << "GL_SHADING_RATE_4X4_PIXELS_EXT";
             break;
         default:
             os << "GL_INVALID_ENUM";
@@ -2223,7 +2310,7 @@ TextureTarget FromGLenum<TextureTarget>(GLenum from)
             return TextureTarget::_2DArray;
         case GL_TEXTURE_2D_MULTISAMPLE:
             return TextureTarget::_2DMultisample;
-        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES:
+        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
             return TextureTarget::_2DMultisampleArray;
         case GL_TEXTURE_3D:
             return TextureTarget::_3D;
@@ -2265,7 +2352,7 @@ GLenum ToGLenum(TextureTarget from)
         case TextureTarget::_2DMultisample:
             return GL_TEXTURE_2D_MULTISAMPLE;
         case TextureTarget::_2DMultisampleArray:
-            return GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES;
+            return GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
         case TextureTarget::_3D:
             return GL_TEXTURE_3D;
         case TextureTarget::External:
@@ -2310,7 +2397,7 @@ std::ostream &operator<<(std::ostream &os, TextureTarget value)
             os << "GL_TEXTURE_2D_MULTISAMPLE";
             break;
         case TextureTarget::_2DMultisampleArray:
-            os << "GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES";
+            os << "GL_TEXTURE_2D_MULTISAMPLE_ARRAY";
             break;
         case TextureTarget::_3D:
             os << "GL_TEXTURE_3D";
@@ -2366,7 +2453,7 @@ TextureType FromGLenum<TextureType>(GLenum from)
             return TextureType::_2DArray;
         case GL_TEXTURE_2D_MULTISAMPLE:
             return TextureType::_2DMultisample;
-        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES:
+        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
             return TextureType::_2DMultisampleArray;
         case GL_TEXTURE_3D:
             return TextureType::_3D;
@@ -2398,7 +2485,7 @@ GLenum ToGLenum(TextureType from)
         case TextureType::_2DMultisample:
             return GL_TEXTURE_2D_MULTISAMPLE;
         case TextureType::_2DMultisampleArray:
-            return GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES;
+            return GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
         case TextureType::_3D:
             return GL_TEXTURE_3D;
         case TextureType::External:
@@ -2433,7 +2520,7 @@ std::ostream &operator<<(std::ostream &os, TextureType value)
             os << "GL_TEXTURE_2D_MULTISAMPLE";
             break;
         case TextureType::_2DMultisampleArray:
-            os << "GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES";
+            os << "GL_TEXTURE_2D_MULTISAMPLE_ARRAY";
             break;
         case TextureType::_3D:
             os << "GL_TEXTURE_3D";

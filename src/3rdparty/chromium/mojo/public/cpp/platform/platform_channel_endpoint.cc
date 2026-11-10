@@ -5,6 +5,7 @@
 #include "mojo/public/cpp/platform/platform_channel_endpoint.h"
 
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -18,8 +19,8 @@
 #if BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
 #include <mach/port.h>
 
+#include "base/apple/mach_port_rendezvous.h"
 #include "base/apple/scoped_mach_port.h"
-#include "base/mac/mach_port_rendezvous.h"
 #elif BUILDFLAG(IS_FUCHSIA)
 #include <lib/zx/handle.h>
 #elif BUILDFLAG(IS_POSIX)
@@ -37,7 +38,7 @@ namespace {
 
 #if BUILDFLAG(IS_ANDROID)
 // Leave room for any other descriptors defined in content for example.
-// TODO(https://crbug.com/676442): Consider changing base::GlobalDescriptors to
+// TODO(crbug.com/40499227): Consider changing base::GlobalDescriptors to
 // generate a key when setting the file descriptor.
 constexpr int kAndroidClientHandleDescriptor =
     base::GlobalDescriptors::kBaseDescriptor + 10000;
@@ -131,17 +132,27 @@ void PlatformChannelEndpoint::PrepareToPass(HandlePassingInfo& info,
 
 void PlatformChannelEndpoint::PrepareToPass(base::LaunchOptions& options,
                                             base::CommandLine& command_line) {
+  const std::string value = PrepareToPass(options);
+  if (!value.empty()) {
+    command_line.AppendSwitchASCII(PlatformChannel::kHandleSwitch, value);
+  }
+}
+
+std::string PlatformChannelEndpoint::PrepareToPass(
+    base::LaunchOptions& options) {
+  std::string value;
 #if BUILDFLAG(IS_WIN)
-  PrepareToPass(options.handles_to_inherit, command_line);
+  PrepareToPass(options.handles_to_inherit, value);
 #elif BUILDFLAG(IS_FUCHSIA)
-  PrepareToPass(options.handles_to_transfer, command_line);
+  PrepareToPass(options.handles_to_transfer, value);
 #elif BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
-  PrepareToPass(options.mach_ports_for_rendezvous, command_line);
+  PrepareToPass(options.mach_ports_for_rendezvous, value);
 #elif BUILDFLAG(IS_POSIX)
-  PrepareToPass(options.fds_to_remap, command_line);
+  PrepareToPass(options.fds_to_remap, value);
 #else
 #error "Platform not supported."
 #endif
+  return value;
 }
 
 void PlatformChannelEndpoint::ProcessLaunchAttempted() {

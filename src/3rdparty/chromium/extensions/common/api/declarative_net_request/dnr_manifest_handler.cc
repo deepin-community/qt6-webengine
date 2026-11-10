@@ -111,6 +111,9 @@ bool DNRManifestHandler::Parse(Extension* extension, std::u16string* error) {
 
   int enabled_ruleset_count = 0;
 
+  std::set<base::FilePath> unique_paths;
+  bool unique_paths_warning = false;
+
   // Note: the static_cast<int> below is safe because we did already verify that
   // |rulesets.size()| <= dnr_api::MAX_NUMBER_OF_STATIC_RULESETS, which is an
   // integer.
@@ -121,6 +124,20 @@ bool DNRManifestHandler::Parse(Extension* extension, std::u16string* error) {
 
     if (info.enabled)
       enabled_ruleset_count++;
+
+    // The DNR system can support assigning different IDs to a ruleset, but this
+    // is likely a developers' mistake since two declarations of the same rule
+    // consume twice the amount of resources.
+    if (!unique_paths_warning) {
+      if (unique_paths.contains(info.relative_path)) {
+        unique_paths_warning = true;
+        extension->AddInstallWarning(
+            InstallWarning(errors::kDeclarativeNetRequestPathDuplicates,
+                           dnr_api::ManifestKeys::kDeclarativeNetRequest));
+      } else {
+        unique_paths.insert(info.relative_path);
+      }
+    }
 
     rulesets_info.push_back(std::move(info));
   }
@@ -140,12 +157,11 @@ bool DNRManifestHandler::Parse(Extension* extension, std::u16string* error) {
   return true;
 }
 
-bool DNRManifestHandler::Validate(const Extension* extension,
+bool DNRManifestHandler::Validate(const Extension& extension,
                                   std::string* error,
                                   std::vector<InstallWarning>* warnings) const {
-  DNRManifestData* data =
-      static_cast<DNRManifestData*>(extension->GetManifestData(
-          dnr_api::ManifestKeys::kDeclarativeNetRequest));
+  DNRManifestData* data = static_cast<DNRManifestData*>(
+      extension.GetManifestData(dnr_api::ManifestKeys::kDeclarativeNetRequest));
   DCHECK(data);
 
   for (const DNRManifestData::RulesetInfo& info : data->rulesets) {
@@ -153,7 +169,7 @@ bool DNRManifestHandler::Validate(const Extension* extension,
     // returns a failure if the relative path contains Windows path separators
     // and we have already normalized the path separators.
     if (ExtensionResource::GetFilePath(
-            extension->path(), info.relative_path,
+            extension.path(), info.relative_path,
             ExtensionResource::SYMLINKS_MUST_RESOLVE_WITHIN_ROOT)
             .empty()) {
       *error = ErrorUtils::FormatErrorMessage(

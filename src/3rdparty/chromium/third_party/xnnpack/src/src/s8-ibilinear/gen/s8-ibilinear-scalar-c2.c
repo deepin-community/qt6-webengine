@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/s8-ibilinear/scalar.c.in
 //   Generator: tools/xngen
@@ -8,9 +9,11 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/ibilinear.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/ibilinear.h"
+#include "src/xnnpack/math.h"
 
 
 void xnn_s8_ibilinear_ukernel__scalar_c2(

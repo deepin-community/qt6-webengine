@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -15,6 +15,7 @@
 
 #include "aom_dsp/x86/convolve.h"
 #include "aom_dsp/x86/convolve_avx2.h"
+#include "aom_dsp/x86/synonyms_avx2.h"
 #include "aom_ports/mem.h"
 
 #if defined(__clang__)
@@ -41,33 +42,21 @@
 #define MM256_BROADCASTSI128_SI256(x) _mm256_broadcastsi128_si256(x)
 #endif  // __clang__
 
-static INLINE void xx_storeu2_epi32(const uint8_t *output_ptr,
+static inline void xx_storeu2_epi32(const uint8_t *output_ptr,
                                     const ptrdiff_t stride, const __m256i *a) {
   *((int *)(output_ptr)) = _mm_cvtsi128_si32(_mm256_castsi256_si128(*a));
   *((int *)(output_ptr + stride)) =
       _mm_cvtsi128_si32(_mm256_extracti128_si256(*a, 1));
 }
 
-static INLINE __m256i xx_loadu2_epi64(const void *hi, const void *lo) {
-  __m256i a = _mm256_castsi128_si256(_mm_loadl_epi64((const __m128i *)(lo)));
-  a = _mm256_inserti128_si256(a, _mm_loadl_epi64((const __m128i *)(hi)), 1);
-  return a;
-}
-
-static INLINE void xx_storeu2_epi64(const uint8_t *output_ptr,
+static inline void xx_storeu2_epi64(const uint8_t *output_ptr,
                                     const ptrdiff_t stride, const __m256i *a) {
   _mm_storel_epi64((__m128i *)output_ptr, _mm256_castsi256_si128(*a));
   _mm_storel_epi64((__m128i *)(output_ptr + stride),
                    _mm256_extractf128_si256(*a, 1));
 }
 
-static INLINE __m256i xx_loadu2_mi128(const void *hi, const void *lo) {
-  __m256i a = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i *)(lo)));
-  a = _mm256_inserti128_si256(a, _mm_loadu_si128((const __m128i *)(hi)), 1);
-  return a;
-}
-
-static INLINE void xx_store2_mi128(const uint8_t *output_ptr,
+static inline void xx_store2_mi128(const uint8_t *output_ptr,
                                    const ptrdiff_t stride, const __m256i *a) {
   _mm_store_si128((__m128i *)output_ptr, _mm256_castsi256_si128(*a));
   _mm_store_si128((__m128i *)(output_ptr + stride),
@@ -100,7 +89,7 @@ static void aom_filter_block1d4_h4_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b1_1 = _mm256_shuffle_epi8(srcReg32b1, filt1Reg);
@@ -188,7 +177,7 @@ static void aom_filter_block1d4_h8_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b1_1 = _mm256_shuffle_epi8(srcReg32b1, filt1Reg);
@@ -295,7 +284,7 @@ static void aom_filter_block1d8_h4_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b3 = _mm256_shuffle_epi8(srcReg32b1, filt2Reg);
@@ -397,7 +386,7 @@ static void aom_filter_block1d8_h8_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b1_1 = _mm256_shuffle_epi8(srcReg32b1, filt1Reg);
@@ -521,7 +510,7 @@ static void aom_filter_block1d16_h4_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b3 = _mm256_shuffle_epi8(srcReg32b1, filt2Reg);
@@ -535,8 +524,7 @@ static void aom_filter_block1d16_h4_avx2(
 
     // reading 2 strides of the next 16 bytes
     // (part of it was being read by earlier read)
-    srcReg32b2 =
-        xx_loadu2_mi128(src_ptr + src_pixels_per_line + 8, src_ptr + 8);
+    srcReg32b2 = yy_loadu2_128(src_ptr + src_pixels_per_line + 8, src_ptr + 8);
 
     // filter the source buffer
     srcRegFilt32b3 = _mm256_shuffle_epi8(srcReg32b2, filt2Reg);
@@ -644,7 +632,7 @@ static void aom_filter_block1d16_h8_avx2(
   dst_stride = output_pitch << 1;
   for (i = output_height; i > 1; i -= 2) {
     // load the 2 strides of source
-    srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pixels_per_line, src_ptr);
+    srcReg32b1 = yy_loadu2_128(src_ptr + src_pixels_per_line, src_ptr);
 
     // filter the source buffer
     srcRegFilt32b1_1 = _mm256_shuffle_epi8(srcReg32b1, filt1Reg);
@@ -670,8 +658,7 @@ static void aom_filter_block1d16_h8_avx2(
 
     // reading 2 strides of the next 16 bytes
     // (part of it was being read by earlier read)
-    srcReg32b2 =
-        xx_loadu2_mi128(src_ptr + src_pixels_per_line + 8, src_ptr + 8);
+    srcReg32b2 = yy_loadu2_128(src_ptr + src_pixels_per_line + 8, src_ptr + 8);
 
     // filter the source buffer
     srcRegFilt32b2_1 = _mm256_shuffle_epi8(srcReg32b2, filt1Reg);
@@ -795,6 +782,14 @@ static void aom_filter_block1d16_h8_avx2(
     // save 16 bytes
     _mm_store_si128((__m128i *)output_ptr, srcRegFilt1_1);
   }
+}
+
+#if !CONFIG_HIGHWAY
+
+static inline __m256i xx_loadu2_epi64(const void *hi, const void *lo) {
+  __m256i a = _mm256_castsi128_si256(_mm_loadl_epi64((const __m128i *)(lo)));
+  a = _mm256_inserti128_si256(a, _mm_loadl_epi64((const __m128i *)(hi)), 1);
+  return a;
 }
 
 static void aom_filter_block1d8_v4_avx2(
@@ -1068,7 +1063,7 @@ static void aom_filter_block1d16_v4_avx2(
   src_stride = src_pitch << 1;
   dst_stride = out_pitch << 1;
 
-  srcReg23 = xx_loadu2_mi128(src_ptr + src_pitch * 3, src_ptr + src_pitch * 2);
+  srcReg23 = yy_loadu2_128(src_ptr + src_pitch * 3, src_ptr + src_pitch * 2);
   srcReg4x = _mm256_castsi128_si256(
       _mm_loadu_si128((const __m128i *)(src_ptr + src_pitch * 4)));
 
@@ -1172,11 +1167,9 @@ static void aom_filter_block1d16_v8_avx2(
   dst_stride = out_pitch << 1;
 
   // load 16 bytes 7 times in stride of src_pitch
-  srcReg32b1 = xx_loadu2_mi128(src_ptr + src_pitch, src_ptr);
-  srcReg32b3 =
-      xx_loadu2_mi128(src_ptr + src_pitch * 3, src_ptr + src_pitch * 2);
-  srcReg32b5 =
-      xx_loadu2_mi128(src_ptr + src_pitch * 5, src_ptr + src_pitch * 4);
+  srcReg32b1 = yy_loadu2_128(src_ptr + src_pitch, src_ptr);
+  srcReg32b3 = yy_loadu2_128(src_ptr + src_pitch * 3, src_ptr + src_pitch * 2);
+  srcReg32b5 = yy_loadu2_128(src_ptr + src_pitch * 5, src_ptr + src_pitch * 4);
   srcReg32b7 = _mm256_castsi128_si256(
       _mm_loadu_si128((const __m128i *)(src_ptr + src_pitch * 6)));
 
@@ -1409,33 +1402,39 @@ static void aom_filter_block1d4_v4_avx2(
     srcReg4x = srcReg6x;
   }
 }
+#endif  // !CONFIG_HIGHWAY
 
 #if HAVE_AVX2 && HAVE_SSSE3
-filter8_1dfunction aom_filter_block1d4_v8_ssse3;
-filter8_1dfunction aom_filter_block1d16_v2_ssse3;
 filter8_1dfunction aom_filter_block1d16_h2_ssse3;
-filter8_1dfunction aom_filter_block1d8_v2_ssse3;
 filter8_1dfunction aom_filter_block1d8_h2_ssse3;
-filter8_1dfunction aom_filter_block1d4_v2_ssse3;
 filter8_1dfunction aom_filter_block1d4_h2_ssse3;
-#define aom_filter_block1d4_v8_avx2 aom_filter_block1d4_v8_ssse3
-#define aom_filter_block1d16_v2_avx2 aom_filter_block1d16_v2_ssse3
 #define aom_filter_block1d16_h2_avx2 aom_filter_block1d16_h2_ssse3
-#define aom_filter_block1d8_v2_avx2 aom_filter_block1d8_v2_ssse3
 #define aom_filter_block1d8_h2_avx2 aom_filter_block1d8_h2_ssse3
-#define aom_filter_block1d4_v2_avx2 aom_filter_block1d4_v2_ssse3
 #define aom_filter_block1d4_h2_avx2 aom_filter_block1d4_h2_ssse3
+
 // void aom_convolve8_horiz_avx2(const uint8_t *src, ptrdiff_t src_stride,
 //                                uint8_t *dst, ptrdiff_t dst_stride,
 //                                const int16_t *filter_x, int x_step_q4,
 //                                const int16_t *filter_y, int y_step_q4,
 //                                int w, int h);
+FUN_CONV_1D(horiz, x_step_q4, filter_x, h, src, , avx2)
+
+#if !CONFIG_HIGHWAY
+filter8_1dfunction aom_filter_block1d4_v8_ssse3;
+filter8_1dfunction aom_filter_block1d16_v2_ssse3;
+filter8_1dfunction aom_filter_block1d8_v2_ssse3;
+filter8_1dfunction aom_filter_block1d4_v2_ssse3;
+#define aom_filter_block1d4_v8_avx2 aom_filter_block1d4_v8_ssse3
+#define aom_filter_block1d16_v2_avx2 aom_filter_block1d16_v2_ssse3
+#define aom_filter_block1d8_v2_avx2 aom_filter_block1d8_v2_ssse3
+#define aom_filter_block1d4_v2_avx2 aom_filter_block1d4_v2_ssse3
+
 // void aom_convolve8_vert_avx2(const uint8_t *src, ptrdiff_t src_stride,
 //                               uint8_t *dst, ptrdiff_t dst_stride,
 //                               const int16_t *filter_x, int x_step_q4,
 //                               const int16_t *filter_y, int y_step_q4,
 //                               int w, int h);
-FUN_CONV_1D(horiz, x_step_q4, filter_x, h, src, , avx2)
 FUN_CONV_1D(vert, y_step_q4, filter_y, v, src - src_stride * 3, , avx2)
+#endif  // !CONFIG_HIGHWAY
 
 #endif  // HAVE_AX2 && HAVE_SSSE3

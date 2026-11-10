@@ -10,12 +10,17 @@
 
 #include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
 
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
+#include "api/array_view.h"
+#include "api/rtp_parameters.h"
+#include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
+#include "modules/rtp_rtcp/source/corruption_detection_extension.h"
 #include "modules/rtp_rtcp/source/rtp_dependency_descriptor_extension.h"
 #include "modules/rtp_rtcp/source/rtp_generic_frame_descriptor_extension.h"
 #include "modules/rtp_rtcp/source/rtp_header_extensions.h"
 #include "modules/rtp_rtcp/source/rtp_video_layers_allocation_extension.h"
-#include "rtc_base/arraysize.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 
@@ -34,7 +39,7 @@ ExtensionInfo CreateExtensionInfo() {
 
 ExtensionInfo kExtensions[] = {
     CreateExtensionInfo<TransmissionOffset>(),
-    CreateExtensionInfo<AudioLevel>(),
+    CreateExtensionInfo<AudioLevelExtension>(),
     CreateExtensionInfo<CsrcAudioLevel>(),
     CreateExtensionInfo<AbsoluteSendTime>(),
     CreateExtensionInfo<AbsoluteCaptureTimeExtension>(),
@@ -53,18 +58,16 @@ ExtensionInfo kExtensions[] = {
     CreateExtensionInfo<ColorSpaceExtension>(),
     CreateExtensionInfo<InbandComfortNoiseExtension>(),
     CreateExtensionInfo<VideoFrameTrackingIdExtension>(),
+    CreateExtensionInfo<CorruptionDetectionExtension>(),
 };
 
 // Because of kRtpExtensionNone, NumberOfExtension is 1 bigger than the actual
 // number of known extensions.
-static_assert(arraysize(kExtensions) ==
+static_assert(std::ssize(kExtensions) ==
                   static_cast<int>(kRtpExtensionNumberOfExtensions) - 1,
               "kExtensions expect to list all known extensions");
 
 }  // namespace
-
-constexpr RTPExtensionType RtpHeaderExtensionMap::kInvalidType;
-constexpr int RtpHeaderExtensionMap::kInvalidId;
 
 RtpHeaderExtensionMap::RtpHeaderExtensionMap() : RtpHeaderExtensionMap(false) {}
 
@@ -75,14 +78,13 @@ RtpHeaderExtensionMap::RtpHeaderExtensionMap(bool extmap_allow_mixed)
 }
 
 RtpHeaderExtensionMap::RtpHeaderExtensionMap(
-    rtc::ArrayView<const RtpExtension> extensions)
+    ArrayView<const RtpExtension> extensions)
     : RtpHeaderExtensionMap(false) {
   for (const RtpExtension& extension : extensions)
     RegisterByUri(extension.id, extension.uri);
 }
 
-void RtpHeaderExtensionMap::Reset(
-    rtc::ArrayView<const RtpExtension> extensions) {
+void RtpHeaderExtensionMap::Reset(ArrayView<const RtpExtension> extensions) {
   for (auto& id : ids_)
     id = kInvalidId;
   for (const RtpExtension& extension : extensions)

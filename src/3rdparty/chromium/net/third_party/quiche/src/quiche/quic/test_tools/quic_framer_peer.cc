@@ -4,6 +4,8 @@
 
 #include "quiche/quic/test_tools/quic_framer_peer.h"
 
+#include <string>
+
 #include "quiche/quic/core/quic_framer.h"
 #include "quiche/quic/core/quic_packets.h"
 
@@ -16,12 +18,6 @@ uint64_t QuicFramerPeer::CalculatePacketNumberFromWire(
     QuicPacketNumber last_packet_number, uint64_t packet_number) {
   return framer->CalculatePacketNumberFromWire(
       packet_number_length, last_packet_number, packet_number);
-}
-
-// static
-void QuicFramerPeer::SetLastSerializedServerConnectionId(
-    QuicFramer* framer, QuicConnectionId server_connection_id) {
-  framer->last_serialized_server_connection_id_ = server_connection_id;
 }
 
 // static

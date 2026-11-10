@@ -1,8 +1,6 @@
 // Copyright (C) 2017 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
-
 #include <util.h>
 #include <QtTest/QtTest>
 #include <QtWebEngineCore/qwebengineurlrequestinfo.h>
@@ -55,6 +53,8 @@ private Q_SLOTS:
     void postWithBody();
     void profilePreventsPageInterception_data();
     void profilePreventsPageInterception();
+    void download();
+    void redirect();
 };
 
 tst_QWebEngineUrlRequestInterceptor::tst_QWebEngineUrlRequestInterceptor()
@@ -88,6 +88,7 @@ struct RequestInfo {
         , initiator(info.initiator())
         , resourceType(info.resourceType())
         , headers(info.httpHeaders())
+        , download(info.isDownload())
     {}
 
     QUrl requestUrl;
@@ -95,11 +96,12 @@ struct RequestInfo {
     QUrl initiator;
     int resourceType;
     QHash<QByteArray, QByteArray> headers;
+    bool download;
 };
 
 static const QUrl kRedirectUrl = QUrl("qrc:///resources/content.html");
 
-Q_LOGGING_CATEGORY(lc, "qt.webengine.tests")
+Q_WEBENGINE_LOGGING_CATEGORY(lc, "qt.webengine.tests")
 
 class TestRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
@@ -159,7 +161,7 @@ public:
     {
         QList<RequestInfo> infos;
 
-        foreach (auto requestInfo, requestInfos) {
+        for (const auto &requestInfo : requestInfos) {
             if (shouldSkipRequest(requestInfo))
                 continue;
 
@@ -172,7 +174,7 @@ public:
 
     bool hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceType type)
     {
-        foreach (auto requestInfo, requestInfos) {
+        for (const auto &requestInfo : requestInfos) {
             if (shouldSkipRequest(requestInfo))
                 continue;
 
@@ -439,11 +441,10 @@ void tst_QWebEngineUrlRequestInterceptor::firstPartyUrlNestedIframes()
 
     if (requestUrl.scheme() == "file"
         && !QDir(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()).exists())
-        W_QSKIP(QString("This test requires access to resources found in '%1'")
+        QSKIP(QString("This test requires access to resources found in '%1'")
                         .arg(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath())
                         .toLatin1()
-                        .constData(),
-                SkipAll);
+                        .constData());
 
     QString adjustedUrl = requestUrl.adjusted(QUrl::RemoveFilename).toString();
 
@@ -528,11 +529,10 @@ void tst_QWebEngineUrlRequestInterceptor::requestInterceptorByResourceType_data(
 void tst_QWebEngineUrlRequestInterceptor::requestInterceptorByResourceType()
 {
     if (!QDir(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()).exists())
-        W_QSKIP(QString("This test requires access to resources found in '%1'")
+        QSKIP(QString("This test requires access to resources found in '%1'")
                         .arg(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath())
                         .toLatin1()
-                        .constData(),
-                SkipAll);
+                        .constData());
     QFETCH(QUrl, requestUrl);
     QFETCH(QUrl, firstPartyUrl);
     QFETCH(int, resourceType);
@@ -572,43 +572,43 @@ void tst_QWebEngineUrlRequestInterceptor::firstPartyUrlHttp()
     // Stylesheet
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeStylesheet));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeStylesheet);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // Script
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeScript));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeScript);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // Image
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeImage));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeImage);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // FontResource
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFontResource));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFontResource);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // Media
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeMedia));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeMedia);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // Favicon
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFavicon));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFavicon);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     // XMLHttpRequest
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeXhr));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeXhr);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 }
 
@@ -724,43 +724,43 @@ void tst_QWebEngineUrlRequestInterceptor::initiator()
     // Stylesheet
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeStylesheet));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeStylesheet);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // Script
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeScript));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeScript);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // Image
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeImage));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeImage);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // FontResource
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFontResource));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFontResource);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // Media
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeMedia));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeMedia);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // Favicon
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFavicon));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeFavicon);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 
     // XMLHttpRequest
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeXhr));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeXhr);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QVERIFY(interceptor.requestInitiatorUrls[info.requestUrl].contains(info.initiator));
 }
 
@@ -793,7 +793,7 @@ void tst_QWebEngineUrlRequestInterceptor::jsServiceWorker()
     // Service Worker
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeServiceWorker));
     infos = interceptor.getUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeServiceWorker);
-    foreach (auto info, infos)
+    for (const RequestInfo &info : std::as_const(infos))
         QCOMPARE(info.firstPartyUrl, firstPartyUrl);
 
     QVERIFY(server.stop());
@@ -802,17 +802,17 @@ void tst_QWebEngineUrlRequestInterceptor::jsServiceWorker()
 void tst_QWebEngineUrlRequestInterceptor::replaceInterceptor_data()
 {
     QTest::addColumn<bool>("firstInterceptIsInPage");
-    QTest::addColumn<bool>("keepInterceptionPoint");
+    QTest::addColumn<bool>("secondInterceptIsInPage");
     QTest::newRow("page")         << true << true;
     QTest::newRow("page-profile") << true << false;
-    QTest::newRow("profile")      << false << true;
-    QTest::newRow("profile-page") << false << false;
+    QTest::newRow("profile")      << false << false;
+    QTest::newRow("profile-page") << false << true;
 }
 
 void tst_QWebEngineUrlRequestInterceptor::replaceInterceptor()
 {
     QFETCH(bool, firstInterceptIsInPage);
-    QFETCH(bool, keepInterceptionPoint);
+    QFETCH(bool, secondInterceptIsInPage);
 
     HttpServer server;
     server.setResourceDirs({ ":/resources" });
@@ -837,17 +837,14 @@ void tst_QWebEngineUrlRequestInterceptor::replaceInterceptor()
         requestsOnReplace.push_back(interceptors[currentInterceptorIndex].requestInfos.size());
 
         bool isFirstReinstall = currentInterceptorIndex == 0;
-        bool interceptInPage = keepInterceptionPoint ? firstInterceptIsInPage : (isFirstReinstall ^ firstInterceptIsInPage);
+        bool interceptInPage = isFirstReinstall ? firstInterceptIsInPage : secondInterceptIsInPage;
         setInterceptor(&interceptors[++currentInterceptorIndex], interceptInPage);
-        if (!keepInterceptionPoint)
-            setInterceptor(nullptr, !interceptInPage);
+        setInterceptor(nullptr, !interceptInPage);
 
         if (isFirstReinstall) {
             page.triggerAction(QWebEnginePage::Reload);
         } else {
-            page.runJavaScript("fetch('http://nonexistent.invalid').catch(() => {})", [&, interceptInPage] (const QVariant &) {
-                requestsOnReplace.push_back(interceptors.back().requestInfos.size());
-                setInterceptor(nullptr, interceptInPage);
+            page.runJavaScript("fetch('http://nonexistent.invalid').catch(() => {})", [&fetchFinished] (const QVariant &) {
                 fetchFinished = true;
             });
         }
@@ -856,6 +853,10 @@ void tst_QWebEngineUrlRequestInterceptor::replaceInterceptor()
     page.setUrl(server.url("/favicon.html"));
     QTRY_COMPARE_WITH_TIMEOUT(spy.size(), 2, 20000);
     QTRY_VERIFY(fetchFinished);
+    QTRY_VERIFY(!interceptors.back().requestInfos.isEmpty());
+    setInterceptor(nullptr, true);
+    setInterceptor(nullptr, false);
+    requestsOnReplace.push_back(interceptors.back().requestInfos.size());
 
     QString s; QDebug d(&s);
     for (auto i = 0u; i < interceptors.size(); ++i) {
@@ -945,10 +946,9 @@ void tst_QWebEngineUrlRequestInterceptor::multipleRedirects()
 class TestPostRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
 public:
-    TestPostRequestInterceptor(QString expected, bool isAppendFile, QObject *parent = nullptr)
+    TestPostRequestInterceptor(QString expected, QObject *parent = nullptr)
         : QWebEngineUrlRequestInterceptor(parent)
         , m_expected(expected)
-        , m_isAppendFile(isAppendFile)
     {};
 
     void interceptRequest(QWebEngineUrlRequestInfo &info) override
@@ -958,11 +958,8 @@ public:
 
         QIODevice *requestBodyDevice = info.requestBody();
 
-        if (m_isAppendFile) {
-            info.d_ptr->appendFileToResourceRequestBodyForTest(":/resources/postBodyFile.txt");
-        }
-
-        requestBodyDevice->open(QIODevice::ReadOnly);
+        QVERIFY2(requestBodyDevice->open(QIODevice::ReadOnly),
+                 qPrintable(requestBodyDevice->errorString()));
 
         const QString webKitBoundary = requestBodyDevice->read(40);
         QVERIFY(webKitBoundary.contains("------WebKitFormBoundary"));
@@ -996,18 +993,20 @@ void tst_QWebEngineUrlRequestInterceptor::postWithBody_data()
                "\"1Content-Disposition:form-data"
                ";name=\"title\"Test123Content-Di"
                "sposition:form-data;name=\"completed\"f"
-               "alse--"
-            << false;
+               "alse--";
     QTest::addRow("FormData blob (DataElementPipe)")
             << "const blob1 = new Blob(['blob1thisisablob'],"
                "{type: 'text/plain'});"
                "fd.append('blob1', blob1);"
             << "Content-Disposition:form-data;name=\"blob1"
                "\";filename=\"blob\"Content-Type:text/plai"
-               "nblob1thisisablob--"
-            << false;
-    QTest::addRow("Append file (DataElementFile)") << ""
-                                                   << "--{\"test\":\"1234\"}\"1234\"}" << true;
+               "nblob1thisisablob--";
+    QTest::addRow("Append file (DataElementFile)") << "const blob = new Blob(['{\"test\":\"1234\"}']);"
+                                                      "fd.append('file', new File([blob], 'file.txt'), 'file.txt');"
+                                                   << "Content-Disposition:form-data;name=\"file\";"
+                                                      "filename=\"file.txt\""
+                                                      "Content-Type:application/octet-stream{\"test\":\"1234\"}"
+                                                      "--";
     QTest::addRow("All combined") << "fd.append('userId', 1);"
                                      "fd.append('title', 'Test123');"
                                      "fd.append('completed', false);"
@@ -1020,6 +1019,7 @@ void tst_QWebEngineUrlRequestInterceptor::postWithBody_data()
                                      "fd.append('title', 'Test456');"
                                      "fd.append('completed', true);"
                                      "fd.append('blob2', blob2);"
+                                     "fd.append('file', new File([blob1], 'file.txt'), 'file.txt');"
                                   << "Content-Disposition:form-data;name=\"userId\""
                                      "1Content-Disposition:form-data;na"
                                      "me=\"title\"Test123Content-Disposit"
@@ -1032,16 +1032,17 @@ void tst_QWebEngineUrlRequestInterceptor::postWithBody_data()
                                      "Content-Disposition:form-data;name=\"complete"
                                      "d\"trueContent-Disposition:form-da"
                                      "ta;name=\"blob2\";filename=\"blob\"Content-Ty"
-                                     "pe:text/plainblob2thisisanotherblob--"
-                                     "{\"test\":\"1234\"}\"1234\"}"
-                                  << true;
+                                     "pe:text/plainblob2thisisanotherblob"
+                                     "Content-Disposition:form-data;name=\"file\";"
+                                     "filename=\"file.txt\""
+                                     "Content-Type:application/octet-streamblob1thisisablob"
+                                     "--";
 }
 
 void tst_QWebEngineUrlRequestInterceptor::postWithBody()
 {
     QFETCH(QString, input);
     QFETCH(QString, output);
-    QFETCH(bool, isAppendFile);
 
     QString script;
     script.append("const fd = new FormData();");
@@ -1050,7 +1051,7 @@ void tst_QWebEngineUrlRequestInterceptor::postWithBody()
 
     QWebEngineProfile profile;
     profile.settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, false);
-    TestPostRequestInterceptor interceptor(output, isAppendFile);
+    TestPostRequestInterceptor interceptor(output);
     profile.setUrlRequestInterceptor(&interceptor);
     QWebEnginePage page(&profile);
     bool ok = false;
@@ -1116,6 +1117,60 @@ void tst_QWebEngineUrlRequestInterceptor::profilePreventsPageInterception()
     QTRY_COMPARE(loadSpy.size(), 1);
     QCOMPARE(profileInterceptor.ran, interceptInProfile);
     QCOMPARE(pageInterceptor.ran, interceptInPage);
+}
+
+void tst_QWebEngineUrlRequestInterceptor::download()
+{
+    HttpServer server;
+    server.setResourceDirs({ ":/resources" });
+    QVERIFY(server.start());
+
+    TestRequestInterceptor interceptor;
+    QWebEnginePage page;
+    page.setUrlRequestInterceptor(&interceptor);
+    QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
+
+    const auto url = QUrl(server.url("/content.html"));
+
+    page.load(url);
+    QTRY_COMPARE(loadSpy.size(), 1);
+    QCOMPARE(interceptor.requestInfos.size(), 1);
+    QCOMPARE(interceptor.requestInfos.at(0).download, false);
+
+    interceptor.requestInfos.clear();
+
+    page.download(url);
+    QTRY_COMPARE(interceptor.requestInfos.size(), 1);
+    QCOMPARE(interceptor.requestInfos.at(0).download, true);
+}
+
+void tst_QWebEngineUrlRequestInterceptor::redirect()
+{
+    HttpServer server;
+    server.setResourceDirs({ ":/resources" });
+    QVERIFY(server.start());
+
+    TestRequestInterceptor interceptor;
+    interceptor.onIntercept = [&](QWebEngineUrlRequestInfo &info) {
+        const auto url = server.url(info.requestUrl().path());
+        if (info.requestUrl() != url) {
+            info.redirect(url);
+            return false;
+        }
+        return true;
+    };
+
+    QWebEnginePage page;
+    page.setUrlRequestInterceptor(&interceptor);
+    QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
+
+    const auto url = QUrl(server.url("/cors.html"));
+    page.load(url);
+    QTRY_COMPARE(loadSpy.size(), 1);
+    // We expect 3 requests: cors.html, cors.js and content.html
+    // redirected requests are not counted
+    // We will only get 2 because the request to fetch content.html will never happen
+    QTRY_COMPARE(interceptor.requestInfos.size(), 3);
 }
 
 QTEST_MAIN(tst_QWebEngineUrlRequestInterceptor)

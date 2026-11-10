@@ -6,6 +6,7 @@
 #define COMPONENTS_VIZ_SERVICE_HIT_TEST_HIT_TEST_MANAGER_H_
 
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -15,7 +16,6 @@
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "components/viz/service/surfaces/surface_observer.h"
 #include "components/viz/service/viz_service_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace viz {
 
@@ -38,11 +38,12 @@ class VIZ_SERVICE_EXPORT HitTestManager : public SurfaceObserver {
   void OnSurfaceDestroyed(const SurfaceId& surface_id) override;
 
   // Called when HitTestRegionList is submitted along with every call
-  // to SubmitCompositorFrame.
-  void SubmitHitTestRegionList(
+  // to SubmitCompositorFrame. Returns true if hit_test_region_list was
+  // successfully submitted, and false if hit_test_region_list is invalid.
+  bool SubmitHitTestRegionList(
       const SurfaceId& surface_id,
       const uint64_t frame_index,
-      absl::optional<HitTestRegionList> hit_test_region_list);
+      std::optional<HitTestRegionList> hit_test_region_list);
 
   // Returns the HitTestRegionList corresponding to the given
   // |frame_sink_id| and the active CompositorFrame matched by frame_index.

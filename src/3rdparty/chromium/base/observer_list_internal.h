@@ -6,6 +6,7 @@
 #define BASE_OBSERVER_LIST_INTERNAL_H_
 
 #include <string>
+#include <type_traits>
 
 #include "base/base_export.h"
 #include "base/check.h"
@@ -24,6 +25,8 @@ namespace base {
 namespace internal {
 
 // Adapter for putting raw pointers into an ObserverList<Foo>::Unchecked.
+template <base::RawPtrTraits ptr_traits = RawPtrTraits::kEmpty,
+          bool use_raw_pointer = false>
 class BASE_EXPORT UncheckedObserverAdapter {
  public:
   explicit UncheckedObserverAdapter(const void* observer)
@@ -48,13 +51,13 @@ class BASE_EXPORT UncheckedObserverAdapter {
   }
 
 #if DCHECK_IS_ON()
-  std::string GetCreationStackString() const {
-    return "Observer created at:\n" + stack_.ToString();
-  }
+  std::string GetCreationStackString() const { return stack_.ToString(); }
 #endif  // DCHECK_IS_ON()
 
  private:
-  raw_ptr<void, AcrossTasksDanglingUntriaged> ptr_;
+  using StorageType =
+      std::conditional_t<use_raw_pointer, void*, raw_ptr<void, ptr_traits>>;
+  StorageType ptr_;
 #if DCHECK_IS_ON()
   base::debug::StackTrace stack_;
 #endif  // DCHECK_IS_ON()
@@ -155,8 +158,11 @@ class WeakLinkNode : public base::LinkNode<WeakLinkNode<ObserverList>> {
   }
 
   ObserverList* get() const {
-    if (list_)
+#if EXPENSIVE_DCHECKS_ARE_ON()
+    if (list_) {
       DCHECK_CALLED_ON_VALID_SEQUENCE(list_->iteration_sequence_checker_);
+    }
+#endif  // EXPENSIVE_DCHECKS_ARE_ON()
     return list_;
   }
   ObserverList* operator->() const { return get(); }

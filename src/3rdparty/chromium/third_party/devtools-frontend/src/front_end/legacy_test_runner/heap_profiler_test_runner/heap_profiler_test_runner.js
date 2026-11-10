@@ -10,13 +10,13 @@ import * as UI from '../../ui/legacy/legacy.js';
 import {TestRunner} from '../test_runner/test_runner.js';
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 export const HeapProfilerTestRunner = {};
 
 HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
   HeapProfilerTestRunner.createJSHeapSnapshotMockObject = function() {
-    return {
+    const result = {
       rootNodeIndex: 0,
       nodeTypeOffset: 0,
       nodeNameOffset: 1,
@@ -40,6 +40,10 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
       createEdge: HeapSnapshotWorker.HeapSnapshot.JSHeapSnapshot.prototype.createEdge,
       createRetainingEdge: HeapSnapshotWorker.HeapSnapshot.JSHeapSnapshot.prototype.createRetainingEdge
     };
+    result.nodes.getValue = result.containmentEdges.getValue = function(i) {
+      return this[i];
+    };
+    return result;
   };
 
   HeapProfilerTestRunner.createHeapSnapshotMockRaw = function() {
@@ -55,7 +59,8 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
           trace_node_fields: ['id', 'function_info_index', 'count', 'size', 'children']
         },
         node_count: 6,
-        edge_count: 7
+        edge_count: 7,
+        trace_function_count: 1
       },
 
       nodes: [
@@ -78,6 +83,12 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
   HeapProfilerTestRunner.postprocessHeapSnapshotMock = function(mock) {
     mock.nodes = new Uint32Array(mock.nodes);
     mock.edges = new Uint32Array(mock.edges);
+    if (mock.trace_function_infos) {
+      mock.trace_function_infos = new Uint32Array(mock.trace_function_infos);
+    }
+    mock.nodes.getValue = mock.edges.getValue = function(i) {
+      return this[i];
+    };
     return mock;
   };
 
@@ -127,17 +138,17 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
   };
 
   HeapProfilerTestRunner.HeapNode.Type = {
-    'hidden': 'hidden',
-    'array': 'array',
-    'string': 'string',
-    'object': 'object',
-    'code': 'code',
-    'closure': 'closure',
-    'regexp': 'regexp',
-    'number': 'number',
-    'native': 'native',
-    'synthetic': 'synthetic',
-    'bigint': 'bigint'
+    hidden: 'hidden',
+    array: 'array',
+    string: 'string',
+    object: 'object',
+    code: 'code',
+    closure: 'closure',
+    regexp: 'regexp',
+    number: 'number',
+    native: 'native',
+    synthetic: 'synthetic',
+    bigint: 'bigint'
   };
 
   HeapProfilerTestRunner.HeapNode.prototype = {
@@ -210,13 +221,13 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
   };
 
   HeapProfilerTestRunner.HeapEdge.Type = {
-    'context': 'context',
-    'element': 'element',
-    'property': 'property',
-    'internal': 'internal',
-    'hidden': 'hidden',
-    'shortcut': 'shortcut',
-    'weak': 'weak'
+    context: 'context',
+    element: 'element',
+    property: 'property',
+    internal: 'internal',
+    hidden: 'hidden',
+    shortcut: 'shortcut',
+    weak: 'weak'
   };
 
   HeapProfilerTestRunner.HeapSnapshotBuilder = function() {
@@ -226,6 +237,7 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
     this.nodeFieldsCount = 7;
     this.nodeTypesMap = {};
     this.nodeTypesArray = [];
+    this.extraNativeBytes = 0;
 
     for (const nodeType in HeapProfilerTestRunner.HeapNode.Type) {
       this.nodeTypesMap[nodeType] = this.nodeTypesArray.length;
@@ -247,19 +259,20 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
   HeapProfilerTestRunner.HeapSnapshotBuilder.prototype = {
     generateSnapshot: function() {
       const rawSnapshot = {
-        'snapshot': {
-          'meta': {
-            'node_fields': ['type', 'name', 'id', 'self_size', 'retained_size', 'dominator', 'edge_count'],
-            'node_types': [this.nodeTypesArray, 'string', 'number', 'number', 'number', 'number', 'number'],
-            'edge_fields': ['type', 'name_or_index', 'to_node'],
-            'edge_types': [this.edgeTypesArray, 'string_or_number', 'node']
-          }
+        snapshot: {
+          meta: {
+            node_fields: ['type', 'name', 'id', 'self_size', 'retained_size', 'dominator', 'edge_count'],
+            node_types: [this.nodeTypesArray, 'string', 'number', 'number', 'number', 'number', 'number'],
+            edge_fields: ['type', 'name_or_index', 'to_node'],
+            edge_types: [this.edgeTypesArray, 'string_or_number', 'node']
+          },
+          extra_native_bytes: this.extraNativeBytes
         },
 
-        'nodes': [],
-        'edges': [],
-        'locations': [],
-        'strings': []
+        nodes: [],
+        edges: [],
+        locations: [],
+        strings: []
       };
 
       for (let i = 0; i < this.nodes.length; ++i) {
@@ -273,10 +286,9 @@ HeapProfilerTestRunner.createHeapSnapshotMockFactories = function() {
       return rawSnapshot;
     },
 
-    createJSHeapSnapshot: function() {
+    createJSHeapSnapshot: async function() {
       const parsedSnapshot = HeapProfilerTestRunner.postprocessHeapSnapshotMock(this.generateSnapshot());
-      return new HeapSnapshotWorker.HeapSnapshot.JSHeapSnapshot(
-          parsedSnapshot, new HeapSnapshotWorker.HeapSnapshot.HeapSnapshotProgress());
+      return await HeapSnapshotWorker.HeapSnapshot.createJSHeapSnapshotForTesting(parsedSnapshot);
     },
 
     registerNode: function(node) {
@@ -428,8 +440,18 @@ HeapProfilerTestRunner.checkArrayIsSorted = function(contents, sortType, sortOrd
     return (a < b ? -1 : (a > b ? 1 : 0));
   }
 
-  function parseSize(size) {
-    return parseInt(size.replace(/[\xa0,]/g, ''), 10);
+  function parseSize(str) {
+    const number = parseFloat(str);
+    if (str.includes('kB')) {
+      return number * 1000;
+    }
+    if (str.includes('MB')) {
+      return number * 1000 * 1000;
+    }
+    if (str.includes('GB')) {
+      return number * 1000 * 1000 * 1000;
+    }
+    return number;
   }
 
   const extractor = {
@@ -655,7 +677,7 @@ HeapProfilerTestRunner.takeAndOpenSnapshot = async function(generator, callback)
 };
 
 /**
- * @return {!Promise<!Profiler.HeapSnapshotView.HeapProfileHeader>}
+ * @returns
  */
 HeapProfilerTestRunner.takeSnapshotPromise = function() {
   return new Promise(resolve => {
@@ -736,7 +758,7 @@ HeapProfilerTestRunner.waitUntilProfileViewIsShown = function(title, callback) {
       profilesPanel.visibleView.profileHeader.title === title) {
     callback(profilesPanel.visibleView);
   } else {
-    HeapProfilerTestRunner.waitUntilProfileViewIsShownCallback = {title: title, callback: callback};
+    HeapProfilerTestRunner.waitUntilProfileViewIsShownCallback = {title, callback};
   }
 };
 
@@ -755,7 +777,7 @@ HeapProfilerTestRunner.startSamplingHeapProfiler = async function() {
         resolve =>
             UI.Context.Context.instance().addFlavorChangeListener(SDK.HeapProfilerModel.HeapProfilerModel, resolve));
   }
-  Profiler.HeapProfileView.SamplingHeapProfileType.instance.startRecordingProfile();
+  await Profiler.HeapProfileView.SamplingHeapProfileType.instance.startRecordingProfile();
 };
 
 HeapProfilerTestRunner.stopSamplingHeapProfiler = function() {

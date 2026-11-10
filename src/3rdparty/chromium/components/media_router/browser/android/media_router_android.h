@@ -15,6 +15,7 @@
 #include "base/observer_list.h"
 #include "components/media_router/browser/android/media_router_android_bridge.h"
 #include "components/media_router/browser/media_router_base.h"
+#include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -52,9 +53,25 @@ class MediaRouterAndroid : public MediaRouterBase {
       std::unique_ptr<std::vector<uint8_t>> data) override;
   void OnUserGesture() override;
   std::vector<MediaRoute> GetCurrentRoutes() const override;
-
   std::unique_ptr<media::FlingingController> GetFlingingController(
       const MediaRoute::Id& route_id) override;
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  MirroringMediaControllerHost* GetMirroringMediaControllerHost(
+      const MediaRoute::Id& route_id) override;
+  IssueManager* GetIssueManager() override;
+  void GetMediaController(
+      const MediaRoute::Id& route_id,
+      mojo::PendingReceiver<mojom::MediaController> controller,
+      mojo::PendingRemote<mojom::MediaStatusObserver> observer) override;
+  base::Value GetLogs() const override;
+  base::Value::Dict GetState() const override;
+  void GetProviderState(
+      mojom::MediaRouteProviderId provider_id,
+      mojom::MediaRouteProvider::GetStateCallback callback) const override;
+  LoggerImpl* GetLogger() override;
+  MediaRouterDebugger& GetDebugger() override;
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
 
   // The methods called by the Java bridge.
   // Notifies the media router that information about sinks is received for
@@ -83,7 +100,7 @@ class MediaRouterAndroid : public MediaRouterBase {
   // Notifies the media router when the route was closed with an optional error.
   // Null error indicates no error.
   void OnRouteClosed(const MediaRoute::Id& route_id,
-                     const absl::optional<std::string>& error);
+                     const std::optional<std::string>& error);
 
   // Notifies the media router about a message received from the media route.
   void OnMessage(const MediaRoute::Id& route_id, const std::string& message);
@@ -155,7 +172,7 @@ class MediaRouterAndroid : public MediaRouterBase {
       const std::string& error_text,
       int route_request_id,
       base::OnceCallback<void(mojom::RouteRequestResultCode,
-                              absl::optional<mojom::MediaRouteProviderId>)>
+                              std::optional<mojom::MediaRouteProviderId>)>
           callback);
 
   void SetMediaRouterBridgeForTest(MediaRouterAndroidBridge* bridge) {

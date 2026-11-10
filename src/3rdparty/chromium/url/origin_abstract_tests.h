@@ -5,6 +5,7 @@
 #ifndef URL_ORIGIN_ABSTRACT_TESTS_H_
 #define URL_ORIGIN_ABSTRACT_TESTS_H_
 
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -277,6 +278,46 @@ TYPED_TEST_P(AbstractOriginTest, NonStandardSchemeWithAndroidWebViewHack) {
   EXPECT_TRUE(this->IsOpaque(origin));
 }
 
+TYPED_TEST_P(
+    AbstractOriginTest,
+    AndroidWebViewHackWithStandardCompliantNonSpecialSchemeURLParsing) {
+  EnableNonStandardSchemesForAndroidWebView();
+
+  // Non-Standard scheme cases.
+  {
+    auto origin_a = this->CreateOriginFromString("non-standard://a.com:80");
+    // Ensure that a host and a port are discarded.
+    EXPECT_EQ(this->GetHost(origin_a), "");
+    EXPECT_EQ(this->GetPort(origin_a), 0);
+    EXPECT_EQ(this->Serialize(origin_a), "non-standard://");
+    EXPECT_FALSE(this->IsOpaque(origin_a));
+
+    // URLs are considered same-origin if their schemes match, even if
+    // their host and port are different.
+    auto origin_b = this->CreateOriginFromString("non-standard://b.com:90");
+    EXPECT_TRUE(this->IsSameOrigin(origin_a, origin_b));
+
+    // URLs are not considered same-origin if their schemes don't match,
+    // even if their host and port are same.
+    auto another_origin_a =
+        this->CreateOriginFromString("another-non-standard://a.com:80");
+    EXPECT_FALSE(this->IsSameOrigin(origin_a, another_origin_a));
+  }
+
+  // Standard scheme cases.
+  {
+    // Ensure that the behavior of a standard URL is preserved.
+    auto origin_a = this->CreateOriginFromString("https://a.com:80");
+    EXPECT_EQ(this->GetHost(origin_a), "a.com");
+    EXPECT_EQ(this->GetPort(origin_a), 80);
+    EXPECT_EQ(this->Serialize(origin_a), "https://a.com:80");
+    EXPECT_FALSE(this->IsOpaque(origin_a));
+
+    auto origin_b = this->CreateOriginFromString("https://b.com:80");
+    EXPECT_FALSE(this->IsSameOrigin(origin_a, origin_b));
+  }
+}
+
 TYPED_TEST_P(AbstractOriginTest, OpaqueOriginsFromValidUrls) {
   const char* kTestCases[] = {
       // Built-in noaccess schemes.
@@ -495,11 +536,8 @@ TYPED_TEST_P(AbstractOriginTest, CustomSchemes_TupleOrigins) {
       // always have empty hostnames, but are allowed to be url::Origins.
       {"local:", {"local", "", 0}},
       {"local:foo", {"local", "", 0}},
-      {"local://bar", {"local", "", 0}},
-      {"also-local://bar", {"also-local", "", 0}},
 
       {"std-with-host://host", {"std-with-host", "host", 0}},
-      {"local://host", {"local", "", 0}},
       {"local-std-with-host://host", {"local-std-with-host", "host", 0}},
   };
 
@@ -514,13 +552,33 @@ TYPED_TEST_P(AbstractOriginTest, CustomSchemes_TupleOrigins) {
   }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(AbstractOriginTest,
-                            NonStandardSchemeWithAndroidWebViewHack,
-                            OpaqueOriginsFromValidUrls,
-                            OpaqueOriginsFromInvalidUrls,
-                            TupleOrigins,
-                            CustomSchemes_OpaqueOrigins,
-                            CustomSchemes_TupleOrigins);
+TYPED_TEST_P(AbstractOriginTest,
+             CustomSchemes_TupleOrigins_StandardCompliantNonSpecialSchemeFlag) {
+  struct TestCase {
+    std::string_view input;
+    SchemeHostPort expected_tuple;
+  } test_cases[] = {
+      {"local://bar", {"local", "bar", 0}},
+      {"also-local://bar", {"also-local", "bar", 0}},
+  };
+  for (const TestCase& test : test_cases) {
+    SCOPED_TRACE(testing::Message() << "Test input: " << test.input);
+    EXPECT_TRUE(this->IsValidUrl(test.input));
+    auto origin = this->CreateOriginFromString(test.input);
+    this->VerifyTupleOriginInvariants(origin, test.expected_tuple);
+  }
+}
+
+REGISTER_TYPED_TEST_SUITE_P(
+    AbstractOriginTest,
+    NonStandardSchemeWithAndroidWebViewHack,
+    AndroidWebViewHackWithStandardCompliantNonSpecialSchemeURLParsing,
+    OpaqueOriginsFromValidUrls,
+    OpaqueOriginsFromInvalidUrls,
+    TupleOrigins,
+    CustomSchemes_OpaqueOrigins,
+    CustomSchemes_TupleOrigins,
+    CustomSchemes_TupleOrigins_StandardCompliantNonSpecialSchemeFlag);
 
 }  // namespace url
 

@@ -5,10 +5,11 @@
 #ifndef COMPONENTS_PDF_BROWSER_PDF_STREAM_DELEGATE_H_
 #define COMPONENTS_PDF_BROWSER_PDF_STREAM_DELEGATE_H_
 
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr_exclusion.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
@@ -44,25 +45,43 @@ class PdfStreamDelegate {
     bool full_frame = false;
     bool allow_javascript = false;
     bool use_skia = false;
+    std::string coep_header;
   };
 
-  PdfStreamDelegate();
-  PdfStreamDelegate(const PdfStreamDelegate&) = delete;
-  PdfStreamDelegate& operator=(const PdfStreamDelegate&) = delete;
-  virtual ~PdfStreamDelegate();
+  virtual ~PdfStreamDelegate() = default;
 
   // Maps the navigation to the original URL. This method should associate a
   // `StreamInfo` with the `blink::Document` for `navigation_handle`'s parent
   // `RenderFrameHost`, for later retrieval by `GetStreamInfo()`.
-  virtual absl::optional<GURL> MapToOriginalUrl(
-      content::NavigationHandle& navigation_handle);
+  virtual std::optional<GURL> MapToOriginalUrl(
+      content::NavigationHandle& navigation_handle) = 0;
 
   // Gets the stream information associated with the given `RenderFrameHost`.
   // The frame must be a PDF extension frame or Print Preview's frame.
   // Returns null if there is no associated stream or if `embedder_frame` is
   // `nullptr`.
-  virtual absl::optional<StreamInfo> GetStreamInfo(
-      content::RenderFrameHost* embedder_frame);
+  virtual std::optional<StreamInfo> GetStreamInfo(
+      content::RenderFrameHost* embedder_frame) = 0;
+
+  // Called after calculating sandbox flags for the PDF embedder frame and it's
+  // determined that the frame is sandboxed. Attempts to delete the PDF stream
+  // for the ongoing PDF navigation. Returns true if deletion is successful,
+  // false otherwise. The stream could be absent for PDF navigations that are
+  // not meant to be viewed inline (e.g. downloads).
+  virtual bool MaybeDeleteSandboxedStream(
+      content::FrameTreeNodeId frame_tree_node_id) = 0;
+
+  // Determines whether navigation attempts in the PDF frames should be allowed.
+  // Navigation attempts in PDF extension and content frames should be canceled
+  // if they are not related to PDF viewer setup.
+  virtual bool ShouldAllowPdfFrameNavigation(
+      content::NavigationHandle* navigation_handle) = 0;
+
+  // Determines whether navigation attempts in the PDF extension frame should be
+  // allowed. If MimeHandlerGuestView is in use, don't allow navigations away
+  // from the extension's origin in the guest's main frame.
+  virtual bool ShouldAllowPdfExtensionFrameNavigation(
+      content::NavigationHandle* navigation_handle) = 0;
 };
 
 }  // namespace pdf

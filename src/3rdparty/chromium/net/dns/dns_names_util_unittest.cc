@@ -9,10 +9,14 @@
 #include <cstring>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "base/big_endian.h"
+#include "base/containers/span.h"
+#include "base/containers/span_reader.h"
+#include "base/containers/to_vector.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/cstring_view.h"
 #include "net/dns/dns_util.h"
 #include "net/dns/public/dns_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -24,13 +28,10 @@ namespace {
 using ::testing::Eq;
 using ::testing::Optional;
 
-// ToBytes converts a char* to a std::vector<uint8_t> and includes the
+// ToBytes converts a string literal to a std::vector<uint8_t> and includes the
 // terminating NUL in the result.
-std::vector<uint8_t> ToBytes(const char* in) {
-  size_t size = strlen(in) + 1;
-  std::vector<uint8_t> out(size, 0);
-  memcpy(out.data(), in, size);
-  return out;
+std::vector<uint8_t> ToBytes(base::cstring_view in) {
+  return base::ToVector(base::byte_span_with_nul_from_cstring_view(in));
 }
 
 TEST(DnsNamesUtilTest, DottedNameToNetworkWithValidation) {
@@ -337,55 +338,58 @@ TEST(DnsNamesUtilTest, DottedNameToNetworkAcceptsRestrictedCharacters) {
       Optional(ToBytes("\004_ipp\004_tcp\005local\021foo printer (bar)")));
 }
 
+TEST(DnsNamesUtilTest, NetworkToDottedNameAdvancesReader) {
+  {
+    auto reader = base::SpanReader(base::byte_span_from_cstring("\003com"));
+    EXPECT_THAT(NetworkToDottedName(reader), Optional(Eq("com")));
+    EXPECT_EQ(reader.remaining(), 0u);
+  }
+  {
+    auto reader =
+        base::SpanReader(base::byte_span_from_cstring("\003com\0ZZZ"));
+    EXPECT_THAT(NetworkToDottedName(reader), Optional(Eq("com")));
+    EXPECT_EQ(reader.remaining(), 3u);
+  }
+}
+
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleSimpleNames) {
   std::string dns_name = "\003foo";
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("foo")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader), Optional(Eq("foo")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("foo")));
 
   dns_name += "\003bar";
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("foo.bar")));
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader1), Optional(Eq("foo.bar")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("foo.bar")));
 
   dns_name += "\002uk";
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("foo.bar.uk")));
-  auto reader2 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader2), Optional(Eq("foo.bar.uk")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("foo.bar.uk")));
 
   dns_name += '\0';
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("foo.bar.uk")));
-  auto reader3 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader3), Optional(Eq("foo.bar.uk")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("foo.bar.uk")));
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleEmpty) {
   std::string dns_name;
 
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader), Optional(Eq("")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("")));
 
   dns_name += '\0';
-
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("")));
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader1), Optional(Eq("")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("")));
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectEmptyIncomplete) {
   std::string dns_name;
 
-  EXPECT_THAT(NetworkToDottedName(dns_name, false /* require_complete */),
-              Optional(Eq("")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader, false /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  false /* require_complete */),
               Optional(Eq("")));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name, true /* require_complete */),
-            std::nullopt);
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader1, true /* require_complete */),
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name),
+                                true /* require_complete */),
             std::nullopt);
 }
 
@@ -395,16 +399,12 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameComplete) {
   std::string dns_name("\003foo\004test");
   dns_name += '\0';
 
-  EXPECT_THAT(NetworkToDottedName(dns_name, false /* require_complete */),
-              Optional(Eq("foo.test")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader, false /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  false /* require_complete */),
               Optional(Eq("foo.test")));
 
-  EXPECT_THAT(NetworkToDottedName(dns_name, true /* require_complete */),
-              Optional(Eq("foo.test")));
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader1, true /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  true /* require_complete */),
               Optional(Eq("foo.test")));
 }
 
@@ -413,16 +413,12 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameComplete) {
 TEST(DnsNamesUtilTest, NetworkToDottedNameNotComplete) {
   std::string dns_name("\003boo\004test");
 
-  EXPECT_THAT(NetworkToDottedName(dns_name, false /* require_complete */),
-              Optional(Eq("boo.test")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader, false /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  false /* require_complete */),
               Optional(Eq("boo.test")));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name, true /* require_complete */),
-            std::nullopt);
-  auto reader2 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader2, true /* require_complete */),
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name),
+                                true /* require_complete */),
             std::nullopt);
 }
 
@@ -430,40 +426,28 @@ TEST(DnsNamesUtilTest,
      NetworkToDottedNameShouldRejectEmptyWhenRequiringComplete) {
   std::string dns_name;
 
-  EXPECT_THAT(NetworkToDottedName(dns_name, false /* require_complete */),
-              Optional(Eq("")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader, false /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  false /* require_complete */),
               Optional(Eq("")));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name, true /* require_complete */),
-            std::nullopt);
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader1, true /* require_complete */),
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name),
+                                true /* require_complete */),
             std::nullopt);
 
   dns_name += '\0';
-
-  EXPECT_THAT(NetworkToDottedName(dns_name, true /* require_complete */),
-              Optional(Eq("")));
-  auto reader2 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader2, true /* require_complete */),
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name),
+                                  true /* require_complete */),
               Optional(Eq("")));
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectCompression) {
-  std::string dns_name = CreateNamePointer(152);
+  std::vector<uint8_t> dns_name = base::ToVector(CreateNamePointer(152));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 
-  dns_name = "\005hello";
-  dns_name += CreateNamePointer(152);
+  dns_name.insert(dns_name.begin(), {'\005', 'h', 'e', 'l', 'l', 'o'});
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader1), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 // Test that extra input past the terminating zero-length label are ignored.
@@ -472,32 +456,24 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleExcessInput) {
   dns_name += '\0';
   dns_name += "blargh!";
 
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("cool.name.test")));
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader), Optional(Eq("cool.name.test")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("cool.name.test")));
 
   dns_name = "\002hi";
   dns_name += '\0';
   dns_name += "goodbye";
 
-  EXPECT_THAT(NetworkToDottedName(dns_name), Optional(Eq("hi")));
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_THAT(NetworkToDottedName(reader1), Optional(Eq("hi")));
+  EXPECT_THAT(NetworkToDottedName(base::as_byte_span(dns_name)),
+              Optional(Eq("hi")));
 }
 
 // Test that input is malformed if it ends mid label.
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTruncatedNames) {
   std::string dns_name = "\07cheese";
-
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 
   dns_name = "\006cheesy\05test";
-
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader1 = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader1), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongSingleLabel) {
@@ -506,9 +482,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongSingleLabel) {
     dns_name += 'a';
   }
 
-  EXPECT_NE(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_NE(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_NE(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongSecondLabel) {
@@ -518,9 +492,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongSecondLabel) {
     dns_name += 'a';
   }
 
-  EXPECT_NE(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_NE(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_NE(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongSingleLabel) {
@@ -529,9 +501,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongSingleLabel) {
     dns_name += 'a';
   }
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongSecondLabel) {
@@ -541,9 +511,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongSecondLabel) {
     dns_name += 'a';
   }
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 #if CHAR_MIN < 0
@@ -560,9 +528,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectCharMinLabels) {
     }
   }
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 #endif  // if CHAR_MIN < 0
 
@@ -579,9 +545,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongName) {
   }
   ASSERT_EQ(dns_name.size(), static_cast<size_t>(dns_protocol::kMaxNameLength));
 
-  EXPECT_NE(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_NE(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_NE(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongName) {
@@ -598,9 +562,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongName) {
   ASSERT_EQ(dns_name.size(),
             static_cast<size_t>(dns_protocol::kMaxNameLength + 1));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongCompleteName) {
@@ -618,9 +580,7 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldHandleLongCompleteName) {
   ASSERT_EQ(dns_name.size(),
             static_cast<size_t>(dns_protocol::kMaxNameLength + 1));
 
-  EXPECT_NE(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_NE(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_NE(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongCompleteName) {
@@ -638,13 +598,11 @@ TEST(DnsNamesUtilTest, NetworkToDottedNameShouldRejectTooLongCompleteName) {
   ASSERT_EQ(dns_name.size(),
             static_cast<size_t>(dns_protocol::kMaxNameLength + 2));
 
-  EXPECT_EQ(NetworkToDottedName(dns_name), std::nullopt);
-  auto reader = base::BigEndianReader::FromStringPiece(dns_name);
-  EXPECT_EQ(NetworkToDottedName(reader), std::nullopt);
+  EXPECT_EQ(NetworkToDottedName(base::as_byte_span(dns_name)), std::nullopt);
 }
 
 TEST(DnsNamesUtilTest, ValidDnsNames) {
-  constexpr base::StringPiece kGoodHostnames[] = {
+  constexpr std::string_view kGoodHostnames[] = {
       "www.noodles.blorg",   "1www.noodles.blorg",    "www.2noodles.blorg",
       "www.n--oodles.blorg", "www.noodl_es.blorg",    "www.no-_odles.blorg",
       "www_.noodles.blorg",  "www.noodles.blorg.",    "_privet._tcp.local",
@@ -652,7 +610,7 @@ TEST(DnsNamesUtilTest, ValidDnsNames) {
       "www.nood(les).blorg", "noo dl(es)._tcp.local",
   };
 
-  for (base::StringPiece good_hostname : kGoodHostnames) {
+  for (std::string_view good_hostname : kGoodHostnames) {
     EXPECT_TRUE(IsValidDnsName(good_hostname));
     EXPECT_TRUE(IsValidDnsRecordName(good_hostname));
   }
@@ -793,6 +751,32 @@ TEST(DnsUtilTest, IgnoreUncanonicalizeableNames) {
   // Disallowed ASCII character.
   EXPECT_EQ(UrlCanonicalizeNameIfAble("google\n.test"), "google\n.test");
   EXPECT_EQ(UrlCanonicalizeNameIfAble("GOOGLE\n.test"), "GOOGLE\n.test");
+}
+
+TEST(DnsNamesUtilTest, ReadU8LengthPrefixed) {
+  const uint8_t kArray[] = {'b', '4', 3, 'a', 'b', 'c', 'd'};
+  auto reader = base::SpanReader(base::span(kArray));
+  EXPECT_TRUE(reader.Skip(2u));
+  EXPECT_EQ(reader.remaining(), 5u);
+  EXPECT_EQ(reader.num_read(), 2u);
+  base::span<const uint8_t> s;
+  EXPECT_TRUE(ReadU8LengthPrefixed(reader, &s));
+  EXPECT_EQ(s, base::span(kArray).subspan(3u, 3u));
+  EXPECT_EQ(reader.remaining(), 1u);
+  EXPECT_EQ(reader.num_read(), 6u);
+}
+
+TEST(DnsNamesUtilTest, ReadU16LengthPrefixed) {
+  const uint8_t kArray[] = {'b', '4', 0, 3, 'a', 'b', 'c', 'd'};
+  auto reader = base::SpanReader(base::span(kArray));
+  EXPECT_TRUE(reader.Skip(2u));
+  EXPECT_EQ(reader.remaining(), 6u);
+  EXPECT_EQ(reader.num_read(), 2u);
+  base::span<const uint8_t> s;
+  EXPECT_TRUE(ReadU16LengthPrefixed(reader, &s));
+  EXPECT_EQ(s, base::span(kArray).subspan(4u, 3u));
+  EXPECT_EQ(reader.remaining(), 1u);
+  EXPECT_EQ(reader.num_read(), 7u);
 }
 
 }  // namespace

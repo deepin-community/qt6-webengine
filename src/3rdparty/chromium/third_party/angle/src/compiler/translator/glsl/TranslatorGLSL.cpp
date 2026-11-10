@@ -11,10 +11,11 @@
 #include "compiler/translator/glsl/ExtensionGLSL.h"
 #include "compiler/translator/glsl/OutputGLSL.h"
 #include "compiler/translator/glsl/VersionGLSL.h"
+#include "compiler/translator/tree_ops/AddDefaultReturnStatements.h"
 #include "compiler/translator/tree_ops/PreTransformTextureCubeGradDerivatives.h"
 #include "compiler/translator/tree_ops/RewriteTexelFetchOffset.h"
+#include "compiler/translator/tree_ops/glsl/ExpandFragmentOutputsToVec4.h"
 #include "compiler/translator/tree_ops/glsl/apple/RewriteRowMajorMatrices.h"
-#include "compiler/translator/tree_ops/glsl/apple/RewriteUnaryMinusOperatorFloat.h"
 
 namespace sh
 {
@@ -29,11 +30,6 @@ void TranslatorGLSL::initBuiltInFunctionEmulator(BuiltInFunctionEmulator *emu,
     if (compileOptions.emulateAbsIntFunction)
     {
         InitBuiltInAbsFunctionEmulatorForGLSLWorkarounds(emu, getShaderType());
-    }
-
-    if (compileOptions.emulateIsnanFloatFunction)
-    {
-        InitBuiltInIsnanFunctionEmulatorForGLSLWorkarounds(emu, getShaderVersion());
     }
 
     if (compileOptions.emulateAtan2FloatFunction)
@@ -104,6 +100,11 @@ bool TranslatorGLSL::translate(TIntermBlock *root,
         }
     }
 
+    if (!sh::AddDefaultReturnStatements(this, root))
+    {
+        return false;
+    }
+
     if (compileOptions.rewriteTexelFetchOffsetToTexelFetch)
     {
         if (!sh::RewriteTexelFetchOffset(this, root, getSymbolTable(), getShaderVersion()))
@@ -112,17 +113,17 @@ bool TranslatorGLSL::translate(TIntermBlock *root,
         }
     }
 
-    if (compileOptions.rewriteFloatUnaryMinusOperator)
+    if (compileOptions.rewriteRowMajorMatrices && getShaderVersion() >= 300)
     {
-        if (!sh::RewriteUnaryMinusOperatorFloat(this, root))
+        if (!RewriteRowMajorMatrices(this, root, &getSymbolTable()))
         {
             return false;
         }
     }
 
-    if (compileOptions.rewriteRowMajorMatrices && getShaderVersion() >= 300)
+    if (compileOptions.expandFragmentOutputsToVec4)
     {
-        if (!RewriteRowMajorMatrices(this, root, &getSymbolTable()))
+        if (!ExpandFragmentOutputsToVec4(this, root, &getSymbolTable()))
         {
             return false;
         }
@@ -208,6 +209,7 @@ bool TranslatorGLSL::translate(TIntermBlock *root,
         }
 
         EmitEarlyFragmentTestsGLSL(*this, sink);
+        WriteFragmentShaderLayoutQualifiers(sink, getAdvancedBlendEquations());
     }
 
     if (getShaderType() == GL_COMPUTE_SHADER)
@@ -256,6 +258,7 @@ void TranslatorGLSL::writeExtensionBehavior(TIntermNode *root,
 {
     bool usesTextureCubeMapArray = false;
     bool usesTextureBuffer       = false;
+    bool usesGPUShader5          = false;
 
     TInfoSinkBase &sink                   = getInfoSink().obj;
     const TExtensionBehavior &extBehavior = getExtensionBehavior();
@@ -326,6 +329,27 @@ void TranslatorGLSL::writeExtensionBehavior(TIntermNode *root,
                  << "\n";
         }
 
+        if (iter.first == TExtension::EXT_texture_shadow_lod)
+        {
+            sink << "#extension " << GetExtensionNameString(iter.first) << " : "
+                 << GetBehaviorString(iter.second) << "\n";
+        }
+
+        if (iter.first == TExtension::KHR_blend_equation_advanced)
+        {
+            sink << "#ifdef GL_KHR_blend_equation_advanced\n"
+                 << "#extension GL_KHR_blend_equation_advanced : " << GetBehaviorString(iter.second)
+                 << "\n"
+                 << "#elif defined GL_NV_blend_equation_advanced\n"
+                 << "#extension GL_NV_blend_equation_advanced : " << GetBehaviorString(iter.second)
+                 << "\n";
+            if (iter.second == EBhRequire)
+            {
+                sink << "#else\n" << "#error \"No advanced blend equation extensions available.\n";
+            }
+            sink << "#endif\n";
+        }
+
         if ((iter.first == TExtension::OES_texture_cube_map_array ||
              iter.first == TExtension::EXT_texture_cube_map_array) &&
             (iter.second == EBhRequire || iter.second == EBhEnable))
@@ -339,6 +363,13 @@ void TranslatorGLSL::writeExtensionBehavior(TIntermNode *root,
         {
             usesTextureBuffer = true;
         }
+
+        if ((iter.first == TExtension::OES_gpu_shader5 ||
+             iter.first == TExtension::EXT_gpu_shader5) &&
+            (iter.second == EBhRequire || iter.second == EBhEnable))
+        {
+            usesGPUShader5 = true;
+        }
     }
 
     // GLSL ES 3 explicit location qualifiers need to use an extension before GLSL 330
@@ -349,15 +380,24 @@ void TranslatorGLSL::writeExtensionBehavior(TIntermNode *root,
     }
 
     // Need to enable gpu_shader5 to have index constant sampler array indexing
-    if (getOutputType() != SH_ESSL_OUTPUT && getOutputType() < SH_GLSL_400_CORE_OUTPUT &&
-        getShaderVersion() == 100)
+    if (usesGPUShader5)
     {
-        // Don't use "require" on to avoid breaking WebGL 1 on drivers that silently
-        // support index constant sampler array indexing, but don't have the extension or
-        // on drivers that don't have the extension at all as it would break WebGL 1 for
-        // some users.
-        sink << "#extension GL_ARB_gpu_shader5 : enable\n";
-        sink << "#extension GL_EXT_gpu_shader5 : enable\n";
+        if (getOutputType() >= SH_GLSL_COMPATIBILITY_OUTPUT &&
+            getOutputType() < SH_GLSL_400_CORE_OUTPUT && getShaderVersion() == 100)
+        {
+            // Don't use "require" on to avoid breaking WebGL 1 on drivers that silently
+            // support index constant sampler array indexing, but don't have the extension or
+            // on drivers that don't have the extension at all as it would break WebGL 1 for
+            // some users.
+            sink << "#extension GL_ARB_gpu_shader5 : enable\n";
+            sink << "#extension GL_OES_gpu_shader5 : enable\n";
+            sink << "#extension GL_EXT_gpu_shader5 : enable\n";
+        }
+        else if (getOutputType() == SH_ESSL_OUTPUT && getShaderVersion() < 320)
+        {
+            sink << "#extension GL_OES_gpu_shader5 : enable\n";
+            sink << "#extension GL_EXT_gpu_shader5 : enable\n";
+        }
     }
 
     if (usesTextureCubeMapArray)

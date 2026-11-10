@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_PATH_BUILDER_H_
 #define BSSL_PKI_PATH_BUILDER_H_
@@ -9,6 +19,7 @@
 #include <vector>
 
 #include <openssl/base.h>
+#include <openssl/pki/verify_error.h>
 
 #include "cert_errors.h"
 #include "input.h"
@@ -17,7 +28,7 @@
 #include "trust_store.h"
 #include "verify_certificate_chain.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace der {
 struct GeneralizedTime;
@@ -48,6 +59,9 @@ struct OPENSSL_EXPORT CertPathBuilderResultPath {
   // chains to a trusted root, and did not have any high severity errors added
   // to it during certificate verification.
   bool IsValid() const;
+
+  // Public verify error result for this candidate path.
+  VerifyError GetVerifyError() const;
 
   // Returns the chain's root certificate or nullptr if the chain doesn't
   // chain to a trust anchor.
@@ -138,6 +152,9 @@ class OPENSSL_EXPORT CertPathBuilder {
 
     // Returns true if any of the attempted paths contain |error_id|.
     bool AnyPathContainsError(CertErrorId error_id) const;
+
+    // Returns the best single error from result, using the best path found.
+    const VerifyError GetBestPathVerifyError() const;
 
     // Returns the CertPathBuilderResultPath for the best valid path, or nullptr
     // if there was none.
@@ -251,6 +268,6 @@ class OPENSSL_EXPORT CertPathBuilder {
   size_t valid_path_count_ = 0;
 };
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_PATH_BUILDER_H_

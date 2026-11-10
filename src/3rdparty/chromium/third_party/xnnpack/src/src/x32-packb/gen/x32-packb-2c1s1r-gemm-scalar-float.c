@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x32-packb/scalar.c.in
 //   Generator: tools/xngen
@@ -9,10 +10,11 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/packb.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/packb.h"
+#include "src/xnnpack/unaligned.h"
 
 void xnn_x32_packb_gemm_ukernel_2c1s1r__scalar_float(
   size_t groups,
@@ -21,7 +23,7 @@ void xnn_x32_packb_gemm_ukernel_2c1s1r__scalar_float(
   uint32_t* packed_weights,
   size_t channel_tile_stride,
   size_t channel_subtile_stride,
-  const union xnn_x32_packb_params params[restrict XNN_MIN_ELEMENTS(1)])
+  const struct xnn_x32_packb_params* restrict params)
 {
   assert(groups != 0);
   assert(channels != 0);

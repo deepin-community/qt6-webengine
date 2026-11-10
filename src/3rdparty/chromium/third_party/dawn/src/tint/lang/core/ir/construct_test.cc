@@ -28,7 +28,6 @@
 #include "src/tint/lang/core/ir/construct.h"
 
 #include "gmock/gmock.h"
-#include "gtest/gtest-spi.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
 namespace tint::core::ir {
@@ -36,14 +35,15 @@ namespace {
 
 using namespace tint::core::number_suffixes;  // NOLINT
 using IR_ConstructTest = IRTestHelper;
+using IR_ConstructDeathTest = IR_ConstructTest;
 
 TEST_F(IR_ConstructTest, Usage) {
     auto* arg1 = b.Constant(true);
     auto* arg2 = b.Constant(false);
     auto* c = b.Construct(mod.Types().f32(), arg1, arg2);
 
-    EXPECT_THAT(arg1->Usages(), testing::UnorderedElementsAre(Usage{c, 0u}));
-    EXPECT_THAT(arg2->Usages(), testing::UnorderedElementsAre(Usage{c, 1u}));
+    EXPECT_THAT(arg1->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{c, 0u}));
+    EXPECT_THAT(arg2->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{c, 1u}));
 }
 
 TEST_F(IR_ConstructTest, Result) {
@@ -52,18 +52,18 @@ TEST_F(IR_ConstructTest, Result) {
     auto* c = b.Construct(mod.Types().f32(), arg1, arg2);
 
     EXPECT_EQ(c->Results().Length(), 1u);
-    EXPECT_TRUE(c->Result(0)->Is<InstructionResult>());
-    EXPECT_EQ(c, c->Result(0)->Instruction());
+    EXPECT_TRUE(c->Result()->Is<InstructionResult>());
+    EXPECT_EQ(c, c->Result()->Instruction());
 }
 
-TEST_F(IR_ConstructTest, Fail_NullType) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(IR_ConstructDeathTest, Fail_NullType) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Module mod;
             Builder b{mod};
             b.Construct(nullptr);
         },
-        "");
+        "internal compiler error");
 }
 
 TEST_F(IR_ConstructTest, Clone) {
@@ -74,8 +74,8 @@ TEST_F(IR_ConstructTest, Clone) {
     auto* new_c = clone_ctx.Clone(c);
 
     EXPECT_NE(c, new_c);
-    EXPECT_NE(c->Result(0), new_c->Result(0));
-    EXPECT_EQ(mod.Types().f32(), new_c->Result(0)->Type());
+    EXPECT_NE(c->Result(), new_c->Result());
+    EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
 
     auto args = new_c->Args();
     EXPECT_EQ(2u, args.Length());
@@ -91,8 +91,8 @@ TEST_F(IR_ConstructTest, CloneEmpty) {
     auto* c = b.Construct(mod.Types().f32());
 
     auto* new_c = clone_ctx.Clone(c);
-    EXPECT_NE(c->Result(0), new_c->Result(0));
-    EXPECT_EQ(mod.Types().f32(), new_c->Result(0)->Type());
+    EXPECT_NE(c->Result(), new_c->Result());
+    EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
     EXPECT_TRUE(new_c->Args().IsEmpty());
 }
 

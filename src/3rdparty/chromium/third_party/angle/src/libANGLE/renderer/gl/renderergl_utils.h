@@ -10,6 +10,7 @@
 #ifndef LIBANGLE_RENDERER_GL_RENDERERGLUTILS_H_
 #define LIBANGLE_RENDERER_GL_RENDERERGLUTILS_H_
 
+#include "common/FixedVector.h"
 #include "common/debug.h"
 #include "libANGLE/Caps.h"
 #include "libANGLE/Error.h"
@@ -18,6 +19,7 @@
 #include "libANGLE/renderer/driver_utils.h"
 #include "libANGLE/renderer/gl/functionsgl_typedefs.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -71,9 +73,16 @@ StateManagerGL *GetStateManagerGL(const gl::Context *context);
 BlitGL *GetBlitGL(const gl::Context *context);
 ClearMultiviewGL *GetMultiviewClearer(const gl::Context *context);
 const angle::FeaturesGL &GetFeaturesGL(const gl::Context *context);
+// Returns a 16-byte fixed vector containing the binary representation of 1.0 depth
+// (and 0 stencil) formatted for the specified OpenGL component type.
+angle::FixedVector<uint8_t, 16> GetDepthOnePixel(GLenum type);
 
 // Clear all errors on the stored context, emits console warnings
 void ClearErrors(const gl::Context *context,
+                 const char *file,
+                 const char *function,
+                 unsigned int line);
+void ClearErrors(const FunctionsGL *functions,
                  const char *file,
                  const char *function,
                  unsigned int line);
@@ -95,6 +104,8 @@ angle::Result HandleError(const gl::Context *context,
 #define ANGLE_GL_TRY_ALWAYS_CHECK(context, call)                      \
     (ClearErrors(context, __FILE__, __FUNCTION__, __LINE__), (call)); \
     ANGLE_TRY(CheckError(context, #call, __FILE__, __FUNCTION__, __LINE__))
+
+#define ANGLE_GL_CLEAR_ERRORS(functions) ClearErrors(functions, __FILE__, __FUNCTION__, __LINE__)
 
 #if defined(ANGLE_ENABLE_ASSERTS)
 #    define ANGLE_GL_TRY(context, call) ANGLE_GL_TRY_ALWAYS_CHECK(context, call)
@@ -124,8 +135,8 @@ namespace nativegl
 {
 bool SupportsVertexArrayObjects(const FunctionsGL *functions);
 bool CanUseDefaultVertexArrayObject(const FunctionsGL *functions);
+bool CanUseClientSideArrays(const FunctionsGL *functions, GLuint vao);
 bool SupportsCompute(const FunctionsGL *functions);
-bool SupportsFenceSync(const FunctionsGL *functions);
 bool SupportsOcclusionQueries(const FunctionsGL *functions);
 bool SupportsNativeRendering(const FunctionsGL *functions,
                              gl::TextureType type,
@@ -182,6 +193,11 @@ std::vector<ContextCreationTry> GenerateContextCreationToTry(EGLint requestedTyp
 std::string GetRendererString(const FunctionsGL *functions);
 std::string GetVendorString(const FunctionsGL *functions);
 std::string GetVersionString(const FunctionsGL *functions);
+
+bool GetPowerVRDriverVersion(const std::string &vendorString,
+                             const std::string &rendererString,
+                             const std::string &versionString,
+                             std::array<int, 2> *versionOut);
 
 }  // namespace rx
 

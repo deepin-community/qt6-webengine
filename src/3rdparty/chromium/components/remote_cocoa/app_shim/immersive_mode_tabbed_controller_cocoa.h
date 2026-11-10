@@ -17,9 +17,9 @@ class REMOTE_COCOA_APP_SHIM_EXPORT ImmersiveModeTabbedControllerCocoa
     : public ImmersiveModeControllerCocoa {
  public:
   explicit ImmersiveModeTabbedControllerCocoa(
-      NativeWidgetMacNSWindow* browser_window,
-      NativeWidgetMacNSWindow* overlay_window,
-      NativeWidgetMacNSWindow* tab_window);
+      BrowserNativeWidgetWindow* browser_window,
+      NativeWidgetMacOverlayNSWindow* overlay_window,
+      NativeWidgetMacOverlayNSWindow* tab_window);
   ImmersiveModeTabbedControllerCocoa(
       const ImmersiveModeTabbedControllerCocoa&) = delete;
   ImmersiveModeTabbedControllerCocoa& operator=(
@@ -27,16 +27,17 @@ class REMOTE_COCOA_APP_SHIM_EXPORT ImmersiveModeTabbedControllerCocoa
   ~ImmersiveModeTabbedControllerCocoa() override;
 
   // ImmersiveModeController overrides
-  // TODO(https://crbug.com/1426944): Init() does not add the controller. It
+  // TODO(crbug.com/40261565): Init() does not add the controller. It
   // will be added / removed from the view controller tree during
   // UpdateToolbarVisibility(). Remove this comment once the bug has been
   // resolved.
   void Init() override;
-  void UpdateToolbarVisibility(mojom::ToolbarVisibilityStyle style) override;
+  void UpdateToolbarVisibility(
+      std::optional<mojom::ToolbarVisibilityStyle> style) override;
   void OnTopViewBoundsChanged(const gfx::Rect& bounds) override;
-  void RevealLock() override;
-  void RevealUnlock() override;
-  void OnTitlebarFrameDidChange(NSRect frame) override;
+  void RevealLocked() override;
+  void RevealUnlocked() override;
+  void Reanchor() override;
   void OnChildWindowAdded(NSWindow* child) override;
   void OnChildWindowRemoved(NSWindow* child) override;
   bool ShouldObserveChildWindow(NSWindow* child) override;
@@ -52,7 +53,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT ImmersiveModeTabbedControllerCocoa
   // parented to overlay window regardless of the current parent.
   void OrderTabWindowZOrderOnTop();
 
-  NSWindow* __weak tab_window_;
+  NativeWidgetMacOverlayNSWindow* __weak tab_window_;
   BridgedContentView* __weak tab_content_view_;
   NSTitlebarAccessoryViewController* __strong tab_titlebar_view_controller_;
 };

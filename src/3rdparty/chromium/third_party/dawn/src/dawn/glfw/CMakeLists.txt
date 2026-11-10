@@ -25,37 +25,41 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-if(DAWN_USE_GLFW)
-
-add_library(dawn_glfw STATIC ${DAWN_PLACEHOLDER_FILE})
-common_compile_options(dawn_glfw)
-target_sources(dawn_glfw
-  INTERFACE
+set(headers
     "${DAWN_INCLUDE_DIR}/webgpu/webgpu_glfw.h"
-  PRIVATE
-    "utils.cpp"
 )
-target_link_libraries(dawn_glfw
-  PUBLIC
+set(sources)
+set(conditional_public_depends)
+if (EMSCRIPTEN)
+    list(APPEND sources "utils_emscripten.cpp")
+    list(APPEND conditional_public_depends "emdawnwebgpu_cpp")
+else()
+    list(APPEND sources "utils.cpp")
+    list(APPEND conditional_public_depends "dawn::dawn_common")
+    list(APPEND conditional_public_depends "dawn::dawncpp_headers")
+    if (DAWN_ENABLE_METAL)
+        list(APPEND sources "utils_metal.mm")
+        list(APPEND conditional_public_depends "-framework Metal")
+        list(APPEND conditional_public_depends "-framework QuartzCore")
+    endif ()
+endif ()
+
+dawn_add_library(
+  dawn_glfw
+  ENABLE_EMSCRIPTEN
+  UTILITY_TARGET dawn_internal_config
+  HEADERS
+    "${headers}"
+  SOURCES
+    "${sources}"
+  DEPENDS
+    ${conditional_public_depends}
+  PRIVATE_DEPENDS
     glfw
-    dawncpp_headers
-    dawn_common
-  PRIVATE
-    dawn_internal_config
 )
-
-target_compile_definitions(dawn_glfw PRIVATE "WGPU_IMPLEMENTATION")
+target_compile_definitions(dawn_glfw PRIVATE "WGPU_GLFW_IMPLEMENTATION")
 if(BUILD_SHARED_LIBS)
-    target_compile_definitions(dawn_glfw PRIVATE "WGPU_SHARED_LIBRARY")
-endif()
-
-if (DAWN_ENABLE_METAL)
-    target_link_libraries(dawn_glfw PRIVATE "-framework Metal")
-    target_sources(dawn_glfw PRIVATE
-        "utils_metal.mm"
-    )
+    target_compile_definitions(dawn_glfw PUBLIC "WGPU_GLFW_SHARED_LIBRARY")
 endif()
 
 add_library(webgpu_glfw ALIAS dawn_glfw)
-
-endif()

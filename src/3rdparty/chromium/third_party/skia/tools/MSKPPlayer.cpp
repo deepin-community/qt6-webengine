@@ -12,13 +12,13 @@
 #include "include/core/SkPicture.h"
 #include "include/core/SkPictureRecorder.h"
 #include "include/core/SkSurface.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/docs/SkMultiPictureDocument.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/private/base/SkTArray.h"
 #include "include/utils/SkNoDrawCanvas.h"
 #include "src/base/SkTLazy.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkStringUtils.h"
-#include "include/docs/SkMultiPictureDocument.h"
 #include "tools/SkSharingProc.h"
 
 using namespace skia_private;
@@ -191,7 +191,7 @@ protected:
                       size_t count,
                       const SkPoint pts[],
                       const SkPaint& paint) override {
-        fRecorder.getRecordingCanvas()->drawPoints(mode, count, pts, paint);
+        fRecorder.getRecordingCanvas()->drawPoints(mode, {pts, count}, paint);
     }
 
     void onDrawImage2(const SkImage* image,
@@ -245,10 +245,9 @@ protected:
                       const SkRect* cull,
                       const SkPaint* paint) override {
         fRecorder.getRecordingCanvas()->drawAtlas(image,
-                                                  rsxForms,
-                                                  src,
-                                                  colors,
-                                                  count,
+                                                  {rsxForms, count},
+                                                  {src, count},
+                                                  {colors, colors ? count : 0},
                                                   mode,
                                                   sampling,
                                                   cull,

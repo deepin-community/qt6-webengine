@@ -10,7 +10,7 @@ import {ConsoleTestRunner} from '../console_test_runner/console_test_runner.js';
 import {TestRunner} from '../test_runner/test_runner.js';
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 export const NetworkTestRunner = {};
 
@@ -48,7 +48,7 @@ NetworkTestRunner.waitForWebsocketFrameReceived = function(wsRequest, message) {
     }
   }
 
-  return TestRunner.waitForEvent(SDK.NetworkRequest.Events.WebsocketFrameAdded, wsRequest, checkFrame);
+  return TestRunner.waitForEvent(SDK.NetworkRequest.Events.WEBSOCKET_FRAME_ADDED, wsRequest, checkFrame);
 
   function checkFrame(frame) {
     return frame.type === SDK.NetworkRequest.WebSocketFrameType.Receive && frame.text === message;
@@ -195,6 +195,7 @@ NetworkTestRunner.HARPropertyFormatters = {
   timings: 'formatAsTypeName',
   version: 'formatAsTypeName',
   wait: 'formatAsTypeName',
+  _connectionId: 'formatAsTypeName',
   _transferSize: 'formatAsTypeName',
   _error: 'skip',
   _initiator: 'formatAsTypeName',

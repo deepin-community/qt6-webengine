@@ -6,9 +6,8 @@ import * as ControlButton from './ControlButton.js';
 import * as CreateRecordingView from './CreateRecordingView.js';
 import * as RecordingListView from './RecordingListView.js';
 import * as RecordingView from './RecordingView.js';
-import * as ReplayButton from './ReplayButton.js';
+import * as ReplaySection from './ReplaySection.js';
 import * as SelectButton from './SelectButton.js';
-import * as StartView from './StartView.js';
 import * as StepEditor from './StepEditor.js';
 import * as StepView from './StepView.js';
 import * as TimelineSection from './TimelineSection.js';
@@ -18,9 +17,8 @@ export {
   CreateRecordingView,
   RecordingListView,
   RecordingView,
-  ReplayButton,
+  ReplaySection,
   SelectButton,
-  StartView,
   StepEditor,
   StepView,
   TimelineSection,

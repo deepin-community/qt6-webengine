@@ -6,10 +6,10 @@
 
 #include <ostream>
 
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_system.h"
 #include "public/fpdfview.h"
 #include "testing/command_line_helpers.h"
-#include "third_party/base/check.h"
 
 #ifdef PDF_ENABLE_V8
 #include "testing/v8_test_environment.h"
@@ -65,8 +65,9 @@ void EmbedderTestEnvironment::TearDown() {
 }
 
 void EmbedderTestEnvironment::AddFlags(int argc, char** argv) {
-  for (int i = 1; i < argc; ++i)
+  for (int i = 1; i < argc; ++i) {
     AddFlag(argv[i]);
+  }
 }
 
 void EmbedderTestEnvironment::AddFlag(const std::string& flag) {

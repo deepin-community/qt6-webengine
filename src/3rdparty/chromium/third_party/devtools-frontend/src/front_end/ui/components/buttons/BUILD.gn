@@ -5,19 +5,30 @@
 import("../../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../../scripts/build/ninja/devtools_module.gni")
 import("../../../../scripts/build/ninja/generate_css.gni")
+import("../../../../scripts/build/typescript/typescript.gni")
 import("../visibility.gni")
 
 generate_css("css_files") {
-  sources = [ "button.css" ]
+  sources = [
+    "button.css",
+    "floatingButton.css",
+    "textButton.css",
+  ]
+}
+
+copy_to_gen("copy_stylesheets_for_server") {
+  sources = [ "textButton.css" ]
 }
 
 devtools_module("button") {
-  sources = [ "Button.ts" ]
+  sources = [
+    "Button.ts",
+    "FloatingButton.ts",
+  ]
 
   deps = [
-    "../../../ui/lit-html:bundle",
+    "../../../ui/lit:bundle",
     "../../../ui/visual_logging:bundle",
-    "../helpers:bundle",
     "../icon_button:bundle",
   ]
 }
@@ -30,5 +41,18 @@ devtools_entrypoint("bundle") {
     ":css_files",
   ]
 
-  visibility = default_components_visibility
+  visibility = [ "../../../entrypoints/main/*" ]
+
+  visibility += default_components_visibility
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [ "Button.test.ts" ]
+
+  deps = [
+    ":bundle",
+    "../../../testing",
+  ]
 }

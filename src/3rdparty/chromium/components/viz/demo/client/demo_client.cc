@@ -4,6 +4,7 @@
 
 #include "components/viz/demo/client/demo_client.h"
 
+#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -66,8 +67,11 @@ void DemoClient::Resize(const gfx::Size& size,
 }
 
 viz::CompositorFrame DemoClient::CreateFrame(const viz::BeginFrameArgs& args) {
-  constexpr SkColor4f colors[] = {SkColors::kRed, SkColors::kGreen,
-                                  SkColors::kYellow};
+  constexpr auto colors = std::to_array<SkColor4f>({
+      SkColors::kRed,
+      SkColors::kGreen,
+      SkColors::kYellow,
+  });
   viz::CompositorFrame frame;
 
   frame.metadata.begin_frame_ack = viz::BeginFrameAck(args, true);
@@ -103,7 +107,7 @@ viz::CompositorFrame DemoClient::CreateFrame(const viz::BeginFrameArgs& args) {
                        /*layer_rect=*/child_bounds,
                        /*visible_layer_rect=*/child_bounds,
                        /*filter_info=*/gfx::MaskFilterInfo(),
-                       /*clip=*/absl::nullopt,
+                       /*clip=*/std::nullopt,
                        /*contents_opaque=*/false, /*opacity_f=*/1.f,
                        /*blend=*/SkBlendMode::kSrcOver,
                        /*sorting_context=*/0,
@@ -129,7 +133,7 @@ viz::CompositorFrame DemoClient::CreateFrame(const viz::BeginFrameArgs& args) {
                      /*quad_layer_rect=*/output_rect,
                      /*visible_layer_rect=*/output_rect,
                      /*mask_filter_info=*/gfx::MaskFilterInfo(),
-                     /*clip_rect=*/absl::nullopt, /*are_contents_opaque=*/false,
+                     /*clip_rect=*/std::nullopt, /*are_contents_opaque=*/false,
                      /*opacity=*/1.f,
                      /*blend_mode=*/SkBlendMode::kSrcOver,
                      /*sorting_context=*/0,
@@ -173,7 +177,6 @@ void DemoClient::DidReceiveCompositorFrameAck(
 
 void DemoClient::OnBeginFrame(const viz::BeginFrameArgs& args,
                               const viz::FrameTimingDetailsMap& timing_details,
-                              bool frame_ack,
                               std::vector<viz::ReturnedResource> resources) {
   // Generate a new compositor-frame for each begin-frame. This demo client
   // generates and submits the compositor-frame immediately. But it is possible
@@ -181,8 +184,8 @@ void DemoClient::OnBeginFrame(const viz::BeginFrameArgs& args,
   // deadline for the client before it needs to submit the compositor-frame.
   base::AutoLock lock(lock_);
   GetPtr()->SubmitCompositorFrame(local_surface_id_, CreateFrame(args),
-                                  absl::optional<viz::HitTestRegionList>(),
-                                  /*trace_time=*/0);
+                                  /*hit_test_region_list=*/std::nullopt,
+                                  /*submit_time=*/0);
 }
 void DemoClient::OnBeginFramePausedChanged(bool paused) {}
 void DemoClient::ReclaimResources(

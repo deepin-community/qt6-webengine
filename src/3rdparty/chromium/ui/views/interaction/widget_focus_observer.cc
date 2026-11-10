@@ -4,6 +4,8 @@
 
 #include "ui/views/interaction/widget_focus_observer.h"
 
+#include <iterator>
+
 #include "base/functional/bind.h"
 #include "base/logging.h"
 
@@ -24,7 +26,7 @@ WidgetFocusSupplier::AddWidgetFocusChangedCallback(
   return callbacks_.Add(callback);
 }
 
-void WidgetFocusSupplier::OnWidgetFocusChanged(gfx::NativeView focused_now) {
+void WidgetFocusSupplier::OnWidgetFocusChanged(Widget* focused_now) {
   callbacks_.Notify(focused_now);
 }
 
@@ -40,6 +42,19 @@ WidgetFocusSupplierFrame::~WidgetFocusSupplierFrame() {
   }
 }
 
+Widget* WidgetFocusSupplierFrame::GetActiveWidget() {
+  Widget::Widgets all_widgets;
+  for (const auto& supplier : supplier_list_) {
+    for (auto& widget : supplier.GetAllWidgets()) {
+      if (widget->IsActive()) {
+        return widget;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// static
 WidgetFocusSupplierFrame* WidgetFocusSupplierFrame::GetCurrentFrame() {
   return g_current_supplier_frame;
 }
@@ -56,7 +71,12 @@ WidgetFocusObserver::WidgetFocusObserver() {
 }
 WidgetFocusObserver::~WidgetFocusObserver() = default;
 
-void WidgetFocusObserver::OnWidgetFocusChanged(gfx::NativeView focused_now) {
+Widget* WidgetFocusObserver::GetStateObserverInitialState() const {
+  return internal::WidgetFocusSupplierFrame::GetCurrentFrame()
+      ->GetActiveWidget();
+}
+
+void WidgetFocusObserver::OnWidgetFocusChanged(Widget* focused_now) {
   OnStateObserverStateChanged(focused_now);
 }
 

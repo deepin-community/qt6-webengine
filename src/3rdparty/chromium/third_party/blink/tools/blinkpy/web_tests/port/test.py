@@ -676,7 +676,6 @@ class TestPort(Port):
         # and "test" ports
 
         self._generic_expectations_path = MOCK_WEB_TESTS + 'TestExpectations'
-        self._results_directory = None
 
         self._operating_system = 'mac'
         if self._name.startswith('test-win'):
@@ -689,8 +688,10 @@ class TestPort(Port):
         version_map = {
             'test-win-win7': 'win7',
             'test-win-win10': 'win10',
+            'test-win-win10-arm64': 'win10-arm64',
             'test-mac-mac10.10': 'mac10.10',
             'test-mac-mac10.11': 'mac10.11',
+            'test-mac-mac11': 'mac11',
             'test-mac-mac11-arm64': 'mac11-arm64',
             'test-linux-precise': 'precise',
             'test-linux-trusty': 'trusty',
@@ -705,9 +706,11 @@ class TestPort(Port):
         self.all_systems = (
             ('mac10.10', 'x86'),
             ('mac10.11', 'x86'),
+            ('mac11', 'x86_64'),
             ('mac11-arm64', 'arm64'),
             ('win7', 'x86'),
             ('win10', 'x86'),
+            ('win10-arm64', 'arm64'),
             ('precise', 'x86_64'),
             ('trusty', 'x86_64'),
         )
@@ -717,8 +720,8 @@ class TestPort(Port):
         # To avoid surprises when introducing new macros, these are
         # intentionally fixed in time.
         self.configuration_specifier_macros_dict = {
-            'mac': ['mac10.10', 'mac10.11', 'mac10.12'],
-            'win': ['win7', 'win10'],
+            'mac': ['mac10.10', 'mac10.11', 'mac11', 'mac11-arm64'],
+            'win': ['win7', 'win10', 'win10-arm64'],
             'linux': ['precise', 'trusty']
         }
 
@@ -814,16 +817,10 @@ class TestPort(Port):
     def start_websocket_server(self):
         pass
 
-    def acquire_http_lock(self):
-        pass
-
     def stop_http_server(self):
         pass
 
     def stop_websocket_server(self):
-        pass
-
-    def release_http_lock(self):
         pass
 
     def path_to_apache(self):
@@ -885,6 +882,14 @@ class TestPort(Port):
                              platforms=['Linux', 'Mac', 'Win'],
                              bases=[],
                              args=['--virtual-arg-empty-bases']),
+            VirtualTestSuite(
+                prefix='generated_wpt',
+                platforms=['Linux', 'Mac', 'Win'],
+                bases=[
+                    'external/wpt/html/parse.html?run_type=uri',
+                    'external/wpt/console/console-is-a-namespace.any.html',
+                ],
+                args=['--fake-switch']),
             VirtualTestSuite(
                 prefix='mixed_wpt',
                 platforms=['Linux', 'Mac', 'Win'],
@@ -1018,5 +1023,5 @@ class TestDriver(Driver):
             leak=test.leak,
             leak_log=leak_log)
 
-    def stop(self, timeout_secs=0.0):
+    def stop(self, timeout_secs=0.0, kill_tree=True, send_sigterm=False):
         self.started = False

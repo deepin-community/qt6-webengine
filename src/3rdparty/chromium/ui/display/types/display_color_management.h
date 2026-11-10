@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "third_party/skia/modules/skcms/skcms.h"
 #include "ui/display/types/display_types_export.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
@@ -19,7 +20,7 @@ namespace display {
 // channels.
 class DISPLAY_TYPES_EXPORT GammaCurve {
  public:
-  explicit GammaCurve(const std::vector<GammaRampRGBEntry>& lut);
+  explicit GammaCurve(std::vector<GammaRampRGBEntry>&& lut);
   GammaCurve();
   GammaCurve(const GammaCurve& other);
   GammaCurve(GammaCurve&& other);
@@ -30,6 +31,12 @@ class DISPLAY_TYPES_EXPORT GammaCurve {
   // `g`.
   static GammaCurve MakeConcat(const GammaCurve& f, const GammaCurve& g);
 
+  // Return a gamma curve with the specified exponent.
+  static GammaCurve MakeGamma(float gamma);
+
+  // Return a linear curve that scales each component as specified.
+  static GammaCurve MakeScale(float red, float green, float blue);
+
   // Returns true if this was set to an empty LUT and is therefore the identity
   // function.
   bool IsDefaultIdentity() const { return lut_.empty(); }
@@ -37,6 +44,10 @@ class DISPLAY_TYPES_EXPORT GammaCurve {
   // Evaluate at a point `x` in [0, 1]. If `x` is not in that interval then this
   // function will clamp `x` to [0, 1].
   void Evaluate(float x, uint16_t& r, uint16_t& g, uint16_t& b) const;
+
+  // Evaluate at the specified RGB values. Input values will be clamped to the
+  // [0, 1] interval.
+  void Evaluate(base::span<float, 3> rgb) const;
 
   // Display as a string for debugging.
   std::string ToString() const;

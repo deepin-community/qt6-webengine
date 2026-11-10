@@ -1,13 +1,14 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-find_package(Qt6 ${PROJECT_VERSION} REQUIRED COMPONENTS Gui Network Quick)
-find_package(Qt6 ${PROJECT_VERSION} QUIET OPTIONAL_COMPONENTS WebChannel Positioning)
+find_package(Qt6 ${Qt6BuildInternals_VERSION} REQUIRED COMPONENTS Gui Network Quick)
+find_package(Qt6 ${Qt6BuildInternals_VERSION} QUIET OPTIONAL_COMPONENTS WebChannel Positioning)
 
 set(qtWebEngineProcessName QtWebEngineProcess)
 
 qt_internal_add_module(WebEngineCore
      SOURCES
+        compat/removed_api.cpp
         qtwebenginecoreglobal.cpp qtwebenginecoreglobal.h qtwebenginecoreglobal_p.h
         qwebenginecertificateerror.cpp qwebenginecertificateerror.h
         qwebengineclientcertificateselection.cpp qwebengineclientcertificateselection.h
@@ -17,6 +18,8 @@ qt_internal_add_module(WebEngineCore
         qwebenginecookiestore.cpp qwebenginecookiestore.h qwebenginecookiestore_p.h
         qwebenginedesktopmediarequest.cpp qwebenginedesktopmediarequest.h qwebenginedesktopmediarequest_p.h
         qwebenginedownloadrequest.cpp qwebenginedownloadrequest.h qwebenginedownloadrequest_p.h
+        qwebengineextensioninfo.cpp qwebengineextensioninfo.h qwebengineextensioninfo_p.h
+        qwebengineextensionmanager.cpp qwebengineextensionmanager.h
         qwebenginefilesystemaccessrequest.cpp qwebenginefilesystemaccessrequest.h
         qwebenginefindtextresult.cpp qwebenginefindtextresult.h
         qwebengineframe.cpp qwebengineframe.h
@@ -43,15 +46,19 @@ qt_internal_add_module(WebEngineCore
         qwebengineurlschemehandler.cpp qwebengineurlschemehandler.h
         qwebengineglobalsettings.cpp qwebengineglobalsettings.h qwebengineglobalsettings_p.h
         qwebenginewebauthuxrequest.cpp qwebenginewebauthuxrequest.h qwebenginewebauthuxrequest_p.h
+        qwebengineprofilebuilder.cpp qwebengineprofilebuilder.h qwebengineprofilebuilder_p.h
     DEFINES
-        BUILDING_CHROMIUM
+        TOOLKIT_QT
     INCLUDE_DIRECTORIES
         ../
         ../../3rdparty/chromium
         ../../3rdparty/chromium/third_party/abseil-cpp
+        ../../3rdparty/chromium/third_party/icu/source/common
         ../../3rdparty/chromium/third_party/perfetto/include
         ../../3rdparty/chromium/third_party/boringssl/src/include
         ../../3rdparty/chromium/base/allocator/partition_allocator/src
+    NO_PCH_SOURCES
+        compat/removed_api.cpp
     LIBRARIES
         Qt::CorePrivate
         Qt::GuiPrivate
@@ -63,7 +70,7 @@ qt_internal_add_module(WebEngineCore
         Qt::Quick
     EXTRA_CMAKE_FILES
         "${CMAKE_CURRENT_LIST_DIR}/${INSTALL_CMAKE_NAMESPACE}WebEngineCoreDeploySupport.cmake"
-    NO_GENERATE_CPP_EXPORTS
+        "${CMAKE_CURRENT_LIST_DIR}/${INSTALL_CMAKE_NAMESPACE}WebEngineCoreExtraProperties.cmake"
     SBOM_INCOMPLETE_3RD_PARTY_DEPENDENCIES
 )
 
@@ -135,10 +142,10 @@ set(localeList am ar bg bn ca cs da de el en-GB en-US es-419 es et fa fi fil fr
     gu he hi hr hu id it ja kn ko lt lv ml mr ms nb nl pl pt-BR pt-PT ro ru sk
     sl sr sv sw ta te th tr uk vi zh-CN zh-TW)
 
-set(resourceList qtwebengine_resources.pak
-    qtwebengine_resources_100p.pak
-    qtwebengine_resources_200p.pak
-    qtwebengine_devtools_resources.pak)
+set(resourceList qtwebengine_resources
+    qtwebengine_resources_100p
+    qtwebengine_resources_200p
+    qtwebengine_devtools_resources)
 
 set(stamps ${buildDir}/${config}/${arch}/QtWebEngineCore.stamp)
 
@@ -175,9 +182,16 @@ foreach(loc ${localeList})
     list(APPEND localeFiles ${locSourcePath})
 endforeach()
 
-foreach(res ${resourceList})
-    get_filename_component(resSourcePath ${buildDir}/${config}/${arch}/${res} ${path_mode})
-    list(APPEND resourceFiles ${resSourcePath})
+foreach(config ${configs})
+    if("${config}" STREQUAL "Debug")
+        set(ext_debug ".debug")
+    else()
+        unset(ext_debug)
+    endif()
+    foreach(res ${resourceList})
+        get_filename_component(resSourcePath ${buildDir}/${config}/${arch}/${res}${ext_debug}.pak ${path_mode})
+        list(APPEND resourceFiles ${resSourcePath})
+    endforeach()
 endforeach()
 
 
@@ -213,14 +227,28 @@ if(QT_FEATURE_framework)
     )
 
 else()
+    set(locale_install_path "${INSTALL_TRANSLATIONSDIR}/qtwebengine_locales")
     install(FILES ${localeFiles}
-        DESTINATION ${INSTALL_TRANSLATIONSDIR}/qtwebengine_locales
+        DESTINATION ${locale_install_path}
         CONFIGURATIONS ${config}
     )
+    qt_internal_sbom_add_files(WebEngineCore
+        FILES "${localeFiles}"
+        FILE_TYPE "TRANSLATIONS"
+        INSTALL_PATH "${locale_install_path}"
+    )
+
+    qt_path_join(resource_install_path "${INSTALL_DATADIR}" "resources")
     install(FILES ${resourceFiles}
-        DESTINATION ${INSTALL_DATADIR}/resources
+        DESTINATION ${resource_install_path}
         CONFIGURATIONS ${config}
     )
+    qt_internal_sbom_add_files(WebEngineCore
+        FILES "${resourceFiles}"
+        FILE_TYPE "RESOURCES"
+        INSTALL_PATH "${resource_install_path}"
+    )
+
     if(QT_SUPERBUILD OR NOT QT_WILL_INSTALL)
         addCopyCommand(WebEngineCore "${localeFiles}"
             ${QT_BUILD_DIR}/${INSTALL_TRANSLATIONSDIR}/qtwebengine_locales

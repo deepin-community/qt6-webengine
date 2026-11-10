@@ -21,6 +21,7 @@
 
 #include <codec2/codec2.h>
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "libavutil/opt.h"
 #include "codec_internal.h"
@@ -181,15 +182,14 @@ const FFCodec ff_libcodec2_decoder = {
     .p.type                 = AVMEDIA_TYPE_AUDIO,
     .p.id                   = AV_CODEC_ID_CODEC2,
     .p.capabilities         = AV_CODEC_CAP_CHANNEL_CONF,
-    .p.supported_samplerates = (const int[]){ 8000, 0 },
-    .p.sample_fmts          = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE },
-    .p.ch_layouts           = (const AVChannelLayout[]) { AV_CHANNEL_LAYOUT_MONO, { 0 } },
+    CODEC_SAMPLERATES(8000),
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16),
+    CODEC_CH_LAYOUTS(AV_CHANNEL_LAYOUT_MONO),
     .caps_internal          = FF_CODEC_CAP_NOT_INIT_THREADSAFE,
     .priv_data_size         = sizeof(LibCodec2Context),
     .init                   = libcodec2_init_decoder,
     .close                  = libcodec2_close,
     FF_CODEC_DECODE_CB(libcodec2_decode),
-    CODEC_OLD_CHANNEL_LAYOUTS(AV_CH_LAYOUT_MONO)
 };
 
 const FFCodec ff_libcodec2_encoder = {
@@ -199,14 +199,13 @@ const FFCodec ff_libcodec2_encoder = {
     .p.id                   = AV_CODEC_ID_CODEC2,
     .p.capabilities         = AV_CODEC_CAP_DR1 |
                               AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE,
-    .p.supported_samplerates = (const int[]){ 8000, 0 },
-    .p.sample_fmts          = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE },
-    .p.ch_layouts           = (const AVChannelLayout[]) { AV_CHANNEL_LAYOUT_MONO, { 0 } },
+    CODEC_SAMPLERATES(8000),
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16),
+    CODEC_CH_LAYOUTS(AV_CHANNEL_LAYOUT_MONO),
     .p.priv_class           = &libcodec2_enc_class,
     .caps_internal          = FF_CODEC_CAP_NOT_INIT_THREADSAFE,
     .priv_data_size         = sizeof(LibCodec2Context),
     .init                   = libcodec2_init_encoder,
     .close                  = libcodec2_close,
     FF_CODEC_ENCODE_CB(libcodec2_encode),
-    CODEC_OLD_CHANNEL_LAYOUTS(AV_CH_LAYOUT_MONO)
 };

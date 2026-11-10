@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include <QtQml/qqmlextensionplugin.h>
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
@@ -25,7 +26,8 @@ public:
     void initializeEngine(QQmlEngine *engine, const char *uri) override
     {
         Q_UNUSED(uri);
-        engine->addImageProvider(QQuickWebEngineFaviconProvider::identifier(), new QQuickWebEngineFaviconProvider);
+        engine->addImageProvider(QQuickWebEngineFaviconProvider::identifier(), new QQuickWebEngineFaviconProvider());
+        engine->addImageProvider(QQuickWebEngineFaviconDBProvider::identifier(), new QQuickWebEngineFaviconDBProvider());
         engine->addImageProvider(QQuickWebEngineTouchHandleProvider::identifier(), new QQuickWebEngineTouchHandleProvider);
     }
     void registerTypes(const char *uri) override {

@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
+#include "base/memory/safety_checks.h"
+
 #include <new>
 
 #include "base/allocator/partition_alloc_features.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_address_space.h"
 #include "base/feature_list.h"
-#include "base/memory/safety_checks.h"
+#include "partition_alloc/partition_address_space.h"
+#include "partition_alloc/tagging.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -75,6 +82,23 @@ static_assert(
     !is_memory_safety_checked<MultipleInheritanceWithDefaultMacro,
                               MemorySafetyCheck::kForcePartitionAlloc>);
 
+struct AdvancedChecksWithPartialOverwrite {
+  ADVANCED_MEMORY_SAFETY_CHECKS(kNone, kForcePartitionAlloc);
+
+ public:
+  char data[16];
+};
+static_assert(
+    !is_memory_safety_checked<AdvancedChecksWithPartialOverwrite,
+                              MemorySafetyCheck::kForcePartitionAlloc>);
+
+struct InheritanceWithPartialOverwrite : private AdvancedChecks {
+  INHERIT_MEMORY_SAFETY_CHECKS(AdvancedChecks, kNone, kForcePartitionAlloc);
+};
+static_assert(
+    !is_memory_safety_checked<InheritanceWithPartialOverwrite,
+                              MemorySafetyCheck::kForcePartitionAlloc>);
+
 // The macro may hook memory allocation/deallocation but should forward the
 // request to PA or any other allocator via
 // |HandleMemorySafetyCheckedOperator***|.
@@ -96,10 +120,10 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
   EXPECT_NE(ptr2, nullptr);
 
 // AdvancedChecks is kForcePartitionAlloc.
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr2)));
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr2))));
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr);
   delete ptr1;
@@ -112,10 +136,10 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
   EXPECT_NE(ptr2, nullptr);
 
 // AdvancedChecks is kForcePartitionAlloc.
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr2)));
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr2))));
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr, std::align_val_t alignment)
   ::operator delete(ptr1, std::align_val_t(64));
@@ -126,10 +150,10 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
   EXPECT_NE(ptr3, nullptr);
 
 // AlignedAdvancedChecks is kForcePartitionAlloc.
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr3)));
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr3))));
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr, std::align_val_t alignment)
   delete ptr3;
@@ -141,7 +165,7 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
   ptr3 = new (data) AlignedAdvancedChecks();
 }
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 TEST(MemorySafetyCheckTest, SchedulerLoopQuarantine) {
   // The check is performed only if `kPartitionAllocSchedulerLoopQuarantine` is
@@ -161,59 +185,31 @@ TEST(MemorySafetyCheckTest, SchedulerLoopQuarantine) {
 
   auto* root =
       base::internal::GetPartitionRootForMemorySafetyCheckedAllocation();
-  auto& branch = root->GetSchedulerLoopQuarantineBranchForTesting();
+  partition_alloc::internal::
+      ScopedSchedulerLoopQuarantineBranchAccessorForTesting branch(root);
 
   auto* ptr1 = new DefaultChecks();
-  EXPECT_NE(ptr1, nullptr);
+  ASSERT_NE(ptr1, nullptr);
   delete ptr1;
-  EXPECT_FALSE(branch.IsQuarantinedForTesting(ptr1));
+  EXPECT_FALSE(branch.IsQuarantined(ptr1));
 
   auto* ptr2 = new AdvancedChecks();
-  EXPECT_NE(ptr2, nullptr);
+  ASSERT_NE(ptr2, nullptr);
+  memset(ptr2->data, 'A', sizeof(ptr2->data));
   delete ptr2;
-  EXPECT_TRUE(branch.IsQuarantinedForTesting(ptr2));
+  EXPECT_TRUE(branch.IsQuarantined(ptr2));
+
+  // Dereferencing `ptr` is still undefined behavior, but we can say it is
+  // somewhat defined as this test is gated behind
+  // `PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)`.
+  // I believe behavior here is concrete enough to be tested, but it can be
+  // affected by changes in PA. Please disable this test if it flakes.
+  EXPECT_NE(ptr2->data[0], 'A');
+  EXPECT_NE(ptr2->data[15], 'A');
 
   branch.Purge();
 }
 
-TEST(MemorySafetyCheckTest, ZapOnFree) {
-  // The check is performed only if `kPartitionAllocZappingByFreeFlags` is
-  // enabled. `base::ScopedFeatureList` does not work here because the default
-  // `PartitionRoot` is configured before running this test.
-  if (!base::FeatureList::IsEnabled(
-          base::features::kPartitionAllocZappingByFreeFlags)) {
-    return;
-  }
-
-  static_assert(
-      !is_memory_safety_checked<DefaultChecks, MemorySafetyCheck::kZapOnFree>);
-  static_assert(
-      is_memory_safety_checked<AdvancedChecks, MemorySafetyCheck::kZapOnFree>);
-
-  {
-    // Without kZapOnFree.
-    auto* ptr = new DefaultChecks();
-    EXPECT_NE(ptr, nullptr);
-    delete ptr;
-    // *ptr is undefined.
-  }
-
-  {
-    // With kZapOnFree.
-    auto* ptr = new AdvancedChecks();
-    EXPECT_NE(ptr, nullptr);
-    memset(ptr->data, 'A', sizeof(ptr->data));
-    delete ptr;
-
-    // Dereferencing `ptr` is still undefiner behavior, but we can say it is
-    // somewhat defined as this test is gated behind
-    // `BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)`.
-    // I believe behavior here is concrete enough to be tested, but it can be
-    // affected by changes in PA. Please disable this test if it flakes.
-    EXPECT_NE(ptr->data[0], 'A');
-  }
-}
-
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 }  // namespace

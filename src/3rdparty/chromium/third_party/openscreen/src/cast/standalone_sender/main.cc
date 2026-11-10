@@ -5,8 +5,6 @@
 #include "platform/impl/logging.h"
 
 #if defined(CAST_STANDALONE_SENDER_HAVE_EXTERNAL_LIBS)
-#include <getopt.h>
-
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -18,7 +16,7 @@
 #include "cast/standalone_sender/constants.h"
 #include "cast/standalone_sender/looping_file_cast_agent.h"
 #include "cast/standalone_sender/receiver_chooser.h"
-#include "cast/streaming/constants.h"
+#include "cast/streaming/public/constants.h"
 #include "platform/api/network_interface.h"
 #include "platform/api/time.h"
 #include "platform/base/error.h"
@@ -27,6 +25,7 @@
 #include "platform/impl/platform_client_posix.h"
 #include "platform/impl/task_runner.h"
 #include "platform/impl/text_trace_logging_platform.h"
+#include "third_party/getopt/getopt.h"
 #include "util/chrono_helpers.h"
 #include "util/stringprintf.h"
 
@@ -58,18 +57,12 @@ usage: %s <options> addr[:port] media_file
       -n, --no-looping
            Disable looping the passed in video after it finishes playing.
 
-)"
-#if defined(CAST_ALLOW_DEVELOPER_CERTIFICATE)
-                               R"(
       -d, --developer-certificate=path-to-cert
            Specifies the path to a self-signed developer certificate that will
            be permitted for use as a root CA certificate for receivers that
            this sender instance will connect to. If omitted, only connections to
            receivers using an official Google-signed cast certificate chain will
            be permitted.
-)"
-#endif
-                               R"(
       -a, --android-hack:
            Use the wrong RTP payload types, for compatibility with older Android
            TV receivers. See https://crbug.com/631828.
@@ -90,7 +83,7 @@ usage: %s <options> addr[:port] media_file
                             kDefaultCastPort, kDefaultMaxBitrate);
 }
 
-// Attempts to parse |string_form| into an IPEndpoint. The format is a
+// Attempts to parse `string_form` into an IPEndpoint. The format is a
 // standard-format IPv4 or IPv6 address followed by an optional colon and port.
 // If the port is not provided, kDefaultCastPort is assumed.
 //
@@ -114,20 +107,17 @@ int StandaloneSenderMain(int argc, char* argv[]) {
   // between all Open Screen executables. If it is a platform feature
   // being exposed, consider if it applies to the standalone receiver,
   // standalone sender, osp demo, and test_main argument options.
-  const struct option kArgumentOptions[] = {
-    {"max-bitrate", required_argument, nullptr, 'm'},
-    {"no-looping", no_argument, nullptr, 'n'},
-#if defined(CAST_ALLOW_DEVELOPER_CERTIFICATE)
-    {"developer-certificate", required_argument, nullptr, 'd'},
-#endif
-    {"android-hack", no_argument, nullptr, 'a'},
-    {"remoting", no_argument, nullptr, 'r'},
-    {"tracing", no_argument, nullptr, 't'},
-    {"verbose", no_argument, nullptr, 'v'},
-    {"help", no_argument, nullptr, 'h'},
-    {"codec", required_argument, nullptr, 'c'},
-    {nullptr, 0, nullptr, 0}
-  };
+  const get_opt::option kArgumentOptions[] = {
+      {"max-bitrate", required_argument, nullptr, 'm'},
+      {"no-looping", no_argument, nullptr, 'n'},
+      {"developer-certificate", required_argument, nullptr, 'd'},
+      {"android-hack", no_argument, nullptr, 'a'},
+      {"remoting", no_argument, nullptr, 'r'},
+      {"tracing", no_argument, nullptr, 't'},
+      {"verbose", no_argument, nullptr, 'v'},
+      {"help", no_argument, nullptr, 'h'},
+      {"codec", required_argument, nullptr, 'c'},
+      {nullptr, 0, nullptr, 0}};
 
   int max_bitrate = kDefaultMaxBitrate;
   bool should_loop_video = true;
@@ -142,10 +132,11 @@ int StandaloneSenderMain(int argc, char* argv[]) {
                            nullptr)) != -1) {
     switch (ch) {
       case 'm':
-        max_bitrate = atoi(optarg);
+        max_bitrate = atoi(get_opt::optarg);
         if (max_bitrate < kMinRequiredBitrate) {
-          OSP_LOG_ERROR << "Invalid --max-bitrate specified: " << optarg
-                        << " is less than " << kMinRequiredBitrate;
+          OSP_LOG_ERROR << "Invalid --max-bitrate specified: "
+                        << get_opt::optarg << " is less than "
+                        << kMinRequiredBitrate;
           LogUsage(argv[0]);
           return 1;
         }
@@ -153,11 +144,9 @@ int StandaloneSenderMain(int argc, char* argv[]) {
       case 'n':
         should_loop_video = false;
         break;
-#if defined(CAST_ALLOW_DEVELOPER_CERTIFICATE)
       case 'd':
-        developer_certificate_path = optarg;
+        developer_certificate_path = get_opt::optarg;
         break;
-#endif
       case 'a':
         use_android_rtp_hack = true;
         break;
@@ -174,14 +163,14 @@ int StandaloneSenderMain(int argc, char* argv[]) {
         LogUsage(argv[0]);
         return 1;
       case 'c':
-        auto specified_codec = StringToVideoCodec(optarg);
+        auto specified_codec = StringToVideoCodec(get_opt::optarg);
         if (specified_codec.is_value() &&
             (specified_codec.value() == VideoCodec::kVp8 ||
              specified_codec.value() == VideoCodec::kVp9 ||
              specified_codec.value() == VideoCodec::kAv1)) {
           codec = specified_codec.value();
         } else {
-          OSP_LOG_ERROR << "Invalid --codec specified: " << optarg
+          OSP_LOG_ERROR << "Invalid --codec specified: " << get_opt::optarg
                         << " is not one of: vp8, vp9, av1.";
           LogUsage(argv[0]);
           return 1;
@@ -195,22 +184,20 @@ int StandaloneSenderMain(int argc, char* argv[]) {
   // The second to last command line argument must be one of: 1) the network
   // interface name or 2) a specific IP address (port is optional). The last
   // argument must be the path to the file.
-  if (optind != (argc - 2)) {
+  if (get_opt::optind != (argc - 2)) {
     LogUsage(argv[0]);
     return 1;
   }
-  const char* const iface_or_endpoint = argv[optind++];
-  const char* const path = argv[optind];
+  const char* const iface_or_endpoint = argv[get_opt::optind++];
+  const char* const path = argv[get_opt::optind];
 
   std::unique_ptr<TrustStore> cast_trust_store;
-#if defined(CAST_ALLOW_DEVELOPER_CERTIFICATE)
   if (!developer_certificate_path.empty()) {
     cast_trust_store =
         TrustStore::CreateInstanceFromPemFile(developer_certificate_path);
     OSP_LOG_INFO << "using cast trust store generated from: "
                  << developer_certificate_path;
   }
-#endif
   if (!cast_trust_store) {
     cast_trust_store = CastTrustStore::Create();
   }
@@ -241,7 +228,7 @@ int StandaloneSenderMain(int argc, char* argv[]) {
     }
   }
 
-  // |cast_agent| must be constructed and destroyed from a Task run by the
+  // `cast_agent` must be constructed and destroyed from a Task run by the
   // TaskRunner.
   LoopingFileCastAgent* cast_agent = nullptr;
   task_runner->PostTask([&] {
@@ -263,7 +250,7 @@ int StandaloneSenderMain(int argc, char* argv[]) {
   // SIGTERM are signaled.
   task_runner->RunUntilSignaled();
 
-  // Spin the TaskRunner to destroy the |cast_agent| and execute any lingering
+  // Spin the TaskRunner to destroy the `cast_agent` and execute any lingering
   // destruction/shutdown tasks.
   OSP_LOG_INFO << "Shutting down...";
   task_runner->PostTask([&] {

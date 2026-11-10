@@ -188,9 +188,6 @@ error::Error DoEnableVertexAttribArray(GLuint index);
 error::Error DoFenceSync(GLenum condition, GLbitfield flags, GLuint client_id);
 error::Error DoFinish();
 error::Error DoFlush();
-error::Error DoFlushMappedBufferRange(GLenum target,
-                                      GLintptr offset,
-                                      GLsizeiptr size);
 error::Error DoFramebufferParameteri(GLenum target, GLenum pname, GLint param);
 error::Error DoFramebufferRenderbuffer(GLenum target,
                                        GLenum attachment,
@@ -272,6 +269,10 @@ error::Error DoGetBufferParameteriv(GLenum target,
                                     GLsizei bufsize,
                                     GLsizei* length,
                                     GLint* params);
+error::Error DoGetBufferSubDataCHROMIUM(GLenum target,
+                                        GLintptr offset,
+                                        GLsizeiptr size,
+                                        void* data);
 error::Error DoGetError(uint32_t* result);
 error::Error DoGetFloatv(GLenum pname,
                          GLsizei bufsize,
@@ -820,16 +821,6 @@ error::Error DoGetMaxValueInBufferCHROMIUM(GLuint buffer_id,
                                            GLenum type,
                                            GLuint offset,
                                            uint32_t* result);
-error::Error DoEnableFeatureCHROMIUM(const char* feature);
-error::Error DoMapBufferRange(GLenum target,
-                              GLintptr offset,
-                              GLsizeiptr size,
-                              GLbitfield access,
-                              void* ptr,
-                              int32_t data_shm_id,
-                              uint32_t data_shm_offset,
-                              uint32_t* result);
-error::Error DoUnmapBuffer(GLenum target);
 error::Error DoResizeCHROMIUM(GLuint width,
                               GLuint height,
                               GLfloat scale_factor,
@@ -894,10 +885,6 @@ error::Error DoDrawElementsInstancedBaseVertexBaseInstanceANGLE(
     GLint basevertices,
     GLuint baseinstances);
 error::Error DoVertexAttribDivisorANGLE(GLuint index, GLuint divisor);
-error::Error DoProduceTextureDirectCHROMIUM(GLuint texture_client_id,
-                                            const volatile GLbyte* mailbox);
-error::Error DoCreateAndConsumeTextureINTERNAL(GLuint texture_client_id,
-                                               const volatile GLbyte* mailbox);
 error::Error DoBindUniformLocationCHROMIUM(GLuint program,
                                            GLint location,
                                            const char* name);
@@ -913,7 +900,6 @@ error::Error DoWaitSyncTokenCHROMIUM(CommandBufferNamespace namespace_id,
                                      CommandBufferId command_buffer_id,
                                      GLuint64 release_count);
 error::Error DoDrawBuffersEXT(GLsizei count, const volatile GLenum* bufs);
-error::Error DoDiscardBackbufferCHROMIUM();
 
 error::Error DoFlushDriverCachesCHROMIUM();
 error::Error DoMatrixLoadfCHROMIUM(GLenum matrixMode,
@@ -1055,20 +1041,6 @@ error::Error DoCreateAndTexStorage2DSharedImageINTERNAL(
 error::Error DoBeginSharedImageAccessDirectCHROMIUM(GLuint client_id,
                                                     GLenum mode);
 error::Error DoEndSharedImageAccessDirectCHROMIUM(GLuint client_id);
-error::Error DoConvertRGBAToYUVAMailboxesINTERNAL(
-    GLenum yuv_color_space,
-    GLenum plane_config,
-    GLenum subsampling,
-    const volatile GLbyte* mailboxes_in);
-error::Error DoConvertYUVAMailboxesToRGBINTERNAL(
-    GLint src_x,
-    GLint src_y,
-    GLsizei width,
-    GLsizei height,
-    GLenum yuv_color_space,
-    GLenum plane_config,
-    GLenum subsampling,
-    const volatile GLbyte* mailboxes_in);
 error::Error DoConvertYUVAMailboxesToTextureINTERNAL(
     GLuint texture,
     GLenum target,
@@ -1090,7 +1062,6 @@ error::Error DoCopySharedImageINTERNAL(GLint xoffset,
                                        GLint y,
                                        GLsizei width,
                                        GLsizei height,
-                                       GLboolean unpack_flip_y,
                                        const volatile GLbyte* mailboxes);
 error::Error DoCopySharedImageToTextureINTERNAL(
     GLuint texture,
@@ -1101,7 +1072,7 @@ error::Error DoCopySharedImageToTextureINTERNAL(
     GLint src_y,
     GLsizei width,
     GLsizei height,
-    GLboolean flip_y,
+    GLboolean is_dst_origin_top_left,
     const volatile GLbyte* src_mailbox);
 error::Error DoEnableiOES(GLenum target, GLuint index);
 error::Error DoDisableiOES(GLenum target, GLuint index);

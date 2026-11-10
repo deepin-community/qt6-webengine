@@ -5,9 +5,10 @@
 #ifndef QUICHE_QUIC_CORE_FRAMES_QUIC_FRAME_H_
 #define QUICHE_QUIC_CORE_FRAMES_QUIC_FRAME_H_
 
+#include <cstddef>
 #include <ostream>
+#include <string>
 #include <type_traits>
-#include <vector>
 
 #include "absl/container/inlined_vector.h"
 #include "quiche/quic/core/frames/quic_ack_frame.h"
@@ -17,6 +18,7 @@
 #include "quiche/quic/core/frames/quic_crypto_frame.h"
 #include "quiche/quic/core/frames/quic_goaway_frame.h"
 #include "quiche/quic/core/frames/quic_handshake_done_frame.h"
+#include "quiche/quic/core/frames/quic_immediate_ack_frame.h"
 #include "quiche/quic/core/frames/quic_max_streams_frame.h"
 #include "quiche/quic/core/frames/quic_message_frame.h"
 #include "quiche/quic/core/frames/quic_mtu_discovery_frame.h"
@@ -26,6 +28,7 @@
 #include "quiche/quic/core/frames/quic_path_challenge_frame.h"
 #include "quiche/quic/core/frames/quic_path_response_frame.h"
 #include "quiche/quic/core/frames/quic_ping_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
 #include "quiche/quic/core/frames/quic_retire_connection_id_frame.h"
 #include "quiche/quic/core/frames/quic_rst_stream_frame.h"
 #include "quiche/quic/core/frames/quic_stop_sending_frame.h"
@@ -34,7 +37,8 @@
 #include "quiche/quic/core/frames/quic_streams_blocked_frame.h"
 #include "quiche/quic/core/frames/quic_window_update_frame.h"
 #include "quiche/quic/core/quic_types.h"
-#include "quiche/quic/platform/api/quic_export.h"
+#include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/quiche_buffer_allocator.h"
 
 #ifndef QUIC_FRAME_DEBUG
 #if (!defined(NDEBUG) || defined(ADDRESS_SANITIZER)) && !defined(COMPILER_MSVC)
@@ -62,6 +66,7 @@ struct QUICHE_EXPORT QuicFrame {
   explicit QuicFrame(QuicStopSendingFrame frame);
   explicit QuicFrame(QuicPathChallengeFrame frame);
   explicit QuicFrame(QuicPathResponseFrame frame);
+  explicit QuicFrame(QuicImmediateAckFrame immediate_ack_frame);
 
   explicit QuicFrame(QuicAckFrame* frame);
   explicit QuicFrame(QuicRstStreamFrame* frame);
@@ -73,6 +78,7 @@ struct QUICHE_EXPORT QuicFrame {
   explicit QuicFrame(QuicMessageFrame* message_frame);
   explicit QuicFrame(QuicCryptoFrame* crypto_frame);
   explicit QuicFrame(QuicAckFrequencyFrame* ack_frequency_frame);
+  explicit QuicFrame(QuicResetStreamAtFrame* reset_stream_at_frame);
 
   QUICHE_EXPORT friend std::ostream& operator<<(std::ostream& os,
                                                 const QuicFrame& frame);
@@ -95,6 +101,7 @@ struct QUICHE_EXPORT QuicFrame {
     QuicStopSendingFrame stop_sending_frame;
     QuicPathChallengeFrame path_challenge_frame;
     QuicPathResponseFrame path_response_frame;
+    QuicImmediateAckFrame immediate_ack_frame;
 
     // Out of line frames.
     struct {
@@ -115,6 +122,7 @@ struct QUICHE_EXPORT QuicFrame {
         QuicCryptoFrame* crypto_frame;
         QuicAckFrequencyFrame* ack_frequency_frame;
         QuicNewTokenFrame* new_token_frame;
+        QuicResetStreamAtFrame* reset_stream_at_frame;
       };
     };
   };
@@ -140,6 +148,12 @@ QUICHE_EXPORT void DeleteFrame(QuicFrame* frame);
 // Deletes all the QuicStreamFrames for the specified |stream_id|.
 QUICHE_EXPORT void RemoveFramesForStream(QuicFrames* frames,
                                          QuicStreamId stream_id);
+
+// Returns true if |frames| contains at least one message frame.
+QUICHE_EXPORT bool HasMessageFrame(const QuicFrames& frames);
+
+// Returns true if |frames| contains only data frames.
+QUICHE_EXPORT bool HasOnlyDatagramFrame(const QuicFrames& frames);
 
 // Returns true if |type| is a retransmittable control frame.
 QUICHE_EXPORT bool IsControlFrame(QuicFrameType type);

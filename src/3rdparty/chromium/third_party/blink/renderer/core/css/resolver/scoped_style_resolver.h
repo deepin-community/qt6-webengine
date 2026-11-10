@@ -31,8 +31,8 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
-#include "third_party/blink/renderer/core/css/cascade_layer.h"
 #include "third_party/blink/renderer/core/css/element_rule_collector.h"
+#include "third_party/blink/renderer/core/css/resolver/style_resolver_utils.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/core/dom/tree_scope.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -67,13 +67,14 @@ class CORE_EXPORT ScopedStyleResolver final
   CounterStyleMap* GetCounterStyleMap() { return counter_style_map_.Get(); }
   static void CounterStyleRulesChanged(TreeScope& scope);
 
-  StyleRulePositionFallback* PositionFallbackForName(
-      const AtomicString& fallback_name);
+  StyleRulePositionTry* PositionTryForName(const AtomicString& try_name);
+
+  StyleRuleFunction* FunctionForName(StringView name);
 
   const FontFeatureValuesStorage* FontFeatureValuesForFamily(
       AtomicString font_family);
 
-  void RebuildCascadeLayerMap(const ActiveStyleSheetVector& sheets);
+  void RebuildCascadeLayerMap(const ActiveStyleSheetVector&);
   bool HasCascadeLayerMap() const { return cascade_layer_map_.Get(); }
   const CascadeLayerMap* GetCascadeLayerMap() const {
     return cascade_layer_map_.Get();
@@ -82,13 +83,31 @@ class CORE_EXPORT ScopedStyleResolver final
     return active_style_sheets_;
   }
 
+  // When the stylesheets are quietly swapped, no invalidation takes
+  // place, but calls to ElementRuleCollector::CollectMatchingRules
+  // will "see" the swapped-in sheets, and return its result accordingly.
+  // This allows the Inspector to query an "alternate reality" which
+  // may be different from what the style engine normally observes
+  // (see InspectorGhostRules).
+  //
+  // This approach has limitations, however: name-defining at-rules
+  // such as @keyframes are generally not applied: if `other` contains
+  // any @keyframes that differ from the original stylesheets,
+  // those changes are effectively ignored.
+  //
+  // Quietly swapping stylesheets does however cause the layer map
+  // (`cascade_layer_map_`) to be rebuilt, because any CascadeLayer
+  // instances within `other` must exist in this map for rule matching
+  // to function (see `CascadeLayerSeeker`).
+  void QuietlySwapActiveStyleSheets(ActiveStyleSheetVector& other);
+
   void AppendActiveStyleSheets(unsigned index, const ActiveStyleSheetVector&);
-  void CollectMatchingElementScopeRules(ElementRuleCollector&);
+  void CollectMatchingElementScopeRules(ElementRuleCollector&,
+                                        PartNames* part_names);
   void CollectMatchingShadowHostRules(ElementRuleCollector&);
   void CollectMatchingSlottedRules(ElementRuleCollector&);
   void CollectMatchingPartPseudoRules(ElementRuleCollector&,
-                                      PartNames& part_names,
-                                      bool for_shadow_pseudo);
+                                      PartNames* part_names);
   void MatchPageRules(PageRuleCollector&);
   void CollectFeaturesTo(RuleFeatureSet&,
                          HeapHashSet<Member<const StyleSheetContents>>&
@@ -116,7 +135,6 @@ class CORE_EXPORT ScopedStyleResolver final
   bool KeyframeStyleShouldOverride(
       const StyleRuleKeyframes* new_rule,
       const StyleRuleKeyframes* existing_rule) const;
-  void AddPositionFallbackRules(const RuleSet&);
 
   CounterStyleMap& EnsureCounterStyleMap();
 
@@ -130,14 +148,17 @@ class CORE_EXPORT ScopedStyleResolver final
 
   ActiveStyleSheetVector active_style_sheets_;
   MediaQueryResultFlags media_query_result_flags_;
+  HeapVector<RuleSetGroup> rule_set_groups_;
 
   using KeyframesRuleMap =
       HeapHashMap<AtomicString, Member<StyleRuleKeyframes>>;
   KeyframesRuleMap keyframes_rule_map_;
 
-  using PositionFallbackRuleMap =
-      HeapHashMap<AtomicString, Member<StyleRulePositionFallback>>;
-  PositionFallbackRuleMap position_fallback_rule_map_;
+  using PositionTryRuleMap =
+      HeapHashMap<AtomicString, Member<StyleRulePositionTry>>;
+  PositionTryRuleMap position_try_rule_map_;
+
+  FunctionRuleMap function_rule_map_;
 
   // Multiple entries are created pointing to the same
   // StyleRuleFontFeatureValues for each mentioned family name in the

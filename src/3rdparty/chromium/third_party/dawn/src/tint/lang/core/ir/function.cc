@@ -38,10 +38,11 @@ namespace tint::core::ir {
 
 Function::Function() = default;
 
-Function::Function(const core::type::Type* rt,
+Function::Function(const core::type::Type* type,
+                   const core::type::Type* rt,
                    PipelineStage stage,
-                   std::optional<std::array<uint32_t, 3>> wg_size)
-    : pipeline_stage_(stage), workgroup_size_(wg_size) {
+                   std::optional<std::array<Value*, 3>> wg_size)
+    : pipeline_stage_(stage), workgroup_size_(wg_size), type_(type) {
     TINT_ASSERT(rt != nullptr);
 
     return_.type = rt;
@@ -50,12 +51,11 @@ Function::Function(const core::type::Type* rt,
 Function::~Function() = default;
 
 Function* Function::Clone(CloneContext& ctx) {
-    auto* new_func = ctx.ir.values.Create<Function>(return_.type, pipeline_stage_, workgroup_size_);
+    auto* new_func =
+        ctx.ir.CreateValue<Function>(type_, return_.type, pipeline_stage_, workgroup_size_);
     new_func->block_ = ctx.ir.blocks.Create<ir::Block>();
-    new_func->params_ = ctx.Clone<1>(params_.Slice());
-    new_func->return_.builtin = return_.builtin;
-    new_func->return_.location = return_.location;
-    new_func->return_.invariant = return_.invariant;
+    new_func->SetParams(ctx.Clone<1>(params_.Slice()));
+    new_func->return_.attributes = return_.attributes;
 
     ctx.Replace(this, new_func);
     block_->CloneInto(ctx, new_func->block_);
@@ -65,13 +65,35 @@ Function* Function::Clone(CloneContext& ctx) {
 }
 
 void Function::SetParams(VectorRef<FunctionParam*> params) {
+    for (auto* param : params_) {
+        param->SetFunction(nullptr);
+    }
     params_ = std::move(params);
     TINT_ASSERT(!params_.Any(IsNull));
+    uint32_t index = 0;
+    for (auto* param : params_) {
+        param->SetFunction(this);
+        param->SetIndex(index++);
+    }
 }
 
 void Function::SetParams(std::initializer_list<FunctionParam*> params) {
+    for (auto* param : params_) {
+        param->SetFunction(nullptr);
+    }
     params_ = params;
     TINT_ASSERT(!params_.Any(IsNull));
+    uint32_t index = 0;
+    for (auto* param : params_) {
+        param->SetFunction(this);
+        param->SetIndex(index++);
+    }
+}
+
+void Function::AppendParam(FunctionParam* param) {
+    params_.Push(param);
+    param->SetFunction(this);
+    param->SetIndex(static_cast<uint32_t>(params_.Length() - 1u));
 }
 
 void Function::Destroy() {

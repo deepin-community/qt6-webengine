@@ -14,29 +14,48 @@
 
 #include "internal/platform/implementation/platform.h"
 
-#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include "file/base/path.h"
-#include "absl/memory/memory.h"
+#include "absl/base/attributes.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "absl/time/time.h"
+#include "internal/base/file_path.h"
+#include "internal/base/files.h"
 #include "internal/platform/implementation/atomic_boolean.h"
 #include "internal/platform/implementation/atomic_reference.h"
+#include "internal/platform/implementation/awdl.h"
+#include "internal/platform/implementation/ble.h"
+#include "internal/platform/implementation/ble_v2.h"
 #include "internal/platform/implementation/bluetooth_adapter.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/condition_variable.h"
+#include "internal/platform/implementation/count_down_latch.h"
+#include "internal/platform/implementation/credential_storage.h"
+#include "internal/platform/implementation/device_info.h"
+#include "internal/platform/implementation/g3/awdl.h"
+#include "internal/platform/implementation/http_loader.h"
+#include "internal/platform/implementation/input_file.h"
 #include "internal/platform/implementation/log_message.h"
 #include "internal/platform/implementation/mutex.h"
+#include "internal/platform/implementation/output_file.h"
 #include "internal/platform/implementation/preferences_manager.h"
 #include "internal/platform/implementation/scheduled_executor.h"
 #include "internal/platform/implementation/server_sync.h"
 #include "internal/platform/implementation/shared/count_down_latch.h"
 #include "internal/platform/implementation/submittable_executor.h"
+#include "internal/platform/implementation/timer.h"
+#include "internal/platform/implementation/wifi_direct.h"
+#include "internal/platform/implementation/wifi_hotspot.h"
+#include "internal/platform/implementation/wifi_lan.h"
+#include "internal/platform/logging.h"
+#include "internal/platform/os_name.h"
+#include "internal/platform/payload_id.h"
+#include "thread/thread.h"
 #ifndef NO_WEBRTC
 #include "internal/platform/implementation/g3/webrtc.h"
 #include "internal/platform/implementation/webrtc.h"
@@ -50,7 +69,6 @@
 #include "internal/platform/implementation/g3/condition_variable.h"
 #include "internal/platform/implementation/g3/credential_storage_impl.h"
 #include "internal/platform/implementation/g3/device_info.h"
-#include "internal/platform/implementation/g3/log_message.h"
 #include "internal/platform/implementation/g3/multi_thread_executor.h"
 #include "internal/platform/implementation/g3/mutex.h"
 #include "internal/platform/implementation/g3/preferences_manager.h"
@@ -70,14 +88,12 @@ namespace api {
 
 std::string ImplementationPlatform::GetCustomSavePath(
     const std::string& parent_folder, const std::string& file_name) {
-  return file::JoinPath(parent_folder, file_name);
+  return absl::StrCat(parent_folder, "/", file_name);
 }
 
 std::string ImplementationPlatform::GetDownloadPath(
     const std::string& parent_folder, const std::string& file_name) {
-  std::string fullPath("/tmp");
-
-  return file::JoinPath("/tmp", file_name);
+  return absl::StrCat("/tmp/", file_name);
 }
 
 OSName ImplementationPlatform::GetCurrentOS() { return OSName::kLinux; }
@@ -148,12 +164,21 @@ std::unique_ptr<OutputFile> ImplementationPlatform::CreateOutputFile(
 
 std::unique_ptr<OutputFile> ImplementationPlatform::CreateOutputFile(
     const std::string& file_path) {
+  FilePath path(file_path);
+  FilePath folder_path = path.GetParentPath();
+  // Verifies that a path is a valid directory.
+  if (!Files::DirectoryExists(folder_path)) {
+    if (!Files::CreateDirectories(folder_path)) {
+      LOG(ERROR) << "Failed to create directory: " << folder_path.ToString();
+      return nullptr;
+    }
+  }
   return shared::IOFile::CreateOutputFile(file_path);
 }
 
 std::unique_ptr<LogMessage> ImplementationPlatform::CreateLogMessage(
     const char* file, int line, LogMessage::Severity severity) {
-  return std::make_unique<g3::LogMessage>(file, line, severity);
+  return nullptr;
 }
 
 std::unique_ptr<BluetoothClassicMedium>
@@ -188,6 +213,10 @@ std::unique_ptr<WifiMedium> ImplementationPlatform::CreateWifiMedium() {
 
 std::unique_ptr<WifiLanMedium> ImplementationPlatform::CreateWifiLanMedium() {
   return std::make_unique<g3::WifiLanMedium>();
+}
+
+std::unique_ptr<AwdlMedium> ImplementationPlatform::CreateAwdlMedium() {
+  return std::make_unique<g3::AwdlMedium>();
 }
 
 std::unique_ptr<WifiHotspotMedium>
@@ -239,7 +268,7 @@ ImplementationPlatform::CreateDeviceInfo() {
 
 std::unique_ptr<nearby::api::PreferencesManager>
 ImplementationPlatform::CreatePreferencesManager(absl::string_view path) {
-  return std::make_unique<g3::PreferencesManager>(path);
+  return std::make_unique<g3::PreferencesManager>();
 }
 
 }  // namespace api

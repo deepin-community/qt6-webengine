@@ -33,22 +33,18 @@
 #include <vector>
 
 #include "src/tint/api/common/binding_point.h"
+#include "src/tint/lang/core/ir/module.h"
+#include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/external_texture.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/msl/writer/common/options.h"
-#include "src/tint/lang/wgsl/ast/module.h"
-#include "src/tint/lang/wgsl/program/program.h"
-#include "src/tint/lang/wgsl/sem/variable.h"
 #include "src/tint/utils/ice/ice.h"
 #include "src/tint/utils/rtti/switch.h"
 
 namespace tint::msl::writer {
 
-Bindings GenerateBindings(const Program& program) {
-    // TODO(tint:1491): Use Inspector once we can get binding info for all
-    // variables, not just those referenced by entry points.
-
+Bindings GenerateBindings(const core::ir::Module& module, bool use_argument_buffers) {
     Bindings bindings{};
 
     std::unordered_set<tint::BindingPoint> seen_binding_points;
@@ -56,66 +52,78 @@ Bindings GenerateBindings(const Program& program) {
     // Collect next valid binding number per group
     Hashmap<uint32_t, uint32_t, 4> group_to_next_binding_number;
     Vector<tint::BindingPoint, 4> ext_tex_bps;
-    for (auto* var : program.AST().GlobalVariables()) {
-        if (auto* sem_var = program.Sem().Get(var)->As<sem::GlobalVariable>()) {
-            if (auto bp = sem_var->Attributes().binding_point) {
-                if (auto val = group_to_next_binding_number.Find(bp->group)) {
-                    *val = std::max(*val, bp->binding + 1);
-                } else {
-                    group_to_next_binding_number.Add(bp->group, bp->binding + 1);
-                }
+    for (auto* inst : *module.root_block) {
+        auto* var = inst->As<core::ir::Var>();
+        if (!var) {
+            continue;
+        }
 
-                // Store up the external textures, we'll add them in the next step
-                if (sem_var->Type()->UnwrapRef()->Is<core::type::ExternalTexture>()) {
-                    ext_tex_bps.Push(*bp);
-                    continue;
-                }
+        if (auto bp = var->BindingPoint()) {
+            if (auto val = group_to_next_binding_number.Get(bp->group)) {
+                *val = std::max(*val, bp->binding + 1);
+            } else {
+                group_to_next_binding_number.Add(bp->group, bp->binding + 1);
+            }
 
-                binding::BindingInfo info{bp->binding};
-                switch (sem_var->AddressSpace()) {
-                    case core::AddressSpace::kHandle:
-                        Switch(
-                            sem_var->Type()->UnwrapRef(),  //
-                            [&](const core::type::Sampler*) {
-                                bindings.sampler.emplace(*bp, info);
-                            },
-                            [&](const core::type::StorageTexture*) {
-                                bindings.storage_texture.emplace(*bp, info);
-                            },
-                            [&](const core::type::Texture*) {
-                                bindings.texture.emplace(*bp, info);
-                            });
-                        break;
-                    case core::AddressSpace::kStorage:
-                        bindings.storage.emplace(*bp, info);
-                        break;
-                    case core::AddressSpace::kUniform:
-                        bindings.uniform.emplace(*bp, info);
-                        break;
+            auto* ptr = var->Result()->Type()->As<core::type::Pointer>();
 
-                    case core::AddressSpace::kUndefined:
-                    case core::AddressSpace::kPixelLocal:
-                    case core::AddressSpace::kPrivate:
-                    case core::AddressSpace::kPushConstant:
-                    case core::AddressSpace::kIn:
-                    case core::AddressSpace::kOut:
-                    case core::AddressSpace::kFunction:
-                    case core::AddressSpace::kWorkgroup:
-                        break;
-                }
+            // Store up the external textures, we'll add them in the next step
+            if (ptr->StoreType()->Is<core::type::ExternalTexture>()) {
+                ext_tex_bps.Push(*bp);
+                continue;
+            }
+
+            binding::BindingInfo info{
+                .group = use_argument_buffers ? bp->group : 0,
+                .binding = bp->binding,
+            };
+            switch (ptr->AddressSpace()) {
+                case core::AddressSpace::kHandle:
+                    Switch(
+                        ptr->StoreType(),  //
+                        [&](const core::type::Sampler*) { bindings.sampler.emplace(*bp, info); },
+                        [&](const core::type::StorageTexture*) {
+                            bindings.storage_texture.emplace(*bp, info);
+                        },
+                        [&](const core::type::Texture*) { bindings.texture.emplace(*bp, info); });
+                    break;
+                case core::AddressSpace::kStorage:
+                    bindings.storage.emplace(*bp, info);
+                    break;
+                case core::AddressSpace::kUniform:
+                    bindings.uniform.emplace(*bp, info);
+                    break;
+
+                case core::AddressSpace::kUndefined:
+                case core::AddressSpace::kPixelLocal:
+                case core::AddressSpace::kPrivate:
+                case core::AddressSpace::kImmediate:
+                case core::AddressSpace::kIn:
+                case core::AddressSpace::kOut:
+                case core::AddressSpace::kFunction:
+                case core::AddressSpace::kWorkgroup:
+                    break;
             }
         }
     }
 
     for (auto bp : ext_tex_bps) {
-        uint32_t g = bp.group;
-        uint32_t next_num = *(group_to_next_binding_number.GetOrZero(g));
+        uint32_t& next_num = group_to_next_binding_number.GetOrAddZero(bp.group);
 
-        binding::BindingInfo plane0{bp.binding};
-        binding::BindingInfo plane1{next_num++};
-        binding::BindingInfo metadata{next_num++};
+        uint32_t g = use_argument_buffers ? bp.group : 0;
 
-        group_to_next_binding_number.Replace(g, next_num);
+        binding::BindingInfo plane0{
+            .group = g,
+            .binding = bp.binding,
+        };
+        binding::BindingInfo plane1{
+            .group = g,
+            .binding = next_num++,
+        };
+        binding::BindingInfo metadata{
+            .group = g,
+            .binding = next_num++,
+        };
 
         bindings.external_texture.emplace(bp, binding::ExternalTexture{metadata, plane0, plane1});
     }

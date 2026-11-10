@@ -17,12 +17,27 @@
 licenses(["notice"])
 
 cc_library(
+    name = "logging",
+    hdrs = [
+        "logging.h",
+    ],
+    visibility = [
+        "//:__subpackages__",
+    ],
+    deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:log_sink_registry",
+    ],
+)
+
+cc_library(
     name = "base",
     srcs = [
         "base64_utils.cc",
         "bluetooth_utils.cc",
         "input_stream.cc",
-        "nsd_service_info.cc",
         "prng.cc",
     ],
     hdrs = [
@@ -31,6 +46,7 @@ cc_library(
         "byte_array.h",
         "callable.h",
         "exception.h",
+        "expected.h",
         "feature_flags.h",
         "input_stream.h",
         "listeners.h",
@@ -46,23 +62,20 @@ cc_library(
     ],
     copts = ["-DCORE_ADAPTER_DLL"],
     visibility = [
+        "//:__subpackages__",
         "//chrome/chromeos/assistant/data_migration/lib:__pkg__",
-        "//connections:__subpackages__",
-        "//fastpair:__subpackages__",
-        "//internal/auth:__subpackages__",
-        "//internal/platform:__subpackages__",
-        "//internal/platform/implementation:__subpackages__",
-        "//internal/preferences:__subpackages__",
-        "//internal/weave:__subpackages__",
-        "//location/nearby/cpp:__subpackages__",
-        "//presence:__subpackages__",
-        "//sharing:__subpackages__",
+        "//connections:partners",
     ],
     deps = [
+        ":mac_address",
         "//proto:connections_enums_cc_proto",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/meta:type_traits",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -73,21 +86,22 @@ cc_library(
 cc_library(
     name = "util",
     srcs = [
-        "base_input_stream.cc",
         "byte_utils.cc",
+        "stream_reader.cc",
+        "stream_writer.cc",
     ],
     hdrs = [
-        "base_input_stream.h",
-        "base_mutex_lock.h",
         "byte_utils.h",
+        "stream_reader.h",
+        "stream_writer.h",
     ],
     visibility = [
         "//connections:__subpackages__",
+        "//connections:partners",
         "//internal/platform/implementation:__subpackages__",
     ],
     deps = [
         ":base",
-        "//internal/platform/implementation:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings:str_format",
     ],
@@ -115,6 +129,44 @@ cc_library(
 )
 
 cc_library(
+    name = "error_code_recorder",
+    srcs = [
+        "error_code_recorder.cc",
+    ],
+    hdrs = [
+        "error_code_params.h",
+        "error_code_recorder.h",
+    ],
+    visibility = ["//connections/implementation:__subpackages__"],
+    deps = [
+        ":logging",
+        "//proto:connections_enums_cc_proto",
+        "//proto/errorcode:error_code_enums_cc_proto",
+        "@com_google_absl//absl/functional:any_invocable",
+    ],
+)
+
+cc_library(
+    name = "uuid",
+    srcs = [
+        "uuid.cc",
+    ],
+    hdrs = [
+        "uuid.h",
+    ],
+    visibility = [
+        "//connections/implementation:__subpackages__",
+        "//internal/platform/implementation:__subpackages__",
+        "//presence:__subpackages__",
+    ],
+    deps = [
+        ":base",
+        "@boringssl//:crypto",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
     name = "connection_info",
     srcs = [
         "ble_connection_info.cc",
@@ -135,7 +187,7 @@ cc_library(
         "//presence:__subpackages__",
     ],
     deps = [
-        ":types",
+        ":logging",
         "//proto:connections_enums_cc_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -146,139 +198,9 @@ cc_library(
 )
 
 cc_library(
-    name = "error_code_recorder",
-    srcs = [
-        "error_code_recorder.cc",
-    ],
-    hdrs = [
-        "error_code_params.h",
-        "error_code_recorder.h",
-    ],
-    visibility = ["//connections/implementation:__subpackages__"],
-    deps = [
-        ":types",
-        "//proto:connections_enums_cc_proto",
-        "//proto/errorcode:error_code_enums_cc_proto",
-        "@com_google_absl//absl/functional:any_invocable",
-    ],
-)
-
-cc_library(
-    name = "uuid",
-    srcs = [
-        "uuid.cc",
-    ],
-    hdrs = [
-        "uuid.h",
-    ],
-    visibility = [
-        "//connections/implementation:__subpackages__",
-        "//fastpair:__subpackages__",
-        "//internal/platform/implementation:__subpackages__",
-        "//presence:__subpackages__",
-    ],
-    deps = [
-        "//internal/platform/implementation:types",
-        "@com_google_absl//absl/strings",
-    ],
-)
-
-cc_library(
-    name = "test_util",
-    testonly = True,
-    srcs = [
-        "medium_environment.cc",
-    ],
-    hdrs = [
-        "medium_environment.h",
-    ],
-    visibility = [
-        "//connections:__subpackages__",
-        "//fastpair:__subpackages__",
-        "//internal/platform/implementation:__subpackages__",
-        "//presence:__subpackages__",
-        "//sharing:__subpackages__",
-    ],
-    deps = [
-        ":base",
-        ":types",
-        ":uuid",
-        "//internal/base",
-        "//internal/platform/implementation:comm",
-        "//internal/test",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:optional",
-    ],
-)
-
-cc_test(
-    name = "platform_base_test",
-    srcs = [
-        "bluetooth_utils_test.cc",
-        "byte_array_test.cc",
-        "feature_flags_test.cc",
-        "input_stream_test.cc",
-        "prng_test.cc",
-    ],
-    deps = [
-        ":base",
-        ":test_util",
-        "//internal/platform/implementation/g3",  # build_cleaner: keep
-        "@com_github_protobuf_matchers//protobuf-matchers",
-        "@com_google_absl//absl/hash:hash_testing",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "platform_util_test",
-    srcs = [
-        "byte_utils_test.cc",
-    ],
-    deps = [
-        ":base",
-        ":util",
-        "@com_github_protobuf_matchers//protobuf-matchers",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "cancellation_flag_test",
-    srcs = [
-        "cancellation_flag_test.cc",
-    ],
-    deps = [
-        ":base",
-        ":cancellation_flag",
-        ":test_util",
-        "//internal/platform/implementation/g3",  # build_cleaner: keep
-        "@com_github_protobuf_matchers//protobuf-matchers",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "error_code_recorder_test",
-    srcs = [
-        "error_code_recorder_test.cc",
-    ],
-    deps = [
-        ":error_code_recorder",
-        ":test_util",
-        "//internal/platform/implementation/g3",  # build_cleaner: keep
-        "@com_github_protobuf_matchers//protobuf-matchers",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
     name = "types",
     srcs = [
+        "blocking_queue_stream.cc",
         "clock_impl.cc",
         "device_info_impl.cc",
         "monitored_runnable.cc",
@@ -288,8 +210,10 @@ cc_library(
         "timer_impl.cc",
     ],
     hdrs = [
+        "array_blocking_queue.h",
         "atomic_boolean.h",
         "atomic_reference.h",
+        "blocking_queue_stream.h",
         "borrowable.h",
         "cancelable.h",
         "cancelable_alarm.h",
@@ -326,25 +250,23 @@ cc_library(
     ],
     visibility = [
         "//connections:__subpackages__",
-        "//fastpair:__subpackages__",
         "//internal/account:__subpackages__",
         "//internal/auth:__subpackages__",
         "//internal/auth/credential_store:__subpackages__",
         "//internal/base:__subpackages__",
+        "//internal/crypto:__subpackages__",
         "//internal/data:__subpackages__",
-        "//internal/flags:__subpackages__",
         "//internal/interop:__pkg__",
         "//internal/network:__subpackages__",
         "//internal/platform:__subpackages__",
         "//internal/platform/implementation/g3:__pkg__",
-        "//internal/platform/implementation/windows:__subpackages__",
         "//internal/preferences:__subpackages__",
         "//internal/proto/analytics:__subpackages__",
         "//internal/test:__subpackages__",
         "//internal/weave:__subpackages__",
-        "//location/nearby/analytics/cpp:__subpackages__",
         "//location/nearby/apps:__subpackages__",
         "//location/nearby/cpp:__subpackages__",
+        "//location/nearby/sharing/sdk:__subpackages__",
         "//location/nearby/testing/nearby_native:__subpackages__",
         "//presence:__subpackages__",
         "//sharing:__subpackages__",
@@ -352,23 +274,32 @@ cc_library(
     deps = [
         ":base",
         ":util",
+        "//connections/implementation/flags:connections_flags",
+        "//internal/base:file_path",
+        "//internal/base:files",
         "//internal/crypto_cros",
+        "//internal/flags:nearby_flags",
+        "//internal/platform/flags:platform_flags",
         "//internal/platform/implementation:platform",
         "//internal/platform/implementation:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:log_sink_registry",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@com_google_glog//:glog",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
 cc_library(
     name = "comm",
     srcs = [
+        "awdl.cc",
         "ble.cc",
         "ble_v2.cc",
         "bluetooth_classic.cc",
@@ -377,9 +308,9 @@ cc_library(
         "wifi_direct.cc",
         "wifi_hotspot.cc",
         "wifi_lan.cc",
-        "wifi_utils.cc",
     ],
     hdrs = [
+        "awdl.h",
         "ble.h",
         "ble_v2.h",
         "bluetooth_adapter.h",
@@ -390,7 +321,6 @@ cc_library(
         "wifi_direct.h",
         "wifi_hotspot.h",
         "wifi_lan.h",
-        "wifi_utils.h",
     ],
     copts = [
         "-DCORE_ADAPTER_DLL",
@@ -398,7 +328,6 @@ cc_library(
     ],
     visibility = [
         "//connections:__subpackages__",
-        "//fastpair:__subpackages__",
         "//internal/platform/implementation:__subpackages__",
         "//internal/test:__subpackages__",
         "//presence:__subpackages__",
@@ -411,7 +340,9 @@ cc_library(
         "//internal/base",
         "//internal/platform/implementation:comm",
         "//internal/platform/implementation:platform",
+        "//internal/platform/implementation:wifi_utils",
         # TODO: Support WebRTC
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
@@ -422,6 +353,186 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "mac_address",
+    srcs = ["mac_address.cc"],
+    hdrs = ["mac_address.h"],
+    visibility = [
+        "//:__subpackages__",
+    ],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+cc_library(
+    name = "test_util",
+    testonly = True,
+    srcs = [
+        "medium_environment.cc",
+    ],
+    hdrs = [
+        "medium_environment.h",
+    ],
+    visibility = [
+        "//connections:__subpackages__",
+        "//internal/platform/implementation:__subpackages__",
+        "//presence:__subpackages__",
+    ],
+    deps = [
+        ":base",
+        ":types",
+        ":uuid",
+        "//internal/base",
+        "//internal/platform/implementation:comm",
+        "//internal/test",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:optional",
+    ],
+)
+
+cc_test(
+    name = "platform_base_test",
+    srcs = [
+        "bluetooth_utils_test.cc",
+        "byte_array_test.cc",
+        "feature_flags_test.cc",
+        "input_stream_test.cc",
+        "prng_test.cc",
+    ],
+    deps = [
+        ":base",
+        ":test_util",
+        "//internal/platform/implementation/g3",  # build_cleaner: keep
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/hash:hash_testing",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "platform_util_test",
+    srcs = [
+        "byte_utils_test.cc",
+        "stream_reader_test.cc",
+        "stream_writer_test.cc",
+    ],
+    deps = [
+        ":base",
+        ":util",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cancellation_flag_test",
+    srcs = [
+        "cancellation_flag_test.cc",
+    ],
+    deps = [
+        ":base",
+        ":cancellation_flag",
+        ":test_util",
+        "//internal/platform/implementation/g3",  # build_cleaner: keep
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "expected_test",
+    srcs = ["expected_test.cc"],
+    deps = [
+        ":base",
+        "//proto:connections_enums_cc_proto",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "error_code_recorder_test",
+    srcs = [
+        "error_code_recorder_test.cc",
+    ],
+    deps = [
+        ":error_code_recorder",
+        ":test_util",
+        "//internal/platform/implementation/g3",  # build_cleaner: keep
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "public_device_test",
+    size = "small",
+    timeout = "moderate",
+    srcs = [
+        "ble_connection_info_test.cc",
+        "ble_test.cc",
+        "ble_v2_test.cc",
+        "blocking_queue_stream_test.cc",
+        "bluetooth_adapter_test.cc",
+        "bluetooth_classic_test.cc",
+        "bluetooth_connection_info_test.cc",
+        "pipe_test.cc",
+        "wifi_direct_test.cc",
+        "wifi_hotspot_test.cc",
+        "wifi_lan_connection_info_test.cc",
+        "wifi_lan_test.cc",
+        "wifi_test.cc",
+    ],
+    deps = [
+        ":base",
+        ":cancellation_flag",
+        ":comm",
+        ":connection_info",
+        ":mac_address",
+        ":test_util",
+        ":types",
+        ":uuid",
+        "//connections/implementation/flags:connections_flags",
+        "//internal/flags:nearby_flags",
+        "//internal/platform/implementation:comm",
+        "//internal/platform/implementation/g3",  # build_cleaner: keep
+        "//proto:connections_enums_cc_proto",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "credential_storage_impl_test",
+    srcs = ["credential_storage_impl_test.cc"],
+    deps = [
+        ":comm",
+        "//internal/platform/implementation:comm",
+        "//internal/platform/implementation/g3",  # build_cleaner: keep
+        "//internal/proto:credential_cc_proto",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_test(
     name = "public_test",
     size = "small",
@@ -429,38 +540,23 @@ cc_test(
     srcs = [
         "atomic_boolean_test.cc",
         "atomic_reference_test.cc",
-        "ble_connection_info_test.cc",
-        "ble_test.cc",
-        "ble_v2_test.cc",
-        "bluetooth_adapter_test.cc",
-        "bluetooth_classic_test.cc",
-        "bluetooth_connection_info_test.cc",
         "borrowable_test.cc",
         "cancelable_alarm_test.cc",
         "condition_variable_test.cc",
         "connection_info_test.cc",
         "count_down_latch_test.cc",
-        "credential_storage_impl_test.cc",
         "crypto_test.cc",
         "direct_executor_test.cc",
+        "file_test.cc",
         "future_test.cc",
-        "logging_test.cc",
         "multi_thread_executor_test.cc",
         "mutex_test.cc",
-        "pipe_test.cc",
         "scheduled_executor_test.cc",
         "single_thread_executor_test.cc",
         "task_runner_impl_test.cc",
         "timer_impl_test.cc",
         "uuid_test.cc",
-        "wifi_direct_test.cc",
-        "wifi_hotspot_test.cc",
-        "wifi_lan_connection_info_test.cc",
-        "wifi_lan_test.cc",
-        "wifi_test.cc",
-        "wifi_utils_test.cc",
     ],
-    copts = ["-DCORE_ADAPTER_DLL"],
     shard_count = 16,
     deps = [
         ":base",
@@ -470,16 +566,42 @@ cc_test(
         ":test_util",
         ":types",
         ":uuid",
+        "//internal/base:file_path",
+        "//internal/base:files",
+        "//internal/crypto_cros",
+        "//internal/flags:nearby_flags",
+        "//internal/platform/flags:platform_flags",
         "//internal/platform/implementation:comm",
-        "//internal/platform/implementation/g3",  # build_cleaner: keep
         "//internal/proto:credential_cc_proto",
+        "//internal/test",
         "//proto:connections_enums_cc_proto",
         "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:variant",
+        "@com_google_googletest//:gtest_main",
+    ] + select({
+        "@platforms//os:windows": [
+            "//internal/platform/implementation/windows",
+        ],
+        "//conditions:default": [
+            "//internal/platform/implementation/g3",
+        ],
+    }),
+)
+
+cc_test(
+    name = "mac_address_test",
+    srcs = ["mac_address_test.cc"],
+    deps = [
+        ":mac_address",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_googletest//:gtest_main",
     ],
 )

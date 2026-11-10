@@ -2,38 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-export type PdfOcrPrefCallback = chrome.pdfViewerPrivate.PdfOcrPrefCallback;
+// <if expr="enable_pdf_save_to_drive">
+type SaveRequestType = chrome.pdfViewerPrivate.SaveRequestType;
+// </if>
 
-// TODO(crbug.com/1302465): Move the other chrome.pdfViewerPrivate calls across
+// TODO(crbug.com/40825351): Move the other chrome.pdfViewerPrivate calls across
 // the PDF UI under this proxy.
 // `chrome.pdfViewerPrivate.isAllowedLocalFileAccess` is currently located in
 // `chrome/browser/resources/pdf/navigator.ts`.
 interface PdfViewerPrivateProxy {
-  isPdfOcrAlwaysActive(): Promise<boolean>;
-  setPdfOcrPref(value: boolean): Promise<boolean>;
-  addPdfOcrPrefChangedListener(listener: PdfOcrPrefCallback): void;
-  removePdfOcrPrefChangedListener(listener: PdfOcrPrefCallback): void;
+  // <if expr="enable_pdf_save_to_drive">
+  saveToDrive(saveRequestType: SaveRequestType): void;
+  // </if>
+  setPdfDocumentTitle(title: string): void;
 }
 
 export class PdfViewerPrivateProxyImpl implements PdfViewerPrivateProxy {
-  isPdfOcrAlwaysActive(): Promise<boolean> {
-    return new Promise(resolve => {
-      chrome.pdfViewerPrivate.isPdfOcrAlwaysActive(result => resolve(result));
-    });
+  // <if expr="enable_pdf_save_to_drive">
+  saveToDrive(saveRequestType: SaveRequestType): void {
+    chrome.pdfViewerPrivate.saveToDrive(saveRequestType);
   }
+  // </if>
 
-  setPdfOcrPref(value: boolean): Promise<boolean> {
-    return new Promise(resolve => {
-      chrome.pdfViewerPrivate.setPdfOcrPref(value, result => resolve(result));
-    });
-  }
-
-  addPdfOcrPrefChangedListener(listener: PdfOcrPrefCallback): void {
-    chrome.pdfViewerPrivate.onPdfOcrPrefChanged.addListener(listener);
-  }
-
-  removePdfOcrPrefChangedListener(listener: PdfOcrPrefCallback): void {
-    chrome.pdfViewerPrivate.onPdfOcrPrefChanged.removeListener(listener);
+  setPdfDocumentTitle(title: string): void {
+    chrome.pdfViewerPrivate.setPdfDocumentTitle(title);
   }
 
   static getInstance(): PdfViewerPrivateProxy {

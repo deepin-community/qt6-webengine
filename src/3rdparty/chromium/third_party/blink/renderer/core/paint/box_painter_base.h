@@ -8,8 +8,10 @@
 #include "third_party/blink/renderer/core/layout/background_bleed_avoidance.h"
 #include "third_party/blink/renderer/core/layout/geometry/box_sides.h"
 #include "third_party/blink/renderer/core/layout/geometry/box_strut.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_size.h"
+#include "third_party/blink/renderer/core/paint/paint_flags.h"
 #include "third_party/blink/renderer/core/style/style_image.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
+#include "third_party/blink/renderer/platform/geometry/physical_size.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -24,15 +26,14 @@ namespace blink {
 class BackgroundImageGeometry;
 class BoxBackgroundPaintContext;
 class ComputedStyle;
+class ContouredRect;
 class Document;
 class FillLayer;
-class FloatRoundedRect;
 class GraphicsContext;
 class ImageResourceObserver;
 class LayoutBox;
 class Node;
 struct PaintInfo;
-struct PhysicalOffset;
 struct PhysicalRect;
 
 // Base class for box painting. Has no dependencies on the layout tree and thus
@@ -122,7 +123,8 @@ class BoxPainterBase {
                   BackgroundBleedAvoidance,
                   PhysicalBoxSides sides_to_include,
                   bool is_inline,
-                  bool is_painting_background_in_contents_space);
+                  bool is_painting_background_in_contents_space,
+                  PaintFlags paint_flags);
 
     // FillLayerInfo is a temporary, stack-allocated container which cannot
     // outlive the StyleImage.  This would normally be a raw pointer, if not for
@@ -139,6 +141,7 @@ class BoxPainterBase {
     bool is_printing;
     bool should_paint_image;
     bool should_paint_color;
+    bool background_forced_to_white = false;
     // True if we paint background color off main thread, design doc here:
     // https://docs.google.com/document/d/1usCnwWs8HsH5FU_185q6MsrZehFmpl5QgbbB4pvHIjI/edit
     bool should_paint_color_with_paint_worklet_image;
@@ -166,10 +169,11 @@ class BoxPainterBase {
       const Color&,
       const FillLayer&,
       BackgroundBleedAvoidance,
-      bool is_painting_background_in_contents_space) const = 0;
+      bool is_painting_background_in_contents_space,
+      PaintFlags paint_flags) const = 0;
   static void PaintInsetBoxShadow(
       const PaintInfo&,
-      const FloatRoundedRect&,
+      const ContouredRect&,
       const ComputedStyle&,
       PhysicalBoxSides sides_to_include = PhysicalBoxSides());
 

@@ -15,10 +15,10 @@ static_library("safe_browsing_prefs") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   deps = [
-    ":common",
-    "//components/pref_registry:pref_registry",
+    ":features",
+    "//components/pref_registry",
     "//components/prefs",
-    "//net:net",
+    "//net",
   ]
 
   public_deps = [ "//base" ]
@@ -34,7 +34,7 @@ source_set("safe_browsing_policy_handler") {
 
   deps = [
     ":safe_browsing_prefs",
-    "//base:base",
+    "//base",
     "//components/policy:generated",
     "//components/policy/core/browser",
     "//components/prefs",
@@ -47,20 +47,20 @@ source_set("unit_tests") {
   sources = [
     "safe_browsing_policy_handler_unittest.cc",
     "safe_browsing_prefs_unittest.cc",
-    "utils_unittest.cc",
+    "scheme_logger_unittest.cc",
   ]
 
   deps = [
     ":common",
     ":safe_browsing_policy_handler",
     ":safe_browsing_prefs",
-    "//base:base",
+    "//base",
     "//base/test:test_support",
-    "//components/policy/core/browser:browser",
+    "//components/policy/core/browser",
     "//components/policy/core/browser:test_support",
     "//components/prefs:test_support",
     "//testing/gtest",
-    "//url:url",
+    "//url",
   ]
   if (is_ios) {
     deps += [ "//components/test:safe_browsing_test_bundle_data" ]
@@ -69,8 +69,6 @@ source_set("unit_tests") {
 
 source_set("common") {
   sources = [
-    "features.cc",
-    "features.h",
     "safe_browsing_settings_metrics.cc",
     "safe_browsing_settings_metrics.h",
     "safebrowsing_constants.cc",
@@ -78,6 +76,8 @@ source_set("common") {
     "safebrowsing_referral_methods.h",
     "safebrowsing_switches.cc",
     "safebrowsing_switches.h",
+    "scheme_logger.cc",
+    "scheme_logger.h",
     "utils.cc",
     "utils.h",
     "web_ui_constants.cc",
@@ -88,20 +88,39 @@ source_set("common") {
 
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
-    "//components/policy/core/browser:browser",
-    "//components/prefs:prefs",
+    "//components/policy/core/browser",
+    "//components/prefs",
     "//components/safe_browsing:buildflags",
+    "//components/safe_browsing/core/browser/db:hit_report",
     "//components/safe_browsing/core/common/proto:csd_proto",
+    "//components/security_interstitials/core:unsafe_resource",
     "//components/variations",
-    "//crypto:crypto",
+    "//crypto",
     "//ipc",
     "//net",
+    "//services/network/public/cpp",
     "//services/network/public/mojom",
     "//url/ipc:url_ipc",
   ]
 
-  public_deps = [ ":interfaces" ]
+  public_deps = [
+    ":features",
+    ":interfaces",
+  ]
+}
+
+source_set("features") {
+  sources = [
+    "features.cc",
+    "features.h",
+  ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
+  deps = [
+    "//base",
+    "//components/safe_browsing:buildflags",
+  ]
 }
 
 mojom("interfaces") {

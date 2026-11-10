@@ -32,6 +32,7 @@
 #include "services/metrics/public/cpp/ukm_recorder_client_interface_registry.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
+#include "third_party/metrics_proto/ukm/web_features.pb.h"
 #include "third_party/metrics_proto/user_demographics.pb.h"
 
 namespace ukm {
@@ -51,15 +52,7 @@ uint64_t GenerateAndStoreClientId(PrefService* pref_service) {
   return client_id;
 }
 
-uint64_t LoadOrGenerateAndStoreClientId(PrefService* pref_service,
-                                        uint64_t external_client_id) {
-  // If external_client_id is present, save to pref service for
-  // consistency purpose and return it as client id.
-  if (external_client_id) {
-    pref_service->SetUint64(prefs::kUkmClientId, external_client_id);
-    return external_client_id;
-  }
-
+uint64_t LoadOrGenerateAndStoreClientId(PrefService* pref_service) {
   uint64_t client_id = pref_service->GetUint64(prefs::kUkmClientId);
   // The pref is stored as a string and GetUint64() uses base::StringToUint64()
   // to convert it. base::StringToUint64() will treat a negative value as
@@ -120,7 +113,11 @@ void FilterReportElements(Predicate predicate,
   int entries_size = elements.size();
   int start = 0;
   int end = entries_size - 1;
-  while (start < end) {
+  // This loop ensures that everything to the left of start doesn't satisfy the
+  // predicate and everything to the right of end does. If start == end then we
+  // don't know if whether or predicate(elements.Get(start)) is true so the
+  // condition needs to be <=.
+  while (start <= end) {
     while (start < entries_size && !predicate(elements.Get(start))) {
       start++;
     }
@@ -129,6 +126,9 @@ void FilterReportElements(Predicate predicate,
     }
     if (start < end) {
       mutable_elements->SwapElements(start, end);
+      // Thanks to the swap predicate(elements.Get(start)) is now false and
+      // predicate(elements.Get(end)) is now true so it's safe unconditionally
+      // increment and decrement start and end respectively.
       start++;
       end--;
     }
@@ -138,7 +138,8 @@ void FilterReportElements(Predicate predicate,
 
 template <typename Predicate>
 void PurgeDataFromUnsentLogStore(metrics::UnsentLogStore* ukm_log_store,
-                                 Predicate source_purging_condition) {
+                                 Predicate source_purging_condition,
+                                 const std::string& current_version) {
   for (size_t index = 0; index < ukm_log_store->size(); index++) {
     // Decode log data from store back into a Report.
     Report report;
@@ -172,6 +173,21 @@ void PurgeDataFromUnsentLogStore(metrics::UnsentLogStore* ukm_log_store,
         },
         report.entries(), report.mutable_entries());
 
+    // Remove all web features data originating from these sources.
+    FilterReportElements(
+        [&](const HighLevelWebFeatures& element) {
+          return relevant_source_ids.count(element.source_id());
+        },
+        report.web_features(), report.mutable_web_features());
+
+    const bool app_version_changed =
+        report.system_profile().app_version() != current_version;
+    UMA_HISTOGRAM_BOOLEAN("UKM.AppVersionDifferentWhenPurging",
+                          app_version_changed);
+    if (app_version_changed) {
+      report.mutable_system_profile()->set_log_written_by_app_version(
+          current_version);
+    }
     std::string reserialized_log_data =
         UkmService::SerializeReportProtoToString(&report);
 
@@ -223,12 +239,10 @@ std::string UkmService::SerializeReportProtoToString(Report* report) {
 UkmService::UkmService(PrefService* pref_service,
                        metrics::MetricsServiceClient* client,
                        std::unique_ptr<metrics::UkmDemographicMetricsProvider>
-                           demographics_provider,
-                       uint64_t external_client_id)
+                           demographics_provider)
     : recorder_client_registry_(
           std::make_unique<metrics::UkmRecorderClientInterfaceRegistry>()),
       pref_service_(pref_service),
-      external_client_id_(external_client_id),
       client_(client),
       demographics_provider_(std::move(demographics_provider)),
       reporting_service_(client, pref_service),
@@ -250,9 +264,9 @@ UkmService::UkmService(PrefService* pref_service,
       get_upload_interval_callback =
           base::BindRepeating(&metrics::MetricsServiceClient::GetUploadInterval,
                               base::Unretained(client_));
-  bool fast_startup_for_testing = client_->ShouldStartUpFastForTesting();
+  bool fast_startup = client_->ShouldStartUpFast();
   scheduler_ = std::make_unique<UkmRotationScheduler>(
-      rotate_callback, fast_startup_for_testing, get_upload_interval_callback);
+      rotate_callback, fast_startup, get_upload_interval_callback);
   InitDecodeMap();
 
   DelegatingUkmRecorder::Get()->AddDelegate(self_ptr_factory_.GetWeakPtr());
@@ -274,8 +288,7 @@ void UkmService::Initialize() {
   if (client_->ShouldResetClientIdsOnClonedInstall()) {
     ResetClientState(ResetReason::kClonedInstall);
   } else {
-    client_id_ =
-        LoadOrGenerateAndStoreClientId(pref_service_, external_client_id_);
+    client_id_ = LoadOrGenerateAndStoreClientId(pref_service_);
     session_id_ = LoadAndIncrementSessionId(pref_service_);
   }
 
@@ -318,7 +331,7 @@ void UkmService::OnAppEnterForeground() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(DebuggingLogLevel::Medium) << "UkmService::OnAppEnterForeground";
 
-  reporting_service_.SetIsInForegound(true);
+  reporting_service_.OnAppEnterForeground();
 
   // If initialize_started_ is false, UKM has not yet been started, so bail. The
   // scheduler will instead be started via EnableReporting().
@@ -333,7 +346,7 @@ void UkmService::OnAppEnterBackground() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(DebuggingLogLevel::Medium) << "UkmService::OnAppEnterBackground";
 
-  reporting_service_.SetIsInForegound(false);
+  reporting_service_.OnAppEnterBackground();
 
   if (!initialize_started_) {
     return;
@@ -370,7 +383,8 @@ void UkmService::PurgeExtensionsData() {
   // Filter out any extension-related data from the serialized logs in the
   // UnsentLogStore for uploading, base on having kExtensionScheme URL scheme.
   PurgeDataFromUnsentLogStore(
-      reporting_service_.ukm_log_store(), [&](const Source& source) {
+      reporting_service_.ukm_log_store(),
+      [&](const Source& source) {
         // Check if any URL on the Source has the kExtensionScheme URL scheme.
         // It is possible that only one of multiple URLs does due to redirect,
         // in this case, we should still purge the source.
@@ -380,7 +394,8 @@ void UkmService::PurgeExtensionsData() {
           }
         }
         return false;
-      });
+      },
+      client_->GetVersionString());
 
   // Purge data currently in the recordings intended for the next
   // ukm::Report.
@@ -397,7 +412,8 @@ void UkmService::PurgeAppsData() {
   // For example, OS Settings is an ChromeOS app with "chrome://os-settings" as
   // its URL.
   PurgeDataFromUnsentLogStore(
-      reporting_service_.ukm_log_store(), [&](const Source& source) {
+      reporting_service_.ukm_log_store(),
+      [&](const Source& source) {
         if (GetSourceIdType(source.id()) == SourceIdType::APP_ID) {
           return true;
         }
@@ -407,7 +423,8 @@ void UkmService::PurgeAppsData() {
           }
         }
         return false;
-      });
+      },
+      client_->GetVersionString());
 
   // Purge data currently in the recordings intended for the next ukm::Report.
   UkmRecorderImpl::PurgeRecordingsWithUrlScheme(kAppScheme);
@@ -419,10 +436,12 @@ void UkmService::PurgeMsbbData() {
   // Filter out any MSBB-related data from the serialized logs in the
   // UnsentLogStore for uploading.
   PurgeDataFromUnsentLogStore(
-      reporting_service_.ukm_log_store(), [&](const Source& source) {
+      reporting_service_.ukm_log_store(),
+      [&](const Source& source) {
         return UkmRecorderImpl::GetConsentType(GetSourceIdType(source.id())) ==
                MSBB;
-      });
+      },
+      client_->GetVersionString());
 
   // Purge data currently in the recordings intended for the next ukm::Report.
   UkmRecorderImpl::PurgeRecordingsWithMsbbSources();
@@ -435,12 +454,7 @@ void UkmService::ResetClientState(ResetReason reason) {
 
   UMA_HISTOGRAM_ENUMERATION("UKM.ResetReason", reason);
 
-  if (external_client_id_) {
-    client_id_ = external_client_id_;
-    pref_service_->SetUint64(prefs::kUkmClientId, client_id_);
-  } else {
-    client_id_ = GenerateAndStoreClientId(pref_service_);
-  }
+  client_id_ = GenerateAndStoreClientId(pref_service_);
 
   // Note: the session_id has already been cleared by GenerateAndStoreClientId.
   session_id_ = LoadAndIncrementSessionId(pref_service_);
@@ -536,7 +550,8 @@ void UkmService::BuildAndStoreLog(
   metrics_providers_.ProvideCurrentSessionUKMData();
 
   // Suppress generating a log if we have no new data to include.
-  bool empty = sources().empty() && entries().empty();
+  bool empty =
+      sources().empty() && entries().empty() && webdx_features().empty();
   UMA_HISTOGRAM_BOOLEAN("UKM.BuildAndStoreLogIsEmpty", empty);
   if (empty) {
     DVLOG(DebuggingLogLevel::Rare) << "No local UKM data. No log created.";
@@ -575,6 +590,7 @@ void UkmService::BuildAndStoreLog(
 
   reporting_service_.ukm_log_store()->StoreLog(serialized_log, log_metadata,
                                                reason);
+  log_creation_time_ = base::TimeTicks::Now();
 }
 
 void UkmService::SetInitializationCompleteCallbackForTesting(

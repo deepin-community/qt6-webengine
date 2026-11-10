@@ -9,6 +9,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "base/check.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
@@ -106,14 +107,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // Encoding fails if the key is invalid or if the recursion depth is too much.
   // In prod, either of these cases will CHECK, but here we fail gracefully.
   std::string result;
-  if (!content::MaybeEncodeIDBKey(key, &result)) {
+  if (!content::indexed_db::MaybeEncodeIDBKey(key, &result)) {
     return 0;
   }
 
   // Ensure that |result| can be decoded back into the original key.
-  auto decoded_key = std::make_unique<IndexedDBKey>();
   auto result_str_view = std::string_view(result);
-  std::ignore = content::DecodeIDBKey(&result_str_view, &decoded_key);
-  assert(decoded_key->Equals(key));
+  CHECK(content::indexed_db::DecodeIDBKey(&result_str_view).Equals(key));
   return 0;
 }

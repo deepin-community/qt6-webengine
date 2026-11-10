@@ -28,11 +28,8 @@
 #ifndef SRC_TINT_LANG_MSL_WRITER_RAISE_RAISE_H_
 #define SRC_TINT_LANG_MSL_WRITER_RAISE_RAISE_H_
 
-#include <string>
-
 #include "src/tint/lang/msl/writer/common/options.h"
-#include "src/tint/utils/diagnostic/diagnostic.h"
-#include "src/tint/utils/result/result.h"
+#include "src/tint/utils/result.h"
 
 // Forward declarations
 namespace tint::core::ir {
@@ -41,11 +38,17 @@ class Module;
 
 namespace tint::msl::writer {
 
+/// The result of running Raise().
+struct RaiseResult {
+    /// `true` if the transformed module needs the storage buffer sizes UBO.
+    bool needs_storage_buffer_sizes = false;
+};
+
 /// Raise a core IR module to the MSL dialect of the IR.
 /// @param module the core IR module to raise to MSL dialect
 /// @param options the printer options
 /// @returns success or failure
-Result<SuccessType> Raise(core::ir::Module& module, const Options& options);
+Result<RaiseResult> Raise(core::ir::Module& module, const Options& options);
 
 }  // namespace tint::msl::writer
 

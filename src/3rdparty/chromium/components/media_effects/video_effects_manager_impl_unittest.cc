@@ -10,40 +10,40 @@
 #include "ui/gfx/geometry/insets_f.h"
 
 namespace {
-video_capture::mojom::VideoEffectsConfigurationPtr GetConfigurationSync(
-    mojo::Remote<video_capture::mojom::VideoEffectsManager>& effects_manager) {
-  base::test::TestFuture<video_capture::mojom::VideoEffectsConfigurationPtr>
+media::mojom::VideoEffectsConfigurationPtr GetConfigurationSync(
+    mojo::Remote<media::mojom::ReadonlyVideoEffectsManager>& effects_manager) {
+  base::test::TestFuture<media::mojom::VideoEffectsConfigurationPtr>
       output_configuration;
   effects_manager->GetConfiguration(output_configuration.GetCallback());
   return output_configuration.Take();
 }
 
 class ConfigurationObserverImpl
-    : public video_capture::mojom::VideoEffectsConfigurationObserver {
+    : public media::mojom::VideoEffectsConfigurationObserver {
+  using GetConfigChangesCallback =
+      base::RepeatingCallback<void(media::mojom::VideoEffectsConfigurationPtr)>;
+
  public:
   ConfigurationObserverImpl() : receiver_(this) {}
 
-  void OnConfigurationChanged(video_capture::mojom::VideoEffectsConfigurationPtr
-                                  configuration) override {
-    received_configurations_.push_back(configuration.Clone());
+  void OnConfigurationChanged(
+      media::mojom::VideoEffectsConfigurationPtr configuration) override {
+    on_get_config_changes_callback_.Run(configuration.Clone());
   }
 
-  mojo::PendingRemote<video_capture::mojom::VideoEffectsConfigurationObserver>
+  void SetOnGetConfigChangesCallback(GetConfigChangesCallback callback) {
+    on_get_config_changes_callback_ = std::move(callback);
+  }
+
+  mojo::PendingRemote<media::mojom::VideoEffectsConfigurationObserver>
   GetRemote() {
     return receiver_.BindNewPipeAndPassRemote();
   }
 
-  const std::vector<video_capture::mojom::VideoEffectsConfigurationPtr>&
-  received_configurations() {
-    return received_configurations_;
-  }
-
  private:
-  std::vector<video_capture::mojom::VideoEffectsConfigurationPtr>
-      received_configurations_;
+  GetConfigChangesCallback on_get_config_changes_callback_;
 
-  mojo::Receiver<video_capture::mojom::VideoEffectsConfigurationObserver>
-      receiver_;
+  mojo::Receiver<media::mojom::VideoEffectsConfigurationObserver> receiver_;
 };
 }  // namespace
 
@@ -56,11 +56,16 @@ class VideoEffectsManagerImplTest : public testing::Test {
                 &VideoEffectsManagerImplTest::OnLastReceiverDisconnected,
                 base::Unretained(this))) {}
 
-  mojo::Remote<video_capture::mojom::VideoEffectsManager>
+  mojo::Remote<media::mojom::ReadonlyVideoEffectsManager>
   GetEffectManagerRemote() {
-    mojo::Remote<video_capture::mojom::VideoEffectsManager> remote;
+    mojo::Remote<media::mojom::ReadonlyVideoEffectsManager> remote;
     effects_manager_.Bind(remote.BindNewPipeAndPassReceiver());
     return remote;
+  }
+
+  void SetConfiguration(
+      media::mojom::VideoEffectsConfigurationPtr configuration) {
+    effects_manager_.SetConfiguration(std::move(configuration));
   }
 
   void OnLastReceiverDisconnected() { ++last_receiver_disconnect_count_; }
@@ -77,16 +82,10 @@ TEST_F(VideoEffectsManagerImplTest, SetGetConfiguration) {
   auto remote = GetEffectManagerRemote();
 
   const float kPaddingRatio = 0.342;
-  base::test::TestFuture<video_capture::mojom::SetConfigurationResult>
-      result_future;
-  remote->SetConfiguration(
-      video_capture::mojom::VideoEffectsConfiguration::New(
-          nullptr, nullptr,
-          video_capture::mojom::Framing::New(gfx::InsetsF{kPaddingRatio})),
-      result_future.GetCallback());
+  SetConfiguration(media::mojom::VideoEffectsConfiguration::New(
+      nullptr, nullptr,
+      media::mojom::Framing::New(gfx::InsetsF{kPaddingRatio})));
 
-  EXPECT_EQ(video_capture::mojom::SetConfigurationResult::kOk,
-            result_future.Get());
   EXPECT_EQ(kPaddingRatio,
             GetConfigurationSync(remote)->framing->padding_ratios.top());
 }
@@ -95,24 +94,21 @@ TEST_F(VideoEffectsManagerImplTest, AddObserver) {
   auto remote = GetEffectManagerRemote();
 
   ConfigurationObserverImpl configuration_observer;
+
+  base::test::TestFuture<media::mojom::VideoEffectsConfigurationPtr>
+      result_future;
+  configuration_observer.SetOnGetConfigChangesCallback(
+      result_future.GetRepeatingCallback());
+
   remote->AddObserver(configuration_observer.GetRemote());
 
   for (const auto& padding_ratio :
        std::vector<float>{0.1, 0.2343, 0.3435, 0.38500}) {
-    base::test::TestFuture<video_capture::mojom::SetConfigurationResult>
-        result_future;
-    remote->SetConfiguration(
-        video_capture::mojom::VideoEffectsConfiguration::New(
-            nullptr, nullptr,
-            video_capture::mojom::Framing::New(gfx::InsetsF{padding_ratio})),
-        result_future.GetCallback());
+    SetConfiguration(media::mojom::VideoEffectsConfiguration::New(
+        nullptr, nullptr,
+        media::mojom::Framing::New(gfx::InsetsF{padding_ratio})));
 
-    EXPECT_EQ(video_capture::mojom::SetConfigurationResult::kOk,
-              result_future.Get());
-    EXPECT_EQ(padding_ratio, configuration_observer.received_configurations()
-                                 .back()
-                                 ->framing->padding_ratios.top());
+    EXPECT_EQ(padding_ratio,
+              result_future.Take()->framing->padding_ratios.top());
   }
-
-  EXPECT_EQ(4u, configuration_observer.received_configurations().size());
 }

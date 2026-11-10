@@ -9,12 +9,14 @@ import type * as Protocol from '../../generated/protocol.js';
 
 export interface ParsedErrorFrame {
   line: string;
+  isCallFrame?: boolean;
   link?: {
     url: Platform.DevToolsPath.UrlString,
     prefix: string,
     suffix: string,
+    enclosedInBraces: boolean,
     lineNumber?: number,
-    columnNumber?: number, enclosedInBraces: boolean,
+    columnNumber?: number,
     scriptId?: Protocol.Runtime.ScriptId,
   };
 }
@@ -30,7 +32,7 @@ export interface ParsedErrorFrame {
  */
 export function parseSourcePositionsFromErrorStack(
     runtimeModel: SDK.RuntimeModel.RuntimeModel, stack: string): ParsedErrorFrame[]|null {
-  if (!/^[\w.]*Error\b/.test(stack)) {
+  if (!(/\n\s*at\s/.test(stack) || stack.startsWith('SyntaxError:'))) {
     return null;
   }
   const debuggerModel = runtimeModel.debuggerModel();
@@ -41,13 +43,14 @@ export function parseSourcePositionsFromErrorStack(
   for (const line of lines) {
     const match = /^\s*at\s(async\s)?/.exec(line);
     if (!match) {
-      if (linkInfos.length && linkInfos[linkInfos.length - 1].link) {
+      if (linkInfos.length && linkInfos[linkInfos.length - 1].isCallFrame) {
         return null;
       }
       linkInfos.push({line});
       continue;
     }
 
+    const isCallFrame = true;
     let left = match[0].length;
     let right = line.length;
     let enclosedInBraces = false;
@@ -74,7 +77,12 @@ export function parseSourcePositionsFromErrorStack(
     const linkCandidate = line.substring(left, right);
     const splitResult = Common.ParsedURL.ParsedURL.splitLineAndColumn(linkCandidate);
     if (splitResult.url === '<anonymous>') {
-      linkInfos.push({line});
+      if (linkInfos.length && linkInfos[linkInfos.length - 1].isCallFrame && !linkInfos[linkInfos.length - 1].link) {
+        // Combine builtin frames.
+        linkInfos[linkInfos.length - 1].line += `\n${line}`;
+      } else {
+        linkInfos.push({line, isCallFrame});
+      }
       continue;
     }
     let url = parseOrScriptMatch(debuggerModel, splitResult.url);
@@ -87,6 +95,7 @@ export function parseSourcePositionsFromErrorStack(
 
     linkInfos.push({
       line,
+      isCallFrame,
       link: {
         url,
         prefix: line.substring(0, left),

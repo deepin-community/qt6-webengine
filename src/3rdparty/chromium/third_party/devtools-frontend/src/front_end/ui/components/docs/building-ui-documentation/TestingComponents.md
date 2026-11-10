@@ -33,14 +33,13 @@ it('outputs the user name onto the screen', async () => {
 If your component is implemented using the scheduled renderer, you will need to wait for the render to be complete before continuing with the test. Otherwise you may try to query the DOM before the component has finished rendering.
 
 ```ts
-import * as Coordinator from '../../../../../front_end/ui/components/render_coordinator/render_coordinator.js';
-const coordinator = Coordinator.RenderCoordinator.RenderCoordinator.instance();
+import * as RenderCoordinator from '../../../../../front_end/ui/components/render_coordinator/render_coordinator.js';
 
 it('outputs the user name onto the screen', async () => {
   const component = new DummyComponent();
   component.data = {name: 'Jack' /* whatever data the component needs */}
   renderElementIntoDOM(component);
-  await coordinator.done(); // Ensure the component is rendered onto the page.
+  await RenderCoordinator.done(); // Ensure the component is rendered onto the page.
 })
 ```
 
@@ -55,8 +54,8 @@ it('outputs the user name onto the screen', async () => {
   const component = new DummyComponent();
   component.data = {name: 'Jack' /* whatever data the component needs */}
   renderElementIntoDOM(component);
-  await coordinator.done();
-  assertShadowRoot(component.shadowRoot); // Check that the Shadow Root exists.
+  await RenderCoordinator.done();
+  assert.isNotNull(component.shadowRoot); // Check that the Shadow Root exists.
 })
 ```
 
@@ -67,8 +66,8 @@ it('outputs the user name onto the screen', async () => {
   const component = new DummyComponent();
   component.data = {name: 'Jack' /* whatever data the component needs */}
   renderElementIntoDOM(component);
-  await coordinator.done();
-  assertShadowRoot(component.shadowRoot);
+  await RenderCoordinator.done();
+  assert.isNotNull(component.shadowRoot);
   const name = component.shadowRoot.querySelector<HTMLElement>('span.name');
 })
 ```
@@ -77,7 +76,7 @@ Note that by default TypeScript will type the result as `Element|null`. Sometime
 
 ## Ensuring queries returned elements
 
-Any DOM querying API could return back `null` if the element was not found. You can use the `assertElement` method from `DOMHelpers.js` to ensure that if the element was not found, the test fails. This also satisfies TypeScript and (much like with the shadow root check earlier) avoids you having to continually code against the element not being found.
+Any DOM querying API could return back `null` if the element was not found. You can use the `assert.instanceOf` method from Chai to ensure that if the element was not found, the test fails. This also satisfies TypeScript and (much like with the shadow root check earlier) avoids you having to continually code against the element not being found.
 
 
 ```ts
@@ -85,10 +84,10 @@ it('outputs the user name onto the screen', async () => {
   const component = new DummyComponent();
   component.data = {name: 'Jack' /* whatever data the component needs */}
   renderElementIntoDOM(component);
-  await coordinator.done();
-  assertShadowRoot(component.shadowRoot);
+  await RenderCoordinator.done();
+  assert.isNotNull(component.shadowRoot);
   const name = component.shadowRoot.querySelector<HTMLElement>('span.name');
-  assertElement(name, HTMLSpanElement);
+  assert.instanceOf(name, HTMLSpanElement);
 })
 ```
 
@@ -101,10 +100,10 @@ it('outputs the user name onto the screen', async () => {
   const component = new DummyComponent();
   component.data = {name: 'Jack' /* whatever data the component needs */}
   renderElementIntoDOM(component);
-  await coordinator.done();
-  assertShadowRoot(component.shadowRoot);
+  await RenderCoordinator.done();
+  assert.isNotNull(component.shadowRoot);
   const name = component.shadowRoot.querySelector<HTMLElement>('span.name');
-  assertElement(name, HTMLSpanElement);
+  assert.instanceOf(name, HTMLSpanElement);
   assert.strictEqual(name.innerText, 'Jack');
 })
 ```

@@ -5,7 +5,10 @@
 #                      \___/_/\_\ .__/ \__,_|\__|
 #                               |_| XML parser
 #
-# Copyright (c) 2021-2022 Sebastian Pipping <sebastian@pipping.org>
+# Copyright (c) 2021-2025 Sebastian Pipping <sebastian@pipping.org>
+# Copyright (c) 2023      Joyce Brum <joycebrum@google.com>
+# Copyright (c) 2024      Dag-Erling Smørgrav <des@des.dev>
+# Copyright (c) 2026      Rosen Penev <rosenp@gmail.com>
 # Licensed under the MIT license:
 #
 # Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -34,6 +37,10 @@ on:
   push:
   schedule:
     - cron: '0 2 * * 5'  # Every Friday at 2am
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   checks:
@@ -42,27 +49,28 @@ jobs:
     env:
       CFLAGS: -g3 -pipe
     steps:
-    - uses: actions/checkout@v3.1.0
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
     - name: Install build dependencies
       run: |-
         set -x -u
         source /etc/os-release
 
-        sudo apt-get update
+        # Unlock 32bit architecture (for Wine further down)
+        sudo dpkg --add-architecture i386  # for wine32
+        sudo apt-get update  # due to new architecture
+
         sudo apt-get install --yes --no-install-recommends -V \
             cmake \
+            docbook-xml \
             docbook2x \
-            dos2unix \
             gcc-multilib \
             g++-multilib \
             lcov \
-            libbsd-dev \
             lzip \
-            moreutils
+            moreutils \
+            retry
 
         # Install 32bit Wine
-        sudo dpkg --add-architecture i386  # for wine32
-        sudo apt-get update  # due to new architecture
         sudo apt-get install --yes --no-install-recommends -V \
             mingw-w64 \
             wine-stable \
@@ -73,12 +81,11 @@ jobs:
     - name: Collect test coverage
       env:
         MODE: coverage-sh
-        TRAVIS_OS_NAME: linux
       run: |
-        exec ./.travis.sh
+        exec ./.ci.sh
 
     - name: Store coverage .info and HTML report
-      uses: actions/upload-artifact@v3.1.1
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: coverage
         path: expat/coverage__*/

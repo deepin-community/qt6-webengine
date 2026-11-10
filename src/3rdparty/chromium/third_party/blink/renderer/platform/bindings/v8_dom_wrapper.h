@@ -55,7 +55,7 @@ class V8DOMWrapper {
   PLATFORM_EXPORT static v8::Local<v8::Object> CreateWrapper(
       ScriptState*,
       const WrapperTypeInfo*);
-  PLATFORM_EXPORT static bool IsWrapper(v8::Isolate*, v8::Local<v8::Value>);
+  PLATFORM_EXPORT static bool IsWrapper(v8::Isolate*, v8::Local<v8::Object>);
 
   // Associates the given ScriptWrappable with the given |wrapper| if the
   // ScriptWrappable is not yet associated with any wrapper.  Returns the
@@ -68,37 +68,83 @@ class V8DOMWrapper {
                              v8::Local<v8::Object> wrapper);
   static void SetNativeInfo(v8::Isolate* isolate,
                             v8::Local<v8::Object> wrapper,
-                            const WrapperTypeInfo* wrapper_type_info,
                             ScriptWrappable* script_wrappable);
-  static void ClearNativeInfo(v8::Isolate*, v8::Local<v8::Object>);
 
-  // hasInternalFieldsSet only checks if the value has the internal fields for
-  // wrapper obejct and type, and does not check if it's valid or not.  The
-  // value may not be a Blink's wrapper object.  In order to make sure of it,
-  // Use isWrapper function instead.
-  PLATFORM_EXPORT static bool HasInternalFieldsSet(v8::Local<v8::Value>);
+  static void ClearNativeInfo(v8::Isolate*,
+                              v8::Local<v8::Object>,
+                              const WrapperTypeInfo*);
+
+  // Same as above but for v8::Context::Global(). It sets native info
+  // on JSGlobalProxy and its hidden prototype.
+  static void SetNativeInfoForGlobal(v8::Isolate* isolate,
+                                     v8::Local<v8::Object> wrapper,
+                                     ScriptWrappable* script_wrappable);
+
+  // Same as above but for v8::Context::Global(). It clears native info
+  // on JSGlobalProxy and its hidden prototype.
+  static void ClearNativeInfoForGlobal(v8::Isolate*,
+                                       v8::Local<v8::Object>,
+                                       const WrapperTypeInfo*);
+
+  // Checks that native info set on JSGlobalProxy and its hidden prototype
+  // are the same.
+  static bool CheckNativeInfoForGlobal(v8::Isolate*,
+                                       v8::Local<v8::Object>,
+                                       const WrapperTypeInfo*);
+
+  // HasInternalFieldsSet only checks if the value has the internal fields for
+  // wrapper object and type, and does not check if it's valid or not. The value
+  // may not be a Blink's wrapper object.  In order to make sure of it, use
+  // IsWrapper() instead.
+  PLATFORM_EXPORT static bool HasInternalFieldsSet(v8::Isolate*,
+                                                   v8::Local<v8::Object>);
 };
 
 inline void V8DOMWrapper::SetNativeInfo(
     v8::Isolate* isolate,
     v8::Local<v8::Object> wrapper,
-    const WrapperTypeInfo* wrapper_type_info,
     ScriptWrappable* wrappable) {
-  DCHECK_GE(wrapper->InternalFieldCount(), 2);
   DCHECK(wrappable);
-  DCHECK(wrapper_type_info);
-  int indices[] = {kV8DOMWrapperObjectIndex, kV8DOMWrapperTypeIndex};
-  void* values[] = {wrappable, const_cast<WrapperTypeInfo*>(wrapper_type_info)};
-  wrapper->SetAlignedPointerInInternalFields(std::size(indices), indices,
-                                             values);
+  DCHECK(!WrapperTypeInfo::HasLegacyInternalFieldsSet(wrapper));
+  v8::Object::Wrap(isolate, wrapper, wrappable,
+                   ToWrapperTypeInfo(wrappable)->this_tag);
 }
 
-inline void V8DOMWrapper::ClearNativeInfo(v8::Isolate* isolate,
-                                          v8::Local<v8::Object> wrapper) {
-  int indices[] = {kV8DOMWrapperObjectIndex, kV8DOMWrapperTypeIndex};
-  void* values[] = {nullptr, nullptr};
-  wrapper->SetAlignedPointerInInternalFields(std::size(indices), indices,
-                                             values);
+inline void V8DOMWrapper::ClearNativeInfo(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::Object::Wrap(isolate, wrapper, static_cast<ScriptWrappable*>(nullptr),
+                   wrapper_type_info->this_tag);
+}
+
+inline void V8DOMWrapper::SetNativeInfoForGlobal(v8::Isolate* isolate,
+                                                 v8::Local<v8::Object> wrapper,
+                                                 ScriptWrappable* wrappable) {
+  DCHECK(wrappable);
+  DCHECK(!WrapperTypeInfo::HasLegacyInternalFieldsSet(wrapper));
+  const WrapperTypeInfo* wrapper_type_info = ToWrapperTypeInfo(wrappable);
+  v8::Object::WrapGlobal(isolate, wrapper, wrappable,
+                         wrapper_type_info->this_tag);
+}
+
+inline void V8DOMWrapper::ClearNativeInfoForGlobal(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::Object::WrapGlobal(isolate, wrapper,
+                         static_cast<ScriptWrappable*>(nullptr),
+                         wrapper_type_info->this_tag);
+}
+
+inline bool V8DOMWrapper::CheckNativeInfoForGlobal(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::CppHeapPointerTagRange tag_range(wrapper_type_info->this_tag,
+                                       wrapper_type_info->max_subclass_tag);
+
+  return v8::Object::CheckGlobalWrappable(isolate, wrapper, tag_range);
 }
 
 inline v8::Local<v8::Object> V8DOMWrapper::AssociateObjectWithWrapper(
@@ -109,10 +155,10 @@ inline v8::Local<v8::Object> V8DOMWrapper::AssociateObjectWithWrapper(
   RUNTIME_CALL_TIMER_SCOPE(
       isolate, RuntimeCallStats::CounterId::kAssociateObjectWithWrapper);
   if (DOMDataStore::SetWrapper(isolate, impl, wrapper_type_info, wrapper)) {
-    SetNativeInfo(isolate, wrapper, wrapper_type_info, impl);
-    DCHECK(HasInternalFieldsSet(wrapper));
+    SetNativeInfo(isolate, wrapper, impl);
+    DCHECK(HasInternalFieldsSet(isolate, wrapper));
   }
-  SECURITY_CHECK(ToScriptWrappable(wrapper) == impl);
+  SECURITY_CHECK(ToAnyScriptWrappable(isolate, wrapper) == impl);
   return wrapper;
 }
 
@@ -126,7 +172,7 @@ class V8WrapperInstantiationScope final {
 
     // For performance, we enter the context only if the currently running
     // context is different from the context that we are about to enter.
-    if (LIKELY(context_for_wrapper == context_)) {
+    if (context_for_wrapper == context_) [[likely]] {
       return;
     }
 
@@ -136,7 +182,7 @@ class V8WrapperInstantiationScope final {
   }
 
   ~V8WrapperInstantiationScope() {
-    if (LIKELY(!did_enter_context_)) {
+    if (!did_enter_context_) [[likely]] {
       return;
     }
     context_->Exit();

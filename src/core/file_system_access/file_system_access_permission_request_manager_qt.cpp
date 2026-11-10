@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "file_system_access_permission_request_manager_qt.h"
 
@@ -17,17 +18,22 @@
 
 namespace QtWebEngineCore {
 
+// Based on chrome/browser/file_system_access/file_system_access_permission_request_manager.cc
+// Copyright 2019 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 bool RequestsAreIdentical(const FileSystemAccessPermissionRequestManagerQt::RequestData &a,
                           const FileSystemAccessPermissionRequestManagerQt::RequestData &b)
 {
-    return a.origin == b.origin && a.path == b.path && a.handle_type == b.handle_type
+    return a.origin == b.origin && a.pathInfo.path == b.pathInfo.path && a.handle_type == b.handle_type
             && a.access == b.access;
 }
 
 bool RequestsAreForSamePath(const FileSystemAccessPermissionRequestManagerQt::RequestData &a,
                             const FileSystemAccessPermissionRequestManagerQt::RequestData &b)
 {
-    return a.origin == b.origin && a.path == b.path && a.handle_type == b.handle_type;
+    return a.origin == b.origin && a.pathInfo.path == b.pathInfo.path && a.handle_type == b.handle_type;
 }
 
 struct FileSystemAccessPermissionRequestManagerQt::Request

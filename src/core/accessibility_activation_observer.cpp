@@ -1,9 +1,13 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "accessibility_activation_observer.h"
 
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
+#include "content/public/browser/scoped_accessibility_mode.h"
+
+using namespace Qt::StringLiterals;
 
 namespace QtWebEngineCore {
 
@@ -14,9 +18,8 @@ bool isAccessibilityEnabled() {
     // QTWEBENGINE_ENABLE_LINUX_ACCESSIBILITY environment variable to 0. For details,
     // see QTBUG-59922.
 #ifdef Q_OS_LINUX
-    static bool accessibility_enabled
-            = qEnvironmentVariable("QTWEBENGINE_ENABLE_LINUX_ACCESSIBILITY", QLatin1String("1"))
-                == QLatin1String("1");
+    static bool accessibility_enabled =
+            qEnvironmentVariable("QTWEBENGINE_ENABLE_LINUX_ACCESSIBILITY", u"1"_s) == "1"_L1;
 #else
     const bool accessibility_enabled = true;
 #endif
@@ -30,7 +33,7 @@ AccessibilityActivationObserver::AccessibilityActivationObserver()
     if (isAccessibilityEnabled()) {
         QAccessible::installActivationObserver(this);
         if (QAccessible::isActive())
-            content::BrowserAccessibilityStateImpl::GetInstance()->EnableAccessibility();
+            content::BrowserAccessibilityStateImpl::GetInstance()->SetActivationFromPlatformEnabled(true);
     }
 }
 
@@ -41,10 +44,12 @@ AccessibilityActivationObserver::~AccessibilityActivationObserver()
 
 void AccessibilityActivationObserver::accessibilityActiveChanged(bool active)
 {
-    if (active)
-        content::BrowserAccessibilityStateImpl::GetInstance()->EnableAccessibility();
-    else
-        content::BrowserAccessibilityStateImpl::GetInstance()->DisableAccessibility();
+    if (active) {
+        scoped_accessibility_mode_ =
+            content::BrowserAccessibilityStateImpl::GetInstance()->CreateScopedModeForProcess(ui::kAXModeComplete);
+    } else {
+        scoped_accessibility_mode_.reset();
+    }
 }
 
 } // namespace QtWebEngineCore

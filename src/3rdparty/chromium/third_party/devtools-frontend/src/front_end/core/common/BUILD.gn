@@ -4,6 +4,7 @@
 
 import("../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../scripts/build/ninja/devtools_module.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 
 ts_library("ColorUtils") {
   sources = [ "ColorUtils.ts" ]
@@ -20,9 +21,11 @@ devtools_module("common") {
     "Console.ts",
     "Debouncer.ts",
     "EventTarget.ts",
+    "Gzip.ts",
     "JavaScriptMetaData.ts",
     "Lazy.ts",
     "Linkifier.ts",
+    "MapWithDefault.ts",
     "Mutex.ts",
     "Object.ts",
     "ParsedURL.ts",
@@ -40,7 +43,6 @@ devtools_module("common") {
     "TextDictionary.ts",
     "Throttler.ts",
     "Trie.ts",
-    "WasmDisassembly.ts",
     "Worker.ts",
   ]
 
@@ -68,4 +70,44 @@ devtools_entrypoint("bundle") {
   ]
 
   visibility = [ "*" ]
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "Base64.test.ts",
+    "CharacterIdMap.test.ts",
+    "Color.test.ts",
+    "ColorConverter.test.ts",
+    "ColorUtils.test.ts",
+    "Console.test.ts",
+    "Debouncer.test.ts",
+    "EventTarget.test.ts",
+    "Gzip.test.ts",
+    "Lazy.test.ts",
+    "MapWithDefault.test.ts",
+    "Mutex.test.ts",
+    "Object.test.ts",
+    "ParsedURL.test.ts",
+    "Progress.test.ts",
+    "ResolverBase.test.ts",
+    "ResourceType.test.ts",
+    "Revealer.test.ts",
+    "SegmentedRange.test.ts",
+    "SettingRegistration.test.ts",
+    "Settings.test.ts",
+    "SimpleHistoryManager.test.ts",
+    "StringOutputStream.test.ts",
+    "TextDictionary.test.ts",
+    "Throttler.test.ts",
+    "Trie.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../testing",
+    "../../ui/legacy/components/quick_open:bundle",
+    "../i18n:bundle",
+  ]
 }

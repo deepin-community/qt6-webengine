@@ -4,6 +4,8 @@
 
 #include "extensions/renderer/bindings/api_binding_hooks.h"
 
+#include "base/debug/dump_without_crashing.h"
+#include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
@@ -14,10 +16,12 @@
 #include "extensions/renderer/bindings/js_runner.h"
 #include "gin/arguments.h"
 #include "gin/data_object_builder.h"
-#include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/per_context_data.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "gin/wrappable.h"
+#include "v8/include/cppgc/allocation.h"
+#include "v8/include/v8-cppgc.h"
 
 namespace extensions {
 
@@ -27,18 +31,23 @@ namespace {
 // Contains registered hooks for a single API.
 class JSHookInterface final : public gin::Wrappable<JSHookInterface> {
  public:
+  static constexpr gin::WrapperInfo kWrapperInfo = {
+      {gin::kEmbedderNativeGin},
+      gin::kJSHookInterface};
+
+  const gin::WrapperInfo* wrapper_info() const override { return &kWrapperInfo; }
+
   explicit JSHookInterface(const std::string& api_name)
       : api_name_(api_name) {}
 
   JSHookInterface(const JSHookInterface&) = delete;
   JSHookInterface& operator=(const JSHookInterface&) = delete;
 
-  static gin::WrapperInfo kWrapperInfo;
-
   // gin::Wrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
-      v8::Isolate* isolate) override {
-    return Wrappable<JSHookInterface>::GetObjectTemplateBuilder(isolate)
+      v8::Isolate* isolate) final {
+    return gin::Wrappable<JSHookInterface>::GetObjectTemplateBuilder(
+               isolate)
         .SetMethod("setHandleRequest", &JSHookInterface::SetHandleRequest)
         .SetMethod("setUpdateArgumentsPreValidate",
                    &JSHookInterface::SetUpdateArgumentsPreValidate)
@@ -94,7 +103,6 @@ class JSHookInterface final : public gin::Wrappable<JSHookInterface> {
     v8::Global<v8::Function>& entry = (*map)[qualified_method_name];
     if (!entry.IsEmpty()) {
       NOTREACHED() << "Hooks can only be set once.";
-      return;
     }
     entry.Reset(isolate, hook);
   }
@@ -137,7 +145,7 @@ class JSHookInterface final : public gin::Wrappable<JSHookInterface> {
 const char kExtensionAPIHooksPerContextKey[] = "extension_api_hooks";
 
 struct APIHooksPerContextData : public base::SupportsUserData::Data {
-  APIHooksPerContextData(v8::Isolate* isolate) : isolate(isolate) {}
+  explicit APIHooksPerContextData(v8::Isolate* isolate) : isolate(isolate) {}
   ~APIHooksPerContextData() override {
     v8::HandleScope scope(isolate);
     for (const auto& pair : hook_interfaces) {
@@ -151,7 +159,7 @@ struct APIHooksPerContextData : public base::SupportsUserData::Data {
     }
   }
 
-  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate;
+  raw_ptr<v8::Isolate> isolate;
 
   std::map<std::string, v8::Global<v8::Object>> hook_interfaces;
 
@@ -161,9 +169,6 @@ struct APIHooksPerContextData : public base::SupportsUserData::Data {
   using ActiveRequest = base::OnceCallback<void(bool, gin::Arguments*)>;
   std::map<int, ActiveRequest> active_requests;
 };
-
-gin::WrapperInfo JSHookInterface::kWrapperInfo =
-    {gin::kEmbedderNativeGin};
 
 // Gets the v8::Object of the JSHookInterface, optionally creating it if it
 // doesn't exist.
@@ -180,7 +185,7 @@ v8::Local<v8::Object> GetJSHookInterfaceObject(
       return v8::Local<v8::Object>();
 
     auto api_data =
-        std::make_unique<APIHooksPerContextData>(context->GetIsolate());
+        std::make_unique<APIHooksPerContextData>(v8::Isolate::GetCurrent());
     data = api_data.get();
     per_context_data->SetUserData(kExtensionAPIHooksPerContextKey,
                                   std::move(api_data));
@@ -188,16 +193,17 @@ v8::Local<v8::Object> GetJSHookInterfaceObject(
 
   auto iter = data->hook_interfaces.find(api_name);
   if (iter != data->hook_interfaces.end())
-    return iter->second.Get(context->GetIsolate());
+    return iter->second.Get(v8::Isolate::GetCurrent());
 
   if (!should_create)
     return v8::Local<v8::Object>();
 
-  gin::Handle<JSHookInterface> hooks =
-      gin::CreateHandle(context->GetIsolate(), new JSHookInterface(api_name));
-  CHECK(!hooks.IsEmpty());
-  v8::Local<v8::Object> hooks_object = hooks.ToV8().As<v8::Object>();
-  data->hook_interfaces[api_name].Reset(context->GetIsolate(), hooks_object);
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  auto* hooks = cppgc::MakeGarbageCollected<JSHookInterface>(
+      isolate->GetCppHeap()->GetAllocationHandle(), api_name);
+  v8::Local<v8::Object> hooks_object =
+      hooks->GetWrapper(isolate).ToLocalChecked();
+  data->hook_interfaces[api_name].Reset(isolate, hooks_object);
 
   return hooks_object;
 }
@@ -233,7 +239,8 @@ void CompleteHandleRequestHelper(
     // TODO(tjudkins): Audit existing handle request custom hooks to see if this
     // could happen in any of them. crbug.com/1298409 seemed to indicate this
     // was happening, hence why we fail gracefully here to avoid a crash.
-    NOTREACHED() << "No callback found for the specified request ID.";
+    LOG(ERROR) << "No callback found for the specified request ID.";
+    base::debug::DumpWithoutCrashing();
     return;
   }
   auto callback = std::move(iter->second);
@@ -282,7 +289,7 @@ void AddSuccessAndFailureCallbacks(
   // We store the callbacks to complete the requests in a map on the
   // APIHooksPerContextData associated with the request id.
   v8::Local<v8::Value> v8_request_id =
-      v8::Integer::New(context->GetIsolate(), request_details.request_id);
+      v8::Integer::New(v8::Isolate::GetCurrent(), request_details.request_id);
   gin::PerContextData* per_context_data = gin::PerContextData::From(context);
   DCHECK(per_context_data);
   APIHooksPerContextData* data = static_cast<APIHooksPerContextData*>(
@@ -372,7 +379,7 @@ APIBindingHooks::RequestResult APIBindingHooks::RunHooks(
                          std::move(result_modifier));
   }
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
 
   JSHookInterface* hook_interface = nullptr;
   gin::Converter<JSHookInterface*>::FromV8(
@@ -458,8 +465,8 @@ APIBindingHooks::RequestResult APIBindingHooks::RunHooks(
   // Safe to use synchronous JS since it's in direct response to JS calling
   // into the binding.
   v8::MaybeLocal<v8::Value> v8_result =
-      JSRunner::Get(context)->RunJSFunctionSync(
-          handle_request, context, arguments->size(), arguments->data());
+      JSRunner::Get(context)->RunJSFunctionSync(handle_request, context,
+                                                *arguments);
 
   if (!binding::IsContextValid(context))
     return RequestResult(RequestResult::CONTEXT_INVALIDATED);
@@ -485,7 +492,7 @@ void APIBindingHooks::CompleteHandleRequest(int request_id,
     request_handler_->CompleteRequest(request_id, arguments->GetAll(),
                                       /*error*/ std::string());
   } else {
-    CHECK(arguments->Length() == 1);
+    CHECK_EQ(arguments->Length(), 1);
     v8::Local<v8::Value> error = arguments->GetAll()[0];
     DCHECK(error->IsString());
 
@@ -532,22 +539,23 @@ bool APIBindingHooks::UpdateArguments(v8::Local<v8::Function> function,
                                       v8::Local<v8::Context> context,
                                       v8::LocalVector<v8::Value>* arguments) {
   v8::Local<v8::Value> result;
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   {
-    v8::TryCatch try_catch(context->GetIsolate());
+    v8::TryCatch try_catch(isolate);
     // Safe to use synchronous JS since it's in direct response to JS calling
     // into the binding.
     v8::MaybeLocal<v8::Value> maybe_result =
-        JSRunner::Get(context)->RunJSFunctionSync(
-            function, context, arguments->size(), arguments->data());
+        JSRunner::Get(context)->RunJSFunctionSync(function, context,
+                                                  *arguments);
     if (try_catch.HasCaught()) {
       try_catch.ReThrow();
       return false;
     }
     result = maybe_result.ToLocalChecked();
   }
-  v8::LocalVector<v8::Value> new_args(context->GetIsolate());
+  v8::LocalVector<v8::Value> new_args(isolate);
   if (result.IsEmpty() || !gin::Converter<v8::LocalVector<v8::Value>>::FromV8(
-                              context->GetIsolate(), result, &new_args)) {
+                              isolate, result, &new_args)) {
     return false;
   }
   arguments->swap(new_args);

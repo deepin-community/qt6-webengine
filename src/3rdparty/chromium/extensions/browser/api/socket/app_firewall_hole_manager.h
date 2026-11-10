@@ -9,6 +9,7 @@
 
 #include <map>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chromeos/components/firewall_hole/firewall_hole.h"
@@ -38,7 +39,7 @@ class AppFirewallHole {
   AppFirewallHole(const base::WeakPtr<AppFirewallHoleManager>& manager,
                   chromeos::FirewallHole::PortType type,
                   uint16_t port,
-                  const std::string& extension_id);
+                  const ExtensionId& extension_id);
 
   void SetVisible(bool app_visible);
   void OnFirewallHoleOpened(
@@ -73,7 +74,7 @@ class AppFirewallHoleManager : public KeyedService,
   // currently visible.
   std::unique_ptr<AppFirewallHole> Open(chromeos::FirewallHole::PortType type,
                                         uint16_t port,
-                                        const std::string& extension_id);
+                                        const ExtensionId& extension_id);
 
   static void EnsureFactoryBuilt();
 
@@ -90,7 +91,8 @@ class AppFirewallHoleManager : public KeyedService,
   raw_ptr<content::BrowserContext> context_;
   base::ScopedObservation<AppWindowRegistry, AppWindowRegistry::Observer>
       observation_{this};
-  std::multimap<std::string, AppFirewallHole*> tracked_holes_;
+  std::multimap<ExtensionId, raw_ptr<AppFirewallHole, CtnExperimental>>
+      tracked_holes_;
 
   base::WeakPtrFactory<AppFirewallHoleManager> weak_factory_{this};
 };

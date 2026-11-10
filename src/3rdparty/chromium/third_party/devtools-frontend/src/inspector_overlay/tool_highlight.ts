@@ -28,7 +28,6 @@
 //  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 //  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// eslint-disable-next-line rulesdir/es_modules_import
 import {
   contrastRatio,
   contrastRatioAPCA,
@@ -37,31 +36,27 @@ import {
 } from '../front_end/core/common/ColorUtils.js';
 
 import {
+  type Bounds,
   constrainNumber,
   createChild,
   createElement,
   createTextChild,
   ellipsify,
   Overlay,
-  type Bounds,
   type PathCommands,
   type ResetData,
 } from './common.js';
-
 import {drawPath, emptyBounds, formatColor, formatRgba, type PathBounds} from './highlight_common.js';
-
+import {type ContainerQueryHighlight, drawContainerQueryHighlight} from './highlight_container_query.js';
 import {
   drawLayoutFlexContainerHighlight,
   drawLayoutFlexItemHighlight,
   type FlexContainerHighlight,
   type FlexItemHighlight,
 } from './highlight_flex_common.js';
-
 import {drawLayoutGridHighlight, type GridHighlight} from './highlight_grid_common.js';
-import {type ScrollSnapHighlight} from './highlight_scroll_snap.js';
-
-import {drawContainerQueryHighlight, type ContainerQueryHighlight} from './highlight_container_query.js';
-import {type IsolatedElementHighlight} from './highlight_isolated_element.js';
+import type {IsolatedElementHighlight} from './highlight_isolated_element.js';
+import type {ScrollSnapHighlight} from './highlight_scroll_snap.js';
 import {PersistentOverlay} from './tool_persistent.js';
 
 type ColorRgba = [number, number, number, number];
@@ -96,9 +91,7 @@ export interface ElementInfo {
   nodeHeight: number;
   isLocked: boolean;
   isLockedAncestor: boolean;
-  style: {
-    [key: string]: string|undefined,
-  }&{
+  style: Record<string, string|undefined>&{
     'color-unclamped-rgba'?: ColorRgba,
     'background-color-unclamped-rgba'?: ColorRgba,
   };
@@ -227,8 +220,7 @@ export class HighlightOverlay extends Overlay {
 
     if (highlight.flexInfo) {
       for (const flex of highlight.flexInfo) {
-        drawLayoutFlexContainerHighlight(
-            flex, this.context, this.deviceScaleFactor, this.canvasWidth, this.canvasHeight, this.emulationScaleFactor);
+        drawLayoutFlexContainerHighlight(flex, this.context, this.emulationScaleFactor);
       }
     }
 
@@ -250,14 +242,12 @@ export class HighlightOverlay extends Overlay {
         if (!path) {
           continue;
         }
-        drawLayoutFlexItemHighlight(
-            flexItem, path, this.context, this.deviceScaleFactor, this.canvasWidth, this.canvasHeight,
-            this.emulationScaleFactor);
+        drawLayoutFlexItemHighlight(flexItem, path, this.context, this.emulationScaleFactor);
       }
     }
     this.context.restore();
 
-    return {bounds: bounds};
+    return {bounds};
   }
 
   drawGridHighlight(highlight: GridHighlight) {
@@ -425,15 +415,15 @@ const gridBackgroundColor = 'rgba(255, 255, 255, 0.8)';
 
 /**
  * Determine the layout type of the highlighted element based on the config.
- * @param {Object} elementInfo The element information, part of the config object passed to drawHighlight
- * @return {String|null} The layout type of the object, or null if none was found
+ * @param elementInfo - The element information, part of the config object passed to drawHighlight
+ * @returns The layout type of the object, or null if none was found
  */
 function getElementLayoutType(elementInfo: ElementInfo): string|null {
-  if (elementInfo.layoutObjectName && elementInfo.layoutObjectName.endsWith('Grid')) {
+  if (elementInfo.layoutObjectName?.endsWith('Grid')) {
     return 'grid';
   }
 
-  if (elementInfo.layoutObjectName && elementInfo.layoutObjectName.endsWith('FlexibleBox')) {
+  if (elementInfo.layoutObjectName?.endsWith('FlexibleBox')) {
     return 'flex';
   }
 
@@ -602,11 +592,11 @@ export function createElementDescription(elementInfo: ElementInfo, colorFormat: 
 }
 
 /**
- * @param {Object} elementInfo The highlight config object passed to drawHighlight
- * @param {String} colorFormat
- * @param {Object} bounds
- * @param {number} canvasWidth
- * @param {number} canvasHeight
+ * @param elementInfo - The highlight config object passed to drawHighlight
+ * @param colorFormat
+ * @param bounds
+ * @param canvasWidth
+ * @param canvasHeight
  */
 function drawElementTitle(
     elementInfo: ElementInfo, colorFormat: string, bounds: Bounds, canvasWidth: number, canvasHeight: number) {

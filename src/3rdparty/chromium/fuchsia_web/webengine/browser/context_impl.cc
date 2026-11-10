@@ -7,6 +7,7 @@
 #include <lib/fpromise/result.h>
 #include <lib/zx/channel.h>
 #include <lib/zx/handle.h>
+
 #include <memory>
 #include <utility>
 
@@ -56,7 +57,7 @@ ContextImpl::~ContextImpl() {
 
 void ContextImpl::DestroyFrame(FrameImpl* frame) {
   auto iter = frames_.find(frame);
-  DCHECK(iter != frames_.end());
+  CHECK(iter != frames_.end());
   frames_.erase(iter);
 }
 

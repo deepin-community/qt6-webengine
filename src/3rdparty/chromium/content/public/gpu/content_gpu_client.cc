@@ -6,6 +6,7 @@
 
 namespace content {
 
+#if BUILDFLAG(IS_ANDROID)
 gpu::SyncPointManager* ContentGpuClient::GetSyncPointManager() {
   return nullptr;
 }
@@ -23,8 +24,10 @@ ContentGpuClient::GetVizCompositorThreadRunner() {
   return nullptr;
 }
 
-gl::GLShareGroup* ContentGpuClient::GetInProcessGpuShareGroup() {
+const gpu::SharedContextState::GrContextOptionsProvider*
+ContentGpuClient::GetGrContextOptionsProvider() {
   return nullptr;
 }
+#endif
 
 }  // namespace content

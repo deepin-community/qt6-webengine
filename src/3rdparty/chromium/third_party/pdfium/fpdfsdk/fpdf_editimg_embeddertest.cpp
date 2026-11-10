@@ -40,9 +40,10 @@ TEST_F(PDFEditImgTest, NewImageObjGenerateContent) {
   ScopedFPDFPage page(FPDFPage_New(doc.get(), 0, 100, 100));
   EXPECT_EQ(0, FPDFPage_CountObjects(page.get()));
 
-  constexpr int kBitmapSize = 50;
+  static constexpr int kBitmapSize = 50;
   ScopedFPDFBitmap bitmap(FPDFBitmap_Create(kBitmapSize, kBitmapSize, 0));
-  FPDFBitmap_FillRect(bitmap.get(), 0, 0, kBitmapSize, kBitmapSize, 0x00000000);
+  ASSERT_TRUE(FPDFBitmap_FillRect(bitmap.get(), 0, 0, kBitmapSize, kBitmapSize,
+                                  0x00000000));
   EXPECT_EQ(kBitmapSize, FPDFBitmap_GetWidth(bitmap.get()));
   EXPECT_EQ(kBitmapSize, FPDFBitmap_GetHeight(bitmap.get()));
 
@@ -60,8 +61,8 @@ TEST_F(PDFEditImgTest, NewImageObjGenerateContent) {
 
 TEST_F(PDFEditImgTest, NewImageObjLoadJpeg) {
   CreateEmptyDocumentWithoutFormFillEnvironment();
-  constexpr int kPageWidth = 200;
-  constexpr int kPageHeight = 200;
+  static constexpr int kPageWidth = 200;
+  static constexpr int kPageHeight = 200;
   ScopedFPDFPage page(FPDFPage_New(document(), 0, kPageWidth, kPageHeight));
   ASSERT_TRUE(page);
 
@@ -73,8 +74,8 @@ TEST_F(PDFEditImgTest, NewImageObjLoadJpeg) {
   EXPECT_TRUE(
       FPDFImageObj_LoadJpegFile(&temp_page, 1, image.get(), &file_access));
 
-  constexpr int kImageWidth = 120;
-  constexpr int kImageHeight = 120;
+  static constexpr int kImageWidth = 120;
+  static constexpr int kImageHeight = 120;
   const char kImageChecksum[] = "58589c36b3b27a0058f5ca1fbed4d5e5";
   const char kPageChecksum[] = "52b3a852f39c5fa9143e59d805dcb343";
   {
@@ -97,8 +98,8 @@ TEST_F(PDFEditImgTest, NewImageObjLoadJpeg) {
 
 TEST_F(PDFEditImgTest, NewImageObjLoadJpegInline) {
   CreateEmptyDocumentWithoutFormFillEnvironment();
-  constexpr int kPageWidth = 200;
-  constexpr int kPageHeight = 200;
+  static constexpr int kPageWidth = 200;
+  static constexpr int kPageHeight = 200;
   ScopedFPDFPage page(FPDFPage_New(document(), 0, kPageWidth, kPageHeight));
   ASSERT_TRUE(page);
 
@@ -110,8 +111,8 @@ TEST_F(PDFEditImgTest, NewImageObjLoadJpegInline) {
   EXPECT_TRUE(FPDFImageObj_LoadJpegFileInline(&temp_page, 1, image.get(),
                                               &file_access));
 
-  constexpr int kImageWidth = 120;
-  constexpr int kImageHeight = 120;
+  static constexpr int kImageWidth = 120;
+  static constexpr int kImageHeight = 120;
   const char kImageChecksum[] = "58589c36b3b27a0058f5ca1fbed4d5e5";
   const char kPageChecksum[] = "52b3a852f39c5fa9143e59d805dcb343";
   {
@@ -172,4 +173,119 @@ TEST_F(PDFEditImgTest, GetSetImageMatrix) {
   EXPECT_FLOAT_EQ(4.0f, matrix.d);
   EXPECT_FLOAT_EQ(5.0f, matrix.e);
   EXPECT_FLOAT_EQ(6.0f, matrix.f);
+}
+
+TEST_F(PDFEditImgTest, Bug2132) {
+  static constexpr int kExpectedWidth = 200;
+  static constexpr int kExpectedHeight = 300;
+  static constexpr char kExpectedChecksum[] =
+      "617b1d57c30c516beee86e0781ff7810";
+
+  ASSERT_TRUE(OpenDocument("bug_2132.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  FPDF_PAGEOBJECT image = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_TRUE(image);
+  ASSERT_EQ(FPDF_PAGEOBJ_IMAGE, FPDFPageObj_GetType(image));
+
+  FS_MATRIX matrix;
+  ASSERT_TRUE(FPDFPageObj_GetMatrix(image, &matrix));
+  EXPECT_FLOAT_EQ(60.0f, matrix.a);
+  EXPECT_FLOAT_EQ(0.0f, matrix.b);
+  EXPECT_FLOAT_EQ(0.0f, matrix.c);
+  EXPECT_FLOAT_EQ(30.0f, matrix.d);
+  EXPECT_FLOAT_EQ(0.0f, matrix.e);
+  EXPECT_FLOAT_EQ(270.0f, matrix.f);
+
+  ASSERT_TRUE(FPDFPageObj_SetMatrix(image, &matrix));
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  VerifySavedDocument(kExpectedWidth, kExpectedHeight, kExpectedChecksum);
+}
+
+TEST_F(PDFEditImgTest, GetAndSetMatrixForFormWithImage) {
+  static constexpr int kExpectedWidth = 200;
+  static constexpr int kExpectedHeight = 300;
+  static constexpr char kExpectedChecksum[] =
+      "fcb9007fd901d2052e2bd1c147b82800";
+
+  ASSERT_TRUE(OpenDocument("form_object_with_image.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  FPDF_PAGEOBJECT form = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_TRUE(form);
+  ASSERT_EQ(FPDF_PAGEOBJ_FORM, FPDFPageObj_GetType(form));
+
+  FS_MATRIX matrix;
+  ASSERT_TRUE(FPDFPageObj_GetMatrix(form, &matrix));
+  EXPECT_FLOAT_EQ(60.0f, matrix.a);
+  EXPECT_FLOAT_EQ(0.0f, matrix.b);
+  EXPECT_FLOAT_EQ(0.0f, matrix.c);
+  EXPECT_FLOAT_EQ(30.0f, matrix.d);
+  EXPECT_FLOAT_EQ(0.0f, matrix.e);
+  EXPECT_FLOAT_EQ(270.0f, matrix.f);
+
+  ASSERT_TRUE(FPDFPageObj_SetMatrix(form, &matrix));
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  FPDF_PAGEOBJECT image = FPDFFormObj_GetObject(form, 0);
+  ASSERT_TRUE(image);
+  ASSERT_EQ(FPDF_PAGEOBJ_IMAGE, FPDFPageObj_GetType(image));
+
+  ASSERT_TRUE(FPDFPageObj_GetMatrix(image, &matrix));
+  EXPECT_FLOAT_EQ(1.0f, matrix.a);
+  EXPECT_FLOAT_EQ(0.0f, matrix.b);
+  EXPECT_FLOAT_EQ(0.0f, matrix.c);
+  EXPECT_FLOAT_EQ(1.0f, matrix.d);
+  EXPECT_FLOAT_EQ(1.0f, matrix.e);
+  EXPECT_FLOAT_EQ(0.0f, matrix.f);
+
+  ASSERT_TRUE(FPDFPageObj_SetMatrix(image, &matrix));
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+  {
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
+    CompareBitmap(bitmap.get(), kExpectedWidth, kExpectedHeight,
+                  kExpectedChecksum);
+  }
+
+  VerifySavedDocument(kExpectedWidth, kExpectedHeight, kExpectedChecksum);
 }

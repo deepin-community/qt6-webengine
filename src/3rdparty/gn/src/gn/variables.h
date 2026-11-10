@@ -158,22 +158,6 @@ extern const char kCheckIncludes[];
 extern const char kCheckIncludes_HelpShort[];
 extern const char kCheckIncludes_Help[];
 
-extern const char kCodeSigningArgs[];
-extern const char kCodeSigningArgs_HelpShort[];
-extern const char kCodeSigningArgs_Help[];
-
-extern const char kCodeSigningOutputs[];
-extern const char kCodeSigningOutputs_HelpShort[];
-extern const char kCodeSigningOutputs_Help[];
-
-extern const char kCodeSigningScript[];
-extern const char kCodeSigningScript_HelpShort[];
-extern const char kCodeSigningScript_Help[];
-
-extern const char kCodeSigningSources[];
-extern const char kCodeSigningSources_HelpShort[];
-extern const char kCodeSigningSources_Help[];
-
 extern const char kCompleteStaticLib[];
 extern const char kCompleteStaticLib_HelpShort[];
 extern const char kCompleteStaticLib_Help[];
@@ -278,6 +262,10 @@ extern const char kPostProcessingArgs[];
 extern const char kPostProcessingArgs_HelpShort[];
 extern const char kPostProcessingArgs_Help[];
 
+extern const char kPostProcessingManifest[];
+extern const char kPostProcessingManifest_HelpShort[];
+extern const char kPostProcessingManifest_Help[];
+
 extern const char kPostProcessingOutputs[];
 extern const char kPostProcessingOutputs_HelpShort[];
 extern const char kPostProcessingOutputs_Help[];
@@ -346,6 +334,10 @@ extern const char kTestonly[];
 extern const char kTestonly_HelpShort[];
 extern const char kTestonly_Help[];
 
+extern const char kLFlagsRemovePattern[];
+extern const char kLFlagsRemovePattern_HelpShort[];
+extern const char kLFlagsRemovePattern_Help[];
+
 extern const char kRspTypes[];
 extern const char kRspTypes_HelpShort[];
 extern const char kRspTypes_Help[];
@@ -377,6 +369,10 @@ extern const char kWriteRuntimeDeps_Help[];
 extern const char kXcodeExtraAttributes[];
 extern const char kXcodeExtraAttributes_HelpShort[];
 extern const char kXcodeExtraAttributes_Help[];
+
+extern const char kTargetXcodePlatform[];
+extern const char kTargetXcodePlatform_HelpShort[];
+extern const char kTargetXcodePlatform_Help[];
 
 extern const char kGenDeps[];
 extern const char kGenDeps_HelpShort[];

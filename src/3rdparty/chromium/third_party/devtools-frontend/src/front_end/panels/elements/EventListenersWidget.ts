@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 /*
  * Copyright (C) 2007 Apple Inc.  All rights reserved.
@@ -71,14 +72,14 @@ const UIStrings = {
    *@description Tooltip text that appears on the setting when hovering over it in Event Listeners Widget of the Elements panel
    */
   resolveEventListenersBoundWith: 'Resolve event listeners bound with framework',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/elements/EventListenersWidget.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 let eventListenersWidgetInstance: EventListenersWidget;
 
 export class EventListenersWidget extends UI.ThrottledWidget.ThrottledWidget implements UI.Toolbar.ItemsProvider {
-  private readonly toolbarItemsInternal: (UI.Toolbar.ToolbarButton|UI.Toolbar.ToolbarSettingCheckbox|
-                                          UI.Toolbar.ToolbarComboBox)[];
+  private readonly toolbarItemsInternal:
+      Array<UI.Toolbar.ToolbarButton|UI.Toolbar.ToolbarSettingCheckbox|UI.Toolbar.ToolbarComboBox>;
   private showForAncestorsSetting: Common.Settings.Setting<boolean>;
   private readonly dispatchFilterBySetting: Common.Settings.Setting<string>;
   private readonly showFrameworkListenersSetting: Common.Settings.Setting<boolean>;
@@ -89,22 +90,23 @@ export class EventListenersWidget extends UI.ThrottledWidget.ThrottledWidget imp
     super();
     this.toolbarItemsInternal = [];
 
-    this.showForAncestorsSetting = Common.Settings.Settings.instance().moduleSetting('showEventListenersForAncestors');
+    this.showForAncestorsSetting =
+        Common.Settings.Settings.instance().moduleSetting('show-event-listeners-for-ancestors');
     this.showForAncestorsSetting.addChangeListener(this.update.bind(this));
 
     this.dispatchFilterBySetting =
-        Common.Settings.Settings.instance().createSetting('eventListenerDispatchFilterType', DispatchFilterBy.All);
+        Common.Settings.Settings.instance().createSetting('event-listener-dispatch-filter-type', DispatchFilterBy.All);
     this.dispatchFilterBySetting.addChangeListener(this.update.bind(this));
 
     this.showFrameworkListenersSetting =
-        Common.Settings.Settings.instance().createSetting('showFrameowkrListeners', true);
+        Common.Settings.Settings.instance().createSetting('show-frameowkr-listeners', true);
     this.showFrameworkListenersSetting.setTitle(i18nString(UIStrings.frameworkListeners));
     this.showFrameworkListenersSetting.addChangeListener(this.showFrameworkListenersChanged.bind(this));
     this.eventListenersView = new EventListeners.EventListenersView.EventListenersView(this.update.bind(this));
     this.eventListenersView.show(this.element);
-    this.element.setAttribute('jslog', `${VisualLogging.pane().context('event-listeners')}`);
+    this.element.setAttribute('jslog', `${VisualLogging.pane('elements.event-listeners').track({resize: true})}`);
 
-    this.toolbarItemsInternal.push(UI.Toolbar.Toolbar.createActionButtonForId('elements.refresh-event-listeners'));
+    this.toolbarItemsInternal.push(UI.Toolbar.Toolbar.createActionButton('elements.refresh-event-listeners'));
     this.toolbarItemsInternal.push(new UI.Toolbar.ToolbarSettingCheckbox(
         this.showForAncestorsSetting, i18nString(UIStrings.showListenersOnTheAncestors),
         i18nString(UIStrings.ancestors)));

@@ -10,7 +10,9 @@
 
 #include <stddef.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "base/containers/queue.h"
 #include "base/feature_list.h"
@@ -18,7 +20,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/types/pass_key.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 class URLRequest;
@@ -51,23 +52,23 @@ class SlopBucket final {
   // value from Read() if a Read() was attempted. If the return value was
   // ERR_IO_PENDING, then OnReadCompleted() should be called later when the
   // URLRequest calls OnReadCompleted() on its Delegate. If the return value is
-  // absl::nullopt then there was no bucket available to read into, and Read()
+  // std::nullopt then there was no bucket available to read into, and Read()
   // was *not* attempted. Should not be called if read_in_progress() or
   // IsComplete() are true.
-  absl::optional<int> AttemptRead();
+  std::optional<int> AttemptRead();
 
   // When a read completes and read_in_progress() is true, the SlopBucket object
   // must be informed by passing the value of `bytes_read` to this function.
   void OnReadCompleted(int bytes_read);
 
-  // Writes up to `max` cached bytes into `buffer`, and returns the number of
-  // bytes written. The bytes will be removed from the bucket. If the return
+  // Writes up cached bytes into `buffer` up to its size, and returns the number
+  // of bytes written. The bytes will be removed from the bucket. If the return
   // value is zero, then the bucket was empty. If the return value is less than
-  // `max`, then the bucket is now empty. Once the bucket is empty it will not
-  // become non-empty until there is another call to AttemptRead() or
-  // OnReadCompleted(). If the return value is `max`, there may or may not still
-  // be bytes remaining in the bucket.
-  size_t Consume(void* buffer, size_t max);
+  // `buffer.size()`, then the bucket is now empty. Once the bucket is empty it
+  // will not become non-empty until there is another call to AttemptRead() or
+  // OnReadCompleted(). If the return value is `buffer.size`, there may or may
+  // not still be bytes remaining in the bucket.
+  size_t Consume(base::span<uint8_t> buffer);
 
   // True if we are currently reading from `request_`.
   bool read_in_progress() const { return read_in_progress_; }
@@ -92,7 +93,7 @@ class SlopBucket final {
 
   // To make it easy for the compiler to optimize, the part of Consume() that
   // copies data is split off into a separate method.
-  size_t ConsumeSlowPath(void* buffer, size_t max)
+  size_t ConsumeSlowPath(base::span<uint8_t> buffer)
       VALID_CONTEXT_REQUIRED(sequence_checker_);
 
   // Attempts to allocates a new chunk. On success, the new chunk is pushed onto
@@ -111,7 +112,7 @@ class SlopBucket final {
   // If we saw the final read from the URLRequest, the value it returned. This
   // will be either 0 if the response body was read successfully, or a
   // net::Error code.
-  absl::optional<int> completion_code_;
+  std::optional<int> completion_code_;
 
   // True if we are currently performing an async read.
   bool read_in_progress_ = false;

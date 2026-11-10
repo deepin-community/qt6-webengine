@@ -9,11 +9,13 @@
 #include <tuple>
 #include <utility>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/no_destructor.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "third_party/skia/include/core/SkClipOp.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPoint.h"
 #include "third_party/skia/include/core/SkRRect.h"
@@ -21,6 +23,7 @@
 #include "third_party/skia/include/core/SkScalar.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/color/color_variant.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/rect.h"
@@ -31,7 +34,9 @@
 #include "ui/gfx/shadow_value.h"
 #include "ui/gfx/skia_paint_util.h"
 #include "ui/views/bubble/bubble_border_arrow_utils.h"
+#include "ui/views/metadata/type_conversion.h"
 #include "ui/views/view.h"
+#include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow_controller.h"
 
 namespace views {
@@ -72,7 +77,6 @@ ui::Shadow::ElevationToColorsMap ShadowElevationToColorsMap(
 #endif
       default:
         NOTREACHED() << "Invalid bubble border shadow type.";
-        break;
     }
   }
 
@@ -83,7 +87,7 @@ ui::Shadow::ElevationToColorsMap ShadowElevationToColorsMap(
   return colors_map;
 }
 
-enum BubbleArrowPart { kFill, kBorder };
+enum class BubbleArrowPart { kFill, kBorder };
 
 SkPath GetVisibleArrowPath(BubbleBorder::Arrow arrow,
                            const gfx::Rect& bounds,
@@ -126,12 +130,12 @@ SkPath GetVisibleArrowPath(BubbleBorder::Arrow arrow,
       break;
   }
 
-  return SkPath::Polygon(points, kNumPoints, part == BubbleArrowPart::kFill);
+  return SkPath::Polygon(points, part == BubbleArrowPart::kFill);
 }
 
 const gfx::ShadowValues& GetShadowValues(
     const ui::ColorProvider* color_provider,
-    const absl::optional<int>& elevation,
+    const std::optional<int>& elevation,
     BubbleBorder::Shadow shadow_type) {
   // If the color provider does not exist the shadow values are being created in
   // order to calculate Insets. In that case the color plays no role so always
@@ -180,7 +184,6 @@ const gfx::ShadowValues& GetShadowValues(
 #endif
       default:
         NOTREACHED() << "Invalid bubble border shadow type";
-        break;
     }
   } else {
     constexpr gfx::Vector2d kOffset(0, 2);
@@ -206,8 +209,8 @@ const gfx::ShadowValues& GetShadowValues(
   return shadow_map->find(key)->second;
 }
 
-bool ShouldDrawStrokeForArgs(const absl::optional<bool>& draw_border_stroke,
-                             const absl::optional<int>& elevation,
+bool ShouldDrawStrokeForArgs(const std::optional<bool>& draw_border_stroke,
+                             const std::optional<int>& elevation,
                              BubbleBorder::Shadow shadow_type) {
   return draw_border_stroke.value_or(!elevation.has_value() &&
                                      shadow_type != BubbleBorder::NO_SHADOW);
@@ -215,7 +218,7 @@ bool ShouldDrawStrokeForArgs(const absl::optional<bool>& draw_border_stroke,
 
 const cc::PaintFlags& GetBorderAndShadowFlags(
     const ui::ColorProvider* color_provider,
-    const absl::optional<int>& elevation,
+    const std::optional<int>& elevation,
     BubbleBorder::Shadow shadow_type) {
   // The flags are always the same for any elevation and color combination, so
   // construct them once and cache.
@@ -224,8 +227,9 @@ const cc::PaintFlags& GetBorderAndShadowFlags(
                      color_provider->GetColor(ui::kColorShadowBase),
                      shadow_type);
 
-  if (flag_map->find(key) != flag_map->end())
+  if (flag_map->find(key) != flag_map->end()) {
     return flag_map->find(key)->second;
+  }
 
   cc::PaintFlags flags;
   flags.setColor(color_provider->GetColor(ui::kColorBubbleBorder));
@@ -243,7 +247,7 @@ void DrawBorderAndShadowImpl(
     gfx::Canvas* canvas,
     const ui::ColorProvider* color_provider,
     bool draw_stroke = true,
-    const absl::optional<int>& elevation = absl::nullopt,
+    const std::optional<int>& elevation = std::nullopt,
     BubbleBorder::Shadow shadow_type = BubbleBorder::STANDARD_SHADOW) {
   if (draw_stroke) {
     // Provide a 1 px border outside the bounds.
@@ -257,19 +261,29 @@ void DrawBorderAndShadowImpl(
       rect, GetBorderAndShadowFlags(color_provider, elevation, shadow_type));
 }
 
+// Shadow is set to NO_SHADOW if compositing is not supported. This checks for
+// NO_SHADOW in cases where it would have to be explicitly set.
+bool IsExplicitNoShadow(BubbleBorder::Shadow shadow) {
+  if (shadow == BubbleBorder::NO_SHADOW) {
+    return Widget::IsWindowCompositingSupported();
+  }
+  return false;
+}
+
 }  // namespace
 
-BubbleBorder::BubbleBorder(Arrow arrow, Shadow shadow, ui::ColorId color_id)
-    : arrow_(arrow), shadow_(shadow), color_id_(color_id) {
+BubbleBorder::BubbleBorder(Arrow arrow, Shadow shadow)
+    : arrow_(arrow), shadow_(shadow) {
   DCHECK_LT(shadow_, SHADOW_COUNT);
+  SetColor(ui::kColorDialogBackground);
 }
 
 BubbleBorder::~BubbleBorder() = default;
 
 // static
 gfx::Insets BubbleBorder::GetBorderAndShadowInsets(
-    const absl::optional<int>& elevation,
-    const absl::optional<bool>& draw_border_stroke,
+    const std::optional<int>& elevation,
+    const std::optional<bool>& draw_border_stroke,
     BubbleBorder::Shadow shadow_type) {
   return gfx::Insets(
              ShouldDrawStrokeForArgs(draw_border_stroke, elevation, shadow_type)
@@ -277,15 +291,6 @@ gfx::Insets BubbleBorder::GetBorderAndShadowInsets(
                  : 0) -
          gfx::ShadowValue::GetMargin(
              GetShadowValues(nullptr, elevation, shadow_type));
-}
-
-void BubbleBorder::SetCornerRadius(int corner_radius) {
-  corner_radius_ = corner_radius;
-}
-
-void BubbleBorder::SetColor(SkColor color) {
-  requested_color_ = color;
-  UpdateColor(nullptr);
 }
 
 gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
@@ -325,8 +330,9 @@ gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
 
   // If |avoid_shadow_overlap_| is true, the shadow part of the inset is also
   // applied now, to ensure that the shadow itself doesn't overlap the anchor.
-  if (avoid_shadow_overlap_)
+  if (avoid_shadow_overlap_) {
     contents_bounds.Inset(-shadow_insets);
+  }
 
   // Adjust the contents to align with the arrow. The `anchor_point` is the
   // point on `anchor_rect` to offset from; it is also used as part of the
@@ -339,21 +345,24 @@ gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
 
   // With NO_SHADOW, there should be further insets, but the same logic is
   // used to position the bubble origin according to |anchor_rect|.
-  DCHECK(shadow_ != NO_SHADOW || insets_.has_value() ||
+  DCHECK(!IsExplicitNoShadow(shadow_) || insets_.has_value() ||
          shadow_insets.IsEmpty() || visible_arrow_);
-  if (!avoid_shadow_overlap_)
+  if (!avoid_shadow_overlap_) {
     contents_bounds.Inset(-shadow_insets);
+  }
 
   // |arrow_offset_| is used to adjust bubbles that would normally be
   // partially offscreen.
-  if (is_arrow_on_horizontal(arrow_))
+  if (is_arrow_on_horizontal(arrow_)) {
     contents_bounds += gfx::Vector2d(-arrow_offset_, 0);
-  else
+  } else {
     contents_bounds += gfx::Vector2d(0, -arrow_offset_);
+  }
 
   // If no visible arrow is shown, return the content bounds.
-  if (!visible_arrow_)
+  if (!visible_arrow_) {
     return contents_bounds;
+  }
 
   // Finally, get the needed movement vector of |contents_bounds| to create the
   // space needed to place the visible arrow. adjustments because we don't want
@@ -448,8 +457,9 @@ void BubbleBorder::Paint(const views::View& view, gfx::Canvas* canvas) {
                           view.GetColorProvider(), ShouldDrawStroke(),
                           md_shadow_elevation_, shadow_);
 
-  if (visible_arrow_)
+  if (visible_arrow_) {
     PaintVisibleArrow(view, canvas);
+  }
 }
 
 // static
@@ -463,7 +473,7 @@ void BubbleBorder::DrawBorderAndShadow(
 
 gfx::Insets BubbleBorder::GetInsets() const {
   // Visible arrow is not compatible with OS-drawn shadow or with manual insets.
-  DCHECK((!insets_ && shadow_ != NO_SHADOW) || !visible_arrow_);
+  DCHECK((!insets_ && !IsExplicitNoShadow(shadow_)) || !visible_arrow_);
   if (insets_.has_value()) {
     return insets_.value();
   }
@@ -496,7 +506,7 @@ gfx::Size BubbleBorder::GetMinimumSize() const {
 }
 
 void BubbleBorder::OnViewThemeChanged(View* view) {
-  UpdateColor(view);
+  view->SchedulePaint();
 }
 
 gfx::Size BubbleBorder::GetSizeForContentsSize(
@@ -510,9 +520,11 @@ gfx::Size BubbleBorder::GetSizeForContentsSize(
 
 bool BubbleBorder::AddArrowToBubbleCornerAndPointTowardsAnchor(
     const gfx::Rect& anchor_rect,
-    gfx::Rect& popup_bounds) {
+    gfx::Rect& popup_bounds,
+    int popup_min_y) {
   // This function should only be called for a visible arrow.
   DCHECK(arrow_ != Arrow::NONE && arrow_ != Arrow::FLOAT);
+  CHECK_GE(popup_bounds.y(), popup_min_y);
 
   // The total size of the arrow in its normal direction.
   const int kVisibleArrowDiamater = 2 * kVisibleArrowRadius;
@@ -619,6 +631,14 @@ bool BubbleBorder::AddArrowToBubbleCornerAndPointTowardsAnchor(
   popup_bounds.set_origin(popup_bounds.origin() + popup_offset);
   visible_arrow_rect_.set_origin(visible_arrow_rect_.origin() + popup_offset);
 
+  // Adjust positions if the shifted popup violates the min y restrictions.
+  int min_y_overlay = popup_min_y - popup_bounds.y();
+  if (min_y_overlay > 0) {
+    // gfx::Vector2d min_y_offset{0, min_y_overlay};
+    popup_bounds.Offset(0, min_y_overlay);
+    visible_arrow_rect_.Offset(0, min_y_overlay);
+  }
+
   set_visible_arrow(true);
   return true;
 }
@@ -659,27 +679,12 @@ void BubbleBorder::CalculateVisibleArrowRect(
 SkRRect BubbleBorder::GetClientRect(const View& view) const {
   gfx::RectF bounds(view.GetLocalBounds());
   bounds.Inset(gfx::InsetsF(GetInsets()));
-
-  // Give precedence to customized rounded corners when non-empty.
-  const gfx::RoundedCornersF corners =
-      rounded_corners_.IsEmpty() ? gfx::RoundedCornersF(corner_radius_)
-                                 : rounded_corners_;
-
-  return SkRRect(gfx::RRectF(bounds, corners));
+  return SkRRect(gfx::RRectF(bounds, rounded_corners_));
 }
 
 bool BubbleBorder::ShouldDrawStroke() const {
   return ShouldDrawStrokeForArgs(draw_border_stroke_, md_shadow_elevation_,
                                  shadow_);
-}
-
-void BubbleBorder::UpdateColor(View* view) {
-  const SkColor computed_color =
-      view ? view->GetColorProvider()->GetColor(color_id_)
-           : gfx::kPlaceholderColor;
-  color_ = requested_color_.value_or(computed_color);
-  if (view)
-    view->SchedulePaint();
 }
 
 void BubbleBorder::PaintNoShadow(const View& view, gfx::Canvas* canvas) {
@@ -723,7 +728,7 @@ void BubbleBorder::PaintVisibleArrow(const View& view, gfx::Canvas* canvas) {
         flags);
   }
 
-  flags.setColor(color());
+  flags.setColor(color().ResolveToSkColor(view.GetColorProvider()));
   flags.setStyle(cc::PaintFlags::kFill_Style);
   flags.setStrokeWidth(1.0);
   flags.setAntiAlias(true);
@@ -738,17 +743,29 @@ void BubbleBackground::Paint(gfx::Canvas* canvas, views::View* view) const {
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
   flags.setStyle(cc::PaintFlags::kFill_Style);
-  flags.setColor(border_->color());
+  flags.setColor(border_->color().ResolveToSkColor(view->GetColorProvider()));
   gfx::RectF bounds(view->GetLocalBounds());
   bounds.Inset(gfx::InsetsF(border_->GetInsets()));
 
-  // Give precedence to customized rounded corners when non-empty.
-  const gfx::RoundedCornersF corners =
-      border_->rounded_corners().IsEmpty()
-          ? gfx::RoundedCornersF(border_->corner_radius())
-          : border_->rounded_corners();
-
-  canvas->sk_canvas()->drawRRect(SkRRect(gfx::RRectF(bounds, corners)), flags);
+  canvas->sk_canvas()->drawRRect(
+      SkRRect(gfx::RRectF(bounds, border_->rounded_corners())), flags);
 }
 
 }  // namespace views
+
+DEFINE_ENUM_CONVERTERS(
+    views::BubbleBorder::Arrow,
+    {views::BubbleBorder::Arrow::TOP_LEFT, u"TOP_LEFT"},
+    {views::BubbleBorder::Arrow::TOP_RIGHT, u"TOP_RIGHT"},
+    {views::BubbleBorder::Arrow::BOTTOM_LEFT, u"BOTTOM_LEFT"},
+    {views::BubbleBorder::Arrow::BOTTOM_RIGHT, u"BOTTOM_RIGHT"},
+    {views::BubbleBorder::Arrow::LEFT_TOP, u"LEFT_TOP"},
+    {views::BubbleBorder::Arrow::RIGHT_TOP, u"RIGHT_TOP"},
+    {views::BubbleBorder::Arrow::LEFT_BOTTOM, u"LEFT_BOTTOM"},
+    {views::BubbleBorder::Arrow::RIGHT_BOTTOM, u"RIGHT_BOTTOM"},
+    {views::BubbleBorder::Arrow::TOP_CENTER, u"TOP_CENTER"},
+    {views::BubbleBorder::Arrow::BOTTOM_CENTER, u"BOTTOM_CENTER"},
+    {views::BubbleBorder::Arrow::LEFT_CENTER, u"LEFT_CENTER"},
+    {views::BubbleBorder::Arrow::RIGHT_CENTER, u"RIGHT_CENTER"},
+    {views::BubbleBorder::Arrow::NONE, u"NONE"},
+    {views::BubbleBorder::Arrow::FLOAT, u"FLOAT"})

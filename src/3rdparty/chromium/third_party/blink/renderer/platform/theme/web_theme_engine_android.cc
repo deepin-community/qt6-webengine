@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_android.h"
 
+#include <variant>
+
 #include "base/notreached.h"
 #include "base/system/sys_info.h"
 #include "skia/ext/platform_canvas.h"
@@ -23,13 +25,11 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartScrollbarVerticalTrack: {
       // Android doesn't draw scrollbars.
       NOTREACHED();
-      ui::NativeTheme::ExtraParams native_theme_extra_params;
-      return native_theme_extra_params;
     }
     case WebThemeEngine::kPartCheckbox: {
       ui::NativeTheme::ButtonExtraParams native_button;
       const auto& button =
-          absl::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
+          std::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
       native_button.checked = button.checked;
       native_button.indeterminate = button.indeterminate;
       native_button.zoom = button.zoom;
@@ -38,14 +38,14 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartRadio: {
       ui::NativeTheme::ButtonExtraParams native_button;
       const auto& button =
-          absl::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
+          std::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
       native_button.checked = button.checked;
       return ui::NativeTheme::ExtraParams(native_button);
     }
     case WebThemeEngine::kPartButton: {
       ui::NativeTheme::ButtonExtraParams native_button;
       const auto& button =
-          absl::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
+          std::get<WebThemeEngine::ButtonExtraParams>(*extra_params);
       native_button.has_border = button.has_border;
       // Native buttons have a different focus style.
       native_button.is_focused = false;
@@ -56,7 +56,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartTextField: {
       ui::NativeTheme::TextFieldExtraParams native_text_field;
       const auto& text_field =
-          absl::get<WebThemeEngine::TextFieldExtraParams>(*extra_params);
+          std::get<WebThemeEngine::TextFieldExtraParams>(*extra_params);
       native_text_field.is_text_area = text_field.is_text_area;
       native_text_field.is_listbox = text_field.is_listbox;
       native_text_field.background_color = text_field.background_color;
@@ -68,7 +68,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartMenuList: {
       ui::NativeTheme::MenuListExtraParams native_menu_list;
       const auto& menu_list =
-          absl::get<WebThemeEngine::MenuListExtraParams>(*extra_params);
+          std::get<WebThemeEngine::MenuListExtraParams>(*extra_params);
       native_menu_list.has_border = menu_list.has_border;
       native_menu_list.has_border_radius = menu_list.has_border_radius;
       native_menu_list.arrow_x = menu_list.arrow_x;
@@ -86,7 +86,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartSliderTrack: {
       ui::NativeTheme::SliderExtraParams native_slider_track;
       const auto& slider_track =
-          absl::get<WebThemeEngine::SliderExtraParams>(*extra_params);
+          std::get<WebThemeEngine::SliderExtraParams>(*extra_params);
       native_slider_track.thumb_x = slider_track.thumb_x;
       native_slider_track.thumb_y = slider_track.thumb_y;
       native_slider_track.zoom = slider_track.zoom;
@@ -98,7 +98,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartSliderThumb: {
       ui::NativeTheme::SliderExtraParams native_slider_thumb;
       const auto& slider_thumb =
-          absl::get<WebThemeEngine::SliderExtraParams>(*extra_params);
+          std::get<WebThemeEngine::SliderExtraParams>(*extra_params);
       native_slider_thumb.vertical = slider_thumb.vertical;
       native_slider_thumb.in_drag = slider_thumb.in_drag;
       return ui::NativeTheme::ExtraParams(native_slider_thumb);
@@ -106,7 +106,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartInnerSpinButton: {
       ui::NativeTheme::InnerSpinButtonExtraParams native_inner_spin;
       const auto& inner_spin =
-          absl::get<WebThemeEngine::InnerSpinButtonExtraParams>(*extra_params);
+          std::get<WebThemeEngine::InnerSpinButtonExtraParams>(*extra_params);
       native_inner_spin.spin_up = inner_spin.spin_up;
       native_inner_spin.read_only = inner_spin.read_only;
       //  Need to explicit cast so we can assign enum to enum.
@@ -119,7 +119,7 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
     case WebThemeEngine::kPartProgressBar: {
       ui::NativeTheme::ProgressBarExtraParams native_progress_bar;
       const auto& progress_bar =
-          absl::get<WebThemeEngine::ProgressBarExtraParams>(*extra_params);
+          std::get<WebThemeEngine::ProgressBarExtraParams>(*extra_params);
       native_progress_bar.determinate = progress_bar.determinate;
       native_progress_bar.value_rect_x = progress_bar.value_rect_x;
       native_progress_bar.value_rect_y = progress_bar.value_rect_y;
@@ -168,27 +168,18 @@ void WebThemeEngineAndroid::Paint(
     const gfx::Rect& rect,
     const WebThemeEngine::ExtraParams* extra_params,
     blink::mojom::ColorScheme color_scheme,
+    bool in_forced_colors,
     const ui::ColorProvider* color_provider,
-    const absl::optional<SkColor>& accent_color) {
+    const std::optional<SkColor>& accent_color) {
   ui::NativeTheme::ExtraParams native_theme_extra_params =
       GetNativeThemeExtraParams(part, state, extra_params);
   // ColorProviders are not supported on android and there are no controls that
   // require ColorProvider colors on the platform.
   const ui::ColorProvider* color_provider_android = nullptr;
   ui::NativeTheme::GetInstanceForWeb()->Paint(
-      canvas, color_provider_android, NativeThemePart(part), NativeThemeState(state),
-      rect, native_theme_extra_params, NativeColorScheme(color_scheme),
-      accent_color);
+      canvas, color_provider_android, NativeThemePart(part),
+      NativeThemeState(state), rect, native_theme_extra_params,
+      NativeColorScheme(color_scheme), in_forced_colors, accent_color);
 }
 
-ForcedColors WebThemeEngineAndroid::GetForcedColors() const {
-  return ui::NativeTheme::GetInstanceForWeb()->InForcedColorsMode()
-             ? ForcedColors::kActive
-             : ForcedColors::kNone;
-}
-
-void WebThemeEngineAndroid::SetForcedColors(const ForcedColors forced_colors) {
-  ui::NativeTheme::GetInstanceForWeb()->set_forced_colors(
-      forced_colors == ForcedColors::kActive);
-}
 }  // namespace blink

@@ -4,18 +4,22 @@
 
 #include "media/gpu/av1_decoder.h"
 
+#include <algorithm>
 #include <bitset>
+#include <utility>
 
-#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/ranges/algorithm.h"
+#include "media/base/agtm.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
 #include "media/gpu/av1_picture.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/libgav1/src/src/decoder_state.h"
 #include "third_party/libgav1/src/src/gav1/status_code.h"
+#include "third_party/libgav1/src/src/utils/common.h"
 #include "third_party/libgav1/src/src/utils/constants.h"
+#include "third_party/skia/include/core/SkData.h"
 #include "ui/gfx/hdr_metadata.h"
 
 namespace media {
@@ -47,7 +51,6 @@ VideoCodecProfile AV1ProfileToVideoCodecProfile(
     default:
       // ObuParser::ParseSequenceHeader() validates the profile.
       NOTREACHED() << "Invalid profile: " << base::strict_cast<int>(profile);
-      return AV1PROFILE_PROFILE_MAIN;
   }
 }
 
@@ -71,7 +74,7 @@ bool IsValidBitDepth(uint8_t bit_depth, VideoCodecProfile profile) {
     case AV1PROFILE_PROFILE_PRO:
       return bit_depth == 8u || bit_depth == 10u || bit_depth == 12u;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -119,12 +122,44 @@ gfx::HdrMetadataSmpteSt2086 ToGfxSmpteSt2086(
 gfx::HdrMetadataCta861_3 ToGfxCta861_3(const libgav1::ObuMetadataHdrCll& cll) {
   return gfx::HdrMetadataCta861_3(cll.max_cll, cll.max_fall);
 }
+bool RequiresHardwareContextReset(
+    const libgav1::ObuSequenceHeader& old_header,
+    const libgav1::ObuSequenceHeader& new_header) {
+  // Changes to these fields require re-allocating GPU memory pools and context.
+  return old_header.use_128x128_superblock !=
+             new_header.use_128x128_superblock ||
+         old_header.film_grain_params_present !=
+             new_header.film_grain_params_present ||
+         old_header.enable_cdef != new_header.enable_cdef ||
+         old_header.enable_restoration != new_header.enable_restoration ||
+         old_header.enable_superres != new_header.enable_superres ||
+         old_header.enable_filter_intra != new_header.enable_filter_intra ||
+         old_header.enable_intra_edge_filter !=
+             new_header.enable_intra_edge_filter ||
+         old_header.enable_interintra_compound !=
+             new_header.enable_interintra_compound ||
+         old_header.enable_masked_compound !=
+             new_header.enable_masked_compound ||
+         old_header.enable_warped_motion != new_header.enable_warped_motion ||
+         old_header.enable_dual_filter != new_header.enable_dual_filter ||
+         old_header.enable_order_hint != new_header.enable_order_hint ||
+         old_header.order_hint_bits != new_header.order_hint_bits ||
+         old_header.enable_jnt_comp != new_header.enable_jnt_comp ||
+         old_header.enable_ref_frame_mvs != new_header.enable_ref_frame_mvs;
+}
+
 }  // namespace
 
 scoped_refptr<AV1Picture> AV1Decoder::AV1Accelerator::CreateAV1PictureSecure(
     bool apply_grain,
     uint64_t secure_handle) {
   return nullptr;
+}
+
+AV1Decoder::AV1Accelerator::Status AV1Decoder::AV1Accelerator::SetStream(
+    base::span<const uint8_t> stream,
+    const DecryptConfig* decrypt_config) {
+  return Status::kOk;
 }
 
 AV1Decoder::AV1Decoder(std::unique_ptr<AV1Accelerator> accelerator,
@@ -167,14 +202,13 @@ void AV1Decoder::Reset() {
   // skip it and will keep skipping until we get a sequence header.
   current_sequence_header_.reset();
   stream_id_ = 0;
-  stream_ = nullptr;
-  stream_size_ = 0;
   on_error_ = false;
 
   state_ = std::make_unique<libgav1::DecoderState>();
   ClearReferenceFrames();
   parser_.reset();
   decrypt_config_.reset();
+  decoder_buffer_.reset();
   secure_handle_ = 0;
 
   buffer_pool_ = std::make_unique<libgav1::BufferPool>(
@@ -184,15 +218,16 @@ void AV1Decoder::Reset() {
       /*callback_private_data=*/nullptr);
 }
 
-void AV1Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
+void AV1Decoder::SetStream(int32_t id,
+                           scoped_refptr<DecoderBuffer> decoder_buffer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(decoder_buffer);
+  decoder_buffer_ = std::move(decoder_buffer);
   stream_id_ = id;
-  stream_ = decoder_buffer.data();
-  stream_size_ = decoder_buffer.data_size();
   ClearCurrentFrame();
 
   parser_ = base::WrapUnique(new (std::nothrow) libgav1::ObuParser(
-      decoder_buffer.data(), decoder_buffer.data_size(), kDefaultOperatingPoint,
+      decoder_buffer_->data(), decoder_buffer_->size(), kDefaultOperatingPoint,
       buffer_pool_.get(), state_.get()));
   if (!parser_) {
     on_error_ = true;
@@ -201,15 +236,23 @@ void AV1Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
 
   if (current_sequence_header_)
     parser_->set_sequence_header(*current_sequence_header_);
-  if (decoder_buffer.decrypt_config())
-    decrypt_config_ = decoder_buffer.decrypt_config()->Clone();
-  else
+  if (decoder_buffer_->decrypt_config()) {
+    decrypt_config_ = decoder_buffer_->decrypt_config()->Clone();
+  } else {
     decrypt_config_.reset();
-  if (decoder_buffer.has_side_data() &&
-      decoder_buffer.side_data()->secure_handle) {
-    secure_handle_ = decoder_buffer.side_data()->secure_handle;
+  }
+  if (decoder_buffer_->side_data() &&
+      decoder_buffer_->side_data()->secure_handle) {
+    secure_handle_ = decoder_buffer_->side_data()->secure_handle;
   } else {
     secure_handle_ = 0;
+  }
+
+  const AV1Accelerator::Status status =
+      accelerator_->SetStream(*decoder_buffer_, decrypt_config_.get());
+  if (status != AV1Accelerator::Status::kOk) {
+    on_error_ = true;
+    return;
   }
 }
 
@@ -236,15 +279,14 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
     return kRanOutOfStreamData;
   }
   while (parser_->HasData() || current_frame_header_) {
-    base::ScopedClosureRunner clear_current_frame(
-        base::BindOnce(&AV1Decoder::ClearCurrentFrame, base::Unretained(this)));
+    absl::Cleanup clear_current_frame = [this] { ClearCurrentFrame(); };
     if (pending_pic_) {
       const AV1Accelerator::Status status = DecodeAndOutputPicture(
           std::move(pending_pic_), parser_->tile_buffers());
       if (status == AV1Accelerator::Status::kFail)
         return kDecodeError;
       if (status == AV1Accelerator::Status::kTryAgain) {
-        clear_current_frame.ReplaceClosure(base::DoNothing());
+        std::move(clear_current_frame).Cancel();
         return kTryAgain;
       }
       // Continue so that we force |clear_current_frame| to run before moving
@@ -266,19 +308,6 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
       current_frame_header_ = parser_->frame_header();
       // Detects if a new coded video sequence is starting.
       if (parser_->sequence_header_changed()) {
-        // TODO(b/171853869): Remove this check once libgav1::ObuParser does
-        // this check.
-        if (current_frame_header_->frame_type != libgav1::kFrameKey ||
-            !current_frame_header_->show_frame ||
-            current_frame_header_->show_existing_frame ||
-            current_frame_->temporal_id() != 0) {
-          // Section 7.5.
-          DVLOG(1)
-              << "The first frame successive to sequence header OBU must be a "
-              << "keyframe with show_frame=1, show_existing_frame=0 and "
-              << "temporal_id=0";
-          return kDecodeError;
-        }
         if (IsSpatialLayerDecoding(
                 parser_->sequence_header()
                     .operating_point_idc[kDefaultOperatingPoint])) {
@@ -291,22 +320,20 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
           return kDecodeError;
         }
 
-        current_sequence_header_ = parser_->sequence_header();
+        const auto& new_sequence_header = parser_->sequence_header();
         VideoChromaSampling new_chroma_sampling =
-            GetAV1ChromaSampling(current_sequence_header_->color_config);
-        if (new_chroma_sampling != chroma_sampling_) {
-          chroma_sampling_ = new_chroma_sampling;
-        }
+            GetAV1ChromaSampling(new_sequence_header.color_config);
 
-        if (chroma_sampling_ != VideoChromaSampling::k420) {
-          DVLOG(1) << "Only YUV 4:2:0 is supported";
+        if (new_chroma_sampling != VideoChromaSampling::k420 &&
+            new_chroma_sampling != VideoChromaSampling::k444) {
+          DVLOG(1) << "Only YUV 4:2:0 and YUV 4:4:4 are supported";
           return kDecodeError;
         }
 
         const VideoCodecProfile new_profile =
-            AV1ProfileToVideoCodecProfile(current_sequence_header_->profile);
+            AV1ProfileToVideoCodecProfile(new_sequence_header.profile);
         const uint8_t new_bit_depth = base::checked_cast<uint8_t>(
-            current_sequence_header_->color_config.bitdepth);
+            new_sequence_header.color_config.bitdepth);
         if (!IsValidBitDepth(new_bit_depth, new_profile)) {
           DVLOG(1) << "Invalid bit depth="
                    << base::strict_cast<int>(new_bit_depth)
@@ -315,8 +342,8 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
         }
 
         const gfx::Size new_frame_size(
-            base::strict_cast<int>(current_sequence_header_->max_frame_width),
-            base::strict_cast<int>(current_sequence_header_->max_frame_height));
+            base::strict_cast<int>(new_sequence_header.max_frame_width),
+            base::strict_cast<int>(new_sequence_header.max_frame_height));
         gfx::Rect new_visible_rect(
             base::strict_cast<int>(current_frame_header_->width),
             base::strict_cast<int>(current_frame_header_->height));
@@ -328,7 +355,7 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
           new_visible_rect = gfx::Rect(new_frame_size);
         }
 
-        const auto& cc = current_sequence_header_->color_config;
+        const auto& cc = new_sequence_header.color_config;
         const VideoColorSpace header_color_space =
             VideoColorSpace(cc.color_primary, cc.transfer_characteristics,
                             cc.matrix_coefficients,
@@ -350,24 +377,37 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
                                   new_color_space != picture_color_space_;
         }
 
+        const bool structural_change =
+            current_sequence_header_ &&
+            RequiresHardwareContextReset(*current_sequence_header_,
+                                         new_sequence_header);
+
+        current_sequence_header_ = new_sequence_header;
         ClearReferenceFrames();
-        // Issues kConfigChange only if either the dimensions, profile or bit
-        // depth is changed.
+
+        // Issue kConfigChange if the sequence header changed significantly,
+        // OR if the visible rect/color space changed.
         if (frame_size_ != new_frame_size ||
             visible_rect_ != new_visible_rect || profile_ != new_profile ||
-            bit_depth_ != new_bit_depth || is_color_space_change) {
-          DVLOG(1) << "New profile: " << GetProfileName(new_profile)
+            bit_depth_ != new_bit_depth ||
+            chroma_sampling_ != new_chroma_sampling || is_color_space_change ||
+            structural_change) {
+          DVLOG(1) << "Configuration changed. New profile: "
+                   << GetProfileName(new_profile)
                    << ", new resolution: " << new_frame_size.ToString()
                    << ", new visible rect: " << new_visible_rect.ToString()
                    << ", new bit depth: "
                    << base::strict_cast<int>(new_bit_depth)
                    << ", new color space: " << new_color_space.ToString();
+
           frame_size_ = new_frame_size;
           visible_rect_ = new_visible_rect;
           profile_ = new_profile;
           bit_depth_ = new_bit_depth;
           picture_color_space_ = new_color_space;
-          clear_current_frame.ReplaceClosure(base::DoNothing());
+          chroma_sampling_ = new_chroma_sampling;
+
+          std::move(clear_current_frame).Cancel();
           return kConfigChange;
         }
       }
@@ -429,26 +469,33 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
     const gfx::Size current_frame_size(
         base::strict_cast<int>(frame_header.width),
         base::strict_cast<int>(frame_header.height));
+    // As per the AV1 spec input video frames can be encoded at a lower
+    // resolution and then the decoder reconstructs the frames back at the
+    // scaled resolution. This is called as reference frame scaling.
+    // In our case the scaled resolution is the one which is specified by
+    // the sequence header.
+    // https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/master/Docs/Appendix-Reference-Scaling.md
     if (current_frame_size != frame_size_) {
-      // TODO(hiroh): This must be handled in decoding spatial layer.
-      DVLOG(1) << "Resolution change in the middle of video sequence (i.e."
-               << " between sequence headers) is not supported";
-      return kDecodeError;
+      DVLOG(2) << "Resolution change in the middle of video sequence. "
+               << "Frames encoded using reference frame scaling.";
     }
     if (current_frame_size.width() !=
         base::strict_cast<int>(frame_header.upscaled_width)) {
       DVLOG(1) << "Super resolution is not supported";
       return kDecodeError;
     }
+
+    // As per the comments in third_party/libgav1/src/src/utils/types.h
+    // for the ObuFrameHeader structure, the render_width and
+    // render_height are hints to the application about the desired display
+    // size. It has no effect on the decoding process. The visible rect should
+    // be set to the current frames width and height.
     const gfx::Rect current_visible_rect(
-        base::strict_cast<int>(frame_header.render_width),
-        base::strict_cast<int>(frame_header.render_height));
+        base::strict_cast<int>(frame_header.width),
+        base::strict_cast<int>(frame_header.height));
     if (current_visible_rect != visible_rect_) {
-      // TODO(andrescj): Handle the visible rectangle change in the middle of
-      // video sequence.
-      DVLOG(1) << "Visible rectangle change in the middle of video sequence"
-               << "(i.e. between sequence headers) is not supported";
-      return kDecodeError;
+      DVLOG(2) << "Visible rectangle change in the middle of video sequence.";
+      visible_rect_ = current_visible_rect;
     }
 
     // AV1 HDR metadata may appears in the below places:
@@ -470,6 +517,22 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
       hdr_metadata_->smpte_st_2086 =
           ToGfxSmpteSt2086(current_frame_->hdr_mdcv());
     }
+    if (current_frame_->itut_t35_set()) {
+      // SAFETY: The best we can do is trust the size provided by libgav1.
+      auto t35_payload_span = UNSAFE_BUFFERS(base::span<const uint8_t>(
+          current_frame_->itut_t35().payload_bytes,
+          static_cast<size_t>(current_frame_->itut_t35().payload_size)));
+      const std::optional<gfx::HdrMetadataAgtm> agtm =
+          GetHdrMetadataAgtmFromItutT35(current_frame_->itut_t35().country_code,
+                                        t35_payload_span);
+      if (agtm.has_value()) {
+        if (!hdr_metadata_.has_value()) {
+          hdr_metadata_.emplace();
+        }
+        // Overwrite existing AGTM metadata if any.
+        hdr_metadata_->agtm = agtm;
+      }
+    }
 
     DCHECK(current_sequence_header_->film_grain_params_present ||
            !frame_header.film_grain_params.apply_grain);
@@ -479,7 +542,7 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
                               : accelerator_->CreateAV1Picture(
                                     frame_header.film_grain_params.apply_grain);
     if (!pic) {
-      clear_current_frame.ReplaceClosure(base::DoNothing());
+      std::move(clear_current_frame).Cancel();
       return kRanOutOfSurfaces;
     }
 
@@ -500,7 +563,7 @@ AcceleratedVideoDecoder::DecodeResult AV1Decoder::DecodeInternal() {
     if (status == AV1Accelerator::Status::kFail)
       return kDecodeError;
     if (status == AV1Accelerator::Status::kTryAgain) {
-      clear_current_frame.ReplaceClosure(base::DoNothing());
+      std::move(clear_current_frame).Cancel();
       return kTryAgain;
     }
   }
@@ -529,7 +592,7 @@ void AV1Decoder::ClearReferenceFrames() {
   ref_frames_.fill(nullptr);
   // If AV1Decoder has decided to clear the reference frames, then ObuParser
   // must have also decided to do so.
-  DCHECK_EQ(base::ranges::count(state_->reference_frame, nullptr),
+  DCHECK_EQ(std::ranges::count(state_->reference_frame, nullptr),
             static_cast<int>(state_->reference_frame.size()));
 }
 
@@ -550,10 +613,8 @@ bool AV1Decoder::CheckAndCleanUpReferenceFrames() {
   // For intra frames, we don't need this assertion because they shouldn't
   // depend on reference frames.
   if (!libgav1::IsIntraFrame(current_frame_header_->frame_type)) {
-    for (size_t i = 0; i < libgav1::kNumInterReferenceFrameTypes; ++i) {
-      const auto ref_frame_index =
-          current_frame_header_->reference_frame_index[i];
-
+    for (int8_t ref_frame_index :
+         current_frame_header_->reference_frame_index) {
       // Unless an error occurred in libgav1, |ref_frame_index| should be valid,
       // and since CheckAndCleanUpReferenceFrames() only gets called if parsing
       // succeeded, we can assert that validity.
@@ -574,16 +635,15 @@ AV1Decoder::AV1Accelerator::Status AV1Decoder::DecodeAndOutputPicture(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pic);
   DCHECK(current_sequence_header_);
-  DCHECK(stream_);
-  DCHECK_GT(stream_size_, 0u);
+  DCHECK(!decoder_buffer_->empty());
   if (!CheckAndCleanUpReferenceFrames()) {
     DLOG(ERROR) << "The states of reference frames are different between "
                 << "|ref_frames_| and |state_|";
     return AV1Accelerator::Status::kFail;
   }
-  const AV1Accelerator::Status status = accelerator_->SubmitDecode(
-      *pic, *current_sequence_header_, ref_frames_, tile_buffers,
-      base::make_span(stream_, stream_size_));
+  const AV1Accelerator::Status status =
+      accelerator_->SubmitDecode(*pic, *current_sequence_header_, ref_frames_,
+                                 tile_buffers, *decoder_buffer_);
   if (status != AV1Accelerator::Status::kOk) {
     if (status == AV1Accelerator::Status::kTryAgain)
       pending_pic_ = std::move(pic);
@@ -603,7 +663,7 @@ AV1Decoder::AV1Accelerator::Status AV1Decoder::DecodeAndOutputPicture(
   return AV1Accelerator::Status::kOk;
 }
 
-absl::optional<gfx::HDRMetadata> AV1Decoder::GetHDRMetadata() const {
+std::optional<gfx::HDRMetadata> AV1Decoder::GetHDRMetadata() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return hdr_metadata_;
 }

@@ -39,10 +39,11 @@ TINT_INSTANTIATE_TYPEINFO(tint::core::type::Atomic);
 namespace tint::core::type {
 
 Atomic::Atomic(const core::type::Type* subtype)
-    : Base(Hash(tint::TypeInfo::Of<Atomic>().full_hashcode, subtype),
+    : Base(Hash(tint::TypeCode::Of<Atomic>().bits, subtype),
            core::type::Flags{
                Flag::kCreationFixedFootprint,
                Flag::kFixedFootprint,
+               Flag::kHostShareable,
            }),
       subtype_(subtype) {
     TINT_ASSERT(!subtype->Is<Reference>());

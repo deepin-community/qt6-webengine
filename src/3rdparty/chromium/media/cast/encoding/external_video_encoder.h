@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string_view>
 
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
@@ -33,16 +34,6 @@ class ExternalVideoEncoder final : public VideoEncoder {
   // Returns true if the current platform and system configuration supports
   // using ExternalVideoEncoder with the given |video_config|.
   static bool IsSupported(const FrameSenderConfig& video_config);
-
-  // Returns true if the external encoder should be used for a codec with a
-  // given receiver and set of VEA profiles. Some receivers have implementation
-  // bugs that keep the external encoder from being used even if it is supported
-  // by the sender.
-  static bool IsRecommended(
-      Codec codec,
-      base::StringPiece receiver_model_name,
-      const std::vector<media::VideoEncodeAccelerator::SupportedProfile>&
-          profiles);
 
   ExternalVideoEncoder(
       const scoped_refptr<CastEnvironment>& cast_environment,
@@ -134,9 +125,8 @@ class SizeAdaptableExternalVideoEncoder final
 // value is related to the complexity of the content of the frame.
 class QuantizerEstimator {
  public:
-  static constexpr int NO_RESULT = -1;
-  static constexpr int MIN_VP8_QUANTIZER = 4;
-  static constexpr int MAX_VP8_QUANTIZER = 63;
+  static constexpr int MIN_VPX_QUANTIZER = 4;
+  static constexpr int MAX_VPX_QUANTIZER = 63;
 
   QuantizerEstimator();
 
@@ -151,9 +141,9 @@ class QuantizerEstimator {
   // Examine |frame| and estimate and return the quantizer value the software
   // VP8 encoder would have used when encoding the frame, in the range
   // [4.0,63.0].  If |frame| is not in planar YUV format, or its size is empty,
-  // this returns |NO_RESULT|.
-  double EstimateForKeyFrame(const VideoFrame& frame);
-  double EstimateForDeltaFrame(const VideoFrame& frame);
+  // this returns std::nullopt.
+  std::optional<double> EstimateForKeyFrame(const VideoFrame& frame);
+  std::optional<double> EstimateForDeltaFrame(const VideoFrame& frame);
 
  private:
   // Returns true if the frame is in planar YUV format.

@@ -1,11 +1,13 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Formatter from '../../models/formatter/formatter.js';
 import * as Persistence from '../../models/persistence/persistence.js';
+import * as TextUtils from '../../models/text_utils/text_utils.js';
 import * as Workspace from '../../models/workspace/workspace.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
@@ -16,7 +18,7 @@ import {
   registerEditorAction,
   type SourcesView,
 } from './SourcesView.js';
-import {type UISourceCodeFrame} from './UISourceCodeFrame.js';
+import type {UISourceCodeFrame} from './UISourceCodeFrame.js';
 
 const UIStrings = {
   /**
@@ -28,7 +30,7 @@ const UIStrings = {
    *@description Tooltip text that appears when hovering over the largeicon pretty print button in the Inplace Formatter Editor Action of the Sources panel
    */
   format: 'Format',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/sources/InplaceFormatterEditorAction.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -38,8 +40,6 @@ export class InplaceFormatterEditorAction implements EditorAction {
   private button!: UI.Toolbar.ToolbarButton;
   private sourcesView!: SourcesView;
   private uiSourceCodeTitleChangedEvent: Common.EventTarget.EventDescriptor|null = null;
-  constructor() {
-  }
   static instance(opts: {
     forceNew: boolean|null,
   } = {forceNew: null}): InplaceFormatterEditorAction {
@@ -84,11 +84,11 @@ export class InplaceFormatterEditorAction implements EditorAction {
     }
 
     this.sourcesView = sourcesView;
-    this.sourcesView.addEventListener(Events.EditorSelected, this.editorSelected.bind(this));
-    this.sourcesView.addEventListener(Events.EditorClosed, this.editorClosed.bind(this));
+    this.sourcesView.addEventListener(Events.EDITOR_SELECTED, this.editorSelected.bind(this));
+    this.sourcesView.addEventListener(Events.EDITOR_CLOSED, this.editorClosed.bind(this));
 
     this.button = new UI.Toolbar.ToolbarButton(i18nString(UIStrings.format), 'brackets');
-    this.button.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this.formatSourceInPlace, this);
+    this.button.addEventListener(UI.Toolbar.ToolbarButton.Events.CLICK, this.formatSourceInPlace, this);
     this.updateButton(sourcesView.currentUISourceCode());
 
     return this.button;
@@ -120,9 +120,11 @@ export class InplaceFormatterEditorAction implements EditorAction {
     if (uiSourceCode.isDirty()) {
       void this.contentLoaded(uiSourceCode, sourceFrame, uiSourceCode.workingCopy());
     } else {
-      void uiSourceCode.requestContent().then(deferredContent => {
-        void this.contentLoaded(uiSourceCode, sourceFrame, deferredContent.content || '');
-      });
+      void uiSourceCode.requestContentData()
+          .then(contentDataOrError => TextUtils.ContentData.ContentData.textOr(contentDataOrError, ''))
+          .then(content => {
+            void this.contentLoaded(uiSourceCode, sourceFrame, content);
+          });
     }
   }
 

@@ -27,10 +27,10 @@
 
 #include <memory>
 
-#include "base/functional/bind.h"
 #include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/platform/graphics/image_frame_generator.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 
 namespace blink {
@@ -46,8 +46,8 @@ ImageDecodingStore::ImageDecodingStore()
       heap_memory_usage_in_bytes_(0),
       memory_pressure_listener_(
           FROM_HERE,
-          base::BindRepeating(&ImageDecodingStore::OnMemoryPressure,
-                              base::Unretained(this))) {}
+          blink::BindRepeating(&ImageDecodingStore::OnMemoryPressure,
+                               blink::Unretained(this))) {}
 
 ImageDecodingStore::~ImageDecodingStore() {
 #if DCHECK_IS_ON()
@@ -115,7 +115,9 @@ void ImageDecodingStore::InsertDecoder(
       generator, 0, std::move(decoder), client_id);
 
   base::AutoLock lock(lock_);
-  DCHECK(!decoder_cache_map_.Contains(new_cache_entry->CacheKey()));
+  // Note: duplicate insertions can happen if multiple threads experience a
+  // cache miss for the same key and both attempt to insert a decoder.
+  // InsertCacheInternal handles this safely.
   InsertCacheInternal(std::move(new_cache_entry), &decoder_cache_map_,
                       &decoder_cache_key_map_);
 }
@@ -244,18 +246,25 @@ void ImageDecodingStore::InsertCacheInternal(std::unique_ptr<T> cache_entry,
                                              U* cache_map,
                                              V* identifier_map) {
   lock_.AssertAcquired();
-  const size_t cache_entry_bytes = cache_entry->MemoryUsageInBytes();
-  heap_memory_usage_in_bytes_ += cache_entry_bytes;
+  const typename U::KeyType key = cache_entry->CacheKey();
 
-  // m_orderedCacheList is used to support LRU operations to reorder cache
-  // entries quickly.
-  ordered_cache_list_.Append(cache_entry.get());
+  // Attempt to insert into the cache map first. If the key already exists,
+  // the unique_ptr is not consumed and will be destroyed, which is correct
+  // for a duplicate entry.
+  auto result = cache_map->insert(key, std::move(cache_entry));
+  if (result.is_new_entry) {
+    // Only add to the LRU list and update memory usage if this is a new entry.
+    T* entry_ptr = result.stored_value->value.get();
 
-  typename U::KeyType key = cache_entry->CacheKey();
-  typename V::AddResult result = identifier_map->insert(
-      cache_entry->Generator(), typename V::MappedType());
-  result.stored_value->value.insert(key);
-  cache_map->insert(key, std::move(cache_entry));
+    // ordered_cache_list_ is used to support LRU operations to reorder cache
+    // entries quickly.
+    ordered_cache_list_.Append(entry_ptr);
+    heap_memory_usage_in_bytes_ += entry_ptr->MemoryUsageInBytes();
+
+    typename V::AddResult id_result = identifier_map->insert(
+        entry_ptr->Generator(), typename V::MappedType());
+    id_result.stored_value->value.insert(key);
+  }
 
   TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("blink.image_decoding"),
                  "ImageDecodingStoreHeapMemoryUsageBytes",
@@ -279,7 +288,7 @@ void ImageDecodingStore::RemoveFromCacheInternal(
 
   // Remove entry from identifier map.
   typename V::iterator iter = identifier_map->find(cache_entry->Generator());
-  DCHECK(iter != identifier_map->end());
+  CHECK(iter != identifier_map->end());
   iter->value.erase(cache_entry->CacheKey());
   if (!iter->value.size())
     identifier_map->erase(iter);

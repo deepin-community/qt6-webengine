@@ -12,11 +12,18 @@
 
 namespace blink {
 
-ScriptPromise CropTarget::fromElement(ScriptState* script_state,
-                                      Element* element,
-                                      ExceptionState& exception_state) {
-  return SubCaptureTarget::fromElement(script_state, element, exception_state,
-                                       SubCaptureTarget::Type::kCropTarget);
+ScriptPromise<CropTarget> CropTarget::fromElement(
+    ScriptState* script_state,
+    Element* element,
+    ExceptionState& exception_state) {
+  MediaDevices* const media_devices =
+      GetMediaDevices(script_state, element, exception_state);
+  if (!media_devices) {
+    CHECK(exception_state.HadException());  // Exception thrown by helper.
+    return EmptyPromise();
+  }
+  return media_devices->ProduceCropTarget(script_state, element,
+                                          exception_state);
 }
 
 CropTarget::CropTarget(String id)

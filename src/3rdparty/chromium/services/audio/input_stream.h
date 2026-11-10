@@ -29,17 +29,15 @@ class AudioParameters;
 }  // namespace media
 
 namespace audio {
-class DeviceOutputListener;
 class InputSyncWriter;
-class UserInputMonitor;
 
 class InputStream final : public media::mojom::AudioInputStream,
                           public InputController::EventHandler {
  public:
   using CreatedCallback =
-      base::OnceCallback<void(media::mojom::ReadOnlyAudioDataPipePtr,
+      base::OnceCallback<void(media::mojom::ReadWriteAudioDataPipePtr,
                               bool,
-                              const absl::optional<base::UnguessableToken>&)>;
+                              const std::optional<base::UnguessableToken>&)>;
   using DeleteCallback = base::OnceCallback<void(InputStream*)>;
 
   InputStream(
@@ -48,11 +46,10 @@ class InputStream final : public media::mojom::AudioInputStream,
       mojo::PendingReceiver<media::mojom::AudioInputStream> receiver,
       mojo::PendingRemote<media::mojom::AudioInputStreamClient> client,
       mojo::PendingRemote<media::mojom::AudioInputStreamObserver> observer,
-      mojo::PendingRemote<media::mojom::AudioLog> log,
+      mojo::SharedRemote<media::mojom::AudioLog> log,
       media::AudioManager* manager,
       media::AecdumpRecordingManager* aecdump_recording_manager,
-      std::unique_ptr<UserInputMonitor> user_input_monitor,
-      DeviceOutputListener* device_output_listener,
+      std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,
       media::mojom::AudioProcessingConfigPtr processing_config,
       const std::string& device_id,
       const media::AudioParameters& params,
@@ -79,11 +76,11 @@ class InputStream final : public media::mojom::AudioInputStream,
 
  private:
   void OnStreamError(
-      absl::optional<media::mojom::AudioInputStreamObserver::DisconnectReason>
+      std::optional<media::mojom::AudioInputStreamObserver::DisconnectReason>
           reason_to_report);
   void OnStreamPlatformError();
   void CallDeleter();
-  void SendLogMessage(const char* format, ...) PRINTF_FORMAT(2, 3);
+  PRINTF_FORMAT(2, 3) void SendLogMessage(const char* format, ...);
 
   SEQUENCE_CHECKER(owning_sequence_);
 
@@ -103,7 +100,6 @@ class InputStream final : public media::mojom::AudioInputStream,
   base::CancelableSyncSocket foreign_socket_;
   const std::unique_ptr<InputSyncWriter> writer_;
   std::unique_ptr<InputController> controller_;
-  const std::unique_ptr<UserInputMonitor> user_input_monitor_;
 
   base::WeakPtrFactory<InputStream> weak_factory_{this};
 };

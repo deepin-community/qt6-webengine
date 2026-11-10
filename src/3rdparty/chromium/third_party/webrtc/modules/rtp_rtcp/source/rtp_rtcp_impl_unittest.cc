@@ -10,18 +10,38 @@
 
 #include "modules/rtp_rtcp/source/rtp_rtcp_impl.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
-#include <set>
+#include <optional>
+#include <vector>
 
+#include "api/array_view.h"
+#include "api/call/transport.h"
+#include "api/environment/environment.h"
+#include "api/environment/environment_factory.h"
+#include "api/field_trials.h"
+#include "api/rtp_headers.h"
 #include "api/units/time_delta.h"
+#include "api/video/video_codec_type.h"
+#include "api/video/video_content_type.h"
+#include "api/video/video_frame_type.h"
+#include "api/video/video_rotation.h"
+#include "modules/rtp_rtcp/include/receive_statistics.h"
+#include "modules/rtp_rtcp/include/rtcp_statistics.h"
 #include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
-#include "modules/rtp_rtcp/source/rtcp_packet.h"
 #include "modules/rtp_rtcp/source/rtcp_packet/nack.h"
+#include "modules/rtp_rtcp/source/rtcp_packet/sender_report.h"
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
+#include "modules/rtp_rtcp/source/rtp_rtcp_interface.h"
 #include "modules/rtp_rtcp/source/rtp_sender_video.h"
-#include "rtc_base/rate_limiter.h"
-#include "test/explicit_key_value_config.h"
+#include "modules/rtp_rtcp/source/rtp_sequence_number_map.h"
+#include "modules/video_coding/codecs/interface/common_constants.h"
+#include "modules/video_coding/codecs/vp8/include/vp8_globals.h"
+#include "system_wrappers/include/clock.h"
+#include "system_wrappers/include/ntp_time.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 #include "test/rtcp_packet_parser.h"
@@ -35,15 +55,15 @@ using ::testing::Optional;
 
 namespace webrtc {
 namespace {
-const uint32_t kSenderSsrc = 0x12345;
-const uint32_t kReceiverSsrc = 0x23456;
+constexpr uint32_t kSenderSsrc = 0x12345;
+constexpr uint32_t kReceiverSsrc = 0x23456;
 constexpr TimeDelta kOneWayNetworkDelay = TimeDelta::Millis(100);
-const uint8_t kBaseLayerTid = 0;
-const uint8_t kHigherLayerTid = 1;
-const uint16_t kSequenceNumber = 100;
-const uint8_t kPayloadType = 100;
-const int kWidth = 320;
-const int kHeight = 100;
+constexpr uint8_t kBaseLayerTid = 0;
+constexpr uint8_t kHigherLayerTid = 1;
+constexpr uint16_t kSequenceNumber = 100;
+constexpr uint8_t kPayloadType = 100;
+constexpr int kWidth = 320;
+constexpr int kHeight = 100;
 
 MATCHER_P2(Near, value, margin, "") {
   return value - margin <= arg && arg <= value + margin;
@@ -76,15 +96,16 @@ class SendTransport : public Transport {
     clock_ = clock;
     delay_ms_ = delay_ms;
   }
-  bool SendRtp(rtc::ArrayView<const uint8_t> data,
-               const PacketOptions& options) override {
+  bool SendRtp(ArrayView<const uint8_t> data,
+               const PacketOptions& /* options */) override {
     RtpPacket packet;
     EXPECT_TRUE(packet.Parse(data));
     ++rtp_packets_sent_;
     last_rtp_sequence_number_ = packet.SequenceNumber();
     return true;
   }
-  bool SendRtcp(rtc::ArrayView<const uint8_t> data) override {
+  bool SendRtcp(ArrayView<const uint8_t> data,
+                const PacketOptions& /* options */) override {
     test::RtcpPacketParser parser;
     parser.Parse(data);
     last_nack_list_ = parser.nack()->packet_ids();
@@ -110,13 +131,14 @@ class SendTransport : public Transport {
 class RtpRtcpModule : public RtcpPacketTypeCounterObserver {
  public:
   RtpRtcpModule(SimulatedClock* clock, bool is_sender)
-      : is_sender_(is_sender),
-        receive_statistics_(ReceiveStatistics::Create(clock)),
-        clock_(clock) {
+      : env_(CreateEnvironment(clock)),
+        is_sender_(is_sender),
+        receive_statistics_(ReceiveStatistics::Create(clock)) {
     CreateModuleImpl();
     transport_.SimulateNetworkDelay(kOneWayNetworkDelay.ms(), clock);
   }
 
+  const Environment env_;
   const bool is_sender_;
   RtcpPacketTypeCounter packets_sent_;
   RtcpPacketTypeCounter packets_received_;
@@ -157,7 +179,6 @@ class RtpRtcpModule : public RtcpPacketTypeCounterObserver {
   void CreateModuleImpl() {
     RtpRtcpInterface::Configuration config;
     config.audio = false;
-    config.clock = clock_;
     config.outgoing_transport = &transport_;
     config.receive_statistics = receive_statistics_.get();
     config.rtcp_packet_type_counter_observer = this;
@@ -167,12 +188,11 @@ class RtpRtcpModule : public RtcpPacketTypeCounterObserver {
     config.need_rtp_packet_infos = true;
     config.non_sender_rtt_measurement = true;
 
-    impl_.reset(new ModuleRtpRtcpImpl(config));
+    impl_.reset(new ModuleRtpRtcpImpl(env_, config));
     impl_->SetRemoteSSRC(is_sender_ ? kReceiverSsrc : kSenderSsrc);
     impl_->SetRTCPStatus(RtcpMode::kCompound);
   }
 
-  SimulatedClock* const clock_;
   std::map<uint32_t, RtcpPacketTypeCounter> counter_map_;
 };
 }  // namespace
@@ -191,7 +211,7 @@ class RtpRtcpImplTest : public ::testing::Test {
     sender_.impl_->SetSequenceNumber(kSequenceNumber);
     sender_.impl_->SetStorePacketsStatus(true, 100);
 
-    test::ExplicitKeyValueConfig field_trials("");
+    FieldTrials field_trials = CreateTestFieldTrials();
     RTPSenderVideo::Config video_config;
     video_config.clock = &clock_;
     video_config.rtp_sender = sender_.impl_->RtpSender();
@@ -599,7 +619,7 @@ TEST_F(RtpRtcpImplTest, StoresPacketInfoForSentPackets) {
 
 // Checks that the remote sender stats are not available if no RTCP SR was sent.
 TEST_F(RtpRtcpImplTest, SenderReportStatsNotAvailable) {
-  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Eq(absl::nullopt));
+  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Eq(std::nullopt));
 }
 
 // Checks that the remote sender stats are available if an RTCP SR was sent.
@@ -608,7 +628,7 @@ TEST_F(RtpRtcpImplTest, SenderReportStatsAvailable) {
   SendFrame(&sender_, sender_video_.get(), kBaseLayerTid);
   // Send an SR.
   ASSERT_THAT(sender_.impl_->SendRTCP(kRtcpReport), Eq(0));
-  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Not(Eq(absl::nullopt)));
+  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Not(Eq(std::nullopt)));
 }
 
 // Checks that the remote sender stats are not available if an RTCP SR with an
@@ -624,7 +644,7 @@ TEST_F(RtpRtcpImplTest, SenderReportStatsNotUpdatedWithUnexpectedSsrc) {
   sr.SetPacketCount(123u);
   sr.SetOctetCount(456u);
   receiver_.impl_->IncomingRtcpPacket(sr.Build());
-  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Eq(absl::nullopt));
+  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(), Eq(std::nullopt));
 }
 
 // Checks the stats derived from the last received RTCP SR are set correctly.
@@ -642,11 +662,11 @@ TEST_F(RtpRtcpImplTest, SenderReportStatsCheckStatsFromLastReport) {
   sr.SetOctetCount(kOctetCount);
   receiver_.impl_->IncomingRtcpPacket(sr.Build());
 
-  EXPECT_THAT(
-      receiver_.impl_->GetSenderReportStats(),
-      Optional(AllOf(Field(&SenderReportStats::last_remote_timestamp, Eq(ntp)),
-                     Field(&SenderReportStats::packets_sent, Eq(kPacketCount)),
-                     Field(&SenderReportStats::bytes_sent, Eq(kOctetCount)))));
+  EXPECT_THAT(receiver_.impl_->GetSenderReportStats(),
+              Optional(AllOf(
+                  Field(&SenderReportStats::last_remote_ntp_timestamp, Eq(ntp)),
+                  Field(&SenderReportStats::packets_sent, Eq(kPacketCount)),
+                  Field(&SenderReportStats::bytes_sent, Eq(kOctetCount)))));
 }
 
 // Checks that the remote sender stats count equals the number of sent RTCP SRs.
@@ -672,8 +692,8 @@ TEST_F(RtpRtcpImplTest, SenderReportStatsArrivalTimestampSet) {
   // Send an SR.
   ASSERT_THAT(sender_.impl_->SendRTCP(kRtcpReport), Eq(0));
   auto stats = receiver_.impl_->GetSenderReportStats();
-  ASSERT_THAT(stats, Not(Eq(absl::nullopt)));
-  EXPECT_TRUE(stats->last_arrival_timestamp.Valid());
+  ASSERT_THAT(stats, Not(Eq(std::nullopt)));
+  EXPECT_TRUE(stats->last_arrival_ntp_timestamp.Valid());
 }
 
 // Checks that the packet and byte counters from an RTCP SR are not zero once

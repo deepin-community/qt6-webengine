@@ -16,6 +16,7 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPicture.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/private/base/SkAssert.h"
 #include "include/private/base/SkMutex.h"
@@ -59,6 +60,23 @@ void SkImage_Picture::replay(SkCanvas* canvas) const {
     canvas->drawPicture(pictureIG->fPicture,
                         &pictureIG->fMatrix,
                         pictureIG->fPaint.getMaybeNull());
+}
+
+sk_sp<SkImage> SkImage_Picture::onMakeSubset(SkRecorder*,
+                                             const SkIRect& subset,
+                                             RequiredProperties) const {
+    auto sharedGenerator = this->generator();
+    auto pictureIG = static_cast<SkPictureImageGenerator*>(sharedGenerator->fGenerator.get());
+
+    SkMatrix matrix = pictureIG->fMatrix;
+    matrix.postTranslate(-subset.left(), -subset.top());
+    SkImages::BitDepth bitDepth =
+            this->colorType() == kRGBA_F16_SkColorType ? SkImages::BitDepth::kF16
+                                                       : SkImages::BitDepth::kU8;
+
+    return SkImage_Picture::Make(pictureIG->fPicture, subset.size(),
+                                 &matrix, pictureIG->fPaint.getMaybeNull(),
+                                 bitDepth, this->refColorSpace(), pictureIG->fProps);
 }
 
 bool SkImage_Picture::getImageKeyValues(

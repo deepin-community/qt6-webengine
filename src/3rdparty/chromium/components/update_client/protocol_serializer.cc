@@ -5,13 +5,13 @@
 #include "components/update_client/protocol_serializer.h"
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/check.h"
 #include "base/containers/flat_map.h"
-#include "base/cpu.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -26,10 +26,13 @@
 #include "components/update_client/protocol_definition.h"
 #include "components/update_client/update_query_params.h"
 #include "components/update_client/utils.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
+#endif
+
+#if defined(ARCH_CPU_X86_FAMILY)
+#include "base/cpu.h"
 #endif
 
 namespace update_client {
@@ -84,7 +87,7 @@ base::flat_map<std::string, std::string> BuildUpdateCheckExtraRequestHeaders(
     const std::vector<std::string>& ids,
     bool is_foreground) {
   // This number of extension ids results in an HTTP header length of about 1KB.
-  constexpr size_t maxIdsCount = 30;
+  static constexpr size_t maxIdsCount = 30;
   const std::vector<std::string>& app_ids =
       ids.size() <= maxIdsCount
           ? ids
@@ -105,7 +108,7 @@ protocol_request::Request MakeProtocolRequest(
     const std::string& channel,
     const std::string& os_long_name,
     const std::string& download_preference,
-    absl::optional<bool> domain_joined,
+    std::optional<bool> domain_joined,
     const base::flat_map<std::string, std::string>& additional_attributes,
     const base::flat_map<std::string, std::string>& updater_state_attributes,
     std::vector<protocol_request::App> apps) {
@@ -128,7 +131,6 @@ protocol_request::Request MakeProtocolRequest(
   request.prodchannel = channel;
   request.operating_system = UpdateQueryParams::GetOS();
   request.arch = UpdateQueryParams::GetArch();
-  request.nacl_arch = UpdateQueryParams::GetNaclArch();
   request.dlpref = download_preference;
   request.domain_joined = domain_joined;
   request.additional_attributes = additional_attributes;
@@ -140,8 +142,9 @@ protocol_request::Request MakeProtocolRequest(
 #endif
 
   // HW platform information.
-  base::CPU cpu;
   request.hw.physmemory = GetPhysicalMemoryGB();
+#if defined(ARCH_CPU_X86_FAMILY)
+  base::CPU cpu;
   request.hw.sse = cpu.has_sse();
   request.hw.sse2 = cpu.has_sse2();
   request.hw.sse3 = cpu.has_sse3();
@@ -149,6 +152,7 @@ protocol_request::Request MakeProtocolRequest(
   request.hw.sse41 = cpu.has_sse41();
   request.hw.sse42 = cpu.has_sse42();
   request.hw.avx = cpu.has_avx();
+#endif
 
   // OS version and platform information.
   request.os.platform = os_long_name;
@@ -157,7 +161,7 @@ protocol_request::Request MakeProtocolRequest(
   request.os.arch = GetArchitecture();
 
   if (!updater_state_attributes.empty()) {
-    request.updater = absl::make_optional<protocol_request::Updater>();
+    request.updater = std::make_optional<protocol_request::Updater>();
     auto it = updater_state_attributes.find("name");
     if (it != updater_state_attributes.end()) {
       request.updater->name = it->second;
@@ -208,21 +212,22 @@ protocol_request::App MakeProtocolApp(
     const base::Version& version,
     const std::string& ap,
     const std::string& brand_code,
+    const std::string& install_id,
     const std::string& lang,
     const int install_date,
     const std::string& install_source,
     const std::string& install_location,
-    const std::string& fingerprint,
     const std::map<std::string, std::string>& installer_attributes,
     const std::string& cohort,
     const std::string& cohort_hint,
     const std::string& cohort_name,
     const std::string& release_channel,
     const std::vector<int>& disabled_reasons,
-    absl::optional<protocol_request::UpdateCheck> update_check,
+    const std::vector<std::string>& cached_hashes,
+    std::optional<protocol_request::UpdateCheck> update_check,
     const std::vector<protocol_request::Data>& data,
-    absl::optional<protocol_request::Ping> ping,
-    absl::optional<std::vector<base::Value::Dict>> events) {
+    std::optional<protocol_request::Ping> ping,
+    std::optional<std::vector<base::Value::Dict>> events) {
   protocol_request::App app;
   app.app_id = app_id;
   app.version = version.GetString();
@@ -231,9 +236,9 @@ protocol_request::App MakeProtocolApp(
   app.brand_code = FilterBrandCode(brand_code);
   app.lang = lang;
   app.install_date = install_date;
+  app.install_id = install_id;
   app.install_source = install_source;
   app.install_location = install_location;
-  app.fingerprint = fingerprint;
   app.installer_attributes = FilterInstallerAttributes(installer_attributes);
   app.cohort = cohort;
   app.cohort_hint = cohort_hint;
@@ -241,6 +246,7 @@ protocol_request::App MakeProtocolApp(
   app.release_channel = release_channel;
   app.enabled = disabled_reasons.empty();
   app.disabled_reasons = disabled_reasons;
+  app.cached_hashes = cached_hashes;
   app.update_check = std::move(update_check);
   app.data = data;
   app.ping = std::move(ping);

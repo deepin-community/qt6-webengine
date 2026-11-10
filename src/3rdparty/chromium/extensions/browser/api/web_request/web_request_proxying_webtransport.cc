@@ -5,10 +5,10 @@
 #include "extensions/browser/api/web_request/web_request_proxying_webtransport.h"
 
 #include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/web_contents.h"
 #include "extensions/browser/api/web_request/extension_web_request_event_router.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
@@ -35,7 +35,7 @@ net::HttpRequestHeaders GetRequestHeaders() {
   //     loading case. Extension authors can use the "initiator" property to
   //     observe it.
   auto headers = net::HttpRequestHeaders();
-  // TODO(1240935): Share the code with
+  // TODO(crbug.com/40194454): Share the code with
   // DedicatedWebTransportHttp3Client::DoSendRequest.
   headers.SetHeader("sec-webtransport-http3-draft02", "1");
   return headers;
@@ -80,10 +80,11 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
                 &redirect_url_, &should_collapse_initiator);
     // It doesn't make sense to collapse WebTransport requests since they won't
     // be associated with a DOM element.
-    DCHECK(!should_collapse_initiator);
+    CHECK(!should_collapse_initiator);
 
-    if (result == net::ERR_IO_PENDING)
+    if (result == net::ERR_IO_PENDING) {
       return;
+    }
 
     DCHECK(result == net::OK || result == net::ERR_BLOCKED_BY_CLIENT) << result;
     OnBeforeRequestCompleted(result);
@@ -105,8 +106,9 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
                     &WebTransportHandshakeProxy::OnBeforeSendHeadersCompleted,
                     base::Unretained(this)),
                 &request_headers_);
-    if (result == net::ERR_IO_PENDING)
+    if (result == net::ERR_IO_PENDING) {
       return;
+    }
 
     DCHECK(result == net::OK || result == net::ERR_BLOCKED_BY_CLIENT) << result;
     // See the comments in the OnBeforeSendHeadersCompleted to see why
@@ -145,16 +147,23 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
 
   // WebTransportHandshakeClient implementation:
   // Proxing should be finished with either of below functions.
+  void OnBeforeConnect(const net::IPEndPoint& server_address) override {}
+
   void OnConnectionEstablished(
       mojo::PendingRemote<network::mojom::WebTransport> transport,
       mojo::PendingReceiver<network::mojom::WebTransportClient> client,
       const scoped_refptr<net::HttpResponseHeaders>& response_headers,
+      const std::optional<std::string>& selected_application_protocol,
       network::mojom::WebTransportStatsPtr initial_stats) override {
     receiver_.reset();
     pending_transport_ = std::move(transport);
     pending_client_ = std::move(client);
     initial_stats_ = std::move(initial_stats);
     response_headers_ = response_headers;
+    selected_application_protocol_ = selected_application_protocol;
+
+    bool should_collapse_initiator = false;
+
     // Since WebTransport doesn't support redirect, 'redirect_url' is ignored
     // even if extensions assigned it.
     const int result =
@@ -164,10 +173,16 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
                 base::BindOnce(
                     &WebTransportHandshakeProxy::OnHeadersReceivedCompleted,
                     base::Unretained(this)),
-                response_headers_.get(), &override_headers_, &redirect_url_);
+                response_headers_.get(), &override_headers_, &redirect_url_,
+                &should_collapse_initiator);
 
-    if (result == net::ERR_IO_PENDING)
+    // It doesn't make sense to collapse WebTransport requests since they won't
+    // be associated with a DOM element.
+    CHECK(!should_collapse_initiator);
+
+    if (result == net::ERR_IO_PENDING) {
       return;
+    }
 
     DCHECK(result == net::OK || result == net::ERR_BLOCKED_BY_CLIENT) << result;
     OnHeadersReceivedCompleted(result);
@@ -183,7 +198,7 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
     response.headers =
         override_headers_ ? override_headers_ : response_headers_;
     DCHECK(response.headers);
-    // TODO(1250090): Assign actual server IP 'response';
+    // TODO(crbug.com/40791652): Assign actual server IP 'response';
     response.remote_endpoint = net::IPEndPoint();
     // Web transport doesn't use the http cache.
     response.was_fetched_via_cache = false;
@@ -194,7 +209,8 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
 
     remote_->OnConnectionEstablished(
         std::move(pending_transport_), std::move(pending_client_),
-        response.headers, std::move(initial_stats_));
+        response.headers, selected_application_protocol_,
+        std::move(initial_stats_));
 
     OnCompleted();
     // `this` is deleted.
@@ -237,6 +253,11 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
   }
 
  private:
+  // WebRequestAPI::Proxy:
+  void OnDNRExtensionUnloaded(const Extension* extension) override {
+    info_.EraseDNRActionsForExtension(extension->id());
+  }
+
   mojo::PendingRemote<WebTransportHandshakeClient> handshake_client_;
   // Weak reference to the ProxySet. This is safe as `proxies_` owns this
   // object.
@@ -244,6 +265,7 @@ class WebTransportHandshakeProxy : public WebRequestAPI::Proxy,
   raw_ptr<content::BrowserContext> browser_context_;
   WebRequestInfo info_;
   net::HttpRequestHeaders request_headers_;
+  std::optional<std::string> selected_application_protocol_;
   GURL redirect_url_;
   mojo::Remote<WebTransportHandshakeClient> remote_;
   mojo::Receiver<WebTransportHandshakeClient> receiver_{this};
@@ -276,7 +298,7 @@ void StartWebRequestProxyingWebTransport(
   request.url = url;
   request.request_initiator = initiator_origin;
 
-  const int process_id = render_process_host.GetID();
+  const int process_id = render_process_host.GetDeprecatedID();
 
   WebRequestInfoInitParams params =
       WebRequestInfoInitParams(request_id, process_id, frame_routing_id,

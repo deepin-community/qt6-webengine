@@ -34,7 +34,7 @@ std::string ControllerStateToString(Controller::State state) {
   }
 }
 
-std::string OptBoolToString(absl::optional<bool> value) {
+std::string OptBoolToString(std::optional<bool> value) {
   if (value.has_value())
     return value.value() ? "OK" : "BAD";
 
@@ -55,7 +55,6 @@ std::string EntryStateToString(Entry::State state) {
       return "COMPLETE";
     default:
       NOTREACHED();
-      return std::string();
   }
 }
 
@@ -71,7 +70,6 @@ std::string DriverEntryStateToString(DriverEntry::State state) {
       return "INTERRUPTED";
     default:
       NOTREACHED();
-      return std::string();
   }
 }
 
@@ -95,7 +93,6 @@ std::string CompletionTypeToString(CompletionType type) {
       return "OUT_OF_RESUMPTIONS";
     default:
       NOTREACHED();
-      return std::string();
   }
 }
 
@@ -115,7 +112,6 @@ std::string StartResultToString(DownloadParams::StartResult result) {
       return "INTERNAL_ERROR";
     default:
       NOTREACHED();
-      return std::string();
   }
 }
 
@@ -129,8 +125,8 @@ base::Value::Dict DriverEntryToValue(const DriverEntry& entry) {
 
 base::Value::Dict EntryToValue(
     const Entry& entry,
-    const absl::optional<DriverEntry>& driver,
-    const absl::optional<CompletionType>& completion_type) {
+    const std::optional<DriverEntry>& driver,
+    const std::optional<CompletionType>& completion_type) {
   base::Value::Dict serialized_entry;
   serialized_entry.Set("client",
                        BackgroundDownloadClientToString(entry.client));
@@ -214,7 +210,7 @@ base::Value::List LoggerImpl::GetServiceDownloads() {
   auto entries = log_source_->GetServiceDownloads();
   for (auto& entry : entries) {
     serialized_entries.Append(
-        EntryToValue(*entry.first, entry.second, absl::nullopt));
+        EntryToValue(*entry.first, entry.second, std::nullopt));
   }
 
   return serialized_entries;
@@ -248,7 +244,7 @@ void LoggerImpl::OnServiceDownloadChanged(const std::string& guid) {
     return;
 
   auto entry = EntryToValue(*(entry_details->first), entry_details->second,
-                            absl::nullopt);
+                            std::nullopt);
 
   for (auto& observer : observers_)
     observer.OnServiceDownloadChanged(entry);
@@ -261,7 +257,7 @@ void LoggerImpl::OnServiceDownloadFailed(CompletionType completion_type,
   if (observers_.empty())
     return;
 
-  auto serialized_entry = EntryToValue(entry, absl::nullopt, completion_type);
+  auto serialized_entry = EntryToValue(entry, std::nullopt, completion_type);
   for (auto& observer : observers_)
     observer.OnServiceDownloadFailed(serialized_entry);
 }

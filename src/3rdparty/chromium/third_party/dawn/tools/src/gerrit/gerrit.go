@@ -210,6 +210,10 @@ func (g *Gerrit) CreateChange(project, branch, subject string, wip bool) (*Chang
 	if err != nil {
 		return nil, err
 	}
+	if change.URL == "" {
+		base := g.client.BaseURL()
+		change.URL = fmt.Sprintf("%vc/%v/+/%v", base.String(), change.Project, change.Number)
+	}
 	return change, nil
 }
 
@@ -279,11 +283,9 @@ func (g *Gerrit) AddHashtags(changeID string, tags container.Set[string]) error 
 type CommentSide int
 
 const (
-	// Left is used to specifiy that code comments should appear on the parent
-	// change
+	// Left is used to specify that code comments should appear on the parent change
 	Left CommentSide = iota
-	// Right is used to specifiy that code comments should appear on the new
-	// change
+	// Right is used to specify that code comments should appear on the new change
 	Right
 )
 
@@ -342,4 +344,20 @@ func (g *Gerrit) SetReadyForReview(changeID, message, reviewer string) error {
 		}
 	}
 	return nil
+}
+
+// ListAccessRights retrieves the access rights for the client for the specified
+// projects within the client's Gerrit instance.
+func (g *Gerrit) ListAccessRights(
+	ctx context.Context, projects ...string) (*map[string]gerrit.ProjectAccessInfo, error) {
+
+	listOptions := gerrit.ListAccessRightsOptions{
+		Project: projects,
+	}
+	accessInfo, _, err := g.client.Access.ListAccessRights(&listOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	return accessInfo, nil
 }

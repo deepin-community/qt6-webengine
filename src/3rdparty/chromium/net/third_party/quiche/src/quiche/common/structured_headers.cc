@@ -21,6 +21,7 @@
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "quiche/common/platform/api/quiche_flag_utils.h"
 #include "quiche/common/platform/api/quiche_logging.h"
 
 namespace quiche {
@@ -42,6 +43,9 @@ constexpr char kKeyChars09[] = DIGIT LCALPHA "_-";
 constexpr char kKeyChars[] = DIGIT LCALPHA "_-.*";
 constexpr char kSP[] = " ";
 constexpr char kOWS[] = " \t";
+// https://www.rfc-editor.org/rfc/rfc8941.html#section-4.2.7
+// https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-header-structure-09#section-4.2.11
+constexpr char kBase64Chars[] = DIGIT UCALPHA LCALPHA "+/=";
 #undef DIGIT
 #undef LCALPHA
 #undef UCALPHA
@@ -186,8 +190,7 @@ class StructuredHeaderParser {
         member = ReadItemOrInnerList();
         if (!member) return std::nullopt;
       } else {
-        std::optional<Parameters> parameters;
-        parameters = ReadParameters();
+        std::optional<Parameters> parameters = ReadParameters();
         if (!parameters) return std::nullopt;
         member = ParameterizedMember{Item(true), std::move(*parameters)};
       }
@@ -238,7 +241,7 @@ class StructuredHeaderParser {
         if (!item) return std::nullopt;
         value = std::move(*item);
       }
-      if (!parameters.emplace(*name, value).second) {
+      if (!parameters.emplace(*name, std::move(value)).second) {
         QUICHE_DVLOG(1) << "ReadParameterisedIdentifier: duplicated parameter: "
                         << *name;
         return std::nullopt;
@@ -252,7 +255,6 @@ class StructuredHeaderParser {
   // Parses an Item or Inner List ([RFC8941] 4.2.1.1).
   std::optional<ParameterizedMember> ReadItemOrInnerList() {
     QUICHE_CHECK_EQ(version_, kFinal);
-    std::vector<Item> member;
     bool member_is_inner_list = (!input_.empty() && input_.front() == '(');
     if (member_is_inner_list) {
       return ReadInnerList();
@@ -304,8 +306,7 @@ class StructuredHeaderParser {
     while (true) {
       SkipWhitespaces();
       if (ConsumeChar(')')) {
-        std::optional<Parameters> parameters;
-        parameters = ReadParameters();
+        std::optional<Parameters> parameters = ReadParameters();
         if (!parameters) return std::nullopt;
         return ParameterizedMember(std::move(inner_list), true,
                                    std::move(*parameters));
@@ -470,7 +471,21 @@ class StructuredHeaderParser {
       QUICHE_DVLOG(1) << "ReadByteSequence: missing closing delimiter";
       return std::nullopt;
     }
-    std::string base64(input_.substr(0, len));
+
+    absl::string_view unpadded = input_.substr(0, len);
+    // This check is partially redundant with the call to
+    // `absl::Base64Unescape()` below, but unfortunately that function
+    // allows `.` as a padding byte and does not reject ASCII whitespace, so it
+    // cannot be used in isolation.
+    if (unpadded.find_first_not_of(kBase64Chars) != absl::string_view::npos) {
+      QUICHE_CODE_COUNT(structured_header_invalid_base64_char);
+      // TODO(b/393153699, b/393408763): Early-return here to reject the invalid
+      // input instead of silently proceeding.
+    }
+
+    // TODO: This string copy shouldn't be necessary, as
+    // `absl::Base64Unescape()` already handles the absence of padding.
+    std::string base64(unpadded);
     // Append the necessary padding characters.
     base64.resize((base64.size() + 3) / 4 * 4, '=');
 
@@ -820,21 +835,16 @@ ParameterisedIdentifier::~ParameterisedIdentifier() = default;
 
 Dictionary::Dictionary() = default;
 Dictionary::Dictionary(const Dictionary&) = default;
+Dictionary::Dictionary(Dictionary&&) = default;
 Dictionary::Dictionary(std::vector<DictionaryMember> members)
     : members_(std::move(members)) {}
 Dictionary::~Dictionary() = default;
-std::vector<DictionaryMember>::iterator Dictionary::begin() {
+Dictionary::iterator Dictionary::begin() { return members_.begin(); }
+Dictionary::const_iterator Dictionary::begin() const {
   return members_.begin();
 }
-std::vector<DictionaryMember>::const_iterator Dictionary::begin() const {
-  return members_.begin();
-}
-std::vector<DictionaryMember>::iterator Dictionary::end() {
-  return members_.end();
-}
-std::vector<DictionaryMember>::const_iterator Dictionary::end() const {
-  return members_.end();
-}
+Dictionary::iterator Dictionary::end() { return members_.end(); }
+Dictionary::const_iterator Dictionary::end() const { return members_.end(); }
 ParameterizedMember& Dictionary::operator[](std::size_t idx) {
   return members_[idx].second;
 }
@@ -846,32 +856,34 @@ const ParameterizedMember& Dictionary::at(std::size_t idx) const {
   return (*this)[idx];
 }
 ParameterizedMember& Dictionary::operator[](absl::string_view key) {
-  auto it = absl::c_find_if(
-      members_, [key](const auto& member) { return member.first == key; });
-  if (it != members_.end()) return it->second;
-  members_.push_back({std::string(key), ParameterizedMember()});
-  return members_.back().second;
+  auto it = find(key);
+  if (it != end()) return it->second;
+  return members_.emplace_back(key, ParameterizedMember()).second;
 }
 ParameterizedMember& Dictionary::at(absl::string_view key) {
-  auto it = absl::c_find_if(
-      members_, [key](const auto& member) { return member.first == key; });
-  QUICHE_CHECK(it != members_.end()) << "Provided key not found in dictionary";
+  auto it = find(key);
+  QUICHE_CHECK(it != end()) << "Provided key not found in dictionary";
   return it->second;
 }
 const ParameterizedMember& Dictionary::at(absl::string_view key) const {
-  auto it = absl::c_find_if(
-      members_, [key](const auto& member) { return member.first == key; });
-  QUICHE_CHECK(it != members_.end()) << "Provided key not found in dictionary";
+  auto it = find(key);
+  QUICHE_CHECK(it != end()) << "Provided key not found in dictionary";
   return it->second;
+}
+Dictionary::const_iterator Dictionary::find(absl::string_view key) const {
+  return absl::c_find_if(
+      members_, [key](const auto& member) { return member.first == key; });
+}
+Dictionary::iterator Dictionary::find(absl::string_view key) {
+  return absl::c_find_if(
+      members_, [key](const auto& member) { return member.first == key; });
 }
 bool Dictionary::empty() const { return members_.empty(); }
 std::size_t Dictionary::size() const { return members_.size(); }
 bool Dictionary::contains(absl::string_view key) const {
-  for (auto& member : members_) {
-    if (member.first == key) return true;
-  }
-  return false;
+  return find(key) != end();
 }
+void Dictionary::clear() { members_.clear(); }
 
 std::optional<ParameterizedItem> ParseItem(absl::string_view str) {
   StructuredHeaderParser parser(str, StructuredHeaderParser::kFinal);

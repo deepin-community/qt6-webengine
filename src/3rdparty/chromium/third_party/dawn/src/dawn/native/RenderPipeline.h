@@ -35,6 +35,7 @@
 #include "dawn/common/ContentLessObjectCacheable.h"
 #include "dawn/native/AttachmentState.h"
 #include "dawn/native/Forward.h"
+#include "dawn/native/ImmediateConstantsLayout.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/Pipeline.h"
 
@@ -49,7 +50,6 @@ enum class VertexFormatBaseType {
 };
 
 struct VertexFormatInfo {
-    wgpu::VertexFormat format;
     uint32_t byteSize;
     uint32_t componentCount;
     VertexFormatBaseType baseType;
@@ -69,8 +69,6 @@ std::vector<StageAndDescriptor> GetRenderStagesAndSetPlaceholderShader(
 size_t IndexFormatSize(wgpu::IndexFormat format);
 
 bool IsStripPrimitiveTopology(wgpu::PrimitiveTopology primitiveTopology);
-
-bool StencilTestEnabled(const DepthStencilState* depthStencil);
 
 struct VertexAttributeInfo {
     wgpu::VertexFormat format;
@@ -94,10 +92,11 @@ class RenderPipelineBase : public PipelineBase,
     RenderPipelineBase(DeviceBase* device, const UnpackedPtr<RenderPipelineDescriptor>& descriptor);
     ~RenderPipelineBase() override;
 
-    static Ref<RenderPipelineBase> MakeError(DeviceBase* device, const char* label);
+    static Ref<RenderPipelineBase> MakeError(DeviceBase* device, StringView label);
 
     ObjectType GetType() const override;
 
+    // Vertex getters
     const VertexAttributeMask& GetAttributeLocationsUsed() const;
     const VertexAttributeInfo& GetAttribute(VertexAttributeLocation location) const;
     const VertexBufferMask& GetVertexBuffersUsed() const;
@@ -106,28 +105,39 @@ class RenderPipelineBase : public PipelineBase,
     const VertexBufferInfo& GetVertexBuffer(VertexBufferSlot slot) const;
     uint32_t GetVertexBufferCount() const;
 
+    // Color attachment getters
     const ColorTargetState* GetColorTargetState(ColorAttachmentIndex attachmentSlot) const;
-    const DepthStencilState* GetDepthStencilState() const;
+    ColorAttachmentMask GetColorAttachmentsMask() const;
+    wgpu::TextureFormat GetColorAttachmentFormat(ColorAttachmentIndex attachment) const;
+
+    // Primitive getters
     wgpu::PrimitiveTopology GetPrimitiveTopology() const;
     wgpu::IndexFormat GetStripIndexFormat() const;
     wgpu::CullMode GetCullMode() const;
     wgpu::FrontFace GetFrontFace() const;
+
+    // Depth-stencil getters
+    const DepthStencilState* GetDepthStencilState() const;
+    bool HasDepthStencilAttachment() const;
+    bool UsesStencil() const;
+    wgpu::TextureFormat GetDepthStencilFormat() const;
     bool IsDepthBiasEnabled() const;
     int32_t GetDepthBias() const;
     float GetDepthBiasSlopeScale() const;
     float GetDepthBiasClamp() const;
     bool HasUnclippedDepth() const;
 
-    ColorAttachmentMask GetColorAttachmentsMask() const;
-    bool HasDepthStencilAttachment() const;
-    wgpu::TextureFormat GetColorAttachmentFormat(ColorAttachmentIndex attachment) const;
-    wgpu::TextureFormat GetDepthStencilFormat() const;
+    // Multisample getters
     uint32_t GetSampleCount() const;
     uint32_t GetSampleMask() const;
     bool IsAlphaToCoverageEnabled() const;
+
+    // Shader builtin getters
     bool WritesDepth() const;
     bool WritesStencil() const;
     bool UsesFragDepth() const;
+    bool UsesVertexIndex() const;
+    bool UsesInstanceIndex() const;
 
     const AttachmentState* GetAttachmentState() const;
 
@@ -144,7 +154,7 @@ class RenderPipelineBase : public PipelineBase,
     void DestroyImpl() override;
 
   private:
-    RenderPipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag, const char* label);
+    RenderPipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label);
 
     // Vertex state
     uint32_t mVertexBufferCount;
@@ -164,10 +174,11 @@ class RenderPipelineBase : public PipelineBase,
     PrimitiveState mPrimitive;
     DepthStencilState mDepthStencil;
     MultisampleState mMultisample;
-    bool mUnclippedDepth = false;
     bool mWritesDepth = false;
     bool mWritesStencil = false;
     bool mUsesFragDepth = false;
+    bool mUsesVertexIndex = false;
+    bool mUsesInstanceIndex = false;
 };
 
 }  // namespace dawn::native

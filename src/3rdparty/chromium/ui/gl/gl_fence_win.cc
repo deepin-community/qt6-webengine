@@ -138,7 +138,6 @@ GLFenceWin::~GLFenceWin() = default;
 
 bool GLFenceWin::HasCompleted() {
   NOTREACHED();
-  return false;
 }
 
 void GLFenceWin::ClientWait() {
@@ -170,10 +169,6 @@ void GLFenceWin::ServerWait() {
 
 std::unique_ptr<gfx::GpuFence> GLFenceWin::GetGpuFence() {
   return std::make_unique<gfx::GpuFence>(gpu_fence_handle_.Clone());
-}
-
-TransferableFence GLFenceWin::Transfer() {
-  return TransferableFence();
 }
 
 }  // namespace gl

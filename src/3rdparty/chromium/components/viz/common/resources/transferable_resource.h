@@ -7,30 +7,48 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <vector>
 
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_id.h"
-#include "components/viz/common/resources/shared_bitmap.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/common/viz_common_export.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
-#include "gpu/ipc/common/vulkan_ycbcr_info.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/skia/include/core/SkAlphaType.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/hdr_metadata.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "gpu/vulkan/vulkan_ycbcr_info.h"
+#endif
+
 namespace gpu {
 class ClientSharedImage;
 }
+
+namespace ash {
+class UiResourceManager;
+}  // namespace ash
 
 namespace viz {
 
 struct ReturnedResource;
 
 struct VIZ_COMMON_EXPORT TransferableResource {
+  struct VIZ_COMMON_EXPORT MetadataOverride {
+    std::optional<SharedImageFormat> format;
+    std::optional<gfx::Size> size;
+    std::optional<uint32_t> texture_target;
+    std::optional<bool> is_overlay_candidate;
+    std::optional<gfx::ColorSpace> color_space;
+    std::optional<GrSurfaceOrigin> origin;
+    std::optional<SkAlphaType> alpha_type;
+  };
+
   enum class SynchronizationType : uint8_t {
     // Commands issued (SyncToken) - a resource can be reused as soon as display
     // compositor issues the latest command on it and SyncToken will be signaled
@@ -63,7 +81,7 @@ struct VIZ_COMMON_EXPORT TransferableResource {
     kImageLayerBridge = 6,
     kPPBGraphics3D = 7,
     kPepperGraphics2D = 8,
-    kSharedElementTransition = 9,
+    kViewTransition = 9,
     kStaleContent = 10,
     kTest = 11,
     kTileRasterTask = 12,
@@ -72,28 +90,17 @@ struct VIZ_COMMON_EXPORT TransferableResource {
     kWebGPUSwapBuffer = 15,
   };
 
-  static TransferableResource MakeSoftware(
-      const SharedBitmapId& id,
+  // Creates transferable resource from the ClientSharedImage. `override` allows
+  // to temporary override SharedImage metadata to facilitate current
+  // discrepancies until they are fixed. Do not pass it in the new code.
+  static TransferableResource Make(
+      const scoped_refptr<gpu::ClientSharedImage>& shared_image,
+      ResourceSource source,
       const gpu::SyncToken& sync_token,
-      const gfx::Size& size,
-      SharedImageFormat format,
-      ResourceSource source = ResourceSource::kUnknown);
-  static TransferableResource MakeGpu(
-      const gpu::Mailbox& mailbox,
-      uint32_t texture_target,
-      const gpu::SyncToken& sync_token,
-      const gfx::Size& size,
-      SharedImageFormat format,
-      bool is_overlay_candidate,
-      ResourceSource source = ResourceSource::kUnknown);
-  static TransferableResource MakeGpu(
-      const scoped_refptr<gpu::ClientSharedImage>& client_shared_image,
-      uint32_t texture_target,
-      const gpu::SyncToken& sync_token,
-      const gfx::Size& size,
-      SharedImageFormat format,
-      bool is_overlay_candidate,
-      ResourceSource source = ResourceSource::kUnknown);
+      const MetadataOverride& override = {});
+
+  static std::vector<ReturnedResource> ReturnResources(
+      const std::vector<TransferableResource>& input);
 
   TransferableResource();
   ~TransferableResource();
@@ -102,9 +109,46 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   TransferableResource& operator=(const TransferableResource& other);
 
   ReturnedResource ToReturnedResource() const;
-  static std::vector<ReturnedResource> ReturnResources(
-      const std::vector<TransferableResource>& input);
-  bool is_null() const { return mailbox_holder.mailbox.IsZero(); }
+
+  bool is_empty() const { return mailbox().IsZero(); }
+
+  void set_mailbox(const gpu::Mailbox& mailbox) { memory_buffer_id_ = mailbox; }
+  void set_sync_token(const gpu::SyncToken& sync_token) {
+    sync_token_ = sync_token;
+  }
+  void set_texture_target(const uint32_t texture_target) {
+    texture_target_ = texture_target;
+  }
+  // For usage only in Mojo serialization/deserialization.
+  void set_memory_buffer_id(gpu::Mailbox memory_buffer_id) {
+    memory_buffer_id_ = memory_buffer_id;
+  }
+
+  // Returns the Mailbox that this instance is storing. Valid to call only if
+  // this instance has been created via MakeSoftwareSharedImage() or MakeGpu().
+  const gpu::Mailbox& mailbox() const { return memory_buffer_id_; }
+  const gpu::SyncToken& sync_token() const { return sync_token_; }
+  gpu::SyncToken& mutable_sync_token() { return sync_token_; }
+  uint32_t texture_target() const { return texture_target_; }
+  // For usage only in Mojo serialization/deserialization.
+  const gpu::Mailbox& memory_buffer_id() const { return memory_buffer_id_; }
+
+  bool operator==(const TransferableResource& o) const {
+    return id == o.id && is_software == o.is_software && size == o.size &&
+           format == o.format && memory_buffer_id_ == o.memory_buffer_id_ &&
+           sync_token_ == o.sync_token_ &&
+           texture_target_ == o.texture_target_ &&
+           color_space == o.color_space && hdr_metadata == o.hdr_metadata &&
+           is_overlay_candidate == o.is_overlay_candidate &&
+#if BUILDFLAG(IS_ANDROID)
+           is_backed_by_surface_view == o.is_backed_by_surface_view &&
+           wants_promotion_hint == o.wants_promotion_hint &&
+#elif BUILDFLAG(IS_WIN)
+           wants_promotion_hint == o.wants_promotion_hint &&
+#endif
+           synchronization_type == o.synchronization_type &&
+           resource_source == o.resource_source;
+  }
 
   // TODO(danakj): Some of these fields are only GL, some are only Software,
   // some are both but used for different purposes (like the mailbox name).
@@ -116,8 +160,7 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // own book-keeping but need not be set at all.
   ResourceId id = kInvalidResourceId;
 
-  // Indicates if the resource is gpu or software backed. If gpu, the
-  // mailbox field is a gpu::Mailbox, else it is a SharedBitmapId.
+  // Indicates if the resource is gpu or software backed.
   bool is_software = false;
 
   // The number of pixels in the gpu mailbox/software bitmap.
@@ -127,11 +170,6 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // almost always be RGBA_8888 for resources generated by compositor clients,
   // and must be RGBA_8888 always for software resources.
   SharedImageFormat format = SinglePlaneFormat::kRGBA_8888;
-
-  // The |mailbox| inside here holds the gpu::Mailbox when this is a gpu
-  // resource, or the SharedBitmapId when it is a software resource.
-  // The |texture_target| inside here only apply for gpu resources.
-  gpu::MailboxHolder mailbox_holder;
 
   // The color space that is used for pixel path operations (e.g, TexImage,
   // CopyTexImage, DrawPixels) and when displaying as an overlay.
@@ -153,24 +191,22 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // true.
   bool is_overlay_candidate = false;
 
+  // Indicates if the resource uses low latency rendering.
+  bool is_low_latency_rendering = false;
+
   // This defines when the display compositor returns resources. Clients may use
   // different synchronization types based on their needs.
   SynchronizationType synchronization_type = SynchronizationType::kSyncToken;
 
-  // YCbCr info for resources backed by YCbCr Vulkan images.
-  absl::optional<gpu::VulkanYCbCrInfo> ycbcr_info;
-
 #if BUILDFLAG(IS_ANDROID)
-  // Indicates whether this resource may not be overlayed on Android, since
-  // it's not backed by a SurfaceView.  This may be set in combination with
-  // |is_overlay_candidate|, to find out if switching the resource to a
-  // a SurfaceView would result in overlay promotion.  It's good to find this
+  // YCbCr info for resources backed by YCbCr Vulkan images.
+  std::optional<gpu::VulkanYCbCrInfo> ycbcr_info;
+
+  // Indicates whether this resource may be overlaid on Android via legacy
+  // overlay flow, since it's backed by a SurfaceView. It's good to find this
   // out in advance, since one has no fallback path for displaying a
-  // SurfaceView except via promoting it to an overlay.  Ideally, one _could_
-  // promote SurfaceTexture via the overlay path, even if one ended up just
-  // drawing a quad in the compositor.  However, for now, we use this flag to
-  // refuse to promote so that the compositor will draw the quad.
-  bool is_backed_by_surface_texture = false;
+  // SurfaceView except via promoting it to an overlay.
+  bool is_backed_by_surface_view = false;
 #endif
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
@@ -182,28 +218,40 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // can scan it out.
   bool needs_detiling = false;
 
+  // Origin of the underlying resource.
+  GrSurfaceOrigin origin = kTopLeft_GrSurfaceOrigin;
+
+  SkAlphaType alpha_type = kPremul_SkAlphaType;
+
   // The source that originally allocated this resource. For determining which
   // sources are maintaining lifetime after surface eviction.
   ResourceSource resource_source = ResourceSource::kUnknown;
 
-  bool operator==(const TransferableResource& o) const {
-    return id == o.id && is_software == o.is_software && size == o.size &&
-           format == o.format &&
-           mailbox_holder.mailbox == o.mailbox_holder.mailbox &&
-           mailbox_holder.sync_token == o.mailbox_holder.sync_token &&
-           mailbox_holder.texture_target == o.mailbox_holder.texture_target &&
-           color_space == o.color_space && hdr_metadata == o.hdr_metadata &&
-           is_overlay_candidate == o.is_overlay_candidate &&
-#if BUILDFLAG(IS_ANDROID)
-           is_backed_by_surface_texture == o.is_backed_by_surface_texture &&
-           wants_promotion_hint == o.wants_promotion_hint &&
-#elif BUILDFLAG(IS_WIN)
-           wants_promotion_hint == o.wants_promotion_hint &&
-#endif
-           synchronization_type == o.synchronization_type &&
-           resource_source == o.resource_source;
-  }
-  bool operator!=(const TransferableResource& o) const { return !(*this == o); }
+ private:
+  // TODO(crbug.com/423939347): Following function is deprecated and only used
+  // by Ash implementation. Remove once that is converted.
+  friend ash::UiResourceManager;
+  static TransferableResource MakeGpu(
+      const gpu::Mailbox& mailbox,
+      uint32_t texture_target,
+      const gpu::SyncToken& sync_token,
+      const gfx::Size& size,
+      SharedImageFormat format,
+      bool is_overlay_candidate,
+      ResourceSource source = ResourceSource::kUnknown);
+
+  gpu::Mailbox memory_buffer_id_;
+
+  // The SyncToken associated with the above buffer. Allows the receiver to wait
+  // until the producer has finished using the texture before it begins using
+  // the texture.
+  gpu::SyncToken sync_token_;
+
+  // When the shared memory buffer is backed by a GPU texture, the
+  // `texture_target` is that texture's type.
+  // See here for OpenGL texture types:
+  // https://www.opengl.org/wiki/Texture#Texture_Objects
+  uint32_t texture_target_ = 0;
 };
 
 }  // namespace viz

@@ -4,7 +4,6 @@
 
 #include "content/browser/renderer_host/render_frame_metadata_provider_impl.h"
 
-#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/observer_list.h"
@@ -43,7 +42,7 @@ void RenderFrameMetadataProviderImpl::Bind(
   // Reset on disconnect so that pending state will be correctly stored and
   // later forwarded in the case of a renderer crash.
   render_frame_metadata_observer_remote_.reset_on_disconnect();
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   if (pending_root_scroll_offset_update_frequency_.has_value()) {
     UpdateRootScrollOffsetUpdateFrequency(
         *pending_root_scroll_offset_update_frequency_);
@@ -57,7 +56,7 @@ void RenderFrameMetadataProviderImpl::Bind(
   }
 }
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 void RenderFrameMetadataProviderImpl::UpdateRootScrollOffsetUpdateFrequency(
     cc::mojom::RootScrollOffsetUpdateFrequency frequency) {
   if (!render_frame_metadata_observer_remote_) {
@@ -152,7 +151,7 @@ void RenderFrameMetadataProviderImpl::OnFrameSubmissionForTesting(
                                   weak_factory_.GetWeakPtr()));
 }
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 void RenderFrameMetadataProviderImpl::OnRootScrollOffsetChanged(
     const gfx::PointF& root_scroll_offset) {
   for (Observer& observer : observers_)

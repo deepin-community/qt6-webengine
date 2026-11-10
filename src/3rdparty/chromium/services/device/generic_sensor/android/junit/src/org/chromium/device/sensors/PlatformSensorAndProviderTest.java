@@ -27,7 +27,6 @@ import android.hardware.SensorManager;
 import android.os.Handler;
 import android.util.SparseArray;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -37,7 +36,6 @@ import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.FeatureList;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.device.mojom.ReportingMode;
@@ -61,9 +59,8 @@ public class PlatformSensorAndProviderTest {
     private static final long PLATFORM_SENSOR_TIMESTAMP = 314159265358979L;
     private static final double SECONDS_IN_NANOSECOND = 0.000000001d;
 
-    @SuppressWarnings("LockNotBeforeTry")
-
     /** Class that overrides thread management callbacks for testing purposes. */
+    @SuppressWarnings("LockNotBeforeTry")
     private static class TestPlatformSensorProvider extends PlatformSensorProvider {
         public TestPlatformSensorProvider(Context context) {
             super(context);
@@ -98,9 +95,6 @@ public class PlatformSensorAndProviderTest {
 
     @Before
     public void setUp() {
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-        FeatureList.setTestValues(testValues);
-
         MockitoAnnotations.initMocks(this);
         // Remove all mock sensors before the test.
         mMockSensors.clear();
@@ -109,8 +103,7 @@ public class PlatformSensorAndProviderTest {
                         new Answer<List<Sensor>>() {
                             @Override
                             public List<Sensor> answer(final InvocationOnMock invocation) {
-                                return getMockSensors(
-                                        (int) (Integer) (invocation.getArguments())[0]);
+                                return getMockSensors((int) (Integer) invocation.getArguments()[0]);
                             }
                         })
                 .when(mSensorManager)
@@ -125,11 +118,6 @@ public class PlatformSensorAndProviderTest {
                         any(Sensor.class),
                         anyInt(),
                         any(Handler.class));
-    }
-
-    @After
-    public void tearDown() {
-        FeatureList.setTestValues(null);
     }
 
     /** Test that PlatformSensorProvider cannot create sensors if sensor manager is null. */

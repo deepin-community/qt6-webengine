@@ -47,7 +47,6 @@ const char* Activity::ToString(Type type) {
       return "DEBUGGER";
   }
   NOTREACHED();
-  return "";
 }
 
 }  // namespace extensions

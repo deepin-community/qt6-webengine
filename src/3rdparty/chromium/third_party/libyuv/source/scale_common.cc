@@ -362,36 +362,35 @@ void ScaleRowDown4Box_C(const uint8_t* src_ptr,
                         ptrdiff_t src_stride,
                         uint8_t* dst,
                         int dst_width) {
-  intptr_t stride = src_stride;
   int x;
   for (x = 0; x < dst_width - 1; x += 2) {
     dst[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[3] +
-              src_ptr[stride + 0] + src_ptr[stride + 1] + src_ptr[stride + 2] +
-              src_ptr[stride + 3] + src_ptr[stride * 2 + 0] +
-              src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2] +
-              src_ptr[stride * 2 + 3] + src_ptr[stride * 3 + 0] +
-              src_ptr[stride * 3 + 1] + src_ptr[stride * 3 + 2] +
-              src_ptr[stride * 3 + 3] + 8) >>
+              src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+              src_ptr[src_stride + 2] + src_ptr[src_stride + 3] +
+              src_ptr[src_stride * 2 + 0] + src_ptr[src_stride * 2 + 1] +
+              src_ptr[src_stride * 2 + 2] + src_ptr[src_stride * 2 + 3] +
+              src_ptr[src_stride * 3 + 0] + src_ptr[src_stride * 3 + 1] +
+              src_ptr[src_stride * 3 + 2] + src_ptr[src_stride * 3 + 3] + 8) >>
              4;
     dst[1] = (src_ptr[4] + src_ptr[5] + src_ptr[6] + src_ptr[7] +
-              src_ptr[stride + 4] + src_ptr[stride + 5] + src_ptr[stride + 6] +
-              src_ptr[stride + 7] + src_ptr[stride * 2 + 4] +
-              src_ptr[stride * 2 + 5] + src_ptr[stride * 2 + 6] +
-              src_ptr[stride * 2 + 7] + src_ptr[stride * 3 + 4] +
-              src_ptr[stride * 3 + 5] + src_ptr[stride * 3 + 6] +
-              src_ptr[stride * 3 + 7] + 8) >>
+              src_ptr[src_stride + 4] + src_ptr[src_stride + 5] +
+              src_ptr[src_stride + 6] + src_ptr[src_stride + 7] +
+              src_ptr[src_stride * 2 + 4] + src_ptr[src_stride * 2 + 5] +
+              src_ptr[src_stride * 2 + 6] + src_ptr[src_stride * 2 + 7] +
+              src_ptr[src_stride * 3 + 4] + src_ptr[src_stride * 3 + 5] +
+              src_ptr[src_stride * 3 + 6] + src_ptr[src_stride * 3 + 7] + 8) >>
              4;
     dst += 2;
     src_ptr += 8;
   }
   if (dst_width & 1) {
     dst[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[3] +
-              src_ptr[stride + 0] + src_ptr[stride + 1] + src_ptr[stride + 2] +
-              src_ptr[stride + 3] + src_ptr[stride * 2 + 0] +
-              src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2] +
-              src_ptr[stride * 2 + 3] + src_ptr[stride * 3 + 0] +
-              src_ptr[stride * 3 + 1] + src_ptr[stride * 3 + 2] +
-              src_ptr[stride * 3 + 3] + 8) >>
+              src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+              src_ptr[src_stride + 2] + src_ptr[src_stride + 3] +
+              src_ptr[src_stride * 2 + 0] + src_ptr[src_stride * 2 + 1] +
+              src_ptr[src_stride * 2 + 2] + src_ptr[src_stride * 2 + 3] +
+              src_ptr[src_stride * 3 + 0] + src_ptr[src_stride * 3 + 1] +
+              src_ptr[src_stride * 3 + 2] + src_ptr[src_stride * 3 + 3] + 8) >>
              4;
   }
 }
@@ -400,36 +399,35 @@ void ScaleRowDown4Box_16_C(const uint16_t* src_ptr,
                            ptrdiff_t src_stride,
                            uint16_t* dst,
                            int dst_width) {
-  intptr_t stride = src_stride;
   int x;
   for (x = 0; x < dst_width - 1; x += 2) {
     dst[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[3] +
-              src_ptr[stride + 0] + src_ptr[stride + 1] + src_ptr[stride + 2] +
-              src_ptr[stride + 3] + src_ptr[stride * 2 + 0] +
-              src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2] +
-              src_ptr[stride * 2 + 3] + src_ptr[stride * 3 + 0] +
-              src_ptr[stride * 3 + 1] + src_ptr[stride * 3 + 2] +
-              src_ptr[stride * 3 + 3] + 8) >>
+              src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+              src_ptr[src_stride + 2] + src_ptr[src_stride + 3] +
+              src_ptr[src_stride * 2 + 0] + src_ptr[src_stride * 2 + 1] +
+              src_ptr[src_stride * 2 + 2] + src_ptr[src_stride * 2 + 3] +
+              src_ptr[src_stride * 3 + 0] + src_ptr[src_stride * 3 + 1] +
+              src_ptr[src_stride * 3 + 2] + src_ptr[src_stride * 3 + 3] + 8) >>
              4;
     dst[1] = (src_ptr[4] + src_ptr[5] + src_ptr[6] + src_ptr[7] +
-              src_ptr[stride + 4] + src_ptr[stride + 5] + src_ptr[stride + 6] +
-              src_ptr[stride + 7] + src_ptr[stride * 2 + 4] +
-              src_ptr[stride * 2 + 5] + src_ptr[stride * 2 + 6] +
-              src_ptr[stride * 2 + 7] + src_ptr[stride * 3 + 4] +
-              src_ptr[stride * 3 + 5] + src_ptr[stride * 3 + 6] +
-              src_ptr[stride * 3 + 7] + 8) >>
+              src_ptr[src_stride + 4] + src_ptr[src_stride + 5] +
+              src_ptr[src_stride + 6] + src_ptr[src_stride + 7] +
+              src_ptr[src_stride * 2 + 4] + src_ptr[src_stride * 2 + 5] +
+              src_ptr[src_stride * 2 + 6] + src_ptr[src_stride * 2 + 7] +
+              src_ptr[src_stride * 3 + 4] + src_ptr[src_stride * 3 + 5] +
+              src_ptr[src_stride * 3 + 6] + src_ptr[src_stride * 3 + 7] + 8) >>
              4;
     dst += 2;
     src_ptr += 8;
   }
   if (dst_width & 1) {
     dst[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[3] +
-              src_ptr[stride + 0] + src_ptr[stride + 1] + src_ptr[stride + 2] +
-              src_ptr[stride + 3] + src_ptr[stride * 2 + 0] +
-              src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2] +
-              src_ptr[stride * 2 + 3] + src_ptr[stride * 3 + 0] +
-              src_ptr[stride * 3 + 1] + src_ptr[stride * 3 + 2] +
-              src_ptr[stride * 3 + 3] + 8) >>
+              src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+              src_ptr[src_stride + 2] + src_ptr[src_stride + 3] +
+              src_ptr[src_stride * 2 + 0] + src_ptr[src_stride * 2 + 1] +
+              src_ptr[src_stride * 2 + 2] + src_ptr[src_stride * 2 + 3] +
+              src_ptr[src_stride * 3 + 0] + src_ptr[src_stride * 3 + 1] +
+              src_ptr[src_stride * 3 + 2] + src_ptr[src_stride * 3 + 3] + 8) >>
              4;
   }
 }
@@ -892,27 +890,26 @@ void ScaleRowDown38_3_Box_C(const uint8_t* src_ptr,
                             ptrdiff_t src_stride,
                             uint8_t* dst_ptr,
                             int dst_width) {
-  intptr_t stride = src_stride;
   int i;
   assert((dst_width % 3 == 0) && (dst_width > 0));
   for (i = 0; i < dst_width; i += 3) {
-    dst_ptr[0] =
-        (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[stride + 0] +
-         src_ptr[stride + 1] + src_ptr[stride + 2] + src_ptr[stride * 2 + 0] +
-         src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2]) *
-            (65536 / 9) >>
-        16;
-    dst_ptr[1] =
-        (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[stride + 3] +
-         src_ptr[stride + 4] + src_ptr[stride + 5] + src_ptr[stride * 2 + 3] +
-         src_ptr[stride * 2 + 4] + src_ptr[stride * 2 + 5]) *
-            (65536 / 9) >>
-        16;
-    dst_ptr[2] =
-        (src_ptr[6] + src_ptr[7] + src_ptr[stride + 6] + src_ptr[stride + 7] +
-         src_ptr[stride * 2 + 6] + src_ptr[stride * 2 + 7]) *
-            (65536 / 6) >>
-        16;
+    dst_ptr[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] +
+                  src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+                  src_ptr[src_stride + 2] + src_ptr[src_stride * 2 + 0] +
+                  src_ptr[src_stride * 2 + 1] + src_ptr[src_stride * 2 + 2]) *
+                     (65536 / 9) >>
+                 16;
+    dst_ptr[1] = (src_ptr[3] + src_ptr[4] + src_ptr[5] +
+                  src_ptr[src_stride + 3] + src_ptr[src_stride + 4] +
+                  src_ptr[src_stride + 5] + src_ptr[src_stride * 2 + 3] +
+                  src_ptr[src_stride * 2 + 4] + src_ptr[src_stride * 2 + 5]) *
+                     (65536 / 9) >>
+                 16;
+    dst_ptr[2] = (src_ptr[6] + src_ptr[7] + src_ptr[src_stride + 6] +
+                  src_ptr[src_stride + 7] + src_ptr[src_stride * 2 + 6] +
+                  src_ptr[src_stride * 2 + 7]) *
+                     (65536 / 6) >>
+                 16;
     src_ptr += 8;
     dst_ptr += 3;
   }
@@ -922,27 +919,26 @@ void ScaleRowDown38_3_Box_16_C(const uint16_t* src_ptr,
                                ptrdiff_t src_stride,
                                uint16_t* dst_ptr,
                                int dst_width) {
-  intptr_t stride = src_stride;
   int i;
   assert((dst_width % 3 == 0) && (dst_width > 0));
   for (i = 0; i < dst_width; i += 3) {
-    dst_ptr[0] =
-        (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[stride + 0] +
-         src_ptr[stride + 1] + src_ptr[stride + 2] + src_ptr[stride * 2 + 0] +
-         src_ptr[stride * 2 + 1] + src_ptr[stride * 2 + 2]) *
-            (65536u / 9u) >>
-        16;
-    dst_ptr[1] =
-        (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[stride + 3] +
-         src_ptr[stride + 4] + src_ptr[stride + 5] + src_ptr[stride * 2 + 3] +
-         src_ptr[stride * 2 + 4] + src_ptr[stride * 2 + 5]) *
-            (65536u / 9u) >>
-        16;
-    dst_ptr[2] =
-        (src_ptr[6] + src_ptr[7] + src_ptr[stride + 6] + src_ptr[stride + 7] +
-         src_ptr[stride * 2 + 6] + src_ptr[stride * 2 + 7]) *
-            (65536u / 6u) >>
-        16;
+    dst_ptr[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] +
+                  src_ptr[src_stride + 0] + src_ptr[src_stride + 1] +
+                  src_ptr[src_stride + 2] + src_ptr[src_stride * 2 + 0] +
+                  src_ptr[src_stride * 2 + 1] + src_ptr[src_stride * 2 + 2]) *
+                     (65536u / 9u) >>
+                 16;
+    dst_ptr[1] = (src_ptr[3] + src_ptr[4] + src_ptr[5] +
+                  src_ptr[src_stride + 3] + src_ptr[src_stride + 4] +
+                  src_ptr[src_stride + 5] + src_ptr[src_stride * 2 + 3] +
+                  src_ptr[src_stride * 2 + 4] + src_ptr[src_stride * 2 + 5]) *
+                     (65536u / 9u) >>
+                 16;
+    dst_ptr[2] = (src_ptr[6] + src_ptr[7] + src_ptr[src_stride + 6] +
+                  src_ptr[src_stride + 7] + src_ptr[src_stride * 2 + 6] +
+                  src_ptr[src_stride * 2 + 7]) *
+                     (65536u / 6u) >>
+                 16;
     src_ptr += 8;
     dst_ptr += 3;
   }
@@ -953,22 +949,23 @@ void ScaleRowDown38_2_Box_C(const uint8_t* src_ptr,
                             ptrdiff_t src_stride,
                             uint8_t* dst_ptr,
                             int dst_width) {
-  intptr_t stride = src_stride;
   int i;
   assert((dst_width % 3 == 0) && (dst_width > 0));
   for (i = 0; i < dst_width; i += 3) {
-    dst_ptr[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[stride + 0] +
-                  src_ptr[stride + 1] + src_ptr[stride + 2]) *
-                     (65536 / 6) >>
-                 16;
-    dst_ptr[1] = (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[stride + 3] +
-                  src_ptr[stride + 4] + src_ptr[stride + 5]) *
-                     (65536 / 6) >>
-                 16;
-    dst_ptr[2] =
-        (src_ptr[6] + src_ptr[7] + src_ptr[stride + 6] + src_ptr[stride + 7]) *
-            (65536 / 4) >>
+    dst_ptr[0] =
+        (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[src_stride + 0] +
+         src_ptr[src_stride + 1] + src_ptr[src_stride + 2]) *
+            (65536 / 6) >>
         16;
+    dst_ptr[1] =
+        (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[src_stride + 3] +
+         src_ptr[src_stride + 4] + src_ptr[src_stride + 5]) *
+            (65536 / 6) >>
+        16;
+    dst_ptr[2] = (src_ptr[6] + src_ptr[7] + src_ptr[src_stride + 6] +
+                  src_ptr[src_stride + 7]) *
+                     (65536 / 4) >>
+                 16;
     src_ptr += 8;
     dst_ptr += 3;
   }
@@ -978,22 +975,23 @@ void ScaleRowDown38_2_Box_16_C(const uint16_t* src_ptr,
                                ptrdiff_t src_stride,
                                uint16_t* dst_ptr,
                                int dst_width) {
-  intptr_t stride = src_stride;
   int i;
   assert((dst_width % 3 == 0) && (dst_width > 0));
   for (i = 0; i < dst_width; i += 3) {
-    dst_ptr[0] = (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[stride + 0] +
-                  src_ptr[stride + 1] + src_ptr[stride + 2]) *
-                     (65536u / 6u) >>
-                 16;
-    dst_ptr[1] = (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[stride + 3] +
-                  src_ptr[stride + 4] + src_ptr[stride + 5]) *
-                     (65536u / 6u) >>
-                 16;
-    dst_ptr[2] =
-        (src_ptr[6] + src_ptr[7] + src_ptr[stride + 6] + src_ptr[stride + 7]) *
-            (65536u / 4u) >>
+    dst_ptr[0] =
+        (src_ptr[0] + src_ptr[1] + src_ptr[2] + src_ptr[src_stride + 0] +
+         src_ptr[src_stride + 1] + src_ptr[src_stride + 2]) *
+            (65536u / 6u) >>
         16;
+    dst_ptr[1] =
+        (src_ptr[3] + src_ptr[4] + src_ptr[5] + src_ptr[src_stride + 3] +
+         src_ptr[src_stride + 4] + src_ptr[src_stride + 5]) *
+            (65536u / 6u) >>
+        16;
+    dst_ptr[2] = (src_ptr[6] + src_ptr[7] + src_ptr[src_stride + 6] +
+                  src_ptr[src_stride + 7]) *
+                     (65536u / 4u) >>
+                 16;
     src_ptr += 8;
     dst_ptr += 3;
   }
@@ -1538,9 +1536,9 @@ void ScaleUVColsUp2_C(uint8_t* dst_uv,
   }
 }
 
-// TODO(fbarchard): Replace 0x7f ^ f with 128-f.  bug=607.
-// Mimics SSSE3 blender
-#define BLENDER1(a, b, f) ((a) * (0x7f ^ f) + (b)*f) >> 7
+// Performs (a + ((f * (b - a) + 64) >> 7)) which is equivalent of
+// ((a * (128 - f) + b * f + 64) >> 7).
+#define BLENDER1(a, b, f) ((a) + (((f) * ((b) - (a)) + 64) >> 7))
 #define BLENDERC(a, b, f, s) \
   (uint16_t)(BLENDER1(((a) >> s) & 255, ((b) >> s) & 255, f) << s)
 #define BLENDER(a, b, f) BLENDERC(a, b, f, 8) | BLENDERC(a, b, f, 0)
@@ -1638,14 +1636,6 @@ void ScalePlaneVertical(int src_height,
   assert(dst_width > 0);
   assert(dst_height > 0);
   src_argb += (x >> 16) * bpp;
-#if defined(HAS_INTERPOLATEROW_SSSE3)
-  if (TestCpuFlag(kCpuHasSSSE3)) {
-    InterpolateRow = InterpolateRow_Any_SSSE3;
-    if (IS_ALIGNED(dst_width_bytes, 16)) {
-      InterpolateRow = InterpolateRow_SSSE3;
-    }
-  }
-#endif
 #if defined(HAS_INTERPOLATEROW_AVX2)
   if (TestCpuFlag(kCpuHasAVX2)) {
     InterpolateRow = InterpolateRow_Any_AVX2;
@@ -1662,12 +1652,9 @@ void ScalePlaneVertical(int src_height,
     }
   }
 #endif
-#if defined(HAS_INTERPOLATEROW_MSA)
-  if (TestCpuFlag(kCpuHasMSA)) {
-    InterpolateRow = InterpolateRow_Any_MSA;
-    if (IS_ALIGNED(dst_width_bytes, 32)) {
-      InterpolateRow = InterpolateRow_MSA;
-    }
+#if defined(HAS_INTERPOLATEROW_SME)
+  if (TestCpuFlag(kCpuHasSME)) {
+    InterpolateRow = InterpolateRow_SME;
   }
 #endif
 #if defined(HAS_INTERPOLATEROW_LSX)
@@ -1692,7 +1679,7 @@ void ScalePlaneVertical(int src_height,
     }
     yi = y >> 16;
     yf = filtering ? ((y >> 8) & 255) : 0;
-    InterpolateRow(dst_argb, src_argb + yi * src_stride, src_stride,
+    InterpolateRow(dst_argb, src_argb + yi * (ptrdiff_t)src_stride, src_stride,
                    dst_width_bytes, yf);
     dst_argb += dst_stride;
     y += dy;
@@ -1723,14 +1710,6 @@ void ScalePlaneVertical_16(int src_height,
   assert(dst_width > 0);
   assert(dst_height > 0);
   src_argb += (x >> 16) * wpp;
-#if defined(HAS_INTERPOLATEROW_16_SSE2)
-  if (TestCpuFlag(kCpuHasSSE2)) {
-    InterpolateRow = InterpolateRow_16_Any_SSE2;
-    if (IS_ALIGNED(dst_width_words, 16)) {
-      InterpolateRow = InterpolateRow_16_SSE2;
-    }
-  }
-#endif
 #if defined(HAS_INTERPOLATEROW_16_SSSE3)
   if (TestCpuFlag(kCpuHasSSSE3)) {
     InterpolateRow = InterpolateRow_16_Any_SSSE3;
@@ -1755,6 +1734,11 @@ void ScalePlaneVertical_16(int src_height,
     }
   }
 #endif
+#if defined(HAS_INTERPOLATEROW_16_SME)
+  if (TestCpuFlag(kCpuHasSME)) {
+    InterpolateRow = InterpolateRow_16_SME;
+  }
+#endif
   for (j = 0; j < dst_height; ++j) {
     int yi;
     int yf;
@@ -1763,7 +1747,7 @@ void ScalePlaneVertical_16(int src_height,
     }
     yi = y >> 16;
     yf = filtering ? ((y >> 8) & 255) : 0;
-    InterpolateRow(dst_argb, src_argb + yi * src_stride, src_stride,
+    InterpolateRow(dst_argb, src_argb + yi * (ptrdiff_t)src_stride, src_stride,
                    dst_width_words, yf);
     dst_argb += dst_stride;
     y += dy;
@@ -1811,6 +1795,11 @@ void ScalePlaneVertical_16To8(int src_height,
     }
   }
 #endif
+#if defined(HAS_INTERPOLATEROW_16TO8_SME)
+  if (TestCpuFlag(kCpuHasSME)) {
+    InterpolateRow_16To8 = InterpolateRow_16To8_SME;
+  }
+#endif
 #if defined(HAS_INTERPOLATEROW_16TO8_AVX2)
   if (TestCpuFlag(kCpuHasAVX2)) {
     InterpolateRow_16To8 = InterpolateRow_16To8_Any_AVX2;
@@ -1827,8 +1816,8 @@ void ScalePlaneVertical_16To8(int src_height,
     }
     yi = y >> 16;
     yf = filtering ? ((y >> 8) & 255) : 0;
-    InterpolateRow_16To8(dst_argb, src_argb + yi * src_stride, src_stride,
-                         scale, dst_width_words, yf);
+    InterpolateRow_16To8(dst_argb, src_argb + yi * (ptrdiff_t)src_stride,
+                         src_stride, scale, dst_width_words, yf);
     dst_argb += dst_stride;
     y += dy;
   }
@@ -1963,35 +1952,6 @@ void ScaleSlope(int src_width,
   }
 }
 #undef CENTERSTART
-
-// Read 8x2 upsample with filtering and write 16x1.
-// actually reads an extra pixel, so 9x2.
-void ScaleRowUp2_16_C(const uint16_t* src_ptr,
-                      ptrdiff_t src_stride,
-                      uint16_t* dst,
-                      int dst_width) {
-  const uint16_t* src2 = src_ptr + src_stride;
-
-  int x;
-  for (x = 0; x < dst_width - 1; x += 2) {
-    uint16_t p0 = src_ptr[0];
-    uint16_t p1 = src_ptr[1];
-    uint16_t p2 = src2[0];
-    uint16_t p3 = src2[1];
-    dst[0] = (p0 * 9 + p1 * 3 + p2 * 3 + p3 + 8) >> 4;
-    dst[1] = (p0 * 3 + p1 * 9 + p2 + p3 * 3 + 8) >> 4;
-    ++src_ptr;
-    ++src2;
-    dst += 2;
-  }
-  if (dst_width & 1) {
-    uint16_t p0 = src_ptr[0];
-    uint16_t p1 = src_ptr[1];
-    uint16_t p2 = src2[0];
-    uint16_t p3 = src2[1];
-    dst[0] = (p0 * 9 + p1 * 3 + p2 * 3 + p3 + 8) >> 4;
-  }
-}
 
 #ifdef __cplusplus
 }  // extern "C"

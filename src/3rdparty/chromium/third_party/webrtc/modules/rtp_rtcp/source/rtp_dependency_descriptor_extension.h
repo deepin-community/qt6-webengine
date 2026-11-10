@@ -11,6 +11,7 @@
 #define MODULES_RTP_RTCP_SOURCE_RTP_DEPENDENCY_DESCRIPTOR_EXTENSION_H_
 
 #include <bitset>
+#include <cstddef>
 #include <cstdint>
 
 #include "absl/strings/string_view.h"
@@ -29,9 +30,14 @@ class RtpDependencyDescriptorExtension {
     return RtpExtension::kDependencyDescriptorUri;
   }
 
-  static bool Parse(rtc::ArrayView<const uint8_t> data,
+  static bool Parse(ArrayView<const uint8_t> data,
                     const FrameDependencyStructure* structure,
                     DependencyDescriptor* descriptor);
+
+  // Reads the mandatory part of the descriptor.
+  // Such read is stateless, i.e., doesn't require `FrameDependencyStructure`.
+  static bool Parse(ArrayView<const uint8_t> data,
+                    DependencyDescriptorMandatory* descriptor);
 
   static size_t ValueSize(const FrameDependencyStructure& structure,
                           const DependencyDescriptor& descriptor) {
@@ -40,28 +46,18 @@ class RtpDependencyDescriptorExtension {
   static size_t ValueSize(const FrameDependencyStructure& structure,
                           std::bitset<32> active_chains,
                           const DependencyDescriptor& descriptor);
-  static bool Write(rtc::ArrayView<uint8_t> data,
+  static bool Write(ArrayView<uint8_t> data,
                     const FrameDependencyStructure& structure,
                     const DependencyDescriptor& descriptor) {
     return Write(data, structure, kAllChainsAreActive, descriptor);
   }
-  static bool Write(rtc::ArrayView<uint8_t> data,
+  static bool Write(ArrayView<uint8_t> data,
                     const FrameDependencyStructure& structure,
                     std::bitset<32> active_chains,
                     const DependencyDescriptor& descriptor);
 
  private:
   static constexpr std::bitset<32> kAllChainsAreActive = ~uint32_t{0};
-};
-
-// Trait to only read the mandatory part of the descriptor.
-class RtpDependencyDescriptorExtensionMandatory {
- public:
-  static constexpr webrtc::RTPExtensionType kId =
-      webrtc::RtpDependencyDescriptorExtension::kId;
-
-  static bool Parse(rtc::ArrayView<const uint8_t> data,
-                    DependencyDescriptorMandatory* descriptor);
 };
 
 }  // namespace webrtc

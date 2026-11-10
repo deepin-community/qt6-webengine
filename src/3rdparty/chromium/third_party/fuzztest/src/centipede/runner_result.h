@@ -26,8 +26,9 @@
 #include "./centipede/execution_metadata.h"
 #include "./centipede/feature.h"
 #include "./centipede/shared_memory_blob_sequence.h"
+#include "./common/defs.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 inline constexpr std::string_view kExecutionFailurePerInputTimeout =
     "per-input-timeout-exceeded";
@@ -57,7 +58,12 @@ class ExecutionResult {
     uint64_t peak_rss_mb = 0;     // Peak RSS in Mb after executing the input.
 
     // For tests.
-    bool operator==(const Stats&) const = default;
+    bool operator==(const Stats& other) const {
+      return prep_time_usec == other.prep_time_usec &&
+             exec_time_usec == other.exec_time_usec &&
+             post_time_usec == other.post_time_usec &&
+             peak_rss_mb == other.peak_rss_mb;
+    }
   };
 
   // Accessors.
@@ -115,6 +121,17 @@ class BatchResult {
   // When executing N inputs, the runner will call this at most N times.
   static bool WriteOneFeatureVec(const feature_t* vec, size_t size,
                                  BlobSequence& blobseq);
+  // Writes a buffer of 32-bit `features` to `blobseq`.
+  //
+  // This is a temporary API to work with the dispatcher prototype.
+  //
+  // For each 32-bit feature, the bit [31] is ignored; the 4 bits [30-27]
+  // indicate the domain, which are mapped to the Centipede user-defined domain
+  // 0-15; the remaining 27 bits [26-0] represent the actual 27-bit feature ID
+  // in the domain.
+  static bool WriteDispatcher32BitFeatures(const uint32_t* features,
+                                           size_t num_features,
+                                           BlobSequence& blobseq);
   // Writes a special Begin marker before executing an input.
   static bool WriteInputBegin(BlobSequence& blobseq);
   // Writes a special End marker after executing an input.
@@ -127,10 +144,25 @@ class BatchResult {
   static bool WriteMetadata(const ExecutionMetadata& metadata,
                             BlobSequence& blobseq);
 
+  // Writes the execution `metadata` to `blobseq` as raw bytes.
+  // Returns true iff successful.
+  static bool WriteMetadata(ByteSpan bytes, BlobSequence& blobseq);
+
   // Reads everything written by the runner to `blobseq` into `this`.
   // Returns true iff successful.
   // When running N inputs, ClearAndResize(N) must be called before Read().
   bool Read(BlobSequence& blobseq);
+
+  // Returns true if the failure should be ignored.
+  bool IsIgnoredFailure() const;
+
+  // Returns true if the batch execution failed due to a setup failure, and not
+  // a crash tied to a specific input.
+  bool IsSetupFailure() const;
+
+  // Returns true if the test is skipped during setup, thus there is no need to
+  // run any inputs at all.
+  bool IsSkippedTest() const;
 
   // Accessors.
   std::vector<ExecutionResult>& results() { return results_; }
@@ -145,6 +177,8 @@ class BatchResult {
   const std::string& failure_description() const {
     return failure_description_;
   }
+  std::string& failure_signature() { return failure_signature_; }
+  const std::string& failure_signature() const { return failure_signature_; }
 
  private:
   friend class MultiInputMock;
@@ -152,10 +186,52 @@ class BatchResult {
   std::vector<ExecutionResult> results_;
   std::string log_;  // log_ is populated optionally, e.g. if there was a crash.
   int exit_code_ = EXIT_SUCCESS;  // Process exit code.
+  // If the batch execution fails, this may optionally contain a human-readable
+  // failure description, e.g., the crash type, stack trace...
   std::string failure_description_;
+  // A signature uniquely identifying the failure, which does not need to be
+  // human-readable. Specially, failures with empty signatures are always
+  // considered unique.
+  std::string failure_signature_;
   size_t num_outputs_read_ = 0;
 };
 
-}  // namespace centipede
+// Represents results of mutating a batch of inputs, which are communicated from
+// the runner to Centipede via a blob sequence using the following protocol:
+//
+// The runner first calls `WriteHasCustomMutator()` to indicate whether the
+// target has a custom mutator. If so, it follows up with a sequence of
+// `WriteMutant()` calls to write the mutants to the blob sequence.
+//
+// Centipede calls `Read()` to read whether the target has a custom mutator,
+// and if so, reads the mutants from the blob sequence.
+class MutationResult {
+ public:
+  // Writes a special marker to indicate whether the target has a custom
+  // mutator. Returns true iff successful.
+  static bool WriteHasCustomMutator(bool has_custom_mutator,
+                                    BlobSequence& blobseq);
+
+  // Writes one mutant to `blobseq`. Returns true iff successful.
+  static bool WriteMutant(ByteSpan mutant, BlobSequence& blobseq);
+
+  // Reads whether the target has a custom mutator, and if so, reads at most
+  // `num_mutants` mutants from `blobseq`. Returns true iff successful.
+  bool Read(size_t num_mutants, BlobSequence& blobseq);
+
+  // Accessors.
+  int exit_code() const { return exit_code_; }
+  int& exit_code() { return exit_code_; }
+  bool has_custom_mutator() const { return has_custom_mutator_; }
+  const std::vector<ByteArray>& mutants() const& { return mutants_; }
+  std::vector<ByteArray>&& mutants() && { return std::move(mutants_); }
+
+ private:
+  int exit_code_ = EXIT_SUCCESS;
+  bool has_custom_mutator_ = false;
+  std::vector<ByteArray> mutants_;
+};
+
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_EXECUTION_RESULT_H_

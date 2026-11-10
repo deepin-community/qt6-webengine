@@ -88,20 +88,20 @@ D3D11Status VideoProcessorProxy::Init(uint32_t width, uint32_t height) {
   HRESULT hr = video_device_->CreateVideoProcessorEnumerator(
       &desc, &processor_enumerator_);
   if (!SUCCEEDED(hr)) {
-    return DebugStatus({D3D11Status::Codes::kCreateDecoderOutputViewFailed, hr},
+    return DebugStatus(D3D11Status(D3D11Status::Codes::kCreateDecoderOutputViewFailed, hr),
                        device);
   }
 
   hr = video_device_->CreateVideoProcessor(processor_enumerator_.Get(), 0,
                                            &video_processor_);
   if (!SUCCEEDED(hr)) {
-    return DebugStatus({D3D11Status::Codes::kCreateVideoProcessorFailed, hr},
+    return DebugStatus(D3D11Status(D3D11Status::Codes::kCreateVideoProcessorFailed, hr),
                        device);
   }
 
   hr = device_context_.As(&video_context_);
   if (!SUCCEEDED(hr)) {
-    return DebugStatus({D3D11Status::Codes::kQueryVideoContextFailed, hr},
+    return DebugStatus(D3D11Status(D3D11Status::Codes::kQueryVideoContextFailed, hr),
                        device);
   }
 
@@ -164,29 +164,6 @@ void VideoProcessorProxy::SetOutputColorSpace(
         video_processor_.Get(),
         gfx::ColorSpaceWin::GetDXGIColorSpace(color_space));
   }
-}
-
-void VideoProcessorProxy::SetStreamHDRMetadata(
-    const DXGI_HDR_METADATA_HDR10& stream_metadata) {
-  ComD3D11VideoContext2 video_context2;
-  if (FAILED(video_context_.As(&video_context2)))
-    return;
-
-  // TODO: we shouldn't do this unless we also set the display metadata.
-  video_context2->VideoProcessorSetStreamHDRMetaData(
-      video_processor_.Get(), 0, DXGI_HDR_METADATA_TYPE_HDR10,
-      sizeof(stream_metadata), &stream_metadata);
-}
-
-void VideoProcessorProxy::SetDisplayHDRMetadata(
-    const DXGI_HDR_METADATA_HDR10& display_metadata) {
-  ComD3D11VideoContext2 video_context2;
-  if (FAILED(video_context_.As(&video_context2)))
-    return;
-
-  video_context2->VideoProcessorSetOutputHDRMetaData(
-      video_processor_.Get(), DXGI_HDR_METADATA_TYPE_HDR10,
-      sizeof(display_metadata), &display_metadata);
 }
 
 HRESULT VideoProcessorProxy::VideoProcessorBlt(

@@ -5,7 +5,10 @@
 #include "third_party/blink/renderer/platform/image-decoders/ico/ico_image_decoder.h"
 
 #include <algorithm>
-#include "third_party/blink/renderer/platform/image-decoders/png/png_image_decoder.h"
+
+#include "base/compiler_specific.h"
+#include "third_party/blink/renderer/platform/image-decoders/png/png_decoder_factory.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -21,6 +24,7 @@ ICOImageDecoder::ICOImageDecoder(AlphaOption alpha_option,
     : ImageDecoder(alpha_option,
                    ImageDecoder::kDefaultBitDepth,
                    color_behavior,
+                   cc::AuxImage::kDefault,
                    max_decoded_bytes) {}
 
 ICOImageDecoder::~ICOImageDecoder() = default;
@@ -39,7 +43,7 @@ void ICOImageDecoder::OnSetData(scoped_refptr<SegmentReader> data) {
   fast_reader_.SetData(data);
 
   for (BMPReaders::iterator i(bmp_readers_.begin()); i != bmp_readers_.end();
-       ++i) {
+       UNSAFE_TODO(++i)) {
     if (*i) {
       (*i)->SetData(data);
     }
@@ -214,7 +218,7 @@ bool ICOImageDecoder::DecodeAtIndex(wtf_size_t index) {
   if (!png_decoders_[index]) {
     AlphaOption alpha_option =
         premultiply_alpha_ ? kAlphaPremultiplied : kAlphaNotPremultiplied;
-    png_decoders_[index] = std::make_unique<PNGImageDecoder>(
+    png_decoders_[index] = CreatePngImageDecoder(
         alpha_option, ImageDecoder::kDefaultBitDepth, color_behavior_,
         max_decoded_bytes_, dir_entry.image_offset_);
     SetDataForPNGDecoderAtIndex(index);
@@ -284,7 +288,7 @@ bool ICOImageDecoder::ProcessDirectoryEntries() {
   // Make sure the specified image offsets are past the end of the directory
   // entries.
   for (IconDirectoryEntries::iterator i(dir_entries_.begin());
-       i != dir_entries_.end(); ++i) {
+       i != dir_entries_.end(); UNSAFE_TODO(++i)) {
     if (i->image_offset_ < decoded_offset_) {
       return SetFailed();
     }
@@ -354,9 +358,10 @@ ICOImageDecoder::ImageType ICOImageDecoder::ImageTypeAtIndex(wtf_size_t index) {
   if ((image_offset > data_->size()) || ((data_->size() - image_offset) < 4)) {
     return kUnknown;
   }
-  char buffer[4];
-  const char* data = fast_reader_.GetConsecutiveData(image_offset, 4, buffer);
-  return strncmp(data, "\x89PNG", 4) ? BMP : PNG;
+  std::array<uint8_t, 4> buffer;
+  base::span<const uint8_t> data =
+      fast_reader_.GetConsecutiveData(image_offset, 4, buffer);
+  return base::byte_span_from_cstring("\x89PNG") == data ? PNG : BMP;
 }
 
 }  // namespace blink

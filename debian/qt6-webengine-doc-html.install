@@ -1,12 +1,24 @@
-usr/share/qt6/doc/qtpdf/*.html
-usr/share/qt6/doc/qtpdf/examples-manifest.xml
-usr/share/qt6/doc/qtpdf/images
-usr/share/qt6/doc/qtpdf/qtpdf.index
-usr/share/qt6/doc/qtpdf/qtpdf.qhp
-usr/share/qt6/doc/qtpdf/style
-usr/share/qt6/doc/qtwebengine/*.html
-usr/share/qt6/doc/qtwebengine/examples-manifest.xml
-usr/share/qt6/doc/qtwebengine/images
-usr/share/qt6/doc/qtwebengine/qtwebengine.index
-usr/share/qt6/doc/qtwebengine/qtwebengine.qhp
-usr/share/qt6/doc/qtwebengine/style
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/*.html
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/examples-manifest.xml
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/images
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/qtpdf.index
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/qtpdf.qhp
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtpdf/style
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/*.html
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/examples-manifest.xml
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/images
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/qtwebengine.index
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/qtwebengine.qhp
+# nodoc: no docs generated
+# usr/share/qt6/doc/qtwebengine/style

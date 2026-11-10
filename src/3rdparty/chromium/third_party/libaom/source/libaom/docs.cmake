@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017, Alliance for Open Media. All rights reserved
+# Copyright (c) 2017, Alliance for Open Media. All rights reserved.
 #
 # This source code is subject to the terms of the BSD 2 Clause License and the
 # Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License was
@@ -13,7 +13,7 @@ if(AOM_DOCS_CMAKE_)
 endif() # AOM_DOCS_CMAKE_
 set(AOM_DOCS_CMAKE_ 1)
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 
 set(AOM_DOXYFILE "${AOM_CONFIG_DIR}/doxyfile")
 set(AOM_DOXYGEN_CONFIG_TEMPLATE "libs.doxy_template")
@@ -197,6 +197,16 @@ if(CONFIG_AV1_DECODER AND CONFIG_AV1_ENCODER)
 
   set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
                                        "Lightfield bitstream parsing example.")
+endif()
+
+if(CONFIG_AV1_DECODER AND CONFIG_AV1_ENCODER)
+  set(AOM_DOXYGEN_EXAMPLE_SOURCES
+      ${AOM_DOXYGEN_EXAMPLE_SOURCES}
+      "${AOM_ROOT}/examples/low_complexity_mode_encoder.c")
+
+  set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS
+      ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
+      "Low complexity decode mode encoder example.")
 endif()
 
 # Iterates over list named by $list_name and appends each item to $AOM_DOXYFILE

@@ -37,7 +37,8 @@ class DawnInstance : public dawn::native::Instance {
   static std::unique_ptr<DawnInstance> Create(
       dawn::platform::Platform* platform,
       const GpuPreferences& gpu_preferences,
-      SafetyLevel safety);
+      SafetyLevel safety,
+      dawn::native::DawnInstanceDescriptor* dawn_instance_descriptor = nullptr);
 
  private:
   using dawn::native::Instance::Instance;

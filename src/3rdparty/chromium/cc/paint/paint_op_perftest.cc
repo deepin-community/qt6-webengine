@@ -4,9 +4,11 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
 #include "base/timer/lap_timer.h"
+#include "cc/paint/draw_looper.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_op_buffer_serializer.h"
 #include "cc/paint/paint_op_writer.h"
@@ -14,10 +16,9 @@
 #include "cc/test/test_options_provider.h"
 #include "skia/ext/font_utils.h"
 #include "testing/perf/perf_result_reporter.h"
-#include "third_party/skia/include/core/SkMaskFilter.h"
+#include "third_party/skia/include/core/SkBlurTypes.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/effects/SkColorMatrixFilter.h"
-#include "third_party/skia/include/effects/SkDashPathEffect.h"
-#include "third_party/skia/include/effects/SkLayerDrawLooper.h"
 
 namespace cc {
 namespace {
@@ -82,7 +83,7 @@ class PaintOpPerfTest : public testing::Test {
           break;
 
         remaining_read_bytes -= bytes_read;
-        to_read += bytes_read;
+        UNSAFE_TODO(to_read += bytes_read);
       }
 
       timer_.NextLap();
@@ -123,17 +124,14 @@ TEST_F(PaintOpPerfTest, ManyFlagsOps) {
 
   PaintFlags flags;
   SkScalar intervals[] = {1.f, 1.f};
-  flags.setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
-  flags.setMaskFilter(SkMaskFilter::MakeBlur(
-      SkBlurStyle::kOuter_SkBlurStyle, 4.3));
+  flags.setPathEffect(PathEffect::MakeDash(intervals, 2, 0));
   flags.setColorFilter(ColorFilter::MakeLuma());
 
-  SkLayerDrawLooper::Builder looper_builder;
-  looper_builder.addLayer();
-  looper_builder.addLayer(2.3f, 4.5f);
-  SkLayerDrawLooper::LayerInfo layer_info;
-  looper_builder.addLayer(layer_info);
-  flags.setLooper(looper_builder.detach());
+  DrawLooperBuilder looper_builder;
+  looper_builder.AddUnmodifiedContent();
+  looper_builder.AddShadow({2.3f, 4.5f}, 0, SkColors::kBlack, 0);
+  looper_builder.AddUnmodifiedContent();
+  flags.setLooper(looper_builder.Detach());
 
   sk_sp<PaintShader> shader = PaintShader::MakeColor(SkColors::kTransparent);
   flags.setShader(std::move(shader));
@@ -160,7 +158,7 @@ TEST_F(PaintOpPerfTest, TextOps) {
   SkTextBlobBuilder builder;
   int glyph_count = 5;
   const auto& run = builder.allocRun(font, glyph_count, 1.2f, 2.3f);
-  std::fill(run.glyphs, run.glyphs + glyph_count, 0);
+  std::fill(run.glyphs, UNSAFE_TODO(run.glyphs + glyph_count), 0);
   auto blob = builder.make();
 
   PaintFlags flags;

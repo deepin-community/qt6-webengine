@@ -11,12 +11,15 @@ import("//components/optimization_guide/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
 static_library("internal") {
+  #TODO(crbug.com/347191610): Refactor code to eliminate visibility
+  #requirement below for `visited_url_ranking`.
   visibility = [
     ":*",
     "//chrome/browser",
     "//chrome/browser/segmentation_platform:*",
     "//chrome/test:*",
     "//components/segmentation_platform/embedder/*",
+    "//components/visited_url_ranking/internal/*",
     "//ios/chrome/browser/segmentation_platform/model:*",
   ]
 
@@ -71,6 +74,8 @@ static_library("internal") {
     "database/ukm_types.h",
     "database/ukm_url_table.cc",
     "database/ukm_url_table.h",
+    "database/uma_metrics_table.cc",
+    "database/uma_metrics_table.h",
     "database_client_impl.cc",
     "database_client_impl.h",
     "dummy_segmentation_platform_service.cc",
@@ -108,6 +113,8 @@ static_library("internal") {
     "local_state_helper_impl.h",
     "logging.cc",
     "logging.h",
+    "metadata/feature_query.cc",
+    "metadata/feature_query.h",
     "metadata/metadata_utils.cc",
     "metadata/metadata_utils.h",
     "metadata/metadata_writer.cc",
@@ -186,8 +193,8 @@ static_library("internal") {
   ]
 
   deps = [
-    "//components/database_utils:database_utils",
-    "//components/history/core/browser:browser",
+    "//components/database_utils",
+    "//components/history/core/browser",
     "//components/keyed_service/core",
     "//components/leveldb_proto",
     "//components/prefs",
@@ -197,8 +204,8 @@ static_library("internal") {
     "//components/ukm:ukm_recorder",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
-    "//sql:sql",
-    "//url:url",
+    "//sql",
+    "//url",
   ]
 
   public_deps = [
@@ -274,6 +281,7 @@ source_set("unit_tests") {
     "database/ukm_database_test_utils.h",
     "database/ukm_metrics_table_unittest.cc",
     "database/ukm_url_table_unittest.cc",
+    "database/uma_metrics_table_unittest.cc",
     "database_client_impl_unittest.cc",
     "dummy_segmentation_platform_service_unittest.cc",
     "execution/model_executor_impl_unittest.cc",
@@ -332,7 +340,7 @@ source_set("unit_tests") {
     ":test_support",
     "//base",
     "//base/test:test_support",
-    "//components/history/core/browser:browser",
+    "//components/history/core/browser",
     "//components/history/core/test",
     "//components/leveldb_proto:test_support",
     "//components/optimization_guide/core",
@@ -346,11 +354,11 @@ source_set("unit_tests") {
     "//components/ukm:test_support",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
-    "//sql:sql",
+    "//sql",
     "//sql:test_support",
     "//testing/gmock",
     "//testing/gtest",
-    "//url:url",
+    "//url",
   ]
 
   if (build_with_tflite_lib) {
@@ -365,6 +373,10 @@ source_set("unit_tests") {
       ":unit_tests_bundle_data",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("test_support") {
@@ -375,7 +387,7 @@ source_set("test_support") {
   ]
   deps = [
     "//base",
-    "//components/segmentation_platform/public:public",
+    "//components/segmentation_platform/public",
     "//testing/gmock",
     "//testing/gtest",
   ]

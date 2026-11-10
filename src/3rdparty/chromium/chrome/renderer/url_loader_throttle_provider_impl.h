@@ -26,6 +26,10 @@ namespace base {
 class SequencedTaskRunner;
 }  // namespace base
 
+namespace subresource_filter {
+class MemoryMappedRuleset;
+}
+
 class ChromeContentRendererClient;
 
 // Instances must be constructed on the render main thread, and then used and
@@ -57,7 +61,7 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
 
   // blink::URLLoaderThrottleProvider implementation.
   std::unique_ptr<blink::URLLoaderThrottleProvider> Clone() override;
-  blink::WebVector<std::unique_ptr<blink::URLLoaderThrottle>> CreateThrottles(
+  std::vector<std::unique_ptr<blink::URLLoaderThrottle>> CreateThrottles(
       base::optional_ref<const blink::LocalFrameToken> local_frame_token,
       const network::ResourceRequest& request) override;
   void SetOnline(bool is_online) override;
@@ -71,8 +75,7 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
   blink::URLLoaderThrottleProviderType type_;
-  const raw_ptr<ChromeContentRendererClient, ExperimentalRenderer>
-      chrome_content_renderer_client_;
+  const raw_ptr<ChromeContentRendererClient> chrome_content_renderer_client_;
 
   mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing>
       pending_safe_browsing_;
@@ -87,6 +90,13 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
   std::unique_ptr<extensions::ExtensionThrottleManager>
       extension_throttle_manager_;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+  // This ruleset object is created on the main thread and then passed to
+  // throttles that run on background threads. We keep a reference to it here to
+  // ensure the last reference to it is destroyed on the sequence where it was
+  // created.
+  scoped_refptr<const subresource_filter::MemoryMappedRuleset>
+      fingerprinting_protection_ruleset_;
 
   // Set only when `this` was created on the main thread, or cloned from a
   // provider which was created on the main thread.

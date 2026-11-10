@@ -1,5 +1,6 @@
 // Copyright (C) 2019 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:network-protocol
 
 #include "qwebengineurlrequestinfo.h"
 #include "qwebengineurlrequestinfo_p.h"
@@ -32,9 +33,9 @@ ASSERT_ENUMS_MATCH(QtWebEngineCore::WebContentsAdapterClient::RedirectNavigation
     \since 5.6
     \brief The QWebEngineUrlRequestInfo class provides information about URL requests.
 
-    The QWebEngineUrlRequestInfo is useful for setting extra header fields for requests
+    The QWebEngineUrlRequestInfo is useful for setting extra header fields for requests,
     or for redirecting certain requests without payload data to another URL.
-    This class cannot be instantiated or copied by the user, instead it will
+    This class cannot be instantiated or copied by the user; instead, it will
     be created by \QWE and sent through the virtual function
     QWebEngineUrlRequestInterceptor::interceptRequest() if an interceptor has been set.
 */
@@ -81,7 +82,7 @@ QWebEngineUrlRequestInfoPrivate::QWebEngineUrlRequestInfoPrivate(
         QWebEngineUrlRequestInfo::ResourceType resource,
         QWebEngineUrlRequestInfo::NavigationType navigation, const QUrl &u, const QUrl &fpu,
         const QUrl &i, const QByteArray &m, QtWebEngineCore::ResourceRequestBody *const rb,
-        const QHash<QByteArray, QByteArray> &h)
+        const QHash<QByteArray, QByteArray> &h, bool isDownload)
     : resourceType(resource)
     , navigationType(navigation)
     , shouldBlockRequest(false)
@@ -93,6 +94,7 @@ QWebEngineUrlRequestInfoPrivate::QWebEngineUrlRequestInfoPrivate(
     , changed(false)
     , extraHeaders(h)
     , resourceRequestBody(rb)
+    , isDownload(isDownload)
 {}
 
 /*!
@@ -153,15 +155,15 @@ QWebEngineUrlRequestInfo::QWebEngineUrlRequestInfo(QWebEngineUrlRequestInfoPriva
     \value ResourceTypeXhr  An XMLHttpRequest.
     \value ResourceTypePing  A ping request for <a ping>.
     \value ResourceTypeServiceWorker  The main resource of a service worker.
-    \value ResourceTypeCspReport  A report of Content Security Policy (CSP)
+    \value [since 5.7] ResourceTypeCspReport  A report of Content Security Policy (CSP)
            violations. CSP reports are in JSON format and they are delivered by
-           HTTP POST requests to specified servers. (Added in Qt 5.7)
-    \value ResourceTypePluginResource  A resource requested by a plugin. (Added in Qt 5.7)
-    \value ResourceTypeNavigationPreloadMainFrame  A main-frame service worker navigation preload request. (Added in Qt 5.14)
-    \value ResourceTypeNavigationPreloadSubFrame  A sub-frame service worker navigation preload request. (Added in Qt 5.14)
-    \value ResourceTypeWebSocket  A WebSocket request. (Added in Qt 6.4)
-    \value ResourceTypeUnknown  Unknown request type.
-    \value ResourceTypeJson A JSON module. (Added in Qt 6.8)
+           HTTP POST requests to specified servers.
+    \value [since 5.7] ResourceTypePluginResource  A resource requested by a plugin.
+    \value [since 5.14] ResourceTypeNavigationPreloadMainFrame  A main-frame service worker navigation preload request.
+    \value [since 5.14] ResourceTypeNavigationPreloadSubFrame  A sub-frame service worker navigation preload request.
+    \value [since 6.4] ResourceTypeWebSocket  A WebSocket request.
+    \value [since 6.9] ResourceTypeJson  A JSON module.
+    \value ResourceTypeUnknown Unknown request type.
 
     \note For forward compatibility all values not matched should be treated as unknown,
     not just \c ResourceTypeUnknown.
@@ -188,7 +190,7 @@ QWebEngineUrlRequestInfo::ResourceType QWebEngineUrlRequestInfo::resourceType() 
     \value NavigationTypeFormSubmitted Navigation submits a form.
     \value NavigationTypeBackForward Navigation initiated by a history action.
     \value NavigationTypeReload Navigation initiated by refreshing the page.
-    \value NavigationTypeRedirect Navigation triggered automatically by page content or remote server. (Added in Qt 5.14)
+    \value NavigationTypeRedirect [since 5.14] Navigation triggered automatically by page content or remote server.
     \value NavigationTypeOther None of the above.
 */
 
@@ -246,7 +248,7 @@ QByteArray QWebEngineUrlRequestInfo::requestMethod() const
 /*!
     Returns a pointer to a QIODevice that gives access to the request body.
     The request body can contain data for example when the request is
-    a POST request. If the request body is empty the QIODevice reflects this
+    a POST request. If the request body is empty, the QIODevice reflects this
     and does not return any data when performing read operations on it.
 
     \since 6.7
@@ -255,6 +257,20 @@ QByteArray QWebEngineUrlRequestInfo::requestMethod() const
 QIODevice *QWebEngineUrlRequestInfo::requestBody() const
 {
     return d_ptr->resourceRequestBody;
+}
+
+/*!
+    Returns true if the request was initiated by an explicit download action
+    from the user.
+
+    A download can still occurs, even when this function return false.
+
+    \since 6.9
+*/
+
+bool QWebEngineUrlRequestInfo::isDownload() const
+{
+    return d_ptr->isDownload;
 }
 
 /*!
@@ -275,7 +291,6 @@ void QWebEngineUrlRequestInfo::resetChanged()
 
 /*!
     Redirects this request to \a url.
-    It is only possible to redirect requests that do not have payload data, such as GET requests.
 */
 
 void QWebEngineUrlRequestInfo::redirect(const QUrl &url)
@@ -303,7 +318,7 @@ void QWebEngineUrlRequestInfo::block(bool shouldBlock)
 
 void QWebEngineUrlRequestInfo::setHttpHeader(const QByteArray &name, const QByteArray &value)
 {
-    // Headers are case insentive, so we need to compare manually
+    // Headers are case insensitive, so we need to compare manually
     for (auto it = d_ptr->extraHeaders.begin(); it != d_ptr->extraHeaders.end(); ++it) {
         if (it.key().compare(name, Qt::CaseInsensitive) == 0) {
             d_ptr->extraHeaders.erase(it);
@@ -324,15 +339,6 @@ void QWebEngineUrlRequestInfo::setHttpHeader(const QByteArray &name, const QByte
 QHash<QByteArray, QByteArray> QWebEngineUrlRequestInfo::httpHeaders() const
 {
     return d_ptr->extraHeaders;
-}
-
-/*!
-    \internal
-*/
-void QWebEngineUrlRequestInfoPrivate::appendFileToResourceRequestBodyForTest(const QString &path)
-{
-    if (resourceRequestBody)
-        resourceRequestBody->appendFilesForTest(path);
 }
 
 QT_END_NAMESPACE

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/scalar.c.in
 //   Generator: tools/xngen
@@ -9,10 +10,15 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x2__scalar_lrintf(
@@ -25,7 +31,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x2__scalar_lrintf(
     int8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -34,6 +40,12 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x2__scalar_lrintf(
 
   const int8_t* a0 = a;
   int8_t* c0 = c;
+
+  const int32_t output_min_less_zero_point = (int32_t) params->fp32_scalar.output_min - (int32_t) params->fp32_scalar.output_zero_point;
+  const int32_t output_max_less_zero_point = (int32_t) params->fp32_scalar.output_max - (int32_t) params->fp32_scalar.output_zero_point;
+  const float voutput_min_less_zero_point = output_min_less_zero_point;
+  const float voutput_max_less_zero_point = output_max_less_zero_point;
+  const int32_t voutput_zero_point = params->fp32_scalar.output_zero_point;
 
   do {
     int32_t vacc0x0 = unaligned_indexed_load_s32(w, 0);
@@ -63,18 +75,15 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x2__scalar_lrintf(
     vfpacc0x1 *= vscale1;
     w = (const void*) ((const float*) w + 2);
 
-    const float voutput_min_less_zero_point = params->fp32_scalar_lrintf.output_min_less_zero_point;
     vfpacc0x0 = math_max_f32(vfpacc0x0, voutput_min_less_zero_point);
     vfpacc0x1 = math_max_f32(vfpacc0x1, voutput_min_less_zero_point);
 
-    const float voutput_max_less_zero_point = params->fp32_scalar_lrintf.output_max_less_zero_point;
     vfpacc0x0 = math_min_f32(vfpacc0x0, voutput_max_less_zero_point);
     vfpacc0x1 = math_min_f32(vfpacc0x1, voutput_max_less_zero_point);
 
     const int32_t vrndacc0x0 = (int32_t) lrintf(vfpacc0x0);
     const int32_t vrndacc0x1 = (int32_t) lrintf(vfpacc0x1);
 
-    const int32_t voutput_zero_point = params->fp32_scalar_lrintf.output_zero_point;
     int32_t vout0x0 = vrndacc0x0 + voutput_zero_point;
     int32_t vout0x1 = vrndacc0x1 + voutput_zero_point;
 

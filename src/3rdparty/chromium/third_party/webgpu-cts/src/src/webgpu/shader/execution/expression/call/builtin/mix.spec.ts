@@ -1,12 +1,12 @@
 export const description = `
 Execution tests for the 'mix' builtin function
 
-S is AbstractFloat, f32, f16
+S is abstract-float, f32, f16
 T is S or vecN<S>
 @const fn mix(e1: T, e2: T, e3: T) -> T
 Returns the linear blend of e1 and e2 (e.g. e1*(1-e3)+e2*e3). Component-wise when T is a vector.
 
-T is AbstractFloat, f32, or f16
+T is abstract-float, f32, or f16
 T2 is vecN<T>
 @const fn mix(e1: T2, e2: T2, e3: T) -> T2
 Returns the component-wise linear blend of e1 and e2, using scalar blending factor e3 for each component.
@@ -15,14 +15,14 @@ Same as mix(e1,e2,T2(e3)).
 `;
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../../gpu_test.js';
-import { TypeAbstractFloat, TypeF16, TypeF32, TypeVec } from '../../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../../gpu_test.js';
+import { Type } from '../../../../../util/conversion.js';
 import { allInputSources, onlyConstInputSource, run } from '../../expression.js';
 
-import { abstractBuiltin, builtin } from './builtin.js';
+import { abstractFloatBuiltin, builtin } from './builtin.js';
 import { d } from './mix.cache.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('abstract_float_matching')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
@@ -36,9 +36,9 @@ g.test('abstract_float_matching')
     const cases = await d.get('abstract_const');
     await run(
       t,
-      abstractBuiltin('mix'),
-      [TypeAbstractFloat, TypeAbstractFloat, TypeAbstractFloat],
-      TypeAbstractFloat,
+      abstractFloatBuiltin('mix'),
+      [Type.abstractFloat, Type.abstractFloat, Type.abstractFloat],
+      Type.abstractFloat,
       t.params,
       cases
     );
@@ -52,9 +52,9 @@ g.test('abstract_float_nonmatching_vec2')
     const cases = await d.get('abstract_vec2_scalar_const');
     await run(
       t,
-      abstractBuiltin('mix'),
-      [TypeVec(2, TypeAbstractFloat), TypeVec(2, TypeAbstractFloat), TypeAbstractFloat],
-      TypeVec(2, TypeAbstractFloat),
+      abstractFloatBuiltin('mix'),
+      [Type.vec(2, Type.abstractFloat), Type.vec(2, Type.abstractFloat), Type.abstractFloat],
+      Type.vec(2, Type.abstractFloat),
       t.params,
       cases
     );
@@ -68,9 +68,9 @@ g.test('abstract_float_nonmatching_vec3')
     const cases = await d.get('abstract_vec3_scalar_const');
     await run(
       t,
-      abstractBuiltin('mix'),
-      [TypeVec(3, TypeAbstractFloat), TypeVec(3, TypeAbstractFloat), TypeAbstractFloat],
-      TypeVec(3, TypeAbstractFloat),
+      abstractFloatBuiltin('mix'),
+      [Type.vec(3, Type.abstractFloat), Type.vec(3, Type.abstractFloat), Type.abstractFloat],
+      Type.vec(3, Type.abstractFloat),
       t.params,
       cases
     );
@@ -84,9 +84,9 @@ g.test('abstract_float_nonmatching_vec4')
     const cases = await d.get('abstract_vec4_scalar_const');
     await run(
       t,
-      abstractBuiltin('mix'),
-      [TypeVec(4, TypeAbstractFloat), TypeVec(4, TypeAbstractFloat), TypeAbstractFloat],
-      TypeVec(4, TypeAbstractFloat),
+      abstractFloatBuiltin('mix'),
+      [Type.vec(4, Type.abstractFloat), Type.vec(4, Type.abstractFloat), Type.abstractFloat],
+      Type.vec(4, Type.abstractFloat),
       t.params,
       cases
     );
@@ -100,7 +100,7 @@ g.test('f32_matching')
   )
   .fn(async t => {
     const cases = await d.get(t.params.inputSource === 'const' ? 'f32_const' : 'f32_non_const');
-    await run(t, builtin('mix'), [TypeF32, TypeF32, TypeF32], TypeF32, t.params, cases);
+    await run(t, builtin('mix'), [Type.f32, Type.f32, Type.f32], Type.f32, t.params, cases);
   });
 
 g.test('f32_nonmatching_vec2')
@@ -111,14 +111,7 @@ g.test('f32_nonmatching_vec2')
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f32_vec2_scalar_const' : 'f32_vec2_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(2, TypeF32), TypeVec(2, TypeF32), TypeF32],
-      TypeVec(2, TypeF32),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec2f, Type.vec2f, Type.f32], Type.vec2f, t.params, cases);
   });
 
 g.test('f32_nonmatching_vec3')
@@ -129,14 +122,7 @@ g.test('f32_nonmatching_vec3')
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f32_vec3_scalar_const' : 'f32_vec3_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(3, TypeF32), TypeVec(3, TypeF32), TypeF32],
-      TypeVec(3, TypeF32),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec3f, Type.vec3f, Type.f32], Type.vec3f, t.params, cases);
   });
 
 g.test('f32_nonmatching_vec4')
@@ -147,14 +133,7 @@ g.test('f32_nonmatching_vec4')
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f32_vec4_scalar_const' : 'f32_vec4_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(4, TypeF32), TypeVec(4, TypeF32), TypeF32],
-      TypeVec(4, TypeF32),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec4f, Type.vec4f, Type.f32], Type.vec4f, t.params, cases);
   });
 
 g.test('f16_matching')
@@ -163,73 +142,44 @@ g.test('f16_matching')
   .params(u =>
     u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get(t.params.inputSource === 'const' ? 'f16_const' : 'f16_non_const');
-    await run(t, builtin('mix'), [TypeF16, TypeF16, TypeF16], TypeF16, t.params, cases);
+    await run(t, builtin('mix'), [Type.f16, Type.f16, Type.f16], Type.f16, t.params, cases);
   });
 
 g.test('f16_nonmatching_vec2')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
   .desc(`f16 tests with two vec2<f16> params and scalar third param`)
   .params(u => u.combine('inputSource', allInputSources))
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f16_vec2_scalar_const' : 'f16_vec2_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(2, TypeF16), TypeVec(2, TypeF16), TypeF16],
-      TypeVec(2, TypeF16),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec2h, Type.vec2h, Type.f16], Type.vec2h, t.params, cases);
   });
 
 g.test('f16_nonmatching_vec3')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
   .desc(`f16 tests with two vec3<f16> params and scalar third param`)
   .params(u => u.combine('inputSource', allInputSources))
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f16_vec3_scalar_const' : 'f16_vec3_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(3, TypeF16), TypeVec(3, TypeF16), TypeF16],
-      TypeVec(3, TypeF16),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec3h, Type.vec3h, Type.f16], Type.vec3h, t.params, cases);
   });
 
 g.test('f16_nonmatching_vec4')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
   .desc(`f16 tests with two vec4<f16> params and scalar third param`)
   .params(u => u.combine('inputSource', allInputSources))
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get(
       t.params.inputSource === 'const' ? 'f16_vec4_scalar_const' : 'f16_vec4_scalar_non_const'
     );
-    await run(
-      t,
-      builtin('mix'),
-      [TypeVec(4, TypeF16), TypeVec(4, TypeF16), TypeF16],
-      TypeVec(4, TypeF16),
-      t.params,
-      cases
-    );
+    await run(t, builtin('mix'), [Type.vec4h, Type.vec4h, Type.f16], Type.vec4h, t.params, cases);
   });

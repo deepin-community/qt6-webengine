@@ -93,7 +93,31 @@ const UIStrings = {
    *@description Command that shows geographic locations.
    */
   showLocations: 'Show Locations',
-};
+  /**
+   * @description Text for the CPU Pressure type to simulate on a device.
+   */
+  cpuPressure: 'CPU Pressure',
+  /**
+   *@description Title of an option in Sensors tab cpu pressure emulation drop-down. Turns off emulation of cpu pressure state.
+   */
+  noPressureEmulation: 'No override',
+  /**
+   *@description An option that appears in a drop-down that represents the nominal state.
+   */
+  nominal: 'Nominal',
+  /**
+   *@description An option that appears in a drop-down that represents the fair state.
+   */
+  fair: 'Fair',
+  /**
+   *@description An option that appears in a drop-down that represents the serious state.
+   */
+  serious: 'Serious',
+  /**
+   *@description An option that appears in a drop-down that represents the critical state.
+   */
+  critical: 'Critical',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/sensors/sensors-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
 
@@ -140,10 +164,11 @@ UI.ViewManager.registerViewExtension({
   settings: [
     'emulation.locations',
   ],
+  iconName: 'location-on',
 });
 
 Common.Settings.registerSettingExtension({
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   settingName: 'emulation.locations',
   settingType: Common.Settings.SettingType.ARRAY,
   // TODO(crbug.com/1136655): http://crrev.com/c/2666426 regressed localization of city titles.
@@ -155,6 +180,7 @@ Common.Settings.registerSettingExtension({
       long: 13.404954,
       timezoneId: 'Europe/Berlin',
       locale: 'de-DE',
+      accuracy: 150,
     },
     {
       title: 'London',
@@ -162,6 +188,7 @@ Common.Settings.registerSettingExtension({
       long: -0.127758,
       timezoneId: 'Europe/London',
       locale: 'en-GB',
+      accuracy: 150,
     },
     {
       title: 'Moscow',
@@ -169,6 +196,7 @@ Common.Settings.registerSettingExtension({
       long: 37.6173,
       timezoneId: 'Europe/Moscow',
       locale: 'ru-RU',
+      accuracy: 150,
     },
     {
       title: 'Mountain View',
@@ -176,6 +204,7 @@ Common.Settings.registerSettingExtension({
       long: -122.083851,
       timezoneId: 'America/Los_Angeles',
       locale: 'en-US',
+      accuracy: 150,
     },
     {
       title: 'Mumbai',
@@ -183,6 +212,7 @@ Common.Settings.registerSettingExtension({
       long: 72.877656,
       timezoneId: 'Asia/Kolkata',
       locale: 'mr-IN',
+      accuracy: 150,
     },
     {
       title: 'San Francisco',
@@ -190,6 +220,7 @@ Common.Settings.registerSettingExtension({
       long: -122.419416,
       timezoneId: 'America/Los_Angeles',
       locale: 'en-US',
+      accuracy: 150,
     },
     {
       title: 'Shanghai',
@@ -197,6 +228,7 @@ Common.Settings.registerSettingExtension({
       long: 121.473701,
       timezoneId: 'Asia/Shanghai',
       locale: 'zh-Hans-CN',
+      accuracy: 150,
     },
     {
       title: 'São Paulo',
@@ -204,6 +236,7 @@ Common.Settings.registerSettingExtension({
       long: -46.633309,
       timezoneId: 'America/Sao_Paulo',
       locale: 'pt-BR',
+      accuracy: 150,
     },
     {
       title: 'Tokyo',
@@ -211,6 +244,42 @@ Common.Settings.registerSettingExtension({
       long: 139.691706,
       timezoneId: 'Asia/Tokyo',
       locale: 'ja-JP',
+      accuracy: 150,
+    },
+  ],
+});
+
+Common.Settings.registerSettingExtension({
+  title: i18nLazyString(UIStrings.cpuPressure),
+  reloadRequired: true,
+  settingName: 'emulation.cpu-pressure',
+  settingType: Common.Settings.SettingType.ENUM,
+  defaultValue: 'none',
+  options: [
+    {
+      value: 'none',
+      title: i18nLazyString(UIStrings.noPressureEmulation),
+      text: i18nLazyString(UIStrings.noPressureEmulation),
+    },
+    {
+      value: 'nominal',
+      title: i18nLazyString(UIStrings.nominal),
+      text: i18nLazyString(UIStrings.nominal),
+    },
+    {
+      value: 'fair',
+      title: i18nLazyString(UIStrings.fair),
+      text: i18nLazyString(UIStrings.fair),
+    },
+    {
+      value: 'serious',
+      title: i18nLazyString(UIStrings.serious),
+      text: i18nLazyString(UIStrings.serious),
+    },
+    {
+      value: 'critical',
+      title: i18nLazyString(UIStrings.critical),
+      text: i18nLazyString(UIStrings.critical),
     },
   ],
 });
@@ -237,7 +306,7 @@ Common.Settings.registerSettingExtension({
 
 Common.Settings.registerSettingExtension({
   title: i18nLazyString(UIStrings.emulateIdleDetectorState),
-  settingName: 'emulation.idleDetection',
+  settingName: 'emulation.idle-detection',
   settingType: Common.Settings.SettingType.ENUM,
   defaultValue: 'none',
   options: [

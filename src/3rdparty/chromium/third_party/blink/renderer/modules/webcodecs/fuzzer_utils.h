@@ -36,7 +36,7 @@ class PlaneLayout;
 
 base::ScopedClosureRunner MakeScopedGarbageCollectionRequest(v8::Isolate*);
 
-class FakeFunction : public ScriptFunction::Callable {
+class FakeFunction : public ScriptFunction {
  public:
   explicit FakeFunction(std::string name);
 
@@ -111,6 +111,10 @@ String ToAlphaOption(wc_fuzzer::ConfigureVideoEncoder_AlphaOption option);
 String ToAacFormat(wc_fuzzer::AacFormat format);
 
 String ToBitrateMode(wc_fuzzer::BitrateMode bitrate_mode);
+
+String ToOpusSignal(wc_fuzzer::OpusSignal opus_signal);
+
+String ToOpusApplication(wc_fuzzer::OpusApplication opus_application);
 
 String ToAccelerationType(
     wc_fuzzer::ConfigureVideoEncoder_EncoderAccelerationPreference type);

@@ -24,6 +24,7 @@
 
 QT_BEGIN_NAMESPACE
 
+class QPdfLink;
 class QPdfPageRenderer;
 
 class QPdfViewPrivate
@@ -34,17 +35,20 @@ public:
     QPdfViewPrivate(QPdfView *q);
     void init();
 
-    void documentStatusChanged();
+    void documentStatusChanged(QPdfDocument::Status status);
     void currentPageChanged(int currentPage);
+    void currentZoomChanged(qreal currentZoom);
     void calculateViewport();
     void setViewport(QRect viewport);
     void updateScrollBars();
+    void scrollTo(const QPdfLink &link);
 
     void pageRendered(int pageNumber, QSize imageSize, const QImage &image, quint64 requestId);
     void invalidateDocumentLayout();
     void invalidatePageCache();
 
     qreal yPositionForPage(int page) const;
+    QPdfLink pagePosition(const QPointF &viewPosition);
 
     QTransform screenScaleTransform(int page) const; // points to pixels
 

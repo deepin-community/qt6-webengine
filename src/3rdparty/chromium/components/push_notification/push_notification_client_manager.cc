@@ -14,7 +14,7 @@ const char kClientIdKey[] = "type_id";
 
 namespace push_notification {
 
-PushNotificationClientManager::PushNotificationClientManager() {}
+PushNotificationClientManager::PushNotificationClientManager() = default;
 
 PushNotificationClientManager::~PushNotificationClientManager() = default;
 
@@ -81,6 +81,8 @@ PushNotificationClientManager::PushNotificationMessage::
     PushNotificationMessage() = default;
 PushNotificationClientManager::PushNotificationMessage::PushNotificationMessage(
     PushNotificationMessage&& other) = default;
+PushNotificationClientManager::PushNotificationMessage::PushNotificationMessage(
+    const PushNotificationMessage& other) = default;
 PushNotificationClientManager::PushNotificationMessage&
 PushNotificationClientManager::PushNotificationMessage::operator=(
     PushNotificationMessage&& other) = default;

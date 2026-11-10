@@ -75,7 +75,6 @@ URLSearchParams* URLSearchParams::Create(const URLSearchParamsInit* init,
                                      exception_state);
   }
   NOTREACHED();
-  return nullptr;
 }
 
 URLSearchParams* URLSearchParams::Create(const Vector<Vector<String>>& init,
@@ -174,7 +173,7 @@ void URLSearchParams::SetInputWithoutUpdate(const String& query_string) {
 String URLSearchParams::toString() const {
   Vector<char> encoded_data;
   EncodeAsFormData(encoded_data);
-  return String(encoded_data.data(), encoded_data.size());
+  return String(encoded_data);
 }
 
 uint32_t URLSearchParams::size() const {
@@ -328,7 +327,7 @@ void URLSearchParams::EncodeAsFormData(Vector<char>& encoded_data) const {
 scoped_refptr<EncodedFormData> URLSearchParams::ToEncodedFormData() const {
   Vector<char> encoded_data;
   EncodeAsFormData(encoded_data);
-  return EncodedFormData::Create(encoded_data.data(), encoded_data.size());
+  return EncodedFormData::Create(encoded_data);
 }
 
 PairSyncIterable<URLSearchParams>::IterationSource*

@@ -8,6 +8,7 @@ import '@material/web/textfield/outlined-text-field.js';
 
 import {MdOutlinedTextField, TextFieldType} from '@material/web/textfield/outlined-text-field.js';
 import {css, CSSResultGroup, html, LitElement, nothing, PropertyValues} from 'lit';
+import {classMap} from 'lit/directives/class-map';
 import {ifDefined} from 'lit/directives/if-defined';
 
 /**
@@ -74,6 +75,20 @@ export type TextfieldAutofixType = 'clear'|'preserve'|'strip';
 /** Regex used for automatically stripping non numeric characters from input. */
 const NON_INTEGER_REGEX = /\D/g;
 
+// DO NOT MODIFY THIS STYLESHEET
+// Added by MWC team to be removed in b/278960272.
+const MWC_SELECTION_STYLES = css`
+  ::selection {
+    background-color: var(--cros-sys-highlight_text);
+  }
+`;
+
+const TEXT_ELLISION_STYLES = css`
+  :host(.use-ellipsis) .input-wrapper > input {
+    text-overflow: ellipsis;
+  }
+`;
+
 /**
  * ChromeOS compliant Textfield component.
  */
@@ -129,6 +144,10 @@ export class Textfield extends LitElement {
       --md-outlined-field-leading-space: ${MD_FIELD_LEFT_RIGHT_SPACE_PX};
       --md-outlined-field-top-space: ${MD_FIELD_TOP_BOTTOM_SPACE_PX};
       --md-outlined-field-trailing-space: ${MD_FIELD_LEFT_RIGHT_SPACE_PX};
+      /** Leading/trailing spacing */
+      --md-outlined-field-content-space: 8px;
+      --md-outlined-field-with-leading-content-leading-space: 12px;
+      --md-outlined-field-with-trailing-content-trailing-space: 14px;
       /** Disabled */
       --md-outlined-field-disabled-supporting-text-color: var(--cros-sys-on_surface);
       --md-outlined-text-field-disabled-input-text-color: var(--cros-sys-on_surface);
@@ -154,6 +173,7 @@ export class Textfield extends LitElement {
       --md-outlined-text-field-hover-supporting-text-color: var(--cros-sys-on_surface);
       --md-outlined-text-field-hover-input-text-color: var(--cros-sys-on_surface);
       --md-outlined-text-field-hover-state-layer-opacity: 0;
+      text-align: inherit;
       width: 100%;
     }
 
@@ -187,15 +207,23 @@ export class Textfield extends LitElement {
     #textfield-background {
       background-color: ${TEXTFIELD_CONTAINER_ON_BASE};
       border-radius: 8px;
-      left: ${MD_TEXTFIELD_OUTLINE_WIDTH}px;
-      min-height: 36px;
-      position:absolute;
-      right: ${MD_TEXTFIELD_OUTLINE_WIDTH}px;
-      top: ${MD_TEXTFIELD_OUTLINE_WIDTH}px;
+      inset: 2px;
+      height: calc(100% - (2 * ${MD_TEXTFIELD_OUTLINE_WIDTH}px));
+      position: absolute;
     }
 
     :host([shaded]) #textfield-background {
       background-color: ${TEXTFIELD_CONTAINER_ON_SHADED};
+    }
+
+    /**
+     * This adjustment updates the trailing icon to match the spec. This cannot
+     * be achieved with the md-outlined-field spacing tokens because the inner
+     * spacing is symmetric.
+     */
+    ::slotted([slot="trailing"]) {
+      position: relative;
+      inset-inline-start: 4px;
     }
 
     /**
@@ -242,6 +270,8 @@ export class Textfield extends LitElement {
     autofix: {type: String, attribute: true},
     required: {type: Boolean, attribute: true},
     noSpinner: {type: Boolean, attribute: true},
+    rows: {type: Number, attribute: true},
+    useEllipsis: {type: Boolean, attribute: true},
   };
 
   /** @nocollapse */
@@ -261,14 +291,14 @@ export class Textfield extends LitElement {
   } as const;
 
   /** @export */
-  type: SupportedTextfieldType;
+  declare type: SupportedTextfieldType;
   /**
    * When false, will use the darker container designed to sit on app-base. When
    * true, will use the lighter container colored designed for use with
    * app-base-shaded. Purely a cosmetic difference to improve contrast.
    * @export
    */
-  shaded = false;
+  declare shaded: boolean;
 
   /** @export */
   get value() {
@@ -290,20 +320,20 @@ export class Textfield extends LitElement {
    * for the internal md-textfield.
    * @export
    */
-  label: string;
+  declare label: string;
   // Properties supported by the MD textfield that are surfaced to the
   // cros-textfield API. These are manually plumbed through as cros-textfield is
   // not a subclass. This is not an exhaustive list, and support should be
   // added by clients as needed.
 
   /** @export */
-  suffix: string;
+  declare suffix: string;
 
   /** @export */
-  disabled: boolean;
+  declare disabled: boolean;
 
   /** @export */
-  hint: string;
+  declare hint: string;
 
   /**
    * Max length of the textfield value. If set to -1 or less, md-textfield will
@@ -311,21 +341,21 @@ export class Textfield extends LitElement {
    * not render the charCounter.
    * @export
    */
-  maxLength: number;
+  declare maxLength: number;
 
   /**
    * Defines the most negative value in the range of permitted values. Only used
    * with `number` type.
    * @export
    */
-  min: number;
+  declare min: number;
 
   /**
    * Defines the greatest value in the range of permitted values. Only used with
    * `number` type.
    * @export
    */
-  max: number;
+  declare max: number;
 
   /**
    * When true, the validity state of the textfield is reported on every
@@ -333,7 +363,7 @@ export class Textfield extends LitElement {
    * occur on blur).
    * @export
    */
-  autoValidate: boolean;
+  declare autoValidate: boolean;
 
   /**
    * The error text shown below the textfield on `error`. This will override
@@ -341,7 +371,7 @@ export class Textfield extends LitElement {
    * `error` is set.
    * @export
    */
-  errorMessage: string;
+  declare errorMessage: string;
 
   /**
    * Gets or sets whether or not the text field is in a visually invalid state.
@@ -351,7 +381,7 @@ export class Textfield extends LitElement {
    * constraint validation.
    * @export
    */
-  error: boolean;
+  declare error: boolean;
 
   /**
    * A regular expression that the text field's value must match to pass
@@ -360,10 +390,10 @@ export class Textfield extends LitElement {
    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#pattern
    * @export
    */
-  pattern: string;
+  declare pattern: string;
 
   /** @export */
-  placeholder: string;
+  declare placeholder: string;
 
   /**
    * When using `type=integer`, clients can also set this field to either
@@ -375,18 +405,34 @@ export class Textfield extends LitElement {
    * clear:       Set value to the empty string.
    * strip:       Remove any non-integer characters.
    */
-  autofix: TextfieldAutofixType;
+  declare autofix: TextfieldAutofixType;
 
   /**
    * Whether the input should be invalid when left blank.
    * @export
    */
-  required: boolean;
+  declare required: boolean;
 
   /**
    * When true, hide the spinner for `type="number"` text fields.
+   * @export
    */
-  noSpinner: boolean;
+  declare noSpinner: boolean;
+
+
+  /**
+   * The number of rows to display for a `type="textarea"` text field.
+   * @export
+   */
+  declare rows: number;
+
+  /**
+   * When true, adds an ellipsis to the end of the input text if it is
+   * overflowing the available width. Only applies when the cursor is not
+   * currently in the textfield input.
+   * @export
+   */
+  declare useEllipsis: boolean;
 
   get mdTextfield(): MdOutlinedTextField|undefined {
     return this.renderRoot?.querySelector('md-outlined-text-field') ||
@@ -424,6 +470,8 @@ export class Textfield extends LitElement {
     this.autofix = 'preserve';
     this.required = false;
     this.noSpinner = false;
+    this.rows = 2;
+    this.useEllipsis = false;
   }
 
   override async firstUpdated() {
@@ -431,6 +479,15 @@ export class Textfield extends LitElement {
     // Run the logic to forward any slotted icons to the md-text-field internal
     // icon slots.
     this.handleIconChange();
+
+    // Ensure md-text-field has finished rendering before adding our custom
+    // styles.
+    await this.mdTextfield!.updateComplete;
+    this.mdTextfield!.shadowRoot!.adoptedStyleSheets = [
+      ...this.mdTextfield!.shadowRoot!.adoptedStyleSheets,
+      // Added by MWC team to be removed in b/278960272.
+      MWC_SELECTION_STYLES.styleSheet!, TEXT_ELLISION_STYLES.styleSheet!
+    ];
   }
 
   override update(changedProperties: PropertyValues<Textfield>) {
@@ -447,11 +504,12 @@ export class Textfield extends LitElement {
     const errorTextOrUndef =
         this.error && this.errorMessage ? this.errorMessage : undefined;
     const mdType = this.type === 'integer' ? 'number' : this.type;
+    const classList = {'use-ellipsis': this.useEllipsis};
     return html`
       ${this.maybeRenderLabel()}
       <div id="main-container">
-        <div id="textfield-background"></div>
         <md-outlined-text-field
+            class=${classMap(classList)}
             ?disabled=${this.disabled}
             type=${mdType}
             aria-label=${ariaLabel}
@@ -462,6 +520,7 @@ export class Textfield extends LitElement {
             max=${this.max > -1 ? this.max : nothing}
             ?required=${this.required}
             ?no-spinner=${this.noSpinner}
+            rows=${this.rows}
             supporting-text=${this.hint}
             ?error=${this.error ?? nothing}
             error-text=${ifDefined(errorTextOrUndef)}
@@ -478,6 +537,7 @@ export class Textfield extends LitElement {
               name="trailing"
               @slotchange=${this.handleIconChange}>
           </slot>
+          <div slot="container" id="textfield-background"></div>
         </md-outlined-text-field>
       </div>
     `;

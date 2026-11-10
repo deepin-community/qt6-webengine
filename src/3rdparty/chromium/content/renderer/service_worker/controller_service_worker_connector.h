@@ -14,6 +14,10 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/network/public/cpp/cross_origin_embedder_policy.h"
+#include "services/network/public/cpp/document_isolation_policy.h"
+#include "services/network/public/mojom/cross_origin_embedder_policy.mojom.h"
+#include "services/network/public/mojom/document_isolation_policy.mojom.h"
 #include "third_party/blink/public/common/service_worker/embedded_worker_status.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker.mojom.h"
@@ -21,13 +25,15 @@
 #include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-shared.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_running_status_callback.mojom.h"
 
-namespace content {
-
-class ServiceWorkerRouterEvaluator;
-
+namespace blink {
 namespace mojom {
 class ServiceWorkerContainerHost;
 }  // namespace mojom
+}  // namespace blink
+
+namespace content {
+
+class ServiceWorkerRouterEvaluator;
 
 // Vends a connection to the controller service worker for a given
 // ServiceWorkerContainerHost. This is co-owned by
@@ -81,7 +87,13 @@ class CONTENT_EXPORT ControllerServiceWorkerConnector
       blink::mojom::ServiceWorkerFetchHandlerBypassOption
           fetch_handler_bypass_option,
       std::optional<blink::ServiceWorkerRouterRules> router_rules,
-      blink::EmbeddedWorkerStatus initial_running_status,
+      const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+      mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+          cross_origin_embedder_policy_reporter,
+      const network::DocumentIsolationPolicy& document_isolation_policy,
+      mojo::PendingRemote<network::mojom::DocumentIsolationPolicyReporter>
+          document_isolation_policy_reporter,
+      std::optional<blink::EmbeddedWorkerStatus> initial_running_status,
       mojo::PendingReceiver<blink::mojom::ServiceWorkerRunningStatusCallback>
           running_status_receiver);
 
@@ -129,16 +141,33 @@ class CONTENT_EXPORT ControllerServiceWorkerConnector
     return router_evaluator_.get();
   }
 
+  const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy()
+      const {
+    return cross_origin_embedder_policy_;
+  }
+
+  const network::DocumentIsolationPolicy& document_isolation_policy() const {
+    return document_isolation_policy_;
+  }
+
+  network::mojom::CrossOriginEmbedderPolicyReporter*
+  cross_origin_embedder_policy_reporter() const {
+    return cross_origin_embedder_policy_reporter_
+               ? cross_origin_embedder_policy_reporter_.get()
+               : nullptr;
+  }
+
+  network::mojom::DocumentIsolationPolicyReporter*
+  document_isolation_policy_reporter() const {
+    return document_isolation_policy_reporter_
+               ? document_isolation_policy_reporter_.get()
+               : nullptr;
+  }
+
   // Returns recent ServiceWorker's running status.
   //
-  // This method returns a cached result. Please assume the value can be old.
-  // When this method is called, it may start updating the running status
-  // without blocking the call.
-  // The initial result will be set when instantiating this class.
-  //
-  // The cached result is returned to avoid a caller to pass a callback,
-  // or the method call would be blocked until it gets a result from the
-  // browser process.
+  // The ServiceWorkerVersion status change callback will send an IPC to update
+  // the recent running status here.
   blink::EmbeddedWorkerStatus GetRecentRunningStatus();
 
   // Calls the Cache Storage API match if the cache storage is accessible.
@@ -171,6 +200,13 @@ class CONTENT_EXPORT ControllerServiceWorkerConnector
   // Connection to the cache storage.
   mojo::Remote<blink::mojom::CacheStorage> cache_storage_;
 
+  network::CrossOriginEmbedderPolicy cross_origin_embedder_policy_;
+  mojo::Remote<network::mojom::CrossOriginEmbedderPolicyReporter>
+      cross_origin_embedder_policy_reporter_;
+  network::DocumentIsolationPolicy document_isolation_policy_;
+  mojo::Remote<network::mojom::DocumentIsolationPolicyReporter>
+      document_isolation_policy_reporter_;
+
   base::ObserverList<Observer>::Unchecked observer_list_;
 
   // The web-exposed client id, used for FetchEvent#clientId (i.e.,
@@ -181,7 +217,7 @@ class CONTENT_EXPORT ControllerServiceWorkerConnector
       fetch_handler_bypass_option_ =
           blink::mojom::ServiceWorkerFetchHandlerBypassOption::kDefault;
   std::unique_ptr<ServiceWorkerRouterEvaluator> router_evaluator_;
-  blink::EmbeddedWorkerStatus running_status_;
+  std::optional<blink::EmbeddedWorkerStatus> running_status_;
   mojo::Receiver<blink::mojom::ServiceWorkerRunningStatusCallback>
       running_status_receiver_;
 };

@@ -21,7 +21,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/random/random.h"
-#include "./fuzztest/domain.h"
+#include "./fuzztest/domain_core.h"
 #include "./domain_tests/domain_testing.h"
 
 namespace fuzztest {
@@ -41,7 +41,7 @@ void TestSmartPointer(Domain domain) {
 
     Set<std::optional<int>> mutations;
     while (mutations.size() < 4) {
-      value.Mutate(domain, bitgen, false);
+      value.Mutate(domain, bitgen, {}, false);
       mutations.insert(value.user_value ? std::optional(*value.user_value)
                                         : std::nullopt);
     }
@@ -61,6 +61,8 @@ struct MyCustomSmartPointer {
 
   int operator*() const { return *i; }
   explicit operator bool() const { return static_cast<bool>(i); }
+  const int* get() const { return i.get(); }
+  int* get() { return i.get(); }
 
   std::unique_ptr<int> i;
 };

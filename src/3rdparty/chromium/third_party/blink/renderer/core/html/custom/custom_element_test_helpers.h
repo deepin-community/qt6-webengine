@@ -103,12 +103,14 @@ class TestCustomElementDefinition : public CustomElementDefinition {
 
   HTMLElement* CreateAutonomousCustomElementSync(
       Document& document,
-      const QualifiedName&) override {
+      const QualifiedName&,
+      CustomElementRegistry* = nullptr) override {
     return CreateElementForConstructor(document);
   }
 
   bool HasConnectedCallback() const override { return false; }
   bool HasDisconnectedCallback() const override { return false; }
+  bool HasConnectedMoveCallback() const override { return false; }
   bool HasAdoptedCallback() const override { return false; }
   bool HasFormAssociatedCallback() const override { return false; }
   bool HasFormResetCallback() const override { return false; }
@@ -120,6 +122,10 @@ class TestCustomElementDefinition : public CustomElementDefinition {
   }
 
   void RunDisconnectedCallback(Element&) override {
+    NOTREACHED() << "definition does not have disconnected callback";
+  }
+
+  void RunConnectedMoveCallback(Element&) override {
     NOTREACHED() << "definition does not have disconnected callback";
   }
 
@@ -195,7 +201,7 @@ class CreateElement {
     NonThrowableExceptionState no_exceptions;
     Element* element = document->CreateElement(
         QualifiedName(g_null_atom, local_name_, namespace_uri_),
-        CreateElementFlags::ByCreateElement(), is_value_);
+        CreateElementFlags::ByCreateElement(), is_value_, /*registry*/ nullptr);
     for (const auto& attribute : attributes_)
       element->setAttribute(attribute.first, attribute.second);
     return element;

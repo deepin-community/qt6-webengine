@@ -14,16 +14,21 @@
 
 #include "connections/implementation/mediums/utils.h"
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
+#include "internal/platform/base64_utils.h"
+#include "internal/platform/byte_array.h"
+#include "internal/platform/crypto.h" //NOLINT
 #include "internal/platform/prng.h"
-#include "internal/platform/crypto.h"
 
 namespace nearby {
 namespace connections {
-using ::location::nearby::connections::LocationHint;
-using ::location::nearby::connections::LocationStandard;
+
+namespace {
+constexpr int kDefaultSaltLength = 16;
+}  // namespace
 
 ByteArray Utils::GenerateRandomBytes(size_t length) {
   Prng prng;
@@ -55,19 +60,12 @@ ByteArray Utils::Sha256Hash(const std::string& source, size_t length) {
   return full_hash;
 }
 
-LocationHint Utils::BuildLocationHint(const std::string& location) {
-  LocationHint location_hint;
-  location_hint.set_format(LocationStandard::UNKNOWN);
+// Generates salts.
+std::string Utils::GenerateSalt() { return GenerateSalt(kDefaultSaltLength); }
 
-  if (!location.empty()) {
-    location_hint.set_location(location);
-    if (location.at(0) == '+') {
-      location_hint.set_format(LocationStandard::E164_CALLING);
-    } else {
-      location_hint.set_format(LocationStandard::ISO_3166_1_ALPHA_2);
-    }
-  }
-  return location_hint;
+std::string Utils::GenerateSalt(size_t length) {
+  ByteArray salt = GenerateRandomBytes(length);
+  return Base64Utils::Encode(salt);
 }
 
 }  // namespace connections

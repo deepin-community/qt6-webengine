@@ -7,10 +7,14 @@ $assert MR % 4 == 0
 $assert NR % 4 == 0
 $ABC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <xmmintrin.h>
 
-#include <xnnpack/ppmm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/ppmm.h"
 
 
 void xnn_f32_ppmm_minmax_ukernel_${MR}x${NR}__sse(
@@ -22,7 +26,7 @@ void xnn_f32_ppmm_minmax_ukernel_${MR}x${NR}__sse(
   float* restrict c,
   size_t cm_stride,
   size_t cn_stride,
-  const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+  const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= ${MR});
@@ -45,6 +49,11 @@ void xnn_f32_ppmm_minmax_ukernel_${MR}x${NR}__sse(
       if XNN_UNPREDICTABLE(mr < ${M+1}) {
         c${M} = c${M-1};
       }
+
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   do {
     __m128 vacc0x${ABC[0:4]} = _mm_load_ps(w);
@@ -79,12 +88,10 @@ void xnn_f32_ppmm_minmax_ukernel_${MR}x${NR}__sse(
       k -= sizeof(float);
     } while (k != 0);
 
-    const __m128 vmax = _mm_load_ps(params->sse.max);
     $for N in range(0, NR, 4):
       $for M in range(MR):
         vacc${M}x${ABC[N:N+4]} = _mm_min_ps(vacc${M}x${ABC[N:N+4]}, vmax);
 
-    const __m128 vmin = _mm_load_ps(params->sse.min);
     $for N in range(0, NR, 4):
       $for M in range(MR):
         vacc${M}x${ABC[N:N+4]} = _mm_max_ps(vacc${M}x${ABC[N:N+4]}, vmin);

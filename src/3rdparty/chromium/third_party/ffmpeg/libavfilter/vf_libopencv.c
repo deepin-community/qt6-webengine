@@ -34,10 +34,11 @@
 #include "libavutil/avstring.h"
 #include "libavutil/common.h"
 #include "libavutil/file.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "video.h"
 
 static void fill_iplimage_from_frame(IplImage *img, const AVFrame *frame, enum AVPixelFormat pixfmt)
@@ -414,11 +415,11 @@ static const AVFilterPad avfilter_vf_ocv_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_ocv = {
-    .name          = "ocv",
-    .description   = NULL_IF_CONFIG_SMALL("Apply transform using libopencv."),
+const FFFilter ff_vf_ocv = {
+    .p.name        = "ocv",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply transform using libopencv."),
+    .p.priv_class  = &ocv_class,
     .priv_size     = sizeof(OCVContext),
-    .priv_class    = &ocv_class,
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(avfilter_vf_ocv_inputs),

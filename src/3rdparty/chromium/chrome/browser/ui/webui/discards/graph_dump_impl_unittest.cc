@@ -32,6 +32,8 @@ namespace {
 using performance_manager::NodeBase;
 
 const char kHtmlMimeType[] = "text/html";
+const blink::mojom::PermissionStatus kAskPermissionStatus =
+    blink::mojom::PermissionStatus::ASK;
 
 class TestChangeStream : public discards::mojom::GraphChangeStream {
  public:
@@ -41,7 +43,7 @@ class TestChangeStream : public discards::mojom::GraphChangeStream {
   using WorkerMap = std::map<int64_t, discards::mojom::WorkerInfoPtr>;
   using IdSet = std::set<int64_t>;
 
-  TestChangeStream() {}
+  TestChangeStream() = default;
 
   mojo::PendingRemote<discards::mojom::GraphChangeStream> GetRemote() {
     mojo::PendingRemote<discards::mojom::GraphChangeStream> remote;
@@ -201,12 +203,16 @@ TEST_F(DiscardsGraphDumpImplTest, ChangeStream) {
   const GURL kExampleUrl("http://www.example.org");
   int64_t next_navigation_id = 1;
   mock_graph.page->OnMainFrameNavigationCommitted(
-      false, now, next_navigation_id++, kExampleUrl, kHtmlMimeType);
+      false, now, next_navigation_id++, kExampleUrl, kHtmlMimeType,
+      kAskPermissionStatus);
   mock_graph.other_page->OnMainFrameNavigationCommitted(
-      false, now, next_navigation_id++, kExampleUrl, kHtmlMimeType);
+      false, now, next_navigation_id++, kExampleUrl, kHtmlMimeType,
+      kAskPermissionStatus);
 
   auto* main_frame = mock_graph.page->main_frame_node();
-  main_frame->OnNavigationCommitted(kExampleUrl, /* same_document */ false);
+  main_frame->OnNavigationCommitted(
+      kExampleUrl, url::Origin::Create(kExampleUrl), /*same_document=*/false,
+      /*is_served_from_back_forward_cache=*/false);
 
   std::unique_ptr<DiscardsGraphDumpImpl> impl =
       std::make_unique<DiscardsGraphDumpImpl>();
@@ -265,8 +271,9 @@ TEST_F(DiscardsGraphDumpImplTest, ChangeStream) {
       EXPECT_NE(0u, frame->page_id);
 
       // The page's main frame should have an URL.
-      if (frame->id == impl_raw->GetNodeIdForTesting(main_frame))
+      if (frame->id == impl_raw->GetNodeIdForTesting(main_frame)) {
         EXPECT_EQ(kExampleUrl, frame->url);
+      }
     }
     EXPECT_NE(0u, frame->id);
     EXPECT_NE(0u, frame->process_id);
@@ -287,7 +294,8 @@ TEST_F(DiscardsGraphDumpImplTest, ChangeStream) {
   // Test change notifications.
   const GURL kAnotherURL("http://www.google.com/");
   mock_graph.page->OnMainFrameNavigationCommitted(
-      false, now, next_navigation_id++, kAnotherURL, kHtmlMimeType);
+      false, now, next_navigation_id++, kAnotherURL, kHtmlMimeType,
+      kAskPermissionStatus);
 
   size_t child_frame_id =
       impl_raw->GetNodeIdForTesting(mock_graph.child_frame.get());

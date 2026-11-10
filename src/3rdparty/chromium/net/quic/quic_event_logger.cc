@@ -9,6 +9,7 @@
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_values.h"
 #include "net/quic/address_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/core/crypto/crypto_protocol.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_socket_address_coder.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
@@ -147,14 +148,20 @@ base::Value::Dict NetLogQuicAckFrameParams(const quic::QuicAckFrame* frame) {
                  NetLogNumberValue(packet_time.second.ToDebuggingValue())));
   }
 
-  return base::Value::Dict()
-      .Set("largest_observed",
-           NetLogNumberValue(frame->largest_acked.ToUint64()))
-      .Set("delta_time_largest_observed_us",
-           NetLogNumberValue(frame->ack_delay_time.ToMicroseconds()))
-      .Set("smallest_observed", NetLogNumberValue(smallest_observed.ToUint64()))
-      .Set("missing_packets", std::move(missing))
-      .Set("received_packet_times", std::move(received));
+  base::Value::Dict rv;
+  rv.Set("largest_observed",
+         NetLogNumberValue(frame->largest_acked.ToUint64()));
+  rv.Set("delta_time_largest_observed_us",
+         NetLogNumberValue(frame->ack_delay_time.ToMicroseconds()));
+  rv.Set("smallest_observed", NetLogNumberValue(smallest_observed.ToUint64()));
+  rv.Set("missing_packets", std::move(missing));
+  rv.Set("received_packet_times", std::move(received));
+  if (frame->ecn_counters.has_value()) {
+    rv.Set("ECT0", NetLogNumberValue(frame->ecn_counters->ect0));
+    rv.Set("ECT1", NetLogNumberValue(frame->ecn_counters->ect1));
+    rv.Set("CE", NetLogNumberValue(frame->ecn_counters->ce));
+  }
+  return rv;
 }
 
 base::Value::Dict NetLogQuicRstStreamFrameParams(

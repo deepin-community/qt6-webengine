@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CREDENTIALMANAGEMENT_NAVIGATOR_LOGIN_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
+#include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
@@ -14,6 +15,7 @@ namespace blink {
 
 class Navigator;
 class V8LoginStatus;
+class LoginStatusOptions;
 
 // Methods to let websites tell the browser about their login status.
 class MODULES_EXPORT NavigatorLogin : public ScriptWrappable,
@@ -25,8 +27,12 @@ class MODULES_EXPORT NavigatorLogin : public ScriptWrappable,
   static NavigatorLogin* login(Navigator&);
   explicit NavigatorLogin(Navigator&);
 
-  ScriptPromise setStatus(ScriptState* script_state,
-                          const V8LoginStatus& status);
+  ScriptPromise<IDLUndefined> setStatus(ScriptState* script_state,
+                                        const V8LoginStatus& status);
+
+  ScriptPromise<IDLUndefined> setStatus(ScriptState* script_state,
+                                        const V8LoginStatus& status,
+                                        const LoginStatusOptions* options);
 
   void Trace(Visitor*) const override;
 };

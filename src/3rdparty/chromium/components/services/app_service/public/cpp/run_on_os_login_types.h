@@ -32,8 +32,7 @@ struct COMPONENT_EXPORT(APP_TYPES) RunOnOsLogin {
   RunOnOsLogin(RunOnOsLogin&&) = default;
   RunOnOsLogin& operator=(RunOnOsLogin&&) = default;
 
-  bool operator==(const RunOnOsLogin& other) const;
-  bool operator!=(const RunOnOsLogin& other) const;
+  friend bool operator==(const RunOnOsLogin&, const RunOnOsLogin&) = default;
 
   ~RunOnOsLogin();
 
@@ -59,7 +58,7 @@ base::Value::Dict ConvertRunOnOsLoginToDict(
 
 // Converts base::Value::Dict to RunOnOsLoginPtr.
 COMPONENT_EXPORT(APP_TYPES)
-absl::optional<RunOnOsLogin> ConvertDictToRunOnOsLogin(
+std::optional<RunOnOsLogin> ConvertDictToRunOnOsLogin(
     const base::Value::Dict* dict);
 
 }  // namespace apps

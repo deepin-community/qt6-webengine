@@ -4,21 +4,23 @@
 
 #include "chrome/browser/ui/webui/app_home/app_home_page_handler.h"
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_future.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/create_application_shortcut_view_test_support.h"
-#include "chrome/browser/ui/web_applications/web_app_controller_browsertest.h"
+#include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/ui/webui/app_home/app_home.mojom.h"
 #include "chrome/browser/ui/webui/app_home/mock_app_home_page.h"
 #include "chrome/browser/web_applications/os_integration/web_app_shortcut.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
+#include "chrome/browser/web_applications/test/web_app_test_observers.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -28,20 +30,18 @@
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_web_ui.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/views/test/dialog_test.h"
 #include "ui/views/widget/any_widget_observer.h"
 #include "ui/views/widget/widget.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "base/base_paths_win.h"
-#include "base/test/scoped_path_override.h"
-#endif  // BUILDFLAG(IS_WIN)
 
 using webapps::AppId;
 using GetAppsCallback =
@@ -99,7 +99,7 @@ class TestAppHomePageHandler : public AppHomePageHandler {
   ~TestAppHomePageHandler() override = default;
 
   void Wait() {
-    // TODO(crbug.com/1350406): Define specific Wait for each
+    // TODO(crbug.com/40234138): Define specific Wait for each
     // listener.
     run_loop_->Run();
     run_loop_ = std::make_unique<base::RunLoop>();
@@ -148,10 +148,10 @@ class TestAppHomePageHandler : public AppHomePageHandler {
 
 std::unique_ptr<web_app::WebAppInstallInfo> BuildWebAppInfo(
     std::string test_app_name) {
-  auto app_info = std::make_unique<web_app::WebAppInstallInfo>();
-  app_info->start_url = GURL(kTestAppUrl);
+  auto app_info = web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(
+      GURL(kTestAppUrl));
   app_info->scope = GURL(kTestAppUrl);
-  app_info->title = base::UTF8ToUTF16(base::StringPiece(test_app_name));
+  app_info->title = base::UTF8ToUTF16(std::string_view(test_app_name));
   app_info->manifest_url = GURL(kTestManifestUrl);
 
   return app_info;
@@ -177,6 +177,7 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
   }
 
   void TearDownOnMainThread() override {
+    web_app::test::UninstallAllWebApps(profile());
     base::ScopedAllowBlockingForTesting allow_blocking;
     override_registration_.reset();
   }
@@ -191,8 +192,8 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
                                                     page_.BindAndGetRemote());
   }
 
-  extensions::ExtensionService* extension_service() {
-    return extensions::ExtensionSystem::Get(profile())->extension_service();
+  extensions::ExtensionRegistrar* extension_registrar() {
+    return extensions::ExtensionRegistrar::Get(profile());
   }
 
   webapps::AppId InstallTestWebApp(
@@ -217,7 +218,8 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
     manifest.SetByDottedPath(extensions::manifest_keys::kName, kTestAppName);
     manifest.SetByDottedPath(extensions::manifest_keys::kVersion, "0.0.0.0");
     manifest.SetByDottedPath(
-        extensions::manifest_keys::kPlatformAppBackgroundPage, std::string());
+        extensions::manifest_keys::kPlatformAppBackgroundPage,
+        "background.html");
 
     std::string error;
     scoped_refptr<extensions::Extension> extension =
@@ -225,11 +227,28 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
             base::FilePath(), extensions::mojom::ManifestLocation::kUnpacked,
             manifest, 0, &error);
 
-    extension_service()->AddExtension(extension.get());
+    extension_registrar()->AddExtension(extension);
     return extension;
   }
 
-  void UninstallTestExtensionApp(const extensions::Extension* extension) {
+  scoped_refptr<const extensions::Extension> InstallTestExtension() {
+    namespace keys = extensions::manifest_keys;
+    base::Value::Dict manifest = base::Value::Dict()
+                                     .Set(keys::kName, "Test extension")
+                                     .Set(keys::kVersion, "1.0")
+                                     .Set(keys::kManifestVersion, 2);
+
+    std::string error;
+    scoped_refptr<extensions::Extension> extension =
+        extensions::Extension::Create(
+            base::FilePath(), extensions::mojom::ManifestLocation::kUnpacked,
+            manifest, 0, &error);
+
+    extension_registrar()->AddExtension(extension);
+    return extension;
+  }
+
+  void UninstallTestExtension(const extensions::Extension* extension) {
     std::u16string error;
     base::RunLoop run_loop;
 
@@ -237,20 +256,16 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
     // set of installed extensions stored in the ExtensionRegistry and later
     // notifies interested observer of extension uninstall event. But it will
     // asynchronously remove site-related data and the files stored on disk.
-    // It's common case that `WebappTest::TearDonw` invokes before
+    // It's common case that `WebappTest::TearDown` invokes before
     // `ExtensionService` completes delete related file, as a result, the
     // `AppHome` test would finally fail delete testing-related file for file
     // locking semantics on WinOS platfom. To workaround this case, make sure
     // the task of uninstalling extension complete before the `AppHome` test
     // tear down.
-    extension_service()->UninstallExtension(
+    extension_registrar()->UninstallExtension(
         extension->id(),
         extensions::UninstallReason::UNINSTALL_REASON_FOR_TESTING, &error,
-        base::BindOnce(
-            [](base::OnceClosure quit_closure) {
-              std::move(quit_closure).Run();
-            },
-            run_loop.QuitClosure()));
+        run_loop.QuitClosure());
     run_loop.Run();
   }
 
@@ -259,14 +274,6 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
 
   std::unique_ptr<web_app::OsIntegrationTestOverrideImpl::BlockingRegistration>
       override_registration_;
-
-#if BUILDFLAG(IS_WIN)
-  // This is used as a fallback to prevent creating shortcuts in the startup
-  // dir or start menu if tasks are still running when `override_registration_`
-  // is reset.
-  base::ScopedPathOverride override_start_menu_dir_{base::DIR_START_MENU};
-  base::ScopedPathOverride override_startup_dir_{base::DIR_USER_STARTUP};
-#endif  // BUILDFLAG(IS_WIN)
 };
 
 MATCHER_P(MatchAppName, expected_app_name, "") {
@@ -315,17 +322,29 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, ForceInstalledApp) {
 IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnWebAppInstalled) {
   std::unique_ptr<TestAppHomePageHandler> page_handler =
       GetAppHomePageHandler();
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
+      .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();
   page_handler->Wait();
 }
 
-IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnExtensionLoaded) {
+IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnExtensionLoaded_App) {
   std::unique_ptr<TestAppHomePageHandler> page_handler =
       GetAppHomePageHandler();
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)))
+      .Times(testing::AtLeast(1));
   scoped_refptr<const extensions::Extension> extension =
       InstallTestExtensionApp();
+  ASSERT_NE(extension, nullptr);
+  page_handler->Wait();
+}
+
+IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnExtensionLoaded_Extension) {
+  std::unique_ptr<TestAppHomePageHandler> page_handler =
+      GetAppHomePageHandler();
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)))
+      .Times(0);
+  scoped_refptr<const extensions::Extension> extension = InstallTestExtension();
   ASSERT_NE(extension, nullptr);
   page_handler->Wait();
 }
@@ -335,7 +354,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnWebAppUninstall) {
       GetAppHomePageHandler();
 
   // First, install a web app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
+      .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();
   page_handler->Wait();
 
@@ -351,7 +371,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnExtensionUninstall) {
       GetAppHomePageHandler();
 
   // First, install a test extension app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)))
+      .Times(testing::AtLeast(1));
   scoped_refptr<const extensions::Extension> extension =
       InstallTestExtensionApp();
   page_handler->Wait();
@@ -359,7 +380,7 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, OnExtensionUninstall) {
   // Check uninstall previous extension will call `RemoveApp` API.
   EXPECT_CALL(page_, RemoveApp(MatchAppId(extension->id())))
       .Times(testing::AtLeast(1));
-  UninstallTestExtensionApp(extension.get());
+  UninstallTestExtension(extension.get());
   page_handler->Wait();
 }
 
@@ -368,7 +389,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, UninstallWebApp) {
       GetAppHomePageHandler();
 
   // First, install a test web app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
+      .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();
   page_handler->Wait();
 
@@ -378,8 +400,11 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, UninstallWebApp) {
       .Times(testing::AtLeast(1));
   extensions::ScopedTestDialogAutoConfirm auto_confirm(
       extensions::ScopedTestDialogAutoConfirm::ACCEPT);
+  web_app::WebAppTestUninstallObserver observer(profile());
+  observer.BeginListening({installed_app_id});
   page_handler->UninstallApp(installed_app_id);
   page_handler->Wait();
+  observer.Wait();
 }
 
 IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, UninstallExtensionApp) {
@@ -407,7 +432,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, ShowWebAppSettings) {
       GetAppHomePageHandler();
 
   // First, install a test web app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
+      .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();
   page_handler->Wait();
 
@@ -424,7 +450,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, CreateWebAppShortcut) {
       GetAppHomePageHandler();
 
   // First, install a test web app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
+      .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();
   page_handler->Wait();
 
@@ -452,7 +479,8 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, CreateExtensionAppShortcut) {
       GetAppHomePageHandler();
 
   // First, install a test extension app for test.
-  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)));
+  EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppNameWithUnsupportedText)))
+      .Times(testing::AtLeast(1));
   scoped_refptr<const extensions::Extension> extension =
       InstallTestExtensionApp();
   page_handler->Wait();
@@ -469,7 +497,7 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, CreateExtensionAppShortcut) {
 #endif
   EXPECT_CALL(page_, RemoveApp(MatchAppId(extension->id())))
       .Times(testing::AtLeast(1));
-  UninstallTestExtensionApp(extension.get());
+  UninstallTestExtension(extension.get());
 #if !BUILDFLAG(IS_MAC)
   FlushShortcutTasks();
 #endif
@@ -478,6 +506,7 @@ IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, CreateExtensionAppShortcut) {
 IN_PROC_BROWSER_TEST_F(AppHomePageHandlerTest, SetRunOnOsLoginMode) {
   std::unique_ptr<TestAppHomePageHandler> page_handler =
       GetAppHomePageHandler();
+  // Add happens twice, on install & on os integration complete.
   EXPECT_CALL(page_, AddApp(MatchAppName(kTestAppName)))
       .Times(testing::AtLeast(1));
   webapps::AppId installed_app_id = InstallTestWebApp();

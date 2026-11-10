@@ -201,19 +201,19 @@ void Locale::ResetDefaultLocale() {
 Locale::~Locale() = default;
 
 String Locale::QueryString(int resource_id) {
-  // FIXME: Returns a string locazlied for this locale.
+  // FIXME: Returns a string localized for this locale.
   return Platform::Current()->QueryLocalizedString(resource_id);
 }
 
 String Locale::QueryString(int resource_id, const String& parameter) {
-  // FIXME: Returns a string locazlied for this locale.
+  // FIXME: Returns a string localized for this locale.
   return Platform::Current()->QueryLocalizedString(resource_id, parameter);
 }
 
 String Locale::QueryString(int resource_id,
                            const String& parameter1,
                            const String& parameter2) {
-  // FIXME: Returns a string locazlied for this locale.
+  // FIXME: Returns a string localized for this locale.
   return Platform::Current()->QueryLocalizedString(resource_id, parameter1,
                                                    parameter2);
 }
@@ -279,7 +279,7 @@ void Locale::SetLocaleData(const Vector<String, kDecimalSymbolsSize>& symbols,
 
   StringBuilder builder;
   for (size_t i = 0; i < kDecimalSymbolsSize; ++i) {
-    // We don't accept group separatros.
+    // We don't accept group separators.
     if (i != kGroupSeparatorIndex)
       builder.Append(decimal_symbols_[i]);
   }
@@ -346,7 +346,7 @@ bool Locale::DetectSignAndGetDigitRange(const String& input,
                                         bool& is_negative,
                                         unsigned& start_index,
                                         unsigned& end_index) {
-  DCHECK_EQ(input.Find(IsASCIISpace), WTF::kNotFound);
+  DCHECK_EQ(input.Find(IsASCIISpace), kNotFound);
   start_index = 0;
   end_index = input.length();
   const auto adjust_for_affixes = [&](const String& prefix,
@@ -500,11 +500,11 @@ bool Locale::HasSignNotAfterE(const String& str) {
 }
 
 bool Locale::IsDigit(UChar ch) {
-  // Alwoays allow 0 - 9
+  // Always allow 0 - 9.
   if (ch >= '0' && ch <= '9')
     return true;
   // Check each digit otherwise
-  String ch_str(&ch, 1u);
+  String ch_str(base::span_from_ref(ch));
   return (ch_str == decimal_symbols_[0] || ch_str == decimal_symbols_[1] ||
           ch_str == decimal_symbols_[2] || ch_str == decimal_symbols_[3] ||
           ch_str == decimal_symbols_[4] || ch_str == decimal_symbols_[5] ||
@@ -516,7 +516,7 @@ bool Locale::IsDigit(UChar ch) {
 bool Locale::IsDecimalSeparator(UChar ch) {
   if (ch == '.')
     return true;
-  return LocalizedDecimalSeparator() == String(&ch, 1u);
+  return LocalizedDecimalSeparator() == String(base::span_from_ref(ch));
 }
 
 // Is there a decimal separator in a string?
@@ -554,18 +554,8 @@ String Locale::FormatDateTime(const DateComponents& date,
       break;
     case DateComponents::kInvalid:
       NOTREACHED();
-      break;
   }
-
-  String date_time_string = builder.ToString();
-
-#if BUILDFLAG(IS_MAC)
-  // Revert ICU 72 change that introduced U+202F instead of U+0020
-  // to separate time from AM/PM. See https://crbug.com/1453047.
-  date_time_string.Replace(0x202f, 0x20);
-#endif
-
-  return date_time_string;
+  return builder.ToString();
 }
 
 }  // namespace blink

@@ -21,6 +21,8 @@ button ~ .text-ellipsis {
   cursor: pointer;
   outline-offset: 2px;
   padding: 0;
+  margin-left: var(--sys-size-3);
+  white-space: nowrap;;
 }
 
 button.link {
@@ -33,6 +35,11 @@ button.link {
 
 button.link:has(devtools-icon) {
   margin-top: 5px;
+}
+
+devtools-button.help-button {
+  top: 4px;
+  position: relative;
 }
 
 button.text-link {
@@ -59,20 +66,23 @@ button.text-link {
 
 .inline-name {
   color: var(--sys-color-token-subtle);
-  padding-right: 4px;
+  padding-inline: 4px;
   user-select: none;
   white-space: pre-line;
 }
 
 .inline-items {
   display: flex;
-  gap: 3px;
 }
 
 .span-cols {
   grid-column-start: span 2;
-  margin: 0 0 8px 30px;
+  margin-left: var(--sys-size-9);
   line-height: 28px;
+}
+
+.report-section:has(.link) {
+  line-height: var(--sys-size-12);
 }
 
 .without-min-width {
@@ -84,8 +94,8 @@ button.text-link {
 }
 
 .link:not(button):has(devtools-icon) {
-  vertical-align: sub;
-  padding-left: 2px;
+  vertical-align: baseline;
+  margin-inline-start: 3px;
 }
 
 .inline-icon {

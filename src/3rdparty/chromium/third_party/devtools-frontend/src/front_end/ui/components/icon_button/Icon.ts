@@ -1,11 +1,11 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import '../../../Images/Images.js';
 
-import iconStyles from './icon.css.legacy.js';
+import iconStyles from './icon.css.js';
 
 /**
  * @deprecated
@@ -38,15 +38,10 @@ export type IconData = IconWithName|{
  * const icon = IconButton.Icon.create('bin');
  * const iconWithClassName = IconButton.Icon.create('bin', 'delete-icon');
  *
- * // Instantiate programmatically via the constructor:
- * const icon = new IconButton.Icon.Icon();
- * icon.name = 'bin';
- * container.appendChild(icon);
- *
  * // Use within a template:
- * LitHtml.html`
- *   <${IconButton.Icon.Icon.litTagName} name="bin">
- *   </${IconButton.Icon.Icon.litTagName}>
+ * Lit.html`
+ *   <devtools-icon name="bin">
+ *   </devtools-icon>
  * `;
  * ```
  *
@@ -68,11 +63,10 @@ export type IconData = IconWithName|{
  * @attr name - The basename of the icon file (not including the `.svg` suffix). For
  *              backwards compatibility we also support a full URL here, but that
  *              should not be used in newly written code.
- * @prop {String} name - The `"name"` attribute is reflected as property.
- * @prop {IconData} data - Deprecated way to set dimensions, color and name at once.
+ * @property name - The `"name"` attribute is reflected as property.
+ * @property data - Deprecated way to set dimensions, color and name at once.
  */
 export class Icon extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-icon`;
   static readonly observedAttributes = ['name'];
 
   readonly #shadowRoot;
@@ -81,20 +75,11 @@ export class Icon extends HTMLElement {
   constructor() {
     super();
     this.role = 'presentation';
+    const style = document.createElement('style');
+    style.textContent = iconStyles;
     this.#icon = document.createElement('span');
     this.#shadowRoot = this.attachShadow({mode: 'open'});
-    this.#shadowRoot.appendChild(this.#icon);
-
-    // TODO(bmeurer): Ideally we'd have a `connectedCallback()` that would just
-    // install the CSS via `adoptedStyleSheets`, but that throws when using the
-    // same `CSSStyleSheet` across two different documents (which happens in the
-    // case of undocked DevTools windows and using the DeviceMode). So the work-
-    // around for now is to use legacy CSS injected as a <style> tag into the
-    // ShadowRoot (which has been working well for the legacy UI components for
-    // a long time).
-    const styleElement = document.createElement('style');
-    styleElement.textContent = iconStyles.cssContent;
-    this.#shadowRoot.appendChild(styleElement);
+    this.#shadowRoot.append(style, this.#icon);
   }
 
   /**
@@ -138,7 +123,7 @@ export class Icon extends HTMLElement {
    * Changes the value of the `"name"` attribute of this `Icon`. If you pass
    * `null` the `"name"` attribute will be removed from this element.
    *
-   * @param name the new icon name or `null` to unset.
+   * @param name - the new icon name or `null` to unset.
    */
   set name(name: string|null) {
     if (name === null) {
@@ -170,9 +155,9 @@ export class Icon extends HTMLElement {
  * Helper function to programmatically create an `Icon` isntance with a given
  * `name` and an optional CSS `className`.
  *
- * @param name the name of the icon to use.
- * @param className optional CSS class name(s) to put onto the element.
- * @return the newly created `Icon` instance.
+ * @param name - the name of the icon to use.
+ * @param className - optional CSS class name(s) to put onto the element.
+ * @returns the newly created `Icon` instance.
  */
 export const create = (name: string, className?: string): Icon => {
   const icon = new Icon();
@@ -183,7 +168,7 @@ export const create = (name: string, className?: string): Icon => {
   return icon;
 };
 
-ComponentHelpers.CustomElements.defineComponent('devtools-icon', Icon);
+customElements.define('devtools-icon', Icon);
 
 declare global {
   interface HTMLElementTagNameMap {

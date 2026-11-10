@@ -26,9 +26,15 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webaudio/periodic_wave.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 #include "build/build_config.h"
@@ -40,6 +46,8 @@
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/wtf/math_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 #if defined(ARCH_CPU_X86_FAMILY)
 #include <xmmintrin.h>
@@ -73,9 +81,9 @@ PeriodicWave* PeriodicWave::Create(BaseAudioContext& context,
   if (real.size() != imag.size()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        "length of real array (" + String::Number(real.size()) +
-            ") and length of imaginary array (" + String::Number(imag.size()) +
-            ") must match.");
+        StrCat({"length of real array (", String::Number(real.size()),
+                ") and length of imaginary array (",
+                String::Number(imag.size()), ") must match."}));
     return nullptr;
   }
 
@@ -176,7 +184,7 @@ PeriodicWaveImpl::PeriodicWaveImpl(float sample_rate)
 }
 
 PeriodicWaveImpl::~PeriodicWaveImpl() {
-  AdjustV8ExternalMemory(-static_cast<int64_t>(v8_external_memory_));
+  external_memory_accounter_.Clear(v8::Isolate::GetCurrent());
 }
 
 unsigned PeriodicWaveImpl::PeriodicWaveSize() const {
@@ -265,15 +273,17 @@ void PeriodicWaveImpl::WaveDataForFundamentalFrequency(
 
   const float* ratio = reinterpret_cast<float*>(&v_ratio);
 
-  alignas(16) float cents_above_lowest_frequency[4];
+  std::array<float, 4> cents_above_lowest_frequency
+      alignas(16);
 
   for (int k = 0; k < 4; ++k) {
     cents_above_lowest_frequency[k] = log2f(ratio[k]) * 1200;
   }
 
-  __m128 v_pitch_range = _mm_add_ps(
-      _mm_set1_ps(1.0), _mm_div_ps(_mm_load_ps(cents_above_lowest_frequency),
-                                   _mm_set1_ps((cents_per_range_))));
+  __m128 v_pitch_range =
+      _mm_add_ps(_mm_set1_ps(1.0),
+                 _mm_div_ps(_mm_load_ps(cents_above_lowest_frequency.data()),
+                            _mm_set1_ps((cents_per_range_))));
   v_pitch_range = _mm_max_ps(v_pitch_range, _mm_set1_ps(0.0));
   v_pitch_range = _mm_min_ps(v_pitch_range, _mm_set1_ps(NumberOfRanges() - 1));
 
@@ -330,10 +340,10 @@ void PeriodicWaveImpl::WaveDataForFundamentalFrequency(
   // zeroes.
   v_ratio = vbslq_f32(pos, v_ratio, vdupq_n_f32(0.5));
 
-  float ratio[4] __attribute__((aligned(16)));
+  alignas(16) float ratio[4];
   vst1q_f32(ratio, v_ratio);
 
-  float cents_above_lowest_frequency[4] __attribute__((aligned(16)));
+  alignas(16) float cents_above_lowest_frequency[4];
 
   for (int k = 0; k < 4; ++k) {
     cents_above_lowest_frequency[k] = log2f(ratio[k]) * 1200;
@@ -350,8 +360,8 @@ void PeriodicWaveImpl::WaveDataForFundamentalFrequency(
   uint32x4_t v_index2 = vaddq_u32(v_index1, vdupq_n_u32(1));
   v_index2 = vminq_u32(v_index2, vdupq_n_u32(NumberOfRanges() - 1));
 
-  uint32_t range_index1[4] __attribute__((aligned(16)));
-  uint32_t range_index2[4] __attribute__((aligned(16)));
+  alignas(16) uint32_t range_index1[4];
+  alignas(16) uint32_t range_index2[4];
 
   vst1q_u32(range_index1, v_index1);
   vst1q_u32(range_index2, v_index2);
@@ -391,13 +401,6 @@ unsigned PeriodicWaveImpl::NumberOfPartialsForRange(
   unsigned number_of_partials = culling_scale * MaxNumberOfPartials();
 
   return number_of_partials;
-}
-
-// Tell V8 about the memory we're using so it can properly schedule garbage
-// collects.
-void PeriodicWaveImpl::AdjustV8ExternalMemory(int64_t delta) {
-  v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(delta);
-  v8_external_memory_ += delta;
 }
 
 // Convert into time-domain wave buffers.  One table is created for each range
@@ -459,7 +462,8 @@ void PeriodicWaveImpl::CreateBandLimitedTables(const float* real_data,
     unsigned wave_size = PeriodicWaveSize();
     std::unique_ptr<AudioFloatArray> table =
         std::make_unique<AudioFloatArray>(wave_size);
-    AdjustV8ExternalMemory(wave_size * sizeof(float));
+    external_memory_accounter_.Increase(v8::Isolate::GetCurrent(),
+                                        wave_size * sizeof(float));
     band_limited_tables_.push_back(std::move(table));
 
     // Apply an inverse FFT to generate the time-domain table data.
@@ -554,8 +558,6 @@ void PeriodicWaveImpl::GenerateBasicWaveform(int shape) {
         break;
       default:
         NOTREACHED();
-        b = 0;
-        break;
     }
 
     real_p[n] = 0;

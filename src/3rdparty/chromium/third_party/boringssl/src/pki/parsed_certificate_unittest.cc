@@ -1,6 +1,16 @@
 // Copyright 2017 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "parsed_certificate.h"
 
@@ -13,7 +23,7 @@
 
 // TODO(eroman): Add tests for parsing of policy mappings.
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -170,6 +180,7 @@ TEST(ParsedCertificateTest, FailedSignatureAlgorithm) {
   ASSERT_FALSE(cert->signature_algorithm());
 }
 
+// '&' is not acceptable in a printable string.
 TEST(ParsedCertificateTest, IssuerBadPrintableString) {
   ASSERT_FALSE(ParseCertificateFromFile("issuer_bad_printable_string.pem", {}));
 }
@@ -188,10 +199,12 @@ TEST(ParsedCertificateTest, SubjectBlankSubjectAltNameNotCritical) {
       "subject_blank_subjectaltname_not_critical.pem", {}));
 }
 
+// Non-ASCII character in locality name in subject.
 TEST(ParsedCertificateTest, SubjectNotAscii) {
   ASSERT_FALSE(ParseCertificateFromFile("subject_not_ascii.pem", {}));
 }
 
+// '&' is not acceptable in a printable string.
 TEST(ParsedCertificateTest, SubjectNotPrintableString) {
   ASSERT_FALSE(
       ParseCertificateFromFile("subject_not_printable_string.pem", {}));
@@ -232,7 +245,7 @@ TEST(ParsedCertificateTest, ExtendedKeyUsage) {
   ASSERT_TRUE(cert->GetExtension(der::Input(kExtKeyUsageOid), &extension));
 
   EXPECT_FALSE(extension.critical);
-  EXPECT_EQ(45u, extension.value.Length());
+  EXPECT_EQ(45u, extension.value.size());
 
   EXPECT_TRUE(cert->has_extended_key_usage());
   EXPECT_EQ(4u, cert->extended_key_usage().size());
@@ -268,7 +281,7 @@ TEST(ParsedCertificateTest, Policies) {
       cert->GetExtension(der::Input(kCertificatePoliciesOid), &extension));
 
   EXPECT_FALSE(extension.critical);
-  EXPECT_EQ(95u, extension.value.Length());
+  EXPECT_EQ(95u, extension.value.size());
 
   EXPECT_TRUE(cert->has_policy_oids());
   EXPECT_EQ(2u, cert->policy_oids().size());
@@ -320,7 +333,7 @@ TEST(ParsedCertificateTest, ExtensionsReal) {
       cert->GetExtension(der::Input(kCertificatePoliciesOid), &extension));
 
   EXPECT_FALSE(extension.critical);
-  EXPECT_EQ(16u, extension.value.Length());
+  EXPECT_EQ(16u, extension.value.size());
 
   // TODO(eroman): Verify the other extensions' values.
 }
@@ -591,4 +604,4 @@ TEST(ParsedCertificateTest, AuthourityKeyIdentifierNotSequence) {
 
 }  // namespace
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

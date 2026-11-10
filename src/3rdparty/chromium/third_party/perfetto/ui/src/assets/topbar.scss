@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-@import "widgets/theme";
+@import "theme";
 
 @mixin omnibox-width() {
   width: 90%;
@@ -132,65 +132,6 @@
       }
     }
   }
-  .progress {
-    position: absolute;
-    bottom: 0;
-    height: 1px;
-    width: 100%;
-  }
-  .progress-anim {
-    &:before {
-      content: "";
-      position: absolute;
-      background-color: hsl(219, 50%, 50%);
-      top: 0;
-      left: 0;
-      bottom: 0;
-      will-change: left, right;
-      animation: indeterminate 2.1s cubic-bezier(0.65, 0.815, 0.735, 0.395)
-        infinite;
-    }
-    &:after {
-      content: "";
-      position: absolute;
-      background-color: hsl(219, 50%, 50%);
-      top: 0;
-      left: 0;
-      bottom: 0;
-      will-change: left, right;
-      animation: indeterminate-short 2.1s cubic-bezier(0.165, 0.84, 0.44, 1)
-        infinite;
-      animation-delay: 1.15s;
-    }
-  }
-  @keyframes indeterminate {
-    0% {
-      left: -35%;
-      right: 100%;
-    }
-    60% {
-      left: 100%;
-      right: -90%;
-    }
-    100% {
-      left: 100%;
-      right: -90%;
-    }
-  }
-  @keyframes indeterminate-short {
-    0% {
-      left: -35%;
-      right: 100%;
-    }
-    60% {
-      left: 100%;
-      right: -90%;
-    }
-    100% {
-      left: 100%;
-      right: -90%;
-    }
-  }
 
   .notification-btn {
     @include transition(0.25s);
@@ -213,28 +154,27 @@
   }
 }
 
-.error {
+.error-box {
   position: absolute;
   right: 10px;
-  color: #ef6c00;
-  &:hover {
-    cursor: pointer;
+  display: flex;
+  align-items: center;
+  .error {
+    color: #ef6c00;
+    &:hover {
+      cursor: pointer;
+    }
+  }
+  .popup-trigger {
+    width: 0px;
+    height: 0px;
   }
 }
 
-.helpful-hint {
-  position: absolute;
-  z-index: 10;
-  right: 5px;
-  top: 5px;
-  width: 300px;
-  background-color: white;
-  font-size: 12px;
-  color: #3f4040;
-  display: grid;
-  border-radius: 5px;
-  padding: 8px;
-  box-shadow: 1px 3px 15px rgba(23, 32, 44, 0.3);
+.error-popup {
+  width: 100px;
+  font-size: 14px;
+  font-family: "Roboto Condensed", sans-serif;
 }
 
 .hint-text {

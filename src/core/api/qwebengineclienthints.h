@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QWEBENGINECLIENTHINTS_H
 #define QWEBENGINECLIENTHINTS_H
@@ -9,7 +10,6 @@
 #include <QtCore/qobject.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qvariantmap.h>
-#include <QtQml/qqmlregistration.h>
 
 namespace QtWebEngineCore {
 class ProfileAdapter;
@@ -29,14 +29,11 @@ class Q_WEBENGINECORE_EXPORT QWebEngineClientHints : public QObject
     Q_PROPERTY(QString bitness READ bitness WRITE setBitness FINAL)
     Q_PROPERTY(QVariantMap fullVersionList READ fullVersionList WRITE setFullVersionList FINAL)
     Q_PROPERTY(bool wow64 READ isWow64 WRITE setIsWow64 FINAL)
+    Q_PROPERTY(QStringList formFactors READ formFactors WRITE setFormFactors REVISION(6, 10) FINAL)
 
     Q_PROPERTY(bool isAllClientHintsEnabled READ isAllClientHintsEnabled WRITE setAllClientHintsEnabled FINAL)
 
 public:
-    QML_NAMED_ELEMENT(WebEngineClientHints)
-    QML_UNCREATABLE("")
-    QML_ADDED_IN_VERSION(6, 8)
-
     ~QWebEngineClientHints();
 
     QString arch() const;
@@ -48,6 +45,7 @@ public:
     QString bitness() const;
     QVariantMap fullVersionList() const;
     bool isWow64() const;
+    Q_REVISION(6, 10) QStringList formFactors() const;
 
     void setArch(const QString &);
     void setPlatform(const QString &);
@@ -58,6 +56,7 @@ public:
     void setBitness(const QString &);
     void setFullVersionList(const QVariantMap &);
     void setIsWow64(bool);
+    Q_REVISION(6, 10) void setFormFactors(const QStringList &);
 
     bool isAllClientHintsEnabled();
     void setAllClientHintsEnabled(bool enabled);
@@ -70,6 +69,7 @@ private:
     Q_DISABLE_COPY(QWebEngineClientHints)
     friend class QWebEngineProfilePrivate;
     friend class QQuickWebEngineProfilePrivate;
+    friend class QQuickWebEngineProfile;
 
     QPointer<QtWebEngineCore::ProfileAdapter> m_profileAdapter;
 };

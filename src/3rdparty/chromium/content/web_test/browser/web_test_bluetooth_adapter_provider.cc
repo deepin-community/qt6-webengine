@@ -34,7 +34,6 @@
 
 namespace {
 
-using ::base::StringPiece;
 using ::base::test::RunOnceCallback;
 using ::device::BluetoothAdapter;
 using ::device::BluetoothDevice;
@@ -766,7 +765,7 @@ WebTestBluetoothAdapterProvider::GetDisconnectingHealthThermometer(
     // expectation.
     ON_CALL(*client_config, WriteRemoteDescriptor_(_, _, _))
         .WillByDefault(
-            Invoke([](const std::vector<uint8_t>&, base::OnceClosure&,
+            Invoke([](base::span<const uint8_t>, base::OnceClosure&,
                       BluetoothRemoteGattDescriptor::ErrorCallback&) {
               NOTREACHED();
             }));
@@ -1059,7 +1058,7 @@ scoped_refptr<NiceMockBluetoothAdapter> WebTestBluetoothAdapterProvider::
   ON_CALL(*measurement_interval, WriteRemoteCharacteristic_(_, _, _, _))
       .WillByDefault(
           Invoke([adapter_ptr, device_ptr, disconnect, succeeds](
-                     const std::vector<uint8_t>& value,
+                     base::span<const uint8_t> value,
                      BluetoothRemoteGattCharacteristic::WriteType write_type,
                      base::OnceClosure& callback,
                      BluetoothRemoteGattCharacteristic::ErrorCallback&
@@ -1085,7 +1084,7 @@ scoped_refptr<NiceMockBluetoothAdapter> WebTestBluetoothAdapterProvider::
   ON_CALL(*measurement_interval, DeprecatedWriteRemoteCharacteristic_(_, _, _))
       .WillByDefault(Invoke(
           [adapter_ptr, device_ptr, disconnect, succeeds](
-              const std::vector<uint8_t>& value, base::OnceClosure& callback,
+              base::span<const uint8_t> value, base::OnceClosure& callback,
               BluetoothRemoteGattCharacteristic::ErrorCallback&
                   error_callback) {
             base::OnceClosure pending;
@@ -1166,7 +1165,7 @@ scoped_refptr<NiceMockBluetoothAdapter> WebTestBluetoothAdapterProvider::
   ON_CALL(*user_descriptor, WriteRemoteDescriptor_(_, _, _))
       .WillByDefault(Invoke(
           [adapter_ptr, device_ptr, disconnect, succeeds](
-              const std::vector<uint8_t>& value, base::OnceClosure& callback,
+              base::span<const uint8_t> value, base::OnceClosure& callback,
               BluetoothRemoteGattDescriptor::ErrorCallback& error_callback) {
             base::OnceClosure pending;
             if (succeeds) {
@@ -1600,7 +1599,7 @@ WebTestBluetoothAdapterProvider::GetGenericAccessService(
     // expectation error correctly as a web test failure.
     ON_CALL(*peripheral_privacy_flag, WriteRemoteCharacteristic_(_, _, _, _))
         .WillByDefault(Invoke(
-            [](const std::vector<uint8_t>&,
+            [](base::span<const uint8_t>,
                BluetoothRemoteGattCharacteristic::WriteType, base::OnceClosure&,
                BluetoothRemoteGattCharacteristic::ErrorCallback&) {
               NOTREACHED();
@@ -1612,7 +1611,7 @@ WebTestBluetoothAdapterProvider::GetGenericAccessService(
     ON_CALL(*peripheral_privacy_flag,
             DeprecatedWriteRemoteCharacteristic_(_, _, _))
         .WillByDefault(
-            Invoke([](const std::vector<uint8_t>&, base::OnceClosure&,
+            Invoke([](base::span<const uint8_t>, base::OnceClosure&,
                       BluetoothRemoteGattCharacteristic::ErrorCallback&) {
               NOTREACHED();
             }));
@@ -1698,7 +1697,7 @@ WebTestBluetoothAdapterProvider::GetDisconnectingService(
   ON_CALL(*disconnection_characteristic, WriteRemoteCharacteristic_(_, _, _, _))
       .WillByDefault(
           Invoke([adapter, device](
-                     const std::vector<uint8_t>& value,
+                     base::span<const uint8_t> value,
                      BluetoothRemoteGattCharacteristic::WriteType write_type,
                      base::OnceClosure& success,
                      BluetoothRemoteGattCharacteristic::ErrorCallback& error) {
@@ -1711,7 +1710,7 @@ WebTestBluetoothAdapterProvider::GetDisconnectingService(
           DeprecatedWriteRemoteCharacteristic_(_, _, _))
       .WillByDefault(Invoke(
           [adapter, device](
-              const std::vector<uint8_t>& value, base::OnceClosure& success,
+              base::span<const uint8_t> value, base::OnceClosure& success,
               BluetoothRemoteGattCharacteristic::ErrorCallback& error) {
             device->SetConnected(false);
             for (auto& observer : adapter->GetObservers())

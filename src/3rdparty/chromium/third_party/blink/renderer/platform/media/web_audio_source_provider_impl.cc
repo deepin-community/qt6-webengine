@@ -8,12 +8,13 @@
 #include <utility>
 
 #include "base/check_op.h"
-#include "base/functional/bind.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/thread_annotations.h"
 #include "media/base/audio_glitch_info.h"
@@ -23,6 +24,11 @@
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
+// TODO(crbug.com/420150619): Re-enable this feature.
+BASE_FEATURE(kDelayStopForMediaElementSourceNode,
+             "DelayStopForMediaElementSourceNode",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // TeeFilter is a RenderCallback implementation that allows for a client to get
 // a copy of the data being rendered by the |renderer_| on Render(). This class
@@ -123,7 +129,7 @@ WebAudioSourceProviderImpl::WebAudioSourceProviderImpl(
     media::MediaLog* media_log,
     base::OnceClosure on_set_client_callback /* = base::OnceClosure()*/)
     : sink_(std::move(sink)),
-      tee_filter_(new TeeFilter()),
+      tee_filter_(std::make_unique<TeeFilter>()),
       media_log_(media_log),
       on_set_client_callback_(std::move(on_set_client_callback)) {}
 
@@ -138,13 +144,15 @@ void WebAudioSourceProviderImpl::SetClient(
 
   base::AutoLock auto_lock(sink_lock_);
   if (client) {
-    // Detach the audio renderer from normal playback.
-    if (sink_) {
-      sink_->Stop();
+    if (!base::FeatureList::IsEnabled(kDelayStopForMediaElementSourceNode)) {
+      // Detach the audio renderer from normal playback.
+      if (sink_) {
+        sink_->Stop();
 
-      // It's not possible to resume an element after disconnection, so just
-      // drop the sink entirely for now.
-      sink_ = nullptr;
+        // It's not possible to resume an element after disconnection, so just
+        // drop the sink entirely for now.
+        sink_ = nullptr;
+      }
     }
 
     // The client will now take control by calling provideInput() periodically.
@@ -176,7 +184,7 @@ void WebAudioSourceProviderImpl::SetClient(
 }
 
 void WebAudioSourceProviderImpl::ProvideInput(
-    const WebVector<float*>& audio_data,
+    base::span<const base::span<float>> audio_data,
     int number_of_frames) {
   if (!bus_wrapper_ ||
       static_cast<size_t>(bus_wrapper_->channels()) != audio_data.size()) {
@@ -185,8 +193,9 @@ void WebAudioSourceProviderImpl::ProvideInput(
   }
 
   bus_wrapper_->set_frames(number_of_frames);
-  for (size_t i = 0; i < audio_data.size(); ++i)
+  for (size_t i = 0; i < audio_data.size(); ++i) {
     bus_wrapper_->SetChannelData(static_cast<int>(i), audio_data[i]);
+  }
 
   // Use a try lock to avoid contention in the real-time audio thread.
   base::AutoTryLock auto_try_lock(sink_lock_);
@@ -223,6 +232,30 @@ void WebAudioSourceProviderImpl::ProvideInput(
     bus_wrapper_->ZeroFramesPartial(frames, number_of_frames - frames);
 
   bus_wrapper_->Scale(volume_);
+}
+
+void WebAudioSourceProviderImpl::ConnectToDestinationReady() {
+  if (!base::FeatureList::IsEnabled(kDelayStopForMediaElementSourceNode)) {
+    return;
+  }
+
+  if (!client_) {
+    return;
+  }
+
+  base::AutoLock auto_lock(sink_lock_);
+  if (!sink_) {
+    return;
+  }
+
+  // If client is set and sink is playing, then we finally stop the sink at this
+  // time. It is expected that the newly connected node, which is calling this
+  // method, will start the audio output.
+  sink_->Stop();
+
+  // It's not possible to resume an element after disconnection, so just
+  // drop the sink entirely for now.
+  sink_ = nullptr;
 }
 
 void WebAudioSourceProviderImpl::Initialize(
@@ -288,7 +321,6 @@ bool WebAudioSourceProviderImpl::SetVolume(double volume) {
 
 media::OutputDeviceInfo WebAudioSourceProviderImpl::GetOutputDeviceInfo() {
   NOTREACHED();  // The blocking API is intentionally not supported.
-  return media::OutputDeviceInfo();
 }
 
 void WebAudioSourceProviderImpl::GetOutputDeviceInfoAsync(

@@ -8,10 +8,11 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/functional/callback.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "net/base/io_buffer.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 
 namespace net {
 
@@ -23,16 +24,16 @@ const size_t kMaxSpdyFrameSize = 0x00ffffff;
 // Makes a spdy::SpdySerializedFrame with |size| bytes of data copied from
 // |data|. |data| must be non-NULL and |size| must be positive.
 std::unique_ptr<spdy::SpdySerializedFrame> MakeSpdySerializedFrame(
-    const char* data,
-    size_t size) {
-  DCHECK(data);
-  CHECK_GT(size, 0u);
-  CHECK_LE(size, kMaxSpdyFrameSize);
+    base::span<const uint8_t> data) {
+  CHECK(!data.empty());
+  CHECK_LE(data.size(), kMaxSpdyFrameSize);
 
-  auto frame_data = std::make_unique<char[]>(size);
-  std::memcpy(frame_data.get(), data, size);
-  return std::make_unique<spdy::SpdySerializedFrame>(frame_data.release(), size,
-                                                     true /* owns_buffer */);
+  auto frame_data = std::make_unique<char[]>(data.size());
+  // SAFETY: `frame_data` has size `data.size()`, and so does `data`. The type
+  // is needed to transfer ownership over to Quiche.
+  UNSAFE_BUFFERS(std::memcpy(frame_data.get(), data.data(), data.size()));
+  return std::make_unique<spdy::SpdySerializedFrame>(std::move(frame_data),
+                                                     data.size());
 }
 
 }  // namespace
@@ -44,7 +45,7 @@ class SpdyBuffer::SharedFrameIOBuffer : public IOBuffer {
  public:
   SharedFrameIOBuffer(const scoped_refptr<SharedFrame>& shared_frame,
                       size_t offset)
-      : IOBuffer(base::make_span(*shared_frame->data).subspan(offset)),
+      : IOBuffer(base::span(*shared_frame->data).subspan(offset)),
         shared_frame_(shared_frame) {}
 
   SharedFrameIOBuffer(const SharedFrameIOBuffer&) = delete;
@@ -54,7 +55,7 @@ class SpdyBuffer::SharedFrameIOBuffer : public IOBuffer {
   ~SharedFrameIOBuffer() override {
     // Prevent `data_` from dangling should this destructor remove the
     // last reference to `shared_frame`.
-    data_ = nullptr;
+    ClearSpan();
   }
 
   const scoped_refptr<SharedFrame> shared_frame_;
@@ -65,11 +66,11 @@ SpdyBuffer::SpdyBuffer(std::unique_ptr<spdy::SpdySerializedFrame> frame)
 
 // The given data may not be strictly a SPDY frame; we (ab)use
 // |frame_| just as a container.
-SpdyBuffer::SpdyBuffer(const char* data, size_t size)
+SpdyBuffer::SpdyBuffer(base::span<const uint8_t> data)
     : shared_frame_(base::MakeRefCounted<SharedFrame>()) {
-  CHECK_GT(size, 0u);
-  CHECK_LE(size, kMaxSpdyFrameSize);
-  shared_frame_->data = MakeSpdySerializedFrame(data, size);
+  CHECK_GT(data.size(), 0u);
+  CHECK_LE(data.size(), kMaxSpdyFrameSize);
+  shared_frame_->data = MakeSpdySerializedFrame(data);
 }
 
 SpdyBuffer::~SpdyBuffer() {
@@ -77,8 +78,9 @@ SpdyBuffer::~SpdyBuffer() {
     ConsumeHelper(GetRemainingSize(), DISCARD);
 }
 
-const char* SpdyBuffer::GetRemainingData() const {
-  return shared_frame_->data->data() + offset_;
+base::span<const uint8_t> SpdyBuffer::GetRemaining() const {
+  std::string_view frame_view(*shared_frame_->data);
+  return base::as_byte_span(frame_view).subspan(offset_);
 }
 
 size_t SpdyBuffer::GetRemainingSize() const {
@@ -102,10 +104,16 @@ void SpdyBuffer::ConsumeHelper(size_t consume_size,
   DCHECK_GE(consume_size, 1u);
   DCHECK_LE(consume_size, GetRemainingSize());
   offset_ += consume_size;
-  for (std::vector<ConsumeCallback>::const_iterator it =
-           consume_callbacks_.begin(); it != consume_callbacks_.end(); ++it) {
-    it->Run(consume_size, consume_source);
+  // Copy callbacks before iterating: a consume callback may cause `this` to be
+  // destroyed reentrantly. Iterating a local copy keeps the iterator valid and
+  // keeps each callback's BindState alive (via RepeatingCallback's
+  // scoped_refptr) even after `this` is freed. The callbacks themselves are
+  // WeakPtr-bound and tolerate the receiver being gone.
+  std::vector<ConsumeCallback> callbacks = consume_callbacks_;
+  for (const auto& callback : callbacks) {
+    callback.Run(consume_size, consume_source);
   }
+  // `this` may have been deleted here.
 }
 
 }  // namespace net

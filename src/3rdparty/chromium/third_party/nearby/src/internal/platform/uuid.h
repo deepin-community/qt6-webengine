@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -31,6 +32,10 @@ namespace nearby {
 class Uuid final {
  public:
   Uuid() = default;
+
+  // Constructs a UUID from the canonical string format as
+  // xxxxxABCD-xxxx-xxxx-xxxxxxxxxxxxxx
+  static std::optional<Uuid> FromString(absl::string_view data);
 
   // Constructs a type 3 (name based) UUID based on the input string.
   explicit Uuid(absl::string_view data);
@@ -53,6 +58,10 @@ class Uuid final {
   // This is needed because Android only support UUID 16 bits in service data
   // section in advertising data
   std::string Get16BitAsString() const;
+  // If the UUID has a valid Bluetooth UUID16 alias, return it, otherwise
+  // return nullopt.
+  // See Bluetooth Core Specification 6.0 Vol.3, Part B, Section 2.5.1
+  std::optional<uint16_t> GetBtUuid16() const;
 
   std::uint64_t GetMostSigBits() const { return most_sig_bits_; }
   std::uint64_t GetLeastSigBits() const { return least_sig_bits_; }

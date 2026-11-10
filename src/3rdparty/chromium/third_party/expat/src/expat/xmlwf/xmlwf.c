@@ -11,13 +11,15 @@
    Copyright (c) 2001-2003 Fred L. Drake, Jr. <fdrake@users.sourceforge.net>
    Copyright (c) 2004-2009 Karl Waclawek <karl@waclawek.net>
    Copyright (c) 2005-2007 Steven Solie <steven@solie.ca>
-   Copyright (c) 2016-2022 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2016-2025 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2017      Rhodri James <rhodri@wildebeest.org.uk>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
    Copyright (c) 2020      Joe Orton <jorton@redhat.com>
    Copyright (c) 2020      Kleber Tarcísio <klebertarcisio@yahoo.com.br>
    Copyright (c) 2021      Tim Bray <tbray@textuality.com>
    Copyright (c) 2022      Martin Ettl <ettl.martin78@googlemail.com>
+   Copyright (c) 2022      Sean McBride <sean@rogue-research.com>
+   Copyright (c) 2025      Alfonso Gregory <gfunni234@gmail.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -40,7 +42,7 @@
    USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include <expat_config.h>
+#include "expat_config.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -194,7 +196,7 @@ startElement(void *userData, const XML_Char *name, const XML_Char **atts) {
     ++p;
   nAtts = (int)((p - atts) >> 1);
   if (nAtts > 1)
-    qsort((void *)atts, nAtts, sizeof(XML_Char *) * 2, attcmp);
+    qsort(atts, nAtts, sizeof(XML_Char *) * 2, attcmp);
   while (*atts) {
     puttc(T(' '), fp);
     fputts(*atts++, fp);
@@ -250,7 +252,7 @@ startElementNS(void *userData, const XML_Char *name, const XML_Char **atts) {
     ++p;
   nAtts = (int)((p - atts) >> 1);
   if (nAtts > 1)
-    qsort((void *)atts, nAtts, sizeof(XML_Char *) * 2, nsattcmp);
+    qsort(atts, nAtts, sizeof(XML_Char *) * 2, nsattcmp);
   while (*atts) {
     name = *atts++;
     sep = tcsrchr(name, NSSEP);
@@ -304,7 +306,7 @@ static XML_Char *
 xcsdup(const XML_Char *s) {
   XML_Char *result;
   int count = 0;
-  int numBytes;
+  size_t numBytes;
 
   /* Get the length of the string, including terminator */
   while (s[count++] != 0) {
@@ -322,7 +324,7 @@ static void XMLCALL
 startDoctypeDecl(void *userData, const XML_Char *doctypeName,
                  const XML_Char *sysid, const XML_Char *publid,
                  int has_internal_subset) {
-  XmlwfUserData *data = (XmlwfUserData *)userData;
+  XmlwfUserData *data = userData;
   UNUSED_P(sysid);
   UNUSED_P(publid);
   UNUSED_P(has_internal_subset);
@@ -378,7 +380,7 @@ notationCmp(const void *a, const void *b) {
 
 static void XMLCALL
 endDoctypeDecl(void *userData) {
-  XmlwfUserData *data = (XmlwfUserData *)userData;
+  XmlwfUserData *data = userData;
   NotationList **notations;
   int notationCount = 0;
   NotationList *p;
@@ -389,16 +391,13 @@ endDoctypeDecl(void *userData) {
     notationCount++;
   if (notationCount == 0) {
     /* Nothing to report */
-    free((void *)data->currentDoctypeName);
-    data->currentDoctypeName = NULL;
-    return;
+    goto cleanUp;
   }
 
   notations = malloc(notationCount * sizeof(NotationList *));
   if (notations == NULL) {
     fprintf(stderr, "Unable to sort notations");
-    freeNotations(data);
-    return;
+    goto cleanUp;
   }
 
   for (p = data->notationListHead, i = 0; i < notationCount; p = p->next, i++) {
@@ -438,6 +437,8 @@ endDoctypeDecl(void *userData) {
   fputts(T("]>\n"), data->fp);
 
   free(notations);
+
+cleanUp:
   freeNotations(data);
   free((void *)data->currentDoctypeName);
   data->currentDoctypeName = NULL;
@@ -446,7 +447,7 @@ endDoctypeDecl(void *userData) {
 static void XMLCALL
 notationDecl(void *userData, const XML_Char *notationName, const XML_Char *base,
              const XML_Char *systemId, const XML_Char *publicId) {
-  XmlwfUserData *data = (XmlwfUserData *)userData;
+  XmlwfUserData *data = userData;
   NotationList *entry = malloc(sizeof(NotationList));
   const char *errorMessage = "Unable to store NOTATION for output\n";
 
@@ -495,7 +496,7 @@ static void XMLCALL
 defaultCharacterData(void *userData, const XML_Char *s, int len) {
   UNUSED_P(s);
   UNUSED_P(len);
-  XML_DefaultCurrent((XML_Parser)userData);
+  XML_DefaultCurrent(userData);
 }
 
 static void XMLCALL
@@ -503,13 +504,13 @@ defaultStartElement(void *userData, const XML_Char *name,
                     const XML_Char **atts) {
   UNUSED_P(name);
   UNUSED_P(atts);
-  XML_DefaultCurrent((XML_Parser)userData);
+  XML_DefaultCurrent(userData);
 }
 
 static void XMLCALL
 defaultEndElement(void *userData, const XML_Char *name) {
   UNUSED_P(name);
-  XML_DefaultCurrent((XML_Parser)userData);
+  XML_DefaultCurrent(userData);
 }
 
 static void XMLCALL
@@ -517,7 +518,7 @@ defaultProcessingInstruction(void *userData, const XML_Char *target,
                              const XML_Char *data) {
   UNUSED_P(target);
   UNUSED_P(data);
-  XML_DefaultCurrent((XML_Parser)userData);
+  XML_DefaultCurrent(userData);
 }
 
 static void XMLCALL
@@ -550,7 +551,7 @@ nopProcessingInstruction(void *userData, const XML_Char *target,
 
 static void XMLCALL
 markup(void *userData, const XML_Char *s, int len) {
-  FILE *fp = ((XmlwfUserData *)XML_GetUserData((XML_Parser)userData))->fp;
+  FILE *fp = ((XmlwfUserData *)XML_GetUserData(userData))->fp;
   for (; len > 0; --len, ++s)
     puttc(*s, fp);
 }
@@ -572,20 +573,18 @@ metaLocation(XML_Parser parser) {
 
 static void
 metaStartDocument(void *userData) {
-  fputts(T("<document>\n"),
-         ((XmlwfUserData *)XML_GetUserData((XML_Parser)userData))->fp);
+  fputts(T("<document>\n"), ((XmlwfUserData *)XML_GetUserData(userData))->fp);
 }
 
 static void
 metaEndDocument(void *userData) {
-  fputts(T("</document>\n"),
-         ((XmlwfUserData *)XML_GetUserData((XML_Parser)userData))->fp);
+  fputts(T("</document>\n"), ((XmlwfUserData *)XML_GetUserData(userData))->fp);
 }
 
 static void XMLCALL
 metaStartElement(void *userData, const XML_Char *name, const XML_Char **atts) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   const XML_Char **specifiedAttsEnd
       = atts + XML_GetSpecifiedAttributeCount(parser);
@@ -617,8 +616,8 @@ metaStartElement(void *userData, const XML_Char *name, const XML_Char **atts) {
 
 static void XMLCALL
 metaEndElement(void *userData, const XML_Char *name) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   ftprintf(fp, T("<endtag name=\"%s\""), name);
   metaLocation(parser);
@@ -628,8 +627,8 @@ metaEndElement(void *userData, const XML_Char *name) {
 static void XMLCALL
 metaProcessingInstruction(void *userData, const XML_Char *target,
                           const XML_Char *data) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *usrData = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *usrData = XML_GetUserData(parser);
   FILE *fp = usrData->fp;
   ftprintf(fp, T("<pi target=\"%s\" data=\""), target);
   characterData(usrData, data, (int)tcslen(data));
@@ -640,8 +639,8 @@ metaProcessingInstruction(void *userData, const XML_Char *target,
 
 static void XMLCALL
 metaComment(void *userData, const XML_Char *data) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *usrData = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *usrData = XML_GetUserData(parser);
   FILE *fp = usrData->fp;
   fputts(T("<comment data=\""), fp);
   characterData(usrData, data, (int)tcslen(data));
@@ -652,8 +651,8 @@ metaComment(void *userData, const XML_Char *data) {
 
 static void XMLCALL
 metaStartCdataSection(void *userData) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   fputts(T("<startcdata"), fp);
   metaLocation(parser);
@@ -662,8 +661,8 @@ metaStartCdataSection(void *userData) {
 
 static void XMLCALL
 metaEndCdataSection(void *userData) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   fputts(T("<endcdata"), fp);
   metaLocation(parser);
@@ -672,8 +671,8 @@ metaEndCdataSection(void *userData) {
 
 static void XMLCALL
 metaCharacterData(void *userData, const XML_Char *s, int len) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   fputts(T("<chars str=\""), fp);
   characterData(data, s, len);
@@ -686,8 +685,8 @@ static void XMLCALL
 metaStartDoctypeDecl(void *userData, const XML_Char *doctypeName,
                      const XML_Char *sysid, const XML_Char *pubid,
                      int has_internal_subset) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   UNUSED_P(sysid);
   UNUSED_P(pubid);
@@ -699,8 +698,8 @@ metaStartDoctypeDecl(void *userData, const XML_Char *doctypeName,
 
 static void XMLCALL
 metaEndDoctypeDecl(void *userData) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   fputts(T("<enddoctype"), fp);
   metaLocation(parser);
@@ -711,8 +710,8 @@ static void XMLCALL
 metaNotationDecl(void *userData, const XML_Char *notationName,
                  const XML_Char *base, const XML_Char *systemId,
                  const XML_Char *publicId) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   UNUSED_P(base);
   ftprintf(fp, T("<notation name=\"%s\""), notationName);
@@ -732,8 +731,8 @@ metaEntityDecl(void *userData, const XML_Char *entityName, int is_param,
                const XML_Char *value, int value_length, const XML_Char *base,
                const XML_Char *systemId, const XML_Char *publicId,
                const XML_Char *notationName) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
 
   UNUSED_P(is_param);
@@ -769,8 +768,8 @@ metaEntityDecl(void *userData, const XML_Char *entityName, int is_param,
 static void XMLCALL
 metaStartNamespaceDecl(void *userData, const XML_Char *prefix,
                        const XML_Char *uri) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   fputts(T("<startns"), fp);
   if (prefix)
@@ -785,8 +784,8 @@ metaStartNamespaceDecl(void *userData, const XML_Char *prefix,
 
 static void XMLCALL
 metaEndNamespaceDecl(void *userData, const XML_Char *prefix) {
-  XML_Parser parser = (XML_Parser)userData;
-  XmlwfUserData *data = (XmlwfUserData *)XML_GetUserData(parser);
+  XML_Parser parser = userData;
+  XmlwfUserData *data = XML_GetUserData(parser);
   FILE *fp = data->fp;
   if (! prefix)
     fputts(T("<endns/>\n"), fp);
@@ -871,6 +870,9 @@ showVersion(XML_Char *prog) {
   }
 }
 
+#if defined(__GNUC__)
+__attribute__((noreturn))
+#endif
 static void
 usage(const XML_Char *prog, int rc) {
   ftprintf(
@@ -883,50 +885,65 @@ usage(const XML_Char *prog, int rc) {
       /* clang-format off */
       T("usage:\n")
       T("  %s [OPTIONS] [FILE ...]\n")
-      T("  %s -h\n")
-      T("  %s -v\n")
+      T("  %s -h|--help\n")
+      T("  %s -v|--version\n")
       T("\n")
       T("xmlwf - Determines if an XML document is well-formed\n")
       T("\n")
       T("positional arguments:\n")
-      T("  FILE          file to process (default: STDIN)\n")
+      T("  FILE           file to process (default: STDIN)\n")
       T("\n")
       T("input control arguments:\n")
-      T("  -s            print an error if the document is not [s]tandalone\n")
-      T("  -n            enable [n]amespace processing\n")
-      T("  -p            enable processing external DTDs and [p]arameter entities\n")
-      T("  -x            enable processing of e[x]ternal entities\n")
-      T("  -e ENCODING   override any in-document [e]ncoding declaration\n")
-      T("  -w            enable support for [W]indows code pages\n")
-      T("  -r            disable memory-mapping and use normal file [r]ead IO calls instead\n")
-      T("  -k            when processing multiple files, [k]eep processing after first file with error\n")
+      T("  -s             print an error if the document is not [s]tandalone\n")
+      T("  -n             enable [n]amespace processing\n")
+      T("  -p             enable processing of external DTDs and [p]arameter entities\n")
+      T("  -x             enable processing of e[x]ternal entities\n")
+      T("                 (CAREFUL! This makes xmlwf vulnerable to external entity attacks (XXE).)\n")
+      T("  -e ENCODING    override any in-document [e]ncoding declaration\n")
+      T("  -w             enable support for [W]indows code pages\n")
+      T("  -r             disable memory-mapping and use [r]ead calls instead\n")
+      T("  -g BYTES       buffer size to request per call pair to XML_[G]etBuffer and read (default: 8 KiB)\n")
+      T("  -k             when processing multiple files, [k]eep processing after first file with error\n")
       T("\n")
       T("output control arguments:\n")
-      T("  -d DIRECTORY  output [d]estination directory\n")
-      T("  -c            write a [c]opy of input XML, not canonical XML\n")
-      T("  -m            write [m]eta XML, not canonical XML\n")
-      T("  -t            write no XML output for [t]iming of plain parsing\n")
-      T("  -N            enable adding doctype and [n]otation declarations\n")
+      T("  -d DIRECTORY   output [d]estination directory\n")
+      T("  -c             write a [c]opy of input XML, not canonical XML\n")
+      T("  -m             write [m]eta XML, not canonical XML\n")
+      T("  -t             write no XML output for [t]iming of plain parsing\n")
+      T("  -N             enable adding doctype and [n]otation declarations\n")
       T("\n")
-      T("billion laughs attack protection:\n")
+      T("amplification attack protection (e.g. billion laughs):\n")
       T("  NOTE: If you ever need to increase these values for non-attack payload, please file a bug report.\n")
       T("\n")
-      T("  -a FACTOR     set maximum tolerated [a]mplification factor (default: 100.0)\n")
-      T("  -b BYTES      set number of output [b]ytes needed to activate (default: 8 MiB)\n")
+      T("  -a FACTOR      set maximum tolerated [a]mplification factor (default: 100.0)\n")
+      T("  -b BYTES       set number of output [b]ytes needed to activate (default: 8 MiB/64 MiB)\n")
+      T("\n")
+      T("reparse deferral:\n")
+      T("  -q             disable reparse deferral, and allow [q]uadratic parse runtime with large tokens\n")
       T("\n")
       T("info arguments:\n")
-      T("  -h            show this [h]elp message and exit\n")
-      T("  -v            show program's [v]ersion number and exit\n")
+      T("  -h, --help     show this [h]elp message and exit\n")
+      T("  -v, --version  show program's [v]ersion number and exit\n")
+      T("\n")
+      T("environment variables:\n")
+      T("  EXPAT_ACCOUNTING_DEBUG=(0|1|2|3)\n")
+      T("                 Control verbosity of accounting debugging (default: 0)\n")
+      T("  EXPAT_ENTITY_DEBUG=(0|1)\n")
+      T("                 Control verbosity of entity debugging (default: 0)\n")
+      T("  EXPAT_ENTROPY_DEBUG=(0|1)\n")
+      T("                 Control verbosity of entropy debugging (default: 0)\n")
+      T("  EXPAT_MALLOC_DEBUG=(0|1|2)\n")
+      T("                 Control verbosity of allocation tracker (default: 0)\n")
       T("\n")
       T("exit status:\n")
-      T("  0             the input files are well-formed and the output (if requested) was written successfully\n")
-      T("  1             could not allocate data structures, signals a serious problem with execution environment\n")
-      T("  2             one or more input files were not well-formed\n")
-      T("  3             could not create an output file\n")
-      T("  4             command-line argument error\n")
+      T("  0              the input files are well-formed and the output (if requested) was written successfully\n")
+      T("  1              could not allocate data structures, signals a serious problem with execution environment\n")
+      T("  2              one or more input files were not well-formed\n")
+      T("  3              could not create an output file\n")
+      T("  4              command-line argument error\n")
       T("\n")
       T("xmlwf of libexpat is software libre, licensed under the MIT license.\n")
-      T("Please report bugs at https://github.com/libexpat/libexpat/issues.  Thank you!\n")
+      T("Please report bugs at https://github.com/libexpat/libexpat/issues -- thank you!\n")
       , /* clang-format on */
       prog, prog, prog);
   exit(rc);
@@ -940,8 +957,10 @@ int wmain(int argc, XML_Char **argv);
 #define XMLWF_SHIFT_ARG_INTO(constCharStarTarget, argc, argv, i, j)            \
   {                                                                            \
     if (argv[i][j + 1] == T('\0')) {                                           \
-      if (++i == argc)                                                         \
+      if (++i == argc) {                                                       \
         usage(argv[0], XMLWF_EXIT_USAGE_ERROR);                                \
+        /* usage called exit(..), never gets here */                           \
+      }                                                                        \
       constCharStarTarget = argv[i];                                           \
     } else {                                                                   \
       constCharStarTarget = argv[i] + j + 1;                                   \
@@ -967,6 +986,8 @@ tmain(int argc, XML_Char **argv) {
   unsigned long long attackThresholdBytes = 0;
   XML_Bool attackThresholdGiven = XML_FALSE;
 
+  XML_Bool disableDeferral = XML_FALSE;
+
   int exitCode = XMLWF_EXIT_SUCCESS;
   enum XML_ParamEntityParsing paramEntityParsing
       = XML_PARAM_ENTITY_PARSING_NEVER;
@@ -983,9 +1004,17 @@ tmain(int argc, XML_Char **argv) {
     if (j == 0) {
       if (argv[i][0] != T('-'))
         break;
-      if (argv[i][1] == T('-') && argv[i][2] == T('\0')) {
-        i++;
-        break;
+      if (argv[i][1] == T('-')) {
+        if (argv[i][2] == T('\0')) {
+          i++;
+          break;
+        } else if (tcscmp(argv[i] + 2, T("help")) == 0) {
+          usage(argv[0], XMLWF_EXIT_SUCCESS);
+          // usage called exit(..), never gets here
+        } else if (tcscmp(argv[i] + 2, T("version")) == 0) {
+          showVersion(argv[0]);
+          return XMLWF_EXIT_SUCCESS;
+        }
       }
       j++;
     }
@@ -1038,10 +1067,30 @@ tmain(int argc, XML_Char **argv) {
       break;
     case T('h'):
       usage(argv[0], XMLWF_EXIT_SUCCESS);
-      return 0;
+      // usage called exit(..), never gets here
     case T('v'):
       showVersion(argv[0]);
-      return 0;
+      return XMLWF_EXIT_SUCCESS;
+    case T('g'): {
+      const XML_Char *valueText = NULL;
+      XMLWF_SHIFT_ARG_INTO(valueText, argc, argv, i, j);
+
+      errno = 0;
+      XML_Char *afterValueText = (XML_Char *)valueText;
+      const long long read_size_bytes_candidate
+          = tcstoull(valueText, &afterValueText, 10);
+      if ((errno != 0) || (afterValueText[0] != T('\0'))
+          || (read_size_bytes_candidate < 1)
+          || (read_size_bytes_candidate > (INT_MAX / 2 + 1))) {
+        // This prevents tperror(..) from reporting misleading "[..]: Success"
+        errno = ERANGE;
+        tperror(T("invalid buffer size") T(
+            " (needs an integer from 1 to INT_MAX/2+1 i.e. 1,073,741,824 on most platforms)"));
+        exit(XMLWF_EXIT_USAGE_ERROR);
+      }
+      g_read_size_bytes = (int)read_size_bytes_candidate;
+      break;
+    }
     case T('k'):
       continueOnError = 1;
       j++;
@@ -1062,9 +1111,10 @@ tmain(int argc, XML_Char **argv) {
             " (needs a floating point number greater or equal than 1.0)"));
         exit(XMLWF_EXIT_USAGE_ERROR);
       }
-#ifndef XML_DTD
-      ftprintf(stderr, T("Warning: Given amplification limit ignored") T(
-                           ", xmlwf has been compiled without DTD support.\n"));
+#if XML_GE == 0
+      ftprintf(stderr,
+               T("Warning: Given amplification limit ignored")
+                   T(", xmlwf has been compiled without DTD/GE support.\n"));
 #endif
       break;
     }
@@ -1083,10 +1133,16 @@ tmain(int argc, XML_Char **argv) {
         exit(XMLWF_EXIT_USAGE_ERROR);
       }
       attackThresholdGiven = XML_TRUE;
-#ifndef XML_DTD
-      ftprintf(stderr, T("Warning: Given attack threshold ignored") T(
-                           ", xmlwf has been compiled without DTD support.\n"));
+#if XML_GE == 0
+      ftprintf(stderr,
+               T("Warning: Given attack threshold ignored")
+                   T(", xmlwf has been compiled without DTD/GE support.\n"));
 #endif
+      break;
+    }
+    case T('q'): {
+      disableDeferral = XML_TRUE;
+      j++;
       break;
     }
     case T('\0'):
@@ -1098,6 +1154,7 @@ tmain(int argc, XML_Char **argv) {
       /* fall through */
     default:
       usage(argv[0], XMLWF_EXIT_USAGE_ERROR);
+      // usage called exit(..), never gets here
     }
   }
   if (i == argc) {
@@ -1120,18 +1177,31 @@ tmain(int argc, XML_Char **argv) {
     }
 
     if (attackMaximumAmplification != -1.0f) {
-#ifdef XML_DTD
+#if XML_GE == 1
       XML_SetBillionLaughsAttackProtectionMaximumAmplification(
           parser, attackMaximumAmplification);
+      XML_SetAllocTrackerMaximumAmplification(parser,
+                                              attackMaximumAmplification);
 #endif
     }
     if (attackThresholdGiven) {
-#ifdef XML_DTD
+#if XML_GE == 1
       XML_SetBillionLaughsAttackProtectionActivationThreshold(
           parser, attackThresholdBytes);
+      XML_SetAllocTrackerActivationThreshold(parser, attackThresholdBytes);
 #else
       (void)attackThresholdBytes; // silence -Wunused-but-set-variable
 #endif
+    }
+
+    if (disableDeferral) {
+      const XML_Bool success = XML_SetReparseDeferralEnabled(parser, XML_FALSE);
+      if (! success) {
+        // This prevents tperror(..) from reporting misleading "[..]: Success"
+        errno = EINVAL;
+        tperror(T("Failed to disable reparse deferral"));
+        exit(XMLWF_EXIT_INTERNAL_ERROR);
+      }
     }
 
     if (requireStandalone)
@@ -1163,8 +1233,8 @@ tmain(int argc, XML_Char **argv) {
         }
 #endif
       }
-      outName = (XML_Char *)malloc((tcslen(outputDir) + tcslen(file) + 2)
-                                   * sizeof(XML_Char));
+      outName
+          = malloc((tcslen(outputDir) + tcslen(file) + 2) * sizeof(XML_Char));
       if (! outName) {
         tperror(T("Could not allocate memory"));
         exit(XMLWF_EXIT_INTERNAL_ERROR);

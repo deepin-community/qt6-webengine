@@ -2,21 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/discardable_shared_memory.h"
+
 #include <fcntl.h>
 #include <stdint.h>
 
+#include <algorithm>
+
 #include "base/files/scoped_file.h"
-#include "base/memory/discardable_shared_memory.h"
 #include "base/memory/page_size.h"
 #include "base/memory/shared_memory_tracker.h"
+#include "base/trace_event/memory_allocator_dump.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/memory_allocator_dump.h"  // no-presubmit-check
-#include "base/trace_event/process_memory_dump.h"    // no-presubmit-check
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 namespace base {
 
@@ -268,8 +268,9 @@ TEST(DiscardableSharedMemoryTest, LockShouldFailIfPlatformLockPagesFails) {
 
   // This test cannot succeed on devices without a proper ashmem device
   // because Lock() will always succeed.
-  if (!DiscardableSharedMemory::IsAshmemDeviceSupportedForTesting())
+  if (!DiscardableSharedMemory::IsAshmemDeviceSupportedForTesting()) {
     return;
+  }
 
   DiscardableSharedMemory memory1;
   bool rv1 = memory1.CreateAndMap(kDataSize);
@@ -434,7 +435,7 @@ TEST(DiscardableSharedMemoryTest, ZeroFilledPagesAfterPurge) {
   ASSERT_TRUE(rv);
 
   // Initialize all memory to '0xaa'.
-  memset(memory2.memory(), 0xaa, kDataSize);
+  std::ranges::fill(memory2.memory(), 0xaa);
 
   // Unlock memory.
   memory2.SetNow(Time::FromSecondsSinceUnixEpoch(1));
@@ -450,11 +451,10 @@ TEST(DiscardableSharedMemoryTest, ZeroFilledPagesAfterPurge) {
   // Check that reading memory after it has been purged is returning
   // zero-filled pages.
   uint8_t expected_data[kDataSize] = {};
-  EXPECT_EQ(memcmp(memory2.memory(), expected_data, kDataSize), 0);
+  EXPECT_EQ(base::span(expected_data), memory2.memory());
 }
 #endif
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
 TEST(DiscardableSharedMemoryTest, TracingOwnershipEdges) {
   const uint32_t kDataSize = 1024;
   TestDiscardableSharedMemory memory1;
@@ -479,6 +479,5 @@ TEST(DiscardableSharedMemoryTest, TracingOwnershipEdges) {
   // TODO(ssid): test for weak global dump once the
   // CreateWeakSharedMemoryOwnershipEdge() is fixed, crbug.com/661257.
 }
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 }  // namespace base

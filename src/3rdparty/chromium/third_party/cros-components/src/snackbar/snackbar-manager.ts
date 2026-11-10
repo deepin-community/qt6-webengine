@@ -10,7 +10,7 @@
  *
  */
 
-import 'google3/third_party/javascript/cros_components/snackbar/snackbar';
+import './snackbar';
 
 import {html, LitElement} from 'lit';
 
@@ -68,6 +68,7 @@ export class SnackbarManager extends LitElement {
       // Close the snackbar to restart the snackbar timer.
       this.snackbar.hidePopover();
     }
+    this.button.slot = options.buttonText ? 'action' : '';
     this.button.style.display = options.buttonText ? 'block' : 'none';
     this.button.label = options.buttonText || '';
     this.snackbar.message = options.messageText;

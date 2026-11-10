@@ -6,10 +6,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/span.h"
@@ -68,7 +70,7 @@ struct HmacKnownAnswer {
   const char* hmac;
 };
 
-const HmacKnownAnswer kHmacKnownAnswers[] = {
+constexpr auto kHmacKnownAnswers = std::to_array<HmacKnownAnswer>({
     // A single byte key with an empty message, generated with:
     //   openssl dgst -sha{1,256} -hmac "" < /dev/null
     {blink::kWebCryptoAlgorithmIdSha1, "00", "",
@@ -134,7 +136,8 @@ const HmacKnownAnswer kHmacKnownAnswers[] = {
      "b191d5cf3fc3e8da95a0f9f4a2a7964289c3129b512bd890de8700a9205420f28a8965b6c"
      "67be28ba7fe278e5fcd16f0f22cf2b2eacbb9",
      "4459066109cb11e6870fa9c6bfd251adfa304c0a2928ca915049704972edc560cc7c0bc38"
-     "249e9101aae2f7d4da62eaff83fb07134efc277de72b9e4ab360425"}};
+     "249e9101aae2f7d4da62eaff83fb07134efc277de72b9e4ab360425"},
+});
 
 blink::WebCryptoKey HmacKeyFromHexBytes(blink::WebCryptoAlgorithmId hash,
                                         const char* key) {
@@ -565,10 +568,13 @@ TEST_F(WebCryptoHmacTest, ImportRawKeyWithZeroLength) {
 
 // Import a huge hmac key (UINT_MAX bytes).
 TEST_F(WebCryptoHmacTest, ImportRawKeyTooLarge) {
+  // This uses `reinterpret_cast` of `1` to avoid nullness `CHECK` in the
+  // constructor of `span`.
+  const void* invalid_data = reinterpret_cast<void*>(1);
   // Invalid data of big length. This span is invalid, but ImportKey should fail
   // before actually reading the bytes, as the key is too large.
-  base::span<const uint8_t> big_data(static_cast<const uint8_t*>(nullptr),
-                                     UINT_MAX);
+  base::span<const uint8_t> UNSAFE_TODO(
+      big_data(static_cast<const uint8_t*>(invalid_data), UINT_MAX));
 
   blink::WebCryptoKey key;
   EXPECT_EQ(Status::ErrorDataTooLarge(),

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/4x2-aarch64-neonfma-ld128.S.in
 //   Generator: tools/xngen
@@ -7,7 +8,7 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 # void xnn_f32_qc4w_gemm_minmax_ukernel_4x2__asm_aarch64_neonfma_ld128(
 #     size_t mr,                x0
@@ -50,6 +51,7 @@ BEGIN_FUNCTION xnn_f32_qc4w_gemm_minmax_ukernel_4x2__asm_aarch64_neonfma_ld128
 
         # Load min/max/zerop values
         LD3R        {v4.2s, v5.2s, v6.2s}, [x8]
+        NEG         v6.2s, v6.2s
         MOVI        v7.8b, 15
 
         ADD         x12, x11, x4            // a2 = a1 + a_stride

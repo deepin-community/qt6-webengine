@@ -54,7 +54,7 @@ static String GetContentTypeFromFileName(const String& name,
                                          File::ContentTypeLookupPolicy policy) {
   String type;
   wtf_size_t index = name.ReverseFind('.');
-  if (index != WTF::kNotFound) {
+  if (index != kNotFound) {
     if (policy == File::kWellKnownContentTypes) {
       type = MIMETypeRegistry::GetWellKnownMIMETypeForExtension(
           name.Substring(index + 1));
@@ -74,7 +74,7 @@ static scoped_refptr<BlobDataHandle> CreateBlobDataHandleForFileWithType(
   return BlobDataHandle::CreateForFile(
       FileBackedBlobFactoryDispatcher::GetFileBackedBlobFactory(context), path,
       /*offset=*/0, BlobData::kToEndOfFile,
-      /*expected_modification_time=*/absl::nullopt, content_type);
+      /*expected_modification_time=*/std::nullopt, content_type);
 }
 
 static scoped_refptr<BlobDataHandle> CreateBlobDataHandleForFile(
@@ -162,7 +162,7 @@ File* File::CreateFromControlState(ExecutionContext* context,
   String relative_path = state[index++];
   if (relative_path.empty())
     return File::CreateForUserProvidedFile(context, path, name);
-  return File::CreateWithRelativePath(context, path, relative_path);
+  return File::CreateWithRelativePath(context, path, name, relative_path);
 }
 
 String File::PathFromControlState(const FormControlState& state,
@@ -178,9 +178,10 @@ String File::PathFromControlState(const FormControlState& state,
 
 File* File::CreateWithRelativePath(ExecutionContext* context,
                                    const String& path,
+                                   const String& name,
                                    const String& relative_path) {
-  File* file = MakeGarbageCollected<File>(context, path, File::kAllContentTypes,
-                                          File::kIsUserVisible);
+  File* file = MakeGarbageCollected<File>(
+      context, path, name, File::kAllContentTypes, File::kIsUserVisible);
   file->relative_path_ = relative_path;
   return file;
 }
@@ -190,8 +191,8 @@ File* File::CreateForFileSystemFile(ExecutionContext& context,
                                     const KURL& url,
                                     const FileMetadata& metadata,
                                     UserVisibility user_visibility) {
-  String content_type =
-      GetContentTypeFromFileName(url.GetPath(), File::kWellKnownContentTypes);
+  String content_type = GetContentTypeFromFileName(
+      url.GetPath().ToString(), File::kWellKnownContentTypes);
   // RegisterBlob doesn't take nullable strings.
   if (content_type.IsNull()) {
     content_type = g_empty_string;
@@ -231,7 +232,7 @@ File::File(const String& path,
            UserVisibility user_visibility,
            bool has_snapshot_data,
            uint64_t size,
-           const absl::optional<base::Time>& last_modified,
+           const std::optional<base::Time>& last_modified,
            scoped_refptr<BlobDataHandle> blob_data_handle)
     : Blob(std::move(blob_data_handle)),
       has_backing_file_(!path.empty() || !relative_path.empty()),
@@ -245,7 +246,7 @@ File::File(const String& path,
 }
 
 File::File(const String& name,
-           const absl::optional<base::Time>& modification_time,
+           const std::optional<base::Time>& modification_time,
            scoped_refptr<BlobDataHandle> blob_data_handle)
     : Blob(std::move(blob_data_handle)),
       has_backing_file_(false),
@@ -322,16 +323,13 @@ int64_t File::lastModified() const {
   return (LastModifiedTime() - base::Time::UnixEpoch()).InMilliseconds();
 }
 
-ScriptValue File::lastModifiedDate(ScriptState* script_state) const {
+ScriptObject File::lastModifiedDate(ScriptState* script_state) const {
   // lastModifiedDate returns a Date instance,
   // http://www.w3.org/TR/FileAPI/#dfn-lastModifiedDate
-  return ScriptValue(
-      script_state->GetIsolate(),
-      ToV8Traits<IDLNullable<IDLDate>>::ToV8(
-          script_state, absl::optional<base::Time>(LastModifiedTime())));
+  return ToV8FromDate(script_state, std::make_optional(LastModifiedTime()));
 }
 
-absl::optional<base::Time> File::LastModifiedTimeForSerialization() const {
+std::optional<base::Time> File::LastModifiedTimeForSerialization() const {
   CaptureSnapshotIfNeeded();
 
   return snapshot_modification_time_;

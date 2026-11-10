@@ -18,16 +18,25 @@
 
 namespace blink {
 
-class TestHelperFunction : public ScriptFunction::Callable {
+class TestResolveFunction
+    : public ThenCallable<IDLString, TestResolveFunction> {
  public:
-  explicit TestHelperFunction(String* value) : value_(value) {}
+  explicit TestResolveFunction(String* value) : value_(value) {}
+  void React(ScriptState*, String value) { *value_ = value; }
 
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+ private:
+  String* value_;
+};
+
+class TestRejectFunction : public ThenCallable<IDLAny, TestRejectFunction> {
+ public:
+  explicit TestRejectFunction(String* value) : value_(value) {}
+
+  void React(ScriptState* script_state, ScriptValue value) {
     DCHECK(!value.IsEmpty());
     *value_ = ToCoreString(
         script_state->GetIsolate(),
         value.V8Value()->ToString(script_state->GetContext()).ToLocalChecked());
-    return value;
   }
 
  private:
@@ -61,22 +70,19 @@ class ScriptPromiseResolverWithTrackerTest : public testing::Test {
         GetScriptState()->GetIsolate());
   }
 
-  ScriptPromiseResolverWithTracker<TestEnum>* CreateResultTracker(
+  ScriptPromiseResolverWithTracker<TestEnum, IDLString>* CreateResultTracker(
       String& on_fulfilled,
       String& on_rejected,
       base::TimeDelta timeout_delay = base::Minutes(1)) {
     ScriptState::Scope scope(GetScriptState());
-    auto* result_tracker =
-        MakeGarbageCollected<ScriptPromiseResolverWithTracker<TestEnum>>(
-            GetScriptState(), metric_name_prefix_, timeout_delay);
+    auto* result_tracker = MakeGarbageCollected<
+        ScriptPromiseResolverWithTracker<TestEnum, IDLString>>(
+        GetScriptState(), metric_name_prefix_, timeout_delay);
 
-    ScriptPromise promise = result_tracker->Promise();
-    promise.Then(MakeGarbageCollected<ScriptFunction>(
-                     GetScriptState(),
-                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
-                 MakeGarbageCollected<ScriptFunction>(
-                     GetScriptState(),
-                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
+    result_tracker->Promise().Then(
+        GetScriptState(),
+        MakeGarbageCollected<TestResolveFunction>(&on_fulfilled),
+        MakeGarbageCollected<TestRejectFunction>(&on_rejected));
 
     PerformMicrotaskCheckpoint();
 
@@ -119,8 +125,8 @@ TEST_F(ScriptPromiseResolverWithTrackerTest, resolve) {
 TEST_F(ScriptPromiseResolverWithTrackerTest, reject) {
   String on_fulfilled, on_rejected;
   auto* result_tracker = CreateResultTracker(on_fulfilled, on_rejected);
-  result_tracker->Reject(/*value=*/"hello",
-                         /*result=*/TestEnum::kFailedWithReason);
+  result_tracker->Reject<IDLString>(/*value=*/"hello",
+                                    /*result=*/TestEnum::kFailedWithReason);
   PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
@@ -132,8 +138,8 @@ TEST_F(ScriptPromiseResolverWithTrackerTest, reject) {
 TEST_F(ScriptPromiseResolverWithTrackerTest, resolve_reject_again) {
   String on_fulfilled, on_rejected;
   auto* result_tracker = CreateResultTracker(on_fulfilled, on_rejected);
-  result_tracker->Reject(/*value=*/"hello",
-                         /*result=*/TestEnum::kFailedWithReason);
+  result_tracker->Reject<IDLString>(/*value=*/"hello",
+                                    /*result=*/TestEnum::kFailedWithReason);
   PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
@@ -144,8 +150,8 @@ TEST_F(ScriptPromiseResolverWithTrackerTest, resolve_reject_again) {
   // Resolve/Reject on already resolved/rejected promise doesn't log new values
   // in the histogram.
   result_tracker->Resolve(/*value=*/"bye", /*result=*/TestEnum::kOk);
-  result_tracker->Reject(/*value=*/"bye",
-                         /*result=*/TestEnum::kFailedWithReason);
+  result_tracker->Reject<IDLString>(/*value=*/"bye",
+                                    /*result=*/TestEnum::kFailedWithReason);
   PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
@@ -173,8 +179,8 @@ TEST_F(ScriptPromiseResolverWithTrackerTest, timeout) {
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
-  result_tracker->Reject(/*value=*/"hello",
-                         /*result=*/TestEnum::kFailedWithReason);
+  result_tracker->Reject<IDLString>(/*value=*/"hello",
+                                    /*result=*/TestEnum::kFailedWithReason);
   PerformMicrotaskCheckpoint();
 
   EXPECT_EQ("hello", on_rejected);

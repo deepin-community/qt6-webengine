@@ -35,13 +35,13 @@
 #include "include/private/base/SkDebug.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTo.h"
-#include "include/private/gpu/ganesh/GrImageContext.h"
 #include "include/utils/SkShadowUtils.h"
 #include "src/base/SkAutoMalloc.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkPaintDefaults.h"
+#include "src/core/SkPathEffectBase.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkWriteBuffer.h"
@@ -58,7 +58,8 @@
 class GrDirectContext;
 
 #if defined(SK_GANESH)
-#include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/private/gpu/ganesh/GrImageContext.h"
 #endif
 
 #define DEBUGCANVAS_ATTRIBUTE_DUMP "dump"
@@ -282,7 +283,7 @@ const char* DrawCommand::GetCommandString(OpType type) {
 }
 
 void DrawCommand::toJSON(SkJSONWriter& writer, UrlDataManager& urlDataManager) const {
-    writer.appendCString(DEBUGCANVAS_ATTRIBUTE_COMMAND, this->GetCommandString(fOpType));
+    writer.appendCString(DEBUGCANVAS_ATTRIBUTE_COMMAND, GetCommandString(fOpType));
     writer.appendBool(DEBUGCANVAS_ATTRIBUTE_VISIBLE, this->isVisible());
 }
 
@@ -571,9 +572,7 @@ void DrawCommand::MakeJsonPath(SkJSONWriter& writer, const SkPath& path) {
 
 void DrawCommand::MakeJsonRegion(SkJSONWriter& writer, const SkRegion& region) {
     // TODO: Actually serialize the rectangles, rather than just devolving to path
-    SkPath path;
-    region.getBoundaryPath(&path);
-    MakeJsonPath(writer, path);
+    MakeJsonPath(writer, region.getBoundaryPath());
 }
 
 void DrawCommand::MakeJsonSampling(SkJSONWriter& writer, const SkSamplingOptions& sampling) {
@@ -874,19 +873,14 @@ static void apply_paint_patheffect(const SkPaint&  paint,
                                    UrlDataManager& urlDataManager) {
     SkPathEffect* pathEffect = paint.getPathEffect();
     if (pathEffect != nullptr) {
-        SkPathEffect::DashInfo dashInfo;
-        SkPathEffect::DashType dashType = pathEffect->asADash(&dashInfo);
-        if (dashType == SkPathEffect::kDash_DashType) {
-            dashInfo.fIntervals = (SkScalar*)sk_malloc_throw(dashInfo.fCount * sizeof(SkScalar));
-            pathEffect->asADash(&dashInfo);
+        if (const auto dashInfo = as_PEB(pathEffect)->asADash()) {
             writer.beginObject(DEBUGCANVAS_ATTRIBUTE_DASHING);
             writer.beginArray(DEBUGCANVAS_ATTRIBUTE_INTERVALS, false);
-            for (int32_t i = 0; i < dashInfo.fCount; i++) {
-                writer.appendFloat(dashInfo.fIntervals[i]);
+            for (SkScalar value : dashInfo->fIntervals) {
+                writer.appendFloat(value);
             }
             writer.endArray();  // intervals
-            sk_free(dashInfo.fIntervals);
-            writer.appendFloat(DEBUGCANVAS_ATTRIBUTE_PHASE, dashInfo.fPhase);
+            writer.appendFloat(DEBUGCANVAS_ATTRIBUTE_PHASE, dashInfo->fPhase);
             writer.endObject();  // dashing
         } else {
             writer.beginObject(DEBUGCANVAS_ATTRIBUTE_PATHEFFECT);
@@ -1623,7 +1617,7 @@ DrawPointsCommand::DrawPointsCommand(SkCanvas::PointMode mode,
         : INHERITED(kDrawPoints_OpType), fMode(mode), fPts(pts, count), fPaint(paint) {}
 
 void DrawPointsCommand::execute(SkCanvas* canvas) const {
-    canvas->drawPoints(fMode, fPts.size(), fPts.begin(), fPaint);
+    canvas->drawPoints(fMode, fPts, fPaint);
 }
 
 bool DrawPointsCommand::render(SkCanvas* canvas) const {
@@ -1643,7 +1637,7 @@ bool DrawPointsCommand::render(SkCanvas* canvas) const {
     p.setColor(SK_ColorBLACK);
     p.setStyle(SkPaint::kStroke_Style);
 
-    canvas->drawPoints(fMode, fPts.size(), fPts.begin(), p);
+    canvas->drawPoints(fMode, fPts, p);
     canvas->restore();
 
     return true;
@@ -2010,10 +2004,7 @@ DrawAtlasCommand::DrawAtlasCommand(const SkImage*  image,
 
 void DrawAtlasCommand::execute(SkCanvas* canvas) const {
     canvas->drawAtlas(fImage.get(),
-                      fXform.begin(),
-                      fTex.begin(),
-                      fColors.empty() ? nullptr : fColors.begin(),
-                      fXform.size(),
+                      fXform, fTex, fColors,
                       fBlendMode,
                       fSampling,
                       fCull.getMaybeNull(),
@@ -2036,7 +2027,8 @@ SaveLayerCommand::SaveLayerCommand(const SkCanvas::SaveLayerRec& rec)
         , fPaint(rec.fPaint)
         , fBackdrop(SkSafeRef(rec.fBackdrop))
         , fSaveLayerFlags(rec.fSaveLayerFlags)
-        , fBackdropScale(SkCanvasPriv::GetBackdropScaleFactor(rec)) {}
+        , fBackdropScale(SkCanvasPriv::GetBackdropScaleFactor(rec))
+        , fBackdropTileMode(rec.fBackdropTileMode) {}
 
 void SaveLayerCommand::execute(SkCanvas* canvas) const {
     // In the common case fBackdropScale == 1.f and then this is no different than a regular Rec
@@ -2044,6 +2036,7 @@ void SaveLayerCommand::execute(SkCanvas* canvas) const {
                                                         fPaint.getMaybeNull(),
                                                         fBackdrop.get(),
                                                         fBackdropScale,
+                                                        fBackdropTileMode,
                                                         fSaveLayerFlags));
 }
 

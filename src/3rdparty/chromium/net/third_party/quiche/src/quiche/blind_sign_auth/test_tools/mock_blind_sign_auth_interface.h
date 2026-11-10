@@ -5,6 +5,7 @@
 #ifndef QUICHE_BLIND_SIGN_AUTH_TEST_TOOLS_MOCK_BLIND_SIGN_AUTH_INTERFACE_H_
 #define QUICHE_BLIND_SIGN_AUTH_TEST_TOOLS_MOCK_BLIND_SIGN_AUTH_INTERFACE_H_
 
+#include <optional>
 #include <string>
 
 #include "quiche/blind_sign_auth/blind_sign_auth_interface.h"
@@ -17,8 +18,14 @@ class QUICHE_NO_EXPORT MockBlindSignAuthInterface
     : public BlindSignAuthInterface {
  public:
   MOCK_METHOD(void, GetTokens,
-              (std::string oauth_token, int num_tokens, ProxyLayer proxy_layer,
+              (std::optional<std::string> oauth_token, int num_tokens,
+               ProxyLayer proxy_layer, BlindSignAuthServiceType service_type,
                SignedTokenCallback callback),
+              (override));
+  MOCK_METHOD(void, GetAttestationTokens,
+              (int num_tokens, ProxyLayer layer,
+               AttestationDataCallback attestation_data_callback,
+               SignedTokenCallback token_callback),
               (override));
 };
 

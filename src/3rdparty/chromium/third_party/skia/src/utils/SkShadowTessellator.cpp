@@ -16,10 +16,10 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkTypes.h"
 #include "include/core/SkVertices.h"
-#include "include/private/SkColorData.h"
 #include "include/private/base/SkFloatingPoint.h"
 #include "include/private/base/SkTDArray.h"
 #include "include/private/base/SkTemplates.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkDrawShadowInfo.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkPointPriv.h"
@@ -270,8 +270,6 @@ bool SkBaseShadowTessellator::computeConvexShadow(SkScalar inset, SkScalar outse
     SkScalar minDistSq = SkPointPriv::DistanceToLineSegmentBetweenSqd(fCentroid,
                                                                       fPathPolygon[0],
                                                                       fPathPolygon[1]);
-    SkRect bounds;
-    bounds.setBounds(&fPathPolygon[0], fPathPolygon.size());
     for (int i = 1; i < fPathPolygon.size(); ++i) {
         int j = i + 1;
         if (i == fPathPolygon.size() - 1) {
@@ -293,7 +291,7 @@ bool SkBaseShadowTessellator::computeConvexShadow(SkScalar inset, SkScalar outse
             // if the umbra would collapse, we back off a bit on inner blur and adjust the alpha
             auto newInset = SkScalarSqrt(minDistSq) - kTolerance;
             auto ratio = 128 * (newInset / inset + 1);
-            SkASSERT(SkScalarIsFinite(ratio));
+            SkASSERT(SkIsFinite(ratio));
             // they aren't PMColors, but the interpolation algorithm is the same
             umbraColor = SkPMLerp(kUmbraColor, kPenumbraColor, (unsigned)ratio);
             inset = newInset;
@@ -783,7 +781,7 @@ void SkBaseShadowTessellator::handleLine(const SkPoint& p) {
 }
 
 void SkBaseShadowTessellator::handleLine(const SkMatrix& m, SkPoint* p) {
-    m.mapPoints(p, 1);
+    *p = m.mapPoint(*p);
 
     this->handleLine(*p);
 }
@@ -814,12 +812,12 @@ void SkBaseShadowTessellator::handleQuad(const SkPoint pts[3]) {
 }
 
 void SkBaseShadowTessellator::handleQuad(const SkMatrix& m, SkPoint pts[3]) {
-    m.mapPoints(pts, 3);
+    m.mapPoints({pts, 3});
     this->handleQuad(pts);
 }
 
 void SkBaseShadowTessellator::handleCubic(const SkMatrix& m, SkPoint pts[4]) {
-    m.mapPoints(pts, 4);
+    m.mapPoints({pts, 4});
 #if defined(SK_GANESH)
     // TODO: Pull PathUtils out of Ganesh?
     int maxCount = GrPathUtils::cubicPointCount(pts, kCubicTolerance);
@@ -843,7 +841,7 @@ void SkBaseShadowTessellator::handleConic(const SkMatrix& m, SkPoint pts[3], SkS
     if (m.hasPerspective()) {
         w = SkConic::TransformW(pts, w, m);
     }
-    m.mapPoints(pts, 3);
+    m.mapPoints({pts, 3});
     SkAutoConicToQuads quadder;
     const SkPoint* quads = quadder.computeQuads(pts, w, kConicTolerance);
     SkPoint lastPoint = *(quads++);
@@ -936,7 +934,7 @@ SkAmbientShadowTessellator::SkAmbientShadowTessellator(const SkPath& path,
     if (!this->computePathPolygon(path, ctm)) {
         return;
     }
-    if (fPathPolygon.size() < 3 || !SkScalarIsFinite(fArea)) {
+    if (fPathPolygon.size() < 3 || !SkIsFinite(fArea)) {
         fSucceeded = true; // We don't want to try to blur these cases, so we will
                            // return an empty SkVertices instead.
         return;
@@ -1037,7 +1035,7 @@ SkSpotShadowTessellator::SkSpotShadowTessellator(const SkPath& path, const SkMat
     if (!this->computeClipAndPathPolygons(path, ctm, shadowTransform)) {
         return;
     }
-    if (fClipPolygon.size() < 3 || fPathPolygon.size() < 3 || !SkScalarIsFinite(fArea)) {
+    if (fClipPolygon.size() < 3 || fPathPolygon.size() < 3 || !SkIsFinite(fArea)) {
         fSucceeded = true; // We don't want to try to blur these cases, so we will
                            // return an empty SkVertices instead.
         return;
@@ -1096,12 +1094,12 @@ bool SkSpotShadowTessellator::computeClipAndPathPolygons(const SkPath& path, con
         }
         switch (verb) {
             case SkPath::kLine_Verb:
-                ctm.mapPoints(clipPts, &pts[1], 1);
+                clipPts[0] = ctm.mapPoint(pts[1]);
                 this->addToClip(clipPts[0]);
                 this->handleLine(shadowTransform, &pts[1]);
                 break;
             case SkPath::kQuad_Verb:
-                ctm.mapPoints(clipPts, pts, 3);
+                ctm.mapPoints({clipPts, 3}, {pts, 3});
                 // point at t = 1/2
                 curvePoint.fX = 0.25f*clipPts[0].fX + 0.5f*clipPts[1].fX + 0.25f*clipPts[2].fX;
                 curvePoint.fY = 0.25f*clipPts[0].fY + 0.5f*clipPts[1].fY + 0.25f*clipPts[2].fY;
@@ -1110,7 +1108,7 @@ bool SkSpotShadowTessellator::computeClipAndPathPolygons(const SkPath& path, con
                 this->handleQuad(shadowTransform, pts);
                 break;
             case SkPath::kConic_Verb:
-                ctm.mapPoints(clipPts, pts, 3);
+                ctm.mapPoints({clipPts, 3}, {pts, 3});
                 w = iter.conicWeight();
                 // point at t = 1/2
                 curvePoint.fX = 0.25f*clipPts[0].fX + w*0.5f*clipPts[1].fX + 0.25f*clipPts[2].fX;
@@ -1121,7 +1119,7 @@ bool SkSpotShadowTessellator::computeClipAndPathPolygons(const SkPath& path, con
                 this->handleConic(shadowTransform, pts, w);
                 break;
             case SkPath::kCubic_Verb:
-                ctm.mapPoints(clipPts, pts, 4);
+                ctm.mapPoints({clipPts, 4}, {pts, 4});
                 // point at t = 5/16
                 curvePoint.fX = kA*clipPts[0].fX + kB*clipPts[1].fX
                               + kC*clipPts[2].fX + kD*clipPts[3].fX;
@@ -1179,7 +1177,7 @@ sk_sp<SkVertices> SkShadowTessellator::MakeSpot(const SkPath& path, const SkMatr
                                                 bool directional) {
     if (!ctm.mapRect(path.getBounds()).isFinite() || !zPlane.isFinite() ||
         !lightPos.isFinite() || !(lightPos.fZ >= SK_ScalarNearlyZero) ||
-        !SkScalarIsFinite(lightRadius) || !(lightRadius >= SK_ScalarNearlyZero)) {
+        !SkIsFinite(lightRadius) || !(lightRadius >= SK_ScalarNearlyZero)) {
         return nullptr;
     }
     SkSpotShadowTessellator spotTess(path, ctm, zPlane, lightPos, lightRadius, transparent,

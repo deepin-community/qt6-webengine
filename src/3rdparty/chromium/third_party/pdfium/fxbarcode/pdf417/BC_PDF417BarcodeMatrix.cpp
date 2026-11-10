@@ -25,22 +25,24 @@
 #include <stdint.h>
 
 #include "core/fxcrt/data_vector.h"
-#include "core/fxcrt/span_util.h"
+#include "core/fxcrt/stl_util.h"
 #include "fxbarcode/pdf417/BC_PDF417BarcodeRow.h"
 
 CBC_BarcodeMatrix::CBC_BarcodeMatrix(size_t width, size_t height)
-    : m_width((width + 4) * 17 + 1), m_height(height) {
-  m_matrix.resize(m_height);
-  for (size_t i = 0; i < m_height; ++i)
-    m_matrix[i] = std::make_unique<CBC_BarcodeRow>(m_width);
+    : width_((width + 4) * 17 + 1), height_(height) {
+  matrix_.resize(height_);
+  for (size_t i = 0; i < height_; ++i) {
+    matrix_[i] = std::make_unique<CBC_BarcodeRow>(width_);
+  }
 }
 
 CBC_BarcodeMatrix::~CBC_BarcodeMatrix() = default;
 
 DataVector<uint8_t> CBC_BarcodeMatrix::toBitArray() {
-  DataVector<uint8_t> bit_array(m_width * m_height);
+  DataVector<uint8_t> bit_array(width_ * height_);
   pdfium::span<uint8_t> bit_array_span(bit_array);
-  for (size_t i = 0; i < m_height; ++i)
-    fxcrt::spancpy(bit_array_span.subspan(i * m_width), m_matrix[i]->GetRow());
+  for (size_t i = 0; i < height_; ++i) {
+    fxcrt::Copy(matrix_[i]->GetRow(), bit_array_span.subspan(i * width_));
+  }
   return bit_array;
 }

@@ -14,8 +14,6 @@
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/paint_preview/common/capture_result.h"
-#include "components/paint_preview/common/mojom/paint_preview_recorder.mojom-forward.h"
-#include "components/paint_preview/common/mojom/paint_preview_recorder.mojom-shared.h"
 #include "components/paint_preview/common/mojom/paint_preview_recorder.mojom.h"
 #include "components/paint_preview/common/proto/paint_preview.pb.h"
 #include "components/paint_preview/common/test_utils.h"
@@ -116,7 +114,7 @@ class PaintPreviewClientRenderViewHostTest
     : public content::RenderViewHostTestHarness,
       public testing::WithParamInterface<RecordingPersistence> {
  public:
-  PaintPreviewClientRenderViewHostTest() {}
+  PaintPreviewClientRenderViewHostTest() = default;
 
  protected:
   void SetUp() override {
@@ -164,7 +162,7 @@ TEST_P(PaintPreviewClientRenderViewHostTest, CaptureMainFrameMock) {
   GURL expected_url = rfh->GetLastCommittedURL();
 
   auto response = NewMockPaintPreviewCaptureResponse();
-  response->embedding_token = absl::nullopt;
+  response->embedding_token = std::nullopt;
   response->scroll_offsets = gfx::Point(5, 10);
   response->frame_offsets = gfx::Point(20, 30);
 
@@ -235,7 +233,6 @@ TEST_P(PaintPreviewClientRenderViewHostTest, CaptureMainFrameMock) {
 
           default:
             NOTREACHED();
-            break;
         }
 
         quit.Run();
@@ -303,7 +300,7 @@ TEST_P(PaintPreviewClientRenderViewHostTest, RenderFrameDeletedDuringCapture) {
   content::RenderFrameHost* rfh = main_rfh();
 
   auto response = NewMockPaintPreviewCaptureResponse();
-  response->embedding_token = absl::nullopt;
+  response->embedding_token = std::nullopt;
 
   base::RunLoop loop;
   auto callback = base::BindOnce(

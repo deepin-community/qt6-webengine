@@ -9,23 +9,31 @@
 #define DMSrcSink_DEFINED
 
 #include "gm/gm.h"
-#include "include/core/SkBBHFactory.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkData.h"
 #include "include/core/SkPicture.h"
-#include "include/gpu/graphite/ContextOptions.h"
 #include "include/docs/SkMultiPictureDocument.h"
+#include "include/gpu/graphite/PrecompileContext.h"
 #include "tools/flags/CommonFlagsConfig.h"
 #include "tools/gpu/MemoryCache.h"
-#include "tools/graphite/TestOptions.h"
 
 #include <functional>
 
+#if !defined (SK_DISABLE_LEGACY_TESTS)
+    #include "include/gpu/graphite/ContextOptions.h"
+    #include "tools/graphite/TestOptions.h"
+#endif
+
 //#define TEST_VIA_SVG
 
+namespace skgpu {
+class UniqueKey;
+}
 namespace skiagm::verifiers {
 class VerifierList;
+}
+namespace skiatools::graphite {
+    class PipelineCallBackHandler;
 }
 namespace DM {
 
@@ -449,9 +457,9 @@ private:
     using INHERITED = GPUSink;
 };
 
-class GPUPrecompileTestingSink : public GPUSink {
+class GaneshPrecompileTestingSink : public GPUSink {
 public:
-    GPUPrecompileTestingSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
+    GaneshPrecompileTestingSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
 
     Result draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
 
@@ -566,7 +574,7 @@ private:
 
 class GraphiteSink : public Sink {
 public:
-    GraphiteSink(const SkCommandLineConfigGraphite*);
+    GraphiteSink(const SkCommandLineConfigGraphite*, const skiatest::graphite::TestOptions&);
 
     Result draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
     bool serial() const override { return true; }
@@ -577,20 +585,63 @@ public:
         return SkColorInfo(fColorType, fAlphaType, fColorSpace);
     }
 
-private:
+protected:
     sk_sp<SkSurface> makeSurface(skgpu::graphite::Recorder*, SkISize) const;
-
-    using SurfaceType = SkCommandLineConfigGraphite::SurfaceType;
 
     skiatest::graphite::TestOptions fOptions;
     skgpu::ContextType fContextType;
-    SurfaceType fSurfaceType;
     SkColorType fColorType;
     SkAlphaType fAlphaType;
     sk_sp<SkColorSpace> fColorSpace;
 };
 
+#if defined(SK_ENABLE_PRECOMPILE)
+// In general this sink:
+//   renders a gm, skp or svg (in drawSrc)
+//   collects all the UniqueKeys                  |
+//   clears the pipeline cache                    | (in resetAndRecreatePipelines)
+//   recreates the pipelines from the UniqueKeys  |
+//   renders a second time (in drawSrc)
+//   asserts that no new pipelines were created
+class GraphitePrecompileTestingSink : public GraphiteSink {
+public:
+    GraphitePrecompileTestingSink(const SkCommandLineConfigGraphite*,
+                                  const skiatest::graphite::TestOptions&);
+    ~GraphitePrecompileTestingSink() override;
+
+    Result draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
+
+    const char* fileExtension() const override {
+        // Suppress writing out results from this config - we just want to check that
+        // the precompilation API is expressive enough and prepopulates the cache.
+        // If desired, this could be updated to save the result of the precompiled rendering.
+        // However; if all the keys match, as is expected, the images should always match.
+        return nullptr;
+    }
+
+private:
+
+    Result drawSrc(const Src&,
+                   skgpu::graphite::Context*,
+                   skiatest::graphite::GraphiteTestContext*,
+                   skgpu::graphite::Recorder*) const;
+    Result resetAndRecreatePipelines(skiatools::graphite::PipelineCallBackHandler*,
+                                     skgpu::graphite::PrecompileContext*) const;
+
+#ifdef SK_DEBUG
+    static void LogMissingKey(skgpu::graphite::PrecompileContext*,
+                              const skgpu::UniqueKey& missingKey,
+                              const char* missingKeyName,
+                              const std::vector<skgpu::UniqueKey>& pool,
+                              const char* poolName);
 #endif
+
+    static void CompareKeys(skgpu::graphite::PrecompileContext*,
+                            const std::vector<skgpu::UniqueKey>& vA, const char* aName,
+                            const std::vector<skgpu::UniqueKey>& vB, const char* bName);
+};
+#endif // SK_ENABLE_PRECOMPILE
+#endif // SK_GRAPHITE
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 

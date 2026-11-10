@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "gn/rsp_target_writer.h"
 #include <iostream>
@@ -95,6 +59,8 @@ TEST_F(RspTargetWriterTest, WriteRspInfo) {
   shared_lib_target.public_deps().push_back(
       LabelTargetPair(&static_lib_target2));
   shared_lib_target.config_values().ldflags().push_back("-fooBAR");
+  shared_lib_target.config_values().ldflags().push_back(
+      "--sysroot=/foo/../bar");
   shared_lib_target.config_values().ldflags().push_back("/INCREMENTAL:NO");
   shared_lib_target.SetToolchain(setup.toolchain());
   ASSERT_TRUE(shared_lib_target.OnResolved(&err));
@@ -120,7 +86,7 @@ TEST_F(RspTargetWriterTest, WriteRspInfo) {
       " obj/foo1/foo1.input1.o obj/foo1/foo1.input2.o obj/foo5/libbar.a "
       "obj/foo6/libbar.a"
       " ../../foo/libfoo3.a || obj/foo1/foo1.stamp\n"
-      "  ldflags = -fooBAR /INCREMENTAL$:NO -L../../foo/bar\n"
+      "  ldflags = -fooBAR /INCREMENTAL:NO -L../../foo/bar\n"
       "  libs = ../../foo/libfoo3.a -lfoo4\n"
       "  frameworks =\n"
       "  swiftmodules =\n"
@@ -144,8 +110,8 @@ TEST_F(RspTargetWriterTest, WriteRspInfo) {
   std::ostringstream lflags_out;
   RspTargetWriter rsp_lflags_writer(&writer, &shared_lib_target,
                                     RspTargetWriter::LFLAGS, lflags_out);
+  rsp_lflags_writer.set_lflags_remove_pattern("(--sysroot=)(/\\S*?\\s)");
   rsp_lflags_writer.Run();
-
   const char lflags_expected[] = " -fooBAR /INCREMENTAL:NO";
 
   EXPECT_EQ(lflags_expected, lflags_out.str());
@@ -155,7 +121,7 @@ TEST_F(RspTargetWriterTest, WriteRspInfo) {
                                     RspTargetWriter::LDIR, ldir_out);
   rsp_ldir_writer.Run();
 
-  const char ldir_expected[] = " -L\"../../foo/bar\"";
+  const char ldir_expected[] = " -L../../foo/bar";
 
   EXPECT_EQ(ldir_expected, ldir_out.str());
 

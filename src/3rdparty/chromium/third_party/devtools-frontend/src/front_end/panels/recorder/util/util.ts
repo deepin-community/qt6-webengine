@@ -2,17 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import * as Platform from '../../../core/platform/platform.js';
-
 import * as SharedObject from './SharedObject.js';
 
-let isDebugBuild: boolean;
-try {
-  Platform.DCHECK(() => false);
-  isDebugBuild = false;
-} catch {
-  isDebugBuild = true;
-}
+// Setting this to `true` enables extra logging for the injected scripts.
+const isDebugBuild = false;
 
 const DEVTOOLS_RECORDER_WORLD_NAME = 'devtools_recorder';
 
@@ -25,8 +18,8 @@ class InjectedScript {
                                   ))
                                  .text();
     }
-    return this.#injectedScript;
+    return await this.#injectedScript;
   }
 }
 
-export {isDebugBuild, InjectedScript, DEVTOOLS_RECORDER_WORLD_NAME, SharedObject};
+export {DEVTOOLS_RECORDER_WORLD_NAME, InjectedScript, isDebugBuild, SharedObject};

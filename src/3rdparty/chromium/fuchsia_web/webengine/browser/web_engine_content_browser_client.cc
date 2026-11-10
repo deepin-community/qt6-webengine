@@ -6,12 +6,15 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "base/i18n/rtl.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_split.h"
 #include "build/chromecast_buildflags.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/policy/content/safe_sites_navigation_throttle.h"
 #include "components/site_isolation/features.h"
@@ -23,6 +26,7 @@
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/common/content_switches.h"
 #include "fuchsia_web/common/fuchsia_dir_scheme.h"
@@ -44,7 +48,6 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
-#include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom.h"
 #include "third_party/widevine/cdm/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -104,7 +107,7 @@ class DevToolsManagerDelegate final : public content::DevToolsManagerDelegate {
   }
 
  private:
-  WebEngineBrowserMainParts* const main_parts_;
+  const raw_ptr<WebEngineBrowserMainParts> main_parts_;
 };
 
 std::vector<std::string> GetCorsExemptHeaders() {
@@ -115,14 +118,13 @@ std::vector<std::string> GetCorsExemptHeaders() {
 }
 
 static constexpr char const* kRendererSwitchesToCopy[] = {
-    blink::switches::kSharedArrayBufferAllowedOrigins,
     switches::kCorsExemptHeaders,
     switches::kEnableCastStreamingReceiver,
     switches::kEnableProtectedVideoBuffers,
     switches::kForceProtectedVideoOutputBuffers,
     switches::kMinVideoDecoderOutputBufferSize,
 
-// TODO(crbug/1013412): Delete these two switches when fixed.
+// TODO(crbug.com/42050020): Delete these two switches when fixed.
 #if BUILDFLAG(ENABLE_WIDEVINE)
     switches::kEnableWidevine,
 #if BUILDFLAG(ENABLE_CAST_RECEIVER)
@@ -146,10 +148,23 @@ static constexpr char const* kAllProcessSwitchesToCopy[] = {
     switches::kEnableContentDirectories,
 };
 
+std::vector<ContentSettingsPattern> GetProtectedServiceWorkers() {
+  const auto tokens = base::SplitString(
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kProtectedServiceWorkers),
+      ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::vector<ContentSettingsPattern> patterns;
+  for (const auto& token : tokens) {
+    patterns.push_back(ContentSettingsPattern::FromString(token));
+  }
+  return patterns;
+}
+
 }  // namespace
 
 WebEngineContentBrowserClient::WebEngineContentBrowserClient()
-    : cors_exempt_headers_(GetCorsExemptHeaders()) {
+    : cors_exempt_headers_(GetCorsExemptHeaders()),
+      protected_service_workers_(GetProtectedServiceWorkers()) {
   // Logging in this class ensures this is logged once per web_instance.
   LogComponentStartWithVersion("WebEngine web_instance");
 }
@@ -189,14 +204,12 @@ blink::UserAgentMetadata WebEngineContentBrowserClient::GetUserAgentMetadata() {
   return embedder_support::GetUserAgentMetadata();
 }
 
-void WebEngineContentBrowserClient::OverrideWebkitPrefs(
+void WebEngineContentBrowserClient::OverrideWebPreferences(
     content::WebContents* web_contents,
+    content::SiteInstance& main_frame_site,
     blink::web_pref::WebPreferences* web_prefs) {
-  // Disable WebSQL support since it is being removed from the web platform
-  // and does not work. See crbug.com/1317431.
-  web_prefs->databases_enabled = false;
 
-  // TODO(crbug.com/1382970): Remove once supported in WebEngine.
+  // TODO(crbug.com/40245916): Remove once supported in WebEngine.
   web_prefs->disable_webauthn = true;
 
 #if BUILDFLAG(ENABLE_CAST_RECEIVER)
@@ -222,15 +235,17 @@ void WebEngineContentBrowserClient::RegisterBrowserInterfaceBindersForFrame(
   PopulateFuchsiaFrameBinders(map);
 }
 
-void WebEngineContentBrowserClient::
-    RegisterNonNetworkNavigationURLLoaderFactories(
-        int frame_tree_node_id,
-        NonNetworkURLLoaderFactoryMap* factories) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableContentDirectories)) {
-    factories->emplace(kFuchsiaDirScheme,
-                       ContentDirectoryLoaderFactory::Create());
+mojo::PendingRemote<network::mojom::URLLoaderFactory>
+WebEngineContentBrowserClient::CreateNonNetworkNavigationURLLoaderFactory(
+    const std::string& scheme,
+    content::FrameTreeNodeId frame_tree_node_id) {
+  if (scheme == kFuchsiaDirScheme) {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kEnableContentDirectories)) {
+      return ContentDirectoryLoaderFactory::Create();
+    }
   }
+  return {};
 }
 
 void WebEngineContentBrowserClient::
@@ -293,8 +308,22 @@ std::string WebEngineContentBrowserClient::GetAcceptLangs(
   return l10n_util::GetStringUTF8(IDS_ACCEPT_LANGUAGES);
 }
 
+// TODO(crbug.com/434764000): May revise if service workers should be allowed
+// in incognito mode at all.
+bool WebEngineContentBrowserClient::MayDeleteServiceWorkerRegistration(
+    const GURL& scope,
+    content::BrowserContext*) {
+  for (const auto& pattern : protected_service_workers_) {
+    if (pattern.Matches(scope)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 base::OnceClosure WebEngineContentBrowserClient::SelectClientCertificate(
     content::BrowserContext* browser_context,
+    int process_id,
     content::WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
     net::ClientCertIdentityList client_certs,
@@ -304,32 +333,29 @@ base::OnceClosure WebEngineContentBrowserClient::SelectClientCertificate(
   return base::OnceClosure();
 }
 
-std::vector<std::unique_ptr<content::NavigationThrottle>>
-WebEngineContentBrowserClient::CreateThrottlesForNavigation(
-    content::NavigationHandle* navigation_handle) {
-  std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
+void WebEngineContentBrowserClient::CreateThrottlesForNavigation(
+    content::NavigationThrottleRegistry& registry) {
+  auto& navigation_handle = registry.GetNavigationHandle();
   auto* frame_impl =
-      FrameImpl::FromWebContents(navigation_handle->GetWebContents());
+      FrameImpl::FromWebContents(navigation_handle.GetWebContents());
   DCHECK(frame_impl);
 
   // Only create throttle if FrameImpl has a NavigationPolicyProvider,
   // indicating an interest in navigations.
   if (frame_impl->navigation_policy_handler()) {
-    throttles.push_back(std::make_unique<NavigationPolicyThrottle>(
-        navigation_handle, frame_impl->navigation_policy_handler()));
+    registry.AddThrottle(std::make_unique<NavigationPolicyThrottle>(
+        registry, frame_impl->navigation_policy_handler()));
   }
 
   const std::optional<std::string>& explicit_sites_filter_error_page =
       frame_impl->explicit_sites_filter_error_page();
 
   if (explicit_sites_filter_error_page) {
-    throttles.push_back(std::make_unique<SafeSitesNavigationThrottle>(
-        navigation_handle,
-        navigation_handle->GetWebContents()->GetBrowserContext(),
+    registry.AddThrottle(std::make_unique<SafeSitesNavigationThrottle>(
+        registry,
+        navigation_handle.GetWebContents()->GetBrowserContext(),
         *explicit_sites_filter_error_page));
   }
-
-  return throttles;
 }
 
 std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
@@ -338,16 +364,19 @@ WebEngineContentBrowserClient::CreateURLLoaderThrottles(
     content::BrowserContext* browser_context,
     const base::RepeatingCallback<content::WebContents*()>& wc_getter,
     content::NavigationUIData* navigation_ui_data,
-    int frame_tree_node_id,
-    absl::optional<int64_t> navigation_id) {
-  if (frame_tree_node_id == content::RenderFrameHost::kNoFrameTreeNodeId) {
-    // TODO(crbug.com/1378791): Add support for Shared and Service Workers.
+    content::FrameTreeNodeId frame_tree_node_id,
+    std::optional<int64_t> navigation_id) {
+  if (frame_tree_node_id.is_null()) {
+    // TODO(crbug.com/40244093): Add support for Shared and Service Workers.
     return {};
   }
 
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
   auto* frame_impl = FrameImpl::FromWebContents(wc_getter.Run());
-  DCHECK(frame_impl);
+  if (!frame_impl) {
+    // `wc_getter` may access stale data, and may return nullptr.
+    return {};
+  }
   auto rules =
       frame_impl->url_request_rewrite_rules_manager()->GetCachedRules();
   if (rules) {

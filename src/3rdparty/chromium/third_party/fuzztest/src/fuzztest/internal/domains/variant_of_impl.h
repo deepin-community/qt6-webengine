@@ -23,6 +23,7 @@
 
 #include "absl/random/bit_gen_ref.h"
 #include "absl/random/distributions.h"
+#include "absl/status/status.h"
 #include "./fuzztest/internal/domains/domain_base.h"
 #include "./fuzztest/internal/domains/serialization_helpers.h"
 #include "./fuzztest/internal/meta.h"
@@ -33,11 +34,11 @@
 namespace fuzztest::internal {
 
 template <typename T, typename... Inner>
-class VariantOfImpl : public DomainBase<VariantOfImpl<T, Inner...>, T,
-                                        // `T` might be a custom variant type.
-                                        // We use std::variant unconditionally
-                                        // to make it simpler.
-                                        std::variant<corpus_type_t<Inner>...>> {
+class VariantOfImpl : public domain_implementor::DomainBase<
+                          VariantOfImpl<T, Inner...>, T,
+                          // `T` might be a custom variant type. We use
+                          // std::variant unconditionally to make it simpler.
+                          std::variant<corpus_type_t<Inner>...>> {
  public:
   using typename VariantOfImpl::DomainBase::corpus_type;
   using typename VariantOfImpl::DomainBase::value_type;
@@ -55,7 +56,9 @@ class VariantOfImpl : public DomainBase<VariantOfImpl<T, Inner...>, T,
         });
   }
 
-  void Mutate(corpus_type& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(corpus_type& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
     // Flip a coin to choose between generating a value of an alternative type
     // and mutating the value of the current type. Assign more weight to the
     // mutating case in order to explore more on a given type before we start
@@ -64,7 +67,8 @@ class VariantOfImpl : public DomainBase<VariantOfImpl<T, Inner...>, T,
       val = Init(prng);
     } else {
       Switch<sizeof...(Inner)>(val.index(), [&](auto I) {
-        std::get<I>(inner_).Mutate(std::get<I>(val), prng, only_shrink);
+        std::get<I>(inner_).Mutate(std::get<I>(val), prng, metadata,
+                                   only_shrink);
       });
     }
   }
@@ -73,9 +77,8 @@ class VariantOfImpl : public DomainBase<VariantOfImpl<T, Inner...>, T,
 
   value_type GetValue(const corpus_type& v) const {
     return Switch<sizeof...(Inner)>(v.index(), [&](auto I) -> value_type {
-      value_type out;
-      out.template emplace<I>(std::get<I>(inner_).GetValue(std::get<I>(v)));
-      return out;
+      return value_type(std::in_place_index<I>,
+                        std::get<I>(inner_).GetValue(std::get<I>(v)));
     });
   }
 

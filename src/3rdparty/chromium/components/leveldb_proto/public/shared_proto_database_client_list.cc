@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/leveldb_proto/public/shared_proto_database_client_list.h"
 
 #include <stddef.h>
@@ -124,9 +125,12 @@ std::string SharedProtoDatabaseClientList::ProtoDbTypeToString(
       return "CommerceParcelTrackingDatabase";
     case ProtoDbType::CLIENT_CERTIFICATES_DATABASE:
       return "ClientCertificatesDatabase";
+    case ProtoDbType::AUTOFILL_AI_MODEL_CACHE:
+      return "AutofillAiModelCache";
+    case ProtoDbType::DISCOUNT_INFOS_DATABASE:
+      return "DiscountInfosDatabase";
     case ProtoDbType::LAST:
       NOTREACHED();
-      return std::string();
   }
 }
 

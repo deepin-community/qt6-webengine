@@ -11,7 +11,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkColorPriv.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkFont.h"
@@ -35,18 +34,15 @@
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypeface.h"
 #include "include/effects/SkGradientShader.h"
-#include "include/private/SkColorData.h"
 #include "include/private/base/SkCPUTypes.h"
 #include "include/private/base/SkTemplates.h"
+#include "src/core/SkColorData.h"
+#include "src/core/SkColorPriv.h"
 #include "src/core/SkFontPriv.h"
 #include "tools/SkMetaData.h"
 
 #include <cmath>
 #include <cstring>
-
-#ifdef SK_BUILD_FOR_WIN
-#include "include/ports/SkTypeface_win.h"
-#endif
 
 using namespace skia_private;
 
@@ -82,6 +78,7 @@ const char* colortype_name(SkColorType ct) {
         case kRGBA_10x6_SkColorType:          return "RGBA_10x6";
         case kGray_8_SkColorType:             return "Gray_8";
         case kRGBA_F16Norm_SkColorType:       return "RGBA_F16Norm";
+        case kRGB_F16F16F16x_SkColorType:     return "RGB_F16F16F16x";
         case kRGBA_F16_SkColorType:           return "RGBA_F16";
         case kRGBA_F32_SkColorType:           return "RGBA_F32";
         case kR8G8_unorm_SkColorType:         return "R8G8_unorm";
@@ -89,6 +86,7 @@ const char* colortype_name(SkColorType ct) {
         case kR16G16_float_SkColorType:       return "R16G16_float";
         case kR16G16B16A16_unorm_SkColorType: return "R16G16B16A16_unorm";
         case kR8_unorm_SkColorType:           return "R8_unorm";
+        case kBGRA_10101010_XR_SkColorType:   return "BGRA_10101010_XR";
     }
     SkUNREACHABLE;
 }
@@ -110,9 +108,11 @@ const char* colortype_depth(SkColorType ct) {
         case kRGB_101010x_SkColorType:        return "101010";
         case kBGR_101010x_SkColorType:        return "101010";
         case kBGR_101010x_XR_SkColorType:     return "101010";
+        case kBGRA_10101010_XR_SkColorType:   return "10101010";
         case kRGBA_10x6_SkColorType:          return "10101010";
         case kGray_8_SkColorType:             return "G8";
         case kRGBA_F16Norm_SkColorType:       return "F16Norm";
+        case kRGB_F16F16F16x_SkColorType:     return "F16F16F16x";
         case kRGBA_F16_SkColorType:           return "F16";
         case kRGBA_F32_SkColorType:           return "F32";
         case kR8G8_unorm_SkColorType:         return "88";
@@ -220,7 +220,7 @@ void add_to_text_blob_w_len(SkTextBlobBuilder* builder,
         return;
     }
     auto run   = builder->allocRun(font, count, x, y);
-    font.textToGlyphs(text, len, encoding, run.glyphs, count);
+    font.textToGlyphs(text, len, encoding, {run.glyphs, count});
 }
 
 void add_to_text_blob(SkTextBlobBuilder* builder,
@@ -242,7 +242,7 @@ void get_text_path(const SkFont&  font,
     AutoTArray<SkPoint> computedPos;
     if (pos == nullptr) {
         computedPos.reset(count);
-        font.getPos(atg.glyphs(), count, &computedPos[0]);
+        font.getPos(atg, computedPos);
         pos = computedPos.get();
     }
 
@@ -250,8 +250,7 @@ void get_text_path(const SkFont&  font,
         SkPath*        fDst;
         const SkPoint* fPos;
     } rec = {dst, pos};
-    font.getPaths(atg.glyphs(),
-                  atg.count(),
+    font.getPaths(atg,
                   [](const SkPath* src, const SkMatrix& mx, void* ctx) {
                       Rec* rec = (Rec*)ctx;
                       if (src) {
@@ -455,6 +454,7 @@ bool equal_pixels(const SkPixmap& a, const SkPixmap& b) {
     if (a.width() != b.width() || a.height() != b.height()) {
         SkDebugf("[ToolUtils::equal_pixels] Dimensions do not match (%d x %d) != (%d x %d)\n",
                  a.width(), a.height(), b.width(), b.height());
+        return false;
     }
 
     if (a.colorType() != b.colorType()) {
@@ -476,16 +476,34 @@ bool equal_pixels(const SkPixmap& a, const SkPixmap& b) {
 
 bool equal_pixels(const SkBitmap& bm0, const SkBitmap& bm1) {
     SkPixmap pm0, pm1;
-    return bm0.peekPixels(&pm0) && bm1.peekPixels(&pm1) && equal_pixels(pm0, pm1);
+    if (!bm0.peekPixels(&pm0)) {
+        SkDebugf("Could not read pixels from A\n");
+        return false;
+    }
+    if (!bm1.peekPixels(&pm1)) {
+        SkDebugf("Could not read pixels from B\n");
+        return false;
+    }
+    return equal_pixels(pm0, pm1);
 }
 
 bool equal_pixels(const SkImage* a, const SkImage* b) {
+    SkASSERT_RELEASE(a);
+    SkASSERT_RELEASE(b);
     // ensure that peekPixels will succeed
-    auto imga = a->makeRasterImage();
-    auto imgb = b->makeRasterImage();
+    auto imga = a->makeRasterImage(nullptr);
+    auto imgb = b->makeRasterImage(nullptr);
 
     SkPixmap pm0, pm1;
-    return imga->peekPixels(&pm0) && imgb->peekPixels(&pm1) && equal_pixels(pm0, pm1);
+    if (!imga->peekPixels(&pm0)) {
+        SkDebugf("Could not read pixels from A\n");
+        return false;
+    }
+    if (!imgb->peekPixels(&pm1)) {
+        SkDebugf("Could not read pixels from B\n");
+        return false;
+    }
+    return equal_pixels(pm0, pm1);
 }
 
 sk_sp<SkSurface> makeSurface(SkCanvas*             canvas,
@@ -504,7 +522,7 @@ VariationSliders::VariationSliders(SkTypeface* typeface,
         return;
     }
 
-    int numAxes = typeface->getVariationDesignParameters(nullptr, 0);
+    int numAxes = typeface->getVariationDesignParameters({});
     if (numAxes < 0) {
         return;
     }
@@ -512,7 +530,7 @@ VariationSliders::VariationSliders(SkTypeface* typeface,
     std::unique_ptr<SkFontParameters::Variation::Axis[]> copiedAxes =
             std::make_unique<SkFontParameters::Variation::Axis[]>(numAxes);
 
-    numAxes = typeface->getVariationDesignParameters(copiedAxes.get(), numAxes);
+    numAxes = typeface->getVariationDesignParameters({copiedAxes.get(), numAxes});
     if (numAxes < 0) {
         return;
     }

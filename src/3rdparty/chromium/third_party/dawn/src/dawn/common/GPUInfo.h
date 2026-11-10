@@ -28,10 +28,11 @@
 #ifndef SRC_DAWN_COMMON_GPUINFO_H_
 #define SRC_DAWN_COMMON_GPUINFO_H_
 
+#include <compare>
 #include <string>
 
+#include "absl/container/inlined_vector.h"
 #include "dawn/common/GPUInfo_autogen.h"
-#include "dawn/common/StackContainer.h"
 
 namespace dawn::gpu_info {
 
@@ -53,17 +54,18 @@ class DriverVersion {
     std::string ToString() const;
 
   private:
-    StackVector<uint16_t, kMaxVersionFields> mDriverVersion;
+    absl::InlinedVector<uint16_t, kMaxVersionFields> mDriverVersion;
 };
 
-// Do comparison between two driver versions. Currently we only support the comparison between
-// Intel Windows driver versions.
-// - Return -1 if build number of version1 is smaller
-// - Return 1 if build number of version1 is bigger
-// - Return 0 if version1 and version2 represent same driver version
-int CompareWindowsDriverVersion(PCIVendorID vendorId,
-                                const DriverVersion& version1,
-                                const DriverVersion& version2);
+class IntelWindowsDriverVersion {
+  public:
+    explicit IntelWindowsDriverVersion(const DriverVersion& driverVersion);
+    IntelWindowsDriverVersion(const std::initializer_list<uint16_t>& version);
+    auto operator<=>(const IntelWindowsDriverVersion& anotherVersion) const = default;
+
+  private:
+    uint32_t mBuildNumber = 0;
+};
 
 // Do comparison between two Intel Mesa driver versions.
 // - Return a negative number if build number of version1 is smaller
@@ -73,6 +75,9 @@ int CompareIntelMesaDriverVersion(const DriverVersion& version1, const DriverVer
 
 // Intel architectures
 bool IsSkylake(PCIDeviceID deviceId);
+bool IsIrisPlus655(PCIDeviceID deviceId);
+
+bool IsIntelGen11OrOlder(PCIVendorID venderId, PCIDeviceID deviceId);
 
 }  // namespace dawn::gpu_info
 #endif  // SRC_DAWN_COMMON_GPUINFO_H_

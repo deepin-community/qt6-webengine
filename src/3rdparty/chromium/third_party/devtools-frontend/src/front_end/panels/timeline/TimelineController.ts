@@ -6,10 +6,13 @@ import * as i18n from '../../core/i18n/i18n.js';
 import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import type * as Protocol from '../../generated/protocol.js';
-import * as TimelineModel from '../../models/timeline_model/timeline_model.js';
-import * as TraceEngine from '../../models/trace/trace.js';
+import * as CrUXManager from '../../models/crux-manager/crux-manager.js';
+import * as Extensions from '../../models/extensions/extensions.js';
+import * as LiveMetrics from '../../models/live-metrics/live-metrics.js';
+import * as Trace from '../../models/trace/trace.js';
+import * as Tracing from '../../services/tracing/tracing.js';
 
-import {PerformanceModel} from './PerformanceModel.js';
+import * as RecordingMetadata from './RecordingMetadata.js';
 
 const UIStrings = {
   /**
@@ -18,21 +21,19 @@ const UIStrings = {
    * worker) doesn't support it.
    */
   tracingNotSupported: 'Performance trace recording not supported for this type of target',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/timeline/TimelineController.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
-export class TimelineController implements TraceEngine.TracingManager.TracingManagerClient {
+export class TimelineController implements Tracing.TracingManager.TracingManagerClient {
   readonly primaryPageTarget: SDK.Target.Target;
   readonly rootTarget: SDK.Target.Target;
-  private tracingManager: TraceEngine.TracingManager.TracingManager|null;
-  private performanceModel: PerformanceModel;
-  #collectedEvents: TraceEngine.Types.TraceEvents.TraceEventData[] = [];
+  private tracingManager: Tracing.TracingManager.TracingManager|null;
+  #collectedEvents: Trace.Types.Events.Event[] = [];
+  #navigationUrls: string[] = [];
+  #fieldData: CrUXManager.PageResult[]|null = null;
   #recordingStartTime: number|null = null;
   private readonly client: Client;
-  private readonly tracingModel: TraceEngine.Legacy.TracingModel;
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private tracingCompleteCallback?: ((value: any) => void)|null;
+  private tracingCompletePromise: PromiseWithResolvers<void>|null = null;
 
   /**
    * We always need to profile against the DevTools root target, which is
@@ -45,7 +46,7 @@ export class TimelineController implements TraceEngine.TracingManager.TracingMan
    * page in a background, tab target would have multiple subtargets, one
    * of them being primaryPageTarget.
    *
-   * The problems with with using primary page target for tracing are:
+   * The problems with using primary page target for tracing are:
    * 1. Performance trace doesn't include information from the other pages on
    *    the tab which is probably not what the user wants as it does not
    *    reflect reality.
@@ -65,10 +66,8 @@ export class TimelineController implements TraceEngine.TracingManager.TracingMan
     this.rootTarget = rootTarget;
     // Ensure the tracing manager is the one for the Root Target, NOT the
     // primaryPageTarget, as that is the one we have to invoke tracing against.
-    this.tracingManager = rootTarget.model(TraceEngine.TracingManager.TracingManager);
-    this.performanceModel = new PerformanceModel();
+    this.tracingManager = rootTarget.model(Tracing.TracingManager.TracingManager);
     this.client = client;
-    this.tracingModel = new TraceEngine.Legacy.TracingModel();
   }
 
   async dispose(): Promise<void> {
@@ -91,29 +90,35 @@ export class TimelineController implements TraceEngine.TracingManager.TracingMan
     // 'disabled-by-default-v8.cpu_profiler'
     //   └ default: on, option: enableJSSampling
     const categoriesArray = [
-      Root.Runtime.experiments.isEnabled('timelineShowAllEvents') ? '*' : '-*',
-      TimelineModel.TimelineModel.TimelineModelImpl.Category.Console,
-      TimelineModel.TimelineModel.TimelineModelImpl.Category.UserTiming,
+      Root.Runtime.experiments.isEnabled('timeline-show-all-events') ? '*' : '-*',
+      Trace.Types.Events.Categories.Console,
+      Trace.Types.Events.Categories.Loading,
+      Trace.Types.Events.Categories.UserTiming,
       'devtools.timeline',
-      disabledByDefault('devtools.timeline'),
+      disabledByDefault('devtools.target-rundown'),
       disabledByDefault('devtools.timeline.frame'),
       disabledByDefault('devtools.timeline.stack'),
-      disabledByDefault('v8.compile'),
+      disabledByDefault('devtools.timeline'),
+      disabledByDefault('devtools.v8-source-rundown-sources'),
+      disabledByDefault('devtools.v8-source-rundown'),
+      disabledByDefault('layout_shift.debug'),
+      // Looking for disabled-by-default-v8.compile? We disabled it: crbug.com/414330508.
+      disabledByDefault('v8.inspector'),
       disabledByDefault('v8.cpu_profiler.hires'),
-      TimelineModel.TimelineModel.TimelineModelImpl.Category.Loading,
       disabledByDefault('lighthouse'),
       'v8.execute',
       'v8',
       'cppgc',
+      'navigation,rail',
     ];
 
-    if (Root.Runtime.experiments.isEnabled('timelineV8RuntimeCallStats') && options.enableJSSampling) {
+    if (Root.Runtime.experiments.isEnabled('timeline-v8-runtime-call-stats') && options.enableJSSampling) {
       categoriesArray.push(disabledByDefault('v8.runtime_stats_sampling'));
     }
     if (options.enableJSSampling) {
       categoriesArray.push(disabledByDefault('v8.cpu_profiler'));
     }
-    if (Root.Runtime.experiments.isEnabled('timelineInvalidationTracking')) {
+    if (Root.Runtime.experiments.isEnabled('timeline-invalidation-tracking')) {
       categoriesArray.push(disabledByDefault('devtools.timeline.invalidationTracking'));
     }
     if (options.capturePictures) {
@@ -124,40 +129,95 @@ export class TimelineController implements TraceEngine.TracingManager.TracingMan
     if (options.captureFilmStrip) {
       categoriesArray.push(disabledByDefault('devtools.screenshot'));
     }
+    if (options.captureSelectorStats) {
+      categoriesArray.push(disabledByDefault('blink.debug'));
+      // enable invalidation nodes
+      categoriesArray.push(disabledByDefault('devtools.timeline.invalidationTracking'));
+    }
 
+    await LiveMetrics.LiveMetrics.instance().disable();
+
+    SDK.TargetManager.TargetManager.instance().addModelListener(
+        SDK.ResourceTreeModel.ResourceTreeModel, SDK.ResourceTreeModel.Events.FrameNavigated, this.#onFrameNavigated,
+        this);
+
+    this.#navigationUrls = [];
+    this.#fieldData = null;
     this.#recordingStartTime = Date.now();
     const response = await this.startRecordingWithCategories(categoriesArray.join(','));
     if (response.getError()) {
-      await this.waitForTracingToStop(false);
       await SDK.TargetManager.TargetManager.instance().resumeAllTargets();
     }
     return response;
   }
 
-  async stopRecording(): Promise<PerformanceModel> {
+  async #onFrameNavigated(event: {data: SDK.ResourceTreeModel.ResourceTreeFrame}): Promise<void> {
+    if (!event.data.isPrimaryFrame()) {
+      return;
+    }
+
+    this.#navigationUrls.push(event.data.url);
+  }
+
+  async stopRecording(): Promise<void> {
     if (this.tracingManager) {
       this.tracingManager.stop();
     }
 
+    SDK.TargetManager.TargetManager.instance().removeModelListener(
+        SDK.ResourceTreeModel.ResourceTreeModel, SDK.ResourceTreeModel.Events.FrameNavigated, this.#onFrameNavigated,
+        this);
+
+    // When throttling is applied to the main renderer, it can slow down the
+    // collection of trace events once tracing has completed. Therefore we
+    // temporarily disable throttling whilst the final trace event collection
+    // takes place. Once it is done, we re-enable it (this is the existing
+    // behaviour within DevTools; the throttling settling is sticky + global).
+    const throttlingManager = SDK.CPUThrottlingManager.CPUThrottlingManager.instance();
+    const optionDuringRecording = throttlingManager.cpuThrottlingOption();
+    throttlingManager.setCPUThrottlingOption(SDK.CPUThrottlingManager.NoThrottlingOption);
+
     this.client.loadingStarted();
-    await this.waitForTracingToStop(true);
+
+    // Give `TimelinePanel.#executeNewTrace` a chance to retain source maps from SDK.SourceMap.SourceMapManager.
+    SDK.SourceMap.SourceMap.retainRawSourceMaps = true;
+
+    const [fieldData] =
+        await Promise
+            .all([
+              this.fetchFieldData(),
+              // TODO(crbug.com/366072294): Report the progress of this resumption, as it can be lengthy on heavy pages.
+              SDK.TargetManager.TargetManager.instance().resumeAllTargets(),
+              this.waitForTracingToStop(),
+            ])
+            .catch(e => {
+              // Normally set false in allSourcesFinished, but just in case something fails, catch it here.
+              SDK.SourceMap.SourceMap.retainRawSourceMaps = false;
+              throw e;
+            });
+    this.#fieldData = fieldData;
+
+    // Now we re-enable throttling again to maintain the setting being persistent.
+    throttlingManager.setCPUThrottlingOption(optionDuringRecording);
     await this.allSourcesFinished();
-    return this.performanceModel;
+
+    await LiveMetrics.LiveMetrics.instance().enable();
   }
 
-  getPerformanceModel(): PerformanceModel {
-    return this.performanceModel;
-  }
-
-  private async waitForTracingToStop(awaitTracingCompleteCallback: boolean): Promise<void> {
-    const tracingStoppedPromises = [];
-    if (this.tracingManager && awaitTracingCompleteCallback) {
-      tracingStoppedPromises.push(new Promise(resolve => {
-        this.tracingCompleteCallback = resolve;
-      }));
+  private async fetchFieldData(): Promise<CrUXManager.PageResult[]|null> {
+    const cruxManager = CrUXManager.CrUXManager.instance();
+    if (!cruxManager.isEnabled() || !navigator.onLine) {
+      return null;
     }
 
-    await Promise.all(tracingStoppedPromises);
+    const urls = [...new Set(this.#navigationUrls)];
+    return await Promise.all(urls.map(url => cruxManager.getFieldDataForPage(url)));
+  }
+
+  private async waitForTracingToStop(): Promise<void> {
+    if (this.tracingManager) {
+      await this.tracingCompletePromise?.promise;
+    }
   }
 
   private async startRecordingWithCategories(categories: string): Promise<Protocol.ProtocolResponseWithError> {
@@ -168,35 +228,52 @@ export class TimelineController implements TraceEngine.TracingManager.TracingMan
     // caused by starting CPU profiler, that needs to traverse JS heap to collect
     // all the functions data.
     await SDK.TargetManager.TargetManager.instance().suspendAllTargets('performance-timeline');
-    return this.tracingManager.start(this, categories, '');
+    this.tracingCompletePromise = Promise.withResolvers();
+    const response = await this.tracingManager.start(this, categories);
+    await this.warmupJsProfiler();
+    Extensions.ExtensionServer.ExtensionServer.instance().profilingStarted();
+    return response;
   }
 
-  traceEventsCollected(events: TraceEngine.TracingManager.EventPayload[]): void {
-    this.#collectedEvents =
-        this.#collectedEvents.concat(events as unknown as TraceEngine.Types.TraceEvents.TraceEventData[]);
-    this.tracingModel.addEvents(events);
+  // CPUProfiler::StartProfiling has a non-trivial cost and we'd prefer it not happen within an
+  // interaction as that complicates debugging interaction latency.
+  // To trigger the StartProfiling interrupt and get the warmup cost out of the way, we send a
+  // very soft invocation to V8.https://crbug.com/1358602
+  async warmupJsProfiler(): Promise<void> {
+    // primaryPageTarget has RuntimeModel whereas rootTarget (Tab) does not.
+    const runtimeModel = this.primaryPageTarget.model(SDK.RuntimeModel.RuntimeModel);
+    if (!runtimeModel) {
+      return;
+    }
+    await runtimeModel.agent.invoke_evaluate({
+      expression: '(async function(){ await 1; })()',
+      throwOnSideEffect: true,
+    });
+  }
+
+  traceEventsCollected(events: Trace.Types.Events.Event[]): void {
+    this.#collectedEvents.push(...events);
   }
 
   tracingComplete(): void {
-    if (!this.tracingCompleteCallback) {
+    if (!this.tracingCompletePromise) {
       return;
     }
-    this.tracingCompleteCallback(undefined);
-    this.tracingCompleteCallback = null;
+    this.tracingCompletePromise.resolve(undefined);
+    this.tracingCompletePromise = null;
   }
 
   private async allSourcesFinished(): Promise<void> {
-    this.client.processingStarted();
-    await this.finalizeTrace();
-  }
+    Extensions.ExtensionServer.ExtensionServer.instance().profilingStopped();
 
-  private async finalizeTrace(): Promise<void> {
-    await SDK.TargetManager.TargetManager.instance().resumeAllTargets();
-    this.tracingModel.tracingComplete();
-    await this.client.loadingComplete(
-        this.#collectedEvents, this.tracingModel, /* exclusiveFilter= */ null, /* isCpuProfile= */ false,
-        this.#recordingStartTime);
+    this.client.processingStarted();
+    const metadata = await RecordingMetadata.forTrace({
+      recordingStartTime: this.#recordingStartTime ?? undefined,
+      cruxFieldData: this.#fieldData ?? undefined,
+    });
+    await this.client.loadingComplete(this.#collectedEvents, /* exclusiveFilter= */ null, metadata);
     this.client.loadingCompleteForTest();
+    SDK.SourceMap.SourceMap.retainRawSourceMaps = false;
   }
 
   tracingBufferUsage(usage: number): void {
@@ -214,14 +291,13 @@ export interface Client {
   processingStarted(): void;
   loadingProgress(progress?: number): void;
   loadingComplete(
-      collectedEvents: TraceEngine.Types.TraceEvents.TraceEventData[],
-      tracingModel: TraceEngine.Legacy.TracingModel|null,
-      exclusiveFilter: TimelineModel.TimelineModelFilter.TimelineModelFilter|null, isCpuProfile: boolean,
-      recordingStartTime: number|null): Promise<void>;
+      collectedEvents: Trace.Types.Events.Event[], exclusiveFilter: Trace.Extras.TraceFilter.TraceFilter|null,
+      metadata: Trace.Types.File.MetaData|null): Promise<void>;
   loadingCompleteForTest(): void;
 }
 export interface RecordingOptions {
   enableJSSampling?: boolean;
   capturePictures?: boolean;
   captureFilmStrip?: boolean;
+  captureSelectorStats?: boolean;
 }

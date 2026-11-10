@@ -25,6 +25,7 @@
 
 #include "base/check_op.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_content_container.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
@@ -33,6 +34,7 @@ namespace blink {
 
 class LayoutSVGText;
 class SVGElement;
+class SVGRect;
 enum class SVGTransformChange;
 
 class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
@@ -41,12 +43,19 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   ~LayoutSVGRoot() override;
   void Trace(Visitor*) const override;
 
+  void LayoutRoot(const PhysicalRect& content_rect);
+
   bool IsEmbeddedThroughSVGImage() const;
   bool IsEmbeddedThroughFrameContainingSVGDocument() const;
 
   void IntrinsicSizingInfoChanged();
-  void UnscaledIntrinsicSizingInfo(IntrinsicSizingInfo&,
-                                   bool use_correct_viewbox = true) const;
+  NaturalSizingInfo UnscaledNaturalSizingInfo(
+      const SVGRect* override_viewbox) const;
+  NaturalSizingInfo UnscaledNaturalSizingInfo() const {
+    NOT_DESTROYED();
+    return UnscaledNaturalSizingInfo(nullptr);
+  }
+
   // This is a special case for SVG documents with percentage dimensions which
   // would normally not change under zoom. See: https://crbug.com/222786.
   double LogicalSizeScaleFactorForPercentageLengths() const;
@@ -66,21 +75,9 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
     return content_.Children().LastChild();
   }
 
-  bool IsLayoutSizeChanged() const {
-    NOT_DESTROYED();
-    return is_layout_size_changed_;
-  }
-  bool DidScreenScaleFactorChange() const {
-    NOT_DESTROYED();
-    return did_screen_scale_factor_change_;
-  }
-  void SetNeedsBoundariesUpdate() override {
-    NOT_DESTROYED();
-    needs_boundaries_or_transform_update_ = true;
-  }
   void SetNeedsTransformUpdate() override {
     NOT_DESTROYED();
-    needs_boundaries_or_transform_update_ = true;
+    needs_transform_update_ = true;
   }
 
   void SetContainerSize(const PhysicalSize& container_size) {
@@ -116,6 +113,8 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   void AddSvgTextDescendant(LayoutSVGText& svg_text);
   void RemoveSvgTextDescendant(LayoutSVGText& svg_text);
 
+  void IntersectChildren(HitTestResult&, const HitTestLocation&) const;
+
   const char* GetName() const override {
     NOT_DESTROYED();
     return "LayoutSVGRoot";
@@ -143,8 +142,14 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
     return true;
   }
 
-  void ComputeIntrinsicSizingInfo(IntrinsicSizingInfo&) const override;
-  void UpdateLayout() override;
+  PhysicalNaturalSizingInfo GetNaturalDimensions() const override;
+  bool ShouldApplyObjectViewBox() const override {
+    NOT_DESTROYED();
+    return false;
+  }
+
+  PhysicalRect VisualOverflowRectIncludingFilters() const override;
+
   void PaintReplaced(const PaintInfo&,
                      const PhysicalOffset& paint_offset) const override;
 
@@ -176,7 +181,7 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   bool HitTestChildren(HitTestResult&,
                        const HitTestLocation& location_in_container,
                        const PhysicalOffset& accumulated_offset,
-                       HitTestPhase) override;
+                       HitTestPhase) const override;
   bool IsInSelfHitTestingPhase(HitTestPhase) const final;
 
   void MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
@@ -194,7 +199,7 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   bool StyleChangeAffectsIntrinsicSize(const ComputedStyle& old_style) const;
 
   bool UpdateCachedBoundaries();
-  SVGTransformChange BuildLocalToBorderBoxTransform();
+  SVGTransformChange BuildLocalToBorderBoxTransform(const PhysicalRect&);
 
   PositionWithAffinity PositionForPoint(const PhysicalOffset&) const final;
 
@@ -204,9 +209,13 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   PhysicalSize container_size_;
   AffineTransform local_to_border_box_transform_;
   HeapHashSet<Member<LayoutSVGText>> text_set_;
-  bool is_layout_size_changed_ : 1;
-  bool did_screen_scale_factor_change_ : 1;
-  bool needs_boundaries_or_transform_update_ : 1;
+
+  // The new content size for SVG roots. This is set during layout, and cleared
+  // afterwards. Always nullptr when this object isn't in the process of being
+  // laid out.
+  const PhysicalSize* new_content_size_ = nullptr;
+
+  bool needs_transform_update_ : 1;
   mutable bool has_non_isolated_blending_descendants_ : 1;
   mutable bool has_non_isolated_blending_descendants_dirty_ : 1;
 };

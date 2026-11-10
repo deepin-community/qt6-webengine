@@ -5,13 +5,14 @@
 #ifndef CHROME_RENDERER_CHROME_RENDER_FRAME_OBSERVER_H_
 #define CHROME_RENDERER_CHROME_RENDER_FRAME_OBSERVER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
-#include "chrome/renderer/companion/visual_query/visual_query_classifier_agent.h"
 #include "components/safe_browsing/buildflags.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
@@ -19,7 +20,16 @@
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/common/actor.mojom.h"
+#include "chrome/renderer/actor/tool_executor.h"
+#endif
+
 class SkBitmap;
+
+namespace actor {
+class Journal;
+}
 
 namespace gfx {
 class Size;
@@ -80,6 +90,7 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
       mojo::ScopedInterfaceEndpointHandle* handle) override;
   void ReadyToCommitNavigation(
       blink::WebDocumentLoader* document_loader) override;
+  void DidSetPageLifecycleState(bool restoring_from_bfcache) override;
   void DidFinishLoad() override;
   void DidCreateNewDocument() override;
   void DidCommitProvisionalLoad(ui::PageTransition transition) override;
@@ -87,7 +98,6 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   void DidMeaningfulLayout(blink::WebMeaningfulLayout layout_type) override;
   void OnDestruct() override;
   void WillDetach(blink::DetachReason detach_reason) override;
-  void DraggableRegionsChanged() override;
 
   // chrome::mojom::ChromeRenderFrame:
   void SetWindowFeatures(
@@ -101,19 +111,31 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
       RequestImageForContextNodeCallback callback) override;
   void RequestBitmapForContextNode(
       RequestBitmapForContextNodeCallback callback) override;
+  void RequestBitmapForContextNodeWithBoundsHint(
+      RequestBitmapForContextNodeWithBoundsHintCallback callback) override;
+  void RequestBoundsHintForAllImages(
+      RequestBoundsHintForAllImagesCallback callback) override;
+  void FindImageElements(blink::WebElement element,
+                         std::vector<blink::WebElement>& images);
   void RequestReloadImageForContextNode() override;
 #if BUILDFLAG(IS_ANDROID)
   void SetCCTClientHeader(const std::string& header) override;
 #endif
   void GetMediaFeedURL(GetMediaFeedURLCallback callback) override;
   void LoadBlockedPlugins(const std::string& identifier) override;
-  void SetSupportsAppRegion(bool supports_app_region) override;
+  void SetSupportsDraggableRegions(bool supports_draggable_regions) override;
+  void SetShouldDeferMediaLoad(bool should_defer) override;
+
+#if !BUILDFLAG(IS_ANDROID)
+  void InvokeTool(actor::mojom::ToolInvocationPtr request,
+                  InvokeToolCallback callback) override;
+  void StartActorJournal(
+      mojo::PendingAssociatedRemote<actor::mojom::JournalClient> client)
+      override;
+#endif
 
   // Initialize a |phishing_classifier_delegate_|.
   void SetClientSidePhishingDetection();
-
-  // Initialize a |visual_query_classifier_agent_|.
-  void SetVisualQueryClassifierAgent();
 
   void OnRenderFrameObserverRequest(
       mojo::PendingAssociatedReceiver<chrome::mojom::ChromeRenderFrame>
@@ -151,27 +173,29 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   static bool IsAnimatedWebp(const std::vector<uint8_t>& image_data);
 
   // Have the same lifetime as us.
-  raw_ptr<translate::TranslateAgent, ExperimentalRenderer> translate_agent_;
-  raw_ptr<optimization_guide::PageTextAgent, ExperimentalRenderer>
-      page_text_agent_;
+  raw_ptr<translate::TranslateAgent> translate_agent_;
+  raw_ptr<optimization_guide::PageTextAgent> page_text_agent_;
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
-  raw_ptr<safe_browsing::PhishingClassifierDelegate, ExperimentalRenderer>
-      phishing_classifier_ = nullptr;
-  raw_ptr<safe_browsing::PhishingImageEmbedderDelegate, ExperimentalRenderer>
+  raw_ptr<safe_browsing::PhishingClassifierDelegate> phishing_classifier_ =
+      nullptr;
+  raw_ptr<safe_browsing::PhishingImageEmbedderDelegate>
       phishing_image_embedder_ = nullptr;
 #endif
 
+#if !BUILDFLAG(IS_ANDROID)
+  std::unique_ptr<actor::Journal> actor_journal_;
+#endif
+
   // Owned by ChromeContentRendererClient and outlive us.
-  raw_ptr<web_cache::WebCacheImpl, ExperimentalRenderer> web_cache_impl_;
+  raw_ptr<web_cache::WebCacheImpl> web_cache_impl_;
 
 #if !BUILDFLAG(IS_ANDROID)
   // Save the JavaScript to preload if ExecuteWebUIJavaScript is invoked.
   std::vector<std::u16string> webui_javascript_;
+#endif
 
-  // Add visual query agent to suggest visually relevant items on the page.
-  raw_ptr<companion::visual_query::VisualQueryClassifierAgent,
-          ExperimentalRenderer>
-      visual_classifier_ = nullptr;
+#if !BUILDFLAG(IS_ANDROID)
+  std::unique_ptr<actor::ToolExecutor> tool_executor_;
 #endif
 
   mojo::AssociatedReceiverSet<chrome::mojom::ChromeRenderFrame> receivers_;

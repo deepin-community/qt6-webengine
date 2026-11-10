@@ -61,7 +61,7 @@ const size_t kZoneIdentifierLength = sizeof(":Zone.Identifier") - 1;
 // Map of download path reservations. Each reserved path is associated with a
 // ReservationKey=DownloadItem*. This object is destroyed in |Revoke()| when
 // there are no more reservations.
-ReservationMap* g_reservation_map = NULL;
+ReservationMap* g_reservation_map = nullptr;
 
 base::LazyThreadPoolSequencedTaskRunner g_sequenced_task_runner =
     LAZY_THREAD_POOL_SEQUENCED_TASK_RUNNER_INITIALIZER(
@@ -209,9 +209,11 @@ struct CreateReservationInfo {
   base::FilePath temporary_path;
   base::FilePath fallback_directory;  // directory to use when target path
                                       // cannot be used.
-  bool create_target_directory;
+  bool create_target_directory = false;
   base::Time start_time;
   DownloadPathReservationTracker::FilenameConflictAction conflict_action;
+  bool is_transient = false;
+  bool is_forced_path = false;
 };
 
 // Check if |target_path| is writable.
@@ -248,7 +250,6 @@ PathValidationResult ResolveReservationConflicts(
       return PathValidationResult::CONFLICT;
   }
   NOTREACHED();
-  return PathValidationResult::SUCCESS;
 }
 
 // Verify that |target_path| can be written to and also resolve any conflicts if
@@ -256,8 +257,30 @@ PathValidationResult ResolveReservationConflicts(
 PathValidationResult ValidatePathAndResolveConflicts(
     const CreateReservationInfo& info,
     base::FilePath* target_path) {
+  // Enforce that the suggested path does not escape the default download
+  // directory via symlink/junction traversal.
+  bool path_escaped = false;
+  if (!info.is_transient && !info.is_forced_path &&
+      !info.default_download_path.empty() &&
+      base::PathExists(info.default_download_path)) {
+    base::FilePath absolute_default_path =
+        base::MakeAbsoluteFilePath(info.default_download_path);
+    base::FilePath absolute_target_dir =
+        base::MakeAbsoluteFilePath(target_path->DirName());
+    if (!absolute_default_path.empty() && !absolute_target_dir.empty()) {
+      if (absolute_target_dir != absolute_default_path &&
+          !absolute_default_path.IsParent(absolute_target_dir)) {
+        DVLOG(1) << "Path escapes default download path via symlink/junction \""
+                 << target_path->value() << "\"";
+        *target_path =
+            info.default_download_path.Append(target_path->BaseName());
+        path_escaped = true;
+      }
+    }
+  }
+
   // Check writability of the suggested path. If we can't write to it, use
-  // the |default_download_path| if it is not empty or |fallback_directory|.
+  // |default_download_path| if it is not empty or |fallback_directory|.
   // We'll prompt them in this case. No further amendments are made to the
   // filename since the user is going to be prompted.
   if (!IsPathWritable(info, *target_path)) {
@@ -268,6 +291,10 @@ PathValidationResult ValidatePathAndResolveConflicts(
     } else {
       *target_path = info.fallback_directory.Append(target_path->BaseName());
     }
+    return PathValidationResult::PATH_NOT_WRITABLE;
+  }
+
+  if (path_escaped) {
     return PathValidationResult::PATH_NOT_WRITABLE;
   }
 
@@ -316,8 +343,9 @@ PathValidationResult CreateReservation(const CreateReservationInfo& info,
                                        base::FilePath* reserved_path) {
   // Create a reservation map if one doesn't exist. It will be automatically
   // deleted when all the reservations are revoked.
-  if (g_reservation_map == NULL)
+  if (g_reservation_map == nullptr) {
     g_reservation_map = new ReservationMap;
+  }
 
   // Erase the reservation if it already exists. This can happen during
   // automatic resumption where a new target determination request may be issued
@@ -372,7 +400,7 @@ PathValidationResult CreateReservation(const CreateReservationInfo& info,
 // Called on a background thread to update the path of the reservation
 // associated with |key| to |new_path|.
 void UpdateReservation(ReservationKey key, const base::FilePath& new_path) {
-  DCHECK(g_reservation_map != NULL);
+  DCHECK(g_reservation_map != nullptr);
   auto iter = g_reservation_map->find(key);
   if (iter != g_reservation_map->end()) {
     bool use_download_collection = false;
@@ -396,13 +424,13 @@ void UpdateReservation(ReservationKey key, const base::FilePath& new_path) {
 // Called on the FILE thread to remove the path reservation associated with
 // |key|.
 void RevokeReservation(ReservationKey key) {
-  DCHECK(g_reservation_map != NULL);
+  DCHECK(g_reservation_map != nullptr);
   DCHECK(base::Contains(*g_reservation_map, key));
   g_reservation_map->erase(key);
   if (g_reservation_map->size() == 0) {
     // No more reservations. Delete map.
     delete g_reservation_map;
-    g_reservation_map = NULL;
+    g_reservation_map = nullptr;
   }
 }
 
@@ -482,9 +510,6 @@ void DownloadItemObserver::OnDownloadUpdated(DownloadItem* download) {
 void DownloadItemObserver::OnDownloadDestroyed(DownloadItem* download) {
   // Items should be COMPLETE/INTERRUPTED/CANCELLED before being destroyed.
   NOTREACHED();
-  DownloadPathReservationTracker::GetTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&RevokeReservation,
-                                reinterpret_cast<ReservationKey>(download)));
 }
 
 // static
@@ -518,7 +543,9 @@ void DownloadPathReservationTracker::GetReservedPath(
                                 fallback_directory,
                                 create_directory,
                                 download_item->GetStartTime(),
-                                conflict_action};
+                                conflict_action,
+                                download_item->IsTransient(),
+                                !download_item->GetForcedFilePath().empty()};
 
   GetTaskRunner()->PostTaskAndReplyWithResult(
       FROM_HERE, base::BindOnce(&CreateReservation, info, reserved_path),

@@ -43,40 +43,40 @@
 // (wgpu::Buffer is dawn::native::BufferBase*)
 #include <{{native_dir}}/{{namespace}}_structs_autogen.h>
 
+{% macro render_structure_conversions(name) -%}
+    inline const {{as_cType(name)}}* ToAPI(const {{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<const {{as_cType(name)}}*>(rhs);
+    }
+    inline {{as_cType(name)}}* ToAPI({{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<{{as_cType(name)}}*>(rhs);
+    }
+    inline const {{as_cppType(name)}}* FromAPI(const {{as_cType(name)}}* rhs) {
+        return reinterpret_cast<const {{as_cppType(name)}}*>(rhs);
+    }
+    inline {{as_cppType(name)}}* FromAPI({{as_cType(name)}}* rhs) {
+        return reinterpret_cast<{{as_cppType(name)}}*>(rhs);
+    }
+    inline const {{metadata.namespace}}::{{as_cppType(name)}}* ToCppAPI(const {{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<const {{metadata.namespace}}::{{as_cppType(name)}}*>(rhs);
+    }
+    inline {{metadata.namespace}}::{{as_cppType(name)}}* ToCppAPI({{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<{{metadata.namespace}}::{{as_cppType(name)}}*>(rhs);
+    }
+    inline const {{as_cppType(name)}}* FromCppAPI(const {{metadata.namespace}}::{{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<const {{as_cppType(name)}}*>(rhs);
+    }
+    inline {{as_cppType(name)}}* FromCppAPI({{metadata.namespace}}::{{as_cppType(name)}}* rhs) {
+        return reinterpret_cast<{{as_cppType(name)}}*>(rhs);
+    }
+{%- endmacro %}
+
 namespace {{native_namespace}} {
 
-    {% for type in by_category["structure"] %}
-        inline const {{as_cType(type.name)}}* ToAPI(const {{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<const {{as_cType(type.name)}}*>(rhs);
-        }
+    {% set ChainedStructName = Name("chained struct") %}
+    {{render_structure_conversions(ChainedStructName)|indent}}
 
-        inline {{as_cType(type.name)}}* ToAPI({{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<{{as_cType(type.name)}}*>(rhs);
-        }
-
-        inline const {{as_cppType(type.name)}}* FromAPI(const {{as_cType(type.name)}}* rhs) {
-            return reinterpret_cast<const {{as_cppType(type.name)}}*>(rhs);
-        }
-
-        inline {{as_cppType(type.name)}}* FromAPI({{as_cType(type.name)}}* rhs) {
-            return reinterpret_cast<{{as_cppType(type.name)}}*>(rhs);
-        }
-
-        inline const {{metadata.namespace}}::{{as_cppType(type.name)}}* ToCppAPI(const {{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<const {{metadata.namespace}}::{{as_cppType(type.name)}}*>(rhs);
-        }
-
-        inline {{metadata.namespace}}::{{as_cppType(type.name)}}* ToCppAPI({{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<{{metadata.namespace}}::{{as_cppType(type.name)}}*>(rhs);
-        }
-
-        inline const {{as_cppType(type.name)}}* FromCppAPI(const {{metadata.namespace}}::{{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<const {{as_cppType(type.name)}}*>(rhs);
-        }
-
-        inline {{as_cppType(type.name)}}* FromCppAPI({{metadata.namespace}}::{{as_cppType(type.name)}}* rhs) {
-            return reinterpret_cast<{{as_cppType(type.name)}}*>(rhs);
-        }
+    {% for type in by_category["structure"] if type.name.get() != "string view" %}
+        {{render_structure_conversions(type.name)|indent}}
 
     {% endfor %}
 
@@ -101,7 +101,7 @@ namespace {{native_namespace}} {
     template <typename T>
     struct EnumCount;
 
-    {% for e in by_category["enum"] if e.contiguousFromZero %}
+    {% for e in by_category["enum"] if e.contiguous and e.startValue == 0 %}
         template<>
         struct EnumCount<{{namespace}}::{{as_cppType(e.name)}}> {
             static constexpr uint32_t value = {{len(e.values)}};
@@ -112,7 +112,9 @@ namespace {{native_namespace}} {
         inline {{as_cType(type.name)}} ToAPI({{namespace}}::{{as_cppType(type.name)}} rhs) {
             return static_cast<{{as_cType(type.name)}}>(rhs);
         }
+    {% endfor %}
 
+    {% for type in by_category["enum"] %}
         inline {{namespace}}::{{as_cppType(type.name)}} FromAPI({{as_cType(type.name)}} rhs) {
             return static_cast<{{namespace}}::{{as_cppType(type.name)}}>(rhs);
         }

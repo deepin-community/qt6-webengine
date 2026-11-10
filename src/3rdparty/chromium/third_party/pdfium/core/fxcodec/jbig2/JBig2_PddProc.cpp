@@ -14,11 +14,12 @@
 
 std::unique_ptr<CJBig2_PatternDict> CJBig2_PDDProc::DecodeArith(
     CJBig2_ArithDecoder* pArithDecoder,
-    JBig2ArithCtx* gbContext,
+    pdfium::span<JBig2ArithCtx> gbContexts,
     PauseIndicatorIface* pPause) {
   std::unique_ptr<CJBig2_GRDProc> pGRD = CreateGRDProc();
-  if (!pGRD)
+  if (!pGRD) {
     return nullptr;
+  }
 
   pGRD->GBTEMPLATE = HDTEMPLATE;
   pGRD->TPGDON = false;
@@ -38,44 +39,51 @@ std::unique_ptr<CJBig2_PatternDict> CJBig2_PDDProc::DecodeArith(
   CJBig2_GRDProc::ProgressiveArithDecodeState state;
   state.pImage = &BHDC;
   state.pArithDecoder = pArithDecoder;
-  state.gbContext = gbContext;
+  state.gbContexts = gbContexts;
   state.pPause = nullptr;
 
   FXCODEC_STATUS status = pGRD->StartDecodeArith(&state);
   state.pPause = pPause;
-  while (status == FXCODEC_STATUS::kDecodeToBeContinued)
+  while (status == FXCODEC_STATUS::kDecodeToBeContinued) {
     status = pGRD->ContinueDecode(&state);
-  if (!BHDC)
+  }
+  if (!BHDC) {
     return nullptr;
+  }
 
-  auto pDict = std::make_unique<CJBig2_PatternDict>(GRAYMAX + 1);
-  for (uint32_t GRAY = 0; GRAY <= GRAYMAX; ++GRAY)
-    pDict->HDPATS[GRAY] = BHDC->SubImage(HDPW * GRAY, 0, HDPW, HDPH);
-  return pDict;
+  auto dict = std::make_unique<CJBig2_PatternDict>(GRAYMAX + 1);
+  for (uint32_t GRAY = 0; GRAY <= GRAYMAX; ++GRAY) {
+    dict->HDPATS[GRAY] = BHDC->SubImage(HDPW * GRAY, 0, HDPW, HDPH);
+  }
+  return dict;
 }
 
 std::unique_ptr<CJBig2_PatternDict> CJBig2_PDDProc::DecodeMMR(
     CJBig2_BitStream* pStream) {
   std::unique_ptr<CJBig2_GRDProc> pGRD = CreateGRDProc();
-  if (!pGRD)
+  if (!pGRD) {
     return nullptr;
+  }
 
   std::unique_ptr<CJBig2_Image> BHDC;
   pGRD->StartDecodeMMR(&BHDC, pStream);
-  if (!BHDC)
+  if (!BHDC) {
     return nullptr;
+  }
 
-  auto pDict = std::make_unique<CJBig2_PatternDict>(GRAYMAX + 1);
-  for (uint32_t GRAY = 0; GRAY <= GRAYMAX; ++GRAY)
-    pDict->HDPATS[GRAY] = BHDC->SubImage(HDPW * GRAY, 0, HDPW, HDPH);
-  return pDict;
+  auto dict = std::make_unique<CJBig2_PatternDict>(GRAYMAX + 1);
+  for (uint32_t GRAY = 0; GRAY <= GRAYMAX; ++GRAY) {
+    dict->HDPATS[GRAY] = BHDC->SubImage(HDPW * GRAY, 0, HDPW, HDPH);
+  }
+  return dict;
 }
 
 std::unique_ptr<CJBig2_GRDProc> CJBig2_PDDProc::CreateGRDProc() {
   uint32_t width = (GRAYMAX + 1) * HDPW;
   uint32_t height = HDPH;
-  if (width > kJBig2MaxImageSize || height > kJBig2MaxImageSize)
+  if (width > kJBig2MaxImageSize || height > kJBig2MaxImageSize) {
     return nullptr;
+  }
 
   auto pGRD = std::make_unique<CJBig2_GRDProc>();
   pGRD->MMR = HDMMR;

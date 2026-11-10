@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 
+#include <array>
 #include <memory>
 
 #include "base/containers/contains.h"
@@ -50,11 +51,14 @@ using mojom::blink::EffectiveConnectionType;
 
 namespace {
 
+constexpr size_t kNumEffectiveConnectionTypes =
+    static_cast<size_t>(WebEffectiveConnectionType::kMaxValue) + 1;
+
 // Typical HTTP RTT value corresponding to a given WebEffectiveConnectionType
 // value. Taken from
 // https://cs.chromium.org/chromium/src/net/nqe/network_quality_estimator_params.cc.
-const base::TimeDelta kTypicalHttpRttEffectiveConnectionType
-    [static_cast<size_t>(WebEffectiveConnectionType::kMaxValue) + 1] = {
+constexpr std::array<base::TimeDelta, kNumEffectiveConnectionTypes>
+    kTypicalHttpRttEffectiveConnectionType = {
         base::Milliseconds(0),    base::Milliseconds(0),
         base::Milliseconds(3600), base::Milliseconds(1800),
         base::Milliseconds(450),  base::Milliseconds(175)};
@@ -62,9 +66,9 @@ const base::TimeDelta kTypicalHttpRttEffectiveConnectionType
 // Typical downlink throughput (in Mbps) value corresponding to a given
 // WebEffectiveConnectionType value. Taken from
 // https://cs.chromium.org/chromium/src/net/nqe/network_quality_estimator_params.cc.
-const double kTypicalDownlinkMbpsEffectiveConnectionType
-    [static_cast<size_t>(WebEffectiveConnectionType::kMaxValue) + 1] = {
-        0, 0, 0.040, 0.075, 0.400, 1.600};
+constexpr std::array<double, kNumEffectiveConnectionTypes>
+    kTypicalDownlinkMbpsEffectiveConnectionType = {0,     0,     0.040,
+                                                   0.075, 0.400, 1.600};
 
 }  // namespace
 
@@ -149,9 +153,9 @@ void NetworkStateNotifier::SetNetworkQuality(WebEffectiveConnectionType type,
     base::AutoLock locker(lock_);
 
     state_.effective_type = type;
-    state_.http_rtt = absl::nullopt;
-    state_.transport_rtt = absl::nullopt;
-    state_.downlink_throughput_mbps = absl::nullopt;
+    state_.http_rtt = std::nullopt;
+    state_.transport_rtt = std::nullopt;
+    state_.downlink_throughput_mbps = std::nullopt;
 
     if (http_rtt.InMilliseconds() >= 0)
       state_.http_rtt = http_rtt;
@@ -209,7 +213,7 @@ NetworkStateNotifier::AddOnLineObserver(
 void NetworkStateNotifier::SetNetworkConnectionInfoOverride(
     bool on_line,
     WebConnectionType type,
-    absl::optional<WebEffectiveConnectionType> effective_type,
+    std::optional<WebEffectiveConnectionType> effective_type,
     int64_t http_rtt_msec,
     double max_bandwidth_mbps) {
   DCHECK(IsMainThread());
@@ -228,17 +232,17 @@ void NetworkStateNotifier::SetNetworkConnectionInfoOverride(
       // Threshold values taken from
       // net/nqe/network_quality_estimator_params.cc.
       if (http_rtt >=
-          net::kHttpRttEffectiveConnectionTypeThresholds[static_cast<int>(
+          net::kHttpRttEffectiveConnectionTypeThresholds[static_cast<size_t>(
               EffectiveConnectionType::kEffectiveConnectionSlow2GType)]) {
         effective_type = WebEffectiveConnectionType::kTypeSlow2G;
       } else if (http_rtt >=
                  net::kHttpRttEffectiveConnectionTypeThresholds[static_cast<
-                     int>(
+                     size_t>(
                      EffectiveConnectionType::kEffectiveConnection2GType)]) {
         effective_type = WebEffectiveConnectionType::kType2G;
       } else if (http_rtt >=
                  net::kHttpRttEffectiveConnectionTypeThresholds[static_cast<
-                     int>(
+                     size_t>(
                      EffectiveConnectionType::kEffectiveConnection3GType)]) {
         effective_type = WebEffectiveConnectionType::kType3G;
       } else {
@@ -327,7 +331,6 @@ NetworkStateNotifier::ObserverListMap& NetworkStateNotifier::GetObserverMapFor(
       return on_line_state_observers_;
     default:
       NOTREACHED();
-      return connection_observers_;
   }
 }
 
@@ -360,9 +363,8 @@ void NetworkStateNotifier::RemoveObserver(
 // static
 String NetworkStateNotifier::EffectiveConnectionTypeToString(
     WebEffectiveConnectionType type) {
-  DCHECK_GT(network::kWebEffectiveConnectionTypeMappingCount,
-            static_cast<size_t>(type));
-  return network::kWebEffectiveConnectionTypeMapping[static_cast<int>(type)];
+  return network::kWebEffectiveConnectionTypeMapping.at(
+      static_cast<size_t>(type));
 }
 
 double NetworkStateNotifier::GetRandomMultiplier(const String& host) const {
@@ -373,7 +375,7 @@ double NetworkStateNotifier::GetRandomMultiplier(const String& host) const {
   if (!host)
     return 1.0;
 
-  unsigned hash = WTF::GetHash(host) + RandomizationSalt();
+  unsigned hash = GetHash(host) + RandomizationSalt();
   double random_multiplier = 0.9 + static_cast<double>((hash % 21)) * 0.01;
   DCHECK_LE(0.90, random_multiplier);
   DCHECK_GE(1.10, random_multiplier);
@@ -382,7 +384,7 @@ double NetworkStateNotifier::GetRandomMultiplier(const String& host) const {
 
 uint32_t NetworkStateNotifier::RoundRtt(
     const String& host,
-    const absl::optional<base::TimeDelta>& rtt) const {
+    const std::optional<base::TimeDelta>& rtt) const {
   if (!rtt.has_value()) {
     // RTT is unavailable. So, return the fastest value.
     return 0;
@@ -402,7 +404,7 @@ uint32_t NetworkStateNotifier::RoundRtt(
 
 double NetworkStateNotifier::RoundMbps(
     const String& host,
-    const absl::optional<double>& downlink_mbps) const {
+    const std::optional<double>& downlink_mbps) const {
   // Limit the size of the buckets and the maximum reported value to reduce
   // fingerprinting.
   static const size_t kBucketSize = 50;
@@ -429,7 +431,7 @@ double NetworkStateNotifier::RoundMbps(
   return downlink_kbps_rounded / 1000;
 }
 
-absl::optional<WebEffectiveConnectionType>
+std::optional<WebEffectiveConnectionType>
 NetworkStateNotifier::GetWebHoldbackEffectiveType() const {
   base::AutoLock locker(lock_);
 
@@ -439,36 +441,36 @@ NetworkStateNotifier::GetWebHoldbackEffectiveType() const {
   return state.network_quality_web_holdback;
 }
 
-absl::optional<base::TimeDelta> NetworkStateNotifier::GetWebHoldbackHttpRtt()
+std::optional<base::TimeDelta> NetworkStateNotifier::GetWebHoldbackHttpRtt()
     const {
-  absl::optional<WebEffectiveConnectionType> override_ect =
+  std::optional<WebEffectiveConnectionType> override_ect =
       GetWebHoldbackEffectiveType();
 
   if (override_ect) {
     return kTypicalHttpRttEffectiveConnectionType[static_cast<size_t>(
         override_ect.value())];
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<double>
+std::optional<double>
 NetworkStateNotifier::GetWebHoldbackDownlinkThroughputMbps() const {
-  absl::optional<WebEffectiveConnectionType> override_ect =
+  std::optional<WebEffectiveConnectionType> override_ect =
       GetWebHoldbackEffectiveType();
 
   if (override_ect) {
     return kTypicalDownlinkMbpsEffectiveConnectionType[static_cast<size_t>(
         override_ect.value())];
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void NetworkStateNotifier::GetMetricsWithWebHoldback(
     WebConnectionType* type,
     double* downlink_max_mbps,
     WebEffectiveConnectionType* effective_type,
-    absl::optional<base::TimeDelta>* http_rtt,
-    absl::optional<double>* downlink_mbps,
+    std::optional<base::TimeDelta>* http_rtt,
+    std::optional<double>* downlink_mbps,
     bool* save_data) const {
   base::AutoLock locker(lock_);
   const NetworkState& state = has_override_ ? override_ : state_;
@@ -476,7 +478,7 @@ void NetworkStateNotifier::GetMetricsWithWebHoldback(
   *type = state.type;
   *downlink_max_mbps = state.max_bandwidth_mbps;
 
-  absl::optional<WebEffectiveConnectionType> override_ect =
+  std::optional<WebEffectiveConnectionType> override_ect =
       state.network_quality_web_holdback;
   if (override_ect) {
     *effective_type = override_ect.value();

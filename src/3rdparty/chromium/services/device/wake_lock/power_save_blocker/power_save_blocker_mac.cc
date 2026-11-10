@@ -79,7 +79,6 @@ void PowerSaveBlocker::Delegate::ApplyBlock() {
       break;
     default:
       NOTREACHED();
-      break;
   }
   if (level) {
     base::apple::ScopedCFTypeRef<CFStringRef> cf_description(

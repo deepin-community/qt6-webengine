@@ -31,9 +31,10 @@
 
 #include "third_party/blink/renderer/core/html/forms/text_field_input_type.h"
 
+#include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
+#include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/events/before_text_inserted_event.h"
@@ -43,6 +44,8 @@
 #include "third_party/blink/renderer/core/events/text_event.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_option_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_inner_elements.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -54,6 +57,7 @@
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -142,10 +146,6 @@ bool TextFieldInputType::MayTriggerVirtualKeyboard() const {
   return true;
 }
 
-bool TextFieldInputType::IsTextField() const {
-  return true;
-}
-
 bool TextFieldInputType::ValueMissing(const String& value) const {
   // For text-mode input elements, the value is missing only if it is mutable.
   // https://html.spec.whatwg.org/multipage/input.html#the-required-attribute
@@ -220,6 +220,21 @@ void TextFieldInputType::SetValue(const String& sanitized_value,
 void TextFieldInputType::HandleKeydownEvent(KeyboardEvent& event) {
   if (!GetElement().IsFocused())
     return;
+
+  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() ||
+      RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
+    if (auto* select = GetElement().FirstAncestorSelectElement()) {
+      if (AtomicString(event.key()) == keywords::kArrowDown) {
+        if (auto* option =
+                select->GetOptionList().FirstKeyboardFocusableOption()) {
+          option->Focus();
+          event.SetDefaultHandled();
+          return;
+        }
+      }
+    }
+  }
+
   if (ChromeClient* chrome_client = GetChromeClient()) {
     chrome_client->HandleKeyboardEventOnTextField(GetElement(), event);
     return;
@@ -230,18 +245,20 @@ void TextFieldInputType::HandleKeydownEvent(KeyboardEvent& event) {
 void TextFieldInputType::HandleKeydownEventForSpinButton(KeyboardEvent& event) {
   if (GetElement().IsDisabledOrReadOnly())
     return;
-  const String& key = event.key();
-  bool is_horizontal =
+  const AtomicString key(event.key());
+  const PhysicalToLogical<const AtomicString*> key_mapper(
       GetElement().GetComputedStyle()
-          ? GetElement().GetComputedStyle()->IsHorizontalWritingMode()
-          : true;
+          ? GetElement().GetComputedStyle()->GetWritingDirection()
+          : WritingDirectionMode(WritingMode::kHorizontalTb,
+                                 TextDirection::kLtr),
+      &keywords::kArrowUp, &keywords::kArrowRight, &keywords::kArrowDown,
+      &keywords::kArrowLeft);
+  const AtomicString* key_up = key_mapper.LineOver();
+  const AtomicString* key_down = key_mapper.LineUnder();
 
-  if ((is_horizontal && key == "ArrowUp") ||
-      (!is_horizontal && key == "ArrowRight")) {
+  if (key == *key_up) {
     SpinButtonStepUp();
-  } else if (((is_horizontal && key == "ArrowDown") ||
-              (!is_horizontal && key == "ArrowLeft")) &&
-             !event.altKey()) {
+  } else if (key == *key_down && !event.altKey()) {
     SpinButtonStepDown();
   } else {
     return;
@@ -314,8 +331,15 @@ LayoutObject* TextFieldInputType::CreateLayoutObject(
   return MakeGarbageCollected<LayoutTextControlSingleLine>(&GetElement());
 }
 
-ControlPart TextFieldInputType::AutoAppearance() const {
-  return kTextFieldPart;
+AppearanceValue TextFieldInputType::AutoAppearance() const {
+  return AppearanceValue::kTextField;
+}
+
+bool TextFieldInputType::IsInnerEditorValueEmpty() const {
+  if (!HasCreatedShadowSubtree()) {
+    return VisibleValue().empty();
+  }
+  return GetElement().InnerEditorValue().empty();
 }
 
 void TextFieldInputType::CreateShadowSubtree() {
@@ -336,6 +360,8 @@ void TextFieldInputType::CreateShadowSubtree() {
 
   Document& document = GetElement().GetDocument();
   auto* container = MakeGarbageCollected<HTMLDivElement>(document);
+  container->SetInlineStyleProperty(CSSPropertyID::kUnicodeBidi,
+                                    CSSValueID::kNormal);
   container->SetIdAttribute(shadow_element_names::kIdTextFieldContainer);
   container->SetShadowPseudoId(
       shadow_element_names::kPseudoTextFieldDecorationContainer);
@@ -426,23 +452,33 @@ void TextFieldInputType::ValueAttributeChanged() {
   UpdateView();
 }
 
-void TextFieldInputType::DisabledOrReadonlyAttributeChanged() {
-  if (SpinButtonElement* spin_button = GetSpinButtonElement())
-    spin_button->ReleaseCapture();
+void TextFieldInputType::DisabledOrReadonlyAttributeChanged(
+    DisabledChangedReason reason) {
+  if (SpinButtonElement* spin_button = GetSpinButtonElement()) {
+    bool avoid_dispatch =
+        RuntimeEnabledFeatures::
+            DisableFormControlChangeEventDuringMutationEnabled() &&
+        (GetElement().GetDocument().StatePreservingAtomicMoveInProgress() ||
+         reason == DisabledChangedReason::kFieldsetChildrenChanged);
+    SpinButtonElement::EventDispatch dispatch =
+        avoid_dispatch ? SpinButtonElement::kEventDispatchDisallowed
+                       : SpinButtonElement::kEventDispatchAllowed;
+    spin_button->ReleaseCapture(dispatch);
+  }
 }
 
-void TextFieldInputType::DisabledAttributeChanged() {
+void TextFieldInputType::DisabledAttributeChanged(DisabledChangedReason reason) {
   if (!HasCreatedShadowSubtree()) {
     return;
   }
-  DisabledOrReadonlyAttributeChanged();
+  DisabledOrReadonlyAttributeChanged(reason);
 }
 
 void TextFieldInputType::ReadonlyAttributeChanged() {
   if (!HasCreatedShadowSubtree()) {
     return;
   }
-  DisabledOrReadonlyAttributeChanged();
+  DisabledOrReadonlyAttributeChanged(DisabledChangedReason::kAttributeChanged);
 }
 
 bool TextFieldInputType::SupportsReadOnly() const {
@@ -533,21 +569,33 @@ void TextFieldInputType::HandleBeforeTextInsertedEvent(
   event_text.Replace('\n', ' ');
 
   event.SetText(LimitLength(event_text, appendable_length));
+
+  if (ChromeClient* chrome_client = GetChromeClient()) {
+    if (selection_length == old_length && selection_length != 0 &&
+        !event_text.empty()) {
+      chrome_client->DidClearValueInTextField(GetElement());
+    }
+  }
 }
 
 bool TextFieldInputType::ShouldRespectListAttribute() {
   return true;
 }
 
-void TextFieldInputType::UpdatePlaceholderText(bool is_suggested_value) {
-  if (!SupportsPlaceholder())
-    return;
+HTMLElement* TextFieldInputType::UpdatePlaceholderText(
+    bool is_suggested_value) {
+  if (!HasCreatedShadowSubtree()) {
+    return nullptr;
+  }
+  if (!SupportsPlaceholder()) {
+    return nullptr;
+  }
   HTMLElement* placeholder = GetElement().PlaceholderElement();
   if (!is_suggested_value &&
       !GetElement().FastHasAttribute(html_names::kPlaceholderAttr)) {
     if (placeholder)
       placeholder->remove(ASSERT_NO_EXCEPTION);
-    return;
+    return nullptr;
   }
   if (!placeholder) {
     GetElement().EnsureShadowSubtree();
@@ -575,6 +623,7 @@ void TextFieldInputType::UpdatePlaceholderText(bool is_suggested_value) {
     placeholder->RemoveInlineStyleProperty(CSSPropertyID::kUserSelect);
   }
   placeholder->setTextContent(GetElement().GetPlaceholderValue());
+  return placeholder;
 }
 
 String TextFieldInputType::ConvertFromVisibleValue(
@@ -606,8 +655,12 @@ void TextFieldInputType::OpenPopupView() {
 void TextFieldInputType::DidSetValueByUserEdit() {
   if (!GetElement().IsFocused())
     return;
-  if (ChromeClient* chrome_client = GetChromeClient())
+  if (ChromeClient* chrome_client = GetChromeClient()) {
+    if (GetElement().Value().empty()) {
+      chrome_client->DidClearValueInTextField(GetElement());
+    }
     chrome_client->DidChangeValueInTextField(GetElement());
+  }
 }
 
 void TextFieldInputType::SpinButtonStepDown() {

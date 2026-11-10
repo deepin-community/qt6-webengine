@@ -8,7 +8,6 @@
 #include "components/policy/policy_export.h"
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 namespace policy {
 namespace switches {
@@ -19,9 +18,10 @@ extern const char kEncryptedReportingUrl[];
 extern const char kChromePolicy[];
 extern const char kSecureConnectApiUrl[];
 extern const char kFileStorageServerUploadUrl[];
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+extern const char kPolicyVerificationKey[];
+#if BUILDFLAG(IS_CHROMEOS)
 extern const char kDisablePolicyKeyVerification[];
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace switches
 }  // namespace policy

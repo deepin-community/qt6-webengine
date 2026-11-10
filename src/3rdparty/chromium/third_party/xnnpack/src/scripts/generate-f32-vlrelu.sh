@@ -9,11 +9,6 @@ tools/xngen src/f32-vlrelu/scalar.c.in -D BATCH_TILE=1 -D WASM=0 -o src/f32-vlre
 tools/xngen src/f32-vlrelu/scalar.c.in -D BATCH_TILE=2 -D WASM=0 -o src/f32-vlrelu/gen/f32-vlrelu-scalar-u2.c &
 tools/xngen src/f32-vlrelu/scalar.c.in -D BATCH_TILE=4 -D WASM=0 -o src/f32-vlrelu/gen/f32-vlrelu-scalar-u4.c &
 
-##################################### WAsm ####################################
-tools/xngen src/f32-vlrelu/wasm.c.in -D BATCH_TILE=1 -D WASM=1 -o src/f32-vlrelu/gen/f32-vlrelu-wasm-u1.c &
-tools/xngen src/f32-vlrelu/wasm.c.in -D BATCH_TILE=2 -D WASM=1 -o src/f32-vlrelu/gen/f32-vlrelu-wasm-u2.c &
-tools/xngen src/f32-vlrelu/wasm.c.in -D BATCH_TILE=4 -D WASM=1 -o src/f32-vlrelu/gen/f32-vlrelu-wasm-u4.c &
-
 ################################## WAsm SIMD ##################################
 tools/xngen src/f32-vlrelu/wasmsimd-laneselect.c.in -D BATCH_TILE=4 -D RELAXED=0 -o src/f32-vlrelu/gen/f32-vlrelu-wasmsimd-laneselect-u4.c &
 tools/xngen src/f32-vlrelu/wasmsimd-laneselect.c.in -D BATCH_TILE=8 -D RELAXED=0 -o src/f32-vlrelu/gen/f32-vlrelu-wasmsimd-laneselect-u8.c &
@@ -30,6 +25,12 @@ tools/xngen src/f32-vlrelu/wasmsimd-iminmax.c.in    -D BATCH_TILE=8 -D RELAXED=1
 ################################### ARM NEON ##################################
 tools/xngen src/f32-vlrelu/neon.c.in -D BATCH_TILE=4 -o src/f32-vlrelu/gen/f32-vlrelu-neon-u4.c &
 tools/xngen src/f32-vlrelu/neon.c.in -D BATCH_TILE=8 -o src/f32-vlrelu/gen/f32-vlrelu-neon-u8.c &
+
+################################ RISC-V Vector ################################
+tools/xngen src/f32-vlrelu/rvv.c.in -D LMUL=1 -o src/f32-vlrelu/gen/f32-vlrelu-rvv-u1v.c &
+tools/xngen src/f32-vlrelu/rvv.c.in -D LMUL=2 -o src/f32-vlrelu/gen/f32-vlrelu-rvv-u2v.c &
+tools/xngen src/f32-vlrelu/rvv.c.in -D LMUL=4 -o src/f32-vlrelu/gen/f32-vlrelu-rvv-u4v.c &
+tools/xngen src/f32-vlrelu/rvv.c.in -D LMUL=8 -o src/f32-vlrelu/gen/f32-vlrelu-rvv-u8v.c &
 
 ################################# x86 128-bit #################################
 tools/xngen src/f32-vlrelu/sse.c.in -D BATCH_TILE=4 -D SSE=1 -o src/f32-vlrelu/gen/f32-vlrelu-sse-u4.c &

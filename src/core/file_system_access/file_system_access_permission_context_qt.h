@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // This file is based on chrome/browser/file_system_access/chrome_file_system_access_permission_context.h:
 // Copyright 2019 The Chromium Authors. All rights reserved.
@@ -31,13 +32,13 @@ public:
 
     // content::FileSystemAccessPermissionContext:
     scoped_refptr<content::FileSystemAccessPermissionGrant>
-    GetReadPermissionGrant(const url::Origin &origin, const base::FilePath &path,
+    GetReadPermissionGrant(const url::Origin &origin, const content::PathInfo &path_info,
                            HandleType handle_type, UserAction user_action) override;
     scoped_refptr<content::FileSystemAccessPermissionGrant>
-    GetWritePermissionGrant(const url::Origin &origin, const base::FilePath &path,
+    GetWritePermissionGrant(const url::Origin &origin, const content::PathInfo &path_info,
                             HandleType handle_type, UserAction user_action) override;
     void ConfirmSensitiveEntryAccess(
-            const url::Origin &origin, PathType path_type, const base::FilePath &path,
+            const url::Origin &origin, const content::PathInfo &path_info,
             HandleType handle_type, UserAction user_action,
             content::GlobalRenderFrameHostId frame_id,
             base::OnceCallback<void(SensitiveEntryResult)> callback) override;
@@ -47,14 +48,19 @@ public:
     bool CanObtainReadPermission(const url::Origin &origin) override;
     bool CanObtainWritePermission(const url::Origin &origin) override;
     void SetLastPickedDirectory(const url::Origin &origin, const std::string &id,
-                                const base::FilePath &path, const PathType type) override;
-    FileSystemAccessPermissionContextQt::PathInfo
+                                const content::PathInfo &path_info) override;
+    content::PathInfo
     GetLastPickedDirectory(const url::Origin &origin, const std::string &id) override;
     base::FilePath GetWellKnownDirectoryPath(blink::mojom::WellKnownDirectory directory, const url::Origin &origin) override;
     std::u16string GetPickerTitle(const blink::mojom::FilePickerOptionsPtr &) override;
-    void NotifyEntryMoved(const url::Origin &, const base::FilePath &, const base::FilePath &) override;
+    void NotifyEntryMoved(const url::Origin &, const content::PathInfo &, const content::PathInfo &) override;
     void OnFileCreatedFromShowSaveFilePicker(const GURL &file_picker_binding_context,
-                                             const storage::FileSystemURL &url) override{};
+                                             const storage::FileSystemURL &url) override {};
+    void CheckPathsAgainstEnterprisePolicy(std::vector<content::PathInfo>, content::GlobalRenderFrameHostId,
+                                           EntriesAllowedByEnterprisePolicyCallback) override;
+
+    base::expected<void, std::string> CanShowFilePicker(content::RenderFrameHost*) override;
+    bool IsFileTypeDangerous(const base::FilePath &path, const url::Origin &origin) override;
 
     void NavigatedAwayFromOrigin(const url::Origin &origin);
     content::BrowserContext *profile() const { return m_profile; }
@@ -78,7 +84,7 @@ private:
     struct OriginState;
     std::map<url::Origin, OriginState> m_origins;
 
-    std::map<std::string, FileSystemAccessPermissionContextQt::PathInfo> m_lastPickedDirectories;
+    std::map<std::string, content::PathInfo> m_lastPickedDirectories;
 
     base::WeakPtrFactory<FileSystemAccessPermissionContextQt> m_weakFactory { this };
 };

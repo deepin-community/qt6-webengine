@@ -38,8 +38,11 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/webplugininfo.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/process_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/test/test_extension_dir.h"
@@ -52,7 +55,7 @@
 
 namespace extensions {
 
-using ContextType = ExtensionApiTest::ContextType;
+using ContextType = extensions::browser_test_util::ContextType;
 
 class ExtensionContentSettingsApiTest : public ExtensionApiTest {
  public:
@@ -104,7 +107,8 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
     GURL example_url("http://www.example.com");
     EXPECT_TRUE(cookie_settings->IsFullCookieAccessAllowed(
         example_url, net::SiteForCookies::FromUrl(example_url),
-        url::Origin::Create(example_url), net::CookieSettingOverrides()));
+        url::Origin::Create(example_url), net::CookieSettingOverrides(),
+        /*cookie_partition_key=*/std::nullopt));
     EXPECT_TRUE(cookie_settings->IsCookieSessionOnly(example_url));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
               map->GetContentSetting(example_url, example_url,
@@ -145,7 +149,7 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
     GURL url("http://www.google.com");
     EXPECT_FALSE(cookie_settings->IsFullCookieAccessAllowed(
         url, net::SiteForCookies::FromUrl(url), url::Origin::Create(url),
-        net::CookieSettingOverrides()));
+        net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
               map->GetContentSetting(url, url, ContentSettingsType::IMAGES));
     EXPECT_EQ(
@@ -191,7 +195,7 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
     GURL url("http://www.google.com");
     EXPECT_TRUE(cookie_settings->IsFullCookieAccessAllowed(
         url, net::SiteForCookies::FromUrl(url), url::Origin::Create(url),
-        net::CookieSettingOverrides()));
+        net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt));
     EXPECT_FALSE(cookie_settings->IsCookieSessionOnly(url));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
               map->GetContentSetting(url, url, ContentSettingsType::IMAGES));
@@ -236,7 +240,7 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
 
     content_settings.push_back(cookie_settings->IsFullCookieAccessAllowed(
         url, net::SiteForCookies::FromUrl(url), url::Origin::Create(url),
-        net::CookieSettingOverrides()));
+        net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt));
     content_settings.push_back(cookie_settings->IsCookieSessionOnly(url));
     content_settings.push_back(
         map->GetContentSetting(url, url, ContentSettingsType::IMAGES));
@@ -454,7 +458,6 @@ class ImageContentSettingApiTest : public ExtensionApiTest {
         R"(
            chrome.contentSettings['images'].set({
              primaryPattern: 'http://*.example1.com/*',
-             secondaryPattern: 'http://*.example2.com/*',
              setting: 'block',
              scope: 'regular'
            });
@@ -483,11 +486,8 @@ class ImageContentSettingApiTest : public ExtensionApiTest {
   TestExtensionDir test_extension_dir_;
 };
 
-// Tests that secondary patterns for image content settings perform
-// resource-scoped origin blocking. For example:
-//   primaryPattern: 'example1.com'
-//   secondaryPattern: 'example2.com'
-// Should only block images with origin=example2.com.
+// Tests that image content setting primary pattern can be used to block image
+// loads.
 IN_PROC_BROWSER_TEST_F(ImageContentSettingApiTest, OriginBlocking) {
   LoadImageContentSettingExtension();
   std::string page_js =
@@ -527,16 +527,15 @@ IN_PROC_BROWSER_TEST_F(ImageContentSettingApiTest, OriginBlocking) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), example1_index));
 
   // The onload event will fire when there are no more pending image loads. We
-  // should then have two messages -- one for the onload event and one for
-  // "example 1" loading. "example 2" was blocked and should never load.
+  // should then have one messages -- one for the onload event. Neither "example
+  // 1" nor "example 2" should have loaded.
   EXPECT_TRUE(body_load_observer.Wait());
 
   std::vector<std::u16string> message_strings;
   for (const auto& message : observer.messages()) {
     message_strings.push_back(message.message);
   }
-  EXPECT_THAT(message_strings,
-              testing::UnorderedElementsAre(u"example1 load", u"body load"));
+  EXPECT_THAT(message_strings, testing::UnorderedElementsAre(u"body load"));
 }
 
 }  // namespace extensions

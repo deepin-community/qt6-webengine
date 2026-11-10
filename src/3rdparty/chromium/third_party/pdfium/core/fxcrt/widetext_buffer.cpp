@@ -7,7 +7,7 @@
 #include "core/fxcrt/widetext_buffer.h"
 
 #include "core/fxcrt/fx_safe_types.h"
-#include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span_util.h"
 
 namespace fxcrt {
 
@@ -16,13 +16,11 @@ size_t WideTextBuffer::GetLength() const {
 }
 
 pdfium::span<wchar_t> WideTextBuffer::GetWideSpan() {
-  return pdfium::make_span(reinterpret_cast<wchar_t*>(m_buffer.data()),
-                           GetLength());
+  return reinterpret_span<wchar_t>(GetMutableSpan());
 }
 
 pdfium::span<const wchar_t> WideTextBuffer::GetWideSpan() const {
-  return pdfium::make_span(reinterpret_cast<const wchar_t*>(m_buffer.data()),
-                           GetLength());
+  return reinterpret_span<const wchar_t>(GetSpan());
 }
 
 WideStringView WideTextBuffer::AsStringView() const {
@@ -48,8 +46,9 @@ void WideTextBuffer::AppendWideString(WideStringView str) {
 
 WideTextBuffer& WideTextBuffer::operator<<(ByteStringView ascii) {
   pdfium::span<wchar_t> new_span = ExpandWideBuf(ascii.GetLength());
-  for (size_t i = 0; i < ascii.GetLength(); ++i)
+  for (size_t i = 0; i < ascii.GetLength(); ++i) {
     new_span[i] = ascii[i];
+  }
   return *this;
 }
 
@@ -79,7 +78,7 @@ pdfium::span<wchar_t> WideTextBuffer::ExpandWideBuf(size_t char_count) {
   safe_bytes *= sizeof(wchar_t);
   size_t bytes = safe_bytes.ValueOrDie();
   ExpandBuf(bytes);
-  m_DataSize += bytes;
+  data_size_ += bytes;
   return GetWideSpan().subspan(original_count);
 }
 

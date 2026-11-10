@@ -17,7 +17,6 @@
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/unowned_ptr.h"
 
-class CFX_RenderDevice;
 class CPDF_Annot;
 class CPDF_Document;
 class CPDF_Page;
@@ -28,31 +27,28 @@ class CPDF_AnnotList final : public CPDF_PageRenderContext::AnnotListIface {
   explicit CPDF_AnnotList(CPDF_Page* pPage);
   ~CPDF_AnnotList() override;
 
-  void DisplayAnnots(CPDF_Page* pPage,
-                     CFX_RenderDevice* pDevice,
-                     CPDF_RenderContext* pContext,
+  void DisplayAnnots(CPDF_RenderContext* pContext,
                      bool bPrinting,
                      const CFX_Matrix& mtUser2Device,
                      bool bShowWidget);
 
-  size_t Count() const { return m_AnnotList.size(); }
-  CPDF_Annot* GetAt(size_t index) const { return m_AnnotList[index].get(); }
+  size_t Count() const { return annot_list_.size(); }
+  CPDF_Annot* GetAt(size_t index) const { return annot_list_[index].get(); }
   bool Contains(const CPDF_Annot* pAnnot) const;
 
  private:
-  void DisplayPass(CPDF_Page* pPage,
-                   CFX_RenderDevice* pDevice,
-                   CPDF_RenderContext* pContext,
+  void DisplayPass(CPDF_RenderContext* pContext,
                    bool bPrinting,
                    const CFX_Matrix& mtMatrix,
                    bool bWidget);
 
-  UnownedPtr<CPDF_Document> const m_pDocument;
+  UnownedPtr<CPDF_Page> const page_;
+  UnownedPtr<CPDF_Document> const document_;
 
-  // The first |m_nAnnotCount| elements are from the PDF itself. The rest are
+  // The first |annot_count_| elements are from the PDF itself. The rest are
   // generated pop-up annotations.
-  std::vector<std::unique_ptr<CPDF_Annot>> m_AnnotList;
-  size_t m_nAnnotCount = 0;
+  std::vector<std::unique_ptr<CPDF_Annot>> annot_list_;
+  size_t annot_count_ = 0;
 };
 
 #endif  // CORE_FPDFDOC_CPDF_ANNOTLIST_H_

@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 /*
  * Copyright (C) 2008 Nokia Inc.  All rights reserved.
@@ -32,27 +33,14 @@ import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
 import * as TextUtils from '../../models/text_utils/text_utils.js';
-import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as SourceFrame from '../../ui/legacy/components/source_frame/source_frame.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {DOMStorage} from './DOMStorageModel.js';
-import {StorageItemsView} from './StorageItemsView.js';
+import {KeyValueStorageItemsView} from './KeyValueStorageItemsView.js';
 
 const UIStrings = {
-  /**
-   *@description Text in DOMStorage Items View of the Application panel
-   */
-  domStorage: 'DOM Storage',
-  /**
-   *@description Text in DOMStorage Items View of the Application panel
-   */
-  key: 'Key',
-  /**
-   *@description Text for the value of something
-   */
-  value: 'Value',
   /**
    *@description Name for the "DOM Storage Items" table that shows the content of the DOM Storage.
    */
@@ -63,80 +51,44 @@ const UIStrings = {
    */
   domStorageItemsCleared: 'DOM Storage Items cleared',
   /**
-   *@description Text in DOMStorage Items View of the Application panel
-   */
-  selectAValueToPreview: 'Select a value to preview',
-  /**
    *@description Text for announcing a DOM Storage key/value item has been deleted
    */
   domStorageItemDeleted: 'The storage item was deleted.',
-  /**
-   *@description Text for announcing number of entries after filtering
-   *@example {5} PH1
-   */
-  domStorageNumberEntries: 'Number of entries shown in table: {PH1}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/application/DOMStorageItemsView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
-export class DOMStorageItemsView extends StorageItemsView {
+export class DOMStorageItemsView extends KeyValueStorageItemsView {
   private domStorage: DOMStorage;
-  private dataGrid: DataGrid.DataGrid.DataGridImpl<unknown>;
-  private readonly splitWidget: UI.SplitWidget.SplitWidget;
-  private readonly previewPanel: UI.Widget.VBox;
-  private preview: UI.Widget.Widget|null;
-  private previewValue: string|null;
   private eventListeners: Common.EventTarget.EventDescriptor[];
 
   constructor(domStorage: DOMStorage) {
-    super(i18nString(UIStrings.domStorage), 'domStoragePanel');
+    super(i18nString(UIStrings.domStorageItems), 'dom-storage', true);
 
     this.domStorage = domStorage;
     if (domStorage.storageKey) {
-      this.setStorageKey(domStorage.storageKey);
+      this.toolbar?.setStorageKey(domStorage.storageKey);
     }
 
     this.element.classList.add('storage-view', 'table');
-
-    const columns = ([
-      {id: 'key', title: i18nString(UIStrings.key), sortable: false, editable: true, longText: true, weight: 50},
-      {id: 'value', title: i18nString(UIStrings.value), sortable: false, editable: true, longText: true, weight: 50},
-    ] as DataGrid.DataGrid.ColumnDescriptor[]);
-    this.dataGrid = new DataGrid.DataGrid.DataGridImpl({
-      displayName: i18nString(UIStrings.domStorageItems),
-      columns,
-      editCallback: this.editingCallback.bind(this),
-      deleteCallback: this.deleteCallback.bind(this),
-      refreshCallback: this.refreshItems.bind(this),
-    });
-    this.dataGrid.addEventListener(DataGrid.DataGrid.Events.SelectedNode, event => {
-      void this.previewEntry(event.data);
-    });
-    this.dataGrid.addEventListener(DataGrid.DataGrid.Events.DeselectedNode, () => {
-      void this.previewEntry(null);
-    });
-    this.dataGrid.setStriped(true);
-    this.dataGrid.setName('DOMStorageItemsView');
-
-    this.splitWidget = new UI.SplitWidget.SplitWidget(
-        /* isVertical: */ false, /* secondIsSidebar: */ true, 'domStorageSplitViewState');
-    this.splitWidget.show(this.element);
-
-    this.previewPanel = new UI.Widget.VBox();
-    this.previewPanel.setMinimumSize(0, 50);
-    const resizer = this.previewPanel.element.createChild('div', 'preview-panel-resizer');
-    const dataGridWidget = this.dataGrid.asWidget();
-    dataGridWidget.setMinimumSize(0, 50);
-    this.splitWidget.setMainWidget(dataGridWidget);
-    this.splitWidget.setSidebarWidget(this.previewPanel);
-    this.splitWidget.installResizer(resizer);
-
-    this.preview = null;
-    this.previewValue = null;
 
     this.showPreview(null, null);
 
     this.eventListeners = [];
     this.setStorage(domStorage);
+  }
+
+  protected createPreview(key: string, value: string): Promise<UI.Widget.Widget|null> {
+    const protocol = this.domStorage.isLocalStorage ? 'localstorage' : 'sessionstorage';
+    const url = `${protocol}://${key}` as Platform.DevToolsPath.UrlString;
+    const provider = TextUtils.StaticContentProvider.StaticContentProvider.fromString(
+        url,
+        Common.ResourceType.resourceTypes.XHR,
+        value,
+    );
+    return SourceFrame.PreviewFactory.PreviewFactory.createPreview(
+        provider,
+        'text/plain',
+    );
   }
 
   setStorage(domStorage: DOMStorage): void {
@@ -145,134 +97,74 @@ export class DOMStorageItemsView extends StorageItemsView {
     const storageKind = domStorage.isLocalStorage ? 'local-storage-data' : 'session-storage-data';
     this.element.setAttribute('jslog', `${VisualLogging.pane().context(storageKind)}`);
     if (domStorage.storageKey) {
-      this.setStorageKey(domStorage.storageKey);
+      this.toolbar?.setStorageKey(domStorage.storageKey);
     }
     this.eventListeners = [
-      this.domStorage.addEventListener(DOMStorage.Events.DOMStorageItemsCleared, this.domStorageItemsCleared, this),
-      this.domStorage.addEventListener(DOMStorage.Events.DOMStorageItemRemoved, this.domStorageItemRemoved, this),
-      this.domStorage.addEventListener(DOMStorage.Events.DOMStorageItemAdded, this.domStorageItemAdded, this),
-      this.domStorage.addEventListener(DOMStorage.Events.DOMStorageItemUpdated, this.domStorageItemUpdated, this),
+      this.domStorage.addEventListener(DOMStorage.Events.DOM_STORAGE_ITEMS_CLEARED, this.domStorageItemsCleared, this),
+      this.domStorage.addEventListener(DOMStorage.Events.DOM_STORAGE_ITEM_REMOVED, this.domStorageItemRemoved, this),
+      this.domStorage.addEventListener(DOMStorage.Events.DOM_STORAGE_ITEM_ADDED, this.domStorageItemAdded, this),
+      this.domStorage.addEventListener(DOMStorage.Events.DOM_STORAGE_ITEM_UPDATED, this.domStorageItemUpdated, this),
     ];
     this.refreshItems();
   }
 
   private domStorageItemsCleared(): void {
-    if (!this.isShowing() || !this.dataGrid) {
+    if (!this.isShowing()) {
       return;
     }
 
-    this.dataGrid.rootNode().removeChildren();
-    this.dataGrid.addCreationNode(false);
-    UI.ARIAUtils.alert(i18nString(UIStrings.domStorageItemsCleared));
-    this.setCanDeleteSelected(false);
+    this.itemsCleared();
+  }
+
+  override itemsCleared(): void {
+    super.itemsCleared();
+    UI.ARIAUtils.LiveAnnouncer.alert(i18nString(UIStrings.domStorageItemsCleared));
   }
 
   private domStorageItemRemoved(event: Common.EventTarget.EventTargetEvent<DOMStorage.DOMStorageItemRemovedEvent>):
       void {
-    if (!this.isShowing() || !this.dataGrid) {
+    if (!this.isShowing()) {
       return;
     }
 
-    const storageData = event.data;
-    const rootNode = this.dataGrid.rootNode();
-    const children = rootNode.children;
+    this.itemRemoved(event.data.key);
+  }
 
-    for (let i = 0; i < children.length; ++i) {
-      const childNode = children[i];
-      if (childNode.data.key === storageData.key) {
-        rootNode.removeChild(childNode);
-        this.setCanDeleteSelected(children.length > 1);
-        return;
-      }
-    }
+  override itemRemoved(key: string): void {
+    super.itemRemoved(key);
+    UI.ARIAUtils.LiveAnnouncer.alert(i18nString(UIStrings.domStorageItemDeleted));
   }
 
   private domStorageItemAdded(event: Common.EventTarget.EventTargetEvent<DOMStorage.DOMStorageItemAddedEvent>): void {
-    if (!this.isShowing() || !this.dataGrid) {
+    if (!this.isShowing()) {
       return;
     }
 
-    const storageData = event.data;
-    const rootNode = this.dataGrid.rootNode();
-    const children = rootNode.children;
-
-    for (let i = 0; i < children.length; ++i) {
-      if (children[i].data.key === storageData.key) {
-        return;
-      }
-    }
-
-    const childNode = new DataGrid.DataGrid.DataGridNode({key: storageData.key, value: storageData.value}, false);
-    rootNode.insertChild(childNode, children.length - 1);
+    this.itemAdded(event.data.key, event.data.value);
   }
 
   private domStorageItemUpdated(event: Common.EventTarget.EventTargetEvent<DOMStorage.DOMStorageItemUpdatedEvent>):
       void {
-    if (!this.isShowing() || !this.dataGrid) {
+    if (!this.isShowing()) {
       return;
     }
 
-    const storageData = event.data;
-    const childNode = this.dataGrid.rootNode().children.find(
-        (child: DataGrid.DataGrid.DataGridNode<unknown>) => child.data.key === storageData.key);
-    if (!childNode) {
-      return;
-    }
-    if (childNode.data.value !== storageData.value) {
-      childNode.data.value = storageData.value;
-      childNode.refresh();
-    }
-    if (!childNode.selected) {
-      return;
-    }
-    if (this.previewValue !== storageData.value) {
-      void this.previewEntry(childNode);
-    }
-    this.setCanDeleteSelected(true);
-  }
-
-  private showDOMStorageItems(items: string[][]): void {
-    const rootNode = this.dataGrid.rootNode();
-    let selectedKey: null = null;
-    for (const node of rootNode.children) {
-      if (!node.selected) {
-        continue;
-      }
-      selectedKey = node.data.key;
-      break;
-    }
-    rootNode.removeChildren();
-    let selectedNode: DataGrid.DataGrid.DataGridNode<unknown>|null = null;
-    const filteredItems = (item: string[]): string => `${item[0]} ${item[1]}`;
-    const filteredList = this.filter(items, filteredItems);
-    for (const item of filteredList) {
-      const key = item[0];
-      const value = item[1];
-      const node = new DataGrid.DataGrid.DataGridNode({key: key, value: value}, false);
-      node.selectable = true;
-      rootNode.appendChild(node);
-      if (!selectedNode || key === selectedKey) {
-        selectedNode = node;
-      }
-    }
-    if (selectedNode) {
-      selectedNode.selected = true;
-    }
-    this.dataGrid.addCreationNode(false);
-    this.setCanDeleteSelected(Boolean(selectedNode));
-    UI.ARIAUtils.alert(i18nString(UIStrings.domStorageNumberEntries, {PH1: filteredList.length}));
-  }
-
-  override deleteSelectedItem(): void {
-    if (!this.dataGrid || !this.dataGrid.selectedNode) {
-      return;
-    }
-
-    this.deleteCallback(this.dataGrid.selectedNode);
+    this.itemUpdated(event.data.key, event.data.value);
   }
 
   override refreshItems(): void {
-    void this.domStorage.getItems().then(items => items && this.showDOMStorageItems(items));
+    void this.#refreshItems();
+  }
+
+  async #refreshItems(): Promise<void> {
+    const items = await this.domStorage.getItems();
+    if (!items || !this.toolbar) {
+      return;
+    }
+    const {filterRegex} = this.toolbar;
+    const filteredItems = items.map(item => ({key: item[0], value: item[1]}))
+                              .filter(item => filterRegex?.test(`${item.key} ${item.value}`) ?? true);
+    this.showItems(filteredItems);
   }
 
   override deleteAllItems(): void {
@@ -281,73 +173,11 @@ export class DOMStorageItemsView extends StorageItemsView {
     this.domStorageItemsCleared();
   }
 
-  private editingCallback(
-      editingNode: DataGrid.DataGrid.DataGridNode<unknown>, columnIdentifier: string, oldText: string,
-      newText: string): void {
-    const domStorage = this.domStorage;
-    if (columnIdentifier === 'key') {
-      if (typeof oldText === 'string') {
-        domStorage.removeItem(oldText);
-      }
-      domStorage.setItem(newText, editingNode.data.value || '');
-      this.removeDupes(editingNode);
-    } else {
-      domStorage.setItem(editingNode.data.key || '', newText);
-    }
+  protected removeItem(key: string): void {
+    this.domStorage?.removeItem(key);
   }
 
-  private removeDupes(masterNode: DataGrid.DataGrid.DataGridNode<unknown>): void {
-    const rootNode = this.dataGrid.rootNode();
-    const children = rootNode.children;
-    for (let i = children.length - 1; i >= 0; --i) {
-      const childNode = children[i];
-      if ((childNode.data.key === masterNode.data.key) && (masterNode !== childNode)) {
-        rootNode.removeChild(childNode);
-      }
-    }
-  }
-
-  private deleteCallback(node: DataGrid.DataGrid.DataGridNode<unknown>): void {
-    if (!node || node.isCreationNode) {
-      return;
-    }
-
-    if (this.domStorage) {
-      this.domStorage.removeItem(node.data.key);
-    }
-
-    UI.ARIAUtils.alert(i18nString(UIStrings.domStorageItemDeleted));
-  }
-
-  private showPreview(preview: UI.Widget.Widget|null, value: string|null): void {
-    if (this.preview && this.previewValue === value) {
-      return;
-    }
-    if (this.preview) {
-      this.preview.detach();
-    }
-    if (!preview) {
-      preview = new UI.EmptyWidget.EmptyWidget(i18nString(UIStrings.selectAValueToPreview));
-    }
-    this.previewValue = value;
-    this.preview = preview;
-    preview.show(this.previewPanel.contentElement);
-  }
-
-  private async previewEntry(entry: DataGrid.DataGrid.DataGridNode<unknown>|null): Promise<void> {
-    const value = entry && entry.data && entry.data.value;
-    if (entry && entry.data && entry.data.value) {
-      const protocol = this.domStorage.isLocalStorage ? 'localstorage' : 'sessionstorage';
-      const url = `${protocol}://${entry.key}` as Platform.DevToolsPath.UrlString;
-      const provider = TextUtils.StaticContentProvider.StaticContentProvider.fromString(
-          url, Common.ResourceType.resourceTypes.XHR, (value as string));
-      const preview = await SourceFrame.PreviewFactory.PreviewFactory.createPreview(provider, 'text/plain');
-      // Selection could've changed while the preview was loaded
-      if (entry.selected) {
-        this.showPreview(preview, value);
-      }
-    } else {
-      this.showPreview(null, value);
-    }
+  protected setItem(key: string, value: string): void {
+    this.domStorage?.setItem(key, value);
   }
 }

@@ -54,7 +54,6 @@ EventResult DispatchEventFromNativeUiEvent(
     // Apparently, there is no need for them to wrap the |event|.
   } else {
     NOTREACHED();
-    return ER_UNHANDLED;
   }
 }
 

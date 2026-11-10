@@ -28,10 +28,10 @@
 #ifndef SRC_DAWN_NATIVE_VULKAN_BUFFERVK_H_
 #define SRC_DAWN_NATIVE_VULKAN_BUFFERVK_H_
 
-#include <set>
-
 #include "dawn/native/Buffer.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
+#include "absl/container/flat_hash_set.h"
 #include "dawn/common/SerialQueue.h"
 #include "dawn/common/vulkan_platform.h"
 #include "dawn/native/ResourceMemoryAllocation.h"
@@ -55,12 +55,9 @@ class Buffer final : public BufferBase {
     void TransitionUsageNow(CommandRecordingContext* recordingContext,
                             wgpu::BufferUsage usage,
                             wgpu::ShaderStage shaderStage = wgpu::ShaderStage::None);
-    bool TrackUsageAndGetResourceBarrier(CommandRecordingContext* recordingContext,
+    void TrackUsageAndGetResourceBarrier(CommandRecordingContext* recordingContext,
                                          wgpu::BufferUsage usage,
-                                         wgpu::ShaderStage shaderStage,
-                                         VkBufferMemoryBarrier* barrier,
-                                         VkPipelineStageFlags* srcStages,
-                                         VkPipelineStageFlags* dstStages);
+                                         wgpu::ShaderStage shaderStage);
 
     // All the Ensure methods return true if the buffer was initialized to zero.
     bool EnsureDataInitialized(CommandRecordingContext* recordingContext);
@@ -73,9 +70,9 @@ class Buffer final : public BufferBase {
     // Dawn API
     void SetLabelImpl() override;
 
-    static void TransitionMappableBuffersEagerly(const VulkanFunctions& fn,
+    static void TransitionMappableBuffersEagerly(Device* device,
                                                  CommandRecordingContext* recordingContext,
-                                                 const std::set<Ref<Buffer>>& buffers);
+                                                 const absl::flat_hash_set<Ref<Buffer>>& buffers);
 
   private:
     ~Buffer() override;
@@ -94,7 +91,8 @@ class Buffer final : public BufferBase {
     void DestroyImpl() override;
     bool IsCPUWritableAtCreation() const override;
     MaybeError MapAtCreationImpl() override;
-    void* GetMappedPointer() override;
+    void* GetMappedPointerImpl() override;
+    MaybeError UploadData(uint64_t bufferOffset, const void* data, size_t size) override;
 
     VkBuffer mHandle = VK_NULL_HANDLE;
     ResourceMemoryAllocation mMemoryAllocation;
@@ -103,7 +101,7 @@ class Buffer final : public BufferBase {
     VkDeviceMemory mDedicatedDeviceMemory = VK_NULL_HANDLE;
 
     wgpu::Callback mHostMappedDisposeCallback = nullptr;
-    void* mHostMappedDisposeUserdata = nullptr;
+    raw_ptr<void, DisableDanglingPtrDetection> mHostMappedDisposeUserdata = nullptr;
 
     // Track which usage was the last to write to the buffer.
     wgpu::BufferUsage mLastWriteUsage = wgpu::BufferUsage::None;
@@ -112,6 +110,10 @@ class Buffer final : public BufferBase {
     // Track which usages have read the buffer since the last write.
     wgpu::BufferUsage mReadUsage = wgpu::BufferUsage::None;
     wgpu::ShaderStage mReadShaderStages = wgpu::ShaderStage::None;
+
+    bool mHostVisible : 1;
+    bool mHostCoherent : 1;
+    bool mHasWriteTransitioned : 1;
 };
 
 }  // namespace dawn::native::vulkan

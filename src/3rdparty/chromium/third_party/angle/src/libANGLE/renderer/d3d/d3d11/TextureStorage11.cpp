@@ -13,6 +13,7 @@
 #include <tuple>
 
 #include "common/MemoryBuffer.h"
+#include "common/base/anglebase/numerics/checked_math.h"
 #include "common/utilities.h"
 #include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
@@ -199,6 +200,18 @@ int TextureStorage11::getLevelHeight(int mipLevel) const
 int TextureStorage11::getLevelDepth(int mipLevel) const
 {
     return std::max(static_cast<int>(mTextureDepth) >> mipLevel, 1);
+}
+
+bool TextureStorage11::isMultiplanar(const gl::Context *context)
+{
+    const TextureHelper11 *dstTexture = nullptr;
+    if (getResource(context, &dstTexture) == angle::Result::Continue)
+    {
+        DXGI_FORMAT format = dstTexture->getFormat();
+        return format == DXGI_FORMAT_NV12 || format == DXGI_FORMAT_P010 ||
+               format == DXGI_FORMAT_P016;
+    }
+    return false;
 }
 
 angle::Result TextureStorage11::getMippedResource(const gl::Context *context,
@@ -567,7 +580,6 @@ angle::Result TextureStorage11::updateSubresourceLevel(const gl::Context *contex
                                                        const gl::Box &copyArea)
 {
     ASSERT(srcTexture.valid());
-
     ANGLE_TRY(resolveTexture(context));
     const GLint level = index.getLevelIndex();
 
@@ -579,8 +591,8 @@ angle::Result TextureStorage11::updateSubresourceLevel(const gl::Context *contex
 
     const TextureHelper11 *dstTexture = nullptr;
 
-    // If the zero-LOD workaround is active and we want to update a level greater than zero, then we
-    // should update the mipmapped texture, even if mapmaps are currently disabled.
+    // If the zero-LOD workaround is active and we want to update a level greater than zero,
+    // then we should update the mipmapped texture, even if mapmaps are currently disabled.
     if (level > 0 && mRenderer->getFeatures().zeroMaxLodWorkaround.enabled)
     {
         ANGLE_TRY(getMippedResource(context, &dstTexture));
@@ -617,9 +629,87 @@ angle::Result TextureStorage11::updateSubresourceLevel(const gl::Context *contex
 
     ID3D11DeviceContext *deviceContext = mRenderer->getDeviceContext();
 
-    deviceContext->CopySubresourceRegion(dstTexture->get(), dstSubresource, copyArea.x, copyArea.y,
-                                         copyArea.z, srcTexture.get(), sourceSubresource,
-                                         fullCopy ? nullptr : &srcBox);
+    if (d3d11::IsSupportedMultiplanarFormat(dstTexture->getFormat()))
+    {
+        ASSERT(dstSubresource == 0);
+        if (dstSubresource != 0)
+        {
+            return angle::Result::Stop;
+        }
+        // Intermediate texture used for copy for multiplanar formats.
+        TextureHelper11 intermediateTextureHelper;
+
+        D3D11_TEXTURE2D_DESC planeDesc;
+        planeDesc.Width              = static_cast<UINT>(copyArea.width);
+        planeDesc.Height             = static_cast<UINT>(copyArea.height);
+        planeDesc.MipLevels          = 1;
+        planeDesc.ArraySize          = 1;
+        planeDesc.Format             = srcTexture.getFormatSet().srvFormat;
+        planeDesc.SampleDesc.Count   = 1;
+        planeDesc.SampleDesc.Quality = 0;
+        planeDesc.Usage              = D3D11_USAGE_DEFAULT;
+        planeDesc.BindFlags          = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        planeDesc.CPUAccessFlags     = 0;
+        planeDesc.MiscFlags          = 0;
+
+        GLenum internalFormat = srcTexture.getFormatSet().internalFormat;
+
+        // Allocate intermediate texture and copy srcTexture into it.
+        ANGLE_TRY(mRenderer->allocateTexture(
+            GetImplAs<Context11>(context), planeDesc,
+            d3d11::Format::Get(internalFormat, mRenderer->getRenderer11DeviceCaps()),
+            &intermediateTextureHelper));
+        intermediateTextureHelper.setInternalName(
+            "updateSubresourceLevel::intermediateTextureHelper");
+
+        // Intermediate texture has offsets 0.
+        deviceContext->CopySubresourceRegion(intermediateTextureHelper.get(), 0, 0, 0, 0,
+                                             srcTexture.get(), sourceSubresource,
+                                             fullCopy ? nullptr : &srcBox);
+
+        Context11 *context11 = GetImplAs<Context11>(context);
+        d3d11::RenderTargetView rtv;
+        D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
+        rtvDesc.Format             = srcTexture.getFormatSet().rtvFormat;
+        rtvDesc.ViewDimension      = D3D11_RTV_DIMENSION_TEXTURE2D;
+        rtvDesc.Texture2D.MipSlice = 0;
+
+        ANGLE_TRY(mRenderer->allocateResource(context11, rtvDesc, dstTexture->get(), &rtv));
+        rtv.setInternalName("updateSubresourceLevel.RTV");
+
+        d3d11::SharedSRV srv;
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+        srvDesc.Format                    = srcTexture.getFormatSet().srvFormat;
+        srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.MipLevels       = 1;
+
+        ANGLE_TRY(
+            mRenderer->allocateResource(context11, srvDesc, intermediateTextureHelper.get(), &srv));
+        srv.setInternalName("updateSubresourceLevel.SRV");
+
+        // Intermediate texture has 0 offsets.
+        gl::Box intermediateGlBox(0, 0, 0, copyArea.width, copyArea.height, 1);
+        // Destination texture has offsets similar to that of source texture.
+        gl::Box destGlBox(copyArea.x, copyArea.y, copyArea.z, copyArea.width, copyArea.height, 1);
+        gl::Extents srcSize(copyArea.width, copyArea.height, 1);
+        gl::Extents dstSize(texSize.width, texSize.height, 1);
+
+        // Perform a copy to dstTexture from intermediate as we cannot copy directly to NV12 d3d11
+        // textures.
+        Blit11 *blitter = mRenderer->getBlitter();
+        ANGLE_TRY(blitter->copyTexture(context, srv, intermediateGlBox, srcSize, internalFormat,
+                                       rtv, destGlBox, dstSize, nullptr,
+                                       gl::GetUnsizedFormat(internalFormat), GL_NONE, GL_NEAREST,
+                                       false, false, false));
+    }
+    else
+    {
+        deviceContext->CopySubresourceRegion(dstTexture->get(), dstSubresource, copyArea.x,
+                                             copyArea.y, copyArea.z, srcTexture.get(),
+                                             sourceSubresource, fullCopy ? nullptr : &srcBox);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -828,22 +918,35 @@ angle::Result TextureStorage11::setData(const gl::Context *context,
 
     const d3d11::Format &d3d11Format =
         d3d11::Format::Get(image->getInternalFormat(), mRenderer->getRenderer11DeviceCaps());
-    const d3d11::DXGIFormatSize &dxgiFormatInfo =
-        d3d11::GetDXGIFormatSizeInfo(d3d11Format.texFormat);
 
-    const size_t outputPixelSize = dxgiFormatInfo.pixelBytes;
-
-    UINT bufferRowPitch   = static_cast<unsigned int>(outputPixelSize) * width;
-    UINT bufferDepthPitch = bufferRowPitch * height;
-
-    const size_t neededSize               = bufferDepthPitch * depth;
     angle::MemoryBuffer *conversionBuffer = nullptr;
     const uint8_t *data                   = nullptr;
+    UINT bufferRowPitch                   = 0;
+    UINT bufferDepthPitch                 = 0;
 
     LoadImageFunctionInfo loadFunctionInfo = d3d11Format.getLoadFunctions()(type);
     if (loadFunctionInfo.requiresConversion)
     {
-        ANGLE_TRY(mRenderer->getScratchMemoryBuffer(context11, neededSize, &conversionBuffer));
+        const d3d11::DXGIFormatSize &dxgiFormatInfo =
+            d3d11::GetDXGIFormatSizeInfo(d3d11Format.texFormat);
+
+        const size_t outputPixelSize = dxgiFormatInfo.pixelBytes;
+
+        angle::CheckedNumeric<uint64_t> checkedBufferRowPitch = outputPixelSize;
+        checkedBufferRowPitch *= static_cast<uint64_t>(width);
+
+        angle::CheckedNumeric<uint64_t> checkedBufferDepthPitch = checkedBufferRowPitch * height;
+        angle::CheckedNumeric<uint64_t> checkedNeededSize       = checkedBufferDepthPitch * depth;
+
+        ANGLE_CHECK_GL_MATH(context11, checkedNeededSize.IsValid<size_t>() &&
+                                           checkedBufferRowPitch.IsValid<UINT>() &&
+                                           checkedBufferDepthPitch.IsValid<UINT>());
+
+        bufferRowPitch   = checkedBufferRowPitch.ValueOrDie<UINT>();
+        bufferDepthPitch = checkedBufferDepthPitch.ValueOrDie<UINT>();
+
+        ANGLE_TRY(mRenderer->getScratchMemoryBuffer(
+            context11, checkedNeededSize.ValueOrDie<size_t>(), &conversionBuffer));
         loadFunctionInfo.loadFunction(mRenderer->getDisplay()->getImageLoadContext(), width, height,
                                       depth, pixelData + srcSkipBytes, srcRowPitch, srcDepthPitch,
                                       conversionBuffer->data(), bufferRowPitch, bufferDepthPitch);
@@ -4296,7 +4399,10 @@ angle::Result TextureStorage11_Buffer::initTexture(const gl::Context *context)
     {
         ID3D11Buffer *buffer = nullptr;
         Buffer11 *buffer11   = GetImplAs<Buffer11>(mBuffer.get());
-        ANGLE_TRY(buffer11->getBuffer(context, rx::BufferUsage::BUFFER_USAGE_TYPED_UAV, &buffer));
+        BufferFeedback feedback;
+        ANGLE_TRY(buffer11->getBuffer(context, rx::BufferUsage::BUFFER_USAGE_TYPED_UAV, &buffer,
+                                      &feedback));
+        mBuffer.get()->applyImplFeedback(context, feedback);
         mTexture.set(buffer, mFormatInfo);
         mTexture.get()->AddRef();
     }

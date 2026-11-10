@@ -122,13 +122,13 @@ void FakeBluetoothGattDescriptorClient::ReadValue(
     }
   }
 
-  std::move(callback).Run(/*error_code=*/absl::nullopt,
+  std::move(callback).Run(/*error_code=*/std::nullopt,
                           iter->second->properties->value.value());
 }
 
 void FakeBluetoothGattDescriptorClient::WriteValue(
     const dbus::ObjectPath& object_path,
-    const std::vector<uint8_t>& value,
+    base::span<const uint8_t> value,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
   if (!base::Contains(properties_, object_path)) {

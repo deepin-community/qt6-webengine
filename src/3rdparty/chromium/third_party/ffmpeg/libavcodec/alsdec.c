@@ -37,10 +37,10 @@
 #include "decode.h"
 #include "internal.h"
 #include "mlz.h"
+#include "libavutil/mem.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/crc.h"
 #include "libavutil/softfloat_ieee754.h"
-#include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
 
 #include <stdint.h>
@@ -2110,17 +2110,17 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
     if (sconf->floating) {
         ctx->acf               = av_malloc_array(channels, sizeof(*ctx->acf));
-        ctx->shift_value       = av_malloc_array(channels, sizeof(*ctx->shift_value));
-        ctx->last_shift_value  = av_malloc_array(channels, sizeof(*ctx->last_shift_value));
-        ctx->last_acf_mantissa = av_malloc_array(channels, sizeof(*ctx->last_acf_mantissa));
+        ctx->shift_value       = av_calloc(channels, sizeof(*ctx->shift_value));
+        ctx->last_shift_value  = av_calloc(channels, sizeof(*ctx->last_shift_value));
+        ctx->last_acf_mantissa = av_calloc(channels, sizeof(*ctx->last_acf_mantissa));
         ctx->raw_mantissa      = av_calloc(channels, sizeof(*ctx->raw_mantissa));
 
         ctx->larray = av_malloc_array(ctx->cur_frame_length * 4, sizeof(*ctx->larray));
         ctx->nbits  = av_malloc_array(ctx->cur_frame_length, sizeof(*ctx->nbits));
         ctx->mlz    = av_mallocz(sizeof(*ctx->mlz));
 
-        if (!ctx->mlz || !ctx->acf || !ctx->shift_value || !ctx->last_shift_value
-            || !ctx->last_acf_mantissa || !ctx->raw_mantissa) {
+        if (!ctx->larray || !ctx->nbits || !ctx->mlz || !ctx->acf || !ctx->shift_value
+            || !ctx->last_shift_value || !ctx->last_acf_mantissa || !ctx->raw_mantissa) {
             av_log(avctx, AV_LOG_ERROR, "Allocating buffer memory failed.\n");
             return AVERROR(ENOMEM);
         }
@@ -2132,6 +2132,10 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
         for (c = 0; c < channels; ++c) {
             ctx->raw_mantissa[c] = av_calloc(ctx->cur_frame_length, sizeof(**ctx->raw_mantissa));
+            if (!ctx->raw_mantissa[c]) {
+                av_log(avctx, AV_LOG_ERROR, "Allocating buffer memory failed.\n");
+                return AVERROR(ENOMEM);
+            }
         }
     }
 
@@ -2190,10 +2194,6 @@ const FFCodec ff_als_decoder = {
     .close          = decode_end,
     FF_CODEC_DECODE_CB(decode_frame),
     .flush          = flush,
-    .p.capabilities =
-#if FF_API_SUBFRAMES
-                      AV_CODEC_CAP_SUBFRAMES |
-#endif
-                      AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <wayland-drm-client-protocol.h>
 
 #include <fcntl.h>
@@ -14,7 +19,13 @@
 #include "ui/ozone/platform/wayland/host/wayland_buffer_factory.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
 #include "ui/ozone/platform/wayland/host/wayland_drm.h"
-#include "wayland-util.h"
+
+#if defined(WAYLAND_GBM)
+#include "base/command_line.h"
+#include "base/trace_event/trace_event.h"
+#include "ui/gfx/linux/scoped_gbm_device.h"
+#include "ui/ozone/public/ozone_switches.h"
+#endif  // defined(WAYLAND_GBM)
 
 namespace ui {
 
@@ -82,8 +93,8 @@ void WaylandDrm::CreateBuffer(const base::ScopedFD& fd,
   // If the |planes_count| less than the maximum sizes of these arrays and the
   // number of offsets and strides that |wl_drm| can receive, just initialize
   // them to 0, which is totally ok.
-  uint32_t stride[3] = {0};
-  uint32_t offset[3] = {0};
+  std::array<uint32_t, 3> stride = {0};
+  std::array<uint32_t, 3> offset = {0};
   for (size_t i = 0; i < planes_count; i++) {
     stride[i] = strides[i];
     offset[i] = offset[i];
@@ -132,6 +143,10 @@ void WaylandDrm::Authenticate(const char* drm_device_path) {
     HandleDrmFailure("Drm open failed: " + std::string(drm_device_path));
     return;
   }
+
+#if defined(WAYLAND_GBM)
+  connection_->SetRenderNodePath(drm_fd, drm_device_path);
+#endif  // defined(WAYLAND_GBM)
 
   if (drmGetNodeTypeFromFd(drm_fd.get()) != DRM_NODE_PRIMARY) {
     DrmDeviceAuthenticated(wl_drm_.get());

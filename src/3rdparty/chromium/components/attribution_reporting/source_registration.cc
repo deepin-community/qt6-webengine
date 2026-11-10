@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 
-#include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -17,7 +17,10 @@
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
 #include "base/values.h"
+#include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregation_keys.h"
+#include "components/attribution_reporting/attribution_scopes_data.h"
 #include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/destination_set.h"
 #include "components/attribution_reporting/event_level_epsilon.h"
@@ -30,8 +33,6 @@
 #include "components/attribution_reporting/suitable_origin.h"
 #include "components/attribution_reporting/trigger_config.h"
 #include "mojo/public/cpp/bindings/default_construct_tag.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace attribution_reporting {
 
@@ -39,13 +40,6 @@ namespace {
 
 using ::attribution_reporting::mojom::SourceRegistrationError;
 using ::attribution_reporting::mojom::SourceType;
-
-constexpr char kAggregatableReportWindow[] = "aggregatable_report_window";
-constexpr char kAggregationKeys[] = "aggregation_keys";
-constexpr char kDestination[] = "destination";
-constexpr char kExpiry[] = "expiry";
-constexpr char kFilterData[] = "filter_data";
-constexpr char kSourceEventId[] = "source_event_id";
 
 base::TimeDelta AdjustExpiry(base::TimeDelta expiry, SourceType source_type) {
   switch (source_type) {
@@ -56,15 +50,30 @@ base::TimeDelta AdjustExpiry(base::TimeDelta expiry, SourceType source_type) {
   }
 }
 
-}  // namespace
+void RecordFeatureUsage(const SourceRegistration& result) {
+  base::UmaHistogramExactLinear(
+      "Conversions.ScopesPerSourceRegistration",
+      result.attribution_scopes_data.has_value()
+          ? result.attribution_scopes_data->attribution_scopes_set()
+                .scopes()
+                .size()
+          : 0,
+      /*exclusive_max=*/attribution_reporting::kMaxScopesPerSource + 1);
+  base::UmaHistogramExactLinear(
+      "Conversions.NamedBudgetsPerSourceRegistration",
+      result.aggregatable_named_budget_defs.budgets().size(),
+      /*exclusive_max=*/25 + 1);
+  static_assert(attribution_reporting::kMaxAggregatableNamedBudgetsPerSource ==
+                25);
+  base::UmaHistogramEnumeration("Conversions.TriggerDataMatchingRegistration",
+                                result.trigger_data_matching);
+}
 
 void RecordSourceRegistrationError(SourceRegistrationError error) {
-  static_assert(
-      SourceRegistrationError::kMaxValue ==
-          SourceRegistrationError::kEventLevelEpsilonValueInvalid,
-      "Bump version of Conversions.SourceRegistrationError10 histogram.");
-  base::UmaHistogramEnumeration("Conversions.SourceRegistrationError10", error);
+  base::UmaHistogramEnumeration("Conversions.SourceRegistrationError13", error);
 }
+
+}  // namespace
 
 SourceRegistration::SourceRegistration(mojo::DefaultConstruct::Tag tag)
     : destination_set(tag) {}
@@ -84,40 +93,35 @@ SourceRegistration::SourceRegistration(SourceRegistration&&) = default;
 SourceRegistration& SourceRegistration::operator=(SourceRegistration&&) =
     default;
 
-// static
-base::expected<SourceRegistration, SourceRegistrationError>
-SourceRegistration::Parse(base::Value::Dict registration,
-                          SourceType source_type) {
+namespace {
+
+base::expected<SourceRegistration, SourceRegistrationError> ParseDict(
+    base::Value::Dict registration,
+    SourceType source_type) {
   ASSIGN_OR_RETURN(DestinationSet destination_set,
                    DestinationSet::FromJSON(registration.Find(kDestination)));
   SourceRegistration result(std::move(destination_set));
 
-  ASSIGN_OR_RETURN(result.filter_data,
-                   FilterData::FromJSON(registration.Find(kFilterData)));
-
-  ASSIGN_OR_RETURN(
-      result.aggregation_keys,
-      AggregationKeys::FromJSON(registration.Find(kAggregationKeys)));
-
   ASSIGN_OR_RETURN(result.source_event_id,
                    ParseUint64(registration, kSourceEventId)
                        .transform(&ValueOrZero<uint64_t>),
-                   [](absl::monostate) {
+                   [](ParseError) {
                      return SourceRegistrationError::kSourceEventIdValueInvalid;
                    });
 
   ASSIGN_OR_RETURN(result.priority, ParsePriority(registration),
-                   [](absl::monostate) {
+                   [](ParseError) {
                      return SourceRegistrationError::kPriorityValueInvalid;
                    });
 
   if (const base::Value* value = registration.Find(kExpiry)) {
     ASSIGN_OR_RETURN(result.expiry,
-                     ParseLegacyDuration(
-                         *value, SourceRegistrationError::kExpiryValueInvalid));
-
-    result.expiry =
-        std::clamp(result.expiry, kMinSourceExpiry, kMaxSourceExpiry);
+                     ParseLegacyDuration(*value,
+                                         /*clamp_min=*/kMinSourceExpiry,
+                                         /*clamp_max=*/kMaxSourceExpiry),
+                     [](ParseError) {
+                       return SourceRegistrationError::kExpiryValueInvalid;
+                     });
 
     result.expiry = AdjustExpiry(result.expiry, source_type);
   }
@@ -125,15 +129,21 @@ SourceRegistration::Parse(base::Value::Dict registration,
   if (const base::Value* value = registration.Find(kAggregatableReportWindow)) {
     ASSIGN_OR_RETURN(
         result.aggregatable_report_window,
-        ParseLegacyDuration(
-            *value,
-            SourceRegistrationError::kAggregatableReportWindowValueInvalid));
-
-    result.aggregatable_report_window = std::clamp(
-        result.aggregatable_report_window, kMinReportWindow, result.expiry);
+        ParseLegacyDuration(*value,
+                            /*clamp_min=*/kMinReportWindow,
+                            /*clamp_max=*/result.expiry),
+        [](ParseError) {
+          return SourceRegistrationError::kAggregatableReportWindowValueInvalid;
+        });
   } else {
     result.aggregatable_report_window = result.expiry;
   }
+
+  ASSIGN_OR_RETURN(result.trigger_data_matching,
+                   ParseTriggerDataMatching(registration));
+
+  ASSIGN_OR_RETURN(result.event_level_epsilon,
+                   EventLevelEpsilon::Parse(registration));
 
   ASSIGN_OR_RETURN(
       result.event_report_windows,
@@ -142,19 +152,65 @@ SourceRegistration::Parse(base::Value::Dict registration,
   ASSIGN_OR_RETURN(result.max_event_level_reports,
                    MaxEventLevelReports::Parse(registration, source_type));
 
-  ASSIGN_OR_RETURN(result.trigger_data_matching,
-                   ParseTriggerDataMatching(registration));
+  ASSIGN_OR_RETURN(result.trigger_data,
+                   TriggerDataSet::Parse(registration, source_type,
+                                         result.trigger_data_matching));
 
-  ASSIGN_OR_RETURN(result.event_level_epsilon,
-                   EventLevelEpsilon::Parse(registration));
+  ASSIGN_OR_RETURN(result.filter_data,
+                   FilterData::FromJSON(registration.Find(kFilterData)));
+
+  ASSIGN_OR_RETURN(
+      result.aggregation_keys,
+      AggregationKeys::FromJSON(registration.Find(kAggregationKeys)));
+
+  ASSIGN_OR_RETURN(result.aggregatable_named_budget_defs,
+                   AggregatableNamedBudgetDefs::FromJSON(
+                       registration.Find(kAggregatableNamedBudgets)));
+
+  if (base::Value* scopes_value = registration.Find(kAttributionScopes)) {
+    ASSIGN_OR_RETURN(result.attribution_scopes_data,
+                     AttributionScopesData::FromJSON(*scopes_value));
+  }
 
   result.debug_key = ParseDebugKey(registration);
 
   result.debug_reporting = ParseDebugReporting(registration);
 
+  // Deliberately ignoring errors for now to avoid dropping the registration
+  // from the optional debug reporting feature.
+  if (auto aggregatable_debug_reporting_config =
+          SourceAggregatableDebugReportingConfig::Parse(registration);
+      aggregatable_debug_reporting_config.has_value()) {
+    result.aggregatable_debug_reporting_config =
+        *std::move(aggregatable_debug_reporting_config);
+  }
+
+  ASSIGN_OR_RETURN(
+      result.destination_limit_priority,
+      ParseInt64(registration, kDestinationLimitPriority)
+          .transform(&ValueOrZero<int64_t>),
+      [](ParseError) {
+        return SourceRegistrationError::kDestinationLimitPriorityInvalid;
+      });
+
   CHECK(result.IsValid());
   CHECK(result.IsValidForSourceType(source_type));
+
+  RecordFeatureUsage(result);
+
   return result;
+}
+
+}  // namespace
+
+// static
+base::expected<SourceRegistration, SourceRegistrationError>
+SourceRegistration::Parse(base::Value value, SourceType source_type) {
+  if (base::Value::Dict* dict = value.GetIfDict()) {
+    return ParseDict(std::move(*dict), source_type);
+  } else {
+    return base::unexpected(SourceRegistrationError::kRootWrongType);
+  }
 }
 
 // static
@@ -163,15 +219,9 @@ SourceRegistration::Parse(std::string_view json, SourceType source_type) {
   base::expected<SourceRegistration, SourceRegistrationError> source =
       base::unexpected(SourceRegistrationError::kInvalidJson);
 
-  absl::optional<base::Value> value =
-      base::JSONReader::Read(json, base::JSON_PARSE_RFC);
-
-  if (value) {
-    if (value->is_dict()) {
-      source = Parse(std::move(*value).TakeDict(), source_type);
-    } else {
-      source = base::unexpected(SourceRegistrationError::kRootWrongType);
-    }
+  if (std::optional<base::Value> value =
+          base::JSONReader::Read(json, base::JSON_PARSE_RFC)) {
+    source = Parse(*std::move(value), source_type);
   }
 
   if (!source.has_value()) {
@@ -200,6 +250,9 @@ base::Value::Dict SourceRegistration::ToJson() const {
   SerializeTimeDeltaInSeconds(dict, kExpiry, expiry);
 
   event_report_windows.Serialize(dict);
+  max_event_level_reports.Serialize(dict);
+
+  trigger_data.Serialize(dict);
 
   SerializeTimeDeltaInSeconds(dict, kAggregatableReportWindow,
                               aggregatable_report_window);
@@ -207,11 +260,19 @@ base::Value::Dict SourceRegistration::ToJson() const {
   SerializeDebugKey(dict, debug_key);
   SerializeDebugReporting(dict, debug_reporting);
 
-  max_event_level_reports.Serialize(dict);
-
   Serialize(dict, trigger_data_matching);
 
   event_level_epsilon.Serialize(dict);
+
+  aggregatable_debug_reporting_config.Serialize(dict);
+
+  if (attribution_scopes_data.has_value()) {
+    dict.Set(kAttributionScopes, attribution_scopes_data->ToJson());
+  }
+
+  SerializeInt64(dict, kDestinationLimitPriority, destination_limit_priority);
+
+  aggregatable_named_budget_defs.Serialize(dict);
 
   return dict;
 }

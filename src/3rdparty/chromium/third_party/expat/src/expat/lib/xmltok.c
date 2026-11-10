@@ -12,7 +12,7 @@
    Copyright (c) 2002      Greg Stein <gstein@users.sourceforge.net>
    Copyright (c) 2002-2016 Karl Waclawek <karl@waclawek.net>
    Copyright (c) 2005-2009 Steven Solie <steven@solie.ca>
-   Copyright (c) 2016-2022 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2016-2024 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2016      Pascal Cuoq <cuoq@trust-in-soft.com>
    Copyright (c) 2016      Don Lewis <truckman@apache.org>
    Copyright (c) 2017      Rhodri James <rhodri@wildebeest.org.uk>
@@ -20,8 +20,11 @@
    Copyright (c) 2017      Benbuck Nason <bnason@netflix.com>
    Copyright (c) 2017      José Gutiérrez de la Concha <jose@zeroc.com>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
-   Copyright (c) 2021      Dong-hee Na <donghee.na@python.org>
+   Copyright (c) 2021      Donghee Na <donghee.na@python.org>
    Copyright (c) 2022      Martin Ettl <ettl.martin78@googlemail.com>
+   Copyright (c) 2022      Sean McBride <sean@rogue-research.com>
+   Copyright (c) 2023      Hanno Böck <hanno@gentoo.org>
+   Copyright (c) 2025      Alfonso Gregory <gfunni234@gmail.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -44,7 +47,7 @@
    USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include <expat_config.h>
+#include "expat_config.h"
 
 #include <stddef.h>
 #include <string.h> /* memcpy */
@@ -54,7 +57,6 @@
 #  include "winconfig.h"
 #endif
 
-#include "expat_external.h"
 #include "internal.h"
 #include "xmltok.h"
 #include "nametab.h"
@@ -76,7 +78,7 @@
 #define VTABLE VTABLE1, PREFIX(toUtf8), PREFIX(toUtf16)
 
 #define UCS2_GET_NAMING(pages, hi, lo)                                         \
-  (namingBitmap[(pages[hi] << 3) + ((lo) >> 5)] & (1u << ((lo)&0x1F)))
+  (namingBitmap[(pages[hi] << 3) + ((lo) >> 5)] & (1u << ((lo) & 0x1F)))
 
 /* A 2 byte UTF-8 representation splits the characters 11 bits between
    the bottom 5 and 6 bits of the bytes.  We need 8 bits to index into
@@ -100,7 +102,7 @@
    & (1u << (((byte)[2]) & 0x1F)))
 
 /* Detection of invalid UTF-8 sequences is based on Table 3.1B
-   of Unicode 3.2: http://www.unicode.org/unicode/reports/tr28/
+   of Unicode 3.2: https://www.unicode.org/unicode/reports/tr28/
    with the additional restriction of not allowing the Unicode
    code points 0xFFFF and 0xFFFE (sequences EF,BF,BF and EF,BF,BE).
    Implementation details:
@@ -225,7 +227,7 @@ struct normal_encoding {
       /* isNmstrt2 */ NULL, /* isNmstrt3 */ NULL, /* isNmstrt4 */ NULL,        \
       /* isInvalid2 */ NULL, /* isInvalid3 */ NULL, /* isInvalid4 */ NULL
 
-static int FASTCALL checkCharRefNumber(int);
+static int FASTCALL checkCharRefNumber(int result);
 
 #include "xmltok_impl.h"
 #include "ascii.h"
@@ -1396,7 +1398,7 @@ unknown_toUtf16(const ENCODING *enc, const char **fromP, const char *fromLim,
 }
 
 ENCODING *
-XmlInitUnknownEncoding(void *mem, int *table, CONVERTER convert,
+XmlInitUnknownEncoding(void *mem, const int *table, CONVERTER convert,
                        void *userData) {
   int i;
   struct unknown_encoding *e = (struct unknown_encoding *)mem;
@@ -1659,7 +1661,7 @@ initScan(const ENCODING *const *encodingTable, const INIT_ENCODING *enc,
 #  undef ns
 
 ENCODING *
-XmlInitUnknownEncodingNS(void *mem, int *table, CONVERTER convert,
+XmlInitUnknownEncodingNS(void *mem, const int *table, CONVERTER convert,
                          void *userData) {
   ENCODING *enc = XmlInitUnknownEncoding(mem, table, convert, userData);
   if (enc)

@@ -15,7 +15,7 @@ template("minify_js") {
                              "out_folder",
                            ])
 
-    inputs = []
+    inputs = [ "//ui/webui/resources/tools/minify_js.mjs" ]
     outputs = []
     foreach(f, invoker.in_files) {
       assert(get_path_info(f, "extension") == "js")
@@ -39,5 +39,8 @@ template("minify_js") {
              rebase_path(out_manifest, root_build_dir),
              "--in_files",
            ] + invoker.in_files
+    if (defined(invoker.ascii_only) && invoker.ascii_only) {
+      args += [ "--ascii_only" ]
+    }
   }
 }

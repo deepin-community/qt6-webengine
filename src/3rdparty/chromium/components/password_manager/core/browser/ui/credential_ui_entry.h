@@ -59,7 +59,7 @@ struct CredentialFacet {
 // Simple struct that represents an entry inside Settings UI. Allows implicit
 // construction from PasswordForm for convenience. A single entry might
 // correspond to multiple PasswordForms.
-// TODO(crbug.com/1374029): Use class here instead of struct.
+// TODO(crbug.com/40872079): Use class here instead of struct.
 struct CredentialUIEntry {
   // Structure which represents affiliated domain and can be used by the UI to
   // display affiliated domains as links.
@@ -73,6 +73,16 @@ struct CredentialUIEntry {
 
     // signon_realm of a corresponding PasswordForm.
     std::string signon_realm;
+  };
+
+  // Structure which represents a recovery password for a password changed in a
+  // password change flow.
+  struct BackupPasswordInfo {
+    // The value of the backup password.
+    std::u16string value;
+
+    // The timestamp of when the backup password was set.
+    base::Time creation_timestamp;
   };
 
   struct Less {
@@ -112,8 +122,14 @@ struct CredentialUIEntry {
   // The current password.
   std::u16string password;
 
+  // Recovery password for automatic password change.
+  std::optional<BackupPasswordInfo> backup_password;
+
   // The origin of identity provider used for federated login.
-  url::Origin federation_origin;
+  url::SchemeHostPort federation_origin;
+
+  // The creation time, if this is a passkey, nullopt otherwise.
+  std::optional<base::Time> creation_time;
 
   // Indicates the stores where the credential is stored.
   base::flat_set<PasswordForm::Store> stored_in;
@@ -181,7 +197,6 @@ struct CredentialUIEntry {
 std::string CreateSortKey(const CredentialUIEntry& credential);
 
 bool operator==(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
-bool operator!=(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
 bool operator<(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
 
 // Returns true when the credential is either leaked or phished.

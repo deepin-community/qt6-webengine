@@ -2,20 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_
 
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 
-#if defined(__GNUC__) || defined(__clang__)
-#define PA_BASE_NUMERICS_LIKELY(x) __builtin_expect(!!(x), 1)
-#define PA_BASE_NUMERICS_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define PA_BASE_NUMERICS_LIKELY(x) (x)
-#define PA_BASE_NUMERICS_UNLIKELY(x) (x)
-#endif
+#include "partition_alloc/buildflags.h"
 
 namespace partition_alloc::internal::base::internal {
 
@@ -91,13 +90,13 @@ constexpr typename std::make_unsigned<T>::type SafeUnsignedAbs(T value) {
 // TODO(jschuh): Debug builds don't reliably propagate constants, so we restrict
 // some accelerated runtime paths to release builds until this can be forced
 // with consteval support in C++20 or C++23.
-#if defined(NDEBUG)
-constexpr bool kEnableAsmCode = true;
+#if PA_BUILDFLAG(IS_DEBUG)
+inline constexpr bool kEnableAsmCode = false;
 #else
-constexpr bool kEnableAsmCode = false;
+inline constexpr bool kEnableAsmCode = true;
 #endif
 
-// Forces a crash, like a CHECK(false). Used for numeric boundary errors.
+// Forces a crash, like a NOTREACHED(). Used for numeric boundary errors.
 // Also used in a constexpr template to trigger a compilation failure on
 // an error condition.
 struct CheckOnFailure {
@@ -838,4 +837,4 @@ constexpr Dst CommonMaxOrMin(bool is_min) {
 
 }  // namespace partition_alloc::internal::base::internal
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_IMPL_H_

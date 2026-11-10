@@ -14,6 +14,9 @@ struct ProcessCountInfo {
   // Total number of renderer processes.
   uint64 renderer_process_count_total;
 
+  // Total number of live renderer processes.
+  uint64 live_renderer_processes_count_total;
+
   // Total number of renderer processes that actually count towards the limit,
   // possibly ignoring some of the total (e.g., to prevent extensions from using
   // up the limit).
@@ -52,6 +55,9 @@ struct SiteInstanceInfo {
 
   // Specifies whether this SiteInstance is for a PDF.
   bool is_pdf;
+
+  // Specifies whether this SiteInstance has JavaScript optimizers enabled.
+  bool are_javascript_optimizers_enabled;
 
   // If this SiteInstance uses a non-default StoragePartition, this specifies a
   // string representation of that StoragePartition.
@@ -99,6 +105,9 @@ interface ProcessInternalsHandler {
 
   // Returns a string containing the currently active isolation modes.
   GetIsolationMode() => (string mode);
+
+  // Returns a string containing the currently active process per site mode.
+  GetProcessPerSiteMode() => (string mode);
 
   // Returns a list of user-triggered isolated origins, which are typically
   // saved when the user types a password into a corresponding site.  These

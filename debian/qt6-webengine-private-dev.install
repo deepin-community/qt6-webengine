@@ -3,5 +3,4 @@ usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineQuick/6.*
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineWidgets/6.*
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginecore_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginequick_private.pri
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginequickdelegatesqml_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginewidgets_private.pri

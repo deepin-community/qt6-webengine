@@ -8,26 +8,24 @@
 #include <utility>
 
 #include "base/memory/unsafe_shared_memory_region.h"
+#include "base/notimplemented.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/service/dawn_caching_interface.h"
 #include "gpu/command_buffer/service/gl_context_virtual.h"
 #include "gpu/command_buffer/service/gl_state_restorer_impl.h"
 #include "gpu/command_buffer/service/logger.h"
-#include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
+#include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/service_utils.h"
-#include "gpu/command_buffer/service/sync_point_manager.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
 #include "gpu/command_buffer/service/webgpu_decoder.h"
 #include "gpu/config/gpu_crash_keys.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/gpu_channel_manager_delegate.h"
-#include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
@@ -37,10 +35,6 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "base/win/win_util.h"
-#endif
-
-#if BUILDFLAG(IS_ANDROID)
-#include "gpu/ipc/service/stream_texture_android.h"
 #endif
 
 namespace gpu {
@@ -71,7 +65,7 @@ gpu::ContextResult WebGPUCommandBufferStub::Initialize(
     const mojom::CreateCommandBufferParams& init_params,
     base::UnsafeSharedMemoryRegion shared_state_shm) {
 #if BUILDFLAG(IS_FUCHSIA)
-  // TODO(crbug.com/707031): Implement this.
+  // TODO(crbug.com/40513405): Implement this.
   NOTIMPLEMENTED();
   LOG(ERROR) << "ContextResult::kFatalFailure: no fuchsia support";
   return gpu::ContextResult::kFatalFailure;
@@ -119,9 +113,9 @@ gpu::ContextResult WebGPUCommandBufferStub::Initialize(
       memory_tracker_.get(), manager->outputter(), manager->gpu_preferences(),
       std::move(shared_context_state), dawn_cache_options, channel_));
 
-  sync_point_client_state_ =
-      channel_->sync_point_manager()->CreateSyncPointClientState(
-          CommandBufferNamespace::GPU_IO, command_buffer_id_, sequence_id_);
+  scoped_sync_point_client_state_ =
+      channel_->scheduler()->CreateSyncPointClientState(
+          sequence_id_, CommandBufferNamespace::GPU_IO, command_buffer_id_);
 
   result = decoder->Initialize(manager->gpu_feature_info());
   if (result != gpu::ContextResult::kSuccess) {
@@ -158,6 +152,8 @@ MemoryTracker* WebGPUCommandBufferStub::GetContextGroupMemoryTracker() const {
   return nullptr;
 }
 
-void WebGPUCommandBufferStub::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {}
+base::WeakPtr<CommandBufferStub> WebGPUCommandBufferStub::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
 
 }  // namespace gpu

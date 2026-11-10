@@ -35,7 +35,6 @@
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
-#include "third_party/blink/public/mojom/feature_observer/feature_observer.mojom-blink.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -70,9 +69,7 @@ static const char kPermissionDeniedErrorMessage[] =
     "The user denied permission to access the database.";
 
 IDBFactory::IDBFactory(ExecutionContext* context)
-    : ExecutionContextLifecycleObserver(context),
-      remote_(context),
-      feature_observer_(context) {}
+    : ExecutionContextLifecycleObserver(context), remote_(context) {}
 IDBFactory::~IDBFactory() = default;
 
 static bool IsContextValid(ExecutionContext* context) {
@@ -90,7 +87,6 @@ void IDBFactory::Trace(Visitor* visitor) const {
   ScriptWrappable::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
   visitor->Trace(remote_);
-  visitor->Trace(feature_observer_);
   visitor->Trace(weak_factory_);
 }
 
@@ -130,11 +126,13 @@ scoped_refptr<base::SingleThreadTaskRunner> IDBFactory::GetTaskRunner() {
   return GetExecutionContext()->GetTaskRunner(TaskType::kDatabaseAccess);
 }
 
-ScriptPromise IDBFactory::GetDatabaseInfo(ScriptState* script_state,
-                                          ExceptionState& exception_state) {
+ScriptPromise<IDLSequence<IDBDatabaseInfo>> IDBFactory::GetDatabaseInfo(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
   ExecutionContext* context = GetValidContext(script_state);
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
-      script_state, exception_state.GetContext());
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<IDLSequence<IDBDatabaseInfo>>>(
+          script_state, exception_state.GetContext());
   if (!context) {
     resolver->Reject();
     return resolver->Promise();
@@ -158,7 +156,8 @@ ScriptPromise IDBFactory::GetDatabaseInfo(ScriptState* script_state,
   return resolver->Promise();
 }
 
-void IDBFactory::GetDatabaseInfoImpl(ScriptPromiseResolver* resolver) {
+void IDBFactory::GetDatabaseInfoImpl(
+    ScriptPromiseResolver<IDLSequence<IDBDatabaseInfo>>* resolver) {
   if (!allowed_.value()) {
     ScriptState* script_state = resolver->GetScriptState();
     ScriptState::Scope scope(script_state);
@@ -174,7 +173,7 @@ void IDBFactory::GetDatabaseInfoImpl(ScriptPromiseResolver* resolver) {
 }
 
 void IDBFactory::DidGetDatabaseInfo(
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolver<IDLSequence<IDBDatabaseInfo>>* resolver,
     Vector<mojom::blink::IDBNameAndVersionPtr> names_and_versions,
     mojom::blink::IDBErrorPtr error) {
   ScriptState* script_state = resolver->GetScriptState();
@@ -182,7 +181,7 @@ void IDBFactory::DidGetDatabaseInfo(
     return;
   }
 
-  if (error) {
+  if (error->error_code != mojom::blink::IDBException::kNoError) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         static_cast<DOMExceptionCode>(error->error_code),
         error->error_message));
@@ -287,7 +286,7 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(ScriptState* script_state,
   auto* request = MakeGarbageCollected<IDBOpenDBRequest>(
       script_state, callbacks_remote.InitWithNewEndpointAndPassReceiver(),
       std::move(transaction_remote), transaction_id, version,
-      std::move(metrics), CreatePendingRemoteFeatureObserver());
+      std::move(metrics));
 
   auto do_open = WTF::BindOnce(
       &IDBFactory::OpenInternalImpl,
@@ -322,9 +321,24 @@ void IDBFactory::OpenInternalImpl(
     return;
   }
 
+  // Getting the scheduling priority as a one-off is somewhat awkward.
+  int scheduling_priority = -1;
+  std::unique_ptr<FrameOrWorkerScheduler::LifecycleObserverHandle> lifecycle =
+      GetExecutionContext()->GetScheduler()->AddLifecycleObserver(
+          FrameOrWorkerScheduler::ObserverType::kWorkerScheduler,
+          WTF::BindRepeating(
+              [](int* priority,
+                 scheduler::SchedulingLifecycleState lifecycle_state) {
+                *priority = IDBDatabase::GetSchedulingPriority(lifecycle_state);
+              },
+              WTF::Unretained(&scheduling_priority)));
+  DCHECK_GE(scheduling_priority, 0);
+  request->set_connection_priority(scheduling_priority);
+
   GetRemote()->Open(CreatePendingRemote(request->CreateFactoryClient()),
                     std::move(callbacks_remote), name, version,
-                    std::move(transaction_receiver), transaction_id);
+                    std::move(transaction_receiver), transaction_id,
+                    scheduling_priority);
 }
 
 IDBOpenDBRequest* IDBFactory::open(ScriptState* script_state,
@@ -378,8 +392,7 @@ IDBOpenDBRequest* IDBFactory::DeleteDatabaseInternal(
       script_state,
       /*callbacks_receiver=*/mojo::NullAssociatedReceiver(),
       IDBTransaction::TransactionMojoRemote(context), 0,
-      IDBDatabaseMetadata::kDefaultVersion, std::move(metrics),
-      CreatePendingRemoteFeatureObserver());
+      IDBDatabaseMetadata::kDefaultVersion, std::move(metrics));
 
   auto do_delete = WTF::BindOnce(&IDBFactory::DeleteDatabaseInternalImpl,
                                  WrapPersistent(weak_factory_.GetWeakCell()),
@@ -415,9 +428,8 @@ int16_t IDBFactory::cmp(ScriptState* script_state,
                         const ScriptValue& first_value,
                         const ScriptValue& second_value,
                         ExceptionState& exception_state) {
-  const std::unique_ptr<IDBKey> first =
-      ScriptValue::To<std::unique_ptr<IDBKey>>(script_state->GetIsolate(),
-                                               first_value, exception_state);
+  const std::unique_ptr<IDBKey> first = CreateIDBKeyFromValue(
+      script_state->GetIsolate(), first_value.V8Value(), exception_state);
   if (exception_state.HadException())
     return 0;
   DCHECK(first);
@@ -427,9 +439,8 @@ int16_t IDBFactory::cmp(ScriptState* script_state,
     return 0;
   }
 
-  const std::unique_ptr<IDBKey> second =
-      ScriptValue::To<std::unique_ptr<IDBKey>>(script_state->GetIsolate(),
-                                               second_value, exception_state);
+  const std::unique_ptr<IDBKey> second = CreateIDBKeyFromValue(
+      script_state->GetIsolate(), second_value.V8Value(), exception_state);
   if (exception_state.HadException())
     return 0;
   DCHECK(second);
@@ -456,24 +467,25 @@ void IDBFactory::AllowIndexedDB(base::OnceCallback<void()> callback) {
     return;
   }
 
-  WebContentSettingsClient* settings_client = nullptr;
-
   if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
     LocalFrame* frame = window->GetFrame();
     if (!frame) {
       DidAllowIndexedDB(false);
       return;
     }
-    settings_client = frame->GetContentSettingsClient();
-  } else {
-    settings_client = To<WorkerGlobalScope>(context)->ContentSettingsClient();
+    frame->AllowStorageAccessAndNotify(
+        WebContentSettingsClient::StorageType::kIndexedDB,
+        WTF::BindOnce(&IDBFactory::DidAllowIndexedDB,
+                      WrapPersistent(weak_factory_.GetWeakCell())));
+    return;
   }
 
+  WebContentSettingsClient* settings_client =
+      To<WorkerGlobalScope>(context)->ContentSettingsClient();
   if (!settings_client) {
     DidAllowIndexedDB(true);
     return;
   }
-
   settings_client->AllowStorageAccess(
       WebContentSettingsClient::StorageType::kIndexedDB,
       WTF::BindOnce(&IDBFactory::DidAllowIndexedDB,
@@ -500,22 +512,6 @@ IDBFactory::CreatePendingRemote(
       pending_factory_client.InitWithNewEndpointAndPassReceiver(),
       GetTaskRunner());
   return pending_factory_client;
-}
-
-mojo::PendingRemote<mojom::blink::ObservedFeature>
-IDBFactory::CreatePendingRemoteFeatureObserver() {
-  if (!feature_observer_) {
-    mojo::PendingRemote<mojom::blink::FeatureObserver> feature_observer;
-    GetExecutionContext()->GetBrowserInterfaceBroker().GetInterface(
-        feature_observer.InitWithNewPipeAndPassReceiver());
-    feature_observer_.Bind(std::move(feature_observer), GetTaskRunner());
-  }
-
-  mojo::PendingRemote<mojom::blink::ObservedFeature> feature;
-  feature_observer_->Register(
-      feature.InitWithNewPipeAndPassReceiver(),
-      mojom::blink::ObservedFeatureType::kIndexedDBConnection);
-  return feature;
 }
 
 }  // namespace blink

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string_view>
 
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/hash/sha1.h"
@@ -17,6 +18,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "crypto/rsa_private_key.h"
 #include "net/base/net_errors.h"
@@ -99,10 +101,10 @@ void CheckGoogleCert(const scoped_refptr<X509Certificate>& google_cert,
   EXPECT_EQ(0U, issuer.organization_unit_names.size());
 
   // Use DoubleT because its epoch is the same on all platforms
-  const Time& valid_start = google_cert->valid_start();
+  Time valid_start = google_cert->valid_start();
   EXPECT_EQ(valid_from, valid_start.InSecondsFSinceUnixEpoch());
 
-  const Time& valid_expiry = google_cert->valid_expiry();
+  Time valid_expiry = google_cert->valid_expiry();
   EXPECT_EQ(valid_to, valid_expiry.InSecondsFSinceUnixEpoch());
 
   EXPECT_EQ(expected_fingerprint, X509Certificate::CalculateFingerprint256(
@@ -158,12 +160,12 @@ TEST(X509CertificateTest, WebkitCertParsing) {
             issuer.organization_unit_names[0]);
 
   // Use DoubleT because its epoch is the same on all platforms
-  const Time& valid_start = webkit_cert->valid_start();
+  Time valid_start = webkit_cert->valid_start();
   EXPECT_EQ(
       1205883319,
       valid_start.InSecondsFSinceUnixEpoch());  // Mar 18 23:35:19 2008 GMT
 
-  const Time& valid_expiry = webkit_cert->valid_expiry();
+  Time valid_expiry = webkit_cert->valid_expiry();
   EXPECT_EQ(
       1300491319,
       valid_expiry.InSecondsFSinceUnixEpoch());  // Mar 18 23:35:19 2011 GMT
@@ -209,12 +211,12 @@ TEST(X509CertificateTest, ThawteCertParsing) {
             issuer.organization_unit_names[0]);
 
   // Use DoubleT because its epoch is the same on all platforms
-  const Time& valid_start = thawte_cert->valid_start();
+  Time valid_start = thawte_cert->valid_start();
   EXPECT_EQ(
       1227052800,
       valid_start.InSecondsFSinceUnixEpoch());  // Nov 19 00:00:00 2008 GMT
 
-  const Time& valid_expiry = thawte_cert->valid_expiry();
+  Time valid_expiry = thawte_cert->valid_expiry();
   EXPECT_EQ(
       1263772799,
       valid_expiry.InSecondsFSinceUnixEpoch());  // Jan 17 23:59:59 2010 GMT
@@ -371,10 +373,7 @@ TEST(X509CertificateTest, SerialNumbers) {
     0x01,0x2a,0x39,0x76,0x0d,0x3f,0x4f,0xc9,
     0x0b,0xe7,0xbd,0x2b,0xcf,0x95,0x2e,0x7a,
   };
-
-  ASSERT_EQ(sizeof(google_serial), google_cert->serial_number().size());
-  EXPECT_TRUE(memcmp(google_cert->serial_number().data(), google_serial,
-                     sizeof(google_serial)) == 0);
+  EXPECT_EQ(google_cert->serial_number(), base::as_string_view(google_serial));
 }
 
 TEST(X509CertificateTest, SerialNumberZeroPadded) {
@@ -387,9 +386,7 @@ TEST(X509CertificateTest, SerialNumberZeroPadded) {
   // Check a serial number where the first byte is >= 0x80, the DER returned by
   // serial() should contain the leading 0 padding byte.
   static const uint8_t expected_serial[3] = {0x00, 0x80, 0x01};
-  ASSERT_EQ(sizeof(expected_serial), cert->serial_number().size());
-  EXPECT_TRUE(memcmp(cert->serial_number().data(), expected_serial,
-                     sizeof(expected_serial)) == 0);
+  EXPECT_EQ(cert->serial_number(), base::as_string_view(expected_serial));
 }
 
 TEST(X509CertificateTest, SerialNumberZeroPadded21BytesLong) {
@@ -405,9 +402,7 @@ TEST(X509CertificateTest, SerialNumberZeroPadded21BytesLong) {
   static const uint8_t expected_serial[21] = {
       0x00, 0x80, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
       0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13};
-  ASSERT_EQ(sizeof(expected_serial), cert->serial_number().size());
-  EXPECT_TRUE(memcmp(cert->serial_number().data(), expected_serial,
-                     sizeof(expected_serial)) == 0);
+  EXPECT_EQ(cert->serial_number(), base::as_string_view(expected_serial));
 }
 
 TEST(X509CertificateTest, SerialNumberNegative) {
@@ -420,9 +415,7 @@ TEST(X509CertificateTest, SerialNumberNegative) {
   // RFC 5280 does not allow serial numbers to be negative, but serial number
   // parsing is currently permissive, so this does not cause an error.
   static const uint8_t expected_serial[2] = {0x80, 0x01};
-  ASSERT_EQ(sizeof(expected_serial), cert->serial_number().size());
-  EXPECT_TRUE(memcmp(cert->serial_number().data(), expected_serial,
-                     sizeof(expected_serial)) == 0);
+  EXPECT_EQ(cert->serial_number(), base::as_string_view(expected_serial));
 }
 
 TEST(X509CertificateTest, SerialNumber37BytesLong) {
@@ -439,9 +432,7 @@ TEST(X509CertificateTest, SerialNumber37BytesLong) {
       0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
       0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
       0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25};
-  ASSERT_EQ(sizeof(expected_serial), cert->serial_number().size());
-  EXPECT_TRUE(memcmp(cert->serial_number().data(), expected_serial,
-                     sizeof(expected_serial)) == 0);
+  EXPECT_EQ(cert->serial_number(), base::as_string_view(expected_serial));
 }
 
 TEST(X509CertificateTest, SHA256FingerprintsCorrectly) {
@@ -542,17 +533,13 @@ TEST(X509CertificateTest, ParseSubjectAltNames) {
   static const uint8_t kIPv4Address[] = {
       0x7F, 0x00, 0x00, 0x02
   };
-  ASSERT_EQ(std::size(kIPv4Address), ip_addresses[0].size());
-  EXPECT_EQ(
-      0, memcmp(ip_addresses[0].data(), kIPv4Address, std::size(kIPv4Address)));
+  EXPECT_EQ(ip_addresses[0], base::as_string_view(kIPv4Address));
 
   static const uint8_t kIPv6Address[] = {
       0xFE, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
   };
-  ASSERT_EQ(std::size(kIPv6Address), ip_addresses[1].size());
-  EXPECT_EQ(
-      0, memcmp(ip_addresses[1].data(), kIPv6Address, std::size(kIPv6Address)));
+  EXPECT_EQ(ip_addresses[1], base::as_string_view(kIPv6Address));
 
   // Ensure the subjectAltName dirName has not influenced the handling of
   // the subject commonName.
@@ -577,13 +564,9 @@ TEST(X509CertificateTest, ExtractSPKIFromDERCert) {
 
   std::string_view spkiBytes;
   EXPECT_TRUE(asn1::ExtractSPKIFromDERCert(
-      x509_util::CryptoBufferAsStringPiece(cert->cert_buffer()), &spkiBytes));
-
-  uint8_t hash[base::kSHA1Length];
-  base::SHA1HashBytes(reinterpret_cast<const uint8_t*>(spkiBytes.data()),
-                      spkiBytes.size(), hash);
-
-  EXPECT_EQ(0, memcmp(hash, kNistSPKIHash, sizeof(hash)));
+      base::as_string_view(cert->cert_span()), &spkiBytes));
+  base::SHA1Digest hash = base::SHA1Hash(base::as_byte_span(spkiBytes));
+  EXPECT_EQ(base::span(hash), base::as_byte_span(kNistSPKIHash));
 }
 
 TEST(X509CertificateTest, HasCanSignHttpExchangesDraftExtension) {
@@ -635,9 +618,7 @@ TEST(X509CertificateTest, ExtractExtension) {
   static constexpr uint8_t kNonsenseOID[] = {0x56, 0x1d, 0x13};
   ASSERT_TRUE(asn1::ExtractExtensionFromDERCert(
       x509_util::CryptoBufferAsStringPiece(cert->cert_buffer()),
-      std::string_view(reinterpret_cast<const char*>(kNonsenseOID),
-                       sizeof(kNonsenseOID)),
-      &present, &critical, &contents));
+      base::as_string_view(kNonsenseOID), &present, &critical, &contents));
   ASSERT_FALSE(present);
 
   scoped_refptr<X509Certificate> uid_cert =
@@ -942,16 +923,14 @@ TEST(X509CertificateTest, IsIssuedByEncoded) {
       ImportCertFromFile(certs_dir, "mit.davidben.der"));
   ASSERT_NE(static_cast<X509Certificate*>(nullptr), mit_davidben_cert.get());
 
-  std::string mit_issuer(reinterpret_cast<const char*>(MITDN),
-                         sizeof(MITDN));
+  std::string mit_issuer{base::as_string_view(MITDN)};
 
   // Test a certificate from Google, issued by Thawte
   scoped_refptr<X509Certificate> google_cert(
       ImportCertFromFile(certs_dir, "google.single.der"));
   ASSERT_NE(static_cast<X509Certificate*>(nullptr), google_cert.get());
 
-  std::string thawte_issuer(reinterpret_cast<const char*>(ThawteDN),
-                            sizeof(ThawteDN));
+  std::string thawte_issuer{base::as_string_view(ThawteDN)};
 
   // Check that the David Ben certificate is issued by MIT, but not
   // by Thawte.
@@ -1030,8 +1009,7 @@ TEST(X509CertificateTest, IsIssuedByEncodedWithIntermediates) {
   EXPECT_FALSE(cert_chain->IsIssuedByEncoded({}));
 
   // Check that the chain is not issued by Verisign
-  std::string verisign_issuer(reinterpret_cast<const char*>(VerisignDN),
-                              sizeof(VerisignDN));
+  std::string verisign_issuer{base::as_string_view(VerisignDN)};
   EXPECT_FALSE(cert_chain->IsIssuedByEncoded({verisign_issuer}));
 
   // Check that the chain is issued by root, though the extraneous Verisign
@@ -1042,7 +1020,7 @@ TEST(X509CertificateTest, IsIssuedByEncodedWithIntermediates) {
 const struct CertificateFormatTestData {
   const char* file_name;
   X509Certificate::Format format;
-  SHA256HashValue* chain_fingerprints[3];
+  std::array<SHA256HashValue*, 3> chain_fingerprints;
 } kFormatTestData[] = {
     // DER Parsing - single certificate, DER encoded
     {"google.single.der",
@@ -1414,7 +1392,7 @@ const struct PublicKeyInfoTestData {
     {"rsa-768", 768, X509Certificate::kPublicKeyTypeRSA},
     {"rsa-1024", 1024, X509Certificate::kPublicKeyTypeRSA},
     {"rsa-2048", 2048, X509Certificate::kPublicKeyTypeRSA},
-    {"rsa-8200", 8200, X509Certificate::kPublicKeyTypeRSA},
+    {"rsa-8000", 8000, X509Certificate::kPublicKeyTypeRSA},
     {"ec-prime256v1", 256, X509Certificate::kPublicKeyTypeECDSA},
 };
 

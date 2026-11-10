@@ -28,9 +28,16 @@
 // Package fileutils contains utility functions for files
 package fileutils
 
+import (
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
+)
+
 const ExeExt = ".exe"
 
 // IsExe returns true if the file at path is an executable
-func IsExe(path string) bool {
+func IsExe(path string, fsReader oswrapper.FilesystemReader) bool {
+	if _, err := fsReader.Stat(path); err != nil {
+		return false
+	}
 	return true
 }

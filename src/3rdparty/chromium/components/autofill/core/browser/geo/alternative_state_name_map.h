@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_ALTERNATIVE_STATE_NAME_MAP_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_ALTERNATIVE_STATE_NAME_MAP_H_
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -164,7 +165,7 @@ class AlternativeStateNameMap {
   // allowed to construct the class.
   friend class base::NoDestructor<AlternativeStateNameMap>;
 
-  // TODO(crbug.com/1425951): Remove lock.
+  // TODO(crbug.com/40261113): Remove lock.
   mutable base::Lock lock_;
 
   // A map that stores the alternative state names. The map is keyed

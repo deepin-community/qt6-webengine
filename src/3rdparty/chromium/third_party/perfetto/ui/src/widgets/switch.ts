@@ -13,37 +13,37 @@
 // limitations under the License.
 
 import m from 'mithril';
-
 import {classNames} from '../base/classnames';
-
 import {HTMLCheckboxAttrs} from './common';
 
 export interface SwitchAttrs extends HTMLCheckboxAttrs {
   // Optional text to show to the right of the switch.
   // If omitted, no text will be shown.
   label?: string;
+  // Optional text to show to the left of the switch.
+  // If omitted, no text will be shown.
+  labelLeft?: string;
 }
 
 export class Switch implements m.ClassComponent<SwitchAttrs> {
   view({attrs}: m.CVnode<SwitchAttrs>) {
-    const {label, checked, disabled, className, ...htmlAttrs} = attrs;
+    const {label, labelLeft, checked, disabled, className, ...htmlAttrs} =
+      attrs;
 
-    const classes = classNames(
-        disabled && 'pf-disabled',
-        className,
-    );
+    const classes = classNames(disabled && 'pf-disabled', className);
 
     // The default checkbox is removed and an entirely new one created inside
     // the span element in CSS.
     return m(
-        'label.pf-switch',
-        {
-          ...htmlAttrs,
-          className: classes,
-        },
-        m('input[type=checkbox]', {disabled, checked}),
-        m('span'),
-        label,
+      'label.pf-switch',
+      {
+        ...htmlAttrs,
+        className: classes,
+      },
+      labelLeft && m('span.pf-switch-label-left', labelLeft),
+      m('input[type=checkbox]', {disabled, checked}),
+      m('span.pf-switch-visual'),
+      label && m('span.pf-switch-label', label),
     );
   }
 }

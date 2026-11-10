@@ -6,14 +6,14 @@
 #define UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_PROVIDER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
-
-#include "build/build_config.h"
 
 #include "base/component_export.h"
 #include "base/files/file_path.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "build/build_config.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/clipboard/file_info.h"
 #include "ui/base/dragdrop/download_file_info.h"
@@ -34,8 +34,12 @@ namespace ui {
 
 class DataTransferEndpoint;
 
-// Controls whether or not filenames should be converted to file: URLs when
-// getting a URL.
+// Controls whether or not filenames are converted to file: URLs when getting a
+// URL. Some callers, e.g. when populating the DataTransfer object for the web
+// platform, need to suppress this conversion, as this:
+// - leaks filesystem paths to the web
+// - results in duplicate entries for the same logical entity
+// See crbug.com/40078641 for more historical context.
 enum class FilenameToURLPolicy {
   CONVERT_FILENAMES,
   DO_NOT_CONVERT_FILENAMES,
@@ -52,25 +56,35 @@ class COMPONENT_EXPORT(UI_BASE_DATA_EXCHANGE) OSExchangeDataProvider {
 
   virtual void MarkRendererTaintedFromOrigin(const url::Origin& origin) = 0;
   virtual bool IsRendererTainted() const = 0;
-  virtual absl::optional<url::Origin> GetRendererTaintedOrigin() const = 0;
+  virtual std::optional<url::Origin> GetRendererTaintedOrigin() const = 0;
 
   virtual void MarkAsFromPrivileged() = 0;
   virtual bool IsFromPrivileged() const = 0;
 
-  virtual void SetString(const std::u16string& data) = 0;
-  virtual void SetURL(const GURL& url, const std::u16string& title) = 0;
+  virtual void SetString(std::u16string_view data) = 0;
+  virtual void SetURL(const GURL& url, std::u16string_view title) = 0;
   virtual void SetFilename(const base::FilePath& path) = 0;
   virtual void SetFilenames(const std::vector<FileInfo>& file_names) = 0;
   virtual void SetPickledData(const ClipboardFormatType& format,
                               const base::Pickle& data) = 0;
 
-  virtual bool GetString(std::u16string* data) const = 0;
-  virtual bool GetURLAndTitle(FilenameToURLPolicy policy,
-                              GURL* url,
-                              std::u16string* title) const = 0;
-  virtual bool GetFilenames(std::vector<FileInfo>* file_names) const = 0;
-  virtual bool GetPickledData(const ClipboardFormatType& format,
-                              base::Pickle* data) const = 0;
+  virtual std::optional<std::u16string> GetString() const = 0;
+  struct UrlInfo {
+    GURL url;
+    std::u16string title;
+  };
+  // Even if there is no URL data present, many implementations will coerce text
+  // content into URLs if the text is a valid URL. This coercion should only
+  // happen for HTTP-like URLs (i.e. http or https) if the data originates from
+  // a renderer (i.e. `IsRendererTainted()` is true) to avoid bypassing the URL
+  // filtering applied when a drag is started.
+  virtual std::optional<UrlInfo> GetURLAndTitle(
+      FilenameToURLPolicy policy) const = 0;
+  virtual std::optional<std::vector<GURL>> GetURLs(
+      FilenameToURLPolicy policy) const = 0;
+  virtual std::optional<std::vector<FileInfo>> GetFilenames() const = 0;
+  virtual std::optional<base::Pickle> GetPickledData(
+      const ClipboardFormatType& format) const = 0;
 
   virtual bool HasString() const = 0;
   virtual bool HasURL(FilenameToURLPolicy policy) const = 0;
@@ -79,12 +93,15 @@ class COMPONENT_EXPORT(UI_BASE_DATA_EXCHANGE) OSExchangeDataProvider {
 
   virtual void SetFileContents(const base::FilePath& filename,
                                const std::string& file_contents) = 0;
-  virtual bool GetFileContents(base::FilePath* filename,
-                               std::string* file_contents) const = 0;
+  struct FileContentsInfo {
+    base::FilePath filename;
+    std::string file_contents;
+  };
+  virtual std::optional<FileContentsInfo> GetFileContents() const = 0;
   virtual bool HasFileContents() const = 0;
 #if BUILDFLAG(IS_WIN)
   virtual bool HasVirtualFilenames() const = 0;
-  virtual bool GetVirtualFilenames(std::vector<FileInfo>* file_names) const = 0;
+  virtual std::optional<std::vector<FileInfo>> GetVirtualFilenames() const = 0;
   virtual void GetVirtualFilesAsTempFiles(
       base::OnceCallback<
           void(const std::vector<std::pair</*temp path*/ base::FilePath,
@@ -99,7 +116,11 @@ class COMPONENT_EXPORT(UI_BASE_DATA_EXCHANGE) OSExchangeDataProvider {
 
 #if defined(USE_AURA)
   virtual void SetHtml(const std::u16string& html, const GURL& base_url) = 0;
-  virtual bool GetHtml(std::u16string* html, GURL* base_url) const = 0;
+  struct HtmlInfo {
+    std::u16string html;
+    GURL base_url;
+  };
+  virtual std::optional<HtmlInfo> GetHtml() const = 0;
   virtual bool HasHtml() const = 0;
 #endif
 

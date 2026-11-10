@@ -247,11 +247,9 @@ ClockState GetClockState(
       return CLOCK_STATE_FUTURE;
     case NETWORK_CLOCK_STATE_MAX:
       NOTREACHED();
-      return CLOCK_STATE_UNKNOWN;
   }
 
   NOTREACHED();
-  return CLOCK_STATE_UNKNOWN;
 }
 
 void SetBuildTimeForTesting(const base::Time& testing_time) {

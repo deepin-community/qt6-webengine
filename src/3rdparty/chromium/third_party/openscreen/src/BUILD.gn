@@ -3,9 +3,30 @@
 # found in the LICENSE file.
 
 import("//build_overrides/build.gni")
+import("./build_overrides/data_headers_template.gni")
+import("./gni/openscreen.gni")
+
+# Used to ensure that relative includes still work while built with an embedder.
+config("include_dirs") {
+  root = rebase_path("./", "//")
+  include_dirs = [
+    "//$root",
+    "$root_gen_dir/$root",
+  ]
+}
+
+# Put defines here that are only used in our internal files and NEVER in
+# external headers that embedders (such as chromium and node) might include.
+config("features") {
+  # Only targets in this file and its subdirs can depend on this.
+  visibility = [ "./*" ]
+
+  root = rebase_path("./", "//")
+  defines = [ "OPENSCREEN_TEST_DATA_DIR=\"$root/test/data/\"" ]
+}
 
 # All compilable non-test targets in the repository (both executables and
-# source_sets).
+# source_sets)
 group("gn_all") {
   testonly = true
   deps = [
@@ -14,41 +35,48 @@ group("gn_all") {
     "cast/common:public",
     "cast/receiver:channel",
     "cast/sender:channel",
-    "cast/streaming:receiver",
-    "cast/streaming:sender",
-    "discovery:dnssd",
-    "discovery:mdns",
-    "discovery:public",
-    "platform",
+    "osp/msgs",
     "third_party/abseil",
     "third_party/boringssl",
     "third_party/googleurl",
     "third_party/jsoncpp",
-    "third_party/quiche",
     "third_party/tinycbor",
     "tools/cddl($host_toolchain)",
     "util",
   ]
 
-  # Mac OS X 10.15 is incompatible with the current version of QUIC.
-  if (!is_mac) {
+  # TODO(issuetracker.google.com/236163082): implement support on Windows.
+  if (!is_win) {
     deps += [
+      "cast/streaming:receiver",
+      "cast/streaming:sender",
+      "discovery:dnssd",
+      "discovery:mdns",
+      "discovery:public",
       "osp",
-      "osp/msgs",
+      "platform",
+
+      # Quiche currently has an issue around logging macros on Windows.
+      "third_party/quiche",
     ]
+    if (!build_with_chromium) {
+      deps += [
+        "cast/standalone_sender:cast_sender",
+        "osp:osp_demo",
+        "third_party/protobuf:protoc($host_toolchain)",
+        "third_party/zlib",
+      ]
+    }
   }
 
-  if (!build_with_chromium) {
-    deps += [
-      "cast/standalone_receiver:cast_receiver",
-      "cast/standalone_sender:cast_sender",
-      "third_party/protobuf:protoc($host_toolchain)",
-      "third_party/zlib",
-    ]
+  # The cast_receiver depends on the standalone implementation which is only
+  # implemented for certain operating systems.
+  if (is_linux || is_mac || is_chromeos || is_android) {
+    deps += [ "cast/standalone_receiver:cast_receiver" ]
   }
 }
 
-source_set("openscreen_unittests_all") {
+openscreen_source_set("openscreen_unittests_all") {
   testonly = true
   public_deps = [
     "cast/common:unittests",
@@ -69,15 +97,13 @@ source_set("openscreen_unittests_all") {
       "discovery:unittests",
     ]
   }
-
-  public_deps += [
-    "osp:unittests",
-    "osp/msgs:unittests",
-  ]
+  public_deps += [ "osp/msgs:unittests" ]
+  if (!is_win) {
+    public_deps += [ "osp:unittests" ]
+  }
 }
-
 if (!build_with_chromium) {
-  executable("openscreen_unittests") {
+  openscreen_executable("openscreen_unittests") {
     testonly = true
     deps = [
       ":openscreen_unittests_all",
@@ -86,18 +112,18 @@ if (!build_with_chromium) {
     ]
   }
 }
-
 if (!build_with_chromium && is_posix) {
-  source_set("e2e_tests_all") {
+  openscreen_source_set("e2e_tests_all") {
     testonly = true
     public_deps = [
-      "cast/common:discovery_e2e_test",
       "cast/test:e2e_tests",
       "cast/test:make_crl_tests($host_toolchain)",
     ]
+    if (is_linux) {
+      public_deps += [ "cast/common:discovery_e2e_test" ]
+    }
   }
-
-  executable("e2e_tests") {
+  openscreen_executable("e2e_tests") {
     testonly = true
     deps = [
       ":e2e_tests_all",
@@ -105,9 +131,8 @@ if (!build_with_chromium && is_posix) {
     ]
   }
 }
-
 if (!build_with_chromium) {
-  source_set("fuzzer_tests_all") {
+  openscreen_source_set("fuzzer_tests_all") {
     testonly = true
     deps = [
       "//cast/common:message_framer_fuzzer",

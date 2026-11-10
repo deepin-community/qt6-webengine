@@ -7,8 +7,10 @@
 #include <string_view>
 
 #include "base/containers/fixed_flat_map.h"
+#include "base/containers/to_vector.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 
@@ -44,6 +46,9 @@ static constexpr auto kTypeNameToFieldType =
          {"NAME_MIDDLE_INITIAL", NAME_MIDDLE_INITIAL},
          {"NAME_FULL", NAME_FULL},
          {"NAME_SUFFIX", NAME_SUFFIX},
+         {"ALTERNATIVE_FULL_NAME", ALTERNATIVE_FULL_NAME},
+         {"ALTERNATIVE_GIVEN_NAME", ALTERNATIVE_GIVEN_NAME},
+         {"ALTERNATIVE_FAMILY_NAME", ALTERNATIVE_FAMILY_NAME},
          {"EMAIL_ADDRESS", EMAIL_ADDRESS},
          {"PHONE_HOME_NUMBER", PHONE_HOME_NUMBER},
          {"PHONE_HOME_CITY_CODE", PHONE_HOME_CITY_CODE},
@@ -55,9 +60,13 @@ static constexpr auto kTypeNameToFieldType =
          {"ADDRESS_HOME_APT", ADDRESS_HOME_APT},
          {"ADDRESS_HOME_APT_NUM", ADDRESS_HOME_APT_NUM},
          {"ADDRESS_HOME_APT_TYPE", ADDRESS_HOME_APT_TYPE},
+         {"ADDRESS_HOME_HOUSE_NUMBER_AND_APT",
+          ADDRESS_HOME_HOUSE_NUMBER_AND_APT},
          {"ADDRESS_HOME_CITY", ADDRESS_HOME_CITY},
          {"ADDRESS_HOME_STATE", ADDRESS_HOME_STATE},
          {"ADDRESS_HOME_ZIP", ADDRESS_HOME_ZIP},
+         {"ADDRESS_HOME_ZIP_PREFIX", ADDRESS_HOME_ZIP_PREFIX},
+         {"ADDRESS_HOME_ZIP_SUFFIX", ADDRESS_HOME_ZIP_SUFFIX},
          {"ADDRESS_HOME_COUNTRY", ADDRESS_HOME_COUNTRY},
          {"CREDIT_CARD_NAME_FULL", CREDIT_CARD_NAME_FULL},
          {"CREDIT_CARD_NUMBER", CREDIT_CARD_NUMBER},
@@ -71,7 +80,6 @@ static constexpr auto kTypeNameToFieldType =
          {"CREDIT_CARD_TYPE", CREDIT_CARD_TYPE},
          {"CREDIT_CARD_VERIFICATION_CODE", CREDIT_CARD_VERIFICATION_CODE},
          {"COMPANY_NAME", COMPANY_NAME},
-         {"FIELD_WITH_DEFAULT_VALUE", FIELD_WITH_DEFAULT_VALUE},
          {"MERCHANT_EMAIL_SIGNUP", MERCHANT_EMAIL_SIGNUP},
          {"MERCHANT_PROMO_CODE", MERCHANT_PROMO_CODE},
          {"PASSWORD", PASSWORD},
@@ -100,6 +108,8 @@ static constexpr auto kTypeNameToFieldType =
          {"ADDRESS_HOME_HOUSE_NUMBER", ADDRESS_HOME_HOUSE_NUMBER},
          {"ADDRESS_HOME_SUBPREMISE", ADDRESS_HOME_SUBPREMISE},
          {"ADDRESS_HOME_OTHER_SUBUNIT", ADDRESS_HOME_OTHER_SUBUNIT},
+         {"NAME_LAST_PREFIX", NAME_LAST_PREFIX},
+         {"NAME_LAST_CORE", NAME_LAST_CORE},
          {"NAME_LAST_FIRST", NAME_LAST_FIRST},
          {"NAME_LAST_CONJUNCTION", NAME_LAST_CONJUNCTION},
          {"NAME_LAST_SECOND", NAME_LAST_SECOND},
@@ -107,10 +117,6 @@ static constexpr auto kTypeNameToFieldType =
          {"ADDRESS_HOME_ADDRESS", ADDRESS_HOME_ADDRESS},
          {"ADDRESS_HOME_ADDRESS_WITH_NAME", ADDRESS_HOME_ADDRESS_WITH_NAME},
          {"ADDRESS_HOME_FLOOR", ADDRESS_HOME_FLOOR},
-         {"NAME_FULL_WITH_HONORIFIC_PREFIX", NAME_FULL_WITH_HONORIFIC_PREFIX},
-         {"BIRTHDATE_DAY", BIRTHDATE_DAY},
-         {"BIRTHDATE_MONTH", BIRTHDATE_MONTH},
-         {"BIRTHDATE_4_DIGIT_YEAR", BIRTHDATE_4_DIGIT_YEAR},
          {"PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX",
           PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX},
          {"PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX",
@@ -136,7 +142,42 @@ static constexpr auto kTypeNameToFieldType =
           ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK},
          {"SINGLE_USERNAME_FORGOT_PASSWORD", SINGLE_USERNAME_FORGOT_PASSWORD},
          {"SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES",
-          SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES}});
+          SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES},
+         {"ADDRESS_HOME_STREET_LOCATION_AND_LOCALITY",
+          ADDRESS_HOME_STREET_LOCATION_AND_LOCALITY},
+         {"ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK",
+          ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK},
+         {"ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK",
+          ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK},
+         {"PASSPORT_NAME_TAG", PASSPORT_NAME_TAG},
+         {"PASSPORT_NUMBER", PASSPORT_NUMBER},
+         {"PASSPORT_ISSUING_COUNTRY", PASSPORT_ISSUING_COUNTRY},
+         {"PASSPORT_EXPIRATION_DATE", PASSPORT_EXPIRATION_DATE},
+         {"PASSPORT_ISSUE_DATE", PASSPORT_ISSUE_DATE},
+         {"LOYALTY_MEMBERSHIP_PROGRAM", LOYALTY_MEMBERSHIP_PROGRAM},
+         {"LOYALTY_MEMBERSHIP_PROVIDER", LOYALTY_MEMBERSHIP_PROVIDER},
+         {"LOYALTY_MEMBERSHIP_ID", LOYALTY_MEMBERSHIP_ID},
+         {"VEHICLE_OWNER_TAG", VEHICLE_OWNER_TAG},
+         {"VEHICLE_LICENSE_PLATE", VEHICLE_LICENSE_PLATE},
+         {"VEHICLE_VIN", VEHICLE_VIN},
+         {"VEHICLE_MAKE", VEHICLE_MAKE},
+         {"VEHICLE_MODEL", VEHICLE_MODEL},
+         {"VEHICLE_YEAR", VEHICLE_YEAR},
+         {"VEHICLE_PLATE_STATE", VEHICLE_PLATE_STATE},
+         {"DRIVERS_LICENSE_NAME_TAG", DRIVERS_LICENSE_NAME_TAG},
+         {"DRIVERS_LICENSE_REGION", DRIVERS_LICENSE_REGION},
+         {"DRIVERS_LICENSE_NUMBER", DRIVERS_LICENSE_NUMBER},
+         {"DRIVERS_LICENSE_EXPIRATION_DATE", DRIVERS_LICENSE_EXPIRATION_DATE},
+         {"DRIVERS_LICENSE_ISSUE_DATE", DRIVERS_LICENSE_ISSUE_DATE},
+         {"NATIONAL_ID_CARD_NUMBER", NATIONAL_ID_CARD_NUMBER},
+         {"NATIONAL_ID_CARD_EXPIRATION_DATE", NATIONAL_ID_CARD_EXPIRATION_DATE},
+         {"NATIONAL_ID_CARD_ISSUE_DATE", NATIONAL_ID_CARD_ISSUE_DATE},
+         {"NATIONAL_ID_CARD_ISSUING_COUNTRY", NATIONAL_ID_CARD_ISSUING_COUNTRY},
+         {"KNOWN_TRAVELER_NUMBER", KNOWN_TRAVELER_NUMBER},
+         {"KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE",
+          KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE},
+         {"REDRESS_NUMBER", REDRESS_NUMBER},
+         {"EMAIL_OR_LOYALTY_MEMBERSHIP_ID", EMAIL_OR_LOYALTY_MEMBERSHIP_ID}});
 
 bool IsFillableFieldType(FieldType field_type) {
   switch (field_type) {
@@ -144,13 +185,17 @@ bool IsFillableFieldType(FieldType field_type) {
     case NAME_FIRST:
     case NAME_MIDDLE:
     case NAME_LAST:
+    case NAME_LAST_CORE:
+    case NAME_LAST_PREFIX:
     case NAME_LAST_FIRST:
     case NAME_LAST_CONJUNCTION:
     case NAME_LAST_SECOND:
     case NAME_MIDDLE_INITIAL:
     case NAME_FULL:
-    case NAME_FULL_WITH_HONORIFIC_PREFIX:
     case NAME_SUFFIX:
+    case ALTERNATIVE_FULL_NAME:
+    case ALTERNATIVE_FAMILY_NAME:
+    case ALTERNATIVE_GIVEN_NAME:
     case EMAIL_ADDRESS:
     case USERNAME_AND_EMAIL_ADDRESS:
     case PHONE_HOME_NUMBER:
@@ -169,9 +214,12 @@ bool IsFillableFieldType(FieldType field_type) {
     case ADDRESS_HOME_APT:
     case ADDRESS_HOME_APT_NUM:
     case ADDRESS_HOME_APT_TYPE:
+    case ADDRESS_HOME_HOUSE_NUMBER_AND_APT:
     case ADDRESS_HOME_CITY:
     case ADDRESS_HOME_STATE:
     case ADDRESS_HOME_ZIP:
+    case ADDRESS_HOME_ZIP_PREFIX:
+    case ADDRESS_HOME_ZIP_SUFFIX:
     case ADDRESS_HOME_COUNTRY:
     case ADDRESS_HOME_STREET_ADDRESS:
     case ADDRESS_HOME_SORTING_CODE:
@@ -192,7 +240,14 @@ bool IsFillableFieldType(FieldType field_type) {
     case ADDRESS_HOME_OVERFLOW:
     case ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK:
     case ADDRESS_HOME_OVERFLOW_AND_LANDMARK:
+    case ADDRESS_HOME_STREET_LOCATION_AND_LOCALITY:
+    case ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK:
+    case ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK:
     case DELIVERY_INSTRUCTIONS:
+    case LOYALTY_MEMBERSHIP_PROGRAM:
+    case LOYALTY_MEMBERSHIP_PROVIDER:
+    case LOYALTY_MEMBERSHIP_ID:
+    case EMAIL_OR_LOYALTY_MEMBERSHIP_ID:
       return true;
 
     case CREDIT_CARD_NAME_FULL:
@@ -228,6 +283,33 @@ bool IsFillableFieldType(FieldType field_type) {
     case SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES:
       return true;
 
+    // Autofill AI types.
+    case DRIVERS_LICENSE_EXPIRATION_DATE:
+    case DRIVERS_LICENSE_ISSUE_DATE:
+    case DRIVERS_LICENSE_NAME_TAG:
+    case DRIVERS_LICENSE_NUMBER:
+    case DRIVERS_LICENSE_REGION:
+    case PASSPORT_EXPIRATION_DATE:
+    case PASSPORT_ISSUE_DATE:
+    case PASSPORT_ISSUING_COUNTRY:
+    case PASSPORT_NAME_TAG:
+    case PASSPORT_NUMBER:
+    case VEHICLE_LICENSE_PLATE:
+    case VEHICLE_MAKE:
+    case VEHICLE_MODEL:
+    case VEHICLE_OWNER_TAG:
+    case VEHICLE_PLATE_STATE:
+    case VEHICLE_VIN:
+    case VEHICLE_YEAR:
+    case NATIONAL_ID_CARD_NUMBER:
+    case NATIONAL_ID_CARD_EXPIRATION_DATE:
+    case NATIONAL_ID_CARD_ISSUE_DATE:
+    case NATIONAL_ID_CARD_ISSUING_COUNTRY:
+    case REDRESS_NUMBER:
+    case KNOWN_TRAVELER_NUMBER:
+    case KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE:
+      return true;
+
     // Not fillable credential fields.
     case NOT_PASSWORD:
     case NOT_USERNAME:
@@ -245,19 +327,15 @@ bool IsFillableFieldType(FieldType field_type) {
     case NO_SERVER_DATA:
     case EMPTY_TYPE:
     case AMBIGUOUS_TYPE:
-    case FIELD_WITH_DEFAULT_VALUE:
     case MERCHANT_EMAIL_SIGNUP:
     case PRICE:
     case NUMERIC_QUANTITY:
     case SEARCH_TERM:
-    case BIRTHDATE_DAY:
-    case BIRTHDATE_MONTH:
-    case BIRTHDATE_4_DIGIT_YEAR:
     case UNKNOWN_TYPE:
     case MAX_VALID_FIELD_TYPE:
       return false;
   }
-  return false;
+  NOTREACHED();
 }
 
 std::string_view FieldTypeToStringView(FieldType type) {
@@ -271,11 +349,17 @@ std::string_view FieldTypeToStringView(FieldType type) {
   if (it != kFieldTypeToTypeName->end()) {
     return it->second;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 std::string FieldTypeToString(FieldType type) {
   return std::string(FieldTypeToStringView(type));
+}
+
+std::string FieldTypeSetToString(FieldTypeSet s) {
+  return base::JoinString(
+      base::ToVector(s, [](FieldType t) { return FieldTypeToStringView(t); }),
+      ", ");
 }
 
 FieldType TypeNameToFieldType(std::string_view type_name) {
@@ -287,7 +371,6 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
   switch (type) {
     case NO_SERVER_DATA:
     case UNKNOWN_TYPE:
-    case FIELD_WITH_DEFAULT_VALUE:
     case EMPTY_TYPE:
     case NOT_ACCOUNT_CREATION_PASSWORD:
     case NOT_NEW_PASSWORD:
@@ -297,6 +380,34 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
     case NAME_SUFFIX:
     case ADDRESS_HOME_ADDRESS:
     case ADDRESS_HOME_ADDRESS_WITH_NAME:
+    case PASSPORT_NAME_TAG:
+    case PASSPORT_NUMBER:
+    case PASSPORT_ISSUING_COUNTRY:
+    case PASSPORT_EXPIRATION_DATE:
+    case PASSPORT_ISSUE_DATE:
+    case LOYALTY_MEMBERSHIP_PROGRAM:
+    case LOYALTY_MEMBERSHIP_PROVIDER:
+    case LOYALTY_MEMBERSHIP_ID:
+    case EMAIL_OR_LOYALTY_MEMBERSHIP_ID:
+    case VEHICLE_OWNER_TAG:
+    case VEHICLE_LICENSE_PLATE:
+    case VEHICLE_VIN:
+    case VEHICLE_MAKE:
+    case VEHICLE_MODEL:
+    case VEHICLE_YEAR:
+    case VEHICLE_PLATE_STATE:
+    case DRIVERS_LICENSE_NAME_TAG:
+    case DRIVERS_LICENSE_REGION:
+    case DRIVERS_LICENSE_NUMBER:
+    case DRIVERS_LICENSE_EXPIRATION_DATE:
+    case DRIVERS_LICENSE_ISSUE_DATE:
+    case NATIONAL_ID_CARD_NUMBER:
+    case NATIONAL_ID_CARD_EXPIRATION_DATE:
+    case NATIONAL_ID_CARD_ISSUE_DATE:
+    case NATIONAL_ID_CARD_ISSUING_COUNTRY:
+    case REDRESS_NUMBER:
+    case KNOWN_TRAVELER_NUMBER:
+    case KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE:
       return "";
     case NUMERIC_QUANTITY:
       return "Numeric quantity";
@@ -326,14 +437,16 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
       return "Price";
     case NAME_HONORIFIC_PREFIX:
       return "Honorific prefix";
-    case NAME_FULL_WITH_HONORIFIC_PREFIX:
-      return "Full name with honorific prefix";
     case NAME_FIRST:
       return "First name";
     case NAME_MIDDLE:
       return "Middle name";
     case NAME_LAST:
       return "Last name";
+    case NAME_LAST_PREFIX:
+      return "Last name prefix";
+    case NAME_LAST_CORE:
+      return "Last name core";
     case NAME_LAST_FIRST:
       return "First last name";
     case NAME_LAST_CONJUNCTION:
@@ -344,6 +457,12 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
       return "Middle name initial";
     case NAME_FULL:
       return "Full name";
+    case ALTERNATIVE_FULL_NAME:
+      return "Alternative full name";
+    case ALTERNATIVE_FAMILY_NAME:
+      return "Alternative family name";
+    case ALTERNATIVE_GIVEN_NAME:
+      return "Alternative given name";
     case EMAIL_ADDRESS:
       return "Email address";
     case PHONE_HOME_NUMBER:
@@ -407,7 +526,11 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
     case ADDRESS_HOME_STATE:
       return "State";
     case ADDRESS_HOME_ZIP:
-      return "Zip code";
+      return "ZIP code";
+    case ADDRESS_HOME_ZIP_PREFIX:
+      return "ZIP code prefix";
+    case ADDRESS_HOME_ZIP_SUFFIX:
+      return "ZIP code suffix";
     case ADDRESS_HOME_COUNTRY:
       return "Country";
     case ADDRESS_HOME_OVERFLOW:
@@ -416,14 +539,16 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
       return "Address overflow and landmark";
     case ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK:
       return "Address between-streets and landmark";
+    case ADDRESS_HOME_STREET_LOCATION_AND_LOCALITY:
+      return "Address street location and locality";
+    case ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK:
+      return "Address street location and landmark";
+    case ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK:
+      return "Address locality and landmark";
+    case ADDRESS_HOME_HOUSE_NUMBER_AND_APT:
+      return "House number and apartment number";
     case DELIVERY_INSTRUCTIONS:
       return "Delivery instructions";
-    case BIRTHDATE_DAY:
-      return "Birthdate day";
-    case BIRTHDATE_MONTH:
-      return "Birthdate month";
-    case BIRTHDATE_4_DIGIT_YEAR:
-      return "Birthdate year";
     case CREDIT_CARD_NAME_FULL:
       return "Credit card full name";
     case CREDIT_CARD_NAME_FIRST:
@@ -453,145 +578,7 @@ std::string_view FieldTypeToDeveloperRepresentationString(FieldType type) {
     case MAX_VALID_FIELD_TYPE:
       return "";
   }
-  NOTREACHED_NORETURN();
-}
-
-FieldTypeSet GetFieldTypesOfGroup(FieldTypeGroup group) {
-  FieldTypeSet fields_matching_group;
-  for (FieldType field_type : kAllFieldTypes) {
-    if (GroupTypeOfFieldType(field_type) == group) {
-      fields_matching_group.insert(field_type);
-    }
-  }
-  return fields_matching_group;
-}
-
-FieldTypeGroup GroupTypeOfFieldType(FieldType field_type) {
-  switch (field_type) {
-    case NAME_HONORIFIC_PREFIX:
-    case NAME_FIRST:
-    case NAME_MIDDLE:
-    case NAME_LAST:
-    case NAME_LAST_FIRST:
-    case NAME_LAST_SECOND:
-    case NAME_LAST_CONJUNCTION:
-    case NAME_MIDDLE_INITIAL:
-    case NAME_FULL:
-    case NAME_SUFFIX:
-    case NAME_FULL_WITH_HONORIFIC_PREFIX:
-      return FieldTypeGroup::kName;
-
-    case EMAIL_ADDRESS:
-    case USERNAME_AND_EMAIL_ADDRESS:
-      return FieldTypeGroup::kEmail;
-
-    case PHONE_HOME_NUMBER:
-    case PHONE_HOME_NUMBER_PREFIX:
-    case PHONE_HOME_NUMBER_SUFFIX:
-    case PHONE_HOME_CITY_CODE:
-    case PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX:
-    case PHONE_HOME_COUNTRY_CODE:
-    case PHONE_HOME_CITY_AND_NUMBER:
-    case PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX:
-    case PHONE_HOME_WHOLE_NUMBER:
-    case PHONE_HOME_EXTENSION:
-      return FieldTypeGroup::kPhone;
-
-    case ADDRESS_HOME_LINE1:
-    case ADDRESS_HOME_LINE2:
-    case ADDRESS_HOME_LINE3:
-    case ADDRESS_HOME_APT:
-    case ADDRESS_HOME_APT_NUM:
-    case ADDRESS_HOME_APT_TYPE:
-    case ADDRESS_HOME_CITY:
-    case ADDRESS_HOME_STATE:
-    case ADDRESS_HOME_ZIP:
-    case ADDRESS_HOME_COUNTRY:
-    case ADDRESS_HOME_STREET_ADDRESS:
-    case ADDRESS_HOME_SORTING_CODE:
-    case ADDRESS_HOME_DEPENDENT_LOCALITY:
-    case ADDRESS_HOME_STREET_NAME:
-    case ADDRESS_HOME_HOUSE_NUMBER:
-    case ADDRESS_HOME_SUBPREMISE:
-    case ADDRESS_HOME_OTHER_SUBUNIT:
-    case ADDRESS_HOME_ADDRESS:
-    case ADDRESS_HOME_ADDRESS_WITH_NAME:
-    case ADDRESS_HOME_FLOOR:
-    case ADDRESS_HOME_LANDMARK:
-    case ADDRESS_HOME_BETWEEN_STREETS:
-    case ADDRESS_HOME_BETWEEN_STREETS_1:
-    case ADDRESS_HOME_BETWEEN_STREETS_2:
-    case ADDRESS_HOME_ADMIN_LEVEL2:
-    case ADDRESS_HOME_STREET_LOCATION:
-    case ADDRESS_HOME_OVERFLOW:
-    case ADDRESS_HOME_OVERFLOW_AND_LANDMARK:
-    case ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK:
-    case DELIVERY_INSTRUCTIONS:
-      return FieldTypeGroup::kAddress;
-
-    case CREDIT_CARD_NAME_FULL:
-    case CREDIT_CARD_NAME_FIRST:
-    case CREDIT_CARD_NAME_LAST:
-    case CREDIT_CARD_NUMBER:
-    case CREDIT_CARD_EXP_MONTH:
-    case CREDIT_CARD_EXP_2_DIGIT_YEAR:
-    case CREDIT_CARD_EXP_4_DIGIT_YEAR:
-    case CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR:
-    case CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
-    case CREDIT_CARD_TYPE:
-    case CREDIT_CARD_VERIFICATION_CODE:
-    case CREDIT_CARD_STANDALONE_VERIFICATION_CODE:
-      return FieldTypeGroup::kCreditCard;
-
-    case IBAN_VALUE:
-      return FieldTypeGroup::kIban;
-
-    case COMPANY_NAME:
-      return FieldTypeGroup::kCompany;
-
-    case PASSWORD:
-    case ACCOUNT_CREATION_PASSWORD:
-    case NOT_ACCOUNT_CREATION_PASSWORD:
-    case NEW_PASSWORD:
-    case PROBABLY_NEW_PASSWORD:
-    case NOT_NEW_PASSWORD:
-    case CONFIRMATION_PASSWORD:
-    case NOT_PASSWORD:
-    case SINGLE_USERNAME:
-    case NOT_USERNAME:
-    case SINGLE_USERNAME_FORGOT_PASSWORD:
-    case SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES:
-      return FieldTypeGroup::kPasswordField;
-
-    case NO_SERVER_DATA:
-    case EMPTY_TYPE:
-    case AMBIGUOUS_TYPE:
-    case FIELD_WITH_DEFAULT_VALUE:
-    case MERCHANT_EMAIL_SIGNUP:
-    case MERCHANT_PROMO_CODE:
-    case ONE_TIME_CODE:
-      return FieldTypeGroup::kNoGroup;
-
-    case USERNAME:
-      return FieldTypeGroup::kUsernameField;
-
-    case BIRTHDATE_DAY:
-    case BIRTHDATE_MONTH:
-    case BIRTHDATE_4_DIGIT_YEAR:
-      return FieldTypeGroup::kBirthdateField;
-
-    case PRICE:
-    case SEARCH_TERM:
-    case NUMERIC_QUANTITY:
-      return FieldTypeGroup::kUnfillable;
-
-    case UNKNOWN_TYPE:
-      return FieldTypeGroup::kNoGroup;
-
-    case MAX_VALID_FIELD_TYPE:
-      break;
-  }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 FieldTypeGroup GroupTypeOfHtmlFieldType(HtmlFieldType field_type) {
@@ -654,13 +641,10 @@ FieldTypeGroup GroupTypeOfHtmlFieldType(HtmlFieldType field_type) {
     case HtmlFieldType::kBirthdateDay:
     case HtmlFieldType::kBirthdateMonth:
     case HtmlFieldType::kBirthdateYear:
-      return FieldTypeGroup::kBirthdateField;
-
-    case HtmlFieldType::kUpiVpa:
       return FieldTypeGroup::kNoGroup;
 
     case HtmlFieldType::kOneTimeCode:
-      return FieldTypeGroup::kNoGroup;
+      return FieldTypeGroup::kOneTimePassword;
 
     case HtmlFieldType::kMerchantPromoCode:
       return FieldTypeGroup::kNoGroup;
@@ -672,7 +656,7 @@ FieldTypeGroup GroupTypeOfHtmlFieldType(HtmlFieldType field_type) {
     case HtmlFieldType::kUnrecognized:
       return FieldTypeGroup::kNoGroup;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 FieldType HtmlFieldTypeToBestCorrespondingFieldType(HtmlFieldType field_type) {
@@ -780,13 +764,6 @@ FieldType HtmlFieldTypeToBestCorrespondingFieldType(HtmlFieldType field_type) {
     case HtmlFieldType::kEmail:
       return EMAIL_ADDRESS;
 
-    case HtmlFieldType::kBirthdateDay:
-      return BIRTHDATE_DAY;
-    case HtmlFieldType::kBirthdateMonth:
-      return BIRTHDATE_MONTH;
-    case HtmlFieldType::kBirthdateYear:
-      return BIRTHDATE_4_DIGIT_YEAR;
-
     case HtmlFieldType::kAdditionalNameInitial:
       return NAME_MIDDLE_INITIAL;
 
@@ -809,7 +786,9 @@ FieldType HtmlFieldTypeToBestCorrespondingFieldType(HtmlFieldType field_type) {
       return IBAN_VALUE;
 
     // These types aren't stored; they're transient.
-    case HtmlFieldType::kUpiVpa:
+    case HtmlFieldType::kBirthdateDay:
+    case HtmlFieldType::kBirthdateMonth:
+    case HtmlFieldType::kBirthdateYear:
     case HtmlFieldType::kTransactionAmount:
     case HtmlFieldType::kTransactionCurrency:
     case HtmlFieldType::kMerchantPromoCode:
@@ -818,7 +797,7 @@ FieldType HtmlFieldTypeToBestCorrespondingFieldType(HtmlFieldType field_type) {
     case HtmlFieldType::kUnrecognized:
       return UNKNOWN_TYPE;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace autofill

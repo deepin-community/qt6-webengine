@@ -6,14 +6,15 @@
 #define COMPONENTS_JS_INJECTION_BROWSER_JS_COMMUNICATION_HOST_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "components/js_injection/common/interfaces.mojom.h"
+#include "components/origin_matcher/origin_matcher.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 class RenderFrameHost;
@@ -21,14 +22,12 @@ class RenderFrameHost;
 
 namespace js_injection {
 
-class OriginMatcher;
 struct JsObject;
-class JsToBrowserMessaging;
 class WebMessageHostFactory;
 
 struct DocumentStartJavaScript {
   DocumentStartJavaScript(std::u16string script,
-                          OriginMatcher allowed_origin_rules,
+                          origin_matcher::OriginMatcher allowed_origin_rules,
                           int32_t script_id);
 
   DocumentStartJavaScript(DocumentStartJavaScript&) = delete;
@@ -37,7 +36,7 @@ struct DocumentStartJavaScript {
   DocumentStartJavaScript& operator=(DocumentStartJavaScript&&) = default;
 
   std::u16string script_;
-  OriginMatcher allowed_origin_rules_;
+  origin_matcher::OriginMatcher allowed_origin_rules_;
   int32_t script_id_;
 };
 
@@ -64,8 +63,8 @@ class JsCommunicationHost : public content::WebContentsObserver {
     AddScriptResult& operator=(const AddScriptResult&);
     ~AddScriptResult();
 
-    absl::optional<std::string> error_message;
-    absl::optional<int> script_id;
+    std::optional<std::string> error_message;
+    std::optional<int> script_id;
   };
 
   // Native side AddDocumentStartJavaScript, returns an error message if the
@@ -94,7 +93,7 @@ class JsCommunicationHost : public content::WebContentsObserver {
 
   struct RegisteredFactory {
     std::u16string js_name;
-    OriginMatcher allowed_origin_rules;
+    origin_matcher::OriginMatcher allowed_origin_rules;
     raw_ptr<WebMessageHostFactory> factory = nullptr;
   };
 
@@ -108,8 +107,10 @@ class JsCommunicationHost : public content::WebContentsObserver {
       content::RenderFrameHost* render_frame_host,
       content::RenderFrameHost::LifecycleState old_state,
       content::RenderFrameHost::LifecycleState new_state) override;
+  void PrimaryPageChanged(content::Page& page) override;
 
  private:
+  class JsToBrowserMessagingList;
   void NotifyFrameForWebMessageListener(
       content::RenderFrameHost* render_frame_host);
   void NotifyFrameForAllDocumentStartJavaScripts(
@@ -125,8 +126,9 @@ class JsCommunicationHost : public content::WebContentsObserver {
   std::vector<DocumentStartJavaScript> scripts_;
   std::vector<std::unique_ptr<JsObject>> js_objects_;
   std::map<content::GlobalRenderFrameHostId,
-           std::vector<std::unique_ptr<JsToBrowserMessaging>>>
+           std::unique_ptr<JsToBrowserMessagingList>>
       js_to_browser_messagings_;
+  bool has_navigation_listener_ = false;
 };
 
 }  // namespace js_injection

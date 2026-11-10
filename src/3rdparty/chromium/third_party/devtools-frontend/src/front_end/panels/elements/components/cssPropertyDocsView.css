@@ -4,12 +4,8 @@
  * found in the LICENSE file.
  */
 
-:host {
-  padding: 6px;
-}
-
 .docs-popup-wrapper {
-  max-width: 350px;
+  max-width: 420px;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -35,6 +31,13 @@
   justify-content: space-between;
 }
 
-.dont-show input {
-  vertical-align: bottom;
+#baseline {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+#baseline-icon {
+  width: 18px;
+  height: 18px;
 }

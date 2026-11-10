@@ -5,7 +5,7 @@
 #ifndef V8_CODEGEN_S390_INTERFACE_DESCRIPTORS_S390_INL_H_
 #define V8_CODEGEN_S390_INTERFACE_DESCRIPTORS_S390_INL_H_
 
-#if V8_TARGET_ARCH_S390
+#if V8_TARGET_ARCH_S390X
 
 #include "src/codegen/interface-descriptors.h"
 #include "src/execution/frames.h"
@@ -85,6 +85,21 @@ constexpr Register KeyedLoadWithVectorDescriptor::VectorRegister() {
 }
 
 // static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::EnumIndexRegister() {
+  return r6;
+}
+
+// static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::CacheTypeRegister() {
+  return r7;
+}
+
+// static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::SlotRegister() {
+  return r4;
+}
+
+// static
 constexpr Register KeyedHasICBaselineDescriptor::ReceiverRegister() {
   return kInterpreterAccumulatorRegister;
 }
@@ -149,6 +164,22 @@ constexpr Register TypeConversionDescriptor::ArgumentRegister() { return r2; }
 
 // static
 constexpr auto TypeofDescriptor::registers() { return RegisterArray(r2); }
+
+// static
+constexpr Register
+MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::FlagsRegister() {
+  return r4;
+}
+// static
+constexpr Register MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::
+    FeedbackVectorRegister() {
+  return r7;
+}
+// static
+constexpr Register
+MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::TemporaryRegister() {
+  return r6;
+}
 
 // static
 constexpr auto CallTrampolineDescriptor::registers() {
@@ -299,13 +330,11 @@ CallApiCallbackOptimizedDescriptor::ActualArgumentsCountRegister() {
   return r4;
 }
 // static
-constexpr Register CallApiCallbackOptimizedDescriptor::CallDataRegister() {
+constexpr Register
+CallApiCallbackOptimizedDescriptor::FunctionTemplateInfoRegister() {
   return r5;
 }
-// static
-constexpr Register CallApiCallbackOptimizedDescriptor::HolderRegister() {
-  return r2;
-}
+
 // static
 constexpr Register
 CallApiCallbackGenericDescriptor::ActualArgumentsCountRegister() {
@@ -317,12 +346,9 @@ CallApiCallbackGenericDescriptor::TopmostScriptHavingContextRegister() {
   return r3;
 }
 // static
-constexpr Register CallApiCallbackGenericDescriptor::CallHandlerInfoRegister() {
+constexpr Register
+CallApiCallbackGenericDescriptor::FunctionTemplateInfoRegister() {
   return r5;
-}
-// static
-constexpr Register CallApiCallbackGenericDescriptor::HolderRegister() {
-  return r2;
 }
 
 // static
@@ -368,11 +394,11 @@ constexpr auto RunMicrotasksEntryDescriptor::registers() {
 
 constexpr auto WasmJSToWasmWrapperDescriptor::registers() {
   // Arbitrarily picked register.
-  return RegisterArray(r2);
+  return RegisterArray(r8);
 }
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_TARGET_ARCH_S390
+#endif  // V8_TARGET_ARCH_S390X
 
 #endif  // V8_CODEGEN_S390_INTERFACE_DESCRIPTORS_S390_INL_H_

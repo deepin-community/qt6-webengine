@@ -12,7 +12,9 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/strings/string_util.h"
@@ -96,6 +98,17 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   }
   const mojom::UsbConfigurationInfo* GetActiveConfiguration() const;
 
+  // Returns true if a device-wide state change (e.g. SetConfiguration, Reset)
+  // is in progress.
+  bool device_state_change_in_progress() const {
+    return device_state_change_in_progress_;
+  }
+
+  // Sets whether a device-wide state change is in progress.
+  void set_device_state_change_in_progress(bool in_progress) {
+    device_state_change_in_progress_ = in_progress;
+  }
+
   // On ChromeOS the permission_broker service must be used to open USB devices.
   // This function asks it to check whether a future Open call will be allowed.
   // On all other platforms this is a no-op and always returns true.
@@ -136,7 +149,9 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   void ActiveConfigurationChanged(int configuration_value);
   void NotifyDeviceRemoved();
 
-  std::list<UsbDeviceHandle*>& handles() { return handles_; }
+  std::list<raw_ptr<UsbDeviceHandle, CtnExperimental>>& handles() {
+    return handles_;
+  }
 
   // This member must be mutable by subclasses as necessary during device
   // enumeration. To preserve the thread safety of this object they must remain
@@ -148,6 +163,7 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   friend class UsbDeviceHandleImpl;
   friend class UsbDeviceHandleMac;
   friend class UsbDeviceHandleUsbfs;
+  friend class UsbDeviceHandleUsbfsTest;
   friend class UsbDeviceHandleWin;
   friend class UsbServiceAndroid;
   friend class UsbServiceImpl;
@@ -160,9 +176,11 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
 
   // Weak pointers to open handles. HandleClosed() will be called before each
   // is freed.
-  std::list<UsbDeviceHandle*> handles_;
+  std::list<raw_ptr<UsbDeviceHandle, CtnExperimental>> handles_;
 
   base::ObserverList<Observer, true>::Unchecked observer_list_;
+
+  bool device_state_change_in_progress_ = false;
 };
 
 }  // namespace device

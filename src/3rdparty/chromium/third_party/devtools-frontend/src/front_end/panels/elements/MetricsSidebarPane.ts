@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 /*
  * Copyright (C) 2007 Apple Inc.  All rights reserved.
@@ -36,6 +37,7 @@ import * as SDK from '../../core/sdk/sdk.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
+import type {ComputedStyleModel} from './ComputedStyleModel.js';
 import {ElementsSidebarPane} from './ElementsSidebarPane.js';
 import metricsSidebarPaneStyles from './metricsSidebarPane.css.js';
 
@@ -44,22 +46,23 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
   previousPropertyDataCandidate: SDK.CSSProperty.CSSProperty|null;
   private inlineStyle: SDK.CSSStyleDeclaration.CSSStyleDeclaration|null;
   private highlightMode: string;
-  private boxElements: {
+  private boxElements: Array<{
     element: HTMLElement,
     name: string,
     backgroundColor: string,
-  }[];
+  }>;
   private isEditingMetrics?: boolean;
 
-  constructor() {
-    super();
+  constructor(computedStyleModel: ComputedStyleModel) {
+    super(computedStyleModel);
+    this.registerRequiredCSS(metricsSidebarPaneStyles);
 
     this.originalPropertyData = null;
     this.previousPropertyDataCandidate = null;
     this.inlineStyle = null;
     this.highlightMode = '';
     this.boxElements = [];
-    this.contentElement.setAttribute('jslog', `${VisualLogging.pane().context('styles-metrics')}`);
+    this.contentElement.setAttribute('jslog', `${VisualLogging.pane('styles-metrics')}`);
   }
 
   override doUpdate(): Promise<void> {
@@ -175,7 +178,7 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
         return element;
       }
 
-      if (value === '' || (name !== 'position' && value === '0px')) {
+      if (value === '' || (name !== 'position' && value === 'unset')) {
         value = '\u2012';
       } else if (name === 'position' && value === 'auto') {
         value = '\u2012';
@@ -184,8 +187,11 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
       value = Platform.NumberUtilities.toFixedIfFloating(value);
 
       element.textContent = value;
-      element.setAttribute(
-          'jslog', `${VisualLogging.value().track({dblclick: true}).context('element-value-modification')}`);
+      element.setAttribute('jslog', `${VisualLogging.value(propertyName).track({
+                             dblclick: true,
+                             keydown: 'Enter|Escape|ArrowUp|ArrowDown|PageUp|PageDown',
+                             change: true,
+                           })}`);
       element.addEventListener('dblclick', this.startEditing.bind(this, element, name, propertyName, style), false);
       return element;
     }
@@ -290,15 +296,21 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
         widthElement.textContent = getContentAreaWidthPx(style);
         widthElement.addEventListener(
             'dblclick', this.startEditing.bind(this, widthElement, 'width', 'width', style), false);
-        widthElement.setAttribute(
-            'jslog', `${VisualLogging.value().track({'dblclick': true}).context('element-value-modification')}`);
+        widthElement.setAttribute('jslog', `${VisualLogging.value('width').track({
+                                    dblclick: true,
+                                    keydown: 'Enter|Escape|ArrowUp|ArrowDown|PageUp|PageDown',
+                                    change: true,
+                                  })}`);
 
         const heightElement = document.createElement('span');
         heightElement.textContent = getContentAreaHeightPx(style);
         heightElement.addEventListener(
             'dblclick', this.startEditing.bind(this, heightElement, 'height', 'height', style), false);
-        heightElement.setAttribute(
-            'jslog', `${VisualLogging.value().track({'dblclick': true}).context('element-value-modification')}`);
+        heightElement.setAttribute('jslog', `${VisualLogging.value('height').track({
+                                     dblclick: true,
+                                     keydown: 'Enter|Escape|ArrowUp|ArrowDown|PageUp|PageDown',
+                                     change: true,
+                                   })}`);
 
         const timesElement = document.createElement('span');
         timesElement.textContent = ' × ';
@@ -347,7 +359,7 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
       styleProperty: string,
       computedStyle: Map<string, string>,
       keyDownHandler: (arg0: Event) => void,
-    } = {box, styleProperty, computedStyle, keyDownHandler: (): void => {}};
+    } = {box, styleProperty, computedStyle, keyDownHandler: () => {}};
     const boundKeyDown = this.handleKeyDown.bind(this, context);
     context.keyDownHandler = boundKeyDown;
     targetElement.addEventListener('keydown', boundKeyDown, false);
@@ -419,7 +431,7 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
   }
 
   private applyUserInput(
-      element: Element, userInput: string, previousContent: string, context: {
+      element: Element, userInput: string, previousContent: string|null, context: {
         box: string,
         styleProperty: string,
         computedStyle: Map<string, string>,
@@ -435,9 +447,9 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
       return this.editingCancelled(element, context);
     }  // nothing changed, so cancel
 
-    if (context.box !== 'position' && (!userInput || userInput === '\u2012')) {
-      userInput = '0px';
-    } else if (context.box === 'position' && (!userInput || userInput === '\u2012')) {
+    if (context.box !== 'position' && (!userInput || userInput === '\u2012' || userInput === '-')) {
+      userInput = 'unset';
+    } else if (context.box === 'position' && (!userInput || userInput === '\u2012' || userInput === '-')) {
       userInput = 'auto';
     }
 
@@ -477,7 +489,7 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
     const allProperties = this.inlineStyle.allProperties();
     for (let i = 0; i < allProperties.length; ++i) {
       const property = allProperties[i];
-      if (property.name !== context.styleProperty || !property.activeInStyle()) {
+      if (property.name !== context.styleProperty || (property.parsedOk && !property.activeInStyle())) {
         continue;
       }
 
@@ -510,17 +522,18 @@ export class MetricsSidebarPane extends ElementsSidebarPane {
     }
   }
 
-  private editingCommitted(element: Element, userInput: string, previousContent: string, context: {
-    box: string,
-    styleProperty: string,
-    computedStyle: Map<string, string>,
-    keyDownHandler: (arg0: Event) => void,
-  }): void {
+  private editingCommitted(
+      element: Element,
+      userInput: string,
+      previousContent: string|null,
+      context: {
+        box: string,
+        styleProperty: string,
+        computedStyle: Map<string, string>,
+        keyDownHandler: (arg0: Event) => void,
+      },
+      ): void {
     this.editingEnded(element, context);
     this.applyUserInput(element, userInput, previousContent, context, true);
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([metricsSidebarPaneStyles]);
   }
 }

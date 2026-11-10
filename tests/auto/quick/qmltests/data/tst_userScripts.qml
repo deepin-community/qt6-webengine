@@ -35,7 +35,7 @@ Item {
         return script
     }
 
-    WebEngineProfile { id: testProfile }
+    WebEngineProfilePrototype { id: testProfilePrototype }
 
     TestWebEngineView {
         id: webEngineView
@@ -65,6 +65,23 @@ Item {
         }
     }
 
+    // This previously crashed. See change: https://codereview.qt-project.org/c/qt/qtwebengine/+/558237
+    WebEngineView {
+        id: webEngineView3
+        width: 400
+        height: 300
+
+        userScripts {
+            collection: [
+                {
+                    injectionPoint: WebEngineScript.DocumentReady,
+                    sourceCode: Qt.resolvedUrl("append-document-title.js"),
+                    worldId: WebEngineScript.UserWorld
+                }
+            ]
+        }
+    }
+
     TestCase {
         name: "UserScripts"
 
@@ -77,6 +94,7 @@ Item {
         }
 
         function test_profileScripts() {
+            let testProfile = testProfilePrototype.instance()
             // assusme it is the same type as in View
             let t1 = String(testProfile.userScripts), t2 = String(webEngineView.userScripts)
             compare(t1.substr(0, t1.indexOf('(')), t2.substr(0, t2.indexOf('(')))

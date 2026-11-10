@@ -7,7 +7,7 @@
 #include "third_party/blink/public/platform/web_theme_engine.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
-#include "third_party/blink/renderer/core/scroll/scrollable_area.h"
+#include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme_overlay_mock.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
@@ -41,11 +41,17 @@ ScrollbarThemeOverlayMobile::ScrollbarThemeOverlayMobile(int thumb_thickness,
                             scrollbar_margin),
       default_color_(Color::FromSkColor4f(ScrollbarStyle().color)) {}
 
-void ScrollbarThemeOverlayMobile::PaintThumb(GraphicsContext& context,
+void ScrollbarThemeOverlayMobile::PaintThumb(const PaintInfo& paint_info,
                                              const Scrollbar& scrollbar,
                                              const gfx::Rect& rect) {
+  GraphicsContext& context = paint_info.context;
   if (!scrollbar.Enabled())
     return;
+
+  const auto* box = scrollbar.GetLayoutBox();
+  if (!box) {
+    return;
+  }
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(context, scrollbar,
                                                   DisplayItem::kScrollbarThumb))
@@ -54,16 +60,15 @@ void ScrollbarThemeOverlayMobile::PaintThumb(GraphicsContext& context,
   DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarThumb,
                            rect);
 
-  const auto* box = scrollbar.GetScrollableArea()->GetLayoutBox();
   Color color = scrollbar.ScrollbarThumbColor().value_or(default_color_);
   AutoDarkMode auto_dark_mode(PaintAutoDarkMode(
       box->StyleRef(), DarkModeFilter::ElementRole::kBackground));
   context.FillRect(rect, color, auto_dark_mode);
 }
 
-SkColor4f ScrollbarThemeOverlayMobile::GetSolidColor(
-    const absl::optional<Color>& thumb_color) const {
-  return thumb_color.value_or(default_color_).toSkColor4f();
+SkColor4f ScrollbarThemeOverlayMobile::ThumbColor(
+    const Scrollbar& scrollbar) const {
+  return scrollbar.ScrollbarThumbColor().value_or(default_color_).toSkColor4f();
 }
 
 }  // namespace blink

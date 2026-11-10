@@ -44,13 +44,14 @@
 
 namespace blink {
 
-void AsyncAudioDecoder::DecodeAsync(DOMArrayBuffer* audio_data,
-                                    float sample_rate,
-                                    V8DecodeSuccessCallback* success_callback,
-                                    V8DecodeErrorCallback* error_callback,
-                                    ScriptPromiseResolver* resolver,
-                                    BaseAudioContext* context,
-                                    ExceptionState& exception_state) {
+void AsyncAudioDecoder::DecodeAsync(
+    DOMArrayBuffer* audio_data,
+    float sample_rate,
+    V8DecodeSuccessCallback* success_callback,
+    V8DecodeErrorCallback* error_callback,
+    ScriptPromiseResolver<AudioBuffer>* resolver,
+    BaseAudioContext* context,
+    ExceptionState& exception_state) {
   DCHECK(IsMainThread());
   DCHECK(audio_data);
 
@@ -78,14 +79,13 @@ void AsyncAudioDecoder::DecodeOnBackgroundThread(
     float sample_rate,
     CrossThreadHandle<V8DecodeSuccessCallback> success_callback,
     CrossThreadHandle<V8DecodeErrorCallback> error_callback,
-    CrossThreadHandle<ScriptPromiseResolver> resolver,
+    CrossThreadHandle<ScriptPromiseResolver<AudioBuffer>> resolver,
     CrossThreadHandle<BaseAudioContext> context,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const ExceptionContext& exception_context) {
   DCHECK(!IsMainThread());
   scoped_refptr<AudioBus> bus = AudioBus::CreateBusFromInMemoryAudioFile(
-      audio_data_contents.Data(), audio_data_contents.DataLength(), false,
-      sample_rate);
+      audio_data_contents.ByteSpan(), false, sample_rate);
 
   // A reference to `bus` is retained by base::OnceCallback and will be removed
   // after `NotifyComplete()` is done.
@@ -105,7 +105,7 @@ void AsyncAudioDecoder::NotifyComplete(
     V8DecodeSuccessCallback* success_callback,
     V8DecodeErrorCallback* error_callback,
     AudioBus* audio_bus,
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolver<AudioBuffer>* resolver,
     BaseAudioContext* context,
     const ExceptionContext& exception_context) {
   DCHECK(IsMainThread());

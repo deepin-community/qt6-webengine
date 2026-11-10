@@ -12,6 +12,7 @@
 #include "components/app_restore/app_launch_info.h"
 #include "components/desks_storage/core/desk_template_conversion.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 
 namespace desks_storage {
 
@@ -61,7 +62,7 @@ SavedDeskGenericAppBuilder& SavedDeskGenericAppBuilder::SetWindowState(
 
 SavedDeskGenericAppBuilder&
 SavedDeskGenericAppBuilder::SetPreMinimizedWindowState(
-    ui::WindowShowState state) {
+    ui::mojom::WindowShowState state) {
   pre_minimized_window_show_state_ = state;
   return *this;
 }
@@ -139,22 +140,21 @@ BuiltApp SavedDeskGenericAppBuilder::Build() {
   window_info->display_id = display_id_;
 
   if (launch_conatiner_) {
-    app_launch_info->container = absl::optional<int32_t>(
-        static_cast<int32_t>(launch_conatiner_.value()));
+    app_launch_info->container =
+        std::optional<int32_t>(static_cast<int32_t>(launch_conatiner_.value()));
   }
 
   if (disposition_) {
     app_launch_info->disposition =
-        absl::optional<int32_t>(static_cast<int32_t>(disposition_.value()));
+        std::optional<int32_t>(static_cast<int32_t>(disposition_.value()));
   }
 
   if (event_flag_) {
     app_launch_info->event_flag = event_flag_.value();
   }
 
-  app_launch_info->app_name = name_;
+  app_launch_info->browser_extra_info.app_name = name_;
   app_launch_info->window_id = window_id_;
-  // app_launch_info->event_flag = event_flag_.value_or(0);
 
   return BuiltApp(BuiltApp::Status::kOk, std::move(window_info),
                   std::move(app_launch_info));
@@ -248,17 +248,6 @@ SavedDeskBrowserBuilder& SavedDeskBrowserBuilder::SetUrls(
   return *this;
 }
 
-SavedDeskBrowserBuilder& SavedDeskBrowserBuilder::SetIsLacros(bool is_lacros) {
-  is_lacros_ = is_lacros;
-  return *this;
-}
-
-SavedDeskBrowserBuilder& SavedDeskBrowserBuilder::SetLacrosProfileId(
-    uint64_t lacros_profile_id) {
-  lacros_profile_id_ = lacros_profile_id;
-  return *this;
-}
-
 SavedDeskBrowserBuilder& SavedDeskBrowserBuilder::SetIsApp(bool is_app) {
   is_app_ = is_app;
   return *this;
@@ -271,29 +260,28 @@ SavedDeskBrowserBuilder& SavedDeskBrowserBuilder::AddTabGroupBuilder(
 }
 
 BuiltApp SavedDeskBrowserBuilder::Build() {
-  generic_builder_.SetAppId(is_lacros_ ? app_constants::kLacrosAppId
-                                       : app_constants::kChromeAppId);
+  generic_builder_.SetAppId(app_constants::kChromeAppId);
 
   BuiltApp generic_app = generic_builder_.Build();
   if (generic_app.status != BuiltApp::Status::kOk)
     return BuiltApp(generic_app.status, nullptr, nullptr);
 
-  generic_app.launch_info->active_tab_index = active_tab_index_;
-  generic_app.launch_info->first_non_pinned_tab_index =
+  generic_app.launch_info->browser_extra_info.urls = urls_;
+  generic_app.launch_info->browser_extra_info.active_tab_index =
+      active_tab_index_;
+  generic_app.launch_info->browser_extra_info.first_non_pinned_tab_index =
       first_non_pinned_tab_index_;
-  generic_app.launch_info->urls = urls_;
-  generic_app.launch_info->app_type_browser = is_app_;
-  generic_app.launch_info->lacros_profile_id = lacros_profile_id_;
-
+  generic_app.launch_info->browser_extra_info.app_type_browser = is_app_;
   for (auto& tab_group : tab_group_builders_) {
     SavedDeskTabGroupBuilder::TabGroupWithStatus built_group =
         tab_group.Build();
     if (built_group.status !=
-        SavedDeskTabGroupBuilder::TabGroupBuildStatus::kOk)
+        SavedDeskTabGroupBuilder::TabGroupBuildStatus::kOk) {
       continue;
+    }
     DCHECK(built_group.tab_group);
 
-    generic_app.launch_info->tab_group_infos.push_back(
+    generic_app.launch_info->browser_extra_info.tab_group_infos.push_back(
         *built_group.tab_group.release());
   }
 
@@ -370,10 +358,6 @@ std::unique_ptr<ash::DeskTemplate> SavedDeskBuilder::Build() {
   if (has_updated_time_) {
     desk_template->set_updated_time(updated_time_);
   }
-  if (lacros_profile_id_) {
-    desk_template->set_lacros_profile_id(*lacros_profile_id_);
-  }
-
   auto restore_data = std::make_unique<app_restore::RestoreData>();
 
   for (auto& app : built_apps_)
@@ -427,12 +411,6 @@ SavedDeskBuilder& SavedDeskBuilder::SetPolicyValue(const base::Value& value) {
 SavedDeskBuilder& SavedDeskBuilder::SetPolicyShouldLaunchOnStartup(
     bool should_launch_on_startup) {
   policy_should_launch_on_startup_ = should_launch_on_startup;
-  return *this;
-}
-
-SavedDeskBuilder& SavedDeskBuilder::SetLacrosProfileId(
-    uint64_t lacros_profile_id) {
-  lacros_profile_id_ = lacros_profile_id;
   return *this;
 }
 

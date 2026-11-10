@@ -13,7 +13,6 @@
 #include "mediapipe/framework/deps/mathutil.h"
 #include "mediapipe/framework/deps/random_base.h"
 #include "mediapipe/framework/formats/video_stream_header.h"
-#include "mediapipe/framework/port/integral_types.h"
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/port/status.h"
 #include "mediapipe/framework/port/status_macros.h"
@@ -147,6 +146,14 @@ class PacketResamplerCalculator : public CalculatorBase {
       const mediapipe::PacketResamplerCalculatorOptions& options);
 
  private:
+  // Updates the frame rate of the calculator.
+  //
+  // This updates the metadata of the frame rate of the calculator moving
+  // forward. All already processed packets will be ignored.
+  absl::Status UpdateFrameRate(
+      const mediapipe::PacketResamplerCalculatorOptions& resampler_options,
+      double frame_rate);
+
   std::unique_ptr<class PacketResamplerStrategy> strategy_;
 
   // The timestamp of the first packet received.
@@ -185,6 +192,8 @@ class PacketResamplerCalculator : public CalculatorBase {
   // are included in the output, even if the nearest timestamp is not
   // between start_time and end_time.
   bool round_limits_;
+
+  bool header_sent_ = false;
 
   // Allow strategies access to all internal calculator state.
   //

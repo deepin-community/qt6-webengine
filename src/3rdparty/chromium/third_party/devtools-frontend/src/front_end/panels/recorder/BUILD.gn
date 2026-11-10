@@ -5,6 +5,7 @@
 import("../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../scripts/build/ninja/devtools_module.gni")
 import("../../../scripts/build/ninja/generate_css.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 
 generate_css("css_files") {
   sources = [ "recorderController.css" ]
@@ -20,15 +21,17 @@ devtools_module("recorder") {
   deps = [
     "../../core/common:bundle",
     "../../core/platform:bundle",
+    "../../core/root:bundle",
     "../../models/extensions:bundle",
     "../../models/trace:bundle",
+    "../../panels/common:bundle",
     "../../panels/emulation:bundle",
-    "../../panels/timeline:bundle",
     "../../services/tracing:bundle",
     "../../third_party/puppeteer-replay:bundle",
     "../../ui/components/dialogs:bundle",
     "../../ui/components/icon_button:bundle",
     "../../ui/components/menus:bundle",
+    "../../ui/visual_logging:bundle",
     "./components:bundle",
     "./controllers:bundle",
     "./converters:bundle",
@@ -48,9 +51,8 @@ devtools_entrypoint("bundle") {
 
   visibility = [
     ":*",
-    "../../../test/e2e/recorder:*",
-    "../../../test/unittests/front_end/models/recorder/*",
-    "../../../test/unittests/front_end/panels/recorder/*",
+    "../../../test/e2e/helpers:*",
+    "../../../test/e2e_non_hosted/recorder:*",
     "../../entrypoints/main/*",
     "../../panels/sources/*",
   ]
@@ -70,5 +72,22 @@ devtools_entrypoint("meta") {
     "../..:*",
     "../../entrypoints/devtools_app:*",
     "../../entrypoints/inspector:*",
+  ]
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "RecorderController.test.ts",
+    "injected.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../testing",
+    "../../ui/components/render_coordinator:bundle",
+    "./components:bundle",
+    "./models:bundle",
   ]
 }

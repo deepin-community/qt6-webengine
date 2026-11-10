@@ -48,6 +48,19 @@ struct Globals {
   void Init(wl_display* display,
             base::flat_map<std::string, uint32_t> in_requested_versions);
 
+  // TestObserver is an interface that observes certain events for testing
+  // purposes.
+  class TestObserver {
+   public:
+    virtual void OnRegistryGlobal(uint32_t id,
+                                  const char* interface,
+                                  uint32_t version) = 0;
+    virtual void OnRegistryGlobalRemove(uint32_t id) = 0;
+  };
+  void set_observer_for_testing(TestObserver* observer) {
+    observer_for_testing_ = observer;
+  }
+
   std::unique_ptr<wl_registry> registry;
 
   std::vector<Object<wl_output>> outputs;
@@ -61,10 +74,10 @@ struct Globals {
   Object<zaura_shell> aura_shell;
   std::vector<Object<zaura_output>> aura_outputs;
   Object<zaura_output_manager> aura_output_manager;
+  Object<zaura_output_manager_v2> aura_output_manager_v2;
   Object<xdg_wm_base> xdg_wm_base;
   Object<zwp_fullscreen_shell_v1> fullscreen_shell;
   Object<zwp_input_timestamps_manager_v1> input_timestamps_manager;
-  Object<zwp_linux_explicit_synchronization_v1> linux_explicit_synchronization;
   Object<zcr_vsync_feedback_v1> vsync_feedback;
   Object<zcr_color_manager_v1> color_manager;
   Object<zcr_stylus_v2> stylus;
@@ -77,6 +90,8 @@ struct Globals {
   Object<wl_data_device_manager> data_device_manager;
 
   base::flat_map<std::string, uint32_t> requested_versions;
+
+  raw_ptr<TestObserver> observer_for_testing_;
 };
 
 }  // namespace exo::wayland::clients

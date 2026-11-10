@@ -17,7 +17,7 @@
 #include "include/effects/SkGradientShader.h"
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
 #include "src/base/SkRandom.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
@@ -226,7 +226,7 @@ public:
 DEF_GM(return new SpiralRT;)
 
 // Test case for sampling with both unmodified input coordinates, and explicit coordinates.
-// The first version of skbug.com/11869 suffered a bug where all samples of a child were treated
+// The first version of skbug.com/40042955 suffered a bug where all samples of a child were treated
 // as pass-through if *at least one* used the unmodified coordinates. This was detected & tracked
 // in b/181092919. This GM is similar, and demonstrates the bug before the fix was applied.
 class UnsharpRT : public RuntimeShaderGM {
@@ -734,7 +734,7 @@ static sk_sp<SkShader> lit_shader(sk_sp<SkShader> normals) {
         }
     )";
     auto effect = SkRuntimeEffect::MakeForShader(SkString(kSrc)).effect;
-    return effect->makeShader(nullptr, &normals, 1);
+    return effect->makeShader(/* uniforms= */ nullptr, &normals, /* childCount= */ 1);
 }
 
 static sk_sp<SkShader> lit_shader_linear(sk_sp<SkShader> normals) {
@@ -748,13 +748,13 @@ static sk_sp<SkShader> lit_shader_linear(sk_sp<SkShader> normals) {
         }
     )";
     auto effect = SkRuntimeEffect::MakeForShader(SkString(kSrc)).effect;
-    return effect->makeShader(nullptr, &normals, 1);
+    return effect->makeShader(/* uniforms= */ nullptr, &normals, /* childCount= */ 1);
 }
 
 DEF_SIMPLE_GM(paint_alpha_normals_rt, canvas, 512,512) {
     // Various draws, with non-opaque paint alpha. This demonstrates several issues around how
     // paint alpha is applied differently on CPU (globally, after all shaders) and GPU (per shader,
-    // inconsistently). See: skbug.com/11942
+    // inconsistently). See: skbug.com/40043035
     //
     // When this works, it will be a demo of applying paint alpha to fade out a complex effect.
     auto draw_shader = [=](int x, int y, sk_sp<SkShader> shader) {
@@ -859,7 +859,7 @@ DEF_SIMPLE_GM(lit_shader_linear_rt, canvas, 512, 256) {
     canvas->drawImage(surface->makeImageSnapshot(), 0, 0);
 }
 
-// skbug.com/13598 GPU was double applying the local matrix.
+// skbug.com/40044685 GPU was double applying the local matrix.
 DEF_SIMPLE_GM(local_matrix_shader_rt, canvas, 256, 256) {
     SkString passthrough(R"(
         uniform shader s;
@@ -887,7 +887,7 @@ DEF_SIMPLE_GM(local_matrix_shader_rt, canvas, 256, 256) {
     // passthrough(image)
     canvas->save();
     canvas->translate(image->width(), 0);
-    paint.setShader(rte->makeShader(nullptr, &imgShader, 1));
+    paint.setShader(rte->makeShader(/* uniforms= */ nullptr, &imgShader, /* childCount= */ 1));
     canvas->drawRect(r, paint);
     canvas->restore();
 
@@ -901,7 +901,8 @@ DEF_SIMPLE_GM(local_matrix_shader_rt, canvas, 256, 256) {
     // localmatrix(passthrough(image)) This was the bug.
     canvas->save();
     canvas->translate(image->width(), image->height());
-    paint.setShader(rte->makeShader(nullptr, &imgShader, 1)->makeWithLocalMatrix(lm));
+    paint.setShader(rte->makeShader(/* uniforms= */ nullptr, &imgShader, /* childCount= */ 1)
+                            ->makeWithLocalMatrix(lm));
     canvas->drawRect(r, paint);
     canvas->restore();
 }
@@ -1102,7 +1103,7 @@ DEF_SIMPLE_GM_CAN_FAIL(alpha_image_shader_rt, canvas, errorMsg, 350, 50) {
     paint.setShader(
             SkRuntimeEffect::MakeForShader(SkString("uniform shader s;"
                                                     "half4 main(float2 p) { return s.eval(p); }"))
-                    .effect->makeShader(nullptr, children));
+                    .effect->makeShader(/* uniforms= */ nullptr, children));
     rect();
 
     // Color-filter that evaluates the "paint color" shader, with and without a shader on the paint

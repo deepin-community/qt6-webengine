@@ -11,13 +11,18 @@
 
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "components/viz/test/test_gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "gpu/ipc/gl_in_process_context.h"
-#include "gpu/ipc/in_process_gpu_thread_holder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+// TODO(crbug.com/351775836): Move ChromeOS to use TestGpuServiceHolder.
+#if BUILDFLAG(IS_CHROMEOS)
+#include "gpu/ipc/in_process_gpu_thread_holder.h"
+#else
+#include "components/viz/test/test_gpu_service_holder.h"
+#endif
 
 namespace {
 
@@ -25,10 +30,14 @@ class ContextTestBase : public testing::Test {
  public:
   std::unique_ptr<gpu::GLInProcessContext> CreateGLInProcessContext() {
     gpu::ContextCreationAttribs attributes;
-    attributes.bind_generates_resource = false;
 
     auto context = std::make_unique<gpu::GLInProcessContext>();
+    // TODO(crbug.com/351775836): Move ChromeOS to use TestGpuServiceHolder.
+#if BUILDFLAG(IS_CHROMEOS)
     auto result = context->Initialize(gpu_thread_holder_.GetTaskExecutor(),
+#else
+    auto result = context->Initialize(gpu_thread_holder_.task_executor(),
+#endif
                                       attributes, gpu::SharedMemoryLimits());
     DCHECK_EQ(result, gpu::ContextResult::kSuccess);
     return context;
@@ -51,7 +60,12 @@ class ContextTestBase : public testing::Test {
   raw_ptr<gpu::ContextSupport> context_support_;
 
  private:
+  // TODO(crbug.com/351775836): Move ChromeOS to use TestGpuServiceHolder.
+#if BUILDFLAG(IS_CHROMEOS)
   gpu::InProcessGpuThreadHolder gpu_thread_holder_;
+#else
+  viz::TestGpuServiceHolder gpu_thread_holder_;
+#endif
   std::unique_ptr<gpu::GLInProcessContext> context_;
 };
 

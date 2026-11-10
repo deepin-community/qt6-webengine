@@ -2,19 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "cc/trees/layer_tree_host.h"
-
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/time/time.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/test/fake_content_layer_client.h"
-#include "cc/test/fake_painted_scrollbar_layer.h"
 #include "cc/test/fake_picture_layer.h"
+#include "cc/test/fake_scrollbar_layer.h"
 #include "cc/test/layer_test_common.h"
 #include "cc/test/layer_tree_test.h"
 #include "cc/trees/damage_tracker.h"
+#include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_impl.h"
 
 namespace cc {
@@ -279,7 +278,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
         EXPECT_TRUE(frame_data->has_no_damage);
 
         // Then we set full damage for the next frame.
-        host_impl->SetFullViewportDamage();
+        full_viewport_damage_ = true;
         break;
       case 2:
         // The whole frame should be damaged as requested.
@@ -298,7 +297,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
         // If we damage part of the frame, but also damage the full
         // frame, then the whole frame should be damaged.
         child_damage_rect_ = gfx::Rect(10, 11, 12, 13);
-        host_impl->SetFullViewportDamage();
+        full_viewport_damage_ = true;
         break;
       case 4:
         // The whole frame is damaged.
@@ -309,6 +308,13 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
         break;
     }
     return draw_result;
+  }
+
+  void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
+    if (full_viewport_damage_) {
+      host_impl->SetFullViewportDamage();
+      full_viewport_damage_ = false;
+    }
   }
 
   void DidCommitAndDrawFrame() override {
@@ -325,6 +331,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
   scoped_refptr<FakePictureLayer> root_;
   scoped_refptr<FakePictureLayer> child_;
   gfx::Rect child_damage_rect_;
+  bool full_viewport_damage_ = false;
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostDamageTestForcedFullDamage);
@@ -348,8 +355,8 @@ class LayerTreeHostScrollbarDamageTest : public LayerTreeHostDamageTest {
     content_layer_->SetIsDrawable(true);
     root_layer->AddChild(content_layer_);
 
-    scoped_refptr<Layer> scrollbar_layer = FakePaintedScrollbarLayer::Create(
-        false, true, content_layer_->element_id());
+    auto scrollbar_layer = base::MakeRefCounted<FakePaintedScrollbarLayer>(
+        content_layer_->element_id());
     scrollbar_layer->SetPosition(gfx::PointF(300.f, 300.f));
     scrollbar_layer->SetBounds(gfx::Size(10, 100));
     root_layer->AddChild(scrollbar_layer);
@@ -425,7 +432,8 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
         break;
       case 2:
         scroll_layer->ScrollBy(gfx::Vector2dF(10.f, 10.f));
-        host_impl->SetNeedsRedraw();
+        host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                  /*skip_if_inside_draw=*/false);
         break;
       case 3:
         // We will resize the content layer, on the main thread.
@@ -492,7 +500,6 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
         break;
       default:
         NOTREACHED();
-        break;
     }
     return draw_result;
   }
@@ -506,7 +513,8 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
         // Scroll on the thread.  This should damage the scrollbar for the
         // next draw on the thread.
         scroll_layer->ScrollBy(gfx::Vector2dF(10.f, 10.f));
-        host_impl->SetNeedsRedraw();
+        host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                  /*skip_if_inside_draw=*/false);
         break;
       case 2:
         // Forcibly send the scroll to the main thread.
@@ -518,7 +526,6 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
 

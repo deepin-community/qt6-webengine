@@ -20,7 +20,6 @@
 #include "third_party/blink/renderer/core/svg/svg_fe_drop_shadow_element.h"
 
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/graphics/filters/svg_filter_builder.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_number.h"
@@ -90,7 +89,6 @@ void SVGFEDropShadowElement::SvgAttributeChanged(
   if (attr_name == svg_names::kInAttr ||
       attr_name == svg_names::kStdDeviationAttr ||
       attr_name == svg_names::kDxAttr || attr_name == svg_names::kDyAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     Invalidate();
     return;
   }
@@ -126,7 +124,7 @@ bool SVGFEDropShadowElement::TaintsOrigin() const {
   // TaintsOrigin() is only called after a successful call to Build()
   // (see above), so we should have a ComputedStyle here.
   DCHECK(style);
-  return style->FloodColor().IsCurrentColor();
+  return style->FloodColor().DependsOnCurrentColor();
 }
 
 SVGAnimatedPropertyBase* SVGFEDropShadowElement::PropertyFromAttribute(

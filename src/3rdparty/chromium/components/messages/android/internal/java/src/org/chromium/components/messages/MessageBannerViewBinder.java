@@ -4,21 +4,25 @@
 
 package org.chromium.components.messages;
 
+import static org.chromium.components.messages.MessageBannerProperties.CLOSE_BUTTON_CLICK_LISTENER;
 import static org.chromium.components.messages.MessageBannerProperties.CONTENT_ALPHA;
 import static org.chromium.components.messages.MessageBannerProperties.DESCRIPTION;
 import static org.chromium.components.messages.MessageBannerProperties.DESCRIPTION_ICON;
 import static org.chromium.components.messages.MessageBannerProperties.DESCRIPTION_MAX_LINES;
 import static org.chromium.components.messages.MessageBannerProperties.ELEVATION;
+import static org.chromium.components.messages.MessageBannerProperties.ENABLE_CLOSE_BUTTON;
 import static org.chromium.components.messages.MessageBannerProperties.ICON;
 import static org.chromium.components.messages.MessageBannerProperties.ICON_RESOURCE_ID;
 import static org.chromium.components.messages.MessageBannerProperties.ICON_ROUNDED_CORNER_RADIUS_PX;
 import static org.chromium.components.messages.MessageBannerProperties.ICON_TINT_COLOR;
+import static org.chromium.components.messages.MessageBannerProperties.IS_WITHIN_TAP_PROTECTION_PERIOD_SUPPLIER;
 import static org.chromium.components.messages.MessageBannerProperties.LARGE_ICON;
 import static org.chromium.components.messages.MessageBannerProperties.MARGIN_TOP;
 import static org.chromium.components.messages.MessageBannerProperties.ON_SECONDARY_BUTTON_CLICK;
 import static org.chromium.components.messages.MessageBannerProperties.ON_TOUCH_RUNNABLE;
 import static org.chromium.components.messages.MessageBannerProperties.PRIMARY_BUTTON_CLICK_LISTENER;
 import static org.chromium.components.messages.MessageBannerProperties.PRIMARY_BUTTON_TEXT;
+import static org.chromium.components.messages.MessageBannerProperties.PRIMARY_BUTTON_TEXT_MAX_LINES;
 import static org.chromium.components.messages.MessageBannerProperties.PRIMARY_WIDGET_APPEARANCE;
 import static org.chromium.components.messages.MessageBannerProperties.RESIZE_DESCRIPTION_ICON;
 import static org.chromium.components.messages.MessageBannerProperties.SECONDARY_BUTTON_MENU_TEXT;
@@ -40,10 +44,12 @@ import android.view.ViewOutlineProvider;
 
 import androidx.appcompat.content.res.AppCompatResources;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** View binder of Message banner. */
+@NullMarked
 public class MessageBannerViewBinder {
     @SuppressLint("ClickableViewAccessibility")
     public static void bind(PropertyModel model, MessageBannerView view, PropertyKey propertyKey) {
@@ -51,6 +57,8 @@ public class MessageBannerViewBinder {
             view.setPrimaryWidgetAppearance(model.get(PRIMARY_WIDGET_APPEARANCE));
         } else if (propertyKey == PRIMARY_BUTTON_TEXT) {
             view.setPrimaryButtonText(model.get(PRIMARY_BUTTON_TEXT));
+        } else if (propertyKey == PRIMARY_BUTTON_TEXT_MAX_LINES) {
+            view.setPrimaryButtonTextMaxLines(model.get(PRIMARY_BUTTON_TEXT_MAX_LINES));
         } else if (propertyKey == PRIMARY_BUTTON_CLICK_LISTENER) {
             view.setPrimaryButtonClickListener(model.get(PRIMARY_BUTTON_CLICK_LISTENER));
         } else if (propertyKey == TITLE) {
@@ -143,6 +151,12 @@ public class MessageBannerViewBinder {
             view.setElevation(model.get(ELEVATION));
         } else if (propertyKey == MARGIN_TOP) {
             view.setMarginTop(model.get(MARGIN_TOP));
+        } else if (propertyKey == IS_WITHIN_TAP_PROTECTION_PERIOD_SUPPLIER) {
+            view.setTapProtectionSupplier(model.get(IS_WITHIN_TAP_PROTECTION_PERIOD_SUPPLIER));
+        } else if (propertyKey == CLOSE_BUTTON_CLICK_LISTENER) {
+            view.setCloseButtonClickListener(model.get(CLOSE_BUTTON_CLICK_LISTENER));
+        } else if (propertyKey == ENABLE_CLOSE_BUTTON) {
+            view.enableCloseButton(model.get(ENABLE_CLOSE_BUTTON));
         }
     }
 }

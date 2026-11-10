@@ -24,6 +24,9 @@ class NinjaCreateBundleTargetWriter : public NinjaTargetWriter {
   // if defined, otherwise returns an empty string.
   std::string WritePostProcessingRuleDefinition();
 
+  // Writes the post processing manifest file if needed.
+  void WritePostProcessingManifestFile();
+
   // Writes the steps to copy files into the bundle.
   //
   // The list of newly created files will be added to |output_files|.
@@ -45,9 +48,9 @@ class NinjaCreateBundleTargetWriter : public NinjaTargetWriter {
       const std::vector<OutputFile>& order_only_deps,
       std::vector<OutputFile>* output_files);
 
-  // Writes the stamp file for the assets catalog compilation input
+  // Writes the phony target for the assets catalog compilation input
   // dependencies.
-  OutputFile WriteCompileAssetsCatalogInputDepsStamp(
+  OutputFile WriteCompileAssetsCatalogInputDepsStampOrPhony(
       const std::vector<const Target*>& dependencies);
 
   // Writes the post-processing step (if a script is defined).
@@ -59,8 +62,9 @@ class NinjaCreateBundleTargetWriter : public NinjaTargetWriter {
                                const std::vector<OutputFile>& order_only_deps,
                                std::vector<OutputFile>* output_files);
 
-  // Writes the stamp file for the post-processing input dependencies.
-  OutputFile WritePostProcessingInputDepsStamp(
+  // Writes the stamp file or phony target for the post-processing input
+  // dependencies.
+  OutputFile WritePostProcessingInputDepsStampOrPhony(
       const std::vector<OutputFile>& order_only_deps,
       std::vector<OutputFile>* output_files);
 

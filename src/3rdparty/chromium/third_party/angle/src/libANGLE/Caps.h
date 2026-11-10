@@ -90,6 +90,9 @@ void InitMinimumTextureCapsMap(const Version &clientVersion,
 // present. Does not determine if they are natively supported without decompression.
 bool DetermineCompressedTextureETCSupport(const TextureCapsMap &textureCaps);
 
+// Determine support for signed normalized format renderability.
+bool DetermineRenderSnormSupport(const TextureCapsMap &textureCaps, bool textureNorm16EXT);
+
 // Pointer to a boolean member of the Extensions struct
 using ExtensionBool = bool Extensions::*;
 
@@ -143,7 +146,7 @@ struct Limitations
     bool noVertexAttributeAliasing = false;
 
     // Renderer doesn't support GL_TEXTURE_COMPARE_MODE=GL_NONE on a shadow sampler.
-    // TODO(http://anglebug.com/5231): add validation code to front-end.
+    // TODO(http://anglebug.com/42263785): add validation code to front-end.
     bool noShadowSamplerCompareModeNone = false;
 
     // PVRTC1 textures must be squares.
@@ -161,7 +164,20 @@ struct Limitations
     // D3D does not support compressed textures where the base mip level is not a multiple of 4
     bool compressedBaseMipLevelMultipleOfFour = false;
 
-    bool limitWebglMaxTextureSizeTo4096 = false;
+    // An extra limit for WebGL texture size. Ignored if 0.
+    GLint webGLTextureSizeLimit = 0;
+
+    // GL_ANGLE_multi_draw is emulated and should only be exposed to WebGL. Emulated by default in
+    // shared renderer code.
+    bool multidrawEmulated = true;
+
+    // GL_ANGLE_base_vertex_base_instance is emulated and should only be exposed to WebGL. Emulated
+    // by default in shared renderer code.
+    bool baseInstanceBaseVertexEmulated = true;
+
+    // Size limit for buffers. GL_INVALID_OPERATION should be generated if trying to allocate a
+    // buffer larger than this limit.
+    GLsizeiptr bufferSizeLimit = std::numeric_limits<GLsizeiptr>::max();
 };
 
 struct TypePrecision
@@ -181,6 +197,20 @@ struct TypePrecision
 
     std::array<GLint, 2> range = {0, 0};
     GLint precision            = 0;
+};
+
+struct FragmentShadingRateProperties
+{
+    GLuint minFragmentShadingRateAttachmentTexelWidth;
+    GLuint minFragmentShadingRateAttachmentTexelHeight;
+    GLuint maxFragmentShadingRateAttachmentTexelWidth;
+    GLuint maxFragmentShadingRateAttachmentTexelHeight;
+    GLuint maxFragmentShadingRateAttachmentTexelAspectRatio;
+    GLuint maxFragmentShadingRateAttachmentLayers;
+    bool layeredShadingRateAttachments;
+    bool fragmentShadingRateNonTrivialCombinersSupport;
+    bool fragmentShadingRateWithShaderDepthStencilWritesSupport;
+    bool fragmentShadingRateWithSampleMaskSupport;
 };
 
 struct Caps
@@ -345,6 +375,8 @@ struct Caps
     GLint maxTessEvaluationInputComponents  = 0;
     GLint maxTessEvaluationOutputComponents = 0;
 
+    bool primitiveRestartForPatchesSupported = false;
+
     GLuint subPixelBits = 4;
 
     // GL_EXT_blend_func_extended
@@ -373,7 +405,6 @@ struct Caps
 
     // GL_ANGLE_shader_pixel_local_storage
     GLuint maxPixelLocalStoragePlanes                       = 0;
-    GLuint maxColorAttachmentsWithActivePixelLocalStorage   = 0;
     GLuint maxCombinedDrawBuffersAndPixelLocalStoragePlanes = 0;
 
     // GL_EXT_shader_pixel_local_storage.
@@ -392,15 +423,24 @@ struct Caps
     GLfloat minSmoothLineWidth                  = 0.0f;
     GLfloat maxSmoothLineWidth                  = 0.0f;
 
-    // ES 3.2 Table 20.41: Implementation Dependent Values (cont.)
+    // ES 3.2 Table 21.40: Implementation Dependent Values
+    GLfloat lineWidthGranularity    = 0.0f;
+    GLfloat minMultisampleLineWidth = 0.0f;
+    GLfloat maxMultisampleLineWidth = 0.0f;
+
+    // ES 3.2 Table 21.42: Implementation Dependent Values (cont.)
     GLint maxTextureBufferSize         = 0;
     GLint textureBufferOffsetAlignment = 0;
 
     // GL_ARM_shader_framebuffer_fetch
     bool fragmentShaderFramebufferFetchMRT = false;
+
+    // EXT_fragment_shading_rate
+    FragmentShadingRateProperties fragmentShadingRateProperties = {};
 };
 
 Caps GenerateMinimumCaps(const Version &clientVersion, const Extensions &extensions);
+
 }  // namespace gl
 
 namespace egl
@@ -562,6 +602,9 @@ struct DisplayExtensions
     // EGL_ANDROID_get_frame_timestamps
     bool getFrameTimestamps = false;
 
+    // EGL_ANDROID_front_buffer_auto_refresh
+    bool frontBufferAutoRefreshANDROID = false;
+
     // EGL_ANGLE_timestamp_surface_attribute
     bool timestampSurfaceAttributeANGLE = false;
 
@@ -594,12 +637,6 @@ struct DisplayExtensions
 
     // EGL_IMG_context_priority
     bool contextPriority = false;
-
-    // EGL_ANGLE_ggp_stream_descriptor
-    bool ggpStreamDescriptor = false;
-
-    // EGL_ANGLE_swap_with_frame_token
-    bool swapWithFrameToken = false;
 
     // EGL_KHR_gl_colorspace
     bool glColorspace = false;
@@ -682,8 +719,23 @@ struct DisplayExtensions
     // EGL_KHR_partial_update
     bool partialUpdateKHR = false;
 
-    // EGL_ANGLE_sync_mtl_shared_event
+    // EGL_ANGLE_metal_shared_event_sync
     bool mtlSyncSharedEventANGLE = false;
+
+    // EGL_ANGLE_global_fence_sync
+    bool globalFenceSyncANGLE = false;
+
+    // EGL_ANGLE_memory_usage_report
+    bool memoryUsageReportANGLE = false;
+
+    // EGL_EXT_surface_compression
+    bool surfaceCompressionEXT = false;
+
+    // EGL_ANGLE_webgpu_texture_client_buffer
+    bool webgpuTextureClientBuffer = false;
+
+    // EXT_ANGLE_create_context_passthrough_shaders
+    bool createContextPassthroughShadersANGLE = false;
 };
 
 struct DeviceExtensions
@@ -696,11 +748,14 @@ struct DeviceExtensions
     // EGL_ANGLE_device_d3d
     bool deviceD3D = false;
 
+    // EGL_ANGLE_device_d3d9
+    bool deviceD3D9 = false;
+
+    // EGL_ANGLE_device_d3d11
+    bool deviceD3D11 = false;
+
     // EGL_ANGLE_device_cgl
     bool deviceCGL = false;
-
-    // EGL_ANGLE_device_eagl
-    bool deviceEAGL = false;
 
     // EGL_ANGLE_device_metal
     bool deviceMetal = false;
@@ -713,6 +768,9 @@ struct DeviceExtensions
 
     // EGL_EXT_device_drm_render_node
     bool deviceDrmRenderNodeEXT = false;
+
+    // EGL_ANGLE_device_webgpu
+    bool deviceWebGPU = false;
 };
 
 struct ClientExtensions
@@ -750,20 +808,26 @@ struct ClientExtensions
     // EGL_ANGLE_platform_angle_d3d11on12
     bool platformANGLED3D11ON12 = false;
 
+    // EGL_ANGLE_platform_angle_d3d_luid
+    bool platformANGLED3DLUID = false;
+
     // EGL_ANGLE_platform_angle_opengl
     bool platformANGLEOpenGL = false;
 
     // EGL_ANGLE_platform_angle_null
     bool platformANGLENULL = false;
 
+    // EGL_ANGLE_platform_angle_webgpu
+    bool platformANGLEWebgpu = false;
+
     // EGL_ANGLE_platform_angle_vulkan
     bool platformANGLEVulkan = false;
 
+    // EGL_ANGLE_platform_angle_vulkan_device_uuid
+    bool platformANGLEVulkanDeviceUUID = false;
+
     // EGL_ANGLE_platform_angle_metal
     bool platformANGLEMetal = false;
-
-    // EGL_ANGLE_platform_angle_device_context_volatile_eagl
-    bool platformANGLEDeviceContextVolatileEagl = false;
 
     // EGL_ANGLE_platform_angle_device_context_volatile_cgl
     bool platformANGLEDeviceContextVolatileCgl = false;
@@ -803,6 +867,9 @@ struct ClientExtensions
 
     // EGL_ANGLE_display_power_preference
     bool displayPowerPreferenceANGLE = false;
+
+    // EGL_ANGLE_no_error
+    bool noErrorANGLE = false;
 };
 
 }  // namespace egl

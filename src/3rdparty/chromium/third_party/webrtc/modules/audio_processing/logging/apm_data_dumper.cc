@@ -10,8 +10,6 @@
 
 #include "modules/audio_processing/logging/apm_data_dumper.h"
 
-#include "absl/strings/string_view.h"
-#include "rtc_base/strings/string_builder.h"
 
 // Check to verify that the define is properly set.
 #if !defined(WEBRTC_APM_DEBUG_DUMP) || \
@@ -36,7 +34,7 @@ std::string FormFileName(absl::string_view output_dir,
                          int reinit_index,
                          absl::string_view suffix) {
   char buf[1024];
-  rtc::SimpleStringBuilder ss(buf);
+  SimpleStringBuilder ss(buf);
   if (!output_dir.empty()) {
     ss << output_dir;
     if (output_dir.back() != kPathDelimiter) {
@@ -54,14 +52,14 @@ std::string FormFileName(absl::string_view output_dir,
 ApmDataDumper::ApmDataDumper(int instance_index)
     : instance_index_(instance_index) {}
 #else
-ApmDataDumper::ApmDataDumper(int instance_index) {}
+ApmDataDumper::ApmDataDumper(int /* instance_index */) {}
 #endif
 
 ApmDataDumper::~ApmDataDumper() = default;
 
 #if WEBRTC_APM_DEBUG_DUMP == 1
 bool ApmDataDumper::recording_activated_ = false;
-absl::optional<int> ApmDataDumper::dump_set_to_use_;
+std::optional<int> ApmDataDumper::dump_set_to_use_;
 char ApmDataDumper::output_dir_[] = "";
 
 FILE* ApmDataDumper::GetRawFile(absl::string_view name) {

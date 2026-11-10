@@ -4,6 +4,7 @@
 
 #include "components/segmentation_platform/internal/execution/processing/feature_processor_state.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "components/segmentation_platform/internal/database/ukm_types.h"
@@ -51,9 +52,9 @@ base::WeakPtr<FeatureProcessorState> FeatureProcessorState::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-absl::optional<std::pair<std::unique_ptr<QueryProcessor>, bool>>
+std::optional<std::pair<std::unique_ptr<QueryProcessor>, bool>>
 FeatureProcessorState::PopNextProcessor() {
-  absl::optional<std::pair<std::unique_ptr<QueryProcessor>, bool>>
+  std::optional<std::pair<std::unique_ptr<QueryProcessor>, bool>>
       next_processor;
   if (!out_processors_.empty()) {
     std::unique_ptr<QueryProcessor> processor =

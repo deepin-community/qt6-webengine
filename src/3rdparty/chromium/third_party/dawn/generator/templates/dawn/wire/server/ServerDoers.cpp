@@ -77,26 +77,27 @@ namespace dawn::wire::server {
         {% endif %}
     {% endfor %}
 
-    WireResult Server::DoDestroyObject(ObjectType objectType, ObjectId objectId) {
+    WireResult Server::DoUnregisterObject(ObjectType objectType, ObjectId objectId) {
         switch(objectType) {
             {% for type in by_category["object"] %}
+                {% set cType = as_cType(type.name) %}
                 case ObjectType::{{type.name.CamelCase()}}: {
-                    Known<WGPU{{type.name.CamelCase()}}> obj;
-                    WIRE_TRY({{type.name.CamelCase()}}Objects().Get(objectId, &obj));
+                    ObjectData<{{cType}}> data;
+                    WIRE_TRY(Free<{{cType}}>(objectId, &data));
 
-                    if (obj->state == AllocationState::Allocated) {
-                        DAWN_ASSERT(obj->handle != nullptr);
+                    //* Handle actually releasing the object after untracking it.
+                    if (data.state == AllocationState::Allocated) {
+                        DAWN_ASSERT(data.handle != nullptr);
                         {% if type.name.get() == "device" %}
-                            if (obj->handle != nullptr) {
-                                //* Deregisters uncaptured error and device lost callbacks since
-                                //* they should not be forwarded if the device no longer exists on the wire.
-                                ClearDeviceCallbacks(obj->handle);
-                            }
-                        {% endif %}
+                            //* Destroy the device to ensure that the spontaneous callbacks, i.e.
+                            //* the uncaptured error and logging callbacks, are cleared, and the
+                            //* device lost callback is fired. This is important because once we
+                            //* deallocate the ObjectData, those callbacks reference freed memory.
+                            mProcs.deviceDestroy(data.handle);
 
-                        mProcs.{{as_varName(type.name, Name("release"))}}(obj->handle);
+                        {% endif %}
+                        Release(data.handle);
                     }
-                    {{type.name.CamelCase()}}Objects().Free(objectId);
                     return WireResult::Success;
                 }
             {% endfor %}

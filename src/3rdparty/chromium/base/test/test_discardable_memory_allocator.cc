@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/memory/discardable_memory.h"
 #include "base/memory/ptr_util.h"
 
@@ -31,7 +32,7 @@ class DiscardableMemoryImpl : public DiscardableMemory {
     is_locked_ = false;
     // Force eviction to catch clients not correctly checking the return value
     // of Lock().
-    memset(data_.get(), 0, size_);
+    UNSAFE_TODO(memset(data_.get(), 0, size_));
   }
 
   void* data() const override {

@@ -2,24 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/cdm/win/media_foundation_cdm.h"
 
 #include <mferror.h>
-
 #include <stdlib.h>
+
 #include <vector>
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
+#include "base/notimplemented.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/lock.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_propvariant.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "media/base/cdm_promise.h"
+#include "media/base/media_switches.h"
 #include "media/base/win/hresults.h"
 #include "media/base/win/media_foundation_cdm_proxy.h"
 #include "media/base/win/mf_helpers.h"
@@ -119,8 +128,8 @@ int GetHdcpValue(HdcpVersion hdcp_version) {
 // the generated session ID is `DUMMY_9F656F4D76BE30D4`.
 std::string GenerateDummySessionId() {
   uint8_t random_bytes[8];
-  base::RandBytes(random_bytes, sizeof(random_bytes));
-  return "DUMMY_" + base::HexEncode(random_bytes, sizeof(random_bytes));
+  base::RandBytes(random_bytes);
+  return "DUMMY_" + base::HexEncode(random_bytes);
 }
 
 class CdmProxyImpl : public MediaFoundationCdmProxy {
@@ -150,6 +159,7 @@ class CdmProxyImpl : public MediaFoundationCdmProxy {
                                  REFIID riid,
                                  IUnknown** object_out) override {
     DVLOG_FUNC(1);
+    base::AutoLock lock(lock_);
 
     if (input_trust_authorities_.count(stream_id)) {
       RETURN_IF_FAILED(input_trust_authorities_[stream_id].CopyTo(object_out));
@@ -179,12 +189,14 @@ class CdmProxyImpl : public MediaFoundationCdmProxy {
 
   HRESULT SetLastKeyId(uint32_t stream_id, REFGUID key_id) override {
     DVLOG_FUNC(1);
+    base::AutoLock lock(lock_);
     last_key_ids_[stream_id] = key_id;
     return S_OK;
   }
 
   HRESULT RefreshTrustedInput() override {
     DVLOG_FUNC(1);
+    base::AutoLock lock(lock_);
 
     // Refresh all decryptors of the last key IDs.
     for (const auto& entry : input_trust_authorities_) {
@@ -218,12 +230,15 @@ class CdmProxyImpl : public MediaFoundationCdmProxy {
   }
 
   void OnHardwareContextReset() override {
-    // Hardware context reset happens, all the crypto sessions are in invalid
-    // states. So drop everything here.
-    // TODO(xhwang): Keep the `last_key_ids_` here for faster resume.
-    trusted_input_.Reset();
-    input_trust_authorities_.clear();
-    last_key_ids_.clear();
+    {
+      base::AutoLock lock(lock_);
+      // Hardware context reset happens, all the crypto sessions are in invalid
+      // states. So drop everything here.
+      // TODO(xhwang): Keep the `last_key_ids_` here for faster resume.
+      trusted_input_.Reset();
+      input_trust_authorities_.clear();
+      last_key_ids_.clear();
+    }
 
     // `CdmEvent::kHardwareContextReset` will be reported in
     // `hardware_context_reset_cb_` below.
@@ -267,17 +282,21 @@ class CdmProxyImpl : public MediaFoundationCdmProxy {
   base::RepeatingClosure hardware_context_reset_cb_;
   MediaFoundationCdm::CdmEventCB cdm_event_cb_;
 
+  // Lock to protect the mutable members. The data can be accessed from Chromium
+  // thread and MF thread pool threads.
+  base::Lock lock_;
+
   // Store IMFTrustedInput to avoid potential performance cost.
-  ComPtr<IMFTrustedInput> trusted_input_;
+  ComPtr<IMFTrustedInput> trusted_input_ GUARDED_BY(lock_);
 
   // |stream_id| to IMFInputTrustAuthority (ITA) mapping. Serves two purposes:
   // 1. The same ITA should always be returned in GetInputTrustAuthority() for
   // the same |stream_id|.
   // 2. The ITA must keep alive for decryptors to work.
-  std::map<uint32_t, ComPtr<IMFInputTrustAuthority>> input_trust_authorities_;
+  std::map<uint32_t, ComPtr<IMFInputTrustAuthority>> input_trust_authorities_ GUARDED_BY(lock_);
 
   // |stream_id| to last used key ID mapping.
-  std::map<uint32_t, GUID> last_key_ids_;
+  std::map<uint32_t, GUID> last_key_ids_ GUARDED_BY(lock_);
 };
 
 }  // namespace
@@ -307,13 +326,13 @@ MediaFoundationCdm::MediaFoundationCdm(
       session_keys_change_cb_(session_keys_change_cb),
       session_expiration_update_cb_(session_expiration_update_cb) {
   DVLOG_FUNC(1);
-  DCHECK(!uma_prefix_.empty());
-  DCHECK(create_mf_cdm_cb_);
-  DCHECK(is_type_supported_cb_);
-  DCHECK(session_message_cb_);
-  DCHECK(session_closed_cb_);
-  DCHECK(session_keys_change_cb_);
-  DCHECK(session_expiration_update_cb_);
+  CHECK(!uma_prefix_.empty(), base::NotFatalUntil::M140);
+  CHECK(create_mf_cdm_cb_, base::NotFatalUntil::M140);
+  CHECK(is_type_supported_cb_, base::NotFatalUntil::M140);
+  CHECK(session_message_cb_, base::NotFatalUntil::M140);
+  CHECK(session_closed_cb_, base::NotFatalUntil::M140);
+  CHECK(session_keys_change_cb_, base::NotFatalUntil::M140);
+  CHECK(session_expiration_update_cb_, base::NotFatalUntil::M140);
 }
 
 MediaFoundationCdm::~MediaFoundationCdm() {
@@ -325,7 +344,7 @@ HRESULT MediaFoundationCdm::Initialize() {
   ComPtr<IMFContentDecryptionModule> mf_cdm;
   create_mf_cdm_cb_.Run(hr, mf_cdm);
   if (!mf_cdm) {
-    DCHECK(FAILED(hr));
+    CHECK(FAILED(hr), base::NotFatalUntil::M140);
 
     if (hr == DRM_E_TEE_INVALID_HWDRM_STATE) {
       OnCdmEvent(CdmEvent::kHardwareContextReset, hr);
@@ -363,6 +382,7 @@ void MediaFoundationCdm::SetServerCertificate(
     return;
   }
 
+  server_certificate_set_ = true;
   promise->resolve();
 }
 
@@ -401,6 +421,17 @@ void MediaFoundationCdm::CreateSessionAndGenerateRequest(
 
   if (!mf_cdm_) {
     promise->reject(Exception::INVALID_STATE_ERROR, 0, "CDM Unavailable");
+    return;
+  }
+
+  // Check if server certificate requirement is enforced
+  if (base::FeatureList::IsEnabled(
+          kHardwareSecureDecryptionRequireServerCert) &&
+      MediaFoundationCdmModule::GetInstance()->IsOsCdm() &&
+      !server_certificate_set_) {
+    promise->reject(Exception::INVALID_STATE_ERROR, 0,
+                    "setServerCertificate must be called before "
+                    "generateRequest");
     return;
   }
 
@@ -517,7 +548,7 @@ void MediaFoundationCdm::CloseSession(
     std::unique_ptr<SimpleCdmPromise> promise) {
   DVLOG_FUNC(1);
 
-  // TODO(crbug.com/1298192): Handle DRM_E_TEE_INVALID_HWDRM_STATE. Right now
+  // TODO(crbug.com/40215444): Handle DRM_E_TEE_INVALID_HWDRM_STATE. Right now
   // DRM_E_TEE_INVALID_HWDRM_STATE is very rare in CloseSession() and there's
   // an open discussion on how this should behave in EME spec discussion.
   CloseSessionInternal(session_id, CdmSessionClosedReason::kClose,
@@ -593,9 +624,9 @@ bool MediaFoundationCdm::OnSessionId(
                 << ", session_id=" << session_id;
 
   auto itr = pending_sessions_.find(session_token);
-  DCHECK(itr != pending_sessions_.end());
+  CHECK(itr != pending_sessions_.end());
   auto session = std::move(itr->second);
-  DCHECK(session);
+  CHECK(session, base::NotFatalUntil::M140);
   pending_sessions_.erase(itr);
 
   if (session_id.empty() || sessions_.count(session_id)) {
@@ -684,10 +715,13 @@ void MediaFoundationCdm::OnHardwareContextReset() {
   // Reset IMFContentDecryptionModule which also holds the old ITA.
   mf_cdm_.Reset();
 
+  // Reset server certificate flag since the CDM is being recreated
+  server_certificate_set_ = false;
+
   // Recreates IMFContentDecryptionModule so we can create new sessions.
   if (FAILED(Initialize())) {
     DLOG(ERROR) << __func__ << ": Re-initialization failed";
-    DCHECK(!mf_cdm_);
+    CHECK(!mf_cdm_, base::NotFatalUntil::M140);
   }
 }
 

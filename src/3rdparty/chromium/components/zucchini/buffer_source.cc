@@ -4,7 +4,9 @@
 
 #include "components/zucchini/buffer_source.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
+#include "base/compiler_specific.h"
 #include "components/zucchini/algorithm.h"
 
 namespace zucchini {
@@ -30,7 +32,7 @@ bool BufferSource::CheckNextBytes(std::initializer_list<uint8_t> bytes) const {
   if (Remaining() < bytes.size()) {
     return false;
   }
-  return base::ranges::mismatch(bytes, *this).first == bytes.end();
+  return std::ranges::mismatch(bytes, *this).in1 == bytes.end();
 }
 
 bool BufferSource::ConsumeBytes(std::initializer_list<uint8_t> bytes) {
@@ -63,13 +65,13 @@ bool BufferSource::GetUleb128(uint32_t* ret) {
       static_cast<int>(std::min<size_type>(kMaxLeb128Size, size())) * 7;
   const_iterator cur = cbegin();
   uint32_t value = 0U;
-  for (int shift = 0; shift < shift_lim; shift += 7, ++cur) {
+  for (int shift = 0; shift < shift_lim; shift += 7, UNSAFE_TODO(++cur)) {
     uint32_t b = *cur;
     // When |shift == 28|, |(b & 0x7F) << shift| discards the "???" bits.
     value |= static_cast<uint32_t>(b & 0x7F) << shift;
     if (!(b & 0x80)) {
       *ret = value;
-      seek(cur + 1);
+      seek(UNSAFE_TODO(cur + 1));
       return true;
     }
   }
@@ -88,13 +90,13 @@ bool BufferSource::GetSleb128(int32_t* ret) {
       static_cast<int>(std::min<size_type>(kMaxLeb128Size, size())) * 7;
   const_iterator cur = cbegin();
   int32_t value = 0;
-  for (int shift = 0; shift < shift_lim; shift += 7, ++cur) {
+  for (int shift = 0; shift < shift_lim; shift += 7, UNSAFE_TODO(++cur)) {
     uint32_t b = *cur;
     // When |shift == 28|, |(b & 0x7F) << shift| discards the "???" bits.
     value |= static_cast<int32_t>(static_cast<uint32_t>(b & 0x7F) << shift);
     if (!(b & 0x80)) {
       *ret = (shift == 28) ? value : SignExtend(shift + 6, value);
-      seek(cur + 1);
+      seek(UNSAFE_TODO(cur + 1));
       return true;
     }
   }
@@ -104,9 +106,9 @@ bool BufferSource::GetSleb128(int32_t* ret) {
 bool BufferSource::SkipLeb128() {
   int lim = static_cast<int>(std::min<size_type>(kMaxLeb128Size, size()));
   const_iterator cur = cbegin();
-  for (int i = 0; i < lim; ++i, ++cur) {
+  for (int i = 0; i < lim; ++i, UNSAFE_TODO(++cur)) {
     if (!(*cur & 0x80)) {
-      seek(cur + 1);
+      seek(UNSAFE_TODO(cur + 1));
       return true;
     }
   }

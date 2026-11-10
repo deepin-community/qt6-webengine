@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {byLengthAsc, Fzf} from 'fzf';
+import {SyncOptionsTuple} from 'fzf/dist/types/finders';
+
 export interface FuzzySegment {
   matching: boolean;
   value: string;
@@ -26,31 +29,34 @@ export type KeyLookup<T> = (x: T) => string;
 
 // Finds approx matching in arbitrary lists of items.
 export class FuzzyFinder<T> {
-  private items: T[];
-  private keyLookup: KeyLookup<T>;
-
+  private readonly fzf: Fzf<ReadonlyArray<T>>;
   // Because we operate on arbitrary lists, a key lookup function is required to
   // so we know which part of the list is to be be searched. It should return
   // the relevant search string for each item.
-  constructor(items: ArrayLike<T>, keyLookup: KeyLookup<T>) {
-    this.items = Array.from(items);
-    this.keyLookup = keyLookup;
+  constructor(
+    items: ReadonlyArray<T>,
+    private readonly keyLookup: KeyLookup<T>,
+  ) {
+    // NOTE(stevegolton): This type assertion because FZF appears to be very
+    // fussy about its input types.
+    const options = [
+      {selector: keyLookup, tiebreakers: [byLengthAsc]},
+    ] as SyncOptionsTuple<T>;
+    this.fzf = new Fzf<ReadonlyArray<T>>(items, ...options);
   }
 
-  // Return a list of all items that match the serch term.
+  // Return a list of items that match any of the search terms.
   find(searchTerm: string): FuzzyResult<T>[] {
-    const result: FuzzyResult<T>[] = [];
-    const indicies: number[] = new Array(searchTerm.length);
-
-    for (const item of this.items) {
-      const key = this.keyLookup(item);
-      if (match(searchTerm, key, indicies)) {
-        const segments = indiciesToSegments(indicies, key);
-        result.push({item, segments});
-      }
-    }
-
-    return result;
+    return this.fzf.find(searchTerm).map((m) => {
+      const normalisedTerm = this.keyLookup(m.item);
+      return {
+        item: m.item,
+        segments: indiciesToSegments(
+          Array.from(m.positions).sort((a, b) => a - b),
+          normalisedTerm,
+        ),
+      };
+    });
   }
 }
 
@@ -93,7 +99,7 @@ function indiciesToSegments(indicies: number[], text: string): FuzzySegment[] {
 // |indicies| is an array of numbers the same length as |searchTerm|, into which
 // we place the indicies of the matching chars in |text|.
 function match(searchTerm: string, text: string, indicies: number[]): boolean {
-  let j = 0;  // index into the searchTerm.
+  let j = 0; // index into the searchTerm.
   let success: boolean = true;
 
   // For each char of the searchTerm...
@@ -118,4 +124,32 @@ function match(searchTerm: string, text: string, indicies: number[]): boolean {
   }
 
   return success;
+}
+
+export interface FuzzyMatch {
+  matches: boolean;
+  segments: FuzzySegment[];
+}
+
+// Fuzzy match a single piece of text against several search terms.
+// If any of the terms match, the result of the match is true.
+export function fuzzyMatch(
+  text: string,
+  ...searchTerms: ReadonlyArray<string>
+): FuzzyMatch {
+  for (const searchTerm of searchTerms) {
+    const indicies: number[] = new Array(searchTerm.length);
+    if (match(searchTerm, text, indicies)) {
+      const segments = indiciesToSegments(indicies, text);
+      return {
+        matches: true,
+        segments,
+      };
+    }
+  }
+
+  return {
+    matches: false,
+    segments: [],
+  };
 }

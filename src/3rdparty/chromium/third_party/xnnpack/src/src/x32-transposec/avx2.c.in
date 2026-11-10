@@ -13,12 +13,14 @@ $_MM256_UNPACKHI_PX = {8: "_mm256_unpackhi_epi8", 16: "_mm256_unpackhi_epi16"}[S
 #include <immintrin.h>
 
 #include <assert.h>
-
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
-#include <xnnpack/unaligned.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
+#include "src/xnnpack/unaligned.h"
 
 void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS.lower()}_avx2(
     const uint${SIZE}_t* input,
@@ -26,11 +28,15 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x${SIZE}_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height) XNN_OOB_READS
 {
-  assert(output_stride >= block_height * sizeof(${XINT}));
-  assert(input_stride >= block_width * sizeof(${XINT}));
+  assert(block_width == 1 || output_stride >= block_height * sizeof(${XINT}));
+  assert(block_height == 1 || input_stride >= block_width * sizeof(${XINT}));
+
+  $if SIZE == 64:
+    static const int64_t mask_table[7] = {-1, -1, -1, -1, 0, 0, 0};
+  $else:
+    static const int32_t mask_table[15] = {-1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
   const size_t tile_height = ${TILE_SIZE};
   const size_t tile_width = ${TILE_SIZE};
@@ -57,7 +63,7 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
     $else:
       const size_t oN_stride = rem * output_stride;
 
-    __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &params->avx2.mask_table[7 ^ (rem>>${NUM_ITERS-3})]));
+    __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &mask_table[7 ^ (rem>>${NUM_ITERS-3})]));
 
     size_t bh = block_height;
     for (; bh >= ${TILE_SIZE}; bh -= ${TILE_SIZE}) {
@@ -87,16 +93,19 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
               _mm256_storeu_si256((__m256i*) oN, v0_${N});
               oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
             }
+            XNN_FALLTHROUGH
           $for N in reversed(range(2, TILE_SIZE>>1)):
             case ${N}: {
               const __m256i v0_${(N)} = _mm256_insertf128_si256(v1_${N}, _mm256_castsi256_si128(v1_${N+(TILE_SIZE>>1)}), 1);
               _mm256_storeu_si256((__m256i*) oN, v0_${N});
               oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
             }
+            XNN_FALLTHROUGH
           case 1: {
             const __m256i v0_1 = _mm256_insertf128_si256(v1_1, _mm256_castsi256_si128(v1_${(TILE_SIZE>>1)+1}), 1);
             _mm256_storeu_si256((__m256i*) oN, v0_1);
           }
+          XNN_FALLTHROUGH
           case 0: {
             const __m256i v0_0 = _mm256_insertf128_si256(v1_0, _mm256_castsi256_si128(v1_${(TILE_SIZE>>1)}), 1);
             _mm256_storeu_si256((__m256i*) o, v0_0);
@@ -160,14 +169,17 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
                 _mm_storeu_si128((__m128i*) oN, v0_${N}_lo);
                  v0_${N}_lo = _mm256_extractf128_si256(v1_${N}, 0x1);
                 oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
+                XNN_FALLTHROUGH
             $for N in reversed(range(2, TILE_SIZE>>1)):
               case ${N}:
                 _mm_storeu_si128((__m128i*) oN, v0_${N}_lo);
                  v0_${N}_lo = _mm256_castsi256_si128(v1_${N+(TILE_SIZE>>1)});
                 oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
+                XNN_FALLTHROUGH
             case 1:
               _mm_storeu_si128((__m128i*) oN, v0_1_lo);
               v0_1_lo = _mm256_castsi256_si128(v1_${1+(TILE_SIZE>>1)});
+              XNN_FALLTHROUGH
             case 0:
               _mm_storeu_si128((__m128i*) o, v0_0_lo);
               v0_0_lo = _mm256_castsi256_si128(v1_${TILE_SIZE>>1});
@@ -232,9 +244,11 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
                 _mm_storel_epi64((__m128i*) oN, v0_${N}_lo);
                 v0_${N}_lo = _mm_unpackhi_epi64(v0_${N}_lo, v0_${N}_lo);
                 oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
+                XNN_FALLTHROUGH
             case 1:
               _mm_storel_epi64((__m128i*) oN, v0_1_lo);
               v0_1_lo = _mm_unpackhi_epi64(v0_1_lo, v0_1_lo);
+              XNN_FALLTHROUGH
             case 0:
               _mm_storel_epi64((__m128i*) o, v0_0_lo);
               v0_0_lo = _mm_unpackhi_epi64(v0_0_lo, v0_0_lo);
@@ -278,10 +292,12 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
                 $if NUM_ITERS>3:
                   v0_${N}_lo = _mm_srli_epi64(v0_${N}_lo, 32);
                 oN = (${XINT}*) ((uintptr_t) oN + minus_output_stride);
+                XNN_FALLTHROUGH
             case 1:
               _mm_storeu_si32(oN, v0_1_lo);
               $if NUM_ITERS>3:
                 v0_1_lo = _mm_srli_epi64(v0_1_lo, 32);
+              XNN_FALLTHROUGH
             case 0:
               _mm_storeu_si32(o, v0_0_lo);
               $if NUM_ITERS>3:
@@ -331,10 +347,12 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
                    $if NUM_ITERS > 4:
                      v0_${N}_lo = _mm_srli_epi32(v0_${N}_lo, 16);
                   oN = (uint${SIZE}_t*) ((uintptr_t) oN + minus_output_stride);
+                  XNN_FALLTHROUGH
               case 1:
                  unaligned_store_u16(oN, (uint16_t) _mm_cvtsi128_si32(v0_1_lo));
                  $if NUM_ITERS > 4:
                    v0_1_lo = _mm_srli_epi32(v0_1_lo, 16);
+                 XNN_FALLTHROUGH
               case 0:
                  unaligned_store_u16(o, (uint16_t) _mm_cvtsi128_si32(v0_0_lo));
                  $if NUM_ITERS > 4:
@@ -384,8 +402,10 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_SIZE}x${TILE_SIZE}_reuse_${OUT_PTRS
                 case ${N}:
                   *oN = (uint8_t) _mm_cvtsi128_si32(v0_${N}_lo);
                   oN = (uint${SIZE}_t*) ((uintptr_t) oN + minus_output_stride);
+                  XNN_FALLTHROUGH
               case 1:
                   *oN = (uint8_t) _mm_cvtsi128_si32(v0_1_lo);
+                  XNN_FALLTHROUGH
               case 0:
                 *o = (uint8_t) _mm_cvtsi128_si32(v0_0_lo);
                 break;

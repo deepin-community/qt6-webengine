@@ -22,8 +22,20 @@ chromium-metrics-reviews@google.com.
 
 <histograms>
 
+<histogram name="UKM.AppVersionDifferentWhenPurging" enum="BooleanChanged"
+    expires_after="2026-01-18">
+  <owner>rkaplow@google.com</owner>
+  <owner>chrome-metrics-team@google.com</owner>
+  <summary>
+    Logged when doing a partial purges of unsent UKM logs. If the unsent log has
+    a different app version that the client's current version then a true is
+    logged and the report's log_written_by_app_version should be set with the
+    current version. Otherwise a false is logged.
+  </summary>
+</histogram>
+
 <histogram name="UKM.BuildAndStoreLogIsEmpty" enum="Boolean"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -34,7 +46,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.ConsentObserver.AppSyncConsentChanged" enum="Boolean"
-    expires_after="2025-05-01">
+    expires_after="2026-01-04">
   <owner>andrewbregger@google.com</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -46,7 +58,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.ConsentObserver.Purge" enum="Boolean"
-    expires_after="2025-05-01">
+    expires_after="2026-01-04">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -57,7 +69,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Dropped" enum="UkmDataDroppedReason"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -67,8 +79,8 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Dropped.ByEntryHash" enum="UkmEventNameHash"
-    expires_after="2025-05-01">
-  <owner>jwd@chromium.org</owner>
+    expires_after="2026-01-11">
+  <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
     The hashed name of the UKM entry being dropped. The hash is the same hash
@@ -79,7 +91,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Dropped.MaxHit.ByEntryHash"
-    enum="UkmEventNameHash" expires_after="2025-05-01">
+    enum="UkmEventNameHash" expires_after="2026-01-11">
   <owner>lucnguyen@google.com</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -92,7 +104,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Dropped.RejectedByFilter.ByEntryHash"
-    enum="UkmEventNameHash" expires_after="2025-05-01">
+    enum="UkmEventNameHash" expires_after="2025-12-14">
   <owner>yrsun@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -104,7 +116,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Dropped.SampledOut.ByEntryHash"
-    enum="UkmEventNameHash" expires_after="2025-05-01">
+    enum="UkmEventNameHash" expires_after="2025-11-09">
   <owner>lucnguyen@google.com</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -116,7 +128,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.Recorded.ByEntryHash" enum="UkmEventNameHash"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>yrsun@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -128,14 +140,14 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Entries.SerializedCount2" units="entries"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>Number of serialized UKM entries when storing a UKM log.</summary>
 </histogram>
 
 <histogram name="UKM.Entries.SerializedCountFCP" units="entries"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -159,7 +171,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.IOSLog.OnSuccess" units="records"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -176,7 +188,7 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="UKM.LogSize.OnSuccess" units="KB" expires_after="2025-05-01">
+<histogram name="UKM.LogSize.OnSuccess" units="KB" expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -199,7 +211,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.LogUpload.ResponseOrErrorCode"
-    enum="CombinedHttpResponseAndNetErrorCode" expires_after="2025-05-01">
+    enum="CombinedHttpResponseAndNetErrorCode" expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -238,7 +250,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.ResetReason" enum="UkmResetReason"
-    expires_after="2025-05-01">
+    expires_after="2025-09-07">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -268,7 +280,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.Sources.SerializedCount2{UkmSourceIdTypes}"
-    units="sources" expires_after="2025-05-01">
+    units="sources" expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -307,7 +319,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.UnsentLogs.DroppedSize" units="bytes"
-    expires_after="2025-05-01">
+    expires_after="2025-09-07">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
@@ -317,11 +329,34 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="UKM.UnsentLogs.NumDropped" units="units"
-    expires_after="2025-05-01">
+    expires_after="2026-01-11">
   <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
     Counter for number of UKM unsent logs removed from persistent storage.
+  </summary>
+</histogram>
+
+<histogram name="UKM.WebDXFeatureSets.Dropped" enum="UkmDataDroppedReason"
+    expires_after="2025-09-07">
+  <owner>yrsun@chromium.org</owner>
+  <owner>lucnguyen@google.com</owner>
+  <owner>chrome-metrics-team@google.com</owner>
+  <summary>
+    The reason why a web feature set was dropped. Emitted every time a call to
+    RecordWebFeatures() results in a drop. A web feature set is a set of
+    features that were used in a particular Source.
+  </summary>
+</histogram>
+
+<histogram name="UKM.WebDXFeatureSets.SerializedCount" units="web feature sets"
+    expires_after="2025-11-09">
+  <owner>yrsun@chromium.org</owner>
+  <owner>lucnguyen@google.com</owner>
+  <owner>chrome-metrics-team@google.com</owner>
+  <summary>
+    Number of serialized UKM web feature sets when storing a UKM log. A web
+    feature set is a set of features that were used in a particular Source.
   </summary>
 </histogram>
 

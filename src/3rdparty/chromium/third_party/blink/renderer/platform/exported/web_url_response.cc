@@ -30,16 +30,17 @@
 
 #include "third_party/blink/public/platform/web_url_response.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "base/containers/to_vector.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/ranges/algorithm.h"
+#include "net/base/features.h"
 #include "net/ssl/ssl_info.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
-#include "services/network/public/cpp/trigger_verification.h"
 #include "services/network/public/mojom/cors.mojom-shared.h"
 #include "services/network/public/mojom/ip_address_space.mojom-shared.h"
 #include "services/network/public/mojom/load_timing_info.mojom.h"
@@ -48,6 +49,7 @@
 #include "third_party/blink/public/platform/web_http_header_visitor.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/loader/fetch/service_worker_router_info.h"
@@ -76,7 +78,9 @@ network::mojom::LoadTimingInfo ToMojoLoadTiming(
       load_timing.push_end, load_timing.service_worker_start_time,
       load_timing.service_worker_ready_time,
       load_timing.service_worker_fetch_start,
-      load_timing.service_worker_respond_with_settled);
+      load_timing.service_worker_respond_with_settled,
+      load_timing.service_worker_router_evaluation_start,
+      load_timing.service_worker_cache_lookup_start);
 }
 
 // TODO(https://crbug.com/862940): Use KURL here.
@@ -115,8 +119,6 @@ void SetSecurityStyleAndDetails(const GURL& url,
 
   if (!ssl_info.cert) {
     NOTREACHED();
-    response->SetSecurityStyle(SecurityStyle::kUnknown);
-    return;
   }
 
   response->SetSSLInfo(ssl_info);
@@ -132,8 +134,13 @@ WebURLResponse WebURLResponse::Create(
     int request_id) {
   WebURLResponse response;
 
+  const bool was_cached =
+      !head.load_timing.request_start_time.is_null() &&
+      head.response_time < head.load_timing.request_start_time;
+
   response.SetCurrentRequestUrl(url);
   response.SetResponseTime(head.response_time);
+  response.SetOriginalResponseTime(head.original_response_time);
   response.SetMimeType(WebString::FromUTF8(head.mime_type));
   response.SetTextEncodingName(WebString::FromUTF8(head.charset));
   response.SetExpectedContentLength(head.content_length);
@@ -141,13 +148,12 @@ WebURLResponse WebURLResponse::Create(
       net::IsCertStatusError(head.cert_status));
   response.SetHasRangeRequested(head.has_range_requested);
   response.SetTimingAllowPassed(head.timing_allow_passed);
-  response.SetWasCached(!head.load_timing.request_start_time.is_null() &&
-                        head.response_time <
-                            head.load_timing.request_start_time);
+  response.SetWasCached(was_cached);
   response.SetConnectionID(head.load_timing.socket_log_id);
   response.SetConnectionReused(head.load_timing.socket_reused);
   response.SetWasFetchedViaSPDY(head.was_fetched_via_spdy);
   response.SetWasFetchedViaServiceWorker(head.was_fetched_via_service_worker);
+  response.SetFromSyntheticResponse(head.from_synthetic_response);
   response.SetDidUseSharedDictionary(head.did_use_shared_dictionary);
   response.SetServiceWorkerResponseSource(head.service_worker_response_source);
   if (!head.service_worker_router_info.is_null()) {
@@ -155,36 +161,25 @@ WebURLResponse WebURLResponse::Create(
   }
   response.SetType(head.response_type);
   response.SetPadding(head.padding);
-  WebVector<KURL> url_list_via_service_worker(
-      head.url_list_via_service_worker.size());
-  base::ranges::transform(head.url_list_via_service_worker,
-                          url_list_via_service_worker.begin(),
-                          [](const GURL& h) { return KURL(h); });
-  response.SetUrlListViaServiceWorker(url_list_via_service_worker);
+  response.SetUrlListViaServiceWorker(
+      base::ToVector(head.url_list_via_service_worker,
+                     [](const GURL& url) { return WebURL(KURL(url)); }));
   response.SetCacheStorageCacheName(
       head.service_worker_response_source ==
               network::mojom::FetchResponseSource::kCacheStorage
           ? WebString::FromUTF8(head.cache_storage_cache_name)
           : WebString());
 
-  WebVector<WebString> dns_aliases(head.dns_aliases.size());
-  base::ranges::transform(head.dns_aliases, dns_aliases.begin(),
-                          &WebString::FromASCII);
-  response.SetDnsAliases(dns_aliases);
+  response.SetDnsAliases(
+      base::ToVector(head.dns_aliases, &WebString::FromASCII));
   response.SetRemoteIPEndpoint(head.remote_endpoint);
   response.SetAddressSpace(head.response_address_space);
   response.SetClientAddressSpace(head.client_address_space);
   response.SetPrivateNetworkAccessPreflightResult(
       head.private_network_access_preflight_result);
 
-  WebVector<WebString> cors_exposed_header_names(
-      head.cors_exposed_header_names.size());
-  base::ranges::transform(head.cors_exposed_header_names,
-                          cors_exposed_header_names.begin(),
-                          [](const auto& header_name) {
-                            return WebString::FromLatin1(header_name);
-                          });
-  response.SetCorsExposedHeaderNames(cors_exposed_header_names);
+  response.SetCorsExposedHeaderNames(
+      base::ToVector(head.cors_exposed_header_names, &WebString::FromLatin1));
   response.SetDidServiceWorkerNavigationPreload(
       head.did_service_worker_navigation_preload);
   response.SetIsValidated(head.is_validated);
@@ -209,7 +204,25 @@ WebURLResponse WebURLResponse::Create(
   response.SetWasInPrefetchCache(head.was_in_prefetch_cache);
   response.SetWasCookieInRequest(head.was_cookie_in_request);
   response.SetRecursivePrefetchToken(head.recursive_prefetch_token);
-  response.SetTriggerVerifications(head.trigger_verifications);
+  response.SetDeviceBoundSessionUsage(head.device_bound_session_usage);
+
+  if (head.unencoded_digests) {
+    // Any `issues` will be taken care of in the network stack; we can simply
+    // move the `digests` into the resource response:
+    response.SetUnencodedDigests(std::move(head.unencoded_digests->digests));
+  }
+
+  // Check for if the response was not cached and was sent through an IP
+  // Protection proxy. Cached responses may contain proxy_chain information
+  // of the original response, including if it was sent through an
+  // IP Protection proxy. We want to only keep track of responses that
+  // actively went through IP Protection proxies. This is currently set
+  // only if kIpPrivacyEnableIppInDevTools is enabled.
+  // TODO(crbug.com/432716000): Remove this guard once IPP is fully launched.
+  if (net::features::kIpPrivacyEnableIppInDevTools.Get()) {
+    response.SetIsIpProtectionUsed(!was_cached &&
+                                    head.proxy_chain.is_for_ip_protection());
+  }
 
   SetSecurityStyleAndDetails(GURL(KURL(url)), head, &response,
                              report_security_info);
@@ -217,24 +230,7 @@ WebURLResponse WebURLResponse::Create(
   // If there's no received headers end time, don't set load timing.  This is
   // the case for non-HTTP requests, requests that don't go over the wire, and
   // certain error cases.
-  //
-  // https://crbug.com/1382255: Because the resource-fetching request of
-  // prefetch occurs before the navigation, both `requestStart` and
-  // `responseStart` are negative, measured with respect to `startTime` of the
-  // navigation. Do not set the `ResourceLoadTiming` for the prefetch navigation
-  // response; then `PerformanceResourceTiming` won't be able to retrieve the
-  // timing info, resulting in setting `requestStart` and `responseStart` to
-  // their respective previous timeline event.
-  //
-  // Not setting the `ResourceLoadTiming` does not affect the DNS and TCP
-  // timings (domainLookupStart, domainLookupEnd, connectStart,
-  // secureConnectionStart and connectEnd) because these values are null for the
-  // prefetch navigation. See
-  // https://docs.google.com/document/d/1XbLImIqGoHgxJZnscWoZIX8IlIiHOlXvBW81B_3HScc
-  // (Chromium org access) for the navigation timing events timeline.
-  if (!head.load_timing.receive_headers_end.is_null() &&
-      head.navigation_delivery_type !=
-          network::mojom::NavigationDeliveryType::kNavigationalPrefetch) {
+  if (!head.load_timing.receive_headers_end.is_null()) {
     response.SetLoadTiming(ToMojoLoadTiming(head.load_timing));
   }
 
@@ -336,6 +332,10 @@ void WebURLResponse::SetLoadTiming(
   timing->SetConnectStart(mojo_timing.connect_timing.connect_start);
   timing->SetConnectEnd(mojo_timing.connect_timing.connect_end);
   timing->SetWorkerStart(mojo_timing.service_worker_start_time);
+  timing->SetWorkerRouterEvaluationStart(
+      mojo_timing.service_worker_router_evaluation_start);
+  timing->SetWorkerCacheLookupStart(
+      mojo_timing.service_worker_cache_lookup_start);
   timing->SetWorkerReady(mojo_timing.service_worker_ready_time);
   timing->SetWorkerFetchStart(mojo_timing.service_worker_fetch_start);
   timing->SetWorkerRespondWithSettled(
@@ -354,21 +354,20 @@ void WebURLResponse::SetLoadTiming(
   resource_response_->SetResourceLoadTiming(std::move(timing));
 }
 
-void WebURLResponse::SetTriggerVerifications(
-    const std::vector<network::TriggerVerification>& trigger_verifications) {
-  WTF::Vector<network::TriggerVerification> verifications;
-  for (const auto& verification : trigger_verifications) {
-    verifications.push_back(verification);
-  }
-  resource_response_->SetTriggerVerifications(std::move(verifications));
-}
-
 base::Time WebURLResponse::ResponseTime() const {
   return resource_response_->ResponseTime();
 }
 
 void WebURLResponse::SetResponseTime(base::Time response_time) {
   resource_response_->SetResponseTime(response_time);
+}
+
+base::Time WebURLResponse::OriginalResponseTime() const {
+  return resource_response_->OriginalResponseTime();
+}
+
+void WebURLResponse::SetOriginalResponseTime(base::Time response_time) {
+  resource_response_->SetOriginalResponseTime(response_time);
 }
 
 WebString WebURLResponse::MimeType() const {
@@ -504,6 +503,14 @@ void WebURLResponse::SetWasFetchedViaServiceWorker(bool value) {
   resource_response_->SetWasFetchedViaServiceWorker(value);
 }
 
+bool WebURLResponse::FromSyntheticResponse() const {
+  return resource_response_->FromSyntheticResponse();
+}
+
+void WebURLResponse::SetFromSyntheticResponse(bool value) {
+  resource_response_->SetFromSyntheticResponse(value);
+}
+
 network::mojom::FetchResponseSource
 WebURLResponse::GetServiceWorkerResponseSource() const {
   return resource_response_->GetServiceWorkerResponseSource();
@@ -513,6 +520,12 @@ void WebURLResponse::SetServiceWorkerRouterInfo(
     const network::mojom::ServiceWorkerRouterInfo& value) {
   auto info = ServiceWorkerRouterInfo::Create();
   info->SetRuleIdMatched(value.rule_id_matched);
+  info->SetMatchedSourceType(value.matched_source_type);
+  info->SetActualSourceType(value.actual_source_type);
+  info->SetRouteRuleNum(value.route_rule_num);
+  info->SetEvaluationWorkerStatus(value.evaluation_worker_status);
+  info->SetRouterEvaluationTime(value.router_evaluation_time);
+  info->SetCacheLookupTime(value.cache_lookup_time);
   resource_response_->SetServiceWorkerRouterInfo(std::move(info));
 }
 
@@ -542,10 +555,10 @@ int64_t WebURLResponse::GetPadding() const {
 }
 
 void WebURLResponse::SetUrlListViaServiceWorker(
-    const WebVector<WebURL>& url_list_via_service_worker) {
+    const std::vector<WebURL>& url_list_via_service_worker) {
   Vector<KURL> url_list(
       base::checked_cast<wtf_size_t>(url_list_via_service_worker.size()));
-  base::ranges::copy(url_list_via_service_worker, url_list.begin());
+  std::ranges::copy(url_list_via_service_worker, url_list.begin());
   resource_response_->SetUrlListViaServiceWorker(url_list);
 }
 
@@ -564,15 +577,15 @@ void WebURLResponse::SetCacheStorageCacheName(
   resource_response_->SetCacheStorageCacheName(cache_storage_cache_name);
 }
 
-WebVector<WebString> WebURLResponse::CorsExposedHeaderNames() const {
-  return resource_response_->CorsExposedHeaderNames();
+std::vector<WebString> WebURLResponse::CorsExposedHeaderNames() const {
+  return base::ToVector(resource_response_->CorsExposedHeaderNames(),
+                        ToWebString);
 }
 
 void WebURLResponse::SetCorsExposedHeaderNames(
-    const WebVector<WebString>& header_names) {
+    const std::vector<WebString>& header_names) {
   Vector<String> exposed_header_names;
-  exposed_header_names.Append(
-      header_names.data(), base::checked_cast<wtf_size_t>(header_names.size()));
+  exposed_header_names.AppendSpan(base::span(header_names));
   resource_response_->SetCorsExposedHeaderNames(exposed_header_names);
 }
 
@@ -653,7 +666,7 @@ void WebURLResponse::SetWasCookieInRequest(bool was_cookie_in_request) {
 }
 
 void WebURLResponse::SetRecursivePrefetchToken(
-    const absl::optional<base::UnguessableToken>& token) {
+    const std::optional<base::UnguessableToken>& token) {
   resource_response_->SetRecursivePrefetchToken(token);
 }
 
@@ -718,20 +731,20 @@ bool WebURLResponse::FromArchive() const {
   return resource_response_->FromArchive();
 }
 
-void WebURLResponse::SetDnsAliases(const WebVector<WebString>& aliases) {
+void WebURLResponse::SetDnsAliases(const std::vector<WebString>& aliases) {
   Vector<String> dns_aliases(base::checked_cast<wtf_size_t>(aliases.size()));
-  base::ranges::transform(aliases, dns_aliases.begin(),
-                          &WebString::operator WTF::String);
+  std::ranges::transform(aliases, dns_aliases.begin(),
+                         &WebString::operator WTF::String);
   resource_response_->SetDnsAliases(std::move(dns_aliases));
 }
 
 void WebURLResponse::SetAuthChallengeInfo(
-    const absl::optional<net::AuthChallengeInfo>& auth_challenge_info) {
+    const std::optional<net::AuthChallengeInfo>& auth_challenge_info) {
   resource_response_->SetAuthChallengeInfo(auth_challenge_info);
 }
 
-const absl::optional<net::AuthChallengeInfo>&
-WebURLResponse::AuthChallengeInfo() const {
+const std::optional<net::AuthChallengeInfo>& WebURLResponse::AuthChallengeInfo()
+    const {
   return resource_response_->AuthChallengeInfo();
 }
 
@@ -752,6 +765,29 @@ void WebURLResponse::SetShouldUseSourceHashForJSCodeCache(
 
 bool WebURLResponse::ShouldUseSourceHashForJSCodeCache() const {
   return resource_response_->ShouldUseSourceHashForJSCodeCache();
+}
+
+void WebURLResponse::SetDeviceBoundSessionUsage(
+    network::mojom::DeviceBoundSessionUsage usage) {
+  resource_response_->SetDeviceBoundSessionUsage(usage);
+}
+network::mojom::DeviceBoundSessionUsage
+WebURLResponse::DeviceBoundSessionUsage() const {
+  return resource_response_->DeviceBoundSessionUsage();
+}
+
+void WebURLResponse::SetIsIpProtectionUsed(bool is_ip_protection_used) {
+  resource_response_->SetIsIpProtectionUsed(is_ip_protection_used);
+}
+
+bool WebURLResponse::IsIpProtectionUsed() const {
+  return resource_response_->IsIpProtectionUsed();
+}
+
+void WebURLResponse::SetUnencodedDigests(
+    std::vector<network::IntegrityMetadata> digests) {
+  resource_response_->SetUnencodedDigests(
+      WTF::Vector<network::IntegrityMetadata>(std::move(digests)));
 }
 
 WebURLResponse::WebURLResponse(ResourceResponse& r) : resource_response_(&r) {}

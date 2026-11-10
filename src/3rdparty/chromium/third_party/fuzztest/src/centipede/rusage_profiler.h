@@ -215,20 +215,23 @@
 #include <string>
 #include <string_view>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/strings/str_cat.h"  // IWYU pragma: keep
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "./centipede/periodic_action.h"
 #include "./centipede/rusage_stats.h"
 
-namespace centipede::perf {
+namespace fuzztest::internal {
 
 // A simple source location wrapper. Typically, construct as
 // `SourceLocation{__FILE__, __LINE__}` and pass around by-value.
 // TODO(ussuri): Switch to absl::SourceLocation or std::source_location.
 struct SourceLocation {
   explicit SourceLocation() = default;
-  SourceLocation(const char* file, int line) : file{file}, line{line} {}
+  SourceLocation(const char* absl_nonnull file, int line)
+      : file{file}, line{line} {}
 
   const char* const file = "<unknown>";
   const int line = 0;
@@ -390,7 +393,7 @@ class RUsageProfiler {
   // Prints to `sink` a report consisting of chronological charts for each of
   // the tracked metrics recorded since this profiler's construction up to this
   // point.
-  void GenerateReport(ReportSink* report_sink) const;
+  void GenerateReport(ReportSink* absl_nonnull report_sink) const;
 
   // Logs the report returned by GenerateReport(). The log message's source
   // location is set to `location`: as a rule of thumb, pass
@@ -428,11 +431,10 @@ class RUsageProfiler {
   // average insertion speed, preserves iterators across insertions, and strikes
   // a balance between vector's and list's additional storage.
   std::deque<Snapshot> snapshots_ ABSL_GUARDED_BY(mutex_);
-  // A temporarily lived thread that records and optionally logs timelapse
-  // snapshots. (Re)created by each new call to StartTimelapse() and terminated
-  // by StopTimelapse() or the dtor, whichever comes first.
-  class TimelapseThread;  // Defined in the .cc.
-  std::unique_ptr<TimelapseThread> timelapse_thread_ ABSL_GUARDED_BY(mutex_);
+  // A temporarily lived periodic action that records and optionally logs
+  // timelapse snapshots. (Re)created by each new call to StartTimelapse() and
+  // terminated by StopTimelapse() or the dtor, whichever comes first.
+  std::unique_ptr<PeriodicAction> timelapse_recorder_ ABSL_GUARDED_BY(mutex_);
 
   // An auto-starting timer passed to RUsageTiming::Snapshot() in order to track
   // this RUsageProfiler object's lifetime stats rather than the process's
@@ -440,7 +442,7 @@ class RUsageProfiler {
   ProcessTimer timer_;
 };
 
-}  // namespace centipede::perf
+}  // namespace fuzztest::internal
 
 //------------------------------------------------------------------------------
 //               Convenience macros for easy use of RUsageProfiler
@@ -463,11 +465,11 @@ class RUsageProfiler {
 // macro call is allowed per function.
 // clang-format off
 #define RPROF_THIS_FUNCTION(enable)                                        \
-  centipede::perf::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
-      /*scope=*/centipede::perf::RUsageScope::ThisProcess(),               \
-      /*metrics=*/(enable) ? centipede::perf::RUsageProfiler::kAllMetrics  \
-                           : centipede::perf::RUsageProfiler::kMetricsOff, \
-      /*raii_actions=*/centipede::perf::RUsageProfiler::kRaiiSnapshots,    \
+  fuzztest::internal::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
+      /*scope=*/fuzztest::internal::RUsageScope::ThisProcess(),               \
+      /*metrics=*/(enable) ? fuzztest::internal::RUsageProfiler::kAllMetrics  \
+                           : fuzztest::internal::RUsageProfiler::kMetricsOff, \
+      /*raii_actions=*/fuzztest::internal::RUsageProfiler::kRaiiSnapshots,    \
       /*location=*/{__FILE__, __LINE__},                                   \
       /*description=*/absl::StrCat(__func__, "()")                         \
   }
@@ -477,11 +479,11 @@ class RUsageProfiler {
 // the function.
 // clang-format off
 #define RPROF_THIS_FUNCTION_WITH_REPORT(enable)                            \
-  centipede::perf::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
-      /*scope=*/centipede::perf::RUsageScope::ThisProcess(),               \
-      /*metrics=*/(enable) ? centipede::perf::RUsageProfiler::kAllMetrics  \
-                           : centipede::perf::RUsageProfiler::kMetricsOff, \
-      /*raii_actions=*/centipede::perf::RUsageProfiler::kAllRaii,          \
+  fuzztest::internal::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
+      /*scope=*/fuzztest::internal::RUsageScope::ThisProcess(),               \
+      /*metrics=*/(enable) ? fuzztest::internal::RUsageProfiler::kAllMetrics  \
+                           : fuzztest::internal::RUsageProfiler::kMetricsOff, \
+      /*raii_actions=*/fuzztest::internal::RUsageProfiler::kAllRaii,          \
       /*location=*/{__FILE__, __LINE__},                                   \
       /*description=*/absl::StrCat(__func__, "()")                         \
   }
@@ -493,10 +495,10 @@ class RUsageProfiler {
 // clang-format off
 #define RPROF_THIS_FUNCTION_WITH_TIMELAPSE(                                \
     enable, timelapse_interval, also_log_timelapses)                       \
-  centipede::perf::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
-      /*scope=*/centipede::perf::RUsageScope::ThisProcess(),               \
-      /*metrics=*/(enable) ? centipede::perf::RUsageProfiler::kAllMetrics  \
-                           : centipede::perf::RUsageProfiler::kMetricsOff, \
+  fuzztest::internal::RUsageProfiler FUNCTION_LEVEL_RPROF_NAME = {            \
+      /*scope=*/fuzztest::internal::RUsageScope::ThisProcess(),               \
+      /*metrics=*/(enable) ? fuzztest::internal::RUsageProfiler::kAllMetrics  \
+                           : fuzztest::internal::RUsageProfiler::kMetricsOff, \
       /*timelapse_interval=*/timelapse_interval,                           \
       /*also_log_timelapses=*/also_log_timelapses,                         \
       /*location=*/{__FILE__, __LINE__},                                   \
@@ -509,7 +511,7 @@ class RUsageProfiler {
 // work with the other `RPROF_THIS_FUNCTION.*` macros.
 // clang-format off
 #define RPROF_THIS_FUNCTION_BY_EXISTING_RPROF(profiler)                 \
-  ::centipede::perf::RUsageProfiler& FUNCTION_LEVEL_RPROF_NAME = profiler;
+  ::fuzztest::internal::RUsageProfiler& FUNCTION_LEVEL_RPROF_NAME = profiler;
 // clang-format on
 
 // Records and returns an intermediate snapshot using the profiler defined by an
@@ -565,11 +567,11 @@ class RUsageProfiler {
 // involved, use RPROF_THIS_FUNCTION() or RUsageProfiler directly.
 // clang-format off
 #define RPROF_THIS_SCOPE(enable, description)                              \
-  centipede::perf::RUsageProfiler SCOPE_LEVEL_RPROF_NAME = {               \
-      /*scope=*/centipede::perf::RUsageScope::ThisProcess(),               \
-      /*metrics=*/(enable) ? centipede::perf::RUsageProfiler::kAllMetrics  \
-                           : centipede::perf::RUsageProfiler::kMetricsOff, \
-      /*raii_actions=*/centipede::perf::RUsageProfiler::kRaiiSnapshots,    \
+  fuzztest::internal::RUsageProfiler SCOPE_LEVEL_RPROF_NAME = {               \
+      /*scope=*/fuzztest::internal::RUsageScope::ThisProcess(),               \
+      /*metrics=*/(enable) ? fuzztest::internal::RUsageProfiler::kAllMetrics  \
+                           : fuzztest::internal::RUsageProfiler::kMetricsOff, \
+      /*raii_actions=*/fuzztest::internal::RUsageProfiler::kRaiiSnapshots,    \
       /*location=*/{__FILE__, __LINE__},                                   \
       /*description=*/description                                          \
   }
@@ -578,10 +580,10 @@ class RUsageProfiler {
 // clang-format off
 #define RPROF_THIS_SCOPE_WITH_TIMELAPSE(                                   \
     enable, timelapse_interval, also_log_timelapses, description)          \
-  centipede::perf::RUsageProfiler SCOPE_LEVEL_RPROF_NAME = {               \
-      /*scope=*/centipede::perf::RUsageScope::ThisProcess(),               \
-      /*metrics=*/(enable) ? centipede::perf::RUsageProfiler::kAllMetrics  \
-                           : centipede::perf::RUsageProfiler::kMetricsOff, \
+  fuzztest::internal::RUsageProfiler SCOPE_LEVEL_RPROF_NAME = {               \
+      /*scope=*/fuzztest::internal::RUsageScope::ThisProcess(),               \
+      /*metrics=*/(enable) ? fuzztest::internal::RUsageProfiler::kAllMetrics  \
+                           : fuzztest::internal::RUsageProfiler::kMetricsOff, \
       /*timelapse_interval=*/timelapse_interval,                           \
       /*also_log_timelapses=*/also_log_timelapses,                         \
       /*location=*/{__FILE__, __LINE__},                                   \

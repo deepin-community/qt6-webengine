@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_EXO_DATA_SOURCE_H_
 #define COMPONENTS_EXO_DATA_SOURCE_H_
 
+#include <optional>
 #include <string>
 
 #include "base/containers/flat_set.h"
@@ -12,7 +13,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "components/exo/surface.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+
+namespace ui {
+struct FileInfo;
+enum class EndpointType;
+}  // namespace ui
 
 namespace exo {
 
@@ -53,7 +58,7 @@ class DataSource {
 
   // Notifies the client of the mime type that will be used by the
   // recipient. Only used during drag drop operations.
-  void Target(const absl::optional<std::string>& mime_type);
+  void Target(const std::optional<std::string>& mime_type);
 
   // Notifies the client of the dnd action that will be performed if the
   // currently running drag operation ends now. Only used during drag drop
@@ -87,8 +92,6 @@ class DataSource {
                               const std::vector<uint8_t>&)>;
   using ReadWebCustomDataCallback =
       base::OnceCallback<void(const std::string&, const std::vector<uint8_t>&)>;
-  void ReadDataTransferEndpoint(ReadTextDataCallback dte_reader,
-                                base::RepeatingClosure failure_callback);
   void GetDataForPreferredMimeTypes(
       ReadTextDataCallback text_reader,
       ReadDataCallback rtf_reader,
@@ -98,6 +101,12 @@ class DataSource {
       ReadFileContentsDataCallback file_contents_reader,
       ReadDataCallback web_custom_data_reader,
       base::RepeatingClosure failure_callback);
+
+  // Read filenames and translate paths in `data` from the `source` format
+  // to local paths.
+  std::vector<ui::FileInfo> GetFilenames(
+      ui::EndpointType source,
+      const std::vector<uint8_t>& data) const;
 
   void ReadDataForTesting(
       const std::string& mime_type,
@@ -118,7 +127,7 @@ class DataSource {
                          ReadDataCallback callback,
                          const std::string& mime_type,
                          base::OnceClosure failure_callback,
-                         const absl::optional<std::vector<uint8_t>>& data);
+                         const std::optional<std::vector<uint8_t>>& data);
 
   void OnTextRead(ReadTextDataCallback callback,
                   const std::string& mime_type,
@@ -128,8 +137,6 @@ class DataSource {
                           const std::string& mime_type,
                           const std::vector<uint8_t>& data);
 
-  // This can be a dangling pointer with AutoclickBrowserTest.ClickAndDrag
-  // when run in browser_tests_require_lacros.
   const raw_ptr<DataSourceDelegate, DanglingUntriaged> delegate_;
   base::ObserverList<DataSourceObserver> observers_;
 

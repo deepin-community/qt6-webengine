@@ -148,12 +148,16 @@ static_library("with_no_strings") {
       "l10n_string_util.h",
       "logging_installer.cc",
       "logging_installer.h",
+      "per_install_values.cc",
+      "per_install_values.h",
       "registry_entry.cc",
       "registry_entry.h",
       "scoped_token_privilege.cc",
       "scoped_token_privilege.h",
       "shell_util.cc",
       "shell_util.h",
+      "system_tracing_util.cc",
+      "system_tracing_util.h",
       "taskbar_util.cc",
       "taskbar_util.h",
     ]
@@ -172,14 +176,13 @@ static_library("with_no_strings") {
 
     deps += [
       "//base:i18n",
-      "//base/third_party/dynamic_annotations",
       "//base/win:pe_image",
       "//build:branding_buildflags",
       "//chrome/install_static:install_static_util",
+      "//components/app_launch_prefetch",
       "//components/base32",
       "//components/metrics:client_info",
       "//components/version_info:channel",
-      "//courgette:courgette_lib",
       "//crypto",
       "//rlz/buildflags",
       "//third_party/icu",
@@ -240,7 +243,7 @@ source_set("strings") {
 source_set("constants") {
   public = [ "initial_preferences_constants.h" ]
 
-  sources = [ "initial_preferences_constants.cc" ]
+  sources = []
 
   if (is_win) {
     public += [
@@ -286,7 +289,10 @@ if (is_win) {
   # setup_unittests, which does so.
   source_set("serial_unittests") {
     testonly = true
-    sources = [ "install_service_work_item_unittest.cc" ]
+    sources = [
+      "install_service_work_item_unittest.cc",
+      "per_install_values_unittest.cc",
+    ]
     deps = [
       ":with_no_strings",
       "//base",
@@ -294,12 +300,17 @@ if (is_win) {
       "//chrome/install_static/test:test_support",
       "//testing/gtest",
     ]
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 
   test("installer_util_unittests") {
     sources = [
       "additional_parameters_unittest.cc",
       "advanced_firewall_manager_win_unittest.cc",
+      "auto_launch_util_unittest.cc",
       "beacons_unittest.cc",
       "callback_work_item_unittest.cc",
       "conditional_work_item_list_unittest.cc",
@@ -316,6 +327,7 @@ if (is_win) {
       "helper_unittest.cc",
       "initial_preferences_unittest.cc",
       "install_util_unittest.cc",
+      "installation_state_unittest.cc",
       "l10n_string_util_unittest.cc",
       "logging_installer_unittest.cc",
       "lzma_util_unittest.cc",

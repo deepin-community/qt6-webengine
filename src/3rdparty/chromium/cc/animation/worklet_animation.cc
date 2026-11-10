@@ -86,9 +86,8 @@ void WorkletAnimation::UpdateState(bool start_ready_animations,
 void WorkletAnimation::TakeTimeUpdatedEvent(AnimationEvents* events) {
   DCHECK(events->needs_time_updated_events());
   if (last_synced_local_time_.Read(*this) != local_time_.Read(*this)) {
-    AnimationEvent event(animation_timeline()->id(), id_,
-                         local_time_.Read(*this));
-    events->events_.push_back(event);
+    events->events().emplace_back(animation_timeline()->id(), id_,
+                                  local_time_.Read(*this));
     last_synced_local_time_.Write(*this) = local_time_.Read(*this);
   }
 }
@@ -119,7 +118,7 @@ void WorkletAnimation::UpdateInputState(MutatorInputState* input_state,
 
   DCHECK(is_timeline_active || state_.Read(*this) == State::kRemoved);
 
-  // TODO(https://crbug.com/1011138): Initialize current_time to null if the
+  // TODO(crbug.com/40651525): Initialize current_time to null if the
   // timeline is inactive. It might be inactive here when state is
   // State::REMOVED.
   std::optional<base::TimeDelta> current_time =
@@ -132,7 +131,7 @@ void WorkletAnimation::UpdateInputState(MutatorInputState* input_state,
   if (!is_timeline_active)
     current_time = last_current_time_.Read(*this);
 
-  // TODO(https://crbug.com/1011138): Do not early exit if state is
+  // TODO(crbug.com/40651525): Do not early exit if state is
   // State::REMOVED. The animation must be removed in this case.
   if (!current_time)
     return;

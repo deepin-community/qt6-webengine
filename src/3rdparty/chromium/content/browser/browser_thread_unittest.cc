@@ -77,6 +77,10 @@ class SequenceManagerThreadDelegate : public base::Thread::Delegate {
         base::MessagePump::Create(base::MessagePumpType::DEFAULT));
   }
 
+  void AddTaskObserver(base::TaskObserver* observer) override {
+    ui_sequence_manager_->AddTaskObserver(observer);
+  }
+
  private:
   std::unique_ptr<base::sequence_manager::SequenceManager> ui_sequence_manager_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
@@ -198,14 +202,6 @@ TEST_F(BrowserThreadTest, PostTask) {
   EXPECT_TRUE(GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&BasicFunction, run_loop.QuitWhenIdleClosure(),
                                 BrowserThread::IO)));
-  run_loop.Run();
-}
-
-TEST_F(BrowserThreadTest, Release) {
-  base::RunLoop run_loop;
-  ExpectRelease(run_loop.QuitWhenIdleClosure());
-  BrowserThread::ReleaseSoon(BrowserThread::IO, FROM_HERE,
-                             base::WrapRefCounted(this));
   run_loop.Run();
 }
 

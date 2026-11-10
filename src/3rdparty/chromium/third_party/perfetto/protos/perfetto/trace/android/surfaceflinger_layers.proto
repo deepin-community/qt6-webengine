@@ -19,6 +19,7 @@ syntax = "proto2";
 package perfetto.protos;
 
 import "protos/perfetto/trace/android/surfaceflinger_common.proto";
+import "protos/perfetto/trace/android/graphics/rect.proto";
 
 // Message used by Winscope to process legacy trace files.
 // Represents a file full of surface flinger trace entries.
@@ -51,12 +52,15 @@ message LayersSnapshotProto {
   // elapsed realtime in nanos since boot of when this entry was logged
   optional sfixed64 elapsed_realtime_nanos = 1;
 
-  // where the trace originated
+  // SurfaceFlinger's stage where the snapshot was triggered.
+  // Currently either "visibleRegionsDirty" or "bufferLatched".
   optional string where = 2;
 
   optional LayersProto layers = 3;
 
   // Blob for the current HWC information for all layers, reported by dumpsys.
+  // Example:
+  //   "maxDownScale: 4, maxFullWidth: 8192, HWState: 1, AssignedState: 3, ..."
   optional string hwc_blob = 4;
 
   // Excludes state sent during composition like visible region and composition
@@ -78,6 +82,7 @@ message LayersProto {
 
 message DisplayProto {
   optional uint64 id = 1;
+  // Display descriptor, e.g. "Built-In Screen"
   optional string name = 2;
   optional uint32 layer_stack = 3;
   optional SizeProto size = 4;
@@ -101,8 +106,10 @@ enum HwcCompositionType {
   // Similar to DEVICE, but the layer position may have been asynchronously set
   // through setCursorPosition
   HWC_TYPE_CURSOR = 4;
-  // Layer was composited by the device via a sideband stream.
+  // Layer was composited by the device via a sideband stream
   HWC_TYPE_SIDEBAND = 5;
+  // Layer was composited by hardware optimized for display decoration
+  HWC_TYPE_DISPLAY_DECORATION = 6;
 }
 
 // Information about each layer.
@@ -110,12 +117,14 @@ message LayerProto {
   // unique id per layer.
   optional int32 id = 1;
   // unique name per layer.
+  // Example: "Wallpaper".
   optional string name = 2;
   // list of children this layer may have. May be empty.
   repeated int32 children = 3 [packed = true];
   // list of layers that are z order relative to this layer.
   repeated int32 relatives = 4 [packed = true];
-  // The type of layer, ex Color, Layer
+  // The type of layer.
+  // Examples: "ContainerLayer", "BufferStateLayer".
   optional string type = 5;
   optional RegionProto transparent_region = 6;
   optional RegionProto visible_region = 7;
@@ -136,7 +145,14 @@ message LayerProto {
   optional RectProto final_crop = 15 [deprecated = true];
   optional bool is_opaque = 16;
   optional bool invalidate = 17;
+  // Composition states's dataspace.
+  // Examples: "STANDARD_BT709", "STANDARD_BT601_625".
+  // See full enum in
+  // frameworks/native/libs/nativewindow/include/android/data_space.h
   optional string dataspace = 18;
+  // Buffer's pixel format
+  // Examples: "PIXEL_FORMAT_TRANSLUCENT", "PIXEL_FORMAT_RGBA_8888".
+  // See full enum in frameworks/native/libs/ui/include/ui/PixelFormat.h
   optional string pixel_format = 19;
   // The layer's actual color.
   optional ColorProto color = 20;
@@ -180,8 +196,8 @@ message LayerProto {
   // If active_buffer is not null, record its transform.
   optional TransformProto buffer_transform = 39;
   optional int32 effective_scaling_mode = 40;
-  // Layer's corner radius.
-  optional float corner_radius = 41;
+  // Layer's corner radius
+  optional float corner_radius = 41 [deprecated = true];
   // Metadata map. May be empty.
   map<int32, string> metadata = 42;
 
@@ -212,11 +228,25 @@ message LayerProto {
   optional bool is_trusted_overlay = 55;
 
   // Corner radius explicitly set on layer rather than inherited
-  optional float requested_corner_radius = 56;
+  optional float requested_corner_radius = 56 [deprecated = true];
 
   optional RectProto destination_frame = 57;
 
   optional uint32 original_id = 58;
+
+  optional TrustedOverlay trusted_overlay = 59;
+
+  // Layer's scale during background blur, relative to 1.0f=100%
+  optional float background_blur_scale = 60;
+
+  // Layer's corner radius.
+  optional CornerRadiiProto corner_radii = 61;
+
+  // Corner radius explicitly set on layer rather than inherited
+  optional CornerRadiiProto requested_corner_radii = 62;
+
+  // Corner radius explicity set as drawn by client
+  optional CornerRadiiProto client_drawn_corner_radii = 63;
 }
 
 message PositionProto {
@@ -229,6 +259,13 @@ message FloatRectProto {
   optional float top = 2;
   optional float right = 3;
   optional float bottom = 4;
+}
+
+message CornerRadiiProto {
+  optional float tl = 1;
+  optional float tr = 2;
+  optional float bl = 3;
+  optional float br = 4;
 }
 
 message ActiveBufferProto {

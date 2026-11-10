@@ -2,18 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PAGE_ALLOCATOR_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PAGE_ALLOCATOR_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PAGE_ALLOCATOR_H_
+#define PARTITION_ALLOC_PAGE_ALLOCATOR_H_
 
 #include <cstddef>
 #include <cstdint>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/page_allocator_constants.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/thread_isolation/thread_isolation.h"
+
+#if PA_BUILDFLAG(IS_WIN)
+#include "partition_alloc/partition_alloc_base/win/windows_types.h"
+#endif
 
 namespace partition_alloc {
 
@@ -33,12 +42,15 @@ struct PageAccessibilityConfiguration {
     // that don't support Arm's BTI.
     kReadExecuteProtected,
     kReadExecute,
+    // This flag is mapped to `kReadWriteExecute` on systems that do not support
+    // Arm's BTI.
+    kReadWriteExecuteProtected,
     // This flag is deprecated and will go away soon.
     // TODO(bbudge) Remove this as soon as V8 doesn't need RWX pages.
     kReadWriteExecute,
   };
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   constexpr explicit PageAccessibilityConfiguration(Permissions permissions)
       : permissions(permissions) {}
   constexpr PageAccessibilityConfiguration(
@@ -48,13 +60,13 @@ struct PageAccessibilityConfiguration {
 #else
   constexpr explicit PageAccessibilityConfiguration(Permissions permissions)
       : permissions(permissions) {}
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
   Permissions permissions;
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   // Tag the page with a Memory Protection Key. Use 0 for none.
   ThreadIsolationOption thread_isolation;
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 };
 
 // Use for De/RecommitSystemPages API.
@@ -170,6 +182,14 @@ void FreePages(void* address, size_t length);
 //
 // Returns true if the permission change succeeded. In most cases you must
 // |CHECK| the result.
+//
+// Note: On Windows, setting permissions to `PAGE_NOACCESS` will also decommit
+// pages. This is desirable because clients assume that pages with no access
+// rights should be "free" from a resource standpoint. In particular this allows
+// clients to map a large amount of memory, set its access rights to
+// `PAGE_NOACCESS` and not worry about commit limit exhaustion.
+// On the flip side, this means that changing permissions can often fail on this
+// platform.
 [[nodiscard]] PA_COMPONENT_EXPORT(PARTITION_ALLOC) bool TrySetSystemPagesAccess(
     uintptr_t address,
     size_t length,
@@ -184,6 +204,8 @@ void FreePages(void* address, size_t length);
 // bytes.
 //
 // Performs a CHECK that the operation succeeds.
+//
+// See the note above for Windows-specific behavior.
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 void SetSystemPagesAccess(uintptr_t address,
                           size_t length,
@@ -256,7 +278,7 @@ bool DecommitAndZeroSystemPages(void* address,
 // recommitted. Do not assume that this will not change over time.
 constexpr PA_COMPONENT_EXPORT(
     PARTITION_ALLOC) bool DecommittedMemoryIsAlwaysZeroed() {
-#if BUILDFLAG(IS_APPLE)
+#if PA_BUILDFLAG(IS_APPLE)
   return false;
 #else
   return true;
@@ -318,10 +340,35 @@ void RecommitSystemPages(
 // that the page is required again. Once written to, the content of the page is
 // guaranteed stable once more. After being written to, the page content may be
 // based on the original page content, or a page of zeroes.
+//
+// WARNING: Do not discard a large amount of pages, for a potentially long
+// duration. Discarded pages are *not* decommitted on Windows, where total
+// system-wide committed memory is limited. As most Chromium OOM crashes are
+// commit limit related, this will both impact Private Memory Footprint (which
+// reports committed memory) and stability (since we will bump into the limit
+// more often).
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 void DiscardSystemPages(uintptr_t address, size_t length);
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 void DiscardSystemPages(void* address, size_t length);
+
+// Seal a number of system pages starting at |address|. Returns |true| on
+// success.
+//
+// This blocks various modifications to the pages such as unmapping, remapping
+// or changing page permissions. Note that it doesn't change the accessibility
+// of the memory, sealed writable pages will still be writable.
+//
+// This is mainly useful for non-writable memory (either via page permissions or
+// other hardware features like pkeys) that is bound to the process lifetime.
+//
+// While unmapping the pages gets blocked, it can still be possible to release
+// the memory using |DiscardSystemPages()|, though note that at least on Linux,
+// it requires write access to the page to succeed.
+PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+bool SealSystemPages(uintptr_t address, size_t length);
+PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+bool SealSystemPages(void* address, size_t length);
 
 // Rounds up |address| to the next multiple of |SystemPageSize()|. Returns
 // 0 for an |address| of 0.
@@ -377,15 +424,33 @@ PA_COMPONENT_EXPORT(PARTITION_ALLOC) uint32_t GetAllocPageErrorCode();
 // to assess address space pressure.
 PA_COMPONENT_EXPORT(PARTITION_ALLOC) size_t GetTotalMappedSize();
 
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
 // Sets whether to retry the allocation of pages when a commit failure
 // happens. This doesn't cover cases where the system is out of address space,
 // or reaches another limit.
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 void SetRetryOnCommitFailure(bool retry_on_commit_failure);
 bool GetRetryOnCommitFailure();
-#endif  // BUILDFLAG(IS_WIN)
+
+// Sets the handle of a process to terminate on commit failure, before retrying
+// the operation. The API takes ownership of the handle (ensures that it will be
+// closed when no longer needed). The caller must call this again with a new
+// handle (or nullptr) when the last provided process terminates (for any
+// reason) - otherwise the implementation may hold onto the terminated process's
+// handle which will undesirably keep the process object alive, see
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/eprocess#eprocess
+PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+void SetProcessToTerminateOnCommitFailure(HANDLE handle);
+
+// Terminates the last process passed to SetProcessToTerminateOnCommitFailure(),
+// if any. Local experiments show that it takes ~50ms for the terminated
+// process' commit charge to be relinquished, so the caller may want to wait a
+// little bit before retrying the commit.
+PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+void TerminateAnotherProcessOnCommitFailure();
+
+#endif  // PA_BUILDFLAG(IS_WIN)
 
 }  // namespace partition_alloc
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PAGE_ALLOCATOR_H_
+#endif  // PARTITION_ALLOC_PAGE_ALLOCATOR_H_

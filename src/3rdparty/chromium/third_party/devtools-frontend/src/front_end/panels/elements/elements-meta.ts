@@ -8,7 +8,6 @@ import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type * as ElementsComponents from './components/components.js';
 import type * as Elements from './elements.js';
 
 const UIStrings = {
@@ -97,20 +96,17 @@ const UIStrings = {
    */
   refreshEventListeners: 'Refresh event listeners',
   /**
-   * @description Title of a setting under the Elements category in Settings. Whether words should be
-   * wrapped around at the end of lines or not.
+   * @description Title of a setting under the Elements category in Settings. If
+   *              this option is on, the Elements panel will automatically wrap
+   *              long lines in the DOM tree and try to avoid showing a horizontal
+   *              scrollbar if possible.
    */
   wordWrap: 'Word wrap',
   /**
-   * @description Title of a setting under the Elements category. Whether words should be wrapped
-   * around at the end of lines or not when showing DOM elements.
+   * @description Title of an action in the Elements panel that toggles the 'Word
+   *              wrap' setting.
    */
-  enableDomWordWrap: 'Enable `DOM` word wrap',
-  /**
-   * @description Title of a setting under the Elements category. Whether words should be wrapped
-   * around at the end of lines or not when showing DOM elements.
-   */
-  disableDomWordWrap: 'Disable `DOM` word wrap',
+  toggleWordWrap: 'Toggle word wrap',
   /**
    * @description Title of a setting under the Elements category. Whether to show/hide code comments in HTML.
    */
@@ -137,10 +133,15 @@ const UIStrings = {
    */
   showCSSDocumentationTooltip: 'Show CSS documentation tooltip',
   /**
-   *@description A context menu item (command) in the Elements panel that copy the styles of
+   * @description A context menu item (command) in the Elements panel that copy the styles of
    * the HTML element.
    */
   copyStyles: 'Copy styles',
+  /**
+   * @description A context menu item (command) in the Elements panel that toggles the view between
+   * the element and a11y trees.
+   */
+  toggleA11yTree: 'Toggle accessibility tree',
   /**
    * @description Title of a setting under the Elements category. Whether to show/hide hide
    * the shadow DOM nodes of HTML elements that are built into the browser (e.g. the <input> element).
@@ -158,23 +159,16 @@ const UIStrings = {
    * @description Command for toggling the eye dropper when the color picker is open
    */
   toggleEyeDropper: 'Toggle eye dropper',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/elements/elements-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
 let loadedElementsModule: (typeof Elements|undefined);
-let loadedElementsComponentsModule: (typeof ElementsComponents|undefined);
 
 async function loadElementsModule(): Promise<typeof Elements> {
   if (!loadedElementsModule) {
     loadedElementsModule = await import('./elements.js');
   }
   return loadedElementsModule;
-}
-async function loadElementsComponentsModule(): Promise<typeof ElementsComponents> {
-  if (!loadedElementsComponentsModule) {
-    loadedElementsComponentsModule = await import('./components/components.js');
-  }
-  return loadedElementsComponentsModule;
 }
 function maybeRetrieveContextTypes<T = unknown>(getClassCallBack: (elementsModule: typeof Elements) => T[]): T[] {
   if (loadedElementsModule === undefined) {
@@ -219,7 +213,7 @@ UI.ActionRegistration.registerActionExtension({
 
 UI.ViewManager.registerViewExtension({
   location: UI.ViewManager.ViewLocationValues.ELEMENTS_SIDEBAR,
-  id: 'elements.eventListeners',
+  id: 'elements.event-listeners',
   commandPrompt: i18nLazyString(UIStrings.showEventListeners),
   title: i18nLazyString(UIStrings.eventListeners),
   order: 5,
@@ -233,7 +227,7 @@ UI.ViewManager.registerViewExtension({
 
 UI.ViewManager.registerViewExtension({
   location: UI.ViewManager.ViewLocationValues.ELEMENTS_SIDEBAR,
-  id: 'elements.domProperties',
+  id: 'elements.dom-properties',
   commandPrompt: i18nLazyString(UIStrings.showProperties),
   title: i18nLazyString(UIStrings.properties),
   order: 7,
@@ -247,7 +241,7 @@ UI.ViewManager.registerViewExtension({
 UI.ViewManager.registerViewExtension({
   experiment: Root.Runtime.ExperimentName.CAPTURE_NODE_CREATION_STACKS,
   location: UI.ViewManager.ViewLocationValues.ELEMENTS_SIDEBAR,
-  id: 'elements.domCreation',
+  id: 'elements.dom-creation',
   commandPrompt: i18nLazyString(UIStrings.showStackTrace),
   title: i18nLazyString(UIStrings.stackTrace),
   order: 10,
@@ -266,8 +260,8 @@ UI.ViewManager.registerViewExtension({
   order: 4,
   persistence: UI.ViewManager.ViewPersistence.PERMANENT,
   async loadView() {
-    const ElementsComponents = await loadElementsComponentsModule();
-    return ElementsComponents.LayoutPane.LayoutPane.instance().wrapper as UI.Widget.Widget;
+    const Elements = await loadElementsModule();
+    return Elements.LayoutPane.LayoutPane.instance();
   },
 });
 
@@ -357,11 +351,29 @@ UI.ActionRegistration.registerActionExtension({
   bindings: [
     {
       shortcut: 'Ctrl+Alt+C',
-      platform: UI.ActionRegistration.Platforms.WindowsLinux,
+      platform: UI.ActionRegistration.Platforms.WINDOWS_LINUX,
     },
     {
       shortcut: 'Meta+Alt+C',
-      platform: UI.ActionRegistration.Platforms.Mac,
+      platform: UI.ActionRegistration.Platforms.MAC,
+    },
+  ],
+});
+
+UI.ActionRegistration.registerActionExtension({
+  actionId: 'elements.toggle-a11y-tree',
+  category: UI.ActionRegistration.ActionCategory.ELEMENTS,
+  title: i18nLazyString(UIStrings.toggleA11yTree),
+  async loadActionDelegate() {
+    const Elements = await loadElementsModule();
+    return new Elements.ElementsPanel.ElementsActionDelegate();
+  },
+  contextTypes() {
+    return maybeRetrieveContextTypes(Elements => [Elements.ElementsPanel.ElementsPanel]);
+  },
+  bindings: [
+    {
+      shortcut: 'A',
     },
   ],
 });
@@ -380,11 +392,11 @@ UI.ActionRegistration.registerActionExtension({
   bindings: [
     {
       shortcut: 'Ctrl+Z',
-      platform: UI.ActionRegistration.Platforms.WindowsLinux,
+      platform: UI.ActionRegistration.Platforms.WINDOWS_LINUX,
     },
     {
       shortcut: 'Meta+Z',
-      platform: UI.ActionRegistration.Platforms.Mac,
+      platform: UI.ActionRegistration.Platforms.MAC,
     },
   ],
 });
@@ -403,11 +415,11 @@ UI.ActionRegistration.registerActionExtension({
   bindings: [
     {
       shortcut: 'Ctrl+Y',
-      platform: UI.ActionRegistration.Platforms.WindowsLinux,
+      platform: UI.ActionRegistration.Platforms.WINDOWS_LINUX,
     },
     {
       shortcut: 'Meta+Shift+Z',
-      platform: UI.ActionRegistration.Platforms.Mac,
+      platform: UI.ActionRegistration.Platforms.MAC,
     },
   ],
 });
@@ -418,7 +430,7 @@ UI.ActionRegistration.registerActionExtension({
     const Elements = await loadElementsModule();
     return new Elements.InspectElementModeController.ToggleSearchActionDelegate();
   },
-  condition: Root.Runtime.ConditionName.CAN_DOCK,
+  condition: Root.Runtime.conditions.canDock,
   title: i18nLazyString(UIStrings.captureAreaScreenshot),
   category: UI.ActionRegistration.ActionCategory.SCREENSHOT,
 });
@@ -436,11 +448,11 @@ UI.ActionRegistration.registerActionExtension({
   bindings: [
     {
       shortcut: 'Ctrl+Shift+C',
-      platform: UI.ActionRegistration.Platforms.WindowsLinux,
+      platform: UI.ActionRegistration.Platforms.WINDOWS_LINUX,
     },
     {
       shortcut: 'Meta+Shift+C',
-      platform: UI.ActionRegistration.Platforms.Mac,
+      platform: UI.ActionRegistration.Platforms.MAC,
     },
   ],
 });
@@ -475,40 +487,49 @@ UI.ActionRegistration.registerActionExtension({
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   order: 1,
   title: i18nLazyString(UIStrings.showUserAgentShadowDOM),
-  settingName: 'showUAShadowDOM',
+  settingName: 'show-ua-shadow-dom',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: false,
 });
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   order: 2,
   title: i18nLazyString(UIStrings.wordWrap),
-  settingName: 'domWordWrap',
+  settingName: 'dom-word-wrap',
   settingType: Common.Settings.SettingType.BOOLEAN,
-  options: [
+  defaultValue: true,
+});
+
+UI.ActionRegistration.registerActionExtension({
+  category: UI.ActionRegistration.ActionCategory.ELEMENTS,
+  actionId: 'elements.toggle-word-wrap',
+  async loadActionDelegate() {
+    const Elements = await loadElementsModule();
+    return new Elements.ElementsPanel.ElementsActionDelegate();
+  },
+  title: i18nLazyString(UIStrings.toggleWordWrap),
+  contextTypes() {
+    return maybeRetrieveContextTypes(Elements => [Elements.ElementsPanel.ElementsPanel]);
+  },
+  bindings: [
     {
-      value: true,
-      title: i18nLazyString(UIStrings.enableDomWordWrap),
-    },
-    {
-      value: false,
-      title: i18nLazyString(UIStrings.disableDomWordWrap),
+      shortcut: 'Alt+Z',
+      keybindSets: [UI.ActionRegistration.KeybindSet.VS_CODE],
     },
   ],
-  defaultValue: true,
 });
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   order: 3,
   title: i18nLazyString(UIStrings.showHtmlComments),
-  settingName: 'showHTMLComments',
+  settingName: 'show-html-comments',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: true,
   options: [
@@ -525,43 +546,43 @@ Common.Settings.registerSettingExtension({
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   order: 4,
   title: i18nLazyString(UIStrings.revealDomNodeOnHover),
-  settingName: 'highlightNodeOnHoverInOverlay',
+  settingName: 'highlight-node-on-hover-in-overlay',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: true,
 });
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   order: 5,
   title: i18nLazyString(UIStrings.showDetailedInspectTooltip),
-  settingName: 'showDetailedInspectTooltip',
+  settingName: 'show-detailed-inspect-tooltip',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: true,
 });
 
 Common.Settings.registerSettingExtension({
-  settingName: 'showEventListenersForAncestors',
+  settingName: 'show-event-listeners-for-ancestors',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: true,
 });
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ADORNER,
-  storageType: Common.Settings.SettingStorageType.Synced,
-  settingName: 'adornerSettings',
+  storageType: Common.Settings.SettingStorageType.SYNCED,
+  settingName: 'adorner-settings',
   settingType: Common.Settings.SettingType.ARRAY,
   defaultValue: [],
 });
 
 Common.Settings.registerSettingExtension({
   category: Common.Settings.SettingCategory.ELEMENTS,
-  storageType: Common.Settings.SettingStorageType.Synced,
+  storageType: Common.Settings.SettingStorageType.SYNCED,
   title: i18nLazyString(UIStrings.showCSSDocumentationTooltip),
-  settingName: 'showCSSPropertyDocumentationOnHover',
+  settingName: 'show-css-property-documentation-on-hover',
   settingType: Common.Settings.SettingType.BOOLEAN,
   defaultValue: true,
 });
@@ -625,10 +646,6 @@ UI.Toolbar.registerToolbarItem({
   },
   order: 1,
   location: UI.Toolbar.ToolbarItemLocation.STYLES_SIDEBARPANE_TOOLBAR,
-  showLabel: undefined,
-  condition: undefined,
-  separator: undefined,
-  actionId: undefined,
 });
 
 UI.Toolbar.registerToolbarItem({
@@ -638,10 +655,6 @@ UI.Toolbar.registerToolbarItem({
   },
   order: 2,
   location: UI.Toolbar.ToolbarItemLocation.STYLES_SIDEBARPANE_TOOLBAR,
-  showLabel: undefined,
-  condition: undefined,
-  separator: undefined,
-  actionId: undefined,
 });
 
 UI.Toolbar.registerToolbarItem({
@@ -651,10 +664,6 @@ UI.Toolbar.registerToolbarItem({
   },
   order: 3,
   location: UI.Toolbar.ToolbarItemLocation.STYLES_SIDEBARPANE_TOOLBAR,
-  showLabel: undefined,
-  condition: undefined,
-  separator: undefined,
-  actionId: undefined,
 });
 
 UI.Toolbar.registerToolbarItem({
@@ -664,20 +673,12 @@ UI.Toolbar.registerToolbarItem({
   },
   order: 100,
   location: UI.Toolbar.ToolbarItemLocation.STYLES_SIDEBARPANE_TOOLBAR,
-  showLabel: undefined,
-  condition: undefined,
-  separator: undefined,
-  actionId: undefined,
 });
 
 UI.Toolbar.registerToolbarItem({
   actionId: 'elements.toggle-element-search',
   location: UI.Toolbar.ToolbarItemLocation.MAIN_TOOLBAR_LEFT,
   order: 0,
-  showLabel: undefined,
-  condition: undefined,
-  separator: undefined,
-  loadItem: undefined,
 });
 
 UI.UIUtils.registerRenderer({
@@ -686,7 +687,7 @@ UI.UIUtils.registerRenderer({
   },
   async loadRenderer() {
     const Elements = await loadElementsModule();
-    return Elements.ElementsTreeOutline.Renderer.instance();
+    return Elements.ElementsTreeOutlineRenderer.Renderer.instance();
   },
 });
 

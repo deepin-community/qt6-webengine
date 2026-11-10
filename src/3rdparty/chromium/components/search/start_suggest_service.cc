@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
@@ -181,7 +183,7 @@ void StartSuggestService::SuggestResponseLoaded(
   // Ensure the request succeeded and that the provider used is still available.
   // A verbatim match cannot be generated without this provider, causing errors.
   const bool request_succeeded = response && loader->NetError() == net::OK;
-  base::EraseIf(loaders_, [loader](const auto& loader_ptr) {
+  std::erase_if(loaders_, [loader](const auto& loader_ptr) {
     return loader == loader_ptr.get();
   });
   if (!request_succeeded) {

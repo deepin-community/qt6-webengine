@@ -6,21 +6,19 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_PUBLIC_PAGE_SCHEDULER_H_
 
 #include <memory>
+
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/scheduling_policy.h"
 #include "third_party/blink/renderer/platform/scheduler/public/virtual_time_controller.h"
+#include "third_party/blink/renderer/platform/scheduler/public/widget_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 class AgentGroupScheduler;
-
-namespace scheduler {
-class WidgetScheduler;
-}  // namespace scheduler
 
 class PLATFORM_EXPORT PageScheduler {
  public:
@@ -30,10 +28,6 @@ class PLATFORM_EXPORT PageScheduler {
 
     // An "ordinary" page is a fully-featured page owned by a web view.
     virtual bool IsOrdinary() const = 0;
-    virtual void ReportIntervention(const WTF::String& message) = 0;
-    // Returns true if the request has been succcessfully relayed to the
-    // compositor.
-    virtual bool RequestBeginMainFrameNotExpected(bool new_state) = 0;
     virtual void OnSetPageFrozen(bool is_frozen) = 0;
   };
 
@@ -80,10 +74,6 @@ class PLATFORM_EXPORT PageScheduler {
 
   virtual bool OptedOutFromAggressiveThrottlingForTest() const = 0;
 
-  // Returns true if the request has been succcessfully relayed to the
-  // compositor.
-  virtual bool RequestBeginMainFrameNotExpected(bool new_state) = 0;
-
   // Returns AgentGroupScheduler
   virtual AgentGroupScheduler& GetAgentGroupScheduler() = 0;
 
@@ -91,8 +81,10 @@ class PLATFORM_EXPORT PageScheduler {
   // be null in unit tests.
   virtual VirtualTimeController* GetVirtualTimeController() = 0;
 
-  // Creates a WebWidgetScheduler implementation.
-  virtual scoped_refptr<scheduler::WidgetScheduler> CreateWidgetScheduler() = 0;
+  // Creates a WidgetScheduler implementation. The delegate must remain alive
+  // until `scheduler::WidgetScheduler::WillShutdown()` is called.
+  virtual scoped_refptr<scheduler::WidgetScheduler> CreateWidgetScheduler(
+      scheduler::WidgetScheduler::Delegate*) = 0;
 };
 
 }  // namespace blink

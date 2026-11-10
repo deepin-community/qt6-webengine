@@ -18,6 +18,7 @@ import org.mockito.MockitoAnnotations;
 
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
+import org.chromium.build.BuildConfig;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
 
 import java.net.URISyntaxException;
@@ -100,7 +101,7 @@ public class GURLJavaTest {
     @SmallTest
     @Test
     public void testEmpty() {
-        GURLJni.TEST_HOOKS.setInstanceForTesting(mGURLMocks);
+        GURLJni.setInstanceForTesting(mGURLMocks);
         doThrow(new RuntimeException("Should not need to parse empty URL"))
                 .when(mGURLMocks)
                 .init(any(), any());
@@ -116,7 +117,7 @@ public class GURLJavaTest {
         Assert.assertEquals("", url.getPath());
         Assert.assertEquals("", url.getQuery());
         Assert.assertEquals("", url.getRef());
-        GURLJni.TEST_HOOKS.setInstanceForTesting(null);
+        GURLJni.setInstanceForTesting(null);
     }
 
     // Test that GURL and URI return the correct Origin.
@@ -194,7 +195,7 @@ public class GURLJavaTest {
             new GURL("https://www.foo" + GURL.SERIALIZER_DELIMITER + "bar.com"),
         };
 
-        GURLJni.TEST_HOOKS.setInstanceForTesting(mGURLMocks);
+        GURLJni.setInstanceForTesting(mGURLMocks);
         doThrow(
                         new RuntimeException(
                                 "Should not re-initialize for deserialization when the "
@@ -205,7 +206,7 @@ public class GURLJavaTest {
             GURL out = GURL.deserialize(url.serialize());
             deepAssertEquals(url, out);
         }
-        GURLJni.TEST_HOOKS.setInstanceForTesting(null);
+        GURLJni.setInstanceForTesting(null);
     }
 
     /**
@@ -286,6 +287,21 @@ public class GURLJavaTest {
         Assert.assertFalse(url1.domainIs("images.google.com"));
     }
 
+    // Test that equalsIgnoringRef is hooked up correctly.
+    @SmallTest
+    @Test
+    public void testEqualsIgnoringRef() {
+        GURL url1 = new GURL("https://www.google.com#ref1");
+        GURL url2 = new GURL("https://www.google.com#ref2");
+        GURL url3 = new GURL("https://www.google.com");
+        GURL url4 = new GURL("https://www.notgoogle.com");
+
+        Assert.assertTrue(url1.equalsIgnoringRef(url2));
+        Assert.assertTrue(url1.equalsIgnoringRef(url3));
+        Assert.assertTrue(url2.equalsIgnoringRef(url3));
+        Assert.assertFalse(url1.equalsIgnoringRef(url4));
+    }
+
     // Test that replaceComponents is hooked up correctly.
     @SmallTest
     @Test
@@ -329,5 +345,48 @@ public class GURLJavaTest {
                 new GURL("https://www.google.com/".concat("a".repeat(2 * 1024 * 1024)))
                         .toMojom()
                         .url);
+    }
+
+    /**
+     * Verifies that GURL can be used in assertEquals() statements and similar assertion statements.
+     */
+    @SmallTest
+    @Test
+    public void testSupportsAssertEqualsComparison() {
+        Assert.assertEquals(
+                "GURLs created from the same spec should be equal",
+                new GURL("https://example.test/"),
+                new GURL("https://example.test/"));
+        Assert.assertNotEquals(
+                "GURLs with different paths are not equal",
+                new GURL("https://example.test/"),
+                new GURL("https://example.test/this/has/a/path.html"));
+        Assert.assertNotEquals(
+                "GURLs with different domains are not equal",
+                new GURL("https://example.test/"),
+                new GURL("https://different.test/"));
+        Assert.assertNotEquals(
+                "GURLs with different schemes are not equal",
+                new GURL("https://example.test/"),
+                new GURL("http://example.test/"));
+
+        // When an assertion does fail, make sure that the failure message is human readable.
+        Throwable exception =
+                Assert.assertThrows(
+                        AssertionError.class,
+                        () -> {
+                            Assert.assertEquals(
+                                    new GURL("https://example.test/"),
+                                    new GURL("https://different.test/"));
+                        });
+        if (BuildConfig.ENABLE_ASSERTS) {
+            String expectedMessage =
+                    "expected:<GURL(https://example.test/)> but"
+                            + " was:<GURL(https://different.test/)>";
+            Assert.assertEquals(
+                    "Assertion message was not what we expected.",
+                    expectedMessage,
+                    exception.getMessage());
+        }
     }
 }

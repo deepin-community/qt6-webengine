@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/testing/wait_for_event.h"
 #include "third_party/blink/renderer/modules/service_worker/navigator_service_worker.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -42,40 +43,21 @@ namespace {
 
 // Promise-related test support.
 
-struct StubScriptFunction {
-  DISALLOW_NEW();
-
+class StubScriptFunction : public ThenCallable<IDLAny, StubScriptFunction> {
  public:
-  StubScriptFunction() : call_count_(0) {}
-
-  // The returned ScriptFunction can outlive the StubScriptFunction,
-  // but it should not be called after the StubScriptFunction dies.
-  v8::Local<v8::Function> GetFunction(ScriptState* script_state) {
-    return MakeGarbageCollected<ScriptFunction>(
-               script_state, MakeGarbageCollected<ScriptFunctionImpl>(*this))
-        ->V8Function();
+  void React(ScriptState*, ScriptValue result) { result_ = result; }
+  ScriptValue Result() const {
+    CHECK(!result_.IsEmpty());
+    return result_;
   }
 
-  size_t CallCount() { return call_count_; }
-  ScriptValue Arg() { return arg_; }
-  void Trace(Visitor* visitor) const { visitor->Trace(arg_); }
+  void Trace(Visitor* visitor) const override {
+    ThenCallable<IDLAny, StubScriptFunction>::Trace(visitor);
+    visitor->Trace(result_);
+  }
 
  private:
-  size_t call_count_;
-  ScriptValue arg_;
-
-  class ScriptFunctionImpl : public ScriptFunction::Callable {
-   public:
-    explicit ScriptFunctionImpl(StubScriptFunction& owner) : owner_(owner) {}
-
-    ScriptValue Call(ScriptState*, ScriptValue arg) override {
-      owner_->arg_ = arg;
-      owner_->call_count_++;
-      return ScriptValue();
-    }
-
-    const raw_ref<StubScriptFunction, ExperimentalRenderer> owner_;
-  };
+  ScriptValue result_;
 };
 
 class ScriptValueTest {
@@ -87,17 +69,13 @@ class ScriptValueTest {
 // Runs microtasks and expects |promise| to be rejected. Calls
 // |valueTest| with the value passed to |reject|, if any.
 void ExpectRejected(ScriptState* script_state,
-                    ScriptPromise& promise,
+                    ScriptPromise<ServiceWorkerRegistration>& promise,
                     const ScriptValueTest& value_test) {
-  StubScriptFunction resolved, rejected;
-  promise.Then(resolved.GetFunction(script_state),
-               rejected.GetFunction(script_state));
+  StubScriptFunction* rejected = MakeGarbageCollected<StubScriptFunction>();
+  promise.Catch(script_state, rejected);
   script_state->GetContext()->GetMicrotaskQueue()->PerformCheckpoint(
       script_state->GetIsolate());
-  EXPECT_EQ(0ul, resolved.CallCount());
-  EXPECT_EQ(1ul, rejected.CallCount());
-  if (rejected.CallCount())
-    value_test(script_state, rejected.Arg());
+  value_test(script_state, rejected->Result());
 }
 
 // DOM-related test support.
@@ -209,8 +187,9 @@ class ServiceWorkerContainerTest : public PageTestBase {
     ScriptState::Scope script_scope(GetScriptState());
     RegistrationOptions* options = RegistrationOptions::Create();
     options->setScope(scope);
-    ScriptPromise promise =
-        container->registerServiceWorker(GetScriptState(), script_url, options);
+    ScriptPromise<ServiceWorkerRegistration> promise =
+        container->registerServiceWorkerWithoutTrustedTypes(
+            GetScriptState(), script_url, options);
     ExpectRejected(GetScriptState(), promise, value_test);
   }
 
@@ -221,7 +200,7 @@ class ServiceWorkerContainerTest : public PageTestBase {
             *GetFrame().DomWindow(),
             std::make_unique<NotReachedWebServiceWorkerProvider>());
     ScriptState::Scope script_scope(GetScriptState());
-    ScriptPromise promise =
+    ScriptPromise<ServiceWorkerRegistration> promise =
         container->getRegistration(GetScriptState(), document_url);
     ExpectRejected(GetScriptState(), promise, value_test);
   }
@@ -340,7 +319,7 @@ class StubWebServiceWorkerProvider {
     }
 
    private:
-    const raw_ref<StubWebServiceWorkerProvider, ExperimentalRenderer> owner_;
+    const raw_ref<StubWebServiceWorkerProvider> owner_;
     Vector<std::unique_ptr<WebServiceWorkerRegistrationCallbacks>>
         registration_callbacks_to_delete_;
     Vector<std::unique_ptr<WebServiceWorkerGetRegistrationCallbacks>>
@@ -370,8 +349,8 @@ TEST_F(ServiceWorkerContainerTest,
     ScriptState::Scope script_scope(GetScriptState());
     RegistrationOptions* options = RegistrationOptions::Create();
     options->setScope("y/");
-    container->registerServiceWorker(GetScriptState(), "/x/y/worker.js",
-                                     options);
+    container->registerServiceWorkerWithoutTrustedTypes(
+        GetScriptState(), "/x/y/worker.js", options);
 
     EXPECT_EQ(1ul, stub_provider.RegisterCallCount());
     EXPECT_EQ(WebURL(KURL("http://localhost/x/y/")),
@@ -417,8 +396,8 @@ TEST_F(ServiceWorkerContainerTest,
     ScriptState::Scope script_scope(GetScriptState());
     RegistrationOptions* options = RegistrationOptions::Create();
     options->setUpdateViaCache("none");
-    container->registerServiceWorker(GetScriptState(), "/x/y/worker.js",
-                                     options);
+    container->registerServiceWorkerWithoutTrustedTypes(
+        GetScriptState(), "/x/y/worker.js", options);
 
     EXPECT_EQ(1ul, stub_provider.RegisterCallCount());
     EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/")),
@@ -443,8 +422,8 @@ TEST_F(ServiceWorkerContainerTest, Register_TypeOptionDelegatesToProvider) {
     ScriptState::Scope script_scope(GetScriptState());
     RegistrationOptions* options = RegistrationOptions::Create();
     options->setType("module");
-    container->registerServiceWorker(GetScriptState(), "/x/y/worker.js",
-                                     options);
+    container->registerServiceWorkerWithoutTrustedTypes(
+        GetScriptState(), "/x/y/worker.js", options);
 
     EXPECT_EQ(1ul, stub_provider.RegisterCallCount());
     EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/")),

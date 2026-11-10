@@ -52,6 +52,7 @@ class QUICHE_EXPORT TlsClientHandshaker
   std::string chlo_hash() const override;
   bool ExportKeyingMaterial(absl::string_view label, absl::string_view context,
                             size_t result_len, std::string* result) override;
+  bool MatchedTrustAnchorIdForTesting() const override;
 
   // From QuicCryptoClientStream::HandshakerInterface and TlsHandshaker
   bool encryption_established() const override;
@@ -84,7 +85,6 @@ class QUICHE_EXPORT TlsClientHandshaker
       std::unique_ptr<ApplicationState> application_state) override;
 
   void AllowEmptyAlpnForTests() { allow_empty_alpn_for_tests_ = true; }
-  void AllowInvalidSNIForTests() { allow_invalid_sni_for_tests_ = true; }
 
   // Make the SSL object from BoringSSL publicly accessible.
   using TlsHandshaker::ssl;
@@ -153,8 +153,8 @@ class QUICHE_EXPORT TlsClientHandshaker
   quiche::QuicheReferenceCountedPointer<QuicCryptoNegotiatedParameters>
       crypto_negotiated_params_;
 
+  bool session_cache_lookup_done_ = false;
   bool allow_empty_alpn_for_tests_ = false;
-  bool allow_invalid_sni_for_tests_ = false;
 
   const bool has_application_state_;
   // Contains the state for performing a resumption, if one is attempted. This
@@ -169,6 +169,11 @@ class QUICHE_EXPORT TlsClientHandshaker
 
   std::unique_ptr<TransportParameters> received_transport_params_ = nullptr;
   std::unique_ptr<ApplicationState> received_application_state_ = nullptr;
+
+  // True if the server indicated during the handshake that it served a
+  // certificate which matched a Trust Anchor ID sent by the client. This value
+  // is needed only for testing.
+  bool matched_trust_anchor_id_ = false;
 };
 
 }  // namespace quic

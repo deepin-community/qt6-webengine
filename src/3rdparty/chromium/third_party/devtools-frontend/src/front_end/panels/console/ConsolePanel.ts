@@ -1,6 +1,7 @@
 // Copyright 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 /*
  * Copyright (C) 2009 Joseph Pecoraro
@@ -32,6 +33,7 @@
 
 import type * as Common from '../../core/common/common.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {ConsoleView} from './ConsoleView.js';
 
@@ -63,7 +65,7 @@ export class ConsolePanel extends UI.Panel.Panel {
   override wasShown(): void {
     super.wasShown();
     const wrapper = wrapperViewInstance;
-    if (wrapper && wrapper.isShowing()) {
+    if (wrapper?.isShowing()) {
       UI.InspectorView.InspectorView.instance().setDrawerMinimized(true);
     }
     this.view.show(this.element);
@@ -92,7 +94,7 @@ export class WrapperView extends UI.Widget.VBox {
   private readonly view: ConsoleView;
 
   private constructor() {
-    super();
+    super({jslog: `${VisualLogging.panel('console').track({resize: true})}`});
     this.view = ConsoleView.instance();
   }
 

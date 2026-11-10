@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vmulcaddc/sse.c.in
 //   Generator: tools/xngen
@@ -8,11 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <xmmintrin.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/vmulcaddc.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vmulcaddc.h"
 
 
 void xnn_f32_vmulcaddc_minmax_ukernel_c8__sse_2x(
@@ -23,7 +28,7 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c8__sse_2x(
     const float* restrict weights,
     float* restrict output,
     size_t output_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(rows != 0);
   assert(channels != 0);
@@ -37,8 +42,10 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c8__sse_2x(
   const size_t input_increment = input_stride * 2 - channels;
   const size_t output_increment = output_stride * 2 - channels;
 
-  const __m128 vmin = _mm_load_ps(params->sse.min);
-  const __m128 vmax = _mm_load_ps(params->sse.max);
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   do {
     if XNN_UNPREDICTABLE(rows < 2) {
       i1 = i0;

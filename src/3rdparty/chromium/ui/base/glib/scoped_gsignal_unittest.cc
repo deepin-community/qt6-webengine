@@ -4,6 +4,7 @@
 
 #include "ui/base/glib/scoped_gsignal.h"
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/glib/scoped_gobject.h"
@@ -19,7 +20,7 @@ struct _TestObject {
   GObject parent_instance;
 };
 
-G_DEFINE_TYPE(TestObject, test_object, G_TYPE_OBJECT)
+UNSAFE_TODO(G_DEFINE_TYPE(TestObject, test_object, G_TYPE_OBJECT))
 
 // Used by G_DEFINE_TYPE above.
 void test_object_class_init(TestObjectClass*) {

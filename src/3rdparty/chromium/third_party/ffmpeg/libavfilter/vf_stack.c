@@ -22,14 +22,15 @@
 
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
 #include "drawutils.h"
+#include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "framesync.h"
 #include "video.h"
 
@@ -62,18 +63,22 @@ typedef struct StackContext {
     FFFrameSync fs;
 } StackContext;
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
-    StackContext *s = ctx->priv;
+    const StackContext *s = ctx->priv;
     int reject_flags = AV_PIX_FMT_FLAG_BITSTREAM |
                        AV_PIX_FMT_FLAG_HWACCEL   |
                        AV_PIX_FMT_FLAG_PAL;
 
     if (s->fillcolor_enable) {
-        return ff_set_common_formats(ctx, ff_draw_supported_pixel_formats(0));
+        return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                      ff_draw_supported_pixel_formats(0));
     }
 
-    return ff_set_common_formats(ctx, ff_formats_pixdesc_filter(0, reject_flags));
+    return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                  ff_formats_pixdesc_filter(0, reject_flags));
 }
 
 static av_cold int init(AVFilterContext *ctx)
@@ -195,7 +200,9 @@ static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
     StackContext *s = ctx->priv;
-    AVRational frame_rate = ctx->inputs[0]->frame_rate;
+    FilterLink *il = ff_filter_link(ctx->inputs[0]);
+    FilterLink *ol = ff_filter_link(outlink);
+    AVRational frame_rate = il->frame_rate;
     AVRational sar = ctx->inputs[0]->sample_aspect_ratio;
     int height = ctx->inputs[0]->h;
     int width = ctx->inputs[0]->w;
@@ -304,7 +311,12 @@ static int config_output(AVFilterLink *outlink)
         int inw, inh, size;
 
         if (s->fillcolor_enable) {
-            ff_draw_init(&s->draw, ctx->inputs[0]->format, 0);
+            const AVFilterLink *inlink = ctx->inputs[0];
+            ret = ff_draw_init2(&s->draw, inlink->format, inlink->colorspace, inlink->color_range, 0);
+            if (ret < 0) {
+                av_log(ctx, AV_LOG_ERROR, "Failed to initialize FFDrawContext\n");
+                return ret;
+            }
             ff_draw_color(&s->draw, &s->color, s->fillcolor);
         }
 
@@ -381,16 +393,16 @@ static int config_output(AVFilterLink *outlink)
 
     outlink->w          = width;
     outlink->h          = height;
-    outlink->frame_rate = frame_rate;
+    ol->frame_rate      = frame_rate;
     outlink->sample_aspect_ratio = sar;
 
     for (i = 1; i < s->nb_inputs; i++) {
-        AVFilterLink *inlink = ctx->inputs[i];
-        if (outlink->frame_rate.num != inlink->frame_rate.num ||
-            outlink->frame_rate.den != inlink->frame_rate.den) {
+        il = ff_filter_link(ctx->inputs[i]);
+        if (ol->frame_rate.num != il->frame_rate.num ||
+            ol->frame_rate.den != il->frame_rate.den) {
             av_log(ctx, AV_LOG_VERBOSE,
                     "Video inputs have different frame rates, output will be VFR\n");
-            outlink->frame_rate = av_make_q(1, 0);
+            ol->frame_rate = av_make_q(1, 0);
             break;
         }
     }
@@ -452,34 +464,34 @@ static const AVFilterPad outputs[] = {
 
 #if CONFIG_HSTACK_FILTER
 
-const AVFilter ff_vf_hstack = {
-    .name          = "hstack",
-    .description   = NULL_IF_CONFIG_SMALL("Stack video inputs horizontally."),
-    .priv_class    = &stack_class,
+const FFFilter ff_vf_hstack = {
+    .p.name        = "hstack",
+    .p.description = NULL_IF_CONFIG_SMALL("Stack video inputs horizontally."),
+    .p.priv_class  = &stack_class,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(StackContext),
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
-    .flags         = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_HSTACK_FILTER */
 
 #if CONFIG_VSTACK_FILTER
 
-const AVFilter ff_vf_vstack = {
-    .name          = "vstack",
-    .description   = NULL_IF_CONFIG_SMALL("Stack video inputs vertically."),
-    .priv_class    = &stack_class,
+const FFFilter ff_vf_vstack = {
+    .p.name        = "vstack",
+    .p.description = NULL_IF_CONFIG_SMALL("Stack video inputs vertically."),
+    .p.priv_class  = &stack_class,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(StackContext),
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
-    .flags         = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_VSTACK_FILTER */
@@ -497,17 +509,17 @@ static const AVOption xstack_options[] = {
 
 AVFILTER_DEFINE_CLASS(xstack);
 
-const AVFilter ff_vf_xstack = {
-    .name          = "xstack",
-    .description   = NULL_IF_CONFIG_SMALL("Stack video inputs into custom layout."),
+const FFFilter ff_vf_xstack = {
+    .p.name        = "xstack",
+    .p.description = NULL_IF_CONFIG_SMALL("Stack video inputs into custom layout."),
+    .p.priv_class  = &xstack_class,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(StackContext),
-    .priv_class    = &xstack_class,
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
-    .flags         = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_XSTACK_FILTER */

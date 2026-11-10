@@ -22,9 +22,12 @@
 
 #include <time.h>
 
+#include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/parseutils.h"
 #include "avio_internal.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct DHAVContext {
@@ -230,50 +233,82 @@ static void get_timeinfo(unsigned date, struct tm *timeinfo)
     timeinfo->tm_sec  = sec;
 }
 
+#define MAX_DURATION_BUFFER_SIZE (1024*1024)
+
 static int64_t get_duration(AVFormatContext *s)
 {
-    DHAVContext *dhav = s->priv_data;
-    int64_t start_pos = avio_tell(s->pb);
-    int64_t start = 0, end = 0;
-    struct tm timeinfo;
-    int max_interations = 100000;
-
-    if (!s->pb->seekable)
+    if (!(s->pb->seekable & AVIO_SEEKABLE_NORMAL))
         return 0;
 
-    avio_seek(s->pb, avio_size(s->pb) - 8, SEEK_SET);
-    while (avio_tell(s->pb) > 12 && max_interations--) {
-        if (avio_rl32(s->pb) == MKTAG('d','h','a','v')) {
-            int64_t seek_back = avio_rl32(s->pb);
+    int64_t start_pos = avio_tell(s->pb);
+    int64_t end_pos = -1;
+    int64_t start = 0, end = 0;
+    struct tm timeinfo;
+    uint8_t *end_buffer;
+    int64_t end_buffer_size;
+    int64_t end_buffer_pos;
+    int64_t offset;
+    unsigned date;
+    int64_t size = avio_size(s->pb);
 
-            avio_seek(s->pb, -seek_back, SEEK_CUR);
-            read_chunk(s);
-            get_timeinfo(dhav->date, &timeinfo);
-            end = av_timegm(&timeinfo) * 1000LL;
+    if (start_pos + 16 > size)
+        return 0;
+
+    avio_skip(s->pb, 16);
+    date = avio_rl32(s->pb);
+    get_timeinfo(date, &timeinfo);
+    start = av_timegm(&timeinfo) * 1000LL;
+
+    end_buffer_size = FFMIN(MAX_DURATION_BUFFER_SIZE, size);
+    end_buffer = av_malloc(end_buffer_size);
+    if (!end_buffer)
+        goto fail;
+    end_buffer_pos = size - end_buffer_size;
+    avio_seek(s->pb, end_buffer_pos, SEEK_SET);
+    if (ffio_read_size(s->pb, end_buffer, end_buffer_size) < 0)
+        goto fail;
+
+    offset = end_buffer_size - 8;
+    while (offset > 0) {
+        if (AV_RL32(end_buffer + offset) == MKTAG('d','h','a','v')) {
+            int64_t seek_back = AV_RL32(end_buffer + offset + 4);
+            end_pos = end_buffer_pos + offset - seek_back + 8;
             break;
         } else {
-            avio_seek(s->pb, -12, SEEK_CUR);
+            offset -= 9;
         }
     }
 
-    avio_seek(s->pb, start_pos, SEEK_SET);
+    if (end_pos < 0 || end_pos + 16 > end_buffer_pos + end_buffer_size)
+        goto fail;
 
-    read_chunk(s);
-    get_timeinfo(dhav->date, &timeinfo);
-    start = av_timegm(&timeinfo) * 1000LL;
+    date = AV_RL32(end_buffer + (end_pos - end_buffer_pos) + 16);
+    get_timeinfo(date, &timeinfo);
+    end = av_timegm(&timeinfo) * 1000LL;
+
+    av_freep(&end_buffer);
 
     avio_seek(s->pb, start_pos, SEEK_SET);
 
     return end - start;
+fail:
+    av_freep(&end_buffer);
+    avio_seek(s->pb, start_pos, SEEK_SET);
+    return 0;
 }
 
 static int dhav_read_header(AVFormatContext *s)
 {
     DHAVContext *dhav = s->priv_data;
     uint8_t signature[5];
+    int ret = ffio_ensure_seekback(s->pb, 5);
 
-    ffio_ensure_seekback(s->pb, 5);
-    avio_read(s->pb, signature, sizeof(signature));
+    if (ret < 0)
+        return ret;
+
+    ret = ffio_read_size(s->pb, signature, sizeof(signature));
+    if (ret < 0)
+        return ret;
     if (!memcmp(signature, "DAHUA", 5)) {
         avio_skip(s->pb, 0x400 - 5);
         dhav->last_good_pos = avio_tell(s->pb);
@@ -462,14 +497,14 @@ static int dhav_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-const AVInputFormat ff_dhav_demuxer = {
-    .name           = "dhav",
-    .long_name      = NULL_IF_CONFIG_SMALL("Video DAV"),
+const FFInputFormat ff_dhav_demuxer = {
+    .p.name         = "dhav",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Video DAV"),
+    .p.extensions   = "dav",
+    .p.flags        = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK | AVFMT_TS_DISCONT | AVFMT_TS_NONSTRICT | AVFMT_SEEK_TO_PTS,
     .priv_data_size = sizeof(DHAVContext),
     .read_probe     = dhav_probe,
     .read_header    = dhav_read_header,
     .read_packet    = dhav_read_packet,
     .read_seek      = dhav_read_seek,
-    .extensions     = "dav",
-    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK | AVFMT_TS_DISCONT | AVFMT_TS_NONSTRICT | AVFMT_SEEK_TO_PTS,
 };

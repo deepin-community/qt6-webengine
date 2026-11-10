@@ -16,6 +16,7 @@
 #include "media/base/renderer_client.h"
 #include "media/mojo/mojom/dcomp_surface_registry.mojom.h"
 #include "media/mojo/mojom/frame_interface_factory.mojom.h"
+#include "media/mojo/mojom/media_log.mojom-forward.h"
 #include "media/mojo/mojom/renderer_extensions.mojom.h"
 #include "media/renderers/win/media_foundation_renderer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -51,7 +52,7 @@ class MediaFoundationRendererWrapper final
                   RendererClient* client,
                   PipelineStatusCallback init_cb) override;
   void SetCdm(CdmContext* cdm_context, CdmAttachedCB cdm_attached_cb) override;
-  void SetLatencyHint(absl::optional<base::TimeDelta> latency_hint) override;
+  void SetLatencyHint(std::optional<base::TimeDelta> latency_hint) override;
   void Flush(base::OnceClosure flush_cb) override;
   void StartPlayingFrom(base::TimeDelta time) override;
   void SetPlaybackRate(double playback_rate) override;
@@ -79,7 +80,7 @@ class MediaFoundationRendererWrapper final
                              const std::string& error);
   void OnDCOMPSurfaceHandleRegistered(
       GetDCOMPSurfaceCallback callback,
-      const absl::optional<base::UnguessableToken>& token);
+      const std::optional<base::UnguessableToken>& token);
   void OnFrameGeneratedByMediaFoundation(
       const base::UnguessableToken& frame_token,
       const gfx::Size& frame_size,

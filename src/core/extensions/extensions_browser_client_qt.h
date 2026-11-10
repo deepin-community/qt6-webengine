@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Portions copyright 2015 The Chromium Embedded Framework Authors.
 // Portions copyright 2014 The Chromium Authors. All rights reserved.
@@ -26,6 +27,7 @@ public:
     ~ExtensionsBrowserClientQt() override;
 
     // ExtensionsBrowserClient overrides:
+    void Init() override;
     bool IsShuttingDown() override;
     bool AreExtensionsDisabled(const base::CommandLine &command_line,
                                content::BrowserContext *context) override;
@@ -35,9 +37,9 @@ public:
     bool HasOffTheRecordContext(content::BrowserContext *context) override;
     content::BrowserContext *GetOffTheRecordContext(content::BrowserContext *context) override;
     content::BrowserContext *GetOriginalContext(content::BrowserContext *context) override;
-    content::BrowserContext *GetContextRedirectedToOriginal(content::BrowserContext*, bool) override;
-    content::BrowserContext *GetContextOwnInstance(content::BrowserContext*, bool) override;
-    content::BrowserContext *GetContextForOriginalOnly(content::BrowserContext*, bool) override;
+    content::BrowserContext *GetContextRedirectedToOriginal(content::BrowserContext*) override;
+    content::BrowserContext *GetContextOwnInstance(content::BrowserContext*) override;
+    content::BrowserContext *GetContextForOriginalOnly(content::BrowserContext*) override;
     bool IsGuestSession(content::BrowserContext *context) const override;
     bool IsExtensionIncognitoEnabled(const std::string &extension_id, content::BrowserContext *context) const override;
     bool CanExtensionCrossIncognito(const Extension *extension, content::BrowserContext *context) const override;
@@ -48,7 +50,8 @@ public:
                                         bool is_incognito,
                                         const Extension *extension,
                                         const ExtensionSet &extensions,
-                                        const ProcessMap &process_map) override;
+                                        const ProcessMap &process_map,
+                                        const GURL& upstream_url) override;
 
     PrefService *GetPrefServiceForContext(content::BrowserContext *context) override;
     void GetEarlyExtensionPrefsObservers(content::BrowserContext *context,
@@ -75,9 +78,6 @@ public:
     bool IsMinBrowserVersionSupported(const std::string &min_version) override;
     ExtensionWebContentsObserver *GetExtensionWebContentsObserver(content::WebContents *web_contents) override;
     KioskDelegate *GetKioskDelegate() override;
-
-    // Whether the browser context is associated with Chrome OS lock screen.
-    bool IsLockScreenContext(content::BrowserContext *context) override;
 
     bool IsAppModeForcedForApp(const ExtensionId &id) override;
     bool IsInDemoMode() override;
@@ -109,8 +109,12 @@ public:
     media_device_salt::MediaDeviceSaltService *GetMediaDeviceSaltService(content::BrowserContext *context) override;
 
     mojo::PendingRemote<network::mojom::URLLoaderFactory>
-    GetControlledFrameEmbedderURLLoader(int frame_tree_node_id,
+    GetControlledFrameEmbedderURLLoader(const url::Origin &,
+                                        content::FrameTreeNodeId frame_tree_node_id,
                                         content::BrowserContext *browser_context) override;
+
+    void CreateExtensionWebContentsObserver(content::WebContents *) override;
+    extensions::SafeBrowsingDelegate* GetSafeBrowsingDelegate() override { return nullptr; }
 
 private:
     // Support for extension APIs.

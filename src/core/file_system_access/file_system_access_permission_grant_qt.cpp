@@ -1,7 +1,13 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "file_system_access_permission_grant_qt.h"
+
+// based on chrome_file_system_access_permission_context.cc:
+// Copyright 2019 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "file_system_access_permission_request_manager_qt.h"
 
@@ -12,14 +18,15 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/disallow_activation_reason.h"
+#include "ui/display/types/display_constants.h"
 #include "url/origin.h"
 
 namespace QtWebEngineCore {
 
 FileSystemAccessPermissionGrantQt::FileSystemAccessPermissionGrantQt(
         base::WeakPtr<FileSystemAccessPermissionContextQt> context, const url::Origin &origin,
-        const base::FilePath &path, HandleType handle_type, GrantType type)
-    : m_context(context), m_origin(origin), m_path(path), m_handleType(handle_type), m_type(type)
+        const content::PathInfo &pathInfo, HandleType handle_type, GrantType type)
+    : m_context(context), m_origin(origin), m_pathInfo(pathInfo), m_handleType(handle_type), m_type(type)
 {
 }
 FileSystemAccessPermissionGrantQt::~FileSystemAccessPermissionGrantQt()
@@ -93,7 +100,12 @@ void FileSystemAccessPermissionGrantQt::RequestPermission(
     }
 
     // Drop fullscreen mode so that the user sees the URL bar.
-    base::ScopedClosureRunner fullscreen_block = web_contents->ForSecurityDropFullscreen();
+    auto blocker = web_contents->ForSecurityDropFullscreen(
+            /*display_id=*/display::kInvalidDisplayId);
+    if (!blocker) {
+        std::move(callback).Run(PermissionRequestOutcome::kRequestAborted);
+        return;
+    }
 
     FileSystemAccessPermissionRequestManagerQt::Access access = m_type == GrantType::kRead
             ? FileSystemAccessPermissionRequestManagerQt::Access::kRead
@@ -105,10 +117,10 @@ void FileSystemAccessPermissionGrantQt::RequestPermission(
     // code does not have to have any way to request Access::kReadWrite.
 
     request_manager->AddRequest(
-            { m_origin, m_path, m_handleType, access },
+            { m_origin, m_pathInfo, m_handleType, access },
             base::BindOnce(&FileSystemAccessPermissionGrantQt::OnPermissionRequestResult, this,
                            std::move(callback)),
-            std::move(fullscreen_block));
+            std::move(*blocker));
 }
 
 void FileSystemAccessPermissionGrantQt::SetStatus(blink::mojom::PermissionStatus status)

@@ -10,15 +10,15 @@
 #include "base/functional/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/extensions/api/tabs/app_base_window.h"
 #include "chrome/browser/extensions/api/tabs/app_window_controller.h"
-#include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/api/tabs/windows_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/common/extensions/api/tabs.h"
 #include "chrome/common/extensions/api/windows.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "extensions/browser/app_window/app_window.h"
@@ -28,6 +28,10 @@
 #include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 
+#if BUILDFLAG(IS_MAC)
+#include "chrome/browser/browser_process_platform_part.h"
+#endif
+
 using content::BrowserContext;
 
 namespace extensions {
@@ -35,6 +39,8 @@ namespace extensions {
 namespace windows = extensions::api::windows;
 
 namespace {
+
+constexpr char kWindowTypesKey[] = "windowTypes";
 
 bool ControllerVisibleToListener(WindowController* window_controller,
                                  const Extension* extension,
@@ -45,11 +51,10 @@ bool ControllerVisibleToListener(WindowController* window_controller,
   // If there is no filter the visibility is based on the extension.
   const base::Value::List* filter_value = nullptr;
   if (listener_filter) {
-    filter_value =
-        listener_filter->FindList(extensions::tabs_constants::kWindowTypesKey);
+    filter_value = listener_filter->FindList(kWindowTypesKey);
   }
 
-  // TODO(https://crbug.com/807313): Remove this.
+  // TODO(crbug.com/41367902): Remove this.
   bool allow_dev_tools_windows = !!filter_value;
   if (!window_controller->IsVisibleToTabsAPIForExtension(
           extension, allow_dev_tools_windows)) {
@@ -70,9 +75,8 @@ bool WillDispatchWindowEvent(
     std::optional<base::Value::List>& event_args_out,
     mojom::EventFilteringInfoPtr& event_filtering_info_out) {
   bool has_filter =
-      listener_filter &&
-      listener_filter->contains(extensions::tabs_constants::kWindowTypesKey);
-  // TODO(https://crbug.com/807313): Remove this.
+      listener_filter && listener_filter->contains(kWindowTypesKey);
+  // TODO(crbug.com/41367902): Remove this.
   bool allow_dev_tools_windows = has_filter;
   if (!window_controller->IsVisibleToTabsAPIForExtension(
           extension, allow_dev_tools_windows)) {
@@ -103,8 +107,7 @@ bool WillDispatchWindowFocusedEvent(
   int window_id = extension_misc::kUnknownWindowId;
   Profile* new_active_context = nullptr;
   bool has_filter =
-      listener_filter &&
-      listener_filter->contains(extensions::tabs_constants::kWindowTypesKey);
+      listener_filter && listener_filter->contains(kWindowTypesKey);
 
   // We might not have a window controller if the focus moves away
   // from chromium's windows.
@@ -121,7 +124,7 @@ bool WillDispatchWindowFocusedEvent(
   if (has_filter) {
     event_filtering_info_out->window_type =
         window_controller ? window_controller->GetWindowTypeText()
-                          : extensions::tabs_constants::kWindowTypeValueNormal;
+                          : api::tabs::ToString(api::tabs::WindowType::kNormal);
   } else {
     event_filtering_info_out->has_window_exposed_by_default = true;
     event_filtering_info_out->window_exposed_by_default = true;
@@ -167,7 +170,7 @@ WindowsEventRouter::WindowsEventRouter(Profile* profile)
   observed_key_window_notifier_.Observe(
       &g_browser_process->platform_part()->key_window_notifier());
 #elif defined(TOOLKIT_VIEWS)
-  views::WidgetFocusManager::GetInstance()->AddFocusChangeListener(this);
+  views::NativeViewFocusManager::GetInstance()->AddFocusChangeListener(this);
 #else
 #error Unsupported
 #endif
@@ -179,18 +182,18 @@ WindowsEventRouter::WindowsEventRouter(Profile* profile)
 
 WindowsEventRouter::~WindowsEventRouter() {
 #if defined(TOOLKIT_VIEWS) && !BUILDFLAG(IS_MAC)
-  views::WidgetFocusManager::GetInstance()->RemoveFocusChangeListener(this);
+  views::NativeViewFocusManager::GetInstance()->RemoveFocusChangeListener(this);
 #endif
 }
 
-void WindowsEventRouter::OnAppWindowAdded(extensions::AppWindow* app_window) {
+void WindowsEventRouter::OnAppWindowAdded(AppWindow* app_window) {
   if (!profile_->IsSameOrParent(
           Profile::FromBrowserContext(app_window->browser_context())))
     return;
   AddAppWindow(app_window);
 }
 
-void WindowsEventRouter::OnAppWindowRemoved(extensions::AppWindow* app_window) {
+void WindowsEventRouter::OnAppWindowRemoved(AppWindow* app_window) {
   if (!profile_->IsSameOrParent(
           Profile::FromBrowserContext(app_window->browser_context())))
     return;
@@ -198,8 +201,7 @@ void WindowsEventRouter::OnAppWindowRemoved(extensions::AppWindow* app_window) {
   app_windows_.erase(app_window->session_id().id());
 }
 
-void WindowsEventRouter::OnAppWindowActivated(
-    extensions::AppWindow* app_window) {
+void WindowsEventRouter::OnAppWindowActivated(AppWindow* app_window) {
   AppWindowMap::const_iterator iter =
       app_windows_.find(app_window->session_id().id());
   OnActiveWindowChanged(iter != app_windows_.end() ? iter->second.get()
@@ -218,12 +220,11 @@ void WindowsEventRouter::OnWindowControllerAdded(
 
   base::Value::List args;
   // Since we don't populate tab info here, the context type doesn't matter.
-  constexpr ExtensionTabUtil::PopulateTabBehavior populate_behavior =
-      ExtensionTabUtil::kDontPopulateTabs;
+  constexpr WindowController::PopulateTabBehavior populate_behavior =
+      WindowController::kDontPopulateTabs;
   constexpr mojom::ContextType context_type = mojom::ContextType::kUnspecified;
-  args.Append(ExtensionTabUtil::CreateWindowValueForExtension(
-      *window_controller->GetBrowser(), nullptr, populate_behavior,
-      context_type));
+  args.Append(window_controller->CreateWindowValueForExtension(
+      nullptr, populate_behavior, context_type));
   DispatchEvent(events::WINDOWS_ON_CREATED, windows::OnCreated::kEventName,
                 window_controller, std::move(args));
 }
@@ -257,8 +258,8 @@ void WindowsEventRouter::OnWindowBoundsChanged(
 
   base::Value::List args;
   // Since we don't populate tab info here, the context type doesn't matter.
-  constexpr ExtensionTabUtil::PopulateTabBehavior populate_behavior =
-      ExtensionTabUtil::kDontPopulateTabs;
+  constexpr WindowController::PopulateTabBehavior populate_behavior =
+      WindowController::kDontPopulateTabs;
   constexpr mojom::ContextType context_type = mojom::ContextType::kUnspecified;
   args.Append(ExtensionTabUtil::CreateWindowValueForExtension(
       *window_controller->GetBrowser(), nullptr, populate_behavior,
@@ -326,7 +327,7 @@ bool WindowsEventRouter::HasEventListener(const std::string& event_name) {
   return EventRouter::Get(profile_)->HasEventListener(event_name);
 }
 
-void WindowsEventRouter::AddAppWindow(extensions::AppWindow* app_window) {
+void WindowsEventRouter::AddAppWindow(AppWindow* app_window) {
   std::unique_ptr<AppWindowController> controller(new AppWindowController(
       app_window, std::make_unique<AppBaseWindow>(app_window), profile_));
   app_windows_[app_window->session_id().id()] = std::move(controller);

@@ -20,25 +20,22 @@
 #include <stack>
 
 #include "perfetto/base/status.h"
+#include "perfetto/ext/base/status_macros.h"
 #include "perfetto/trace_processor/basic_types.h"
-#include "src/trace_processor/perfetto_sql/engine/function_util.h"
 #include "src/trace_processor/perfetto_sql/engine/perfetto_sql_engine.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
+#include "src/trace_processor/perfetto_sql/parser/function_util.h"
 #include "src/trace_processor/sqlite/sql_source.h"
-#include "src/trace_processor/sqlite/sqlite_engine.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
-#include "src/trace_processor/tp_metatrace.h"
-#include "src/trace_processor/util/status_macros.h"
+#include "src/trace_processor/util/sql_argument.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 
 base::Status CreateFunction::Run(PerfettoSqlEngine* engine,
                                  size_t argc,
                                  sqlite3_value** argv,
                                  SqlValue&,
                                  Destructors&) {
-  RETURN_IF_ERROR(sqlite_utils::CheckArgCount("CREATE_FUNCTION", argc, 3u));
+  RETURN_IF_ERROR(sqlite::utils::CheckArgCount("CREATE_FUNCTION", argc, 3u));
 
   sqlite3_value* prototype_value = argv[0];
   sqlite3_value* return_type_value = argv[1];
@@ -48,7 +45,7 @@ base::Status CreateFunction::Run(PerfettoSqlEngine* engine,
   {
     auto type_check = [prototype_value](sqlite3_value* value,
                                         SqlValue::Type type, const char* desc) {
-      base::Status status = sqlite_utils::TypeCheckSqliteValue(value, type);
+      base::Status status = sqlite::utils::TypeCheckSqliteValue(value, type);
       if (!status.ok()) {
         return base::ErrStatus("CREATE_FUNCTION[prototype=%s]: %s %s",
                                sqlite3_value_text(prototype_value), desc,
@@ -75,8 +72,13 @@ base::Status CreateFunction::Run(PerfettoSqlEngine* engine,
 
   FunctionPrototype prototype;
   RETURN_IF_ERROR(ParsePrototype(base::StringView(prototype_str), prototype));
+  auto type = sql_argument::ParseType(base::StringView(return_type_str));
+  if (!type) {
+    return base::ErrStatus("CREATE_FUNCTION: unknown return type %s",
+                           return_type_str.c_str());
+  }
   return engine->RegisterRuntimeFunction(
-      true /* replace */, prototype, return_type_str,
+      true /* replace */, prototype, *type,
       SqlSource::FromTraceProcessorImplementation(std::move(sql_defn_str)));
 }
 
@@ -85,12 +87,12 @@ base::Status ExperimentalMemoize::Run(PerfettoSqlEngine* engine,
                                       sqlite3_value** argv,
                                       SqlValue&,
                                       Destructors&) {
-  RETURN_IF_ERROR(sqlite_utils::CheckArgCount("EXPERIMENTAL_MEMOIZE", argc, 1));
+  RETURN_IF_ERROR(
+      sqlite::utils::CheckArgCount("EXPERIMENTAL_MEMOIZE", argc, 1));
   base::StatusOr<std::string> function_name =
-      sqlite_utils::ExtractStringArg("MEMOIZE", "function_name", argv[0]);
+      sqlite::utils::ExtractStringArg("MEMOIZE", "function_name", argv[0]);
   RETURN_IF_ERROR(function_name.status());
   return engine->EnableSqlFunctionMemoization(*function_name);
 }
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

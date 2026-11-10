@@ -30,7 +30,6 @@ class CONTENT_EXPORT PrefetchType {
   PrefetchType& operator=(const PrefetchType& prefetch_type) = delete;
 
   bool operator==(const PrefetchType& rhs) const = default;
-  bool operator!=(const PrefetchType& rhs) const = default;
 
   PreloadingTriggerType trigger_type() const { return trigger_type_; }
 
@@ -46,6 +45,11 @@ class CONTENT_EXPORT PrefetchType {
 
   // Returns the eagerness of the prefetch based on the speculation rules API.
   blink::mojom::SpeculationEagerness GetEagerness() const;
+
+  // Whether this prefetch is initiated by renderer processes.
+  // Currently this is equivalent to whether the trigger type is Speculation
+  // Rules or not.
+  bool IsRendererInitiated() const;
 
  private:
   const PreloadingTriggerType trigger_type_;

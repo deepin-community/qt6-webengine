@@ -34,7 +34,7 @@
 
 #include "absl/base/const_init.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // TODO(kcc): replace the standalone ForEachNonZeroByte with code from here.
 // TODO(kcc): ConcurrentByteSet is an unoptimized single-layer byte set.
@@ -44,7 +44,11 @@ namespace centipede {
 // Set() can be called concurrently with another Set(), other uses should be
 // synchronized externally.
 // Intended usage is to call ForEachNonZeroByte() from one thread.
-// Should only be constructed with static storage duration.
+//
+// IMPORTANT!!! Objects of this class should only be constructed with static
+// storage duration. This is because the class has intentionally uninitialized
+// direct and transitive data members that rely on static initialization in the
+// compiled process image.
 template <size_t kSize>
 class ConcurrentByteSet {
  public:
@@ -101,7 +105,9 @@ class ConcurrentByteSet {
   }
 
  private:
-  uint8_t bytes_[kSize] __attribute__((aligned(64)));  // No initializer.
+  // No initializer for performance (`kSize` can be quite large). Relies on
+  // static initialization in the process image (see the class comment).
+  uint8_t bytes_[kSize] __attribute__((aligned(64)));
 };
 
 // Similar to ConcurrentByteSet, but consists of two layers, upper and lower.
@@ -176,6 +182,6 @@ class TwoLayerConcurrentByteSet
             absl::kConstInit) {}
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_CONCURRENT_BYTESET_H_

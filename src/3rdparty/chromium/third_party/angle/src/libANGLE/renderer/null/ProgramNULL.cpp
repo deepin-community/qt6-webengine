@@ -18,17 +18,32 @@ namespace
 class LinkTaskNULL : public LinkTask
 {
   public:
+    LinkTaskNULL(const gl::ProgramState *state) : mState(state) {}
     ~LinkTaskNULL() override = default;
-    std::vector<std::shared_ptr<LinkSubTask>> link(const gl::ProgramLinkedResources &resources,
-                                                   const gl::ProgramMergedVaryings &mergedVaryings,
-                                                   bool *areSubTasksOptionalOut) override
+    void link(const gl::ProgramLinkedResources &resources,
+              const gl::ProgramMergedVaryings &mergedVaryings,
+              std::vector<std::shared_ptr<LinkSubTask>> *linkSubTasksOut,
+              std::vector<std::shared_ptr<LinkSubTask>> *postLinkSubTasksOut) override
     {
-        return {};
+        ASSERT(linkSubTasksOut && linkSubTasksOut->empty());
+        ASSERT(postLinkSubTasksOut && postLinkSubTasksOut->empty());
+
+        const gl::SharedCompiledShaderState &fragmentShader =
+            mState->getAttachedShader(gl::ShaderType::Fragment);
+        if (fragmentShader != nullptr)
+        {
+            resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageFormats);
+        }
+
+        return;
     }
     angle::Result getResult(const gl::Context *context, gl::InfoLog &infoLog) override
     {
         return angle::Result::Continue;
     }
+
+  private:
+    const gl::ProgramState *mState;
 };
 }  // anonymous namespace
 
@@ -42,7 +57,7 @@ angle::Result ProgramNULL::load(const gl::Context *context,
                                 egl::CacheGetResult *resultOut)
 {
     *loadTaskOut = {};
-    *resultOut   = egl::CacheGetResult::GetSuccess;
+    *resultOut   = egl::CacheGetResult::Success;
     return angle::Result::Continue;
 }
 
@@ -55,7 +70,7 @@ void ProgramNULL::setSeparable(bool separable) {}
 angle::Result ProgramNULL::link(const gl::Context *contextImpl,
                                 std::shared_ptr<LinkTask> *linkTaskOut)
 {
-    *linkTaskOut = std::shared_ptr<LinkTask>(new LinkTaskNULL);
+    *linkTaskOut = std::shared_ptr<LinkTask>(new LinkTaskNULL(&mState));
     return angle::Result::Continue;
 }
 

@@ -17,8 +17,6 @@
 #include "components/sync/protocol/password_sharing_invitation_specifics.pb.h"
 #include "components/sync/service/sync_service_observer.h"
 
-class PrefService;
-
 namespace password_manager {
 
 class PasswordStoreInterface;
@@ -67,9 +65,9 @@ class PasswordReceiverServiceImpl : public PasswordReceiverService,
   // Due to the dependency of keyed servivces, the SyncService is only
   // constructed *after* the construction of the PasswordReceiverService, and
   // hence SyncService is provided later in OnSyncServiceInitialized().
-  // `sync_bridge` may be null in tests.
+  // `sync_bridge`, `profile_password_store` and `account_password_store` may be
+  // nullptr in tests.
   explicit PasswordReceiverServiceImpl(
-      const PrefService* pref_service,
       std::unique_ptr<IncomingPasswordSharingInvitationSyncBridge> sync_bridge,
       PasswordStoreInterface* profile_password_store,
       PasswordStoreInterface* account_password_store);
@@ -81,7 +79,7 @@ class PasswordReceiverServiceImpl : public PasswordReceiverService,
   // PasswordReceiverService implementation:
   void ProcessIncomingSharingInvitation(
       sync_pb::IncomingPasswordSharingInvitationSpecifics invitation) override;
-  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate()
+  base::WeakPtr<syncer::DataTypeControllerDelegate> GetControllerDelegate()
       override;
   void OnSyncServiceInitialized(syncer::SyncService* service) override;
 
@@ -91,12 +89,11 @@ class PasswordReceiverServiceImpl : public PasswordReceiverService,
  private:
   void RemoveTaskFromTasksList(ProcessIncomingSharingInvitationTask* task);
 
-  const raw_ptr<const PrefService> pref_service_;
-
   raw_ptr<syncer::SyncService> sync_service_ = nullptr;
 
   std::unique_ptr<IncomingPasswordSharingInvitationSyncBridge> sync_bridge_;
 
+  // Both stores can be nullptr in tests.
   raw_ptr<PasswordStoreInterface> profile_password_store_;
   raw_ptr<PasswordStoreInterface> account_password_store_;
 

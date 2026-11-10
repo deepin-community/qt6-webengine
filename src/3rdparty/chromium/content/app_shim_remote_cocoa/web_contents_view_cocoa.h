@@ -8,6 +8,7 @@
 #include "base/memory/raw_ptr.h"
 #include "content/common/content_export.h"
 #include "content/common/web_contents_ns_view_bridge.mojom.h"
+#include "content/public/common/child_process_id.h"
 #import "ui/base/cocoa/base_view.h"
 #import "ui/base/cocoa/views_hostable.h"
 
@@ -44,6 +45,8 @@ CONTENT_EXPORT
 - (instancetype)initWithViewsHostableView:(ui::ViewsHostableView*)v;
 - (void)registerDragTypes;
 - (void)startDragWithDropData:(const content::DropData&)dropData
+              renderProcessId:(content::ChildProcessId)renderProcessId
+                documentToken:(const blink::DocumentToken&)documentToken
                  sourceOrigin:(const url::Origin&)sourceOrigin
             dragOperationMask:(NSDragOperation)operationMask
                         image:(NSImage*)image
@@ -64,8 +67,6 @@ CONTENT_EXPORT
 // Updates the WCVC's web contents's visibility state. The update may occur
 // immediately or in the near future.
 - (void)updateWebContentsVisibility:(remote_cocoa::mojom::Visibility)visibility;
-
-- (void)updateWindowControlsOverlay:(const gfx::Rect&)boundingRect;
 
 @end
 

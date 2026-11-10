@@ -70,7 +70,6 @@ void DelegatingProvider::OnPageLoadStarted() {
 bool DelegatingProvider::HasIndependentMetrics() {
   // These are collected seperately for each provider.
   NOTREACHED();
-  return false;
 }
 
 void DelegatingProvider::ProvideSystemProfileMetrics(

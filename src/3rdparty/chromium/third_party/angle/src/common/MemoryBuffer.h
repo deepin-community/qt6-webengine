@@ -7,16 +7,21 @@
 #ifndef COMMON_MEMORYBUFFER_H_
 #define COMMON_MEMORYBUFFER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "common/Optional.h"
 #include "common/angleutils.h"
 #include "common/debug.h"
 
-#include <stdint.h>
-#include <cstddef>
+#include "common/span.h"
+#include "common/unsafe_buffers.h"
 
 namespace angle
 {
 
+// MemoryBuffers are used in place of std::vector<uint8_t> when an uninitialized buffer
+// as would be obtained via malloc is required.
 class MemoryBuffer final : NonCopyable
 {
   public:
@@ -26,9 +31,31 @@ class MemoryBuffer final : NonCopyable
     MemoryBuffer(MemoryBuffer &&other);
     MemoryBuffer &operator=(MemoryBuffer &&other);
 
-    [[nodiscard]] bool resize(size_t size);
+    // Destroy underlying memory
+    void destroy();
+
+    // Updates mSize to newSize. Updates mCapacity iff newSize > mCapacity
+    [[nodiscard]] bool resize(size_t newSize);
+
+    // Resets mSize to 0. Reserves memory and updates mCapacity iff newSize > mCapacity
+    [[nodiscard]] bool clearAndReserve(size_t newSize);
+
+    // Updates mCapacity iff newSize > mCapacity
+    [[nodiscard]] bool reserve(size_t newSize);
+
+    // Sets size bound by capacity.
+    void setSize(size_t size)
+    {
+        ASSERT(size <= mCapacity);
+        mSize = size;
+    }
+    void setSizeToCapacity() { setSize(mCapacity); }
+
+    // Invalidate current content
     void clear() { (void)resize(0); }
+
     size_t size() const { return mSize; }
+    size_t capacity() const { return mCapacity; }
     bool empty() const { return mSize == 0; }
 
     const uint8_t *data() const { return mData; }
@@ -38,31 +65,76 @@ class MemoryBuffer final : NonCopyable
         return mData;
     }
 
+    // Access entire buffer, although MemoryBuffer should be implicitly convertible to
+    // any span implementation because it has both data() and size() methods.
+    angle::Span<uint8_t> span()
+    {
+        // SAFETY: `mData` is valid for `mSize` bytes.
+        return ANGLE_UNSAFE_BUFFERS(angle::Span<uint8_t>(mData, mSize));
+    }
+    angle::Span<const uint8_t> span() const
+    {
+        // SAFETY: `mData` is valid for `mSize` bytes.
+        return ANGLE_UNSAFE_BUFFERS(angle::Span<const uint8_t>(mData, mSize));
+    }
+
+    // Convenience methods for accessing portions of the buffer.
+    angle::Span<uint8_t> first(size_t count) { return span().first(count); }
+    angle::Span<uint8_t> last(size_t count) { return span().last(count); }
+    angle::Span<uint8_t> subspan(size_t offset) { return span().subspan(offset, mSize - offset); }
+    angle::Span<uint8_t> subspan(size_t offset, size_t count)
+    {
+        return span().subspan(offset, count);
+    }
+
     uint8_t &operator[](size_t pos)
     {
-        ASSERT(pos < mSize);
-        return mData[pos];
+        ASSERT(mData && pos < mSize);
+        // SAFETY: assert on previous line.
+        return ANGLE_UNSAFE_BUFFERS(mData[pos]);
     }
     const uint8_t &operator[](size_t pos) const
     {
-        ASSERT(pos < mSize);
-        return mData[pos];
+        ASSERT(mData && pos < mSize);
+        // SAFETY: assert on previous line.
+        return ANGLE_UNSAFE_BUFFERS(mData[pos]);
     }
 
     void fill(uint8_t datum);
 
+    // Only used by unit tests
+    // Validate total bytes allocated during a resize
+    void assertTotalAllocatedBytes(size_t totalAllocatedBytes) const
+    {
+#if defined(ANGLE_ENABLE_ASSERTS)
+        ASSERT(totalAllocatedBytes == mTotalAllocatedBytes);
+#endif  // ANGLE_ENABLE_ASSERTS
+    }
+    // Validate total bytes copied during a resize
+    void assertTotalCopiedBytes(size_t totalCopiedBytes) const
+    {
+#if defined(ANGLE_ENABLE_ASSERTS)
+        ASSERT(totalCopiedBytes == mTotalCopiedBytes);
+#endif  // ANGLE_ENABLE_ASSERTS
+    }
+
   private:
-    size_t mSize   = 0;
-    uint8_t *mData = nullptr;
+    size_t mSize     = 0;
+    size_t mCapacity = 0;
+    uint8_t *mData   = nullptr;
+#if defined(ANGLE_ENABLE_ASSERTS)
+    size_t mTotalAllocatedBytes = 0;
+    size_t mTotalCopiedBytes    = 0;
+#endif  // ANGLE_ENABLE_ASSERTS
 };
 
 class ScratchBuffer final : NonCopyable
 {
   public:
+    ScratchBuffer();
     // If we request a scratch buffer requesting a smaller size this many times, release and
     // recreate the scratch buffer. This ensures we don't have a degenerate case where we are stuck
     // hogging memory.
-    ScratchBuffer();
     ScratchBuffer(uint32_t lifetime);
     ~ScratchBuffer();
 
@@ -79,6 +151,8 @@ class ScratchBuffer final : NonCopyable
     void tick();
 
     void clear();
+
+    MemoryBuffer *getMemoryBuffer() { return &mScratchMemory; }
 
   private:
     bool getImpl(size_t requestedSize, MemoryBuffer **memoryBufferOut, Optional<uint8_t> initValue);

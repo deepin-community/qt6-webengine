@@ -5,19 +5,20 @@
 #include "components/update_client/background_downloader_win.h"
 
 #include <objbase.h>
+
+#include <windows.h>
+
 #include <shlobj_core.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <windows.h>
 #include <winerror.h>
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "background_downloader_win.h"
-#include "base/check.h"
 #include "base/check_op.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
@@ -28,7 +29,7 @@
 #include "base/functional/function_ref.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/ranges/algorithm.h"
+#include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -742,7 +743,6 @@ HRESULT BackgroundDownloader::CreateOrOpenJob(
       },
       bits_manager_, &jobs);
   if (SUCCEEDED(hr) && !jobs.empty()) {
-    metrics::RecordBDWExistingJobUsed(true);
     *job = jobs.front();
     return S_FALSE;
   }
@@ -763,7 +763,6 @@ HRESULT BackgroundDownloader::CreateOrOpenJob(
     return hr;
   }
 
-  metrics::RecordBDWExistingJobUsed(false);
   *job = local_job;
   return S_OK;
 }
@@ -895,7 +894,6 @@ void BackgroundDownloader::CleanupStaleJobs() {
       },
       bits_manager_, &jobs);
 
-  metrics::RecordBDWNumJobsCleaned(jobs.size());
   for (const auto& job : jobs) {
     CleanupJob(job);
   }
@@ -911,8 +909,7 @@ void BackgroundDownloader::CleanupStaleDownloads() {
         base::File::Info info;
         if (base::GetFileInfo(dir, &info) &&
             info.creation_time + base::Days(kPurgeStaleJobsAfterDays) < now) {
-          metrics::RecordBDWStaleDownloadAge(now - info.creation_time);
-          base::DeletePathRecursively(dir);
+          RetryDeletePathRecursively(dir);
         }
       });
 }
@@ -923,13 +920,13 @@ void BackgroundDownloader::EnumerateDownloadDirs(
   DCHECK_CALLED_ON_VALID_SEQUENCE(com_sequence_checker_);
   base::FilePath dir;
   std::vector<base::FilePath> dirs;
-  if (base::GetSecureSystemTemp(&dir)) {
+  if (base::PathService::Get(base::DIR_SYSTEM_TEMP, &dir)) {
     dirs.push_back(dir);
   }
   if (base::GetTempDir(&dir)) {
     dirs.push_back(dir);
   }
-  base::ranges::for_each(dirs, [&](const base::FilePath& parent_dir) {
+  std::ranges::for_each(dirs, [&](const base::FilePath& parent_dir) {
     base::FileEnumerator(parent_dir,
                          /*recursive=*/false, base::FileEnumerator::DIRECTORIES,
                          matcher)

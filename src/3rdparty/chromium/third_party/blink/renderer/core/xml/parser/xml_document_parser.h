@@ -27,13 +27,16 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_XML_PARSER_XML_DOCUMENT_PARSER_H_
 
 #include <libxml/tree.h>
+
 #include <memory>
+
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/dom/parser_content_policy.h"
 #include "third_party/blink/renderer/core/dom/scriptable_document_parser.h"
 #include "third_party/blink/renderer/core/script/xml_parser_script_runner.h"
 #include "third_party/blink/renderer/core/script/xml_parser_script_runner_host.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_errors.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
@@ -51,6 +54,9 @@ class DocumentFragment;
 class Element;
 class LocalFrameView;
 class Text;
+
+struct xmlSAX2Attributes;
+struct xmlSAX2Namespace;
 
 class XMLParserContext : public RefCounted<XMLParserContext> {
   USING_FAST_MALLOC(XMLParserContext);
@@ -79,6 +85,8 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   ~XMLDocumentParser() override;
   void Trace(Visitor*) const override;
 
+  static void EnsureLibXMLInitialized();
+
   // Exposed for callbacks:
   void HandleError(XMLErrors::ErrorType, const char* message, TextPosition);
 
@@ -89,11 +97,11 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
     return is_currently_parsing8_bit_chunk_;
   }
 
-  static bool ParseDocumentFragment(
-      const String&,
-      DocumentFragment*,
-      Element* parent = nullptr,
-      ParserContentPolicy = kAllowScriptingContent);
+  static bool ParseDocumentFragment(const String&,
+                                    DocumentFragment*,
+                                    Element* parent,
+                                    ParserContentPolicy,
+                                    ExceptionState&);
 
   // Used by the XMLHttpRequest to check if the responseXML was well formed.
   bool WellFormed() const override { return !saw_error_; }
@@ -139,9 +147,6 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
 
   // XMLParserScriptRunnerHost
   void NotifyScriptExecuted() override;
-  // |kDOMContentLoadedWaitForAsyncScript| experiment is not effective for XML
-  // documents and thus we don't have to do anything here.
-  void NotifyNoRemainingAsyncScripts() final {}
 
   void end();
 
@@ -157,13 +162,11 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   void StartElementNs(const AtomicString& local_name,
                       const AtomicString& prefix,
                       const AtomicString& uri,
-                      int namespace_count,
-                      const xmlChar** namespaces,
-                      int attribute_count,
-                      int defaulted_count,
-                      const xmlChar** libxml_attributes);
+                      base::span<const xmlSAX2Namespace> namespaces,
+                      base::span<const xmlSAX2Attributes> attributes,
+                      int defaulted_count);
   void EndElementNs();
-  void Characters(const xmlChar* chars, int length);
+  void Characters(base::span<const xmlChar> chars);
   void GetProcessingInstruction(const String& target, const String& data);
   void CdataBlock(const String&);
   void Comment(const String&);
@@ -207,12 +210,6 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
 
   Member<Text> leaf_text_node_;
 
-  // Tracks whether we're processing a new input chunk. This is set right before
-  // submitting a new chunk to libxml and is reset by most emitted parse events.
-  // We use this as a signal to merge CDATA sections when they span a chunk
-  // boundary.
-  bool is_start_of_new_chunk_ = false;
-
   bool is_currently_parsing8_bit_chunk_;
   bool saw_error_;
   bool saw_css_;
@@ -220,6 +217,10 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   bool saw_first_element_;
   bool is_xhtml_document_;
   bool parser_paused_;
+  // Re-entrancy guard for DoWrite()/xmlParseChunk(). libxml2 push-parser
+  // contexts are not re-entrant; calling xmlParseChunk while already inside
+  // a SAX callback corrupts ctxt->pushTab/nsTab.
+  bool in_parse_chunk_ = false;
   bool requesting_script_;
   bool finish_called_;
   bool waiting_for_stylesheets_ = false;

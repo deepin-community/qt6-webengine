@@ -9,10 +9,11 @@
 #include <cstring>
 #include <vector>
 
+#include "core/fxcrt/fx_memcpy_wrappers.h"
+#include "core/fxcrt/numerics/safe_conversions.h"
 #include "public/fpdfview.h"
 #include "testing/utils/file_util.h"
 #include "testing/utils/path_service.h"
-#include "third_party/base/numerics/safe_conversions.h"
 #include "v8/include/libplatform/libplatform.h"
 #include "v8/include/v8-initialization.h"
 #include "v8/include/v8-snapshot.h"
@@ -58,9 +59,9 @@ bool GetExternalData(const std::string& exe_path,
 
   // `result_data` takes ownership.
   void* copy = malloc(data_buffer.size());
-  memcpy(copy, data_buffer.data(), data_buffer.size());
+  FXSYS_memcpy(copy, data_buffer.data(), data_buffer.size());
   result_data->data = static_cast<char*>(copy);
-  result_data->raw_size = pdfium::base::checked_cast<int>(data_buffer.size());
+  result_data->raw_size = pdfium::checked_cast<int>(data_buffer.size());
   return true;
 }
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
@@ -78,8 +79,9 @@ std::unique_ptr<v8::Platform> InitializeV8Common(const std::string& exe_path,
   const char* recommended_v8_flags = FPDF_GetRecommendedV8Flags();
   v8::V8::SetFlagsFromString(recommended_v8_flags);
 
-  if (!js_flags.empty())
+  if (!js_flags.empty()) {
     v8::V8::SetFlagsFromString(js_flags.c_str());
+  }
 
   // By enabling predictable mode, V8 won't post any background tasks.
   // By enabling GC, it makes it easier to chase use-after-free.
@@ -101,8 +103,10 @@ std::unique_ptr<v8::Platform> InitializeV8ForPDFiumWithStartupData(
   std::unique_ptr<v8::Platform> platform =
       InitializeV8Common(exe_path, js_flags);
   if (snapshot_blob) {
-    if (!GetExternalData(exe_path, bin_dir, "snapshot_blob.bin", snapshot_blob))
+    if (!GetExternalData(exe_path, bin_dir, "snapshot_blob.bin",
+                         snapshot_blob)) {
       return nullptr;
+    }
     v8::V8::SetSnapshotDataBlob(snapshot_blob);
   }
   return platform;

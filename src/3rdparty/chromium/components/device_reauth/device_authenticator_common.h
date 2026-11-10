@@ -5,10 +5,12 @@
 #ifndef COMPONENTS_DEVICE_REAUTH_DEVICE_AUTHENTICATOR_COMMON_H_
 #define COMPONENTS_DEVICE_REAUTH_DEVICE_AUTHENTICATOR_COMMON_H_
 
+#include <optional>
+
+#include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
 #include "components/device_reauth/device_authenticator.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // Helper class which keeps the last good authentication timestamp such that it
 // is common per profile.
@@ -17,7 +19,7 @@ class DeviceAuthenticatorProxy : public KeyedService {
   DeviceAuthenticatorProxy();
   ~DeviceAuthenticatorProxy() override;
 
-  absl::optional<base::TimeTicks> GetLastGoodAuthTimestamp() {
+  std::optional<base::TimeTicks> GetLastGoodAuthTimestamp() {
     return last_good_auth_timestamp_;
   }
   void UpdateLastGoodAuthTimestamp() {
@@ -29,7 +31,7 @@ class DeviceAuthenticatorProxy : public KeyedService {
 
  private:
   // Time of last successful re-auth. nullopt if there hasn't been an auth yet.
-  absl::optional<base::TimeTicks> last_good_auth_timestamp_;
+  std::optional<base::TimeTicks> last_good_auth_timestamp_;
 
   // Factory for weak pointers to this class.
   base::WeakPtrFactory<DeviceAuthenticatorProxy> weak_ptr_factory_{this};
@@ -55,6 +57,9 @@ class DeviceAuthenticatorCommon : public device_reauth::DeviceAuthenticator {
   void RecordAuthResultSkipped();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(ChromeDeviceAuthenticatorFactoryTest,
+                           NeedAuthentication);
+
   // Used to obtain/update the last successful authentication timestamp.
   base::WeakPtr<DeviceAuthenticatorProxy> device_authenticator_proxy_;
 

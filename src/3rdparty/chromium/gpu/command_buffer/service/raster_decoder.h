@@ -5,10 +5,16 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_RASTER_DECODER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_RASTER_DECODER_H_
 
+#include <string_view>
+
 #include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/gpu_gles2_export.h"
+
+namespace cc {
+class SharedImageProvider;
+}  // namespace cc
 
 namespace gpu {
 
@@ -39,7 +45,7 @@ class GPU_GLES2_EXPORT RasterDecoder : public DecoderContext,
       gles2::Outputter* outputter,
       const GpuFeatureInfo& gpu_feature_info,
       const GpuPreferences& gpu_preferences,
-      MemoryTracker* memory_tracker,
+      scoped_refptr<MemoryTracker> memory_tracker,
       SharedImageManager* shared_image_manager,
       scoped_refptr<SharedContextState> shared_context_state,
       bool is_priviliged);
@@ -63,7 +69,7 @@ class GPU_GLES2_EXPORT RasterDecoder : public DecoderContext,
                     const gfx::Rect& cleared_rect) override;
   void BeginDecoding() override;
   void EndDecoding() override;
-  base::StringPiece GetLogPrefix() override;
+  std::string_view GetLogPrefix() override;
 
   virtual gles2::GLES2Util* GetGLES2Util() = 0;
   virtual gles2::Logger* GetLogger() = 0;
@@ -86,6 +92,8 @@ class GPU_GLES2_EXPORT RasterDecoder : public DecoderContext,
   virtual void SetUpForRasterCHROMIUMForTest() = 0;
   virtual void SetOOMErrorForTest() = 0;
   virtual void DisableFlushWorkaroundForTest() = 0;
+
+  virtual cc::SharedImageProvider* GetSharedImageProviderForTest() const = 0;
 
  protected:
   RasterDecoder(DecoderClient* client,

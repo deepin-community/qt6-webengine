@@ -10,30 +10,38 @@
 #include "net/dcsctp/socket/transmission_control_block.h"
 
 #include <algorithm>
-#include <cstdint>
+#include <cstddef>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/types/optional.h"
+#include "absl/functional/bind_front.h"
+#include "absl/strings/string_view.h"
+#include "api/task_queue/task_queue_base.h"
 #include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
+#include "net/dcsctp/common/internal_types.h"
 #include "net/dcsctp/packet/chunk/data_chunk.h"
-#include "net/dcsctp/packet/chunk/forward_tsn_chunk.h"
 #include "net/dcsctp/packet/chunk/idata_chunk.h"
-#include "net/dcsctp/packet/chunk/iforward_tsn_chunk.h"
 #include "net/dcsctp/packet/chunk/reconfig_chunk.h"
-#include "net/dcsctp/packet/chunk/sack_chunk.h"
 #include "net/dcsctp/packet/sctp_packet.h"
+#include "net/dcsctp/public/dcsctp_handover_state.h"
 #include "net/dcsctp/public/dcsctp_options.h"
+#include "net/dcsctp/public/dcsctp_socket.h"
 #include "net/dcsctp/public/types.h"
 #include "net/dcsctp/rx/data_tracker.h"
 #include "net/dcsctp/rx/reassembly_queue.h"
 #include "net/dcsctp/socket/capabilities.h"
+#include "net/dcsctp/socket/packet_sender.h"
 #include "net/dcsctp/socket/stream_reset_handler.h"
 #include "net/dcsctp/timer/timer.h"
 #include "net/dcsctp/tx/retransmission_queue.h"
 #include "net/dcsctp/tx/retransmission_timeout.h"
+#include "net/dcsctp/tx/send_queue.h"
+#include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/string_builder.h"
 
@@ -66,7 +74,7 @@ TransmissionControlBlock::TransmissionControlBlock(
           absl::bind_front(&TransmissionControlBlock::OnRtxTimerExpiry, this),
           TimerOptions(options.rto_initial.ToTimeDelta(),
                        TimerBackoffAlgorithm::kExponential,
-                       /*max_restarts=*/absl::nullopt,
+                       /*max_restarts=*/std::nullopt,
                        options.max_timer_backoff_duration.has_value()
                            ? options.max_timer_backoff_duration->ToTimeDelta()
                            : TimeDelta::PlusInfinity()))),
@@ -90,7 +98,6 @@ TransmissionControlBlock::TransmissionControlBlock(
       tx_error_counter_(log_prefix, options),
       data_tracker_(log_prefix, delayed_ack_timer_.get(), peer_initial_tsn),
       reassembly_queue_(log_prefix,
-                        peer_initial_tsn,
                         options.max_receiver_window_buffer_size,
                         capabilities.message_interleaving),
       retransmission_queue_(
@@ -170,7 +177,6 @@ void TransmissionControlBlock::MaybeSendForwardTsn(SctpPacket::Builder& builder,
     } else {
       builder.Add(retransmission_queue_.CreateForwardTsn());
     }
-    Send(builder);
     // https://datatracker.ietf.org/doc/html/rfc3758
     // "IMPLEMENTATION NOTE: An implementation may wish to limit the number of
     // duplicate FORWARD TSN chunks it sends by ... waiting a full RTT before
@@ -211,9 +217,7 @@ void TransmissionControlBlock::MaybeSendFastRetransmit() {
 
 void TransmissionControlBlock::SendBufferedPackets(SctpPacket::Builder& builder,
                                                    Timestamp now) {
-  for (int packet_idx = 0;
-       packet_idx < options_.max_burst && retransmission_queue_.can_send_data();
-       ++packet_idx) {
+  for (int packet_idx = 0; packet_idx < options_.max_burst; ++packet_idx) {
     // Only add control chunks to the first packet that is sent, if sending
     // multiple packets in one go (as allowed by the congestion window).
     if (packet_idx == 0) {
@@ -236,7 +240,7 @@ void TransmissionControlBlock::SendBufferedPackets(SctpPacket::Builder& builder,
             reassembly_queue_.remaining_bytes()));
       }
       MaybeSendForwardTsn(builder, now);
-      absl::optional<ReConfigChunk> reconfig =
+      std::optional<ReConfigChunk> reconfig =
           stream_reset_handler_.MakeStreamResetRequest();
       if (reconfig.has_value()) {
         builder.Add(*reconfig);
@@ -245,11 +249,20 @@ void TransmissionControlBlock::SendBufferedPackets(SctpPacket::Builder& builder,
 
     auto chunks =
         retransmission_queue_.GetChunksToSend(now, builder.bytes_remaining());
+
+    if (!chunks.empty()) {
+      // https://datatracker.ietf.org/doc/html/rfc9260#section-8.3
+      // Sending DATA means that the path is not idle - restart heartbeat timer.
+      heartbeat_handler_.RestartTimer();
+    }
+
+    bool set_immediate_sack_bit =
+        cwnd() < (options_.immediate_sack_under_cwnd_mtus * options_.mtu);
     for (auto& [tsn, data] : chunks) {
       if (capabilities_.message_interleaving) {
-        builder.Add(IDataChunk(tsn, std::move(data), false));
+        builder.Add(IDataChunk(tsn, std::move(data), set_immediate_sack_bit));
       } else {
-        builder.Add(DataChunk(tsn, std::move(data), false));
+        builder.Add(DataChunk(tsn, std::move(data), set_immediate_sack_bit));
       }
     }
 
@@ -273,7 +286,7 @@ void TransmissionControlBlock::SendBufferedPackets(SctpPacket::Builder& builder,
 }
 
 std::string TransmissionControlBlock::ToString() const {
-  rtc::StringBuilder sb;
+  webrtc::StringBuilder sb;
 
   sb.AppendFormat(
       "verification_tag=%08x, last_cumulative_ack=%u, capabilities=",

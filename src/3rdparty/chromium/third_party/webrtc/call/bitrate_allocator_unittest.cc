@@ -11,11 +11,20 @@
 #include "call/bitrate_allocator.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
-#include <vector>
+#include <optional>
+#include <string>
 
 #include "absl/strings/string_view.h"
-#include "system_wrappers/include/clock.h"
+#include "api/call/bitrate_allocation.h"
+#include "api/field_trials.h"
+#include "api/transport/network_types.h"
+#include "api/units/data_rate.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
+#include "rtc_base/numerics/safe_conversions.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 
@@ -70,11 +79,12 @@ class TestBitrateObserver : public BitrateAllocatorObserver {
   uint32_t OnBitrateUpdated(BitrateAllocationUpdate update) override {
     last_bitrate_bps_ = update.target_bitrate.bps();
     last_fraction_loss_ =
-        rtc::dchecked_cast<uint8_t>(update.packet_loss_ratio * 256);
+        dchecked_cast<uint8_t>(update.packet_loss_ratio * 256);
     last_rtt_ms_ = update.round_trip_time.ms();
     last_probing_interval_ms_ = update.bwe_period.ms();
     return update.target_bitrate.bps() * protection_ratio_;
   }
+  std::optional<DataRate> GetUsedRate() const override { return std::nullopt; }
   uint32_t last_bitrate_bps_;
   uint8_t last_fraction_loss_;
   int64_t last_rtt_ms_;
@@ -82,8 +92,15 @@ class TestBitrateObserver : public BitrateAllocatorObserver {
   double protection_ratio_;
 };
 
+class TestContributingBitrateObserver : public TestBitrateObserver {
+ public:
+  TestContributingBitrateObserver() : rate_usage_(DataRate::Zero()) {}
+  std::optional<DataRate> GetUsedRate() const override { return rate_usage_; }
+  DataRate rate_usage_;
+};
+
 constexpr int64_t kDefaultProbingIntervalMs = 3000;
-const double kDefaultBitratePriority = 1.0;
+constexpr double kDefaultBitratePriority = 1.0;
 
 TargetTransferRate CreateTargetRateMessage(uint32_t target_bitrate_bps,
                                            uint8_t fraction_loss,
@@ -94,7 +111,6 @@ TargetTransferRate CreateTargetRateMessage(uint32_t target_bitrate_bps,
   // messages in the test.
   msg.at_time = Timestamp::Seconds(10000);
   msg.target_rate = DataRate::BitsPerSec(target_bitrate_bps);
-  msg.stable_target_rate = msg.target_rate;
   msg.network_estimate.bandwidth = msg.target_rate;
   msg.network_estimate.loss_rate_ratio = fraction_loss / 255.0;
   msg.network_estimate.round_trip_time = TimeDelta::Millis(rtt_ms);
@@ -105,21 +121,24 @@ TargetTransferRate CreateTargetRateMessage(uint32_t target_bitrate_bps,
 
 class BitrateAllocatorTest : public ::testing::Test {
  protected:
-  BitrateAllocatorTest() : allocator_(new BitrateAllocator(&limit_observer_)) {
+  BitrateAllocatorTest()
+      : allocator_(new BitrateAllocator(&limit_observer_, DataRate::Zero())) {
     allocator_->OnNetworkEstimateChanged(
         CreateTargetRateMessage(300000u, 0, 0, kDefaultProbingIntervalMs));
   }
-  ~BitrateAllocatorTest() {}
-  void AddObserver(BitrateAllocatorObserver* observer,
-                   uint32_t min_bitrate_bps,
-                   uint32_t max_bitrate_bps,
-                   uint32_t pad_up_bitrate_bps,
-                   bool enforce_min_bitrate,
-                   double bitrate_priority) {
+  ~BitrateAllocatorTest() override {}
+  void AddObserver(
+      BitrateAllocatorObserver* observer,
+      uint32_t min_bitrate_bps,
+      uint32_t max_bitrate_bps,
+      uint32_t pad_up_bitrate_bps,
+      bool enforce_min_bitrate,
+      double bitrate_priority,
+      std::optional<TrackRateElasticity> rate_elasticity = std::nullopt) {
     allocator_->AddObserver(
-        observer,
-        {min_bitrate_bps, max_bitrate_bps, pad_up_bitrate_bps,
-         /* priority_bitrate */ 0, enforce_min_bitrate, bitrate_priority});
+        observer, {min_bitrate_bps, max_bitrate_bps, pad_up_bitrate_bps,
+                   /* priority_bitrate */ 0, enforce_min_bitrate,
+                   bitrate_priority, rate_elasticity});
   }
   MediaStreamAllocationConfig DefaultConfig() const {
     MediaStreamAllocationConfig default_config;
@@ -130,6 +149,12 @@ class BitrateAllocatorTest : public ::testing::Test {
     default_config.enforce_min_bitrate = true;
     default_config.bitrate_priority = kDefaultBitratePriority;
     return default_config;
+  }
+  void ReconfigureAllocator(DataRate elastic_rate_upper_limit) {
+    allocator_.reset(
+        new BitrateAllocator(&limit_observer_, elastic_rate_upper_limit));
+    allocator_->OnNetworkEstimateChanged(
+        CreateTargetRateMessage(300000u, 0, 0, kDefaultProbingIntervalMs));
   }
 
   NiceMock<MockLimitObserver> limit_observer_;
@@ -297,17 +322,17 @@ TEST_F(BitrateAllocatorTest, RemoveObserverTriggersLimitObserver) {
 class BitrateAllocatorTestNoEnforceMin : public ::testing::Test {
  protected:
   BitrateAllocatorTestNoEnforceMin()
-      : allocator_(new BitrateAllocator(&limit_observer_)) {
+      : allocator_(new BitrateAllocator(&limit_observer_, DataRate::Zero())) {
     allocator_->OnNetworkEstimateChanged(
         CreateTargetRateMessage(300000u, 0, 0, kDefaultProbingIntervalMs));
   }
-  ~BitrateAllocatorTestNoEnforceMin() {}
+  ~BitrateAllocatorTestNoEnforceMin() override {}
   void AddObserver(BitrateAllocatorObserver* observer,
                    uint32_t min_bitrate_bps,
                    uint32_t max_bitrate_bps,
                    uint32_t pad_up_bitrate_bps,
                    bool enforce_min_bitrate,
-                   absl::string_view track_id,
+                   absl::string_view /* track_id */,
                    double bitrate_priority) {
     allocator_->AddObserver(
         observer, {min_bitrate_bps, max_bitrate_bps, pad_up_bitrate_bps, 0,
@@ -1032,6 +1057,133 @@ TEST_F(BitrateAllocatorTest, PriorityRateThreeObserversTwoAllocatedToMax) {
   allocator_->RemoveObserver(&observer_low);
   allocator_->RemoveObserver(&observer_mid);
   allocator_->RemoveObserver(&observer_high);
+}
+
+TEST_F(BitrateAllocatorTest, ElasticRateAllocationCanBorrowUnsedRate) {
+  FieldTrials field_trials = CreateTestFieldTrials(
+      "WebRTC-ElasticBitrateAllocation/upper_limit:200bps/");
+  ReconfigureAllocator(
+      GetElasticRateAllocationFieldTrialParameter(field_trials));
+  TestBitrateObserver observer_consume;
+  TestContributingBitrateObserver observer_contribute;
+  AddObserver(&observer_consume, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanConsumeExtraRate);
+  AddObserver(&observer_contribute, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanContributeUnusedRate);
+
+  observer_contribute.rate_usage_ = DataRate::BitsPerSec(20);
+  allocator_->OnNetworkEstimateChanged(
+      CreateTargetRateMessage(100, 0, 0, kDefaultProbingIntervalMs));
+
+  // observer_contribute is allocated 50 but only used 20, so 30 is borrowed to
+  // observer_consume who gets 50+30=80.
+  EXPECT_EQ(80u, observer_consume.last_bitrate_bps_);
+  EXPECT_EQ(50u, observer_contribute.last_bitrate_bps_);
+
+  allocator_->RemoveObserver(&observer_consume);
+  allocator_->RemoveObserver(&observer_contribute);
+}
+
+TEST_F(BitrateAllocatorTest, ElasticRateAllocationDefaultsInactive) {
+  ReconfigureAllocator(
+      GetElasticRateAllocationFieldTrialParameter(CreateTestFieldTrials()));
+  TestBitrateObserver observer_consume;
+  TestContributingBitrateObserver observer_contribute;
+  AddObserver(&observer_consume, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanConsumeExtraRate);
+  AddObserver(&observer_contribute, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanContributeUnusedRate);
+
+  observer_contribute.rate_usage_ = DataRate::BitsPerSec(20);
+  allocator_->OnNetworkEstimateChanged(
+      CreateTargetRateMessage(100, 0, 0, kDefaultProbingIntervalMs));
+
+  EXPECT_EQ(50u, observer_consume.last_bitrate_bps_);
+  EXPECT_EQ(50u, observer_contribute.last_bitrate_bps_);
+
+  allocator_->RemoveObserver(&observer_consume);
+  allocator_->RemoveObserver(&observer_contribute);
+}
+
+TEST_F(BitrateAllocatorTest, ElasticRateAllocationDontExceedMaxBitrate) {
+  FieldTrials field_trials = CreateTestFieldTrials(
+      "WebRTC-ElasticBitrateAllocation/upper_limit:200bps/");
+  ReconfigureAllocator(
+      GetElasticRateAllocationFieldTrialParameter(field_trials));
+  TestBitrateObserver observer_consume;
+  TestContributingBitrateObserver observer_contribute;
+  AddObserver(&observer_consume, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanConsumeExtraRate);
+  AddObserver(&observer_contribute, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanContributeUnusedRate);
+
+  observer_contribute.rate_usage_ = DataRate::BitsPerSec(20);
+  allocator_->OnNetworkEstimateChanged(
+      CreateTargetRateMessage(140, 0, 0, kDefaultProbingIntervalMs));
+
+  // observer_contribute is allocated 70 but only used 20, so 50 is borrowed to
+  // observer_consume who could get 70+50=120, but is capped by max-bitrate to
+  // 100.
+  EXPECT_EQ(100u, observer_consume.last_bitrate_bps_);
+  EXPECT_EQ(70u, observer_contribute.last_bitrate_bps_);
+
+  allocator_->RemoveObserver(&observer_consume);
+  allocator_->RemoveObserver(&observer_contribute);
+}
+
+TEST_F(BitrateAllocatorTest, ElasticRateAllocationStayWithinUpperLimit) {
+  uint32_t upper_limit = 70;
+  FieldTrials field_trials =
+      CreateTestFieldTrials("WebRTC-ElasticBitrateAllocation/upper_limit:" +
+                            std::to_string(upper_limit) + "bps/");
+  ReconfigureAllocator(
+      GetElasticRateAllocationFieldTrialParameter(field_trials));
+  TestBitrateObserver observer_consume;
+  TestContributingBitrateObserver observer_contribute;
+  AddObserver(&observer_consume, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanConsumeExtraRate);
+  AddObserver(&observer_contribute, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanContributeUnusedRate);
+
+  observer_contribute.rate_usage_ = DataRate::BitsPerSec(20);
+  allocator_->OnNetworkEstimateChanged(
+      CreateTargetRateMessage(100, 0, 0, kDefaultProbingIntervalMs));
+
+  // observer_contribute is allocated 50 but only used 20, so 30 is borrowed to
+  // observer_consume who could get 30+50=80, but is capped by upper_limit.
+  EXPECT_EQ(upper_limit, observer_consume.last_bitrate_bps_);
+  EXPECT_EQ(50u, observer_contribute.last_bitrate_bps_);
+
+  allocator_->RemoveObserver(&observer_consume);
+  allocator_->RemoveObserver(&observer_contribute);
+}
+
+TEST_F(BitrateAllocatorTest, ElasticRateAllocationDontReduceAllocation) {
+  uint32_t upper_limit = 70;
+  FieldTrials field_trials =
+      CreateTestFieldTrials("WebRTC-ElasticBitrateAllocation/upper_limit:" +
+                            std::to_string(upper_limit) + "bps/");
+  ReconfigureAllocator(
+      GetElasticRateAllocationFieldTrialParameter(field_trials));
+  TestBitrateObserver observer_consume;
+  TestContributingBitrateObserver observer_contribute;
+  AddObserver(&observer_consume, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanConsumeExtraRate);
+  AddObserver(&observer_contribute, 10, 100, 0, false, 1.0,
+              TrackRateElasticity::kCanContributeUnusedRate);
+
+  observer_contribute.rate_usage_ = DataRate::BitsPerSec(20);
+  allocator_->OnNetworkEstimateChanged(
+      CreateTargetRateMessage(200, 0, 0, kDefaultProbingIntervalMs));
+
+  // observer_contribute is allocated 100 but only used 20, so 80 can be
+  // borrowed to observer_consume. But observer_consume already has 100
+  // (above upper_limit), so no bitrate is borrowed.
+  EXPECT_EQ(100u, observer_consume.last_bitrate_bps_);
+  EXPECT_EQ(100u, observer_contribute.last_bitrate_bps_);
+
+  allocator_->RemoveObserver(&observer_consume);
+  allocator_->RemoveObserver(&observer_contribute);
 }
 
 }  // namespace webrtc

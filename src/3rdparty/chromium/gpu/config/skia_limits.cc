@@ -28,7 +28,6 @@ MIRACLE_PARAMETER_FOR_INT(GetMaxDefaultGlyphCacheTextureBytes,
                           "MaxDefaultGlyphCacheTextureBytes",
                           2048 * 1024 * 4)
 
-#if !BUILDFLAG(IS_NACL)
 // The limit of the bytes allocated toward GPU resources in the GrContext's
 // GPU cache.
 MIRACLE_PARAMETER_FOR_INT(GetMaxLowEndGaneshResourceCacheBytes,
@@ -52,18 +51,33 @@ MIRACLE_PARAMETER_FOR_INT(GetHighEndMemoryThresholdMB,
                           kGrCacheLimitsFeature,
                           "HighEndMemoryThresholdMB",
                           4096)
-#endif
+
+// Limits for the Graphite client image provider which is responsible for
+// uploading non-GPU backed images (e.g. raster, lazy/generated) to Graphite.
+// The limits are smallish since only a small number of images take this path
+// instead of being uploaded via the transfer cache.
+MIRACLE_PARAMETER_FOR_INT(GetMaxGpuMainGraphiteImageProviderBytes,
+                          kGrCacheLimitsFeature,
+                          "MaxGpuMainGraphiteImageProviderBytes",
+                          16 * 1024 * 1024)
+
+// The limits for the Viz compositor's image provider are even smaller since
+// the only time we encounter such images is via reference image filters on
+// composited layers which is a pretty uncommon case.
+MIRACLE_PARAMETER_FOR_INT(GetMaxVizCompositorGraphiteImageProviderBytes,
+                          kGrCacheLimitsFeature,
+                          "MaxVizCompositorGraphiteImageProviderBytes",
+                          4 * 1024 * 1024)
 
 }  // namespace
 
-size_t DetermineGraphiteImageProviderCacheLimitFromAvailableMemory() {
-  // Use the same value as that for the Ganesh resource cache.
-  size_t max_resource_cache_bytes;
-  size_t dont_care;
-  DetermineGrCacheLimitsFromAvailableMemory(&max_resource_cache_bytes,
-                                            &dont_care);
-
-  return max_resource_cache_bytes;
+void DetermineGraphiteImageProviderCacheLimits(
+    size_t* max_gpu_main_image_provider_cache_bytes,
+    size_t* max_viz_compositor_image_provider_cache_bytes) {
+  *max_gpu_main_image_provider_cache_bytes =
+      GetMaxGpuMainGraphiteImageProviderBytes();
+  *max_viz_compositor_image_provider_cache_bytes =
+      GetMaxVizCompositorGraphiteImageProviderBytes();
 }
 
 void DetermineGrCacheLimitsFromAvailableMemory(
@@ -73,8 +87,6 @@ void DetermineGrCacheLimitsFromAvailableMemory(
   *max_resource_cache_bytes = GetMaxGaneshResourceCacheBytes();
   *max_glyph_cache_texture_bytes = GetMaxDefaultGlyphCacheTextureBytes();
 
-// We can't call AmountOfPhysicalMemory under NACL, so leave the default.
-#if !BUILDFLAG(IS_NACL)
   if (base::SysInfo::IsLowEndDevice()) {
     *max_resource_cache_bytes = GetMaxLowEndGaneshResourceCacheBytes();
     *max_glyph_cache_texture_bytes = GetMaxLowEndGlyphCacheTextureBytes();
@@ -82,7 +94,6 @@ void DetermineGrCacheLimitsFromAvailableMemory(
              GetHighEndMemoryThresholdMB()) {
     *max_resource_cache_bytes = GetMaxHighEndGaneshResourceCacheBytes();
   }
-#endif
 }
 
 void DefaultGrCacheLimitsForTests(size_t* max_resource_cache_bytes,

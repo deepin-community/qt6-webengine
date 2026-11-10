@@ -4,15 +4,36 @@
 
 #include "quiche/quic/core/quic_stream.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "quiche/http2/core/spdy_protocol.h"
+#include "quiche/quic/core/frames/quic_connection_close_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
+#include "quiche/quic/core/frames/quic_rst_stream_frame.h"
+#include "quiche/quic/core/frames/quic_stream_frame.h"
+#include "quiche/quic/core/frames/quic_window_update_frame.h"
+#include "quiche/quic/core/quic_ack_listener_interface.h"
+#include "quiche/quic/core/quic_constants.h"
+#include "quiche/quic/core/quic_data_writer.h"
 #include "quiche/quic/core/quic_error_codes.h"
 #include "quiche/quic/core/quic_flow_controller.h"
+#include "quiche/quic/core/quic_interval_set.h"
 #include "quiche/quic/core/quic_session.h"
+#include "quiche/quic/core/quic_stream_priority.h"
+#include "quiche/quic/core/quic_stream_send_buffer.h"
+#include "quiche/quic/core/quic_stream_send_buffer_base.h"
+#include "quiche/quic/core/quic_stream_send_buffer_inlining.h"
+#include "quiche/quic/core/quic_stream_sequencer.h"
+#include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_utils.h"
 #include "quiche/quic/core/quic_versions.h"
@@ -21,7 +42,9 @@
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_logging.h"
 #include "quiche/common/platform/api/quiche_logging.h"
-#include "quiche/common/platform/api/quiche_mem_slice.h"
+#include "quiche/common/platform/api/quiche_reference_counted.h"
+#include "quiche/common/quiche_buffer_allocator.h"
+#include "quiche/common/quiche_mem_slice.h"
 
 using spdy::SpdyPriority;
 
@@ -104,6 +127,17 @@ QuicByteCount GetReceivedFlowControlWindow(QuicSession* session,
   }
 
   return DefaultFlowControlWindow(version);
+}
+
+std::unique_ptr<QuicStreamSendBufferBase> CreateSendBuffer(
+    QuicSession* session) {
+  quiche::QuicheBufferAllocator* allocator =
+      session->connection()->helper()->GetStreamSendBufferAllocator();
+  if (GetQuicReloadableFlag(quic_use_inlining_send_buffer2)) {
+    QUIC_RELOADABLE_FLAG_COUNT(quic_use_inlining_send_buffer2);
+    return std::make_unique<QuicStreamSendBufferInlining>(allocator);
+  }
+  return std::make_unique<QuicStreamSendBuffer>(allocator);
 }
 
 }  // namespace
@@ -250,6 +284,26 @@ void PendingStream::OnRstStreamFrame(const QuicRstStreamFrame& frame) {
   }
 }
 
+void PendingStream::OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) {
+  if (frame.reliable_offset > sequencer()->close_offset()) {
+    OnUnrecoverableError(
+        QUIC_STREAM_MULTIPLE_OFFSET,
+        absl::StrCat(
+            "Stream ", id_,
+            " received reliable reset with offset: ", frame.reliable_offset,
+            " greater than the FIN offset: ", sequencer()->close_offset()));
+    return;
+  }
+  if (buffered_reset_stream_at_.has_value() &&
+      (frame.reliable_offset > buffered_reset_stream_at_->reliable_offset)) {
+    // Ignore a reliable reset that raises the reliable size. It might have
+    // arrived out of sequence.
+    return;
+  }
+  buffered_reset_stream_at_ = frame;
+  sequencer_.OnReliableReset(frame.reliable_offset);
+}
+
 void PendingStream::OnWindowUpdateFrame(const QuicWindowUpdateFrame& frame) {
   QUICHE_DCHECK(is_bidirectional_);
   flow_controller_.UpdateSendWindowOffset(frame.max_data);
@@ -300,6 +354,7 @@ QuicStream::QuicStream(PendingStream* pending, QuicSession* session,
           (session->GetClock()->ApproximateNow() - pending->creation_time())) {
   QUICHE_DCHECK(session->version().HasIetfQuicFrames());
   sequencer_.set_stream(this);
+  buffered_reset_stream_at_ = pending->buffered_reset_stream_at();
 }
 
 namespace {
@@ -343,7 +398,6 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
       id_(id),
       session_(session),
       stream_delegate_(session),
-      priority_(QuicStreamPriority::Default(session->priority_type())),
       stream_bytes_read_(stream_bytes_read),
       stream_error_(QuicResetStreamError::NoError()),
       connection_error_(QUIC_NO_ERROR),
@@ -356,6 +410,7 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
       fin_lost_(false),
       fin_received_(fin_received),
       rst_sent_(false),
+      rst_stream_at_sent_(false),
       rst_received_(false),
       stop_sending_sent_(false),
       flow_controller_(std::move(flow_controller)),
@@ -363,8 +418,7 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
       stream_contributes_to_connection_flow_control_(true),
       busy_counter_(0),
       add_random_padding_after_fin_(false),
-      send_buffer_(
-          session->connection()->helper()->GetStreamSendBufferAllocator()),
+      send_buffer_(CreateSendBuffer(session)),
       buffered_data_threshold_(GetQuicFlag(quic_buffered_data_threshold)),
       is_static_(is_static),
       deadline_(QuicTime::Zero()),
@@ -377,7 +431,8 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
                 : type),
       creation_time_(session->connection()->clock()->ApproximateNow()),
       pending_duration_(pending_duration),
-      perspective_(session->perspective()) {
+      perspective_(session->perspective()),
+      reliable_size_(0) {
   if (type_ == WRITE_UNIDIRECTIONAL) {
     fin_received_ = true;
     CloseReadSide();
@@ -395,7 +450,7 @@ QuicStream::~QuicStream() {
     QUIC_DVLOG(1)
         << ENDPOINT << "Stream " << id_
         << " gets destroyed while waiting for acks. stream_bytes_outstanding = "
-        << send_buffer_.stream_bytes_outstanding()
+        << send_buffer_->stream_bytes_outstanding()
         << ", fin_outstanding: " << fin_outstanding_;
   }
   if (stream_delegate_ != nullptr && type_ != CRYPTO) {
@@ -508,8 +563,28 @@ bool QuicStream::OnStopSending(QuicResetStreamError error) {
   }
 
   stream_error_ = error;
-  MaybeSendRstStream(error);
+  if (reliable_size_ == 0) {
+    MaybeSendRstStream(error);
+  } else {
+    // The spec is ambiguous as to whether a RESET_STREAM or RESET_STREAM_AT
+    // should be sent in response to a STOP_SENDING frame if the write side has
+    // specified a reliable size. Because STOP_SENDING and RESET_STREAM_AT could
+    // cross in flight, send RESET_STREAM_AT if reliable_size is set, so that
+    // the result of setting reliable_size is consistent. ResetWriteSide() will
+    // check reliable_size and do the right thing.
+    PartialResetWriteSide(error);
+  }
+  if (session()->enable_stop_sending_for_zombie_streams() &&
+      read_side_closed_ && write_side_closed_ && !IsWaitingForAcks()) {
+    QUIC_RELOADABLE_FLAG_COUNT_N(quic_deliver_stop_sending_to_zombie_streams, 3,
+                                 3);
+    session()->MaybeCloseZombieStream(id_);
+  }
   return true;
+}
+
+void QuicStream::OnSoonToBeDestroyed() {
+  QUICHE_DCHECK(write_side_closed() && read_side_closed());
 }
 
 int QuicStream::num_frames_received() const {
@@ -562,19 +637,49 @@ void QuicStream::OnStreamReset(const QuicRstStreamFrame& frame) {
   CloseReadSide();
 }
 
-void QuicStream::OnConnectionClosed(QuicErrorCode error,
-                                    ConnectionCloseSource /*source*/) {
-  if (read_side_closed_ && write_side_closed_) {
+void QuicStream::OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) {
+  if (frame.reliable_offset > sequencer()->close_offset()) {
+    OnUnrecoverableError(
+        QUIC_STREAM_MULTIPLE_OFFSET,
+        absl::StrCat(
+            "Stream ", id_,
+            " received reliable reset with offset: ", frame.reliable_offset,
+            " greater than the FIN offset: ", sequencer()->close_offset()));
     return;
   }
-  if (error != QUIC_NO_ERROR) {
-    stream_error_ =
-        QuicResetStreamError::FromInternal(QUIC_STREAM_CONNECTION_ERROR);
-    connection_error_ = error;
+  if (buffered_reset_stream_at_.has_value() &&
+      (frame.reliable_offset > buffered_reset_stream_at_->reliable_offset)) {
+    // Ignore a reliable reset that raises the reliable size. It might have
+    // arrived out of sequence.
+    return;
+  }
+  buffered_reset_stream_at_ = frame;
+  MaybeCloseStreamWithBufferedReset();
+  if (!rst_received_) {
+    sequencer_.OnReliableReset(frame.reliable_offset);
+  }
+}
+
+void QuicStream::OnConnectionClosed(const QuicConnectionCloseFrame& frame,
+                                    ConnectionCloseSource /*source*/) {
+  if (!read_side_closed_ || !write_side_closed_) {
+    auto error_code = frame.quic_error_code;
+    if (error_code != QUIC_NO_ERROR) {
+      stream_error_ =
+          QuicResetStreamError::FromInternal(QUIC_STREAM_CONNECTION_ERROR);
+      connection_error_ = error_code;
+    }
+
+    CloseWriteSide();
+    CloseReadSide();
   }
 
-  CloseWriteSide();
-  CloseReadSide();
+  if (session_->notify_stream_soon_to_destroy()) {
+    QUIC_RELOADABLE_FLAG_COUNT_N(quic_notify_stream_soon_to_destroy, 2, 2);
+    // The stream may still be waiting for ACKs, but no ACK will be received any
+    // more. So move it into the closed stream list.
+    session_->MaybeCloseZombieStream(id_);
+  }
 }
 
 void QuicStream::OnFinRead() {
@@ -597,8 +702,24 @@ void QuicStream::Reset(QuicRstStreamErrorCode error) {
   ResetWithError(QuicResetStreamError::FromInternal(error));
 }
 
+bool QuicStream::SetReliableSize() {
+  if (rst_sent_ || rst_stream_at_sent_) {
+    return false;
+  }
+  if (!session_->connection()->reliable_stream_reset_enabled() ||
+      !VersionHasIetfQuicFrames(transport_version()) ||
+      type_ == READ_UNIDIRECTIONAL) {
+    return false;
+  }
+  reliable_size_ = send_buffer_->stream_offset();
+  return true;
+}
+
 void QuicStream::ResetWithError(QuicResetStreamError error) {
   stream_error_ = error;
+  // The caller has explicitly abandoned reliable delivery of anything in the
+  // stream, so adjust stream state accordingly.
+  reliable_size_ = 0;
   QuicConnection::ScopedPacketFlusher flusher(session()->connection());
   MaybeSendStopSending(error);
   MaybeSendRstStream(error);
@@ -612,6 +733,42 @@ void QuicStream::ResetWriteSide(QuicResetStreamError error) {
   stream_error_ = error;
   MaybeSendRstStream(error);
 
+  if (read_side_closed_ && write_side_closed_ && !IsWaitingForAcks()) {
+    session()->MaybeCloseZombieStream(id_);
+  }
+}
+
+void QuicStream::PartialResetWriteSide(QuicResetStreamError error) {
+  if (reliable_size_ == 0) {
+    QUIC_BUG(quic_bug_reliable_size_not_set)
+        << "QuicStream::PartialResetWriteSide called when reliable_size_ is 0";
+    return;
+  }
+  if (rst_sent_) {
+    QUIC_BUG(quic_bug_reset_stream_at_after_rst_sent)
+        << "QuicStream::PartialResetWriteSide on reset stream";
+    return;
+  }
+  stream_error_ = error;
+  MaybeSendResetStreamAt(error);
+  if (reliable_size_ <= stream_bytes_written()) {
+    // Notionally ack unreliable, previously consumed data so that it's not
+    // retransmitted, and the buffer can free the memory.
+    QuicByteCount newly_acked;
+    send_buffer_->OnStreamDataAcked(
+        reliable_size_, stream_bytes_written() - reliable_size_, &newly_acked);
+    fin_outstanding_ = false;  // Do not wait to close until FIN is acked.
+    fin_lost_ = false;
+    if (!IsWaitingForAcks()) {
+      session_->connection()->OnStreamReset(id_, stream_error_.internal_code());
+    }
+    CloseWriteSide();
+  } else {
+    // If stream_bytes_written() < reliable_size_, then the write side can't
+    // close until buffered data is sent.
+    QUIC_BUG_IF(quic_bug_unexpected_write_side_closed, write_side_closed_)
+        << "Write side closed with unsent reliable data";
+  }
   if (read_side_closed_ && write_side_closed_ && !IsWaitingForAcks()) {
     session()->MaybeCloseZombieStream(id_);
   }
@@ -670,8 +827,9 @@ void QuicStream::WriteOrBufferDataAtLevel(
     return;
   }
 
-  if (fin_buffered_) {
-    QUIC_BUG(quic_bug_10586_3) << "Fin already buffered";
+  if (fin_buffered_ || rst_stream_at_sent_) {
+    QUIC_BUG(quic_bug_10586_3)
+        << "Fin already buffered, or RESET_STREAM_AT sent";
     return;
   }
   if (write_side_closed_) {
@@ -689,8 +847,8 @@ void QuicStream::WriteOrBufferDataAtLevel(
   bool had_buffered_data = HasBufferedData();
   // Do not respect buffered data upper limit as WriteOrBufferData guarantees
   // all data to be consumed.
-  if (data.length() > 0) {
-    QuicStreamOffset offset = send_buffer_.stream_offset();
+  if (!data.empty()) {
+    QuicStreamOffset offset = send_buffer_->stream_offset();
     if (kMaxStreamLength - offset < data.length()) {
       QUIC_BUG(quic_bug_10586_4) << "Write too many data via stream " << id_;
       OnUnrecoverableError(
@@ -698,7 +856,7 @@ void QuicStream::WriteOrBufferDataAtLevel(
           absl::StrCat("Write too many data via stream ", id_));
       return;
     }
-    send_buffer_.SaveStreamData(data);
+    send_buffer_->SaveStreamData(data);
     OnDataBuffered(offset, data.length(), ack_listener);
   }
   if (!had_buffered_data && (HasBufferedData() || fin_buffered_)) {
@@ -728,7 +886,8 @@ void QuicStream::OnCanWrite() {
   if (HasBufferedData() || (fin_buffered_ && !fin_sent_)) {
     WriteBufferedData(session()->GetEncryptionLevelToSendApplicationData());
   }
-  if (!fin_buffered_ && !fin_sent_ && CanWriteNewData()) {
+  if (!fin_buffered_ && !fin_sent_ && !rst_stream_at_sent_ &&
+      CanWriteNewData()) {
     // Notify upper layer to write new data when buffered data size is below
     // low water mark.
     OnCanWriteNewData();
@@ -763,15 +922,17 @@ QuicConsumedData QuicStream::WriteMemSlice(quiche::QuicheMemSlice span,
 }
 
 QuicConsumedData QuicStream::WriteMemSlices(
-    absl::Span<quiche::QuicheMemSlice> span, bool fin) {
+    absl::Span<quiche::QuicheMemSlice> span, bool fin,
+    bool buffer_unconditionally) {
   QuicConsumedData consumed_data(0, false);
   if (span.empty() && !fin) {
     QUIC_BUG(quic_bug_10586_6) << "span.empty() && !fin";
     return consumed_data;
   }
 
-  if (fin_buffered_) {
-    QUIC_BUG(quic_bug_10586_7) << "Fin already buffered";
+  if (fin_buffered_ || rst_stream_at_sent_) {
+    QUIC_BUG(quic_bug_10586_7)
+        << "Fin already buffered or RESET_STREAM_AT sent";
     return consumed_data;
   }
 
@@ -786,14 +947,14 @@ QuicConsumedData QuicStream::WriteMemSlices(
   }
 
   bool had_buffered_data = HasBufferedData();
-  if (CanWriteNewData() || span.empty()) {
+  if (CanWriteNewData() || span.empty() || buffer_unconditionally) {
     consumed_data.fin_consumed = fin;
     if (!span.empty()) {
       // Buffer all data if buffered data size is below limit.
-      QuicStreamOffset offset = send_buffer_.stream_offset();
-      consumed_data.bytes_consumed = send_buffer_.SaveMemSliceSpan(span);
-      if (offset > send_buffer_.stream_offset() ||
-          kMaxStreamLength < send_buffer_.stream_offset()) {
+      QuicStreamOffset offset = send_buffer_->stream_offset();
+      consumed_data.bytes_consumed = send_buffer_->SaveMemSliceSpan(span);
+      if (offset > send_buffer_->stream_offset() ||
+          kMaxStreamLength < send_buffer_->stream_offset()) {
         QUIC_BUG(quic_bug_10586_8) << "Write too many data via stream " << id_;
         OnUnrecoverableError(
             QUIC_STREAM_LENGTH_OVERFLOW,
@@ -814,13 +975,13 @@ QuicConsumedData QuicStream::WriteMemSlices(
 }
 
 bool QuicStream::HasPendingRetransmission() const {
-  return send_buffer_.HasPendingRetransmission() || fin_lost_;
+  return send_buffer_->HasPendingRetransmission() || fin_lost_;
 }
 
 bool QuicStream::IsStreamFrameOutstanding(QuicStreamOffset offset,
                                           QuicByteCount data_length,
                                           bool fin) const {
-  return send_buffer_.IsStreamDataOutstanding(offset, data_length) ||
+  return send_buffer_->IsStreamDataOutstanding(offset, data_length) ||
          (fin && fin_outstanding_);
 }
 
@@ -876,6 +1037,8 @@ void QuicStream::MaybeSendStopSending(QuicResetStreamError error) {
 }
 
 void QuicStream::MaybeSendRstStream(QuicResetStreamError error) {
+  // It is OK to send RESET_STREAM after RESET_STREAM_AT. reliable_size can
+  // always decrease in the spec, so it doesn't check rst_stream_at_sent_.
   if (rst_sent_) {
     return;
   }
@@ -890,9 +1053,31 @@ void QuicStream::MaybeSendRstStream(QuicResetStreamError error) {
   CloseWriteSide();
 }
 
+void QuicStream::MaybeSendResetStreamAt(QuicResetStreamError error) {
+  if (!session_->connection()->reliable_stream_reset_enabled() ||
+      !VersionHasIetfQuicFrames(transport_version())) {
+    QUIC_BUG_IF(quic_bug_gquic_calling_reset_stream_at,
+                !VersionHasIetfQuicFrames(transport_version()))
+        << "gQUIC is calling MaybeSendResetStreamAt";
+    MaybeSendRstStream(error);
+    return;
+  }
+  if (rst_sent_ || rst_stream_at_sent_) {
+    return;
+  }
+  // If data has been buffered but not sent, it doesn't normally count towards
+  // final_size. However, if that buffered data is within reliable_size_, it
+  // will have to be sent, and therefore needs to be included in final_size.
+  QuicByteCount final_size = std::max(stream_bytes_written(), reliable_size_);
+  session()->MaybeSendResetStreamAtFrame(id(), error, final_size,
+                                         reliable_size_);
+  rst_stream_at_sent_ = true;
+}
+
 bool QuicStream::HasBufferedData() const {
-  QUICHE_DCHECK_GE(send_buffer_.stream_offset(), stream_bytes_written());
-  return send_buffer_.stream_offset() > stream_bytes_written();
+  QUICHE_DCHECK_GE(send_buffer_->stream_offset(), stream_bytes_written());
+  return (send_buffer_->stream_offset() > stream_bytes_written() &&
+          (!rst_stream_at_sent_ || reliable_size_ > stream_bytes_written()));
 }
 
 ParsedQuicVersion QuicStream::version() const { return session_->version(); }
@@ -913,11 +1098,11 @@ void QuicStream::StopReading() {
 void QuicStream::OnClose() {
   QUICHE_DCHECK(read_side_closed_ && write_side_closed_);
 
-  if (!fin_sent_ && !rst_sent_) {
+  if (!fin_sent_ && !rst_sent_ && !rst_stream_at_sent_) {
     QUIC_BUG_IF(quic_bug_12570_6, session()->connection()->connected() &&
                                       session()->version().UsesHttp3())
-        << "The stream should've already sent RST in response to "
-           "STOP_SENDING";
+        << "The stream should've already sent RESET_STREAM or RESET_STREAM_AT "
+           "in response to STOP_SENDING";
     // For flow control accounting, tell the peer how many bytes have been
     // written on this stream before termination. Done here if needed, using a
     // RST_STREAM frame.
@@ -1020,6 +1205,7 @@ void QuicStream::AddBytesConsumed(QuicByteCount bytes) {
   if (stream_contributes_to_connection_flow_control_) {
     connection_flow_controller_->AddBytesConsumed(bytes);
   }
+  MaybeCloseStreamWithBufferedReset();
 }
 
 bool QuicStream::MaybeConfigSendWindowOffset(QuicStreamOffset new_offset,
@@ -1077,15 +1263,16 @@ void QuicStream::AddRandomPaddingAfterFin() {
 
 bool QuicStream::OnStreamFrameAcked(QuicStreamOffset offset,
                                     QuicByteCount data_length, bool fin_acked,
-                                    QuicTime::Delta /*ack_delay_time*/,
-                                    QuicTime /*receive_timestamp*/,
-                                    QuicByteCount* newly_acked_length) {
+                                    QuicTime::Delta ack_delay_time,
+                                    QuicTime receive_timestamp,
+                                    QuicByteCount* newly_acked_length,
+                                    bool is_retransmission) {
   QUIC_DVLOG(1) << ENDPOINT << "stream " << id_ << " Acking "
                 << "[" << offset << ", " << offset + data_length << "]"
                 << " fin = " << fin_acked;
   *newly_acked_length = 0;
-  if (!send_buffer_.OnStreamDataAcked(offset, data_length,
-                                      newly_acked_length)) {
+  if (!send_buffer_->OnStreamDataAcked(offset, data_length,
+                                       newly_acked_length)) {
     OnUnrecoverableError(QUIC_INTERNAL_ERROR, "Trying to ack unsent data.");
     return false;
   }
@@ -1104,6 +1291,14 @@ bool QuicStream::OnStreamFrameAcked(QuicStreamOffset offset,
       !write_side_data_recvd_state_notified_) {
     OnWriteSideInDataRecvdState();
     write_side_data_recvd_state_notified_ = true;
+    if (rst_stream_at_sent_) {
+      session_->connection()->OnStreamReset(id_, stream_error_.internal_code());
+    }
+  }
+  if (notify_ack_listener_earlier_ && new_data_acked) {
+    QUIC_RELOADABLE_FLAG_COUNT_N(quic_notify_ack_listener_earlier, 1, 3);
+    OnNewDataAcked(offset, data_length, *newly_acked_length, receive_timestamp,
+                   ack_delay_time, is_retransmission);
   }
   if (!IsWaitingForAcks() && read_side_closed_ && write_side_closed_) {
     session_->MaybeCloseZombieStream(id_);
@@ -1111,10 +1306,19 @@ bool QuicStream::OnStreamFrameAcked(QuicStreamOffset offset,
   return new_data_acked;
 }
 
+void QuicStream::OnNewDataAcked(QuicStreamOffset /*offset*/,
+                                QuicByteCount /*data_length*/,
+                                QuicByteCount /*newly_acked_length*/,
+                                QuicTime /*receive_timestamp*/,
+                                QuicTime::Delta /*ack_delay_time*/,
+                                bool /*is_retransmission*/) {
+  QUICHE_DCHECK(notify_ack_listener_earlier_);
+}
+
 void QuicStream::OnStreamFrameRetransmitted(QuicStreamOffset offset,
                                             QuicByteCount data_length,
                                             bool fin_retransmitted) {
-  send_buffer_.OnStreamDataRetransmitted(offset, data_length);
+  send_buffer_->OnStreamDataRetransmitted(offset, data_length);
   if (fin_retransmitted) {
     fin_lost_ = false;
   }
@@ -1126,7 +1330,7 @@ void QuicStream::OnStreamFrameLost(QuicStreamOffset offset,
                 << "[" << offset << ", " << offset + data_length << "]"
                 << " fin = " << fin_lost;
   if (data_length > 0) {
-    send_buffer_.OnStreamDataLost(offset, data_length);
+    send_buffer_->OnStreamDataLost(offset, data_length);
   }
   if (fin_lost && fin_outstanding_) {
     fin_lost_ = true;
@@ -1191,7 +1395,7 @@ bool QuicStream::RetransmitStreamData(QuicStreamOffset offset,
 
 bool QuicStream::IsWaitingForAcks() const {
   return (!rst_sent_ || stream_error_.ok()) &&
-         (send_buffer_.stream_bytes_outstanding() || fin_outstanding_);
+         (send_buffer_->stream_bytes_outstanding() || fin_outstanding_);
 }
 
 bool QuicStream::WriteStreamData(QuicStreamOffset offset,
@@ -1200,7 +1404,7 @@ bool QuicStream::WriteStreamData(QuicStreamOffset offset,
   QUICHE_DCHECK_LT(0u, data_length);
   QUIC_DVLOG(2) << ENDPOINT << "Write stream " << id_ << " data from offset "
                 << offset << " length " << data_length;
-  return send_buffer_.WriteStreamData(offset, data_length, writer);
+  return send_buffer_->WriteStreamData(offset, data_length, writer);
 }
 
 void QuicStream::WriteBufferedData(EncryptionLevel level) {
@@ -1213,6 +1417,20 @@ void QuicStream::WriteBufferedData(EncryptionLevel level) {
 
   // Size of buffered data.
   QuicByteCount write_length = BufferedDataBytes();
+  // Do not send data beyond reliable_size_.
+  // TODO(martinduke): This code could be simpler if partial reset directly
+  // deleted data from the buffer, instead of notionally acking it. Since unsent
+  // data can't be acked, it's still in the buffer and has to be explicitly not
+  // sent.
+  if (rst_stream_at_sent_ &&
+      stream_bytes_written() + write_length > reliable_size_) {
+    if (reliable_size_ <= stream_bytes_written()) {
+      QUIC_BUG(quic_bug_reliable_size_already_sent)
+          << "Call to WriteBufferedData after reliable_size_ has been sent.";
+      return;
+    }
+    write_length = reliable_size_ - stream_bytes_written();
+  }
 
   // A FIN with zero data payload should not be flow control blocked.
   bool fin_with_zero_data = (fin_buffered_ && write_length == 0);
@@ -1288,11 +1506,16 @@ void QuicStream::WriteBufferedData(EncryptionLevel level) {
   if (consumed_data.bytes_consumed > 0 || consumed_data.fin_consumed) {
     busy_counter_ = 0;
   }
+  if (rst_stream_at_sent_ && stream_bytes_written() >= reliable_size_) {
+    // If data up to reliable_size_ has been sent, the write side can finally
+    // close.
+    CloseWriteSide();
+  }
 }
 
 uint64_t QuicStream::BufferedDataBytes() const {
-  QUICHE_DCHECK_GE(send_buffer_.stream_offset(), stream_bytes_written());
-  return send_buffer_.stream_offset() - stream_bytes_written();
+  QUICHE_DCHECK_GE(send_buffer_->stream_offset(), stream_bytes_written());
+  return send_buffer_->stream_offset() - stream_bytes_written();
 }
 
 bool QuicStream::CanWriteNewData() const {
@@ -1304,21 +1527,21 @@ bool QuicStream::CanWriteNewDataAfterData(QuicByteCount length) const {
 }
 
 uint64_t QuicStream::stream_bytes_written() const {
-  return send_buffer_.stream_bytes_written();
+  return send_buffer_->stream_bytes_written();
 }
 
 const QuicIntervalSet<QuicStreamOffset>& QuicStream::bytes_acked() const {
-  return send_buffer_.bytes_acked();
+  return send_buffer_->bytes_acked();
 }
 
 void QuicStream::OnStreamDataConsumed(QuicByteCount bytes_consumed) {
-  send_buffer_.OnStreamDataConsumed(bytes_consumed);
+  send_buffer_->OnStreamDataConsumed(bytes_consumed);
 }
 
 void QuicStream::WritePendingRetransmission() {
   while (HasPendingRetransmission()) {
     QuicConsumedData consumed(0, false);
-    if (!send_buffer_.HasPendingRetransmission()) {
+    if (!send_buffer_->HasPendingRetransmission()) {
       QUIC_DVLOG(1) << ENDPOINT << "stream " << id_
                     << " retransmits fin only frame.";
       consumed = stream_delegate_->WritevData(
@@ -1331,7 +1554,7 @@ void QuicStream::WritePendingRetransmission() {
       }
     } else {
       StreamPendingRetransmission pending =
-          send_buffer_.NextPendingRetransmission();
+          send_buffer_->NextPendingRetransmission();
       // Determine whether the lost fin can be bundled with the data.
       const bool can_bundle_fin =
           fin_lost_ &&
@@ -1382,6 +1605,14 @@ bool QuicStream::HasDeadlinePassed() const {
   // TTL expired.
   QUIC_DVLOG(1) << "stream " << id() << " deadline has passed";
   return true;
+}
+
+void QuicStream::MaybeCloseStreamWithBufferedReset() {
+  if (buffered_reset_stream_at_.has_value() && !sequencer_.IsClosed() &&
+      NumBytesConsumed() >= buffered_reset_stream_at_->reliable_offset) {
+    OnStreamReset(buffered_reset_stream_at_->ToRstStream());
+    buffered_reset_stream_at_ = std::nullopt;
+  }
 }
 
 void QuicStream::OnDeadlinePassed() { Reset(QUIC_STREAM_TTL_EXPIRED); }

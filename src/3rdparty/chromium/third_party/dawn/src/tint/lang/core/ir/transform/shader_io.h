@@ -51,9 +51,7 @@ struct ShaderIOBackendState {
     /// @param type the type of the input
     /// @param attributes the IO attributes
     /// @returns the index of the input
-    virtual uint32_t AddInput(Symbol name,
-                              const core::type::Type* type,
-                              core::type::StructMemberAttributes attributes) {
+    uint32_t AddInput(Symbol name, const core::type::Type* type, core::IOAttributes attributes) {
         inputs.Push({name, type, std::move(attributes)});
         return uint32_t(inputs.Length() - 1);
     }
@@ -63,20 +61,24 @@ struct ShaderIOBackendState {
     /// @param type the type of the output
     /// @param attributes the IO attributes
     /// @returns the index of the output
-    virtual uint32_t AddOutput(Symbol name,
-                               const core::type::Type* type,
-                               core::type::StructMemberAttributes attributes) {
+    uint32_t AddOutput(Symbol name, const core::type::Type* type, core::IOAttributes attributes) {
         outputs.Push({name, type, std::move(attributes)});
         return uint32_t(outputs.Length() - 1);
     }
+
+    /// @returns true if inputs were added
+    bool HasInputs() const { return !inputs.IsEmpty(); }
+
+    // @returns true if outputs were added
+    bool HasOutputs() const { return !outputs.IsEmpty(); }
 
     /// Finalize the shader inputs and create any state needed for the new entry point function.
     /// @returns the list of function parameters for the new entry point
     virtual Vector<FunctionParam*, 4> FinalizeInputs() = 0;
 
     /// Finalize the shader outputs and create state needed for the new entry point function.
-    /// @returns the return value for the new entry point
-    virtual Value* FinalizeOutputs() = 0;
+    /// @returns the return type for the new entry point
+    virtual const type::Type* FinalizeOutputs() = 0;
 
     /// Get the value of the input at index @p idx
     /// @param builder the IR builder for new instructions
@@ -89,6 +91,11 @@ struct ShaderIOBackendState {
     /// @param idx the index of the output
     /// @param value the value to set
     virtual void SetOutput(Builder& builder, uint32_t idx, Value* value) = 0;
+
+    /// Create the return value for the entry point, based on the output values that have been set.
+    /// @param builder the IR builder for new instructions
+    /// @returns the return value for the new entry point
+    virtual Value* MakeReturnValue([[maybe_unused]] Builder& builder) { return nullptr; }
 
     /// @returns true if a vertex point size builtin should be added
     virtual bool NeedsVertexPointSize() const { return false; }

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginenavigationrequest.h"
 
@@ -7,13 +8,17 @@
 
 QT_BEGIN_NAMESPACE
 
-class QWebEngineNavigationRequestPrivate {
+class QWebEngineNavigationRequestPrivate
+{
 public:
-    QWebEngineNavigationRequestPrivate(const QUrl& url, QWebEngineNavigationRequest::NavigationType navigationType, bool mainFrame, bool formData)
+    QWebEngineNavigationRequestPrivate(const QUrl &url,
+                                       QWebEngineNavigationRequest::NavigationType navigationType,
+                                       bool mainFrame, bool formData, bool userInitiated)
         : url(url)
         , navigationType(navigationType)
         , isMainFrame(mainFrame)
         , hasFormData(formData)
+        , isUserInitiated(userInitiated)
     {}
 
     QUrl url;
@@ -21,6 +26,7 @@ public:
     bool isMainFrame;
     bool hasFormData;
     bool isAccepted = true;
+    bool isUserInitiated = false;
 };
 
 /*!
@@ -53,9 +59,12 @@ public:
 
 /*! \internal
 */
-QWebEngineNavigationRequest::QWebEngineNavigationRequest(const QUrl& url, QWebEngineNavigationRequest::NavigationType navigationType, bool mainFrame, bool formData, QObject* parent)
+QWebEngineNavigationRequest::QWebEngineNavigationRequest(
+        const QUrl &url, QWebEngineNavigationRequest::NavigationType navigationType, bool mainFrame,
+        bool formData, bool userInitiated, QObject *parent)
     : QObject(parent)
-    , d_ptr(new QWebEngineNavigationRequestPrivate(url, navigationType, mainFrame, formData))
+    , d_ptr(new QWebEngineNavigationRequestPrivate(url, navigationType, mainFrame, formData,
+                                                   userInitiated))
 {
 }
 
@@ -193,6 +202,33 @@ bool QWebEngineNavigationRequest::hasFormData() const
 {
     Q_D(const QWebEngineNavigationRequest);
     return d->hasFormData;
+}
+
+/*!
+    \property QWebEngineNavigationRequest::userInitiated
+    \brief Whether the navigation request was directly triggered as the
+    result of a keyboard or mouse event.
+    \since 6.12
+
+    \note A redirect navigation that was originally triggered by a user
+    gesture may also be reported as user-initiated.
+*/
+/*!
+    \qmlproperty bool WebEngineNavigationRequest::userInitiated
+    \since 6.12
+    \readonly
+
+    Whether the navigation request was directly triggered as the
+    result of a keyboard or mouse event.
+
+    \note A redirect navigation that was originally triggered by a user
+    gesture may also be reported as user-initiated.
+*/
+
+bool QWebEngineNavigationRequest::isUserInitiated() const
+{
+    Q_D(const QWebEngineNavigationRequest);
+    return d->isUserInitiated;
 }
 
 /*! \internal */

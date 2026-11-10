@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginedownloadrequest.h"
 #include "qwebenginedownloadrequest_p.h"
@@ -9,6 +10,7 @@
 #include "profile_adapter.h"
 #include "web_contents_adapter_client.h"
 
+#include <QDir>
 #include <QFileInfo>
 
 QT_BEGIN_NAMESPACE
@@ -55,8 +57,7 @@ static inline QWebEngineDownloadRequest::DownloadState toDownloadState(int state
     case ProfileAdapterClient::DownloadInterrupted:
         return QWebEngineDownloadRequest::DownloadInterrupted;
     default:
-        Q_UNREACHABLE();
-        return QWebEngineDownloadRequest::DownloadCancelled;
+        Q_UNREACHABLE_RETURN(QWebEngineDownloadRequest::DownloadCancelled);
     }
 }
 
@@ -81,11 +82,9 @@ static inline QWebEngineDownloadRequest::DownloadInterruptReason toDownloadInter
     requests, which it does by emitting the
     \l{QWebEngineProfile::downloadRequested}{downloadRequested} signal together
     with a newly created QWebEngineDownloadRequest. The application can then
-    examine this item and decide whether to accept it or not. A signal handler
-    must explicitly call accept() on the item for \QWE to actually start
-    downloading and writing data to disk. If no signal handler calls accept(),
-    then the download request will be automatically rejected and nothing will be
-    written to disk.
+    examine this item and decide whether to accept it or not. When a decision is
+    made, the application must explicitly call accept() or cancel() on the item
+    for \QWE to actually start downloading or rejecting the request.
 
     \note Some properties, such as setting the path and file name where the file
     will be saved (see \l downloadDirectory() and \l downloadFileName()), can
@@ -93,18 +92,10 @@ static inline QWebEngineDownloadRequest::DownloadInterruptReason toDownloadInter
 
     \section2 Object Life Cycle
 
-    All items are guaranteed to be valid during the emission of the
-    \l{QWebEngineProfile::downloadRequested}{downloadRequested} signal. If
-    accept() is \e not called by any signal handler, then the item will be
-    deleted \e immediately after signal emission. This means that the
-    application \b{must not} keep references to rejected download items. It also
-    means the application should not use a queued connection to this signal.
-
-    If accept() \e is called by a signal handler, then the QWebEngineProfile
-    will take ownership of the item. However, it is safe for the application to
-    delete the item at any time, except during the handling of the
-    \l{QWebEngineProfile::downloadRequested}{downloadRequested} signal. The
-    QWebEngineProfile being a long-lived object, it is in fact recommended that
+    In each and every case, the QWebEngineProfile takes the ownership of the item.
+    However, it is safe for the application to delete the item at any time, except
+    during the handling of the \l{QWebEngineProfile::downloadRequested}{downloadRequested}
+    signal. The QWebEngineProfile being a long-lived object, it is in fact recommended that
     the application delete any items it is no longer interested in.
 
     \note Deleting an item will also automatically cancel a download since 5.12.2,
@@ -118,6 +109,12 @@ static inline QWebEngineDownloadRequest::DownloadInterruptReason toDownloadInter
     downloading any dependent resources, and potentially packaging everything
     into a special file format (\l savePageFormat). To check if a download is
     for a file or a web page, use \l isSavePageDownload.
+
+    Web page save requests are accepted automatically and started from
+    \l DownloadInProgress state by convenience reasons. The first directly connected
+    \l{QWebEngineProfile::downloadRequested}{downloadRequested} signal handler
+    can prevent this by calling cancel(), otherwise the save operation will start
+    writing data to the disk.
 
     \sa QWebEngineProfile, QWebEngineProfile::downloadRequested,
     QWebEnginePage::download, QWebEnginePage::save
@@ -137,7 +134,9 @@ void QWebEngineDownloadRequestPrivate::update(const ProfileAdapterClient::Downlo
 {
     Q_Q(QWebEngineDownloadRequest);
 
-    Q_ASSERT(downloadState != QWebEngineDownloadRequest::DownloadRequested);
+    // Don't change download state until users accept/cancel the request
+    if (!answered && downloadState == QWebEngineDownloadRequest::DownloadRequested)
+        return;
 
     if (toDownloadInterruptReason(info.downloadInterruptReason) != interruptReason) {
         interruptReason = toDownloadInterruptReason(info.downloadInterruptReason);
@@ -147,17 +146,13 @@ void QWebEngineDownloadRequestPrivate::update(const ProfileAdapterClient::Downlo
         downloadState = toDownloadState(info.state);
         Q_EMIT q->stateChanged(downloadState);
     }
-
-    if (info.receivedBytes != receivedBytes || info.totalBytes != totalBytes) {
-
-      if (info.receivedBytes != receivedBytes) {
-          receivedBytes = info.receivedBytes;
-          Q_EMIT q->receivedBytesChanged();
-      }
-      if (info.totalBytes != totalBytes) {
-          totalBytes = info.totalBytes;
-          Q_EMIT q->totalBytesChanged();
-      }
+    if (info.receivedBytes != receivedBytes) {
+        receivedBytes = info.receivedBytes;
+        Q_EMIT q->receivedBytesChanged();
+    }
+    if (info.totalBytes != totalBytes) {
+        totalBytes = info.totalBytes;
+        Q_EMIT q->totalBytesChanged();
     }
 
     if (info.done)
@@ -176,6 +171,20 @@ void QWebEngineDownloadRequestPrivate::setFinished()
 
     downloadFinished = true;
     Q_EMIT q_ptr->isFinishedChanged();
+}
+
+void QWebEngineDownloadRequestPrivate::answer()
+{
+    if (answered)
+        return;
+
+    if (profileAdapter) {
+        const QString path = QDir(downloadDirectory).filePath(downloadFileName);
+        bool accepted = downloadState != QWebEngineDownloadRequest::DownloadCancelled
+                && downloadState != QWebEngineDownloadRequest::DownloadRequested;
+        profileAdapter->acceptDownload(downloadId, accepted, useDownloadTargetCallback, path, savePageFormat);
+        answered = true;
+    }
 }
 
 /*!
@@ -197,6 +206,7 @@ void QWebEngineDownloadRequest::accept()
 
     d->downloadState = QWebEngineDownloadRequest::DownloadInProgress;
     Q_EMIT stateChanged(d->downloadState);
+    d->answer();
 }
 
 /*!
@@ -239,6 +249,7 @@ void QWebEngineDownloadRequest::cancel()
         Q_EMIT stateChanged(d->downloadState);
         d->setFinished();
     }
+    d->answer();
 }
 
 /*!
@@ -284,7 +295,8 @@ void QWebEngineDownloadRequest::resume()
 }
 
 /*!
-    Returns the download item's ID.
+    \property QWebEngineDownloadRequest::id
+    \brief The download item's ID.
 */
 
 quint32 QWebEngineDownloadRequest::id() const
@@ -374,7 +386,8 @@ quint32 QWebEngineDownloadRequest::id() const
 */
 
 /*!
-    Returns the download item's current state.
+    \property QWebEngineDownloadRequest::state
+    \brief The download item's current state.
 
     \sa DownloadState
 */
@@ -386,7 +399,8 @@ QWebEngineDownloadRequest::DownloadState QWebEngineDownloadRequest::state() cons
 }
 
 /*!
-    Returns the total amount of data to download in bytes.
+    \property QWebEngineDownloadRequest::totalBytes
+    \brief The total amount of data to download in bytes.
 
     \c -1 means the size is unknown.
 */
@@ -398,7 +412,8 @@ qint64 QWebEngineDownloadRequest::totalBytes() const
 }
 
 /*!
-    Returns the amount of data in bytes that has been downloaded so far.
+    \property QWebEngineDownloadRequest::receivedBytes
+    \brief The amount of data in bytes that has been downloaded so far.
 
     \c -1 means the size is unknown.
 */
@@ -410,7 +425,8 @@ qint64 QWebEngineDownloadRequest::receivedBytes() const
 }
 
 /*!
-    Returns the download's origin URL.
+    \property QWebEngineDownloadRequest::url
+    \brief The download's origin URL.
 */
 
 QUrl QWebEngineDownloadRequest::url() const
@@ -420,7 +436,8 @@ QUrl QWebEngineDownloadRequest::url() const
 }
 
 /*!
-    Returns the MIME type of the download.
+    \property QWebEngineDownloadRequest::mimeType
+    \brief The MIME type of the download.
 */
 
 QString QWebEngineDownloadRequest::mimeType() const
@@ -430,7 +447,13 @@ QString QWebEngineDownloadRequest::mimeType() const
 }
 
 /*!
-    Returns the download directory path.
+    \property QWebEngineDownloadRequest::downloadDirectory
+    \brief The download directory path.
+
+    The download directory path can only be set in response to the
+    QWebEngineProfile::downloadRequested() signal before the download is
+    accepted. Past that point, this property has no effect on the download
+    item's state.
 */
 
 QString QWebEngineDownloadRequest::downloadDirectory() const
@@ -438,14 +461,6 @@ QString QWebEngineDownloadRequest::downloadDirectory() const
     Q_D(const QWebEngineDownloadRequest);
     return d->downloadDirectory;
 }
-
-/*!
-    Sets \a directory as the directory path to download the file to.
-
-    The download directory path can only be set in response to the QWebEngineProfile::downloadRequested()
-    signal before the download is accepted. Past that point, this function has no effect on the
-    download item's state.
-*/
 
 void QWebEngineDownloadRequest::setDownloadDirectory(const QString &directory)
 {
@@ -465,14 +480,20 @@ void QWebEngineDownloadRequest::setDownloadDirectory(const QString &directory)
                                                                                  d->suggestedFileName,
                                                                                  d->startTime)).fileName();
         if (d->downloadFileName != newFileName) {
-            d->downloadFileName = newFileName;
+            d->downloadFileName = std::move(newFileName);
             Q_EMIT downloadFileNameChanged();
         }
     }
 }
 
 /*!
-    Returns the file name to download the file to.
+    \property QWebEngineDownloadRequest::downloadFileName
+    \brief The file name to download the file to.
+
+    The download file name can only be set in response to the
+    QWebEngineProfile::downloadRequested() signal before the download is
+    accepted. Past that point, this property has no effect on the download
+    item's state.
 */
 
 QString QWebEngineDownloadRequest::downloadFileName() const
@@ -480,14 +501,6 @@ QString QWebEngineDownloadRequest::downloadFileName() const
     Q_D(const QWebEngineDownloadRequest);
     return d->downloadFileName;
 }
-
-/*!
-    Sets \a fileName as the file name to download the file to.
-
-    The download file name can only be set in response to the QWebEngineProfile::downloadRequested()
-    signal before the download is accepted. Past that point, this function has no effect on the
-    download item's state.
-*/
 
 void QWebEngineDownloadRequest::setDownloadFileName(const QString &fileName)
 {
@@ -505,7 +518,8 @@ void QWebEngineDownloadRequest::setDownloadFileName(const QString &fileName)
 }
 
 /*!
-    Returns the suggested file name.
+    \property QWebEngineDownloadRequest::suggestedFileName
+    \brief The suggested file name.
 */
 
 QString QWebEngineDownloadRequest::suggestedFileName() const
@@ -542,8 +556,10 @@ bool QWebEngineDownloadRequest::isPaused() const
 }
 
 /*!
-    Returns the format the web page will be saved in if this is a download request for a web page.
-    \sa setSavePageFormat(), isSavePageDownload()
+    \property QWebEngineDownloadRequest::savePageFormat
+    \brief The format the web page will be saved in if this is a download request for a web page.
+
+    \sa isSavePageDownload
 */
 QWebEngineDownloadRequest::SavePageFormat QWebEngineDownloadRequest::savePageFormat() const
 {
@@ -551,11 +567,6 @@ QWebEngineDownloadRequest::SavePageFormat QWebEngineDownloadRequest::savePageFor
     return d->savePageFormat;
 }
 
-/*!
-    Sets the \a format the web page will be saved in if this is a download request for a web page.
-
-    \sa savePageFormat(), isSavePageDownload()
-*/
 void QWebEngineDownloadRequest::setSavePageFormat(QWebEngineDownloadRequest::SavePageFormat format)
 {
   Q_D(QWebEngineDownloadRequest);
@@ -566,9 +577,10 @@ void QWebEngineDownloadRequest::setSavePageFormat(QWebEngineDownloadRequest::Sav
 }
 
 /*!
-    Returns \c true if this is a download request for saving a web page.
+    \property QWebEngineDownloadRequest::isSavePageDownload
+    \brief Whether this is a download request for saving a web page.
 
-    \sa savePageFormat(), setSavePageFormat()
+    \sa savePageFormat
  */
 bool QWebEngineDownloadRequest::isSavePageDownload() const
 {
@@ -577,9 +589,10 @@ bool QWebEngineDownloadRequest::isSavePageDownload() const
 }
 
 /*!
-    Returns the reason why the download was interrupted.
+    \property QWebEngineDownloadRequest::interruptReason
+    \brief The reason why the download was interrupted.
 
-    \sa interruptReasonString()
+    \sa interruptReasonString
 */
 
 QWebEngineDownloadRequest::DownloadInterruptReason QWebEngineDownloadRequest::interruptReason() const
@@ -589,9 +602,10 @@ QWebEngineDownloadRequest::DownloadInterruptReason QWebEngineDownloadRequest::in
 }
 
 /*!
-    Returns a human-readable description of the reason for interrupting the download.
+    \property QWebEngineDownloadRequest::interruptReasonString
+    \brief A human-readable description of the reason for interrupting the download.
 
-    \sa interruptReason()
+    \sa interruptReason
 */
 
 QString QWebEngineDownloadRequest::interruptReasonString() const

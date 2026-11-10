@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_ASH_CLOUD_UPLOAD_CLOUD_UPLOAD_NOTIFICATION_MANAGER_H_
 #define CHROME_BROWSER_UI_WEBUI_ASH_CLOUD_UPLOAD_CLOUD_UPLOAD_NOTIFICATION_MANAGER_H_
 
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
@@ -14,7 +15,6 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/file_manager/io_task.h"
 #include "chrome/browser/notifications/notification_display_service.h"
-#include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_dialog.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
 #include "ui/message_center/public/cpp/notification.h"
 
@@ -34,7 +34,6 @@ class CloudUploadNotificationManager
       base::OnceCallback<void(base::FilePath)>;
 
   CloudUploadNotificationManager(Profile* profile,
-                                 const std::string& file_name,
                                  const std::string& cloud_provider_name,
                                  const std::string& target_app_name,
                                  int num_files,
@@ -131,11 +130,10 @@ class CloudUploadNotificationManager
 
   // Counts the total number of notification manager instances. This counter is
   // never decremented.
-  static inline int notification_manager_counter_ = 0;
+  COMPONENT_EXPORT() static inline int notification_manager_counter_ = 0;
 
   const raw_ptr<Profile, LeakedDanglingUntriaged> profile_;
   CloudProvider provider_;
-  std::string file_name_;
   std::string cloud_provider_name_;
   std::string notification_id_;
   std::string target_app_name_;

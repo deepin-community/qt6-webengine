@@ -13,11 +13,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
+#include "base/time/tick_clock.h"
 #include "media/base/cross_origin_data_source.h"
 #include "media/base/data_source.h"
 #include "media/base/ranges.h"
 #include "media/base/tuneable.h"
-#include "third_party/blink/public/platform/media/url_index.h"
+#include "third_party/blink/renderer/platform/media/buffered_data_source_host_impl.h"
+#include "third_party/blink/renderer/platform/media/url_index.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "url/gurl.h"
@@ -43,7 +45,50 @@ class PLATFORM_EXPORT MultiBufferDataSource
     : public media::CrossOriginDataSource {
  public:
   using DownloadingCB = base::RepeatingCallback<void(bool)>;
-  using RedirectCB = base::RepeatingCallback<void()>;
+
+  class PLATFORM_EXPORT Factory : public media::CrossOriginDataSource::Factory {
+   public:
+    using UrlDataCb = base::RepeatingCallback<void(
+        const GURL& url,
+        DataSource::CacheMode cache_mode,
+        base::OnceCallback<void(scoped_refptr<UrlData>)>)>;
+
+    ~Factory() override;
+    Factory(std::unique_ptr<media::MediaLog> media_log,
+            UrlDataCb get_url_data,
+            bool is_audio_element,
+            Preload preload,
+            EventCb data_source_tainted_cb,
+            const base::TickClock* tick_clock,
+            scoped_refptr<base::SingleThreadTaskRunner> main_task_runner);
+
+    void Create(
+        const GURL& uri,
+        DataSource::CacheMode cache_mode,
+        base::OnceCallback<void(std::unique_ptr<media::CrossOriginDataSource>)>
+            cb) override;
+
+   private:
+    void OnUrlData(base::OnceCallback<
+                       void(std::unique_ptr<media::CrossOriginDataSource>)> cb,
+                   base::RepeatingCallback<void(bool)> download_cb,
+                   scoped_refptr<UrlData> data);
+
+    // Flags & Options passed to the created MultiBufferDataSources in `Create`.
+    const bool is_audio_element_;
+    const Preload preload_;
+    std::unique_ptr<media::MediaLog> media_log_;
+
+    EventCb tainted_source_cb_;
+
+    UrlDataCb get_url_data_;
+
+    scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
+
+    std::unique_ptr<BufferedDataSourceHostImpl> buffered_data_source_host_;
+
+    base::WeakPtrFactory<Factory> weak_factory_{this};
+  };
 
   // |url| and |cors_mode| are passed to the object. Buffered byte range changes
   // will be reported to |host|. |downloading_cb| will be called whenever the
@@ -59,8 +104,6 @@ class PLATFORM_EXPORT MultiBufferDataSource
   ~MultiBufferDataSource() override;
 
   // CrossOriginDataSource overrides.
-  bool IsCorsCrossOrigin() const override;
-  bool HasAccessControl() const override;
   const std::string& GetMimeType() const override {
     return url_data_->mime_type();
   }
@@ -72,14 +115,9 @@ class PLATFORM_EXPORT MultiBufferDataSource
   // Adjusts the buffering algorithm based on the given preload value.
   void SetPreload(media::DataSource::Preload preload) override;
 
-  // Returns true if the media resource has a single origin, false otherwise.
-  // Only valid to call after Initialize() has completed.
-  //
-  // Method called on the render thread.
-  bool HasSingleOrigin();
-
-  // Provides a callback to be run when the underlying url is redirected.
-  void OnRedirect(RedirectCB callback);
+  // Provides a callback to be run when the request becomes CORS tainted via
+  // redirection or some other mechanism.
+  void SetTaintedCallback(media::DataSource::EventCb callback);
 
   bool PassedTimingAllowOriginCheck() override;
 
@@ -97,9 +135,11 @@ class PLATFORM_EXPORT MultiBufferDataSource
   // Returns true if the resource is local.
   bool AssumeFullyBuffered() const override;
 
-  void OnBufferingHaveEnough(bool must_cancel_netops) override;
+  void StopPreloading() override;
 
   int64_t GetMemoryUsage() override;
+
+  bool DidRedirect() const override { return did_redirect_; }
 
   GURL GetUrlAfterRedirects() const override;
 
@@ -119,8 +159,6 @@ class PLATFORM_EXPORT MultiBufferDataSource
     is_client_audio_element_ = is_client_audio_element;
   }
 
-  CrossOriginDataSource* GetAsCrossOriginDataSource() override { return this; }
-
   bool cancel_on_defer_for_testing() const { return cancel_on_defer_; }
 
  protected:
@@ -136,7 +174,7 @@ class PLATFORM_EXPORT MultiBufferDataSource
                                    int64_t last_byte_position);
 
   // Set reader_ while asserting proper locking.
-  void SetReader(MultiBufferReader* reader);
+  void SetReader(std::unique_ptr<MultiBufferReader> reader);
 
   friend class MultiBufferDataSourceTest;
 
@@ -186,7 +224,7 @@ class PLATFORM_EXPORT MultiBufferDataSource
   // The total size of the resource. Set during StartCallback() if the size is
   // known, otherwise it will remain kPositionNotSpecified until the size is
   // determined by reaching EOF.
-  int64_t total_bytes_;
+  int64_t total_bytes_ = kPositionNotSpecified;
 
   // Bytes we've read but not reported to the url_data yet.
   // SeekTask handles the reporting.
@@ -199,14 +237,19 @@ class PLATFORM_EXPORT MultiBufferDataSource
 
   // This value will be true if this data source can only support streaming.
   // i.e. range request is not supported.
-  bool streaming_;
+  bool streaming_ = false;
 
   // This is the loading state that we last reported to our owner through
   // |downloading_cb_|.
-  bool loading_;
+  bool loading_ = false;
 
   // True if a failure has occured.
-  bool failed_;
+  bool failed_ = false;
+
+  // Records whether this DataSource had a redirect, minimizing the need to
+  // call `GetUrlAfterRedirects` in some cases. It must never be set to false
+  // once true.
+  bool did_redirect_ = false;
 
   // The task runner of the render thread.
   const scoped_refptr<base::SingleThreadTaskRunner> render_task_runner_;
@@ -229,37 +272,37 @@ class PLATFORM_EXPORT MultiBufferDataSource
   base::Lock lock_;
 
   // Whether we've been told to stop via Abort() or Stop().
-  bool stop_signal_received_;
+  bool stop_signal_received_ = false;
 
   // This variable is true when the user has requested the video to play at
   // least once.
-  bool media_has_played_;
+  bool media_has_played_ = false;
 
   // As we follow redirects, we set this variable to false if redirects
   // go between different origins.
-  bool single_origin_;
+  bool single_origin_ = true;
 
-  // Callback used when a redirect occurs.
-  RedirectCB redirect_cb_;
+  // Callback used when a data source becomes tainted.
+  media::DataSource::EventCb notify_tainted_cb_;
 
-  // Close the connection when we have enough data.
-  bool cancel_on_defer_;
+  // Stops preloading and closes the connection when we have enough data.
+  bool cancel_on_defer_ = false;
 
   // This variable holds the value of the preload attribute for the video
   // element.
-  media::DataSource::Preload preload_;
+  media::DataSource::Preload preload_ = AUTO;
 
   // Bitrate of the content, 0 if unknown.
-  int bitrate_;
+  int bitrate_ = 0;
 
   // Current playback rate.
-  double playback_rate_;
+  double playback_rate_ = 0;
 
   std::unique_ptr<media::MediaLog> media_log_;
 
   bool is_client_audio_element_ = false;
 
-  int buffer_size_update_counter_;
+  int buffer_size_update_counter_ = 0;
 
   // Host object to report buffered byte range changes to.
   raw_ptr<BufferedDataSourceHost, DanglingUntriaged> host_;

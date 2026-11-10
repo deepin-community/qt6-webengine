@@ -6,12 +6,13 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_usb_delegate_observer.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -151,7 +152,7 @@ WebUsbServiceImpl::WebUsbServiceImpl(
           weak_factory_.GetWeakPtr());
     }
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif  // !BUILDFLAG(IS_ANDROID)
   }
 }
@@ -168,7 +169,7 @@ void WebUsbServiceImpl::Create(
     RenderFrameHostImpl& render_frame_host,
     mojo::PendingReceiver<blink::mojom::WebUsbService> pending_receiver) {
   if (!render_frame_host.IsFeatureEnabled(
-          blink::mojom::PermissionsPolicyFeature::kUsb)) {
+          network::mojom::PermissionsPolicyFeature::kUsb)) {
     mojo::ReportBadMessage("Permissions policy blocks access to USB.");
     return;
   }
@@ -253,23 +254,15 @@ std::vector<uint8_t> WebUsbServiceImpl::GetProtectedInterfaceClasses() const {
                                               render_frame_host_, classes);
   }
 
-  // Isolated contexts with permission to access the policy-controlled feature
-  // "usb-unrestricted" can claim USB interfaces with classes that are
-  // normally blocked. Currently the feature is gated by
-  // `kUnrestrictedUsb`. If the feature is disabled, Isolated Apps
-  // directly have unrestricted access to any USB interface class.
+  // If the 'kUnrestrictedUsb' feature is enabled and the isolated context has
+  // 'kUsbUnrestricted' permission, grant access to all USB interface classes.
   bool is_usb_unrestricted = false;
   if (base::FeatureList::IsEnabled(blink::features::kUnrestrictedUsb)) {
     is_usb_unrestricted =
         render_frame_host_ &&
         render_frame_host_->IsFeatureEnabled(
-            blink::mojom::PermissionsPolicyFeature::kUsbUnrestricted) &&
+            network::mojom::PermissionsPolicyFeature::kUsbUnrestricted) &&
         HasIsolatedContextCapability(render_frame_host_);
-  } else {
-    is_usb_unrestricted =
-        render_frame_host_ &&
-        render_frame_host_->GetWebExposedIsolationLevel() >=
-            content::WebExposedIsolationLevel::kMaybeIsolatedApplication;
   }
   if (is_usb_unrestricted) {
     classes.clear();
@@ -400,7 +393,7 @@ void WebUsbServiceImpl::OnPermissionRevoked(const url::Origin& origin) {
   // permission.
   auto* delegate = GetContentClient()->browser()->GetUsbDelegate();
   auto* browser_context = GetBrowserContext();
-  base::EraseIf(device_clients_, [=](const auto& client) {
+  std::erase_if(device_clients_, [=, this](const auto& client) {
     auto* device_info =
         delegate->GetDeviceInfo(browser_context, client->device_guid());
     if (!device_info)
@@ -423,7 +416,7 @@ void WebUsbServiceImpl::OnDeviceAdded(
 
 void WebUsbServiceImpl::OnDeviceRemoved(
     const device::mojom::UsbDeviceInfo& device_info) {
-  base::EraseIf(device_clients_, [&device_info](const auto& client) {
+  std::erase_if(device_clients_, [&device_info](const auto& client) {
     return device_info.guid == client->device_guid();
   });
 
@@ -488,7 +481,7 @@ void WebUsbServiceImpl::DecrementConnectionCount() {
 }
 
 void WebUsbServiceImpl::RemoveDeviceClient(const UsbDeviceClient* client) {
-  base::EraseIf(device_clients_, [client](const auto& this_client) {
+  std::erase_if(device_clients_, [client](const auto& this_client) {
     return client == this_client.get();
   });
 }

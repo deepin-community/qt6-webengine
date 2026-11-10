@@ -17,13 +17,10 @@
 #include "src/tools/ftrace_proto_gen/proto_gen_utils.h"
 
 #include <algorithm>
-#include <fstream>
 #include <regex>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/file_utils.h"
-#include "perfetto/ext/base/pipe.h"
-#include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/subprocess.h"
 
@@ -169,6 +166,9 @@ ProtoType ProtoType::FromDescriptor(
 
   if (type == google::protobuf::FieldDescriptor::Type::TYPE_STRING)
     return String(is_repeated);
+
+  if (type == google::protobuf::FieldDescriptor::Type::TYPE_ENUM)
+    return Numeric(32, true, is_repeated);
 
   return Invalid();
 }

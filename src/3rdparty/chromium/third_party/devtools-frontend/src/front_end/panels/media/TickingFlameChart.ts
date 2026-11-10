@@ -1,6 +1,7 @@
 // Copyright 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
@@ -53,7 +54,6 @@ export interface EventProperties {
   duration?: number;
   name: string;
   color?: string;
-  hoverData?: Object|null;
 }
 
 /**
@@ -69,12 +69,11 @@ export class Event {
   title: string;
   private colorInternal: string;
   private fontColorInternal: string;
-  private readonly hoverData: Object;
 
   constructor(
       timelineData: PerfUI.FlameChart.FlameChartTimelineData, eventHandlers: EventHandlers,
       eventProperties: EventProperties|
-      undefined = {color: undefined, duration: undefined, hoverData: {}, level: 0, name: '', startTime: 0}) {
+      undefined = {color: undefined, duration: undefined, level: 0, name: '', startTime: 0}) {
     // These allow the event to privately change it's own data in the timeline.
     this.timelineData = timelineData;
     this.setLive = eventHandlers.setLive;
@@ -100,7 +99,6 @@ export class Event {
     this.title = eventProperties['name'] || '';
     this.colorInternal = eventProperties['color'] || HotColorScheme[0];
     this.fontColorInternal = calculateFontColor(this.colorInternal);
-    this.hoverData = eventProperties['hoverData'] || {};
   }
 
   /**
@@ -124,7 +122,7 @@ export class Event {
   /**
    * set an event to be "live" where it's ended time is always the chart maximum
    * or to be a fixed time.
-   * @param {number} time
+   * @param time
    */
   set endTime(time: number) {
     // Setting end time to -1 signals that an event becomes live
@@ -210,7 +208,7 @@ export class TickingFlameChart extends UI.Widget.VBox {
 
     // Chart settings.
     this.chartGroupExpansionSetting =
-        Common.Settings.Settings.instance().createSetting('mediaFlameChartGroupExpansion', {});
+        Common.Settings.Settings.instance().createSetting('media-flame-chart-group-expansion', {});
 
     // Create the chart.
     this.chart =
@@ -270,8 +268,8 @@ export class TickingFlameChart extends UI.Widget.VBox {
   }
 
   private onScroll(e: WheelEvent): void {
-    // TODO: is this a good divisor? does it account for high presicision scroll wheels?
-    // low precisision scroll wheels?
+    // TODO: is this a good divisor? does it account for high precision scroll wheels?
+    // low precision scroll wheels?
     const scrollTickCount = Math.round(e.deltaY / 50);
     const scrollPositionRatio = e.offsetX / (e.srcElement as HTMLElement).clientWidth;
     if (scrollTickCount > 0) {
@@ -318,7 +316,7 @@ export class TickingFlameChart extends UI.Widget.VBox {
     this.ticking = true;
   }
 
-  private stop(permanently: boolean = false): void {
+  private stop(permanently = false): void {
     window.clearInterval(this.intervalTimer);
     this.intervalTimer = 0;
     if (permanently) {
@@ -344,9 +342,6 @@ export class TickingFlameChart extends UI.Widget.VBox {
  * Doesn't do much right now, but can be used in the future for selecting events.
  */
 class TickingFlameChartDelegate implements PerfUI.FlameChart.FlameChartDelegate {
-  constructor() {
-  }
-
   windowChanged(_windowStartTime: number, _windowEndTime: number, _animate: boolean): void {
   }
 
@@ -378,12 +373,16 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
     // Map<Event>
     this.eventMap = new Map();
 
-    // Contains the numerical indicies. This is passed as a reference to the events
+    // Contains the numerical indices. This is passed as a reference to the events
     // so that they can update it when they change.
     this.timelineDataInternal = PerfUI.FlameChart.FlameChartTimelineData.createEmpty();
 
     // The current sum of all group heights.
     this.maxLevel = 0;
+  }
+
+  hasTrackConfigurationMode(): boolean {
+    return false;
   }
 
   /**
@@ -392,7 +391,7 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
   addGroup(name: Common.UIString.LocalizedString, depth: number): void {
     if (this.timelineDataInternal.groups) {
       const newGroup = {
-        name: name,
+        name,
         startLevel: this.maxLevel,
         expanded: true,
         selectable: false,
@@ -413,7 +412,7 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
   startEvent(properties: EventProperties): Event {
     properties['level'] = properties['level'] || 0;
     if (properties['level'] > this.maxLevel) {
-      throw `level ${properties['level']} is above the maximum allowed of ${this.maxLevel}`;
+      throw new Error(`level ${properties['level']} is above the maximum allowed of ${this.maxLevel}`);
     }
 
     const event = new Event(
@@ -489,7 +488,7 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
     return false;
   }
 
-  prepareHighlightedEntryInfo(index: number): Element|null {
+  preparePopoverElement(index: number): Element|null {
     const element = document.createElement('div');
     (this.eventMap.get(index) as Event).decorate(element);
     return element;

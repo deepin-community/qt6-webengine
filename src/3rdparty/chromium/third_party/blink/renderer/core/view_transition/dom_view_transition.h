@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_view_transition_callback.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_type_set.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 
@@ -25,12 +26,10 @@ class ViewTransition;
 class CORE_EXPORT DOMViewTransition : public ScriptWrappable,
                                       public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
-  using PromiseProperty =
-      ScriptPromiseProperty<ToV8UndefinedGenerator, ScriptValue>;
+  using PromiseProperty = ScriptPromiseProperty<IDLUndefined, IDLAny>;
 
  public:
-  // Constructor for navigation-initiated view transition (used only in the new
-  // document).
+  // Constructor for navigation-initiated view transition.
   explicit DOMViewTransition(ExecutionContext&, ViewTransition&);
 
   // Constructor for script-initiated view transition. Also delegated from the
@@ -46,9 +45,13 @@ class CORE_EXPORT DOMViewTransition : public ScriptWrappable,
 
   // IDL implementation. Refer to view_transition.idl for additional comments.
   void skipTransition();
-  ScriptPromise finished(ScriptState*) const;
-  ScriptPromise ready(ScriptState*) const;
-  ScriptPromise updateCallbackDone(ScriptState*) const;
+  ScriptPromise<IDLUndefined> finished(ScriptState*) const;
+  ScriptPromise<IDLUndefined> ready(ScriptState*) const;
+  ScriptPromise<IDLUndefined> updateCallbackDone(ScriptState*) const;
+
+  ViewTransitionTypeSet* types() const;
+
+  Element* transitionRoot() const;
 
   // Called from ViewTransition when the transition is skipped/aborted for any
   // reason.
@@ -73,21 +76,10 @@ class CORE_EXPORT DOMViewTransition : public ScriptWrappable,
   void HandlePromise(ViewTransition::PromiseResponse response,
                      PromiseProperty* property);
 
-  void NotifyDOMCallbackFinished(bool success, ScriptValue value);
-
-  // Invoked when ViewTransitionCallback finishes running.
-  class DOMChangeFinishedCallback : public ScriptFunction::Callable {
-   public:
-    explicit DOMChangeFinishedCallback(DOMViewTransition&, bool success);
-    ~DOMChangeFinishedCallback() override;
-
-    ScriptValue Call(ScriptState*, ScriptValue) override;
-    void Trace(Visitor*) const override;
-
-   private:
-    Member<DOMViewTransition> dom_view_transition_;
-    const bool success_;
-  };
+  friend class DOMChangeFinishedCallback;
+  friend class DOMChangeRejectedCallback;
+  void NotifyDOMCallbackFinished();
+  void NotifyDOMCallbackRejected(ScriptValue value);
 
   // Cleared when the context is destroyed.
   Member<ExecutionContext> execution_context_;

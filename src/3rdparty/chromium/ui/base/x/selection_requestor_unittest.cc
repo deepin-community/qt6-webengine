@@ -89,8 +89,10 @@ void PerformBlockingConvertSelection(SelectionRequestor* requestor,
   EXPECT_TRUE(requestor->PerformBlockingConvertSelection(selection, target,
                                                          &out_data, &out_type));
   EXPECT_EQ(expected_data.size(), out_data.size());
-  EXPECT_EQ(expected_data, ui::RefCountedMemoryToString(
-                               base::RefCountedBytes::TakeVector(&out_data)));
+  EXPECT_EQ(
+      expected_data,
+      ui::RefCountedMemoryToString(
+          base::MakeRefCounted<base::RefCountedBytes>(std::move(out_data))));
   EXPECT_EQ(x11::Atom::STRING, out_type);
 }
 
@@ -98,7 +100,7 @@ void PerformBlockingConvertSelection(SelectionRequestor* requestor,
 
 // Test that SelectionRequestor correctly handles receiving a request while it
 // is processing another request.
-// TODO(https://crbug.com/443355): Reenable once clipboard interface is async.
+// TODO(crbug.com/40398800): Reenable once clipboard interface is async.
 TEST_F(SelectionRequestorTest, DISABLED_NestedRequests) {
   // Assume that |selection| will have no owner. If there is an owner, the owner
   // will set the property passed into the XConvertSelection() request which is

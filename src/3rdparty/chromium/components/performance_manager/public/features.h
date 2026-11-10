@@ -8,23 +8,14 @@
 #ifndef COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_FEATURES_H_
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_FEATURES_H_
 
+#include <string>
+
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 
 namespace performance_manager::features {
-
-// If enabled the PM runs on the main (UI) thread. Incompatible with
-// kRunOnDedicatedThreadPoolThread.
-BASE_DECLARE_FEATURE(kRunOnMainThread);
-
-// If enabled the PM runs on a single ThreadPool thread that isn't shared with
-// any other task runners. It will be named "Performance Manager" in traces.
-// This makes it easy to identify tasks running on the PM sequence, but may not
-// perform as well as a shared sequence, which is the default. Incompatible with
-// kRunOnMainThread.
-BASE_DECLARE_FEATURE(kRunOnDedicatedThreadPoolThread);
 
 #if !BUILDFLAG(IS_ANDROID)
 
@@ -34,138 +25,107 @@ BASE_DECLARE_FEATURE(kRunOnDedicatedThreadPoolThread);
 #define URGENT_DISCARDING_FROM_PERFORMANCE_MANAGER() true
 #endif
 
-// Enables urgent discarding of pages directly from PerformanceManager rather
-// than via TabManager on Ash Chrome.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-BASE_DECLARE_FEATURE(kAshUrgentDiscardingFromPerformanceManager);
+// When enabled removes the rate limit on reporting tab processes to resourced.
+#if BUILDFLAG(IS_CHROMEOS)
+BASE_DECLARE_FEATURE(kUnthrottledTabProcessReporting);
 #endif
 
 // Enable background tab loading of pages (restored via session restore)
 // directly from Performance Manager rather than via TabLoader.
 BASE_DECLARE_FEATURE(kBackgroundTabLoadingFromPerformanceManager);
 
+// Minimum site engagement score for a tab to be restored, if it doesn't
+// communicate in the background. If 0, engagement score doesn't prevent any tab
+// from being loaded.
+BASE_DECLARE_FEATURE_PARAM(size_t, kBackgroundTabLoadingMinSiteEngagement);
+
+// If false, the background tab loading policy won't set the main frame restored
+// state before restoring a tab. This gives it the same bugs as TabLoader: the
+// notification permission and features stored in SiteDataReader won't be used,
+// because they're looked up by url which isn't available without the restored
+// state. This minimizes behaviour differences between TabLoader and the
+// Performance Manager policy, for performance comparisons.
+BASE_DECLARE_FEATURE_PARAM(bool, kBackgroundTabLoadingRestoreMainFrameState);
+
 // Make the Battery Saver Modes available to users. If this is enabled, it
 // doesn't mean the mode is enabled, just that the user has the option of
 // toggling it.
 BASE_DECLARE_FEATURE(kBatterySaverModeAvailable);
 
-// If enabled, makes battery saver request render process tuning.
-BASE_DECLARE_FEATURE(kBatterySaverModeRenderTuning);
+// Flags to control HaTS surveys about Chrome performance.
+BASE_DECLARE_FEATURE(kPerformanceControlsPPMSurvey);
 
-// Flag to control a baseline HaTS survey for Chrome performance.
-BASE_DECLARE_FEATURE(kPerformanceControlsPerformanceSurvey);
-BASE_DECLARE_FEATURE(kPerformanceControlsBatteryPerformanceSurvey);
-BASE_DECLARE_FEATURE(kPerformanceControlsMemorySaverOptOutSurvey);
-BASE_DECLARE_FEATURE(kPerformanceControlsBatterySaverOptOutSurvey);
+// Defines the minimum and maximum delay before showing the PPM survey. It will
+// be shown the next time the user opens the New Tab Page after a random time in
+// this range.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kPerformanceControlsPPMSurveyMinDelay);
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kPerformanceControlsPPMSurveyMaxDelay);
 
-// Defines the time delta to look back when checking if a device has used
-// battery.
-extern const base::FeatureParam<base::TimeDelta>
-    kPerformanceControlsBatterySurveyLookback;
+// Controls whether survey responses will be tagged as "Selected For Uniform
+// Sample". The subset of responses with this tag approximate the general
+// population, no matter how many responses are received in individual segments.
+BASE_DECLARE_FEATURE_PARAM(bool,
+                           kPerformanceControlsPPMSurveyUniformSampleValue);
 
-// Round 2 Performance Controls features
+// Defines the names and boundaries of up to 3 segments for the PPM survey.
+// There's no kPerformanceControlsPPMSurveySegmentMaxMemoryGB3 because there's
+// never a 4th segment, so segment 3 has no maximum.
+BASE_DECLARE_FEATURE_PARAM(std::string,
+                           kPerformanceControlsPPMSurveySegmentName1);
+BASE_DECLARE_FEATURE_PARAM(std::string,
+                           kPerformanceControlsPPMSurveySegmentName2);
+BASE_DECLARE_FEATURE_PARAM(std::string,
+                           kPerformanceControlsPPMSurveySegmentName3);
+BASE_DECLARE_FEATURE_PARAM(size_t,
+                           kPerformanceControlsPPMSurveySegmentMaxMemoryGB1);
+BASE_DECLARE_FEATURE_PARAM(size_t,
+                           kPerformanceControlsPPMSurveySegmentMaxMemoryGB2);
 
-// This enables the UI for the multi-state version of memory saver mode.
-BASE_DECLARE_FEATURE(kMemorySaverMultistateMode);
-// When true, a recommended badge will be shown next to the heuristic memory
-// saver option.
-extern const base::FeatureParam<bool> kMemorySaverShowRecommendedBadge;
+// This enables performance intervention to run in demo mode. While in demo
+// mode, performance intervention will ignore rate throttling and CPU thresholds
+// to make it easier to trigger performance intervention for testing purposes.
+BASE_DECLARE_FEATURE(kPerformanceInterventionDemoMode);
 
-// This shows more information about discarded tabs in the tab strip and
-// hovercards.
-BASE_DECLARE_FEATURE(kDiscardedTabTreatment);
-// This displays active memory usage in hovercards.
-BASE_DECLARE_FEATURE(kMemoryUsageInHovercards);
-// This enables improved UI for adding site exceptions for tab discarding.
-BASE_DECLARE_FEATURE(kDiscardExceptionsImprovements);
-// This enables improved UI for highlighting memory savings in the page action
-// chip and dialog.
-BASE_DECLARE_FEATURE(kMemorySavingsReportingImprovements);
+// This enables performance intervention to use the improved notification
+// prompting algorithm to show the intervention more often.
+BASE_DECLARE_FEATURE(kPerformanceInterventionNotificationImprovements);
 
-// The minimum time between instances where the chip is shown in expanded mode.
-extern const base::FeatureParam<base::TimeDelta>
-    kExpandedMemorySaverChipFrequency;
+// Minimum time needed before showing another performance intervention.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta, kMinimumTimeBetweenReshow);
 
-// The minimum discard savings that a tab must have for the chip to be expanded.
-extern const base::FeatureParam<int> kExpandedMemorySaverChipThresholdBytes;
+// Number of recent samples to be taken into consideration when determining
+// performance intervention acceptance rate.
+BASE_DECLARE_FEATURE_PARAM(int, kAcceptanceRateWindowSize);
 
-// The minimum time a tab must be discarded before the chip can be shown
-// expanded.
-extern const base::FeatureParam<base::TimeDelta>
-    kExpandedMemorySaverChipDiscardedDuration;
+// Upper bounds for showing performance intervention and will be scaled down
+// based on the acceptance rate.
+BASE_DECLARE_FEATURE_PARAM(int, kScaleMaxTimesPerDay);
+BASE_DECLARE_FEATURE_PARAM(int, kScaleMaxTimesPerWeek);
 
-// Percentiles of PMF across all tabs on all browsers.
-extern const base::FeatureParam<int> kMemorySaverChartPmf25PercentileBytes;
-extern const base::FeatureParam<int> kMemorySaverChartPmf50PercentileBytes;
-extern const base::FeatureParam<int> kMemorySaverChartPmf75PercentileBytes;
-extern const base::FeatureParam<int> kMemorySaverChartPmf99PercentileBytes;
+// The amount of time a user needs to wait before being shown performance
+// intervention with a 0% acceptance rate
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta, kNoAcceptanceBackOff);
 
-// Final opacity of the favicon after the discard animation completes
-extern const base::FeatureParam<double> kDiscardedTabTreatmentOpacity;
+// This enables performance intervention to use the updated notification
+// strings.
+BASE_DECLARE_FEATURE(kPerformanceInterventionNotificationStringImprovements);
 
-// The version of the tab discard treatment on the favicon should be shown
-extern const base::FeatureParam<int> kDiscardedTabTreatmentOption;
-
-// Threshold for when memory usage is labeled as "high".
-extern const base::FeatureParam<int> kMemoryUsageInHovercardsHighThresholdBytes;
-
-// Options for when memory usage metrics are fetched for hovercards.
-enum class MemoryUsageInHovercardsUpdateTrigger {
-  kBackground,  // Metrics are fetched in the background every 2 minutes
-                // (default).
-  kNavigation,  // Metrics are also fetched after a navigation becomes idle.
-};
-
-// Sets when memory usage metrics will be fetched to display in hovercards.
-extern const base::FeatureParam<MemoryUsageInHovercardsUpdateTrigger>
-    kMemoryUsageInHovercardsUpdateTrigger;
-
-enum class DiscardTabTreatmentOptions {
-  kNone = 0,
-  kFadeFullsizedFavicon = 1,
-  kFadeSmallFaviconWithRing = 2
-};
-
-// This enables the performance controls side panel for learning about and
-// configuring performance settings.
-BASE_DECLARE_FEATURE(kPerformanceControlsSidePanel);
-
-// This enables the CPU performance interventions within the side panel.
-BASE_DECLARE_FEATURE(kPerformanceCPUIntervention);
-
-// This represents the duration that CPU must be over the threshold before
-// an intervention is triggered.
-extern const base::FeatureParam<base::TimeDelta> kCPUTimeOverThreshold;
-
-// If Chrome CPU utilization and System CPU utilization are both over the
-// specified percent thresholds then we will trigger an intervention.
-extern const base::FeatureParam<int> kCPUSystemPercentThreshold;
-extern const base::FeatureParam<int> kCPUChromePercentThreshold;
-
-// This enables the Memory performance interventions within the side panel.
-BASE_DECLARE_FEATURE(kPerformanceMemoryIntervention);
-
-// This represents the duration that Memory must be over the threshold before
-// an intervention is triggered.
-extern const base::FeatureParam<base::TimeDelta> kMemoryTimeOverThreshold;
-
-// If available Memory percent and bytes are both under the specified thresholds
-// then we will trigger an intervention.
-extern const base::FeatureParam<int> kMemoryFreePercentThreshold;
-extern const base::FeatureParam<int> kMemoryFreeBytesThreshold;
+// The version string that is used on the performance detection dialog.
+BASE_DECLARE_FEATURE_PARAM(int, kNotificationStringVersion);
 
 #endif
 
 BASE_DECLARE_FEATURE(kPMProcessPriorityPolicy);
 
-extern const base::FeatureParam<bool> kDownvoteAdFrames;
+extern const base::FeatureParam<bool> kInheritParentPriority;
 
-// When enabled, Memory Saver supports the different modes defined in the
-// `ModalMemorySaverMode` enum.
-BASE_DECLARE_FEATURE(kModalMemorySaver);
+extern const base::FeatureParam<bool> kRenderedOutOfViewIsNotVisible;
 
-// When set, makes Memory Saver behave as the specified mode if it's  enabled.
-extern const base::FeatureParam<int> kModalMemorySaverMode;
+extern const base::FeatureParam<bool> kNonSpareRendererHighInitialPriority;
+
+BASE_DECLARE_FEATURE(kPMLoadingPageVoter);
 
 // Policy that evicts the BFCache of pages that become non visible or the
 // BFCache of all pages when the system is under memory pressure.
@@ -174,9 +134,6 @@ BASE_DECLARE_FEATURE(kBFCachePerformanceManagerPolicy);
 // Whether tabs are discarded under high memory pressure.
 BASE_DECLARE_FEATURE(kUrgentPageDiscarding);
 
-// This enables logging to evaluate the efficacy of potential CPU interventions.
-BASE_DECLARE_FEATURE(kCPUInterventionEvaluationLogging);
-
 // This represents the duration that CPU must be over the threshold before
 // logging the delayed metrics.
 extern const base::FeatureParam<base::TimeDelta> kDelayBeforeLogging;
@@ -184,9 +141,104 @@ extern const base::FeatureParam<base::TimeDelta> kDelayBeforeLogging;
 // If Chrome CPU utilization is over the specified percent then we will log it.
 extern const base::FeatureParam<int> kThresholdChromeCPUPercent;
 
-// When enabled, the PageResource2 UKM is logged twice, once using Resource
-// Attribution and once using legacy measurements, to compare the results.
-BASE_DECLARE_FEATURE(kResourceAttributionValidation);
+// When enabled, the freezing policy measures background CPU usage.
+BASE_DECLARE_FEATURE(kCPUMeasurementInFreezingPolicy);
+
+// When enabled, the freezing policy measures memory usage. This exists to
+// quantify the overhead of memory measurement in a holdback study.
+BASE_DECLARE_FEATURE(kMemoryMeasurementInFreezingPolicy);
+
+// When enabled, frozen browsing instances in which an origin's private memory
+// footprint grows above a threshold are discarded. Depends on
+// `kMemoryMeasurementInFreezingPolicy`.
+BASE_DECLARE_FEATURE(kDiscardFrozenBrowsingInstancesWithGrowingPMF);
+
+// Per-origin private memory footprint increase above which a frozen browsing
+// instance is discarded.
+BASE_DECLARE_FEATURE_PARAM(int, kFreezingMemoryGrowthThresholdToDiscardKb);
+
+// Proportion of background CPU usage for a group of frames/workers that belong
+// to the same [browsing instance, origin] that is considered "high".
+BASE_DECLARE_FEATURE_PARAM(double, kFreezingHighCPUProportion);
+
+// Time for which a page cannot be frozen after being visible.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta, kFreezingVisibleProtectionTime);
+
+// Time for which a page cannot be frozen after being audible.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta, kFreezingAudioProtectionTime);
+
+// When enabled, browsing instances with high CPU usage in background are frozen
+// when Battery Saver is active. Depends on `kCPUMeasurementInFreezingPolicy`.
+BASE_DECLARE_FEATURE(kFreezingOnBatterySaver);
+
+// This is the similar to `kFreezingOnBatterySaver`, with some changes to
+// facilitate testing:
+// - Pretend that Battery Saver is active even if it's not.
+// - Pretend that all tabs have high CPU usage in background.
+BASE_DECLARE_FEATURE(kFreezingOnBatterySaverForTesting);
+
+// When enabled, the freezing policy won't freeze pages that are opted out of
+// tab discarding.
+BASE_DECLARE_FEATURE(kFreezingFollowsDiscardOptOut);
+
+// When enabled, the freezing eligibility UKM event may be recorded.
+BASE_DECLARE_FEATURE(kRecordFreezingEligibilityUKM);
+
+// When enabled, eligible tabs which are not in the N most recently used are
+// frozen. This prevents CPU usage from growing proportionally with the number
+// of tabs, and aims to make the browser support "infinite tabs" with good
+// performance. A tab is eligible if it doesn't have a `CannotFreezeReason`
+// other than `CannotFreezeReason::kRecentlyVisible`. N is configurable with
+// `kInfiniteTabsFreezing_NumProtectedTabs`. Tabs frozen by this feature are
+// periodically unfrozen, to allow showing notifications, refreshing content,
+// maintaining connections... (see `kInfiniteTabsFreezing_UnfreezeInterval` and
+// `kInfiniteTabsFreezing_UnfreezeDuration`).
+BASE_DECLARE_FEATURE(kInfiniteTabsFreezing);
+
+// Number of most recently visible tabs protected from "infinite tabs" freezing.
+BASE_DECLARE_FEATURE_PARAM(int, kInfiniteTabsFreezing_NumProtectedTabs);
+
+// Interval at which tabs frozen to support "infinite tabs" are temporarily
+// unfrozen.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kInfiniteTabsFreezing_UnfreezeInterval);
+
+// Duration for which tabs frozen to support "infinite tabs" are temporarily
+// unfrozen.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kInfiniteTabsFreezing_UnfreezeDuration);
+
+// If enabled, eligible tabs may be frozen on Windows if the system is under
+// memory pressure. A tab is eligible if it would be freezable by the
+// kInfiniteTabsFreezing policy.
+BASE_DECLARE_FEATURE(kInfiniteTabsFreezingOnMemoryPressure);
+
+// The interval at which to check for memory pressure when enabled.
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kInfiniteTabsFreezingOnMemoryPressureInterval);
+
+// The available physical memory percentage below which to trigger freezing when
+// enabled.
+BASE_DECLARE_FEATURE_PARAM(int, kInfiniteTabsFreezingOnMemoryPressurePercent);
+
+// When enabled, Resource Attribution measurements will include contexts for
+// individual origins.
+BASE_DECLARE_FEATURE(kResourceAttributionIncludeOrigins);
+
+// When enabled, change the ordering of frame swap in render (crbug/357649043).
+BASE_DECLARE_FEATURE(kSeamlessRenderFrameSwap);
+
+// When enabled, visible unimportant frames receives a lesser priority than
+// non unimportant frames.
+BASE_DECLARE_FEATURE(kUnimportantFramesPriority);
+
+// When enabled, the begin frame rate of visible unimportant frames would be
+// reduced to half of normal frame rate.
+BASE_DECLARE_FEATURE(kThrottleUnimportantFrameRate);
+
+// When enabled, keep the default search engine render process host alive
+// (crbug.com/365958798).
+BASE_DECLARE_FEATURE(kKeepDefaultSearchEngineRendererAlive);
 
 }  // namespace performance_manager::features
 

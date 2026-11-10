@@ -34,6 +34,7 @@
 
 #include "{{native_dir}}/ChainUtils.h"
 #include "{{native_dir}}/ObjectType_autogen.h"
+#include "{{native_dir}}/webgpu_absl_format.h"
 
 namespace {{native_namespace}} {
 
@@ -53,7 +54,7 @@ namespace {{native_namespace}} {
                         return {true};
                     }
                     s->Append("[{{as_cppType(type.name)}}");
-                    if (value->label != nullptr) {
+                    if (value->label.data != nullptr) {
                         s->Append(absl::StrFormat(" \"%s\"", value->label));
                     }
                     s->Append("]");
@@ -67,42 +68,6 @@ namespace {{native_namespace}} {
                 }
             {% endif %}
         {% endfor %}
-    {% endfor %}
-
-    //
-    // Compatible with absl::StrFormat (Needs to be disjoint from having a 'label' for now.)
-    // Currently uses a hard-coded list to determine which structures are actually supported. If
-    // additional structures are added, be sure to update the header file's list as well.
-    //
-    using absl::ParsedFormat;
-
-    {% for type in by_category["structure"] %}
-        {% if type.name.get() in [
-             "buffer binding layout",
-             "sampler binding layout",
-             "texture binding layout",
-             "storage texture binding layout"
-           ]
-        %}
-        absl::FormatConvertResult<absl::FormatConversionCharSet::kString>
-            AbslFormatConvert(const {{as_cppType(type.name)}}& value,
-                              const absl::FormatConversionSpec& spec,
-                              absl::FormatSink* s) {
-            {% set members = [] %}
-            {% set format = [] %}
-            {% set template = [] %}
-            {% for member in type.members %}
-                {% set memberName = member.name.camelCase() %}
-                {% do members.append("value." + memberName) %}
-                {% do format.append(memberName + ": %" + as_formatType(member)) %}
-                {% do template.append("'" + as_formatType(member) + "'") %}
-            {% endfor %}
-            static const auto* const fmt =
-                new ParsedFormat<{{template|join(",")}}>("{ {{format|join(", ")}} }");
-            s->Append(absl::StrFormat(*fmt, {{members|join(", ")}}));
-            return {true};
-        }
-        {% endif %}
     {% endfor %}
 
 }  // namespace {{native_namespace}}
@@ -121,16 +86,17 @@ namespace {{namespace}} {
                       absl::FormatSink* s) {
         if (spec.conversion_char() == absl::FormatConversionChar::s) {
             s->Append("{{as_cppType(type.name)}}::");
-            switch (value) {
-            {% for value in type.values %}
-                case {{as_cppType(type.name)}}::{{as_cppEnum(value.name)}}:
+            switch ({{as_cType(type.name)}}(value)) {
+            {% for value in type.values if not is_enum_value_proxy(value) %}
+                case {{as_cEnum(type.name, value.name)}}:
                     s->Append("{{as_cppEnum(value.name)}}");
-                    break;
+                    return {true};
             {% endfor %}
+            default:
+                break;
             }
-        } else {
-            s->Append(absl::StrFormat("%u", static_cast<typename std::underlying_type<{{as_cppType(type.name)}}>::type>(value)));
         }
+        s->Append(absl::StrFormat("%u", static_cast<{{as_cType(type.name)}}>(value)));
         return {true};
     }
     {% endfor %}

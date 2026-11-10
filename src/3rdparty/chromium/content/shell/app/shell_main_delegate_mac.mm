@@ -10,6 +10,7 @@
 #include "base/apple/foundation_util.h"
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/common/content_switches.h"
@@ -27,13 +28,13 @@ void EnsureCorrectResolutionSettings() {
   }
 
   NSString* const kHighResolutionCapable = @"NSHighResolutionCapable";
-  base::FilePath info_plist = GetInfoPlistPath();
-  NSMutableDictionary* info_dict = [[NSMutableDictionary alloc]
-      initWithContentsOfFile:base::apple::FilePathToNSString(info_plist)];
+  NSURL* info_plist = base::apple::FilePathToNSURL(GetInfoPlistPath());
+  NSMutableDictionary* info_dict =
+      [[NSMutableDictionary alloc] initWithContentsOfURL:info_plist error:nil];
 
   bool running_web_tests = switches::IsRunWebTestsSwitchPresent();
   NSNumber* high_resolution_capable_from_info_dict =
-      [info_dict objectForKey:kHighResolutionCapable];
+      info_dict[kHighResolutionCapable];
   bool not_high_resolution_capable =
       high_resolution_capable_from_info_dict &&
       !high_resolution_capable_from_info_dict.boolValue;
@@ -42,25 +43,18 @@ void EnsureCorrectResolutionSettings() {
   }
 
   // We need to update our Info.plist before we can continue.
-  [info_dict setObject:@(!running_web_tests) forKey:kHighResolutionCapable];
-  CHECK([info_dict writeToFile:base::apple::FilePathToNSString(info_plist)
-                    atomically:YES]);
+  info_dict[kHighResolutionCapable] = @(!running_web_tests);
+  CHECK([info_dict writeToURL:info_plist error:nil]);
 
   const base::CommandLine::StringVector& original_argv =
       base::CommandLine::ForCurrentProcess()->argv();
-  char** argv = new char*[original_argv.size() + 1];
-  for (unsigned i = 0; i < original_argv.size(); ++i) {
-    argv[i] = const_cast<char*>(original_argv.at(i).c_str());
+  std::vector<char*> argv;
+  for (const auto& arg : original_argv) {
+    argv.push_back(const_cast<char*>(arg.c_str()));
   }
-  argv[original_argv.size()] = nullptr;
+  argv.push_back(nullptr);
 
-  CHECK(execvp(argv[0], argv));
-}
-
-void OverrideBundleID() {
-  NSBundle* bundle = base::apple::OuterBundle();
-  base::apple::SetBaseBundleID(
-      base::SysNSStringToUTF8([bundle bundleIdentifier]).c_str());
+  CHECK(execvp(argv[0], argv.data()));
 }
 
 void RegisterShellCrApp() {

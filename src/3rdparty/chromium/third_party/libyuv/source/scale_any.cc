@@ -152,22 +152,6 @@ SDANY(ScaleUVRowDown2Box_Any_NEON,
       2,
       7)
 #endif
-
-#ifdef HAS_SCALEROWDOWN2_MSA
-SDANY(ScaleRowDown2_Any_MSA, ScaleRowDown2_MSA, ScaleRowDown2_C, 2, 1, 31)
-SDANY(ScaleRowDown2Linear_Any_MSA,
-      ScaleRowDown2Linear_MSA,
-      ScaleRowDown2Linear_C,
-      2,
-      1,
-      31)
-SDANY(ScaleRowDown2Box_Any_MSA,
-      ScaleRowDown2Box_MSA,
-      ScaleRowDown2Box_C,
-      2,
-      1,
-      31)
-#endif
 #ifdef HAS_SCALEROWDOWN2_LSX
 SDANY(ScaleRowDown2_Any_LSX, ScaleRowDown2_LSX, ScaleRowDown2_C, 2, 1, 31)
 SDANY(ScaleRowDown2Linear_Any_LSX,
@@ -202,22 +186,13 @@ SDANY(ScaleRowDown4Box_Any_AVX2,
       15)
 #endif
 #ifdef HAS_SCALEROWDOWN4_NEON
-SDANY(ScaleRowDown4_Any_NEON, ScaleRowDown4_NEON, ScaleRowDown4_C, 4, 1, 7)
+SDANY(ScaleRowDown4_Any_NEON, ScaleRowDown4_NEON, ScaleRowDown4_C, 4, 1, 15)
 SDANY(ScaleRowDown4Box_Any_NEON,
       ScaleRowDown4Box_NEON,
       ScaleRowDown4Box_C,
       4,
       1,
       7)
-#endif
-#ifdef HAS_SCALEROWDOWN4_MSA
-SDANY(ScaleRowDown4_Any_MSA, ScaleRowDown4_MSA, ScaleRowDown4_C, 4, 1, 15)
-SDANY(ScaleRowDown4Box_Any_MSA,
-      ScaleRowDown4Box_MSA,
-      ScaleRowDown4Box_C,
-      4,
-      1,
-      15)
 #endif
 #ifdef HAS_SCALEROWDOWN4_LSX
 SDANY(ScaleRowDown4_Any_LSX, ScaleRowDown4_LSX, ScaleRowDown4_C, 4, 1, 15)
@@ -249,6 +224,26 @@ SDANY(ScaleRowDown34_1_Box_Any_SSSE3,
       23)
 #endif
 #ifdef HAS_SCALEROWDOWN34_NEON
+#ifdef __aarch64__
+SDANY(ScaleRowDown34_Any_NEON,
+      ScaleRowDown34_NEON,
+      ScaleRowDown34_C,
+      4 / 3,
+      1,
+      47)
+SDANY(ScaleRowDown34_0_Box_Any_NEON,
+      ScaleRowDown34_0_Box_NEON,
+      ScaleRowDown34_0_Box_C,
+      4 / 3,
+      1,
+      47)
+SDANY(ScaleRowDown34_1_Box_Any_NEON,
+      ScaleRowDown34_1_Box_NEON,
+      ScaleRowDown34_1_Box_C,
+      4 / 3,
+      1,
+      47)
+#else
 SDANY(ScaleRowDown34_Any_NEON,
       ScaleRowDown34_NEON,
       ScaleRowDown34_C,
@@ -268,25 +263,6 @@ SDANY(ScaleRowDown34_1_Box_Any_NEON,
       1,
       23)
 #endif
-#ifdef HAS_SCALEROWDOWN34_MSA
-SDANY(ScaleRowDown34_Any_MSA,
-      ScaleRowDown34_MSA,
-      ScaleRowDown34_C,
-      4 / 3,
-      1,
-      47)
-SDANY(ScaleRowDown34_0_Box_Any_MSA,
-      ScaleRowDown34_0_Box_MSA,
-      ScaleRowDown34_0_Box_C,
-      4 / 3,
-      1,
-      47)
-SDANY(ScaleRowDown34_1_Box_Any_MSA,
-      ScaleRowDown34_1_Box_MSA,
-      ScaleRowDown34_1_Box_C,
-      4 / 3,
-      1,
-      47)
 #endif
 #ifdef HAS_SCALEROWDOWN34_LSX
 SDANY(ScaleRowDown34_Any_LSX,
@@ -343,26 +319,6 @@ SDANY(ScaleRowDown38_3_Box_Any_NEON,
       11)
 SDANY(ScaleRowDown38_2_Box_Any_NEON,
       ScaleRowDown38_2_Box_NEON,
-      ScaleRowDown38_2_Box_C,
-      8 / 3,
-      1,
-      11)
-#endif
-#ifdef HAS_SCALEROWDOWN38_MSA
-SDANY(ScaleRowDown38_Any_MSA,
-      ScaleRowDown38_MSA,
-      ScaleRowDown38_C,
-      8 / 3,
-      1,
-      11)
-SDANY(ScaleRowDown38_3_Box_Any_MSA,
-      ScaleRowDown38_3_Box_MSA,
-      ScaleRowDown38_3_Box_C,
-      8 / 3,
-      1,
-      11)
-SDANY(ScaleRowDown38_2_Box_Any_MSA,
-      ScaleRowDown38_2_Box_MSA,
       ScaleRowDown38_2_Box_C,
       8 / 3,
       1,
@@ -429,26 +385,6 @@ SDANY(ScaleARGBRowDown2Box_Any_NEON,
       4,
       7)
 #endif
-#ifdef HAS_SCALEARGBROWDOWN2_MSA
-SDANY(ScaleARGBRowDown2_Any_MSA,
-      ScaleARGBRowDown2_MSA,
-      ScaleARGBRowDown2_C,
-      2,
-      4,
-      3)
-SDANY(ScaleARGBRowDown2Linear_Any_MSA,
-      ScaleARGBRowDown2Linear_MSA,
-      ScaleARGBRowDown2Linear_C,
-      2,
-      4,
-      3)
-SDANY(ScaleARGBRowDown2Box_Any_MSA,
-      ScaleARGBRowDown2Box_MSA,
-      ScaleARGBRowDown2Box_C,
-      2,
-      4,
-      3)
-#endif
 #ifdef HAS_SCALEARGBROWDOWN2_LSX
 SDANY(ScaleARGBRowDown2_Any_LSX,
       ScaleARGBRowDown2_LSX,
@@ -508,18 +444,6 @@ SDAANY(ScaleARGBRowDownEvenBox_Any_NEON,
        4,
        3)
 #endif
-#ifdef HAS_SCALEARGBROWDOWNEVEN_MSA
-SDAANY(ScaleARGBRowDownEven_Any_MSA,
-       ScaleARGBRowDownEven_MSA,
-       ScaleARGBRowDownEven_C,
-       4,
-       3)
-SDAANY(ScaleARGBRowDownEvenBox_Any_MSA,
-       ScaleARGBRowDownEvenBox_MSA,
-       ScaleARGBRowDownEvenBox_C,
-       4,
-       3)
-#endif
 #ifdef HAS_SCALEARGBROWDOWNEVEN_LSX
 SDAANY(ScaleARGBRowDownEven_Any_LSX,
        ScaleARGBRowDownEven_LSX,
@@ -569,9 +493,6 @@ SAROW(ScaleAddRow_Any_AVX2, ScaleAddRow_AVX2, 1, 2, 31)
 #ifdef HAS_SCALEADDROW_NEON
 SAROW(ScaleAddRow_Any_NEON, ScaleAddRow_NEON, 1, 2, 15)
 #endif
-#ifdef HAS_SCALEADDROW_MSA
-SAROW(ScaleAddRow_Any_MSA, ScaleAddRow_MSA, 1, 2, 15)
-#endif
 #ifdef HAS_SCALEADDROW_LSX
 SAROW(ScaleAddRow_Any_LSX, ScaleAddRow_LSX, 1, 2, 15)
 #endif
@@ -598,9 +519,6 @@ SAANY(ScaleAddRow_Any_AVX2, ScaleAddRow_AVX2, ScaleAddRow_C, 31)
 #ifdef HAS_SCALEADDROW_NEON
 SAANY(ScaleAddRow_Any_NEON, ScaleAddRow_NEON, ScaleAddRow_C, 15)
 #endif
-#ifdef HAS_SCALEADDROW_MSA
-SAANY(ScaleAddRow_Any_MSA, ScaleAddRow_MSA, ScaleAddRow_C, 15)
-#endif
 #ifdef HAS_SCALEADDROW_LSX
 SAANY(ScaleAddRow_Any_LSX, ScaleAddRow_LSX, ScaleAddRow_C, 15)
 #endif
@@ -623,17 +541,11 @@ SAANY(ScaleAddRow_Any_LSX, ScaleAddRow_LSX, ScaleAddRow_C, 15)
 #ifdef HAS_SCALEFILTERCOLS_NEON
 CANY(ScaleFilterCols_Any_NEON, ScaleFilterCols_NEON, ScaleFilterCols_C, 1, 7)
 #endif
-#ifdef HAS_SCALEFILTERCOLS_MSA
-CANY(ScaleFilterCols_Any_MSA, ScaleFilterCols_MSA, ScaleFilterCols_C, 1, 15)
-#endif
 #ifdef HAS_SCALEFILTERCOLS_LSX
 CANY(ScaleFilterCols_Any_LSX, ScaleFilterCols_LSX, ScaleFilterCols_C, 1, 15)
 #endif
 #ifdef HAS_SCALEARGBCOLS_NEON
 CANY(ScaleARGBCols_Any_NEON, ScaleARGBCols_NEON, ScaleARGBCols_C, 4, 7)
-#endif
-#ifdef HAS_SCALEARGBCOLS_MSA
-CANY(ScaleARGBCols_Any_MSA, ScaleARGBCols_MSA, ScaleARGBCols_C, 4, 3)
 #endif
 #ifdef HAS_SCALEARGBCOLS_LSX
 CANY(ScaleARGBCols_Any_LSX, ScaleARGBCols_LSX, ScaleARGBCols_C, 4, 3)
@@ -644,13 +556,6 @@ CANY(ScaleARGBFilterCols_Any_NEON,
      ScaleARGBFilterCols_C,
      4,
      3)
-#endif
-#ifdef HAS_SCALEARGBFILTERCOLS_MSA
-CANY(ScaleARGBFilterCols_Any_MSA,
-     ScaleARGBFilterCols_MSA,
-     ScaleARGBFilterCols_C,
-     4,
-     7)
 #endif
 #ifdef HAS_SCALEARGBFILTERCOLS_LSX
 CANY(ScaleARGBFilterCols_Any_LSX,
@@ -749,11 +654,19 @@ SUH2LANY(ScaleRowUp2_Linear_16_Any_AVX2,
 #endif
 
 #ifdef HAS_SCALEROWUP2_LINEAR_NEON
+#ifdef __aarch64__
+SUH2LANY(ScaleRowUp2_Linear_Any_NEON,
+         ScaleRowUp2_Linear_NEON,
+         ScaleRowUp2_Linear_C,
+         31,
+         uint8_t)
+#else
 SUH2LANY(ScaleRowUp2_Linear_Any_NEON,
          ScaleRowUp2_Linear_NEON,
          ScaleRowUp2_Linear_C,
          15,
          uint8_t)
+#endif
 #endif
 
 #ifdef HAS_SCALEROWUP2_LINEAR_12_NEON

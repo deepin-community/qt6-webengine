@@ -8,15 +8,12 @@
 #include <string>
 #include <vector>
 
-#include "base/test/scoped_feature_list.h"
 #include "content/browser/preloading/prefetch/prefetch_features.h"
-#include "content/browser/preloading/prefetch/prefetch_service.h"
-#include "content/browser/preloading/prefetch/prefetch_test_utils.h"
+#include "content/browser/preloading/prefetch/prefetch_test_util_internal.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_web_contents.h"
-#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/no_vary_search.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
@@ -28,22 +25,10 @@
 namespace content {
 namespace {
 
+using testing::FieldsAre;
 using testing::IsEmpty;
+using testing::IsNull;
 using testing::UnorderedElementsAreArray;
-
-class TestPrefetchService : public PrefetchService {
- public:
-  explicit TestPrefetchService(BrowserContext* browser_context)
-      : PrefetchService(browser_context) {}
-
-  void PrefetchUrl(
-      base::WeakPtr<PrefetchContainer> prefetch_container) override {
-    prefetch_container->DisablePrecogLoggingForTest();
-    prefetches_.push_back(prefetch_container);
-  }
-
-  std::vector<base::WeakPtr<PrefetchContainer>> prefetches_;
-};
 
 class PrefetchDocumentManagerTest : public RenderViewHostTestHarness {
  public:
@@ -108,9 +93,6 @@ class PrefetchDocumentManagerTest : public RenderViewHostTestHarness {
   // to DevTools console.
   std::string TriggerNoVarySearchParseErrorAndGetConsoleMessage(
       network::mojom::NoVarySearchParseError parse_error) {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeature(
-        network::features::kPrefetchNoVarySearch);
     // Used to create responses.
     const net::IsolationInfo info;
     // Process the candidates with the |PrefetchDocumentManager| for the current
@@ -132,8 +114,7 @@ class PrefetchDocumentManagerTest : public RenderViewHostTestHarness {
 
     candidates.push_back(std::move(candidate1));
 
-    prefetch_document_manager->ProcessCandidates(candidates,
-                                                 /*devtools_observer=*/nullptr);
+    prefetch_document_manager->ProcessCandidates(candidates);
     // Now call TakePrefetchedResponse
     network::mojom::URLResponseHeadPtr head =
         network::mojom::URLResponseHead::New();
@@ -141,6 +122,7 @@ class PrefetchDocumentManagerTest : public RenderViewHostTestHarness {
     head->parsed_headers->no_vary_search_with_parse_error =
         network::mojom::NoVarySearchWithParseError::NewParseError(parse_error);
 
+    GetPrefetches()[0]->SimulatePrefetchEligibleForTest();
     MakeServableStreamingURLLoaderForTest(GetPrefetches()[0].get(),
                                           std::move(head), "empty");
 
@@ -197,8 +179,7 @@ TEST_F(PrefetchDocumentManagerTest, PopulateNoVarySearchHint) {
   candidates.push_back(std::move(candidate2));
   candidates.push_back(std::move(candidate3));
 
-  prefetch_document_manager->ProcessCandidates(candidates,
-                                               /*devtools_observer=*/nullptr);
+  prefetch_document_manager->ProcessCandidates(candidates);
 
   ASSERT_EQ(GetPrefetches().size(), 3u);
   {
@@ -282,9 +263,6 @@ TEST_F(PrefetchDocumentManagerTest,
 }
 
 TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      network::features::kPrefetchNoVarySearch);
   // Create list of SpeculationCandidatePtrs.
   std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
 
@@ -298,7 +276,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate1->requires_anonymous_client_ip_when_cross_origin = true;
   candidate1->url = GetCrossOriginUrl("/candidate1.html");
   candidate1->referrer = referrer->Clone();
-  candidate1->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate1->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate1));
 
   // Create candidate for non-private cross-origin prefetch. This candidate
@@ -308,7 +286,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate2->requires_anonymous_client_ip_when_cross_origin = false;
   candidate2->url = GetCrossOriginUrl("/candidate2.html");
   candidate2->referrer = referrer->Clone();
-  candidate2->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate2->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate2));
 
   // Create candidate for non-private cross-origin prefetch. This candidate
@@ -318,7 +296,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate3->requires_anonymous_client_ip_when_cross_origin = false;
   candidate3->url = GetSameOriginUrl("/candidate3.html");
   candidate3->referrer = referrer->Clone();
-  candidate3->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate3->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate3));
 
   // Create candidate for private cross-origin prefetch with subresources. This
@@ -329,7 +307,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate4->requires_anonymous_client_ip_when_cross_origin = true;
   candidate4->url = GetCrossOriginUrl("/candidate4.html");
   candidate4->referrer = referrer->Clone();
-  candidate4->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate4->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate4));
 
   // Create candidate for prerender. This candidate should not be prefetched by
@@ -339,7 +317,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate5->requires_anonymous_client_ip_when_cross_origin = false;
   candidate5->url = GetCrossOriginUrl("/candidate5.html");
   candidate5->referrer = referrer->Clone();
-  candidate5->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate5->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate5));
 
   // Create candidate for private cross-origin prefetch with default eagerness.
@@ -359,7 +337,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate7->requires_anonymous_client_ip_when_cross_origin = false;
   candidate7->url = GetSameSiteCrossOriginUrl("/candidate7.html");
   candidate7->referrer = referrer->Clone();
-  candidate7->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate7->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate7));
 
   // Create candidate for same-origin prefetch that requires a proxy if
@@ -370,7 +348,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   candidate8->requires_anonymous_client_ip_when_cross_origin = true;
   candidate8->url = GetSameOriginUrl("/candidate8.html");
   candidate8->referrer = referrer->Clone();
-  candidate8->eagerness = blink::mojom::SpeculationEagerness::kEager;
+  candidate8->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
   candidates.push_back(std::move(candidate8));
 
   // Process the candidates with the |PrefetchDocumentManager| for the current
@@ -378,8 +356,7 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   auto* prefetch_document_manager =
       PrefetchDocumentManager::GetOrCreateForCurrentDocument(
           &GetPrimaryMainFrame());
-  prefetch_document_manager->ProcessCandidates(candidates,
-                                               /*devtools_observer=*/nullptr);
+  prefetch_document_manager->ProcessCandidates(candidates);
 
   // Check that the candidates that should be prefetched were sent to
   // |PrefetchService|.
@@ -389,21 +366,21 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   EXPECT_EQ(prefetch_urls[0]->GetPrefetchType(),
             PrefetchType(PreloadingTriggerType::kSpeculationRule,
                          /*use_prefetch_proxy=*/true,
-                         blink::mojom::SpeculationEagerness::kEager));
+                         blink::mojom::SpeculationEagerness::kImmediate));
   EXPECT_TRUE(
       prefetch_urls[0]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
   EXPECT_EQ(prefetch_urls[1]->GetURL(), GetCrossOriginUrl("/candidate2.html"));
   EXPECT_EQ(prefetch_urls[1]->GetPrefetchType(),
             PrefetchType(PreloadingTriggerType::kSpeculationRule,
                          /*use_prefetch_proxy=*/false,
-                         blink::mojom::SpeculationEagerness::kEager));
+                         blink::mojom::SpeculationEagerness::kImmediate));
   EXPECT_TRUE(
       prefetch_urls[1]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
   EXPECT_EQ(prefetch_urls[2]->GetURL(), GetSameOriginUrl("/candidate3.html"));
   EXPECT_EQ(prefetch_urls[2]->GetPrefetchType(),
             PrefetchType(PreloadingTriggerType::kSpeculationRule,
                          /*use_prefetch_proxy=*/false,
-                         blink::mojom::SpeculationEagerness::kEager));
+                         blink::mojom::SpeculationEagerness::kImmediate));
   EXPECT_FALSE(
       prefetch_urls[2]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
   EXPECT_EQ(prefetch_urls[3]->GetURL(), GetCrossOriginUrl("/candidate6.html"));
@@ -418,14 +395,14 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
   EXPECT_EQ(prefetch_urls[4]->GetPrefetchType(),
             PrefetchType(PreloadingTriggerType::kSpeculationRule,
                          /*use_prefetch_proxy=*/false,
-                         blink::mojom::SpeculationEagerness::kEager));
+                         blink::mojom::SpeculationEagerness::kImmediate));
   EXPECT_FALSE(
       prefetch_urls[4]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
   EXPECT_EQ(prefetch_urls[5]->GetURL(), GetSameOriginUrl("/candidate8.html"));
   EXPECT_EQ(prefetch_urls[5]->GetPrefetchType(),
             PrefetchType(PreloadingTriggerType::kSpeculationRule,
                          /*use_prefetch_proxy=*/true,
-                         blink::mojom::SpeculationEagerness::kEager));
+                         blink::mojom::SpeculationEagerness::kImmediate));
   EXPECT_FALSE(
       prefetch_urls[5]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
 
@@ -459,53 +436,51 @@ TEST_F(PrefetchDocumentManagerTest, ProcessSpeculationCandidates) {
       GetCrossOriginUrl("/candidate3.html")));
 }
 
-// Struct describing the settings for No-Vary-Search experiment's flags used to
-// support shipping and origin trial.
-struct NoVarySearchExperimentConfigTestInfo {
-  bool shipped_by_default;
-  bool origin_trial_enabled;
-  bool experiment_expected_status;
-};
+// Link speculationrules prefetch is not started in fenced frame.
+// `CanPrefetchNow()` check blocks speculationrules prefetch from fenced frames.
+TEST_F(PrefetchDocumentManagerTest, FencedFrameDoesNotStartPrefetch) {
+  // Create list of SpeculationCandidatePtrs.
+  std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
 
-class PrefetchDocumentManagerNoVarySearchTest
-    : public PrefetchDocumentManagerTest,
-      public testing::WithParamInterface<NoVarySearchExperimentConfigTestInfo> {
-};
+  auto referrer = blink::mojom::Referrer::New();
+  referrer->url = GetSameOriginUrl("/referrer");
+  const GURL cross_origin_url = GetCrossOriginUrl("/candidate.html");
 
-// Tests that the NoVarySearch feature is properly enabled/disabled when
-// setting shipping and Origin Trial flags.
-TEST_P(PrefetchDocumentManagerNoVarySearchTest,
-       NoVarySearchFeatureStatusCheck) {
-  base::test::ScopedFeatureList scoped_feature_list;
+  // Create candidate for private cross-origin prefetch. This candidate should
+  // be added to the queue of |PrefetchDocumentManager|. However, it will not be
+  // prefetched because it is from a fenced frame.
+  auto candidate = blink::mojom::SpeculationCandidate::New();
+  candidate->action = blink::mojom::SpeculationAction::kPrefetch;
+  candidate->requires_anonymous_client_ip_when_cross_origin = true;
+  candidate->url = cross_origin_url;
+  candidate->referrer = referrer->Clone();
+  candidate->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
+  candidates.push_back(std::move(candidate));
 
-  bool shipped_by_default = GetParam().shipped_by_default;
-  bool origin_trial_enabled = GetParam().origin_trial_enabled;
-  bool experiment_expected_status = GetParam().experiment_expected_status;
-
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      network::features::kPrefetchNoVarySearch,
-      {{network::features::kPrefetchNoVarySearchShippedByDefault.name,
-        shipped_by_default ? "true" : "false"}});
-
+  // Process the candidate with the |PrefetchDocumentManager| for the current
+  // document.
+  TestRenderFrameHost* fenced_frame_rfh =
+      static_cast<TestRenderFrameHost&>(GetPrimaryMainFrame())
+          .AppendFencedFrame();
   auto* prefetch_document_manager =
-      PrefetchDocumentManager::GetOrCreateForCurrentDocument(
-          &GetPrimaryMainFrame());
+      PrefetchDocumentManager::GetOrCreateForCurrentDocument(fenced_frame_rfh);
+  prefetch_document_manager->ProcessCandidates(candidates);
 
-  if (origin_trial_enabled) {
-    prefetch_document_manager->EnableNoVarySearchSupportFromOriginTrial();
-  }
+  // Check that the candidate was sent to |PrefetchService|.
+  const auto& prefetch_urls = GetPrefetches();
+  ASSERT_EQ(prefetch_urls.size(), 1U);
+  EXPECT_EQ(prefetch_urls[0]->GetURL(), cross_origin_url);
+  EXPECT_EQ(prefetch_urls[0]->GetPrefetchType(),
+            PrefetchType(PreloadingTriggerType::kSpeculationRule,
+                         /*use_prefetch_proxy=*/true,
+                         blink::mojom::SpeculationEagerness::kImmediate));
+  EXPECT_TRUE(
+      prefetch_urls[0]->IsIsolatedNetworkContextRequiredForCurrentPrefetch());
 
-  EXPECT_EQ(prefetch_document_manager->NoVarySearchSupportEnabled(),
-            experiment_expected_status);
+  // `CanPrefetchNow()` blocks the speculationrules prefetch from fenced frame.
+  EXPECT_THAT(prefetch_document_manager->CanPrefetchNow(prefetch_urls[0].get()),
+              FieldsAre(false, IsNull()));
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    PrefetchDocumentManagerTest,
-    PrefetchDocumentManagerNoVarySearchTest,
-    ::testing::Values(NoVarySearchExperimentConfigTestInfo{false, false, false},
-                      NoVarySearchExperimentConfigTestInfo{false, true, true},
-                      NoVarySearchExperimentConfigTestInfo{true, false, true},
-                      NoVarySearchExperimentConfigTestInfo{true, true, true}));
 
 }  // namespace
 }  // namespace content

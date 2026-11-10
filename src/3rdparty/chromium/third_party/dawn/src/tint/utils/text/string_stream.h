@@ -28,12 +28,14 @@
 #ifndef SRC_TINT_UTILS_TEXT_STRING_STREAM_H_
 #define SRC_TINT_UTILS_TEXT_STRING_STREAM_H_
 
+#include <algorithm>
 #include <functional>
 #include <iomanip>
 #include <iterator>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "src/tint/utils/text/unicode.h"
@@ -54,13 +56,15 @@ class StringStream {
                                       std::is_same_v<SetFillRetTy, std::decay_t<T>>;
 
   public:
-    /// @see tint::traits::IsOStream
-    static constexpr bool IsStreamWriter = true;
-
     /// Constructor
     StringStream();
+    /// Copy constructor
+    StringStream(const StringStream&);
     /// Destructor
     ~StringStream();
+
+    /// Copy assignment operator
+    StringStream& operator=(const StringStream&);
 
     /// @returns the format flags for the stream
     std::ios_base::fmtflags flags() const { return sstream_.flags(); }
@@ -192,13 +196,14 @@ class StringStream {
         return *this;
     }
 
-    /// @returns the current location in the output stream
-    uint32_t tellp() { return static_cast<uint32_t>(sstream_.tellp()); }
+    /// @returns the number of UTF-8 code units (bytes) have been written to the string.
+    size_t Length() { return static_cast<size_t>(sstream_.tellp()); }
 
     /// @returns the string contents of the stream
     std::string str() const { return sstream_.str(); }
 
   private:
+    void Reset();
     std::stringstream sstream_;
 };
 

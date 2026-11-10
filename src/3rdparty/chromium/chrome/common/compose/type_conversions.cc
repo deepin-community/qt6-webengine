@@ -9,38 +9,40 @@ using ModelExecutionError = optimization_guide::
     OptimizationGuideModelExecutionError::ModelExecutionError;
 
 optimization_guide::proto::ComposeLength ComposeLength(
-    compose::mojom::Length length) {
-  switch (length) {
-    case compose::mojom::Length::kShorter:
+    compose::mojom::StyleModifier modifier) {
+  switch (modifier) {
+    case compose::mojom::StyleModifier::kShorter:
       return optimization_guide::proto::ComposeLength::COMPOSE_SHORTER;
-    case compose::mojom::Length::kLonger:
+    case compose::mojom::StyleModifier::kLonger:
       return optimization_guide::proto::ComposeLength::COMPOSE_LONGER;
-    case compose::mojom::Length::kUnset:
+    case compose::mojom::StyleModifier::kUnset:
     default:
       return optimization_guide::proto::ComposeLength::
           COMPOSE_UNSPECIFIED_LENGTH;
   }
 }
 
-optimization_guide::proto::ComposeTone ComposeTone(compose::mojom::Tone tone) {
-  switch (tone) {
-    case compose::mojom::Tone::kCasual:
+optimization_guide::proto::ComposeTone ComposeTone(
+    compose::mojom::StyleModifier modifier) {
+  switch (modifier) {
+    case compose::mojom::StyleModifier::kCasual:
       return optimization_guide::proto::ComposeTone::COMPOSE_INFORMAL;
-    case compose::mojom::Tone::kFormal:
+    case compose::mojom::StyleModifier::kFormal:
       return optimization_guide::proto::ComposeTone::COMPOSE_FORMAL;
-    case compose::mojom::Tone::kUnset:
+    case compose::mojom::StyleModifier::kUnset:
     default:
       return optimization_guide::proto::ComposeTone::COMPOSE_UNSPECIFIED_TONE;
   }
 }
 
 compose::mojom::ComposeStatus ComposeStatusFromOptimizationGuideResult(
-    optimization_guide::OptimizationGuideModelStreamingExecutionResult result) {
-  if (result.has_value()) {
+    const optimization_guide::OptimizationGuideModelStreamingExecutionResult&
+        result) {
+  if (result.response.has_value()) {
     return compose::mojom::ComposeStatus::kOk;
   }
 
-  switch (result.error().error()) {
+  switch (result.response.error().error()) {
     case ModelExecutionError::kUnknown:
     case ModelExecutionError::kGenericFailure:
       return compose::mojom::ComposeStatus::kServerError;
@@ -57,6 +59,7 @@ compose::mojom::ComposeStatus ComposeStatusFromOptimizationGuideResult(
     case ModelExecutionError::kUnsupportedLanguage:
       return compose::mojom::ComposeStatus::kUnsupportedLanguage;
     case ModelExecutionError::kFiltered:
+    case ModelExecutionError::kResponseLowQuality:
       return compose::mojom::ComposeStatus::kFiltered;
     case ModelExecutionError::kDisabled:
       return compose::mojom::ComposeStatus::kDisabled;
@@ -74,5 +77,23 @@ optimization_guide::proto::UserFeedback OptimizationFeedbackFromComposeFeedback(
       return optimization_guide::proto::UserFeedback::USER_FEEDBACK_THUMBS_DOWN;
     default:
       return optimization_guide::proto::UserFeedback::USER_FEEDBACK_UNSPECIFIED;
+  }
+}
+
+optimization_guide::proto::ComposeUpfrontInputMode ComposeUpfrontInputMode(
+    compose::mojom::InputMode mode) {
+  switch (mode) {
+    case compose::mojom::InputMode::kPolish:
+      return optimization_guide::proto::ComposeUpfrontInputMode::
+          COMPOSE_POLISH_MODE;
+    case compose::mojom::InputMode::kElaborate:
+      return optimization_guide::proto::ComposeUpfrontInputMode::
+          COMPOSE_ELABORATE_MODE;
+    case compose::mojom::InputMode::kFormalize:
+      return optimization_guide::proto::ComposeUpfrontInputMode::
+          COMPOSE_FORMALIZE_MODE;
+    case compose::mojom::InputMode::kUnset:
+      return optimization_guide::proto::ComposeUpfrontInputMode::
+          COMPOSE_UNSPECIFIED_MODE;
   }
 }

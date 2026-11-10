@@ -10,14 +10,21 @@
 
 #include "base/auto_reset.h"
 #include "base/containers/adapters.h"
-#include "base/ranges/algorithm.h"
+#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/rand_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
+#include "cc/base/histograms.h"
 #include "cc/base/region.h"
 #include "cc/slim/frame_data.h"
 #include "cc/slim/frame_sink_impl.h"
 #include "cc/slim/layer.h"
 #include "cc/slim/layer_tree_client.h"
+#include "cc/slim/surface_layer.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
 #include "components/viz/common/quads/compositor_frame.h"
@@ -26,7 +33,9 @@
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/frame_deadline.h"
+#include "components/viz/common/quads/offset_tag.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
+#include "components/viz/common/resources/resource_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -60,6 +69,16 @@ class LayerTreeImplScopedKeepSurfaceAlive
   const viz::SurfaceRange range_;
 };
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// This enum is used for the "Compositing.Slim.BeginFrameResult" histogram.
+enum class SlimBeginFrameResult {
+  kEarlyOutNoDraw = 0,
+  kFrameProcessed = 1,
+  kFrameProduced = 2,
+  kMaxValue = kFrameProduced,
+};
+
 }  // namespace
 
 LayerTreeImpl::PresentationCallbackInfo::PresentationCallbackInfo(
@@ -86,6 +105,7 @@ LayerTreeImpl::LayerTreeImpl(LayerTreeClient* client,
 
 LayerTreeImpl::~LayerTreeImpl() {
   SetRoot(nullptr);
+  FlushBeginFrameResults();
 }
 
 cc::UIResourceManager* LayerTreeImpl::GetUIResourceManager() {
@@ -155,7 +175,7 @@ void LayerTreeImpl::RequestCopyOfOutput(
     std::unique_ptr<viz::CopyOutputRequest> request) {
   if (request->has_source()) {
     const base::UnguessableToken& source = request->source();
-    auto it = base::ranges::find_if(
+    auto it = std::ranges::find_if(
         copy_requests_for_next_frame_,
         [&source](const std::unique_ptr<viz::CopyOutputRequest>& x) {
           return x->has_source() && x->source() == source;
@@ -181,20 +201,7 @@ void LayerTreeImpl::ReleaseDeferBeginFrame() {
   UpdateNeedsBeginFrame();
 }
 
-void LayerTreeImpl::UpdateTopControlsVisibleHeight(float height) {
-  if (top_controls_visible_height_ &&
-      top_controls_visible_height_.value() == height) {
-    return;
-  }
-  top_controls_visible_height_ = height;
-  SetNeedsDraw();
-}
-
 void LayerTreeImpl::SetNeedsAnimate() {
-  SetClientNeedsOneBeginFrame();
-}
-
-void LayerTreeImpl::SetNeedsRedraw() {
   SetClientNeedsOneBeginFrame();
 }
 
@@ -264,15 +271,30 @@ LayerTreeImpl::GetSurfaceRangesForTesting() const {
   return referenced_surfaces_;
 }
 
+void LayerTreeImpl::SetNeedsRedrawForTesting() {
+  // Clearing the previous damages, so that when the next BeginFrame arrives,
+  // the root layer will be treated as a new layer.
+  damage_from_previous_frame_.clear();
+  SetNeedsDraw();
+}
+
 bool LayerTreeImpl::BeginFrame(
     const viz::BeginFrameArgs& args,
     viz::CompositorFrame& out_frame,
     base::flat_set<viz::ResourceId>& out_resource_ids,
     viz::HitTestRegionList& out_hit_test_region_list) {
+  base::ElapsedTimer timer;
+  if (begin_frame_not_needed_count_ + begin_frame_processed_count_ +
+          begin_frame_produced_count_ >=
+      100) {
+    FlushBeginFrameResults();
+  }
+
   // Skip any delayed BeginFrame messages that arrive even after we no longer
   // need it.
   if (!NeedsDraw()) {
     TRACE_EVENT_INSTANT0("cc", "EarlyOut_NotNeeded", TRACE_EVENT_SCOPE_THREAD);
+    ++begin_frame_not_needed_count_;
     num_begin_frames_with_no_draw_++;
     frame_sink_->SetNeedsBeginFrame(NeedsBeginFrames());
     return false;
@@ -293,6 +315,7 @@ bool LayerTreeImpl::BeginFrame(
   needs_draw_ = false;
 
   if (!root_ || device_viewport_rect_.IsEmpty()) {
+    ++begin_frame_processed_count_;
     UpdateNeedsBeginFrame();
     return false;
   }
@@ -300,6 +323,13 @@ bool LayerTreeImpl::BeginFrame(
   GenerateCompositorFrame(args, out_frame, out_resource_ids,
                           out_hit_test_region_list);
   UpdateNeedsBeginFrame();
+
+  ++begin_frame_produced_count_;
+  if (base::ShouldRecordSubsampledMetric(0.01)) {
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "Compositing.Browser.BeginFrame.Produced.Duration.Subsampled",
+        timer.Elapsed(), base::Microseconds(1), base::Milliseconds(30), 50);
+  }
   return true;
 }
 
@@ -328,7 +358,7 @@ void LayerTreeImpl::DidPresentCompositorFrame(
     // Only run `success_callbacks` if successful.
     if (success) {
       for (auto& callback : itr->success_callbacks) {
-        std::move(callback).Run(details.presentation_feedback.timestamp);
+        std::move(callback).Run(details);
       }
       itr->success_callbacks.clear();
     }
@@ -397,6 +427,19 @@ void LayerTreeImpl::RemoveSurfaceRange(const viz::SurfaceRange& range) {
   }
 }
 
+void LayerTreeImpl::RegisterOffsetTag(const viz::OffsetTag& tag,
+                                      SurfaceLayer* owner) {
+  bool inserted = registered_offset_tags_.insert({tag, owner}).second;
+  // There should only be a single SurfaceLayer owner for each tag.
+  CHECK(inserted);
+}
+
+void LayerTreeImpl::UnregisterOffsetTag(const viz::OffsetTag& tag,
+                                        SurfaceLayer* owner) {
+  size_t erased = registered_offset_tags_.erase(tag);
+  CHECK_EQ(erased, 1u);
+}
+
 void LayerTreeImpl::MaybeRequestFrameSink() {
   if (frame_sink_ || !visible_ || frame_sink_request_pending_) {
     return;
@@ -432,6 +475,44 @@ bool LayerTreeImpl::NeedsDraw() const {
   return client_needs_one_begin_frame_ || needs_draw_;
 }
 
+void LayerTreeImpl::FlushBeginFrameResults() {
+  if (begin_frame_not_needed_count_ == 0 && begin_frame_processed_count_ == 0 &&
+      begin_frame_produced_count_ == 0) {
+    return;
+  }
+
+  // The UMA_HISTOGRAM_ENUMERATION macro is not suitable for adding a count > 1.
+  // Instead, we get the histogram pointer and use AddCount(). For performance,
+  // the pointer is cached in a static variable.
+  static base::HistogramBase* histogram = nullptr;
+  if (!histogram) {
+    constexpr char kHistogramName[] = "Compositing.Slim.BeginFrameResult";
+    // For enums, the max value is one higher than the max enumerator value.
+    constexpr int kBoundary =
+        static_cast<int>(SlimBeginFrameResult::kMaxValue) + 1;
+    // The number of buckets is boundary + 1 to include the overflow bucket.
+    histogram = base::LinearHistogram::FactoryGet(
+        kHistogramName, 1, kBoundary, kBoundary + 1,
+        base::HistogramBase::kUmaTargetedHistogramFlag);
+  }
+
+  if (begin_frame_not_needed_count_ > 0) {
+    histogram->AddCount(static_cast<int>(SlimBeginFrameResult::kEarlyOutNoDraw),
+                        begin_frame_not_needed_count_);
+    begin_frame_not_needed_count_ = 0;
+  }
+  if (begin_frame_processed_count_ > 0) {
+    histogram->AddCount(static_cast<int>(SlimBeginFrameResult::kFrameProcessed),
+                        begin_frame_processed_count_);
+    begin_frame_processed_count_ = 0;
+  }
+  if (begin_frame_produced_count_ > 0) {
+    histogram->AddCount(static_cast<int>(SlimBeginFrameResult::kFrameProduced),
+                        begin_frame_produced_count_);
+    begin_frame_produced_count_ = 0;
+  }
+}
+
 bool LayerTreeImpl::NeedsBeginFrames() const {
   return NeedsDraw() ||
          num_begin_frames_with_no_draw_ < num_unneeded_begin_frame_before_stop_;
@@ -442,15 +523,6 @@ void LayerTreeImpl::GenerateCompositorFrame(
     viz::CompositorFrame& out_frame,
     base::flat_set<viz::ResourceId>& out_resource_ids,
     viz::HitTestRegionList& out_hit_test_region_list) {
-  TRACE_EVENT(
-      "viz,benchmark,graphics.pipeline", "Graphics.Pipeline",
-      perfetto::Flow::Global(args.trace_id), [&](perfetto::EventContext ctx) {
-        auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
-        auto* data = event->set_chrome_graphics_pipeline();
-        data->set_step(perfetto::protos::pbzero::ChromeGraphicsPipeline::
-                           StepName::STEP_GENERATE_COMPOSITOR_FRAME);
-      });
-
   for (auto& resource_request :
        ui_resource_manager_.TakeUIResourcesRequests()) {
     switch (resource_request.GetType()) {
@@ -484,8 +556,16 @@ void LayerTreeImpl::GenerateCompositorFrame(
   for (const auto& [range, range_counts] : referenced_surfaces_) {
     out_frame.metadata.referenced_surfaces.emplace_back(range);
   }
-  out_frame.metadata.top_controls_visible_height = top_controls_visible_height_;
-  top_controls_visible_height_.reset();
+  for (auto& [tag, layer] : registered_offset_tags_) {
+    // Only add OffsetTagDefinitions if the SurfaceLayer they are registered to
+    // embed something. There is no way to provide an offset value without an
+    // embedded viz::Surface to look the value up from.
+    // TODO(b/334144355): Don't tag quads if no definition is added.
+    if (layer->surface_range().IsValid()) {
+      out_frame.metadata.offset_tag_definitions.push_back(
+          layer->GetOffsetTagDefinition(tag));
+    }
+  }
   out_frame.metadata.display_transform_hint = display_transform_hint_;
 
   FrameData frame_data(out_frame, out_hit_test_region_list.regions);
@@ -543,12 +623,20 @@ void LayerTreeImpl::GenerateCompositorFrame(
       args.frame_time, frame_data.deadline_in_frames.value_or(0u),
       args.interval, frame_data.use_default_lower_bound_deadline);
 
+  size_t total_quad_count = 0;
   for (const auto& pass : out_frame.render_pass_list) {
+    total_quad_count += pass->quad_list.size();
     for (const auto* quad : pass->quad_list) {
-      for (viz::ResourceId resource_id : quad->resources) {
-        out_resource_ids.insert(resource_id);
+      if (quad->resource_id != viz::kInvalidResourceId) {
+        out_resource_ids.insert(quad->resource_id);
       }
     }
+  }
+
+  if (const char* client_name = GetClientNameForMetrics()) {
+    UMA_HISTOGRAM_COUNTS_1000(
+        base::StringPrintf("Compositing.%s.CompositorFrame.Quads", client_name),
+        total_quad_count);
   }
 
   if (!presentation_callback_for_next_frame_.empty() ||
@@ -582,18 +670,6 @@ void LayerTreeImpl::Draw(Layer& layer,
     return;
   }
 
-  // Compute new clip in layer space.
-  const bool mask_to_bounds =
-      layer.masks_to_bounds() || layer.HasNonTrivialMaskFilterInfo();
-  gfx::RectF clip_in_layer = transform_from_parent->MapRect(clip_in_parent);
-  if (mask_to_bounds) {
-    clip_in_layer.Intersect(
-        gfx::RectF(layer.bounds().width(), layer.bounds().height()));
-  }
-  if (clip_in_layer.IsEmpty()) {
-    return;
-  }
-
   gfx::Transform transform_to_target = parent_transform_to_target;
   gfx::Transform transform_to_root = parent_transform_to_root;
   {
@@ -601,6 +677,62 @@ void LayerTreeImpl::Draw(Layer& layer,
     const gfx::Transform transform_to_parent = layer.ComputeTransformToParent();
     transform_to_target.PreConcat(transform_to_parent);
     transform_to_root.PreConcat(transform_to_parent);
+  }
+
+  // Compute new clip in layer space.
+  gfx::RectF clip_in_layer;
+  std::optional<base::AutoReset<viz::OffsetTag>> offset_tag_reset;
+  if (layer.offset_tag() &&
+      registered_offset_tags_.contains(layer.offset_tag())) {
+    // A layer can't have a different offset tag than it's ancestor.
+    CHECK(!data.offset_tag);
+
+    // If a mask filter from a parent layer that applies to tagged `layer` then
+    // the mask filter bounds shouldn't move based on offset. Currently viz
+    // assumes that mask bounds should move so don't allow this case. Allowing
+    // this would require plumbing a bool to viz that indicates if
+    // `SharedQuadState::mask_filter_info` should be translated, see
+    // crbug.com/361804880 for details
+    CHECK(!data.mask_filter_info_in_target.HasRoundedCorners() &&
+          !data.mask_filter_info_in_target.HasGradientMask());
+
+    offset_tag_reset.emplace(&data.offset_tag, layer.offset_tag());
+
+    // If `layer` has an offset tag then the position `layer` will be drawn at
+    // isn't fixed and `transform_to_target` and `transform_to_parent` might be
+    // inaccurate. Any required clipping from ancestor layers is already part of
+    // `parent_clip_in_target` if the ancestor layer has an axis-aligned
+    // transform to target render pass. Otherwise the ancestor layer will have
+    // introduced a new render pass to perform clipping. In either case, the
+    // ancestor clipping is handled and we could discard parent clipping in
+    // layer space without issues.
+    //
+    // A valid `clip_in_layer` is still needed so take `parent_clip_in_target`,
+    // expand it by the maximum movement of current layer based on offset tag
+    // constraints and transform it back to current layers coordinate space.
+    // This represents the area of `layer` that can be visible for any possible
+    // `transform_to_target` at draw time aka it clips any part of the current
+    // layer that isn't possible to be visible.
+    gfx::RectF expanded_parent_clip_in_target =
+        parent_clip_in_target ? *parent_clip_in_target
+                              : gfx::RectF(parent_pass.output_rect);
+    auto tag_constraints = registered_offset_tags_[layer.offset_tag()]
+                               ->GetOffsetTagDefinition(layer.offset_tag())
+                               .constraints;
+    tag_constraints.ExpandVisibleRect(expanded_parent_clip_in_target);
+    clip_in_layer = transform_to_target.GetCheckedInverse().MapRect(
+        expanded_parent_clip_in_target);
+  } else {
+    clip_in_layer = transform_from_parent->MapRect(clip_in_parent);
+  }
+
+  const bool mask_to_bounds =
+      layer.masks_to_bounds() || layer.HasNonTrivialMaskFilterInfo();
+  if (mask_to_bounds) {
+    clip_in_layer.Intersect(gfx::RectF(layer.bounds()));
+  }
+  if (clip_in_layer.IsEmpty()) {
+    return;
   }
 
   {
@@ -626,7 +758,12 @@ void LayerTreeImpl::Draw(Layer& layer,
       // Compute new clip in target space.
       gfx::RectF new_clip_in_target(gfx::SizeF(layer.bounds()));
       const gfx::RectF* clip_in_target = parent_clip_in_target;
-      if (mask_to_bounds) {
+
+      // If `layer`, or an ancestor layer, has an OffsetTag then it's not known
+      // where it will be drawn in target render pass coordinate space. Don't
+      // add layer bounds to `clip_in_target` and rely on layer space clipping
+      // in `clip_in_layer`.
+      if (mask_to_bounds && !data.offset_tag) {
         new_clip_in_target = transform_to_target.MapRect(new_clip_in_target);
         if (parent_clip_in_target) {
           new_clip_in_target.Intersect(*parent_clip_in_target);
@@ -702,6 +839,12 @@ void LayerTreeImpl::Draw(Layer& layer,
   {
     SimpleEnclosedRegion parent_pass_occlusion = data.occlusion_in_target;
     data.occlusion_in_target.Clear();
+
+    // The OffsetTag will be applied to the RenderPassDrawQuad so reset it when
+    // drawing layers to the new render pass.
+    base::AutoReset<viz::OffsetTag> render_pass_offset_tag_reset(
+        &data.offset_tag, viz::OffsetTag());
+
     DrawChildrenAndAppendQuads(layer, *new_pass, data, transform_to_root,
                                transform_to_target, clip_in_target,
                                clip_in_layer,
@@ -759,6 +902,8 @@ void LayerTreeImpl::Draw(Layer& layer,
                             parent_opacity * layer.opacity(),
                             SkBlendMode::kSrcOver, /*sorting_context=*/0,
                             /*layer_id=*/0u, /*fast_rounded_corner=*/true);
+  shared_quad_state->offset_tag = data.offset_tag;
+
   auto* quad =
       parent_pass.CreateAndAppendDrawQuad<viz::CompositorRenderPassDrawQuad>();
 
@@ -850,6 +995,16 @@ bool LayerTreeImpl::UpdateOcclusionRect(
     float opacity,
     const gfx::RectF& visible_rectf_in_target,
     gfx::RectF& visible_rect) {
+  if (data.offset_tag) {
+    // If layer has an offset tag then it's not known where it will be drawn.
+    // Don't consider anything above it as occluding or anything below it as
+    // occluded.
+    // TODO(kylechar): It's possible to start a new "occlusion context" at the
+    // parent layer and compute occlusion between layers that have the same
+    // OffsetTag, since they all move together.
+    return true;
+  }
+
   // Skip occlusion calculations on non-axis aligned layers.
   // Note this is to reduce complexity of occlusion tracking (eg can use
   // Transform::MapRect on RectF directly and only need to worry about

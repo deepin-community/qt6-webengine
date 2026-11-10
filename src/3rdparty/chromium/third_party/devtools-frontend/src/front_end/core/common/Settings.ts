@@ -28,15 +28,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import type * as Platform from '../platform/platform.js';
+import * as Platform from '../platform/platform.js';
 import * as Root from '../root/root.js';
 
 import {Console} from './Console.js';
-import {type GenericEvents, type EventDescriptor, type EventTargetEvent} from './EventTarget.js';
+import type {EventDescriptor, EventTargetEvent, GenericEvents} from './EventTarget.js';
 import {ObjectWrapper} from './Object.js';
 import {
   getLocalizedSettingsCategory,
-  getRegisteredSettings,
+  getRegisteredSettings as getRegisteredSettingsInternal,
+  type LearnMore,
   maybeRemoveSettingExtension,
   type RegExpSettingItem,
   registerSettingExtension,
@@ -51,39 +52,33 @@ import {
 let settingsInstance: Settings|undefined;
 
 export class Settings {
-  readonly #sessionStorage: SettingsStorage;
-  settingNameSet: Set<string>;
-  orderValuesBySettingCategory: Map<SettingCategory, Set<number>>;
-  #eventSupport: ObjectWrapper<GenericEvents>;
-  #registry: Map<string, Setting<unknown>>;
-  readonly moduleSettings: Map<string, Setting<unknown>>;
+  readonly #sessionStorage = new SettingsStorage({});
+  settingNameSet = new Set<string>();
+  orderValuesBySettingCategory = new Map<SettingCategory, Set<number>>();
+  #eventSupport = new ObjectWrapper<GenericEvents>();
+  #registry = new Map<string, Setting<unknown>>();
+  readonly moduleSettings = new Map<string, Setting<unknown>>();
+  #logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>;
 
   private constructor(
-      private readonly syncedStorage: SettingsStorage, readonly globalStorage: SettingsStorage,
-      private readonly localStorage: SettingsStorage) {
-    this.#sessionStorage = new SettingsStorage({});
+      readonly syncedStorage: SettingsStorage,
+      readonly globalStorage: SettingsStorage,
+      readonly localStorage: SettingsStorage,
+      logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>,
+  ) {
+    this.#logSettingAccess = logSettingAccess;
 
-    this.settingNameSet = new Set();
-
-    this.orderValuesBySettingCategory = new Map();
-
-    this.#eventSupport = new ObjectWrapper<GenericEvents>();
-    this.#registry = new Map();
-    this.moduleSettings = new Map();
-
-    for (const registration of getRegisteredSettings()) {
+    for (const registration of this.getRegisteredSettings()) {
       const {settingName, defaultValue, storageType} = registration;
       const isRegex = registration.settingType === SettingType.REGEX;
 
-      const setting = isRegex && typeof defaultValue === 'string' ?
-          this.createRegExpSetting(settingName, defaultValue, undefined, storageType) :
-          this.createSetting(settingName, defaultValue, storageType);
+      const evaluatedDefaultValue =
+          typeof defaultValue === 'function' ? defaultValue(Root.Runtime.hostConfig) : defaultValue;
+      const setting = isRegex && typeof evaluatedDefaultValue === 'string' ?
+          this.createRegExpSetting(settingName, evaluatedDefaultValue, undefined, storageType) :
+          this.createSetting(settingName, evaluatedDefaultValue, storageType);
 
-      if (Root.Runtime.Runtime.platform() === 'mac' && registration.titleMac) {
-        setting.setTitleFunction(registration.titleMac);
-      } else {
-        setting.setTitleFunction(registration.title);
-      }
+      setting.setTitleFunction(registration.title);
       if (registration.userActionCondition) {
         setting.setRequiresUserAction(Boolean(Root.Runtime.Runtime.queryParam(registration.userActionCondition)));
       }
@@ -91,6 +86,10 @@ export class Settings {
 
       this.registerModuleSetting(setting);
     }
+  }
+
+  getRegisteredSettings(): SettingRegistration[] {
+    return getRegisteredSettingsInternal();
   }
 
   static hasInstance(): boolean {
@@ -102,14 +101,15 @@ export class Settings {
     syncedStorage: SettingsStorage|null,
     globalStorage: SettingsStorage|null,
     localStorage: SettingsStorage|null,
+    logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>,
   } = {forceNew: null, syncedStorage: null, globalStorage: null, localStorage: null}): Settings {
-    const {forceNew, syncedStorage, globalStorage, localStorage} = opts;
+    const {forceNew, syncedStorage, globalStorage, localStorage, logSettingAccess} = opts;
     if (!settingsInstance || forceNew) {
       if (!syncedStorage || !globalStorage || !localStorage) {
         throw new Error(`Unable to create settings: global and local storage must be provided: ${new Error().stack}`);
       }
 
-      settingsInstance = new Settings(syncedStorage, globalStorage, localStorage);
+      settingsInstance = new Settings(syncedStorage, globalStorage, localStorage, logSettingAccess);
     }
 
     return settingsInstance;
@@ -138,6 +138,27 @@ export class Settings {
     this.moduleSettings.set(setting.name, setting);
   }
 
+  static normalizeSettingName(name: string): string {
+    if ([
+          VersionController.GLOBAL_VERSION_SETTING_NAME,
+          VersionController.SYNCED_VERSION_SETTING_NAME,
+          VersionController.LOCAL_VERSION_SETTING_NAME,
+          'currentDockState',
+          'isUnderTest',
+        ].includes(name)) {
+      return name;
+    }
+    return Platform.StringUtilities.toKebabCase(name);
+  }
+
+  /**
+   * Prefer a module setting if this setting is one that you might not want to
+   * surface to the user to control themselves. Examples of these are settings
+   * to store UI state such as how a user choses to position a split widget or
+   * which panel they last opened.
+   * If you are creating a setting that you expect the user to control, and
+   * sync, prefer {@see createSetting}
+   */
   // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   moduleSetting<T = any>(settingName: string): Setting<T> {
@@ -156,25 +177,34 @@ export class Settings {
     return setting;
   }
 
+  /**
+   * Get setting via key, and create a new setting if the requested setting does not exist.
+   * @param key - kebab-case string ID
+   * @param defaultValue
+   * @param storageType - If not specified, SettingStorageType.GLOBAL is used.
+   */
   createSetting<T>(key: string, defaultValue: T, storageType?: SettingStorageType): Setting<T> {
     const storage = this.storageFromType(storageType);
-    let setting = (this.#registry.get(key) as Setting<T>);
+    let setting = this.#registry.get(key) as Setting<T>;
     if (!setting) {
-      setting = new Setting(key, defaultValue, this.#eventSupport, storage);
+      setting = new Setting(key, defaultValue, this.#eventSupport, storage, this.#logSettingAccess);
       this.#registry.set(key, setting);
     }
     return setting;
   }
 
   createLocalSetting<T>(key: string, defaultValue: T): Setting<T> {
-    return this.createSetting(key, defaultValue, SettingStorageType.Local);
+    return this.createSetting(key, defaultValue, SettingStorageType.LOCAL);
   }
 
   createRegExpSetting(key: string, defaultValue: string, regexFlags?: string, storageType?: SettingStorageType):
       RegExpSetting {
     if (!this.#registry.get(key)) {
       this.#registry.set(
-          key, new RegExpSetting(key, defaultValue, this.#eventSupport, this.storageFromType(storageType), regexFlags));
+          key,
+          new RegExpSetting(
+              key, defaultValue, this.#eventSupport, this.storageFromType(storageType), regexFlags,
+              this.#logSettingAccess));
     }
     return this.#registry.get(key) as RegExpSetting;
   }
@@ -188,13 +218,13 @@ export class Settings {
 
   private storageFromType(storageType?: SettingStorageType): SettingsStorage {
     switch (storageType) {
-      case SettingStorageType.Local:
+      case SettingStorageType.LOCAL:
         return this.localStorage;
-      case SettingStorageType.Session:
+      case SettingStorageType.SESSION:
         return this.#sessionStorage;
-      case SettingStorageType.Global:
+      case SettingStorageType.GLOBAL:
         return this.globalStorage;
-      case SettingStorageType.Synced:
+      case SettingStorageType.SYNCED:
         return this.syncedStorage;
     }
     return this.globalStorage;
@@ -224,7 +254,7 @@ export const NOOP_STORAGE: SettingsBackingStore = {
 export class SettingsStorage {
   constructor(
       private object: Record<string, string>, private readonly backingStore: SettingsBackingStore = NOOP_STORAGE,
-      private readonly storagePrefix: string = '') {
+      private readonly storagePrefix = '') {
   }
 
   register(name: string): void {
@@ -270,13 +300,14 @@ export class SettingsStorage {
     this.backingStore.clear();
   }
 
+  keys(): string[] {
+    return Object.keys(this.object);
+  }
+
   dumpSizes(): void {
     Console.instance().log('Ten largest settings: ');
-
-    const sizes: {
-      [x: string]: number,
-      // @ts-expect-error __proto__ optimization
-    } = {__proto__: null};
+    // @ts-expect-error __proto__ optimization
+    const sizes: Record<string, number> = {__proto__: null};
     for (const key in this.object) {
       sizes[key] = this.object[key].length;
     }
@@ -294,7 +325,7 @@ export class SettingsStorage {
   }
 }
 
-function removeSetting(setting: Setting<unknown>): void {
+function removeSetting(setting: {name: string, storage: SettingsStorage}): void {
   const name = setting.name;
   const settings = Settings.instance();
 
@@ -323,7 +354,7 @@ export class Deprecation {
 
 export class Setting<V> {
   #titleFunction?: () => Platform.UIString.LocalizedString;
-  #titleInternal!: string;
+  #titleInternal!: Platform.UIString.LocalizedString;
   #registration: SettingRegistration|null = null;
   #requiresUserAction?: boolean;
   #value?: V;
@@ -332,11 +363,15 @@ export class Setting<V> {
   #hadUserAction?: boolean;
   #disabled?: boolean;
   #deprecation: Deprecation|null = null;
+  #loggedInitialAccess = false;
+  #logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>;
 
   constructor(
       readonly name: string, readonly defaultValue: V, private readonly eventSupport: ObjectWrapper<GenericEvents>,
-      readonly storage: SettingsStorage) {
-    storage.register(name);
+      readonly storage: SettingsStorage,
+      logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>) {
+    storage.register(this.name);
+    this.#logSettingAccess = logSettingAccess;
   }
 
   setSerializer(serializer: Serializer<unknown, V>): void {
@@ -351,14 +386,14 @@ export class Setting<V> {
     this.eventSupport.removeEventListener(this.name, listener, thisObject);
   }
 
-  title(): string {
+  title(): Platform.UIString.LocalizedString {
     if (this.#titleInternal) {
       return this.#titleInternal;
     }
     if (this.#titleFunction) {
       return this.#titleFunction();
     }
-    return '';
+    return '' as Platform.UIString.LocalizedString;
   }
 
   setTitleFunction(titleFunction: (() => Platform.UIString.LocalizedString)|undefined): void {
@@ -367,7 +402,7 @@ export class Setting<V> {
     }
   }
 
-  setTitle(title: string): void {
+  setTitle(title: Platform.UIString.LocalizedString): void {
     this.#titleInternal = title;
   }
 
@@ -376,7 +411,25 @@ export class Setting<V> {
   }
 
   disabled(): boolean {
+    if (this.#registration?.disabledCondition) {
+      const {disabled} = this.#registration.disabledCondition(Root.Runtime.hostConfig);
+      // If registration does not disable it, pass through to #disabled
+      // attribute check.
+      if (disabled) {
+        return true;
+      }
+    }
     return this.#disabled || false;
+  }
+
+  disabledReasons(): Platform.UIString.LocalizedString[] {
+    if (this.#registration?.disabledCondition) {
+      const result = this.#registration.disabledCondition(Root.Runtime.hostConfig);
+      if (result.disabled) {
+        return result.reasons;
+      }
+    }
+    return [];
   }
 
   setDisabled(disabled: boolean): void {
@@ -384,12 +437,33 @@ export class Setting<V> {
     this.eventSupport.dispatchEventToListeners(this.name);
   }
 
+  #maybeLogAccess(value: V): void {
+    try {
+      const valueToLog = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ?
+          value :
+          this.#serializer?.stringify(value);
+      if (valueToLog !== undefined && this.#logSettingAccess) {
+        void this.#logSettingAccess(this.name, valueToLog);
+      }
+    } catch {
+    }
+  }
+
+  #maybeLogInitialAccess(value: V): void {
+    if (!this.#loggedInitialAccess) {
+      this.#maybeLogAccess(value);
+      this.#loggedInitialAccess = true;
+    }
+  }
+
   get(): V {
     if (this.#requiresUserAction && !this.#hadUserAction) {
+      this.#maybeLogInitialAccess(this.defaultValue);
       return this.defaultValue;
     }
 
     if (typeof this.#value !== 'undefined') {
+      this.#maybeLogInitialAccess(this.#value);
       return this.#value;
     }
 
@@ -397,11 +471,22 @@ export class Setting<V> {
     if (this.storage.has(this.name)) {
       try {
         this.#value = this.#serializer.parse(this.storage.get(this.name));
-      } catch (e) {
+      } catch {
         this.storage.remove(this.name);
       }
     }
+    this.#maybeLogInitialAccess(this.#value);
     return this.#value;
+  }
+
+  // Prefer this getter for settings which are "disableable". The plain getter returns `this.#value`,
+  // even if the setting is disabled, which means the callsite has to explicitly call the `disabled()`
+  // getter and add its own logic for the disabled state.
+  getIfNotDisabled(): V|undefined {
+    if (this.disabled()) {
+      return;
+    }
+    return this.get();
   }
 
   async forceGet(): Promise<V> {
@@ -412,7 +497,7 @@ export class Setting<V> {
     if (value) {
       try {
         this.#value = this.#serializer.parse(value);
-      } catch (e) {
+      } catch {
         this.storage.remove(this.name);
       }
     }
@@ -421,10 +506,12 @@ export class Setting<V> {
       this.eventSupport.dispatchEventToListeners(this.name, this.#value);
     }
 
+    this.#maybeLogInitialAccess(this.#value);
     return this.#value;
   }
 
   set(value: V): void {
+    this.#maybeLogAccess(value);
     this.#hadUserAction = true;
     this.#value = value;
     try {
@@ -432,7 +519,7 @@ export class Setting<V> {
       try {
         this.storage.set(this.name, settingString);
       } catch (e) {
-        this.printSettingsSavingError(e.message, this.name, settingString);
+        this.printSettingsSavingError(e.message, settingString);
       }
     } catch (e) {
       Console.instance().error('Cannot stringify setting with name: ' + this.name + ', error: ' + e.message);
@@ -466,10 +553,10 @@ export class Setting<V> {
       return this.#registration.options.map(opt => {
         const {value, title, text, raw} = opt;
         return {
-          value: value,
+          value,
           title: title(),
           text: typeof text === 'function' ? text() : text,
-          raw: raw,
+          raw,
         };
       });
     }
@@ -505,6 +592,10 @@ export class Setting<V> {
     return null;
   }
 
+  learnMore(): LearnMore|null {
+    return this.#registration?.learnMore ?? null;
+  }
+
   get deprecation(): Deprecation|null {
     if (!this.#registration || !this.#registration.deprecationNotice) {
       return null;
@@ -515,7 +606,7 @@ export class Setting<V> {
     return this.#deprecation;
   }
 
-  private printSettingsSavingError(message: string, name: string, value: string): void {
+  private printSettingsSavingError(message: string, value: string): void {
     const errorMessage =
         'Error saving setting with name: ' + this.name + ', value length: ' + value.length + '. Error: ' + message;
     console.error(errorMessage);
@@ -532,8 +623,8 @@ export class RegExpSetting extends Setting<any> {
 
   constructor(
       name: string, defaultValue: string, eventSupport: ObjectWrapper<GenericEvents>, storage: SettingsStorage,
-      regexFlags?: string) {
-    super(name, defaultValue ? [{pattern: defaultValue}] : [], eventSupport, storage);
+      regexFlags?: string, logSettingAccess?: (name: string, value: number|string|boolean) => Promise<void>) {
+    super(name, defaultValue ? [{pattern: defaultValue}] : [], eventSupport, storage, logSettingAccess);
     this.#regexFlags = regexFlags;
   }
 
@@ -572,7 +663,7 @@ export class RegExpSetting extends Setting<any> {
       if (pattern) {
         this.#regex = new RegExp(pattern, this.#regexFlags || '');
       }
-    } catch (e) {
+    } catch {
     }
     return this.#regex;
   }
@@ -583,7 +674,7 @@ export class VersionController {
   static readonly SYNCED_VERSION_SETTING_NAME = 'syncedInspectorVersion';
   static readonly LOCAL_VERSION_SETTING_NAME = 'localInspectorVersion';
 
-  static readonly CURRENT_VERSION = 36;
+  static readonly CURRENT_VERSION = 40;
 
   readonly #globalVersionSetting: Setting<number>;
   readonly #syncedVersionSetting: Setting<number>;
@@ -592,11 +683,11 @@ export class VersionController {
   constructor() {
     // If no version setting is found, we initialize with the current version and don't do anything.
     this.#globalVersionSetting = Settings.instance().createSetting(
-        VersionController.GLOBAL_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.Global);
+        VersionController.GLOBAL_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.GLOBAL);
     this.#syncedVersionSetting = Settings.instance().createSetting(
-        VersionController.SYNCED_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.Synced);
+        VersionController.SYNCED_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.SYNCED);
     this.#localVersionSetting = Settings.instance().createSetting(
-        VersionController.LOCAL_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.Local);
+        VersionController.LOCAL_VERSION_SETTING_NAME, VersionController.CURRENT_VERSION, SettingStorageType.LOCAL);
   }
 
   /**
@@ -622,11 +713,11 @@ export class VersionController {
         Math.min(this.#globalVersionSetting.get(), this.#syncedVersionSetting.get(), this.#localVersionSetting.get());
     const methodsToRun = this.methodsToRunToUpdateVersion(minimumVersion, currentVersion);
     console.assert(
-        // @ts-ignore
+        // @ts-expect-error
         this[`updateVersionFrom${currentVersion}To${currentVersion + 1}`] === undefined,
         'Unexpected migration method found. Increment CURRENT_VERSION or remove the method.');
     for (const method of methodsToRun) {
-      // @ts-ignore Special version method matching
+      // @ts-expect-error Special version method matching
       this[method].call(this);
     }
     this.resetToCurrent();
@@ -640,55 +731,53 @@ export class VersionController {
     return result;
   }
 
-  private updateVersionFrom0To1(): void {
+  updateVersionFrom0To1(): void {
     this.clearBreakpointsWhenTooMany(Settings.instance().createLocalSetting('breakpoints', []), 500000);
   }
 
-  private updateVersionFrom1To2(): void {
+  updateVersionFrom1To2(): void {
     Settings.instance().createSetting('previouslyViewedFiles', []).set([]);
   }
 
-  private updateVersionFrom2To3(): void {
+  updateVersionFrom2To3(): void {
     Settings.instance().createSetting('fileSystemMapping', {}).set({});
     removeSetting(Settings.instance().createSetting('fileMappingEntries', []));
   }
 
-  private updateVersionFrom3To4(): void {
+  updateVersionFrom3To4(): void {
     const advancedMode = Settings.instance().createSetting('showHeaSnapshotObjectsHiddenProperties', false);
     moduleSetting('showAdvancedHeapSnapshotProperties').set(advancedMode.get());
     removeSetting(advancedMode);
   }
 
-  private updateVersionFrom4To5(): void {
-    const settingNames: {
-      [x: string]: string,
-    } = {
-      'FileSystemViewSidebarWidth': 'fileSystemViewSplitViewState',
-      'elementsSidebarWidth': 'elementsPanelSplitViewState',
-      'StylesPaneSplitRatio': 'stylesPaneSplitViewState',
-      'heapSnapshotRetainersViewSize': 'heapSnapshotSplitViewState',
+  updateVersionFrom4To5(): void {
+    const settingNames: Record<string, string> = {
+      FileSystemViewSidebarWidth: 'fileSystemViewSplitViewState',
+      elementsSidebarWidth: 'elementsPanelSplitViewState',
+      StylesPaneSplitRatio: 'stylesPaneSplitViewState',
+      heapSnapshotRetainersViewSize: 'heapSnapshotSplitViewState',
       'InspectorView.splitView': 'InspectorView.splitViewState',
       'InspectorView.screencastSplitView': 'InspectorView.screencastSplitViewState',
       'Inspector.drawerSplitView': 'Inspector.drawerSplitViewState',
-      'layerDetailsSplitView': 'layerDetailsSplitViewState',
-      'networkSidebarWidth': 'networkPanelSplitViewState',
-      'sourcesSidebarWidth': 'sourcesPanelSplitViewState',
-      'scriptsPanelNavigatorSidebarWidth': 'sourcesPanelNavigatorSplitViewState',
-      'sourcesPanelSplitSidebarRatio': 'sourcesPanelDebuggerSidebarSplitViewState',
+      layerDetailsSplitView: 'layerDetailsSplitViewState',
+      networkSidebarWidth: 'networkPanelSplitViewState',
+      sourcesSidebarWidth: 'sourcesPanelSplitViewState',
+      scriptsPanelNavigatorSidebarWidth: 'sourcesPanelNavigatorSplitViewState',
+      sourcesPanelSplitSidebarRatio: 'sourcesPanelDebuggerSidebarSplitViewState',
       'timeline-details': 'timelinePanelDetailsSplitViewState',
       'timeline-split': 'timelinePanelRecorsSplitViewState',
       'timeline-view': 'timelinePanelTimelineStackSplitViewState',
-      'auditsSidebarWidth': 'auditsPanelSplitViewState',
-      'layersSidebarWidth': 'layersPanelSplitViewState',
-      'profilesSidebarWidth': 'profilesPanelSplitViewState',
-      'resourcesSidebarWidth': 'resourcesPanelSplitViewState',
+      auditsSidebarWidth: 'auditsPanelSplitViewState',
+      layersSidebarWidth: 'layersPanelSplitViewState',
+      profilesSidebarWidth: 'profilesPanelSplitViewState',
+      resourcesSidebarWidth: 'resourcesPanelSplitViewState',
     };
     const empty = {};
     for (const oldName in settingNames) {
       const newName = settingNames[oldName];
       const oldNameH = oldName + 'H';
 
-      let newValue: {}|null = null;
+      let newValue: object|null = null;
       const oldSetting = Settings.instance().createSetting(oldName, empty);
       if (oldSetting.get() !== empty) {
         newValue = newValue || {};
@@ -713,12 +802,10 @@ export class VersionController {
     }
   }
 
-  private updateVersionFrom5To6(): void {
-    const settingNames: {
-      [x: string]: string,
-    } = {
-      'debuggerSidebarHidden': 'sourcesPanelSplitViewState',
-      'navigatorHidden': 'sourcesPanelNavigatorSplitViewState',
+  updateVersionFrom5To6(): void {
+    const settingNames: Record<string, string> = {
+      debuggerSidebarHidden: 'sourcesPanelSplitViewState',
+      navigatorHidden: 'sourcesPanelNavigatorSplitViewState',
       'WebInspector.Drawer.showOnLoad': 'Inspector.drawerSplitViewState',
     };
 
@@ -753,12 +840,12 @@ export class VersionController {
     }
   }
 
-  private updateVersionFrom6To7(): void {
+  updateVersionFrom6To7(): void {
     const settingNames = {
-      'sourcesPanelNavigatorSplitViewState': 'sourcesPanelNavigatorSplitViewState',
-      'elementsPanelSplitViewState': 'elementsPanelSplitViewState',
-      'stylesPaneSplitViewState': 'stylesPaneSplitViewState',
-      'sourcesPanelDebuggerSidebarSplitViewState': 'sourcesPanelDebuggerSidebarSplitViewState',
+      sourcesPanelNavigatorSplitViewState: 'sourcesPanelNavigatorSplitViewState',
+      elementsPanelSplitViewState: 'elementsPanelSplitViewState',
+      stylesPaneSplitViewState: 'stylesPaneSplitViewState',
+      sourcesPanelDebuggerSidebarSplitViewState: 'sourcesPanelDebuggerSidebarSplitViewState',
     };
 
     const empty = {};
@@ -770,20 +857,20 @@ export class VersionController {
         continue;
       }
       // Zero out saved percentage sizes, and they will be restored to defaults.
-      if (value.vertical && value.vertical.size && value.vertical.size < 1) {
+      if (value.vertical?.size && value.vertical.size < 1) {
         value.vertical.size = 0;
       }
-      if (value.horizontal && value.horizontal.size && value.horizontal.size < 1) {
+      if (value.horizontal?.size && value.horizontal.size < 1) {
         value.horizontal.size = 0;
       }
       setting.set(value);
     }
   }
 
-  private updateVersionFrom7To8(): void {
+  updateVersionFrom7To8(): void {
   }
 
-  private updateVersionFrom8To9(): void {
+  updateVersionFrom8To9(): void {
     const settingNames = ['skipStackFramesPattern', 'workspaceFolderExcludePattern'];
 
     for (let i = 0; i < settingNames.length; ++i) {
@@ -804,7 +891,7 @@ export class VersionController {
     }
   }
 
-  private updateVersionFrom9To10(): void {
+  updateVersionFrom9To10(): void {
     // This one is localStorage specific, which is fine.
     if (!window.localStorage) {
       return;
@@ -816,7 +903,7 @@ export class VersionController {
     }
   }
 
-  private updateVersionFrom10To11(): void {
+  updateVersionFrom10To11(): void {
     const oldSettingName = 'customDevicePresets';
     const newSettingName = 'customEmulatedDeviceList';
     const oldSetting = Settings.instance().createSetting<unknown>(oldSettingName, undefined);
@@ -827,11 +914,8 @@ export class VersionController {
     const newList = [];
     for (let i = 0; i < list.length; ++i) {
       const value = list[i];
-      const device: {
-        // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        [x: string]: any,
-      } = {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const device: Record<string, any> = {};
       device['title'] = value['title'];
       device['type'] = 'unknown';
       device['user-agent'] = value['userAgent'];
@@ -857,28 +941,26 @@ export class VersionController {
     removeSetting(oldSetting);
   }
 
-  private updateVersionFrom11To12(): void {
+  updateVersionFrom11To12(): void {
     this.migrateSettingsFromLocalStorage();
   }
 
-  private updateVersionFrom12To13(): void {
+  updateVersionFrom12To13(): void {
     this.migrateSettingsFromLocalStorage();
     removeSetting(Settings.instance().createSetting('timelineOverviewMode', ''));
   }
 
-  private updateVersionFrom13To14(): void {
-    const defaultValue = {'throughput': -1, 'latency': 0};
+  updateVersionFrom13To14(): void {
+    const defaultValue = {throughput: -1, latency: 0};
     Settings.instance().createSetting('networkConditions', defaultValue).set(defaultValue);
   }
 
-  private updateVersionFrom14To15(): void {
+  updateVersionFrom14To15(): void {
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setting = Settings.instance().createLocalSetting<any>('workspaceExcludedFolders', {});
     const oldValue = setting.get();
-    const newValue: {
-      [x: string]: string[],
-    } = {};
+    const newValue: Record<string, string[]> = {};
     for (const fileSystemPath in oldValue) {
       newValue[fileSystemPath] = [];
       for (const entry of oldValue[fileSystemPath]) {
@@ -888,7 +970,7 @@ export class VersionController {
     setting.set(newValue);
   }
 
-  private updateVersionFrom15To16(): void {
+  updateVersionFrom15To16(): void {
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setting = Settings.instance().createSetting<any>('InspectorView.panelOrder', {});
@@ -899,7 +981,7 @@ export class VersionController {
     setting.set(tabOrders);
   }
 
-  private updateVersionFrom16To17(): void {
+  updateVersionFrom16To17(): void {
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setting = Settings.instance().createSetting<any>('networkConditionsCustomProfiles', []);
@@ -919,14 +1001,12 @@ export class VersionController {
     setting.set(newValue);
   }
 
-  private updateVersionFrom17To18(): void {
+  updateVersionFrom17To18(): void {
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setting = Settings.instance().createLocalSetting<any>('workspaceExcludedFolders', {});
     const oldValue = setting.get();
-    const newValue: {
-      [x: string]: string,
-    } = {};
+    const newValue: Record<string, string> = {};
     for (const oldKey in oldValue) {
       let newKey = oldKey.replace(/\\/g, '/');
       if (!newKey.startsWith('file://')) {
@@ -941,7 +1021,7 @@ export class VersionController {
     setting.set(newValue);
   }
 
-  private updateVersionFrom18To19(): void {
+  updateVersionFrom18To19(): void {
     const defaultColumns = {status: true, type: true, initiator: true, size: true, time: true};
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -950,11 +1030,9 @@ export class VersionController {
     visibleColumns.name = true;
     visibleColumns.timeline = true;
 
-    const configs: {
-      [x: string]: {
-        visible: number,
-      },
-    } = {};
+    const configs: Record<string, {
+      visible: number,
+    }> = {};
     for (const columnId in visibleColumns) {
       if (!visibleColumns.hasOwnProperty(columnId)) {
         continue;
@@ -966,24 +1044,22 @@ export class VersionController {
     removeSetting(visibleColumnSettings);
   }
 
-  private updateVersionFrom19To20(): void {
+  updateVersionFrom19To20(): void {
     const oldSetting = Settings.instance().createSetting('InspectorView.panelOrder', {});
     const newSetting = Settings.instance().createSetting('panel-tabOrder', {});
     newSetting.set(oldSetting.get());
     removeSetting(oldSetting);
   }
 
-  private updateVersionFrom20To21(): void {
+  updateVersionFrom20To21(): void {
     const networkColumns = Settings.instance().createSetting('networkLogColumns', {});
-    const columns = (networkColumns.get() as {
-      [x: string]: string,
-    });
+    const columns = (networkColumns.get() as Record<string, string>);
     delete columns['timeline'];
     delete columns['waterfall'];
     networkColumns.set(columns);
   }
 
-  private updateVersionFrom21To22(): void {
+  updateVersionFrom21To22(): void {
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const breakpointsSetting = Settings.instance().createLocalSetting<any>('breakpoints', []);
@@ -995,18 +1071,18 @@ export class VersionController {
     breakpointsSetting.set(breakpoints);
   }
 
-  private updateVersionFrom22To23(): void {
+  updateVersionFrom22To23(): void {
     // This update is no-op.
   }
 
-  private updateVersionFrom23To24(): void {
+  updateVersionFrom23To24(): void {
     const oldSetting = Settings.instance().createSetting('searchInContentScripts', false);
     const newSetting = Settings.instance().createSetting('searchInAnonymousAndContentScripts', false);
     newSetting.set(oldSetting.get());
     removeSetting(oldSetting);
   }
 
-  private updateVersionFrom24To25(): void {
+  updateVersionFrom24To25(): void {
     const defaultColumns = {status: true, type: true, initiator: true, size: true, time: true};
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1016,7 +1092,7 @@ export class VersionController {
     networkLogColumnsSetting.set(columns);
   }
 
-  private updateVersionFrom25To26(): void {
+  updateVersionFrom25To26(): void {
     const oldSetting = Settings.instance().createSetting('messageURLFilters', {});
     const urls = Object.keys(oldSetting.get());
     const textFilter = urls.map(url => `-url:${url}`).join(' ');
@@ -1030,7 +1106,7 @@ export class VersionController {
     removeSetting(oldSetting);
   }
 
-  private updateVersionFrom26To27(): void {
+  updateVersionFrom26To27(): void {
     function renameKeyInObjectSetting(settingName: string, from: string, to: string): void {
       // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1056,14 +1132,14 @@ export class VersionController {
     renameInStringSetting('panel-selectedTab', 'audits2', 'audits');
   }
 
-  private updateVersionFrom27To28(): void {
+  updateVersionFrom27To28(): void {
     const setting = Settings.instance().createSetting('uiTheme', 'systemPreferred');
     if (setting.get() === 'default') {
       setting.set('systemPreferred');
     }
   }
 
-  private updateVersionFrom28To29(): void {
+  updateVersionFrom28To29(): void {
     function renameKeyInObjectSetting(settingName: string, from: string, to: string): void {
       // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1089,7 +1165,7 @@ export class VersionController {
     renameInStringSetting('panel-selectedTab', 'audits', 'lighthouse');
   }
 
-  private updateVersionFrom29To30(): void {
+  updateVersionFrom29To30(): void {
     // Create new location agnostic setting
     const closeableTabSetting = Settings.instance().createSetting('closeableTabs', {});
 
@@ -1108,7 +1184,7 @@ export class VersionController {
     removeSetting(drawerCloseableTabSetting);
   }
 
-  private updateVersionFrom30To31(): void {
+  updateVersionFrom30To31(): void {
     // Remove recorder_recordings setting that was used for storing recordings
     // by an old recorder experiment.
     const recordingsSetting = Settings.instance().createSetting('recorder_recordings', []);
@@ -1201,6 +1277,175 @@ export class VersionController {
     Settings.instance().createSetting('showThirdPartyIssues', true).set(true);
   }
 
+  updateVersionFrom36To37(): void {
+    const updateStorage = (storage: SettingsStorage): void => {
+      for (const key of storage.keys()) {
+        const normalizedKey = Settings.normalizeSettingName(key);
+        if (normalizedKey !== key) {
+          const value = storage.get(key);
+          removeSetting({name: key, storage});
+          storage.set(normalizedKey, value);
+        }
+      }
+    };
+    updateStorage(Settings.instance().globalStorage);
+    updateStorage(Settings.instance().syncedStorage);
+    updateStorage(Settings.instance().localStorage);
+
+    for (const key of Settings.instance().globalStorage.keys()) {
+      if ((key.startsWith('data-grid-') && key.endsWith('-column-weights')) || key.endsWith('-tab-order') ||
+          key === 'views-location-override' || key === 'closeable-tabs') {
+        const setting = Settings.instance().createSetting(key, {});
+        setting.set(Platform.StringUtilities.toKebabCaseKeys(setting.get()));
+      }
+      if (key.endsWith('-selected-tab')) {
+        const setting = Settings.instance().createSetting(key, '');
+        setting.set(Platform.StringUtilities.toKebabCase(setting.get()));
+      }
+    }
+  }
+
+  updateVersionFrom37To38(): void {
+    const getConsoleInsightsEnabledSetting = (): Setting<boolean>|undefined => {
+      try {
+        return moduleSetting('console-insights-enabled') as Setting<boolean>;
+      } catch {
+        return;
+      }
+    };
+
+    const consoleInsightsEnabled = getConsoleInsightsEnabledSetting();
+    const onboardingFinished = Settings.instance().createLocalSetting('console-insights-onboarding-finished', false);
+
+    if (consoleInsightsEnabled && consoleInsightsEnabled.get() === true && onboardingFinished.get() === false) {
+      consoleInsightsEnabled.set(false);
+    }
+    if (consoleInsightsEnabled && consoleInsightsEnabled.get() === false) {
+      onboardingFinished.set(false);
+    }
+  }
+
+  updateVersionFrom38To39(): void {
+    const PREFERRED_NETWORK_COND = 'preferred-network-condition';
+    // crrev.com/c/5582013 renamed "Slow 3G" to "3G" and "Fast 3G" => "Slow 4G".
+    // Any users with the old values need to have them moved to avoid breaking DevTools.
+    // Note: we load the raw value via the globalStorage here because
+    // `createSetting` creates if it is not present, and we do not want that;
+    // we only want to update existing, old values.
+    const setting = Settings.instance().globalStorage.get(PREFERRED_NETWORK_COND);
+    if (!setting) {
+      return;
+    }
+    try {
+      const networkSetting = JSON.parse(setting) as unknown as {
+        // Can't use SDK type here as it creates a common<>sdk circular
+        // dep. This type is not exhaustive but contains the fields we
+        // need.
+        title: string,
+        i18nTitleKey?: string,
+      };
+      if (networkSetting.title === 'Slow 3G') {
+        networkSetting.title = '3G';
+        networkSetting.i18nTitleKey = '3G';
+        Settings.instance().globalStorage.set(PREFERRED_NETWORK_COND, JSON.stringify(networkSetting));
+      } else if (networkSetting.title === 'Fast 3G') {
+        networkSetting.title = 'Slow 4G';
+        networkSetting.i18nTitleKey = 'Slow 4G';
+        Settings.instance().globalStorage.set(PREFERRED_NETWORK_COND, JSON.stringify(networkSetting));
+      }
+    } catch {
+      // If parsing the setting threw, it's in some invalid state, so remove it.
+      Settings.instance().globalStorage.remove(PREFERRED_NETWORK_COND);
+    }
+  }
+
+  /**
+   * There are two related migrations here for handling network throttling persistence:
+   * 1. Go through all user custom throttling conditions and add a `key` property.
+   * 2. If the user has a 'preferred-network-condition' setting, take the value
+   *    of that and set the right key for the new 'active-network-condition-key'
+   *    setting. Then, remove the now-obsolete 'preferred-network-condition'
+   *    setting.
+   */
+  updateVersionFrom39To40(): void {
+    const hasCustomNetworkConditionsSetting = (): boolean => {
+      try {
+        // this will error if it does not exist
+        moduleSetting('custom-network-conditions');
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (hasCustomNetworkConditionsSetting()) {
+      /**
+       * We added keys to custom network throttling conditions in M140, so we
+       * need to go through any existing profiles the user has and add the key to
+       * them.
+       * We can't use the SDK.NetworkManager.Condition here as it would be a
+       * circular dependency. All that matters is that these conditions are
+       * objects, and we need to set the right key on each one. The actual keys &
+       * values in the object are not important.
+       */
+      const conditionsSetting = moduleSetting('custom-network-conditions') as Setting<Array<{key?: string}>>;
+      const customConditions = conditionsSetting.get();
+      if (customConditions?.length > 0) {
+        customConditions.forEach((condition, i) => {
+          // This could be run multiple times, make sure that we don't override any
+          // existing keys.
+          if (condition.key) {
+            return;
+          }
+          // The format of this key is important: see
+          // SDK.NetworkManager.UserDefinedThrottlingConditionKey
+          condition.key = `USER_CUSTOM_SETTING_${i + 1}`;
+        });
+        conditionsSetting.set(customConditions);
+      }
+    }
+
+    // Additionally, we need to make sure we persist the right throttling for
+    // users who have a preferred-network-condition set.
+    const PREFERRED_NETWORK_COND_SETTING = 'preferred-network-condition';
+    // We shipped a change to how we persist network throttling conditions and
+    // added a `key` property rather than rely on any user visible string which
+    // is more likely to change. This migration step tries to update the
+    // setting for users, or removes it if we fail, so they start fresh next
+    // time they load DevTools.
+    const setting = Settings.instance().globalStorage.get(PREFERRED_NETWORK_COND_SETTING);
+    if (!setting) {
+      return;
+    }
+    // The keys here are the UI Strings as of July 2025 (shipped in M139).
+    // This migration shipped in M140. The values are the values of the
+    // `PredefinedThrottlingConditionKey` in SDK.NetworkManager.
+    const UI_STRING_TO_NEW_KEY = {
+      'Fast 4G': 'SPEED_FAST_4G',
+      'Slow 4G': 'SPEED_SLOW_4G',
+      '3G': 'SPEED_3G',
+      'No throttling': 'NO_THROTTLING',
+      Offline: 'OFFLINE'
+    };
+    try {
+      const networkSetting = JSON.parse(setting) as unknown as {
+        // Can't use SDK type here as it creates a common<>sdk circular
+        // dep. We only rely on the i18nTitleKey.
+        i18nTitleKey?: string,
+      };
+      if (networkSetting.i18nTitleKey && UI_STRING_TO_NEW_KEY.hasOwnProperty(networkSetting.i18nTitleKey)) {
+        const key = UI_STRING_TO_NEW_KEY[networkSetting.i18nTitleKey as keyof typeof UI_STRING_TO_NEW_KEY];
+
+        // The second argument is the default value, so it's important that we
+        // set this to the default, and then update it to the new key.
+        const newSetting = Settings.instance().createSetting('active-network-condition-key', 'NO_THROTTLING');
+        newSetting.set(key);
+      }
+    } finally {
+      // This setting is now not used, so we can remove it.
+      Settings.instance().globalStorage.remove(PREFERRED_NETWORK_COND_SETTING);
+    }
+  }
+
   /*
    * Any new migration should be added before this comment.
    *
@@ -1249,17 +1494,16 @@ export class VersionController {
 }
 
 export const enum SettingStorageType {
-  /**
-   * Synced storage persists settings with the active Chrome profile but also
-   * syncs the settings across devices via Chrome Sync.
-   */
-  Synced = 'Synced',
-  /** Global storage persists settings with the active Chrome profile */
-  Global = 'Global',
-  /** Uses Window.localStorage */
-  Local = 'Local',
-  /** Session storage dies when DevTools window closes */
-  Session = 'Session',
+  /** Persists with the active Chrome profile but also syncs the settings across devices via Chrome Sync. */
+  SYNCED = 'Synced',
+  /** Persists with the active Chrome profile, but not synchronized to other devices.
+   * The default SettingStorageType of createSetting(). */
+  GLOBAL = 'Global',
+  /** Uses Window.localStorage. Not recommended, legacy. */
+  LOCAL = 'Local',
+  /** Session storage dies when DevTools window closes. Useful for atypical conditions that should be reverted when the
+   * user is done with their task. (eg Emulation modes, Debug overlays). These are also not carried into/out of incognito */
+  SESSION = 'Session',
 }
 
 export function moduleSetting(settingName: string): Setting<unknown> {
@@ -1272,16 +1516,15 @@ export function settingForTest(settingName: string): Setting<unknown> {
 
 export {
   getLocalizedSettingsCategory,
-  getRegisteredSettings,
   maybeRemoveSettingExtension,
-  registerSettingExtension,
   RegExpSettingItem,
+  registerSettingExtension,
+  registerSettingsForTest,
+  resetSettings,
   SettingCategory,
   SettingExtensionOption,
   SettingRegistration,
   SettingType,
-  registerSettingsForTest,
-  resetSettings,
 };
 
 export interface Serializer<I, O> {

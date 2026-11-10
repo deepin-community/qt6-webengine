@@ -34,6 +34,6 @@ jumbo_component("prediction") {
     "//base",
     "//third_party/one_euro_filter",
     "//ui/base:features",
-    "//ui/gfx/geometry:geometry",
+    "//ui/gfx/geometry",
   ]
 }

@@ -6,10 +6,10 @@
 #define UI_VIEWS_CONTROLS_BUTTON_CHECKBOX_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "cc/paint/paint_flags.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/metadata/view_factory.h"
@@ -48,13 +48,16 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   void SetCheckedIconImageColor(SkColor color);
 
   // LabelButton:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::ImageSkia GetImage(ButtonState for_state) const override;
   std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const override;
+  std::unique_ptr<ActionViewInterface> GetActionViewInterface() override;
 
  protected:
   // Bitmask constants for GetIconImageColor.
   enum IconState { CHECKED = 0b1, ENABLED = 0b10 };
+
+  // Button:
+  void UpdateAccessibleCheckedState() override;
 
   // LabelButton:
   void OnThemeChanged() override;
@@ -83,10 +86,26 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   ui::NativeTheme::Part GetThemePart() const override;
   void GetExtraParams(ui::NativeTheme::ExtraParams* params) const override;
 
+  void SetAndUpdateAccessibleDefaultActionVerb();
+
   // True if the checkbox is checked.
   bool checked_ = false;
 
-  absl::optional<SkColor> checked_icon_image_color_;
+  std::optional<SkColor> checked_icon_image_color_;
+};
+
+class VIEWS_EXPORT CheckboxActionViewInterface
+    : public LabelButtonActionViewInterface {
+ public:
+  explicit CheckboxActionViewInterface(Checkbox* action_view);
+  ~CheckboxActionViewInterface() override = default;
+
+  // LabelButtonActionViewInterface:
+  void ActionItemChangedImpl(actions::ActionItem* action_item) override;
+  void OnViewChangedImpl(actions::ActionItem* action_item) override;
+
+ private:
+  raw_ptr<Checkbox> action_view_;
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, Checkbox, LabelButton)

@@ -52,6 +52,7 @@ class RangeInputType final : public InputType, public InputTypeView {
   InputTypeView* CreateView() override;
   ValueMode GetValueMode() const override;
   void CountUsage() override;
+  void DidRecalcStyle(const StyleRecalcChange) override;
   double ValueAsDouble() const override;
   void SetValueAsDouble(double,
                         TextFieldEventBehavior,
@@ -61,6 +62,7 @@ class RangeInputType final : public InputType, public InputTypeView {
   void HandleMouseDownEvent(MouseEvent&) override;
   void HandleKeydownEvent(KeyboardEvent&) override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) const override;
+  void AdjustStyle(ComputedStyleBuilder&) override;
   void CreateShadowSubtree() override;
   Decimal ParseToNumber(const String&, const Decimal&) const override;
   String Serialize(const Decimal&) const override;
@@ -68,6 +70,7 @@ class RangeInputType final : public InputType, public InputTypeView {
   void SanitizeValueInResponseToMinOrMaxAttributeChange() override;
   void StepAttributeChanged() override;
   void WarnIfValueIsInvalid(const String&) const override;
+  String ValueNotEqualText(const Decimal& value) const override;
   String RangeOverflowText(const Decimal& maxmum) const override;
   String RangeUnderflowText(const Decimal& minimum) const override;
   String RangeInvalidText(const Decimal& minimum,
@@ -75,7 +78,7 @@ class RangeInputType final : public InputType, public InputTypeView {
   void DidSetValue(const String&, bool value_changed) override;
   String SanitizeValue(const String& proposed_value) const override;
   bool ShouldRespectListAttribute() override;
-  void DisabledAttributeChanged() override;
+  void DisabledAttributeChanged(DisabledChangedReason) override;
   void ListAttributeTargetChanged() override;
   Decimal FindClosestTickMarkValue(const Decimal&) override;
 
@@ -84,7 +87,7 @@ class RangeInputType final : public InputType, public InputTypeView {
   void UpdateTickMarkValues();
 
   // InputTypeView function:
-  ControlPart AutoAppearance() const override;
+  AppearanceValue AutoAppearance() const override;
   void UpdateView() override;
   void ValueAttributeChanged() override;
   bool IsDraggedSlider() const override;

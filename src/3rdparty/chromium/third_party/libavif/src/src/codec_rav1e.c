@@ -88,19 +88,30 @@ static avifResult rav1eCodecEncodeImage(avifCodec * codec,
     RaFrame * rav1eFrame = NULL;
 
     if (!codec->internal->rav1eContext) {
-        if (codec->csOptions->count > 0) {
-            // None are currently supported!
-            return AVIF_RESULT_INVALID_CODEC_SPECIFIC_OPTION;
-        }
-
         const avifBool supports400 = rav1eSupports400();
         RaPixelRange rav1eRange;
         if (alpha) {
+            // AV1-AVIF specification, Section 4 "Auxiliary Image Items and Sequences":
+            //   The color_range field in the Sequence Header OBU shall be set to 1.
             rav1eRange = RA_PIXEL_RANGE_FULL;
+
+            // AV1-AVIF specification, Section 4 "Auxiliary Image Items and Sequences":
+            //   The mono_chrome field in the Sequence Header OBU shall be set to 1.
+            // Some encoders do not support 4:0:0 and encode alpha as 4:2:0 so it is not always respected.
             codec->internal->chromaSampling = supports400 ? RA_CHROMA_SAMPLING_CS400 : RA_CHROMA_SAMPLING_CS420;
             codec->internal->yShift = 1;
+
+            // CICP (CP/TC/MC) does not apply to the alpha auxiliary image.
+            // Use Unspecified (2) colour primaries, transfer characteristics, and matrix coefficients below.
         } else {
+            // AV1-ISOBMFF specification, Section 2.3.4:
+            //   The value of full_range_flag in the 'colr' box SHALL match the color_range
+            //   flag in the Sequence Header OBU.
             rav1eRange = (image->yuvRange == AVIF_RANGE_FULL) ? RA_PIXEL_RANGE_FULL : RA_PIXEL_RANGE_LIMITED;
+
+            // AV1-AVIF specification, Section 2.2.1. "AV1 Item Configuration Property":
+            //   The values of the fields in the AV1CodecConfigurationBox shall match those
+            //   of the Sequence Header OBU in the AV1 Image Item Data.
             codec->internal->yShift = 0;
             switch (image->yuvFormat) {
                 case AVIF_PIXEL_FORMAT_YUV444:
@@ -182,11 +193,24 @@ static avifResult rav1eCodecEncodeImage(avifCodec * codec,
                 goto cleanup;
             }
         }
+        for (uint32_t i = 0; i < codec->csOptions->count; ++i) {
+            avifCodecSpecificOption * entry = &codec->csOptions->entries[i];
+            if (rav1e_config_parse(rav1eConfig, entry->key, entry->value) < 0) {
+                avifDiagnosticsPrintf(codec->diag, "Invalid value for %s: %s.", entry->key, entry->value);
+                result = AVIF_RESULT_INVALID_CODEC_SPECIFIC_OPTION;
+                goto cleanup;
+            }
+        }
 
+        // Section 2.3.4 of AV1-ISOBMFF says 'colr' with 'nclx' should be present and shall match CICP
+        // values in the Sequence Header OBU, unless the latter has 2/2/2 (Unspecified).
+        // So set CICP values to 2/2/2 (Unspecified) in the Sequence Header OBU for simplicity.
+        // It may also save 3 bytes since the AV1 encoder may set color_description_present_flag to 0
+        // (see Section 5.5.2 "Color config syntax" of the AV1 specification).
         rav1e_config_set_color_description(rav1eConfig,
-                                           (RaMatrixCoefficients)image->matrixCoefficients,
-                                           (RaColorPrimaries)image->colorPrimaries,
-                                           (RaTransferCharacteristics)image->transferCharacteristics);
+                                           RA_MATRIX_COEFFICIENTS_UNSPECIFIED,
+                                           RA_COLOR_PRIMARIES_UNSPECIFIED,
+                                           RA_TRANSFER_CHARACTERISTICS_UNSPECIFIED);
 
         codec->internal->rav1eContext = rav1e_context_new(rav1eConfig);
         if (!codec->internal->rav1eContext) {

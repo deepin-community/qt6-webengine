@@ -48,16 +48,22 @@
 #include "third_party/blink/renderer/core/events/text_event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_label_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace blink {
 
@@ -98,8 +104,10 @@ WebString WebElement::GetIdAttribute() const {
 }
 
 bool WebElement::HasHTMLTagName(const WebString& tag_name) const {
-  const Element* element = ConstUnwrap<Element>();
-  return element->IsHTMLWithTagName(String(tag_name));
+  const auto* html_element =
+      blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
+  return html_element &&
+         html_element->localName() == String(tag_name).LowerASCII();
 }
 
 bool WebElement::HasAttribute(const WebString& attr_name) const {
@@ -124,19 +132,19 @@ WebString WebElement::TextContentAbridged(const unsigned int max_length) const {
 }
 
 WebString WebElement::InnerHTML() const {
-  return ConstUnwrap<Element>()->innerHTML();
+  return ConstUnwrap<Element>()->GetInnerHTMLString();
 }
 
-bool WebElement::IsContentEditable() const {
+void WebElement::Focus() {
+  return Unwrap<Element>()->Focus();
+}
+
+bool WebElement::WritingSuggestions() const {
   const auto* html_element =
       blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
-  if (!html_element) {
-    return false;
-  }
-  ContentEditableType normalized_value =
-      html_element->contentEditableNormalized();
-  return normalized_value == ContentEditableType::kContentEditable ||
-         normalized_value == ContentEditableType::kPlaintextOnly;
+  return html_element &&
+         !EqualIgnoringASCIICase(html_element->writingSuggestions(),
+                                 keywords::kFalse);
 }
 
 bool WebElement::ContainsFrameSelection() const {
@@ -169,6 +177,37 @@ WebString WebElement::SelectedText() const {
                         .Build());
 }
 
+void WebElement::SelectText(bool select_all) {
+  auto* element = Unwrap<Element>();
+  LocalFrame* frame = element->GetDocument().GetFrame();
+  if (!frame) {
+    return;
+  }
+
+  // Makes sure the selection is inside `element`: if `select_all`, selects
+  // all inside `element`; otherwise, selects an empty range at the end.
+  if (auto* text_control_element =
+          blink::DynamicTo<TextControlElement>(element)) {
+    if (select_all) {
+      text_control_element->select();
+    } else {
+      text_control_element->Focus(FocusParams(SelectionBehaviorOnFocus::kNone,
+                                              mojom::blink::FocusType::kScript,
+                                              nullptr, FocusOptions::Create()));
+      text_control_element->setSelectionStart(std::numeric_limits<int>::max());
+    }
+  } else {
+    Position base = FirstPositionInOrBeforeNode(*element);
+    Position extent = LastPositionInOrAfterNode(*element);
+    if (!select_all) {
+      base = extent;
+    }
+    frame->Selection().SetSelection(
+        SelectionInDOMTree::Builder().SetBaseAndExtent(base, extent).Build(),
+        SetSelectionOptions());
+  }
+}
+
 void WebElement::PasteText(const WebString& text, bool replace_all) {
   if (!IsEditable()) {
     return;
@@ -185,29 +224,7 @@ void WebElement::PasteText(const WebString& text, bool replace_all) {
   };
 
   if (replace_all || !ContainsFrameSelection()) {
-    // Makes sure the selection is inside `element`: if `replace_all`, selects
-    // all inside `element`; otherwise, selects an empty range at the end.
-    if (auto* text_control_element =
-            blink::DynamicTo<TextControlElement>(element)) {
-      if (replace_all) {
-        text_control_element->select();
-      } else {
-        text_control_element->Focus(FocusParams(
-            SelectionBehaviorOnFocus::kNone, mojom::blink::FocusType::kScript,
-            nullptr, FocusOptions::Create()));
-        text_control_element->setSelectionStart(
-            std::numeric_limits<int>::max());
-      }
-    } else {
-      Position base = FirstPositionInOrBeforeNode(*element);
-      Position extent = LastPositionInOrAfterNode(*element);
-      if (!replace_all) {
-        base = extent;
-      }
-      frame->Selection().SetSelection(
-          SelectionInDOMTree::Builder().SetBaseAndExtent(base, extent).Build(),
-          SetSelectionOptions());
-    }
+    SelectText(replace_all);
     // JavaScript handlers may have destroyed the frame or moved the selection.
     if (is_destroyed(*frame) || !ContainsFrameSelection()) {
       return;
@@ -246,7 +263,7 @@ void WebElement::PasteText(const WebString& text, bool replace_all) {
                                           /*should_smart_replace=*/true));
 }
 
-WebVector<WebLabelElement> WebElement::Labels() const {
+std::vector<WebLabelElement> WebElement::Labels() const {
   auto* html_element = blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
   if (!html_element)
     return {};
@@ -254,7 +271,7 @@ WebVector<WebLabelElement> WebElement::Labels() const {
       const_cast<HTMLElement*>(html_element)->labels();
   if (!html_labels)
     return {};
-  Vector<WebLabelElement> labels;
+  std::vector<WebLabelElement> labels;
   for (unsigned i = 0; i < html_labels->length(); i++) {
     if (auto* label_element =
             blink::DynamicTo<HTMLLabelElement>(html_labels->item(i))) {
@@ -297,6 +314,32 @@ gfx::Rect WebElement::BoundsInWidget() const {
   return ConstUnwrap<Element>()->BoundsInWidget();
 }
 
+gfx::Rect WebElement::VisibleBoundsInWidget() const {
+  const Element* element = ConstUnwrap<Element>();
+  LocalFrame* frame = element->GetDocument().GetFrame();
+  if (!frame || !frame->View()) {
+    return gfx::Rect();
+  }
+
+  gfx::Rect bounds_in_local_root =
+      element->VisibleBoundsRespectingClipsInLocalRoot();
+
+  if (!frame->IsOutermostMainFrame()) {
+    return bounds_in_local_root;
+  }
+
+  // In the outermost main frame the widget includes the viewport transform
+  // (i.e. pinch-zoom). VisibleBoundsRespectingClipsInLocalRoot should already
+  // have clipped to the visual viewport (but then transforms back into local
+  // root space).
+  VisualViewport& visual_viewport =
+      element->GetDocument().GetPage()->GetVisualViewport();
+  gfx::Rect bounds_in_viewport =
+      visual_viewport.RootFrameToViewport(bounds_in_local_root);
+  bounds_in_viewport.Intersect(gfx::Rect(visual_viewport.Size()));
+  return bounds_in_viewport;
+}
+
 SkBitmap WebElement::ImageContents() {
   Image* image = GetImage();
   if (!image)
@@ -335,6 +378,47 @@ gfx::Size WebElement::GetScrollSize() const {
   return gfx::Size(element->scrollWidth(), element->scrollHeight());
 }
 
+gfx::Vector2dF WebElement::GetScrollOffset() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+  return gfx::Vector2dF(element->scrollLeft(), element->scrollTop());
+}
+
+bool WebElement::SetScrollOffset(const gfx::Vector2dF& offset) {
+  Element* element = Unwrap<Element>();
+  return element->SetScrollOffset(offset);
+}
+
+bool WebElement::HasScrollBehaviorSmooth() const {
+  return GetScrollingBox()->StyleRef().GetScrollBehavior() ==
+         mojom::blink::ScrollBehavior::kSmooth;
+}
+
+bool WebElement::IsUserScrollableX() const {
+  LayoutBox* box = GetScrollingBox();
+  if (!box) {
+    return false;
+  }
+
+  return box->HasScrollableOverflowX();
+}
+
+bool WebElement::IsUserScrollableY() const {
+  LayoutBox* box = GetScrollingBox();
+  if (!box) {
+    return false;
+  }
+
+  return box->HasScrollableOverflowY();
+}
+
+float WebElement::GetEffectiveZoom() const {
+  const Element* element = ConstUnwrap<Element>();
+  if (const auto* layout_object = element->GetLayoutObject()) {
+    return layout_object->StyleRef().EffectiveZoom();
+  }
+  return 1.0f;
+}
+
 WebString WebElement::GetComputedValue(const WebString& property_name) {
   if (IsNull())
     return WebString();
@@ -368,6 +452,18 @@ Image* WebElement::GetImage() {
   if (IsNull())
     return nullptr;
   return Unwrap<Element>()->ImageContents();
+}
+
+LayoutBox* WebElement::GetScrollingBox() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+
+  // The viewport is a special case as it is scrolled by the layout view, rather
+  // than body or html elements.
+  if (element == element->GetDocument().scrollingElement()) {
+    return element->GetDocument().GetLayoutView();
+  }
+
+  return blink::DynamicTo<LayoutBox>(element->GetLayoutObject());
 }
 
 }  // namespace blink

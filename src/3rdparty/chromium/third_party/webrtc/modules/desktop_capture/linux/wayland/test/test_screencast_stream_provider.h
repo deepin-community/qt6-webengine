@@ -12,11 +12,13 @@
 #define MODULES_DESKTOP_CAPTURE_LINUX_WAYLAND_TEST_TEST_SCREENCAST_STREAM_PROVIDER_H_
 
 #include <pipewire/pipewire.h>
-#include <spa/param/video/format-utils.h>
+#include <spa/param/video/raw.h>
+#include <spa/utils/hook.h>
+
+#include <cstdint>
 
 #include "modules/desktop_capture/linux/wayland/screencast_stream_utils.h"
 #include "modules/desktop_capture/rgba_color.h"
-#include "rtc_base/random.h"
 
 namespace webrtc {
 
@@ -35,6 +37,8 @@ class TestScreenCastStreamProvider {
     virtual ~Observer() = default;
   };
 
+  enum FrameDefect { None, EmptyData, CorruptedData, CorruptedMetadata };
+
   explicit TestScreenCastStreamProvider(Observer* observer,
                                         uint32_t width,
                                         uint32_t height);
@@ -42,7 +46,7 @@ class TestScreenCastStreamProvider {
 
   uint32_t PipeWireNodeId();
 
-  void RecordFrame(RgbaColor rgba_color);
+  void RecordFrame(RgbaColor rgba_color, FrameDefect frame_defect = None);
   void StartStreaming();
   void StopStreaming();
 

@@ -17,10 +17,11 @@ import "services/network/public/mojom/network_types.mojom";
 import "services/network/public/mojom/http_cache_backend_file_operations.mojom";
 import "services/network/public/mojom/ip_endpoint.mojom";
 import "services/network/public/mojom/transferable_socket.mojom";
+import "url/mojom/url.mojom";
 
 // Maps to net::RuleBasedHostResolverProc::Rule::ResolverType.
 //
-// TODO(https://crbug.com/1298106) Deduplicate this enum's definition.
+// TODO(crbug.com/40822747) Deduplicate this enum's definition.
 enum ResolverType {
   kResolverTypeFail,
   kResolverTypeFailTimeout,
@@ -151,15 +152,6 @@ interface NetworkServiceTest {
       CertVerifyResult verify_result,
       int32 rv) => ();
 
-  // Toggles requiring CT for testing
-  enum RequireCT {
-    DEFAULT = 0,
-    REQUIRE = 1,
-  };
-
-  [Sync]
-  SetRequireCT(RequireCT required) => ();
-
   // Set the global transport security state preloaded static data source to
   // the unittest_default source, with the reporting URIs rewritten to use
   // |reporting_port|.  If |reporting_port| is 0, the source will be reset to
@@ -262,4 +254,18 @@ interface NetworkServiceTest {
   // Only relevant on ChromeOS and Linux.
   [Sync]
   AllowsGSSAPILibraryLoad() => (bool allow_gssapi_library_load);
+
+  // Disable exclusive locking of the cookie database for testing.
+  // TODO(crbug.com/377940976): Remove this once the background sequence runner
+  // can be fully drained of tasks during network context shutdown.
+  [EnableIf=is_win]
+  DisableExclusiveCookieDatabaseLockingForTesting() => ();
+
+  // Returns true if the HappyEyeballs V3 is enabled for testing.
+  IsHappyEyeballsV3Enabled() => (bool is_happy_eyeballs_v3_enabled);
+
+  // Returns true if the network service has raw headers access for the given
+  // process ID and URL.
+  [Sync]
+  HasRawHeadersAccess(uint32 process_id, url.mojom.Url url) => (bool result);
 };

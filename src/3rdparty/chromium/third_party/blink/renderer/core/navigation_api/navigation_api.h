@@ -44,17 +44,20 @@ class CORE_EXPORT NavigationApi final : public EventTarget {
   explicit NavigationApi(LocalDOMWindow*);
   ~NavigationApi() final = default;
 
-  void InitializeForNewWindow(HistoryItem& current,
-                              WebFrameLoadType,
-                              CommitReason,
-                              NavigationApi* previous,
-                              const WebVector<WebHistoryItem>& back_entries,
-                              const WebVector<WebHistoryItem>& forward_entries,
-                              HistoryItem* previous_entry);
+  void InitializeForNewWindow(
+      HistoryItem& current,
+      WebFrameLoadType,
+      CommitReason,
+      NavigationApi* previous,
+      const std::vector<WebHistoryItem>& back_entries,
+      const std::vector<WebHistoryItem>& forward_entries,
+      HistoryItem* previous_entry);
   void UpdateForNavigation(HistoryItem&, WebFrameLoadType);
   void SetEntriesForRestore(
       const mojom::blink::NavigationApiHistoryEntryArraysPtr&,
       mojom::blink::NavigationApiEntryRestoreReason);
+
+  void UpdateCurrentEntryForTesting(HistoryItem& item);
 
   // The entries indicated by |keys| have been removed from the session history
   // in the browser process and should be disposed. In many cases, this won't
@@ -125,6 +128,8 @@ class CORE_EXPORT NavigationApi final : public EventTarget {
                          mojom::blink::TraverseCancelledReason reason);
 
   int GetIndexFor(NavigationHistoryEntry*);
+  NavigationHistoryEntry* GetExistingEntryFor(const String& key,
+                                              const String& id);
 
   // EventTarget overrides:
   const AtomicString& InterfaceName() const final;
@@ -141,11 +146,9 @@ class CORE_EXPORT NavigationApi final : public EventTarget {
       const mojom::blink::NavigationApiHistoryEntryPtr&);
   void PopulateKeySet();
   void UpdateActivation(HistoryItem* previous_entry, WebFrameLoadType);
-  void AbortOngoingNavigation(ScriptState*);
+  void AbortOngoingNavigation(ScriptState*, CancelNavigationReason);
   void DidFinishOngoingNavigation();
   void DidFailOngoingNavigation(ScriptValue);
-  NavigationHistoryEntry* GetExistingEntryFor(const String& key,
-                                              const String& id);
 
   NavigationResult* PerformNonTraverseNavigation(
       ScriptState*,

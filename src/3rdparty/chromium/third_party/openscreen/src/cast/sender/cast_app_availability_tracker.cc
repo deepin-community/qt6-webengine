@@ -43,7 +43,7 @@ void CastAppAvailabilityTracker::UnregisterSource(
 
   for (const std::string& app_id : it->second.app_ids()) {
     auto count_it = registration_count_by_app_id_.find(app_id);
-    OSP_DCHECK(count_it != registration_count_by_app_id_.end());
+    OSP_CHECK(count_it != registration_count_by_app_id_.end());
     if (--(count_it->second) == 0) {
       registration_count_by_app_id_.erase(count_it);
     }
@@ -146,7 +146,7 @@ std::vector<std::string> CastAppAvailabilityTracker::GetAvailableReceivers(
     const CastMediaSource& source) const {
   std::vector<std::string> receiver_ids;
   // For each receiver, check if there is at least one available app in
-  // |source|.
+  // `source`.
   for (const auto& availabilities : app_availabilities_) {
     for (const std::string& app_id : source.app_ids()) {
       const auto& availabilities_map = availabilities.second;

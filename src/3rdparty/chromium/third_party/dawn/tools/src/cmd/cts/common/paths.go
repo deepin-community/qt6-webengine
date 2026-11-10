@@ -28,10 +28,10 @@
 package common
 
 import (
-	"os"
 	"path/filepath"
 
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
 )
 
 const (
@@ -47,16 +47,18 @@ const (
 	// slow_tests.txt file.
 	RelativeSlowExpectationsPath = "webgpu-cts/slow_tests.txt"
 
-	// RelativeTestListPath is the dawn-root relative path to the
-	// test_list.txt file.
+	// RelativeTestListPath is the dawn-root relative path to the test_list.txt file.
 	RelativeTestListPath = "third_party/gn/webgpu-cts/test_list.txt"
+
+	// RelativeCTSPath is the dawn-root relative path to the WebGPU CTS directory.
+	RelativeCTSPath = "third_party/webgpu-cts"
 )
 
 // DefaultExpectationsPath returns the default path to the expectations.txt
 // file. Returns an empty string if the file cannot be found.
-func DefaultExpectationsPath() string {
-	path := filepath.Join(fileutils.DawnRoot(), RelativeExpectationsPath)
-	if _, err := os.Stat(path); err != nil {
+func DefaultExpectationsPath(fsReader oswrapper.FilesystemReader) string {
+	path := filepath.Join(fileutils.DawnRoot(fsReader), RelativeExpectationsPath)
+	if _, err := fsReader.Stat(path); err != nil {
 		return ""
 	}
 	return path
@@ -64,9 +66,9 @@ func DefaultExpectationsPath() string {
 
 // DefaultCompatExpectationsPath returns the default path to the compat-expectations.txt
 // file. Returns an empty string if the file cannot be found.
-func DefaultCompatExpectationsPath() string {
-	path := filepath.Join(fileutils.DawnRoot(), RelativeCompatExpectationsPath)
-	if _, err := os.Stat(path); err != nil {
+func DefaultCompatExpectationsPath(fsReader oswrapper.FilesystemReader) string {
+	path := filepath.Join(fileutils.DawnRoot(fsReader), RelativeCompatExpectationsPath)
+	if _, err := fsReader.Stat(path); err != nil {
 		return ""
 	}
 	return path
@@ -74,28 +76,38 @@ func DefaultCompatExpectationsPath() string {
 
 // DefaultExpectationsPaths returns the default set of expectations files commands
 // will use if no alternative list of files is supplied.
-func DefaultExpectationsPaths() []string {
+func DefaultExpectationsPaths(fsReader oswrapper.FilesystemReader) []string {
 	return []string{
-		DefaultExpectationsPath(),
-		DefaultCompatExpectationsPath(),
+		DefaultExpectationsPath(fsReader),
+		DefaultCompatExpectationsPath(fsReader),
 	}
 }
 
 // DefaultSlowExpectationsPath returns the default path to the slow_tests.txt
 // file. Returns an empty string if the file cannot be found.
-func DefaultSlowExpectationsPath() string {
-	path := filepath.Join(fileutils.DawnRoot(), RelativeSlowExpectationsPath)
-	if _, err := os.Stat(path); err != nil {
+func DefaultSlowExpectationsPath(fsReader oswrapper.FilesystemReader) string {
+	path := filepath.Join(fileutils.DawnRoot(fsReader), RelativeSlowExpectationsPath)
+	if _, err := fsReader.Stat(path); err != nil {
 		return ""
 	}
 	return path
 }
 
-// DefaultTestListPath returns the default path to the test_list.txt
-// file. Returns an empty string if the file cannot be found.
-func DefaultTestListPath() string {
-	path := filepath.Join(fileutils.DawnRoot(), RelativeTestListPath)
-	if _, err := os.Stat(path); err != nil {
+// DefaultTestListPath returns the default path to the test_list.txt file.
+// Returns an empty string if the file cannot be found.
+func DefaultTestListPath(fsReader oswrapper.FilesystemReader) string {
+	path := filepath.Join(fileutils.DawnRoot(fsReader), RelativeTestListPath)
+	if _, err := fsReader.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+// DefaultCTSPath returns the default path to the WenGPU CTS directory.
+// Returns an empty string if the file cannot be found.
+func DefaultCTSPath(fsReader oswrapper.FilesystemReader) string {
+	path := filepath.Join(fileutils.DawnRoot(fsReader), RelativeCTSPath)
+	if _, err := fsReader.Stat(path); err != nil {
 		return ""
 	}
 	return path

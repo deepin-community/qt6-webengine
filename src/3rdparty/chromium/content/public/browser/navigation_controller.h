@@ -49,7 +49,6 @@ class BackForwardCache;
 class BrowserContext;
 class NavigationEntry;
 class RenderFrameHost;
-class WebContents;
 class NavigationHandle;
 struct OpenURLParams;
 
@@ -76,6 +75,8 @@ class NavigationController {
  public:
   using DeletionPredicate =
       base::RepeatingCallback<bool(content::NavigationEntry* entry)>;
+  using WeakNavigationHandleVector =
+      std::vector<base::WeakPtr<NavigationHandle>>;
 
   // Load type used in LoadURLParams.
   //
@@ -93,8 +94,13 @@ class NavigationController {
     // Loads a 'data:' scheme URL with specified base URL and a history entry
     // URL. This is only safe to be used for browser-initiated data: URL
     // navigations, since it shows arbitrary content as if it comes from
-    // |virtual_url_for_data_url|.
-    LOAD_TYPE_DATA
+    // |virtual_url_for_special_cases|.
+    LOAD_TYPE_DATA,
+
+#if BUILDFLAG(IS_ANDROID)
+    // Load a pdf page. Used on Android only.
+    LOAD_TYPE_PDF_ANDROID
+#endif
 
     // Adding new LoadURLType? Also update LoadUrlParams.java static constants.
   };
@@ -193,9 +199,9 @@ class NavigationController {
     // Note the default value in constructor below.
     ui::PageTransition transition_type = ui::PAGE_TRANSITION_LINK;
 
-    // The browser-global FrameTreeNode ID for the frame to navigate, or
-    // RenderFrameHost::kNoFrameTreeNodeId for the main frame.
-    int frame_tree_node_id = RenderFrameHost::kNoFrameTreeNodeId;
+    // The browser-global FrameTreeNode ID for the frame to navigate, or the
+    // default-constructed invalid value to indicate the main frame.
+    FrameTreeNodeId frame_tree_node_id;
 
     // Referrer for this load. Empty if none.
     Referrer referrer;
@@ -224,9 +230,9 @@ class NavigationController {
     // for pages loaded via data URLs.
     GURL base_url_for_data_url;
 
-    // Used in LOAD_TYPE_DATA loads only. URL displayed to the user for
-    // data loads.
-    GURL virtual_url_for_data_url;
+    // Used in LOAD_TYPE_DATA and LOAD_TYPE_PDF_ANDROID loads only. URL
+    // displayed to the user for data or pdf loads.
+    GURL virtual_url_for_special_cases;
 
 #if BUILDFLAG(IS_ANDROID)
     // Used in LOAD_TYPE_DATA loads only. The real data URI is represented
@@ -327,20 +333,28 @@ class NavigationController {
     // this is used in web platform tests to guarantee that each test starts in
     // a fresh BrowsingInstance.
     bool force_new_browsing_instance = false;
+
+    // Indicates this navigation should use a new compositor. This is used by
+    // web tests to ensure that input state is fully reset between tests. This
+    // should only be set on the main frame.
+    bool force_new_compositor = false;
+
+    // True if the initiator explicitly asked for opener relationships to be
+    // preserved, via rel="opener".
+    bool has_rel_opener = false;
+
+    // True if the navigation should not be upgraded to HTTPS. This should only
+    // be set in very specific circumstances like navigations to captive portal
+    // login URLs which may be broken by HTTPS Upgrades due to the portal's
+    // unconventional handling of HTTPS URLs.
+    bool force_no_https_upgrade = false;
   };
 
   // Disables checking for a repost and prompting the user. This is used during
   // testing.
   CONTENT_EXPORT static void DisablePromptOnRepost();
 
-  virtual ~NavigationController() {}
-
-  // Returns the web contents associated with this controller. It can never be
-  // nullptr.
-  //
-  // TODO(crbug.com/1225205): Remove this. It is a layering violation as it is
-  // implemented in renderer_host/ which cannot depend on WebContents.
-  virtual WebContents* DeprecatedGetWebContents() = 0;
+  virtual ~NavigationController() = default;
 
   // Get the browser context for this controller. It can never be nullptr.
   virtual BrowserContext* GetBrowserContext() = 0;
@@ -391,6 +405,7 @@ class NavigationController {
   // associated with the NavigationController is already initialized, as a
   // FrameTree will always start with the initial NavigationEntry.
   virtual NavigationEntry* GetLastCommittedEntry() = 0;
+  virtual const NavigationEntry* GetLastCommittedEntry() const = 0;
 
   // Returns the index of the last committed entry.
   virtual int GetLastCommittedEntryIndex() = 0;
@@ -469,10 +484,29 @@ class NavigationController {
   //
   // Returns the handle to the navigation for the error page, which may be null
   // if the navigation is immediately canceled.
+  //
+  // TODO(crbug.com/406729265) Restrict this function to only be usable with
+  // main frame interstitial navigations. For loading an error page in any other
+  // scenario, prefer |NavigationController::NavigateFrameToErrorPage()|.
   virtual base::WeakPtr<NavigationHandle> LoadPostCommitErrorPage(
       RenderFrameHost* render_frame_host,
       const GURL& url,
       const std::string& error_page_html) = 0;
+
+  // Navigates directly to an error page in response to an event on the last
+  // committed page, with |error_page_html| as the contents and |url| as the
+  // URL. Permanently replaces the current session history item for that frame
+  // with a new one reflecting the error page navigation. The error navigation
+  // is not "sticky", meaning that if the frame is reloaded, it will attempt to
+  // load |url| normally.
+  //
+  // You should almost always prefer this function to
+  // |LoadPostCommitErrorPage()|, which only temporarily replaces the
+  // NavigationEntry. See |NavigationController::LoadPostCommitErrorPage()| for
+  // more details on this temporary replacement.
+  virtual void NavigateFrameToErrorPage(RenderFrameHost* render_frame_host,
+                                        const GURL& url,
+                                        const std::string& error_page_html) = 0;
 
   // Renavigation --------------------------------------------------------------
 
@@ -480,13 +514,24 @@ class NavigationController {
   virtual bool CanGoBack() = 0;
   virtual bool CanGoForward() = 0;
   virtual bool CanGoToOffset(int offset) = 0;
-  // `CanGoBack`/`CanGoForward` are preconditions for these respective methods.
-  virtual void GoBack() = 0;
-  virtual void GoForward() = 0;
+
+  // Returns a vector of weak pointers to the NavigationHandles created for this
+  // navigation. There may be multiple NavigationHandles if more than one frame
+  // needs to navigate, or there may be none if the navigation is immediately
+  // canceled. Keep in mind that the NavigationHandles may not immediately start
+  // (e.g., if a beforeunload handler must run) and may be silently deleted if
+  // they are canceled before starting (e.g., subframe traverses canceled by the
+  // navigation API). `CanGoBack`/`CanGoForward` are preconditions for these
+  // respective methods.
+  // TODO(crbug.com/417756996): In cases where the navigation is canceled before
+  // starting, there isn't currently a notification option in the public API.
+  // Existing code polls for this but an API would make this more ergonomic.
+  virtual WeakNavigationHandleVector GoBack() = 0;
+  virtual WeakNavigationHandleVector GoForward() = 0;
 
   // Navigates to the specified absolute index. Should only be used for
   // browser-initiated navigations.
-  virtual void GoToIndex(int index) = 0;
+  virtual WeakNavigationHandleVector GoToIndex(int index) = 0;
 
   // Navigates to the specified offset from the "current entry". Does nothing if
   // the offset is out of bounds.
@@ -558,29 +603,10 @@ class NavigationController {
   virtual void CopyStateFrom(NavigationController* source,
                              bool needs_reload) = 0;
 
-  // A variant of CopyStateFrom. Removes all entries from this except the last
-  // committed entry, and inserts all entries from |source| before and including
-  // its last committed entry. For example:
-  // source: A B *C* D
-  // this:   E F *G*
-  // result: A B C *G*
-  // If there is a pending entry after *G* in |this|, it is also preserved.
-  // If |replace_entry| is true, the current entry in |source| is replaced. So
-  // the result above would be A B *G*.
-  // This ignores any pending entry in |source|.  Callers must ensure that
-  // |CanPruneAllButLastCommitted| returns true before calling this, or it will
-  // crash.
-  virtual void CopyStateFromAndPrune(NavigationController* source,
-                                     bool replace_entry) = 0;
-
-  // Returns whether it is safe to call PruneAllButLastCommitted or
-  // CopyStateFromAndPrune.  There must be a last committed entry, and if there
-  // is a pending entry, it must be new and not an existing entry.
+  // Returns whether it is safe to call PruneAllButLastCommitted. There must be
+  // a last committed entry, and if there is a pending entry, it must be new and
+  // not an existing entry.
   //
-  // If there were no last committed entry, the pending entry might not commit,
-  // leaving us with a blank page.  This is unsafe when used with
-  // |CopyStateFromAndPrune|, which would show an existing entry above the blank
-  // page.
   // If there were an existing pending entry, we could not prune the last
   // committed entry, in case it did not commit.  That would leave us with no
   // sensible place to put the pending entry when it did commit, after all other

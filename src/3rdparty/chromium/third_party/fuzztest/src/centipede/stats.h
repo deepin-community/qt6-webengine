@@ -19,60 +19,140 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <memory>
 #include <ostream>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "./centipede/environment.h"
-#include "./centipede/remote_file.h"
+#include "./common/remote_file.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // A set of statistics about the fuzzing progress.
-// Each worker thread has its own Stats object and updates it periodically.
-// The updates must not be frequent for performance reasons.
-// All such objects may be read synchronously by another thread,
-// hence the use of atomics.
-// These objects may also be accessed after all worker threads have joined.
-// TODO(ussuri): Too many atomics now: danger of grabbing stats half-way
-//  through updating in centipede.cc. Replace with a mutex instead.
-struct Stats {
-  std::atomic<uint64_t> timestamp_unix_micros = 0;
+// - Each worker thread has its own `std::atomic<Stats>` object and updates it
+//   periodically. Another special thread reads all such objects periodically
+//   and concurrently to report the current stats to log and/or files on disk.
+// - The updates must not be frequent for performance reasons.
+// - These objects may also be accessed after all worker threads have joined.
 
-  // Performance.
-  std::atomic<uint64_t> fuzz_time_sec = 0;
-  std::atomic<uint64_t> num_executions = 0;
-  std::atomic<uint64_t> num_target_crashes = 0;
+struct StatsMeta {
+  uint64_t timestamp_unix_micros = 0;
 
-  // Coverage.
-  std::atomic<uint64_t> num_covered_pcs = 0;
-  std::atomic<uint64_t> num_8bit_counter_features = 0;
-  std::atomic<uint64_t> num_data_flow_features = 0;
-  std::atomic<uint64_t> num_cmp_features = 0;
-  std::atomic<uint64_t> num_call_stack_features = 0;
-  std::atomic<uint64_t> num_bounded_path_features = 0;
-  std::atomic<uint64_t> num_pc_pair_features = 0;
-  std::atomic<uint64_t> num_user_features = 0;
-  std::atomic<uint64_t> num_unknown_features = 0;
-  std::atomic<uint64_t> num_funcs_in_frontier = 0;
+  // NOTE: Ordering in general won't be applicable to metadata, so define
+  // equality only.
+  friend bool operator==(const StatsMeta &lhs, const StatsMeta &rhs) {
+    return lhs.timestamp_unix_micros == rhs.timestamp_unix_micros;
+  }
+};
 
-  // Corpus & element sizes.
-  std::atomic<uint64_t> active_corpus_size = 0;
-  std::atomic<uint64_t> total_corpus_size = 0;
-  std::atomic<uint64_t> max_corpus_element_size = 0;
-  std::atomic<uint64_t> avg_corpus_element_size = 0;
+struct ExecStats {
+  uint64_t fuzz_time_sec = 0;
+  uint64_t num_executions = 0;
+  uint64_t num_target_crashes = 0;
 
-  // Rusage.
-  std::atomic<uint64_t> engine_rusage_avg_millicores = 0;
-  std::atomic<uint64_t> engine_rusage_cpu_percent = 0;
-  std::atomic<uint64_t> engine_rusage_rss_mb = 0;
-  std::atomic<uint64_t> engine_rusage_vsize_mb = 0;
+  friend bool operator==(const ExecStats &lhs, const ExecStats &rhs) {
+    return lhs.fuzz_time_sec == rhs.fuzz_time_sec &&
+           lhs.num_executions == rhs.num_executions &&
+           lhs.num_target_crashes == rhs.num_target_crashes;
+  }
+};
 
+struct CovStats {
+  uint64_t num_covered_pcs = 0;
+  uint64_t num_8bit_counter_features = 0;
+  uint64_t num_data_flow_features = 0;
+  uint64_t num_cmp_features = 0;
+  uint64_t num_call_stack_features = 0;
+  uint64_t num_bounded_path_features = 0;
+  uint64_t num_pc_pair_features = 0;
+  uint64_t num_user_features = 0;
+  uint64_t num_user0_features = 0;
+  uint64_t num_user1_features = 0;
+  uint64_t num_user2_features = 0;
+  uint64_t num_user3_features = 0;
+  uint64_t num_user4_features = 0;
+  uint64_t num_user5_features = 0;
+  uint64_t num_user6_features = 0;
+  uint64_t num_user7_features = 0;
+  uint64_t num_user8_features = 0;
+  uint64_t num_user9_features = 0;
+  uint64_t num_user10_features = 0;
+  uint64_t num_user11_features = 0;
+  uint64_t num_user12_features = 0;
+  uint64_t num_user13_features = 0;
+  uint64_t num_user14_features = 0;
+  uint64_t num_user15_features = 0;
+  uint64_t num_unknown_features = 0;
+  uint64_t num_funcs_in_frontier = 0;
+
+  friend bool operator==(const CovStats &lhs, const CovStats &rhs) {
+    return lhs.num_covered_pcs == rhs.num_covered_pcs &&
+           lhs.num_8bit_counter_features == rhs.num_8bit_counter_features &&
+           lhs.num_data_flow_features == rhs.num_data_flow_features &&
+           lhs.num_cmp_features == rhs.num_cmp_features &&
+           lhs.num_call_stack_features == rhs.num_call_stack_features &&
+           lhs.num_bounded_path_features == rhs.num_bounded_path_features &&
+           lhs.num_pc_pair_features == rhs.num_pc_pair_features &&
+           lhs.num_user_features == rhs.num_user_features &&
+           lhs.num_user0_features == rhs.num_user0_features &&
+           lhs.num_user1_features == rhs.num_user1_features &&
+           lhs.num_user2_features == rhs.num_user2_features &&
+           lhs.num_user3_features == rhs.num_user3_features &&
+           lhs.num_user4_features == rhs.num_user4_features &&
+           lhs.num_user5_features == rhs.num_user5_features &&
+           lhs.num_user6_features == rhs.num_user6_features &&
+           lhs.num_user7_features == rhs.num_user7_features &&
+           lhs.num_user8_features == rhs.num_user8_features &&
+           lhs.num_user9_features == rhs.num_user9_features &&
+           lhs.num_user10_features == rhs.num_user10_features &&
+           lhs.num_user11_features == rhs.num_user11_features &&
+           lhs.num_user12_features == rhs.num_user12_features &&
+           lhs.num_user13_features == rhs.num_user13_features &&
+           lhs.num_user14_features == rhs.num_user14_features &&
+           lhs.num_user15_features == rhs.num_user15_features &&
+           lhs.num_unknown_features == rhs.num_unknown_features &&
+           lhs.num_funcs_in_frontier == rhs.num_funcs_in_frontier;
+  }
+};
+
+struct CorpusStats {
+  uint64_t active_corpus_size = 0;
+  uint64_t total_corpus_size = 0;
+  uint64_t max_corpus_element_size = 0;
+  uint64_t avg_corpus_element_size = 0;
+
+  friend bool operator==(const CorpusStats &lhs, const CorpusStats &rhs) {
+    return lhs.active_corpus_size == rhs.active_corpus_size &&
+           lhs.total_corpus_size == rhs.total_corpus_size &&
+           lhs.max_corpus_element_size == rhs.max_corpus_element_size &&
+           lhs.avg_corpus_element_size == rhs.avg_corpus_element_size;
+  }
+};
+
+struct RusageStats {
+  uint64_t engine_rusage_avg_millicores = 0;
+  uint64_t engine_rusage_cpu_percent = 0;
+  uint64_t engine_rusage_rss_mb = 0;
+  uint64_t engine_rusage_vsize_mb = 0;
+
+  friend bool operator==(const RusageStats &lhs, const RusageStats &rhs) {
+    return lhs.engine_rusage_avg_millicores ==
+               rhs.engine_rusage_avg_millicores &&
+           lhs.engine_rusage_cpu_percent == rhs.engine_rusage_cpu_percent &&
+           lhs.engine_rusage_rss_mb == rhs.engine_rusage_rss_mb &&
+           lhs.engine_rusage_vsize_mb == rhs.engine_rusage_vsize_mb;
+  }
+};
+
+struct Stats : StatsMeta, ExecStats, CovStats, CorpusStats, RusageStats {
   using Traits = uint32_t;
   enum TraitBits : Traits {
     // The kind of the stat.
@@ -89,7 +169,7 @@ struct Stats {
 
   // Ascribes some properties to each stat. Used in `StatReporter` & subclasses.
   struct FieldInfo {
-    std::atomic<uint64_t> Stats::*field;
+    uint64_t Stats::*field;
     // The machine-readable name of the field. Used in the CSV header.
     std::string_view name;
     // The human-readable description of the field. Used in logging.
@@ -106,18 +186,23 @@ struct Stats {
   // In other words: do not change the names or the order of the old fields
   // without a very good reason.
   static constexpr std::initializer_list<FieldInfo> kFieldInfos = {
+      // Coverage 1.
       {
           &Stats::num_covered_pcs,
           "NumCoveredPcs",
           "Coverage",
           kFuzzStat | kMin | kMax | kAvg,
       },
+
+      // Execution.
       {
           &Stats::num_executions,
           "NumExecs",
           "Number of executions",
           kFuzzStat | kMin | kMax | kAvg,
       },
+
+      // Corpus.
       {
           &Stats::active_corpus_size,
           "ActiveCorpusSize",
@@ -136,18 +221,24 @@ struct Stats {
           "Avg element size",
           kFuzzStat | kMin | kMax | kAvg,
       },
+
+      // Metadata.
       {
           &Stats::timestamp_unix_micros,
           "UnixMicros",
           "Timestamp",
           kTimestamp | kMin | kMax,
       },
+
+      // Execution 2.
       {
           &Stats::fuzz_time_sec,
           "FuzzTimeSec",
           "Fuzz time (sec)",
           kFuzzStat | kMin | kMax | kAvg,
       },
+
+      // Coverage 2.
       {
           &Stats::num_target_crashes,
           "NumProxyCrashes",
@@ -214,6 +305,7 @@ struct Stats {
           "Num funcs in frontier",
           kFuzzStat | kMin | kMax | kAvg,
       },
+
       // Rusage. Each shard of a run is a thread of the same process, but it
       // measures the following metrics for the whole process. That means that
       // all the shards should return more or less the same number for the same
@@ -245,6 +337,105 @@ struct Stats {
           "Engine rusage VSize (MB)",
           kRUsageStat | kMax,
       },
+
+      // Coverage 3. A breakdown of the total in `Stats::num_user_features` by
+      // individual feature types.
+      {
+          &Stats::num_user0_features,
+          "NumUser0Fts",
+          "Num user0 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user1_features,
+          "NumUser1Fts",
+          "Num user1 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user2_features,
+          "NumUser2Fts",
+          "Num user2 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user3_features,
+          "NumUser3Fts",
+          "Num user3 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user4_features,
+          "NumUser4Fts",
+          "Num user4 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user5_features,
+          "NumUser5Fts",
+          "Num user5 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user6_features,
+          "NumUser6Fts",
+          "Num user6 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user7_features,
+          "NumUser7Fts",
+          "Num user7 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user8_features,
+          "NumUser8Fts",
+          "Num user8 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user9_features,
+          "NumUser9Fts",
+          "Num user9 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user10_features,
+          "NumUser10Fts",
+          "Num user10 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user11_features,
+          "NumUser11Fts",
+          "Num user11 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user12_features,
+          "NumUser12Fts",
+          "Num user12 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user13_features,
+          "NumUser13Fts",
+          "Num user13 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user14_features,
+          "NumUser14Fts",
+          "Num user14 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
+      {
+          &Stats::num_user15_features,
+          "NumUser15Fts",
+          "Num user15 features",
+          kFuzzStat | kMin | kMax | kAvg,
+      },
   };
 };
 
@@ -256,8 +447,11 @@ struct Stats {
 // classes by overriding the virtual API.
 class StatsReporter {
  public:
-  StatsReporter(const std::vector<Stats> &stats_vec,
+  StatsReporter(const std::vector<std::atomic<Stats>> &stats_vec,
                 const std::vector<Environment> &env_vec);
+
+  StatsReporter(const StatsReporter &) = default;
+  StatsReporter(StatsReporter &&) noexcept;
 
   virtual ~StatsReporter() = default;
 
@@ -304,7 +498,7 @@ class StatsReporter {
 
  private:
   // Cached external sets of stats and environments to observe.
-  const std::vector<Stats> &stats_vec_;
+  const std::vector<std::atomic<Stats>> &stats_vec_;
   const std::vector<Environment> &env_vec_;
 
   // Maps group names to indices in `env_vec_` / `stats_vec_`. If there is
@@ -317,6 +511,8 @@ class StatsReporter {
   GroupToFlags group_to_flags_;
 };
 
+inline StatsReporter::StatsReporter(StatsReporter &&) noexcept = default;
+
 // Takes a set of `Stats` objects and a corresponding set of `Environment`
 // objects and logs the current `Stats` values to LOG(INFO) on each invocation
 // of `ReportCurrStats()`. If the environments indicate the use of the
@@ -326,6 +522,8 @@ class StatsLogger : public StatsReporter {
  public:
   using StatsReporter::StatsReporter;
   ~StatsLogger() override = default;
+
+  StatsLogger(StatsLogger &&) = default;
 
  private:
   bool ShouldReportThisField(const Stats::FieldInfo &field) override;
@@ -343,17 +541,63 @@ class StatsLogger : public StatsReporter {
 };
 
 // Takes a set of `Stats` objects and a corresponding set of `Environment`
-// objects `env_vec` and writes aggregate metrics of the current `Stats` values
+// objects `env_vec` and appends aggregate metrics of the current `Stats` values
 // to a CSV file on each invocation of `ReportCurrStats()`. If the environments
 // indicate the use of the --experiment flag, the stats for each of the
 // experiments are written to a separate correspondingly named CSV file. The
 // names of each output field are written to the file(s) as a CSV header.
+//
+// When the file already exists (e.g. Centipede runs in a previously populated
+// workdir):
+// - If the current CSV header matches the one in the file, then new CSV lines
+//   will be appended to the file.
+// - If the current CSV header doesn't match the one in the file (e.g. the
+//   Centipede version changed and the set of CSV fields changed with it), then
+//   the existing file will be renamed to `GetBackupFilename(filename)`, and a
+//   new file will be created from scratch.
 class StatsCsvFileAppender : public StatsReporter {
  public:
   using StatsReporter::StatsReporter;
   ~StatsCsvFileAppender() override;
 
+  // Move-only.
+  StatsCsvFileAppender(StatsCsvFileAppender &&) noexcept = default;
+
  private:
+  struct BufferedRemoteFile {
+    RemoteFile *file = nullptr;
+    std::string buffer;
+  };
+
+  // Auxiliary struct that holds a pointer to a `BufferedRemoteFile` and sets
+  // itself to `nullptr` when moved. This is to avoid having to define an
+  // explicit move constructor for `StatsCsvFileAppender` solely to set the
+  // pointer to `nullptr`.
+  class BufferedRemoteFilePtr {
+   public:
+    BufferedRemoteFilePtr(BufferedRemoteFile *absl_nullable file)
+        : file_(file) {}
+    BufferedRemoteFilePtr(BufferedRemoteFilePtr &&other) noexcept
+        : file_(std::exchange(other.file_, nullptr)) {}
+    BufferedRemoteFilePtr &operator=(BufferedRemoteFile *absl_nullable file) {
+      file_ = file;
+      return *this;
+    }
+    bool operator==(BufferedRemoteFile *absl_nullable file) const {
+      return file_ == file;
+    }
+    bool operator!=(BufferedRemoteFile *absl_nullable file) const {
+      return file_ != file;
+    }
+    BufferedRemoteFile *absl_nullable operator->() const { return file_; }
+
+   private:
+    BufferedRemoteFile *absl_nullable file_ = nullptr;
+  };
+
+  using BufferedRemoteFilesMap =
+      absl::flat_hash_map<std::string /*group_name*/, BufferedRemoteFile>;
+
   void PreAnnounceFields(
       std::initializer_list<Stats::FieldInfo> fields) override;
   void SetCurrGroup(const Environment &master_env) override;
@@ -362,16 +606,23 @@ class StatsCsvFileAppender : public StatsReporter {
   void DoneFieldSamplesBatch() override;
   void ReportFlags(const GroupToFlags &group_to_flags) override;
 
+  // Given a filename, should return a backup file filename for it. The default
+  // version appends the current timestamp as UNIX seconds. Intended for tests.
+  virtual std::string GetBackupFilename(const std::string &filename) const;
+
   std::string csv_header_;
-  absl::flat_hash_map<std::string /*group_name*/, RemoteFile *> files_;
-  RemoteFile *curr_file_;
+  std::unique_ptr<BufferedRemoteFilesMap> files_ =
+      std::make_unique<BufferedRemoteFilesMap>();
+  BufferedRemoteFilePtr curr_file_ = nullptr;
   Stats::FieldInfo curr_field_info_;
 };
 
 // Takes a span of Stats objects `stats_vec` and prints a summary of the results
 // to `os`, such that it can be ingested as a reward function by an ML system.
 // To be used with knobs.
-void PrintRewardValues(absl::Span<const Stats> stats_vec, std::ostream& os);
+void PrintRewardValues(absl::Span<const std::atomic<Stats>> stats_vec,
+                       std::ostream &os);
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
+
 #endif  // THIRD_PARTY_CENTIPEDE_STATS_H_

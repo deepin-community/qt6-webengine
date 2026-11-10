@@ -13,13 +13,21 @@
 // limitations under the License.
 
 import m from 'mithril';
+import {classNames} from '../base/classnames';
 
 export interface EmptyStateAttrs {
   // Which material icon to show.
   // Defaults to 'search'.
-  icon?: string;
+  readonly icon?: string;
+
   // Some text to show under the icon. No text shown if omitted.
-  header?: string;
+  readonly title?: string;
+
+  // Additional class name applied to our container.
+  readonly className?: string;
+
+  // Fill the height of the parent container.
+  readonly fillHeight?: boolean;
 }
 
 // Something to show when there's nothing else to show!
@@ -27,16 +35,24 @@ export interface EmptyStateAttrs {
 // some optional content passed as children elements, usually containing common
 // actions for things you might want to do next (e.g. clear a search box).
 export class EmptyState implements m.ClassComponent<EmptyStateAttrs> {
-  view({attrs, children}: m.Vnode<EmptyStateAttrs, this>): void|m.Children {
+  view({attrs, children}: m.Vnode<EmptyStateAttrs, this>): void | m.Children {
     const {
-      icon = 'search',  // Icon defaults to the search symbol
-      header,
+      icon = 'search', // Icon defaults to the search symbol
+      title,
+      className,
+      fillHeight,
     } = attrs;
     return m(
-        '.pf-empty-state',
-        m('i.material-icons', icon),
-        header && m('span.pf-empty-state-header', header),
-        m('div.pf-empty-state-content', children),
+      '.pf-empty-state',
+      {
+        className: classNames(
+          className,
+          fillHeight && 'pf-empty-state--fill-height',
+        ),
+      },
+      m('i.material-icons', icon),
+      title && m('.pf-empty-state__title', title),
+      m('.pf-empty-state__content', children),
     );
   }
 }

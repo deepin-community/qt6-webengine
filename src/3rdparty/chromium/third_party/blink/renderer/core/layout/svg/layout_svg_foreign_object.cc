@@ -6,12 +6,16 @@
 
 #include "third_party/blink/renderer/core/layout/block_node.h"
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
+#include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/transformed_hit_test_location.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/svg/svg_foreign_object_element.h"
 #include "third_party/blink/renderer/core/svg/svg_length_functions.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -71,9 +75,18 @@ AffineTransform LayoutSVGForeignObject::LocalToSVGParentTransform() const {
   return transform;
 }
 
-LayoutPoint LayoutSVGForeignObject::LocationInternal() const {
+PhysicalOffset LayoutSVGForeignObject::PhysicalLocation(
+    const LayoutBox*) const {
   NOT_DESTROYED();
   return overridden_location_;
+}
+
+DeprecatedLayoutPoint LayoutSVGForeignObject::DeprecatedLocationInternal()
+    const {
+  NOT_DESTROYED();
+  DCHECK(!RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled());
+  return DeprecatedLayoutPoint(overridden_location_.left,
+                               overridden_location_.top);
 }
 
 PaintLayerType LayoutSVGForeignObject::LayerTypeRequired() const {
@@ -89,7 +102,8 @@ bool LayoutSVGForeignObject::CreatesNewFormattingContext() const {
   return true;
 }
 
-void LayoutSVGForeignObject::UpdateLayout() {
+SVGLayoutResult LayoutSVGForeignObject::UpdateSVGLayout(
+    const SVGLayoutInfo& layout_info) {
   NOT_DESTROYED();
   DCHECK(NeedsLayout());
 
@@ -109,8 +123,8 @@ void LayoutSVGForeignObject::UpdateLayout() {
   const ComputedStyle& style = StyleRef();
   viewport_.set_origin(
       PointForLengthPair(style.X(), style.Y(), viewport_resolver, style));
-  gfx::Vector2dF size = VectorForLengthPair(
-      style.UsedWidth(), style.UsedHeight(), viewport_resolver, style);
+  gfx::Vector2dF size = VectorForLengthPair(style.Width(), style.Height(),
+                                            viewport_resolver, style);
   // gfx::SizeF() will clamp negative width/height to zero.
   viewport_.set_size(gfx::SizeF(size.x(), size.y()));
 
@@ -118,9 +132,10 @@ void LayoutSVGForeignObject::UpdateLayout() {
   // This is necessary for external/wpt/inert/inert-on-non-html.html.
   // See FullyClipsContents() in fully_clipped_state_stack.cc.
   const float zoom = style.EffectiveZoom();
-  LogicalSize zoomed_size = PhysicalSize(LayoutUnit(viewport_.width() * zoom),
-                                         LayoutUnit(viewport_.height() * zoom))
-                                .ConvertToLogical(style.GetWritingMode());
+  LogicalSize zoomed_size =
+      ToLogicalSize(PhysicalSize(LayoutUnit(viewport_.width() * zoom),
+                                 LayoutUnit(viewport_.height() * zoom)),
+                    style.GetWritingMode());
 
   // Use the zoomed version of the viewport as the location, because we will
   // interpose a transform that "unzooms" the effective zoom to let the children
@@ -132,7 +147,7 @@ void LayoutSVGForeignObject::UpdateLayout() {
   // would pull this information from ComputedStyle - in SVG those properties
   // are ignored for non <svg> elements, so we mimic what happens when
   // specifying them through CSS.
-  overridden_location_ = LayoutPoint(zoomed_location);
+  overridden_location_ = PhysicalOffset::FromPointFFloor(zoomed_location);
 
   ConstraintSpaceBuilder builder(
       style.GetWritingMode(), style.GetWritingDirection(),
@@ -140,12 +155,13 @@ void LayoutSVGForeignObject::UpdateLayout() {
   builder.SetAvailableSize(zoomed_size);
   builder.SetIsFixedInlineSize(true);
   builder.SetIsFixedBlockSize(true);
-  const auto* result = BlockNode(this).Layout(builder.ToConstraintSpace());
+  const auto* content_result =
+      BlockNode(this).Layout(builder.ToConstraintSpace());
 
   // Any propagated sticky-descendants may have invalid sticky-constraints.
   // Clear them now.
   if (const auto* sticky_descendants =
-          result->GetPhysicalFragment().PropagatedStickyDescendants()) {
+          content_result->GetPhysicalFragment().PropagatedStickyDescendants()) {
     for (const auto& sticky_descendant : *sticky_descendants) {
       sticky_descendant->SetStickyConstraints(nullptr);
     }
@@ -154,29 +170,28 @@ void LayoutSVGForeignObject::UpdateLayout() {
   DCHECK(!NeedsLayout() || ChildLayoutBlockedByDisplayLock());
 
   const PhysicalRect frame_rect(PhysicalLocation(), Size());
-  const bool bounds_changed = old_frame_rect != frame_rect;
-  bool update_parent_boundaries = false;
-  if (bounds_changed) {
-    update_parent_boundaries = true;
-  }
-  if (UpdateAfterSvgLayout(bounds_changed)) {
-    update_parent_boundaries = true;
+  bool bounds_changed = old_frame_rect != frame_rect;
+  if (UpdateAfterSVGLayout(layout_info, bounds_changed)) {
+    bounds_changed = true;
   }
 
-  // Notify ancestor about our bounds changing.
-  if (update_parent_boundaries) {
-    LayoutSVGBlock::SetNeedsBoundariesUpdate();
-  }
+  const bool has_viewport_dependence =
+      To<SVGForeignObjectElement>(GetElement())->SelfHasRelativeLengths() ||
+      (transform_uses_reference_box_ &&
+       StyleRef().TransformBox() == ETransformBox::kViewBox);
 
   DCHECK(!needs_transform_update_);
+  return SVGLayoutResult(bounds_changed, has_viewport_dependence);
 }
 
-bool LayoutSVGForeignObject::UpdateAfterSvgLayout(bool bounds_changed) {
+bool LayoutSVGForeignObject::UpdateAfterSVGLayout(
+    const SVGLayoutInfo& layout_info,
+    bool bounds_changed) {
   // Invalidate all resources of this client if our reference box changed.
   if (EverHadLayout() && bounds_changed) {
     SVGResourceInvalidator(*this).InvalidateEffects();
   }
-  return UpdateTransformAfterLayout(bounds_changed);
+  return UpdateTransformAfterLayout(layout_info, bounds_changed);
 }
 
 void LayoutSVGForeignObject::StyleDidChange(StyleDifference diff,
@@ -204,6 +219,19 @@ bool LayoutSVGForeignObject::NodeAtPointFromSVG(
                                             LocalToSVGParentTransform());
   if (!local_location) {
     return false;
+  }
+
+  if (result.GetHitTestRequest().IsHitTestVisualOverflow()) [[unlikely]] {
+    gfx::RectF bounds =
+        SVGLayoutSupport::ApplyFiltersToRect(*this, DecoratedBoundingBox());
+    if (local_location->Intersects(bounds)) {
+      UpdateHitTestResult(result, PhysicalOffset::FromPointFRound(
+                                      local_location->TransformedPoint()));
+      if (result.AddNodeToListBasedTestResult(GetElement(), *local_location) ==
+          kStopHitTesting) {
+        return true;
+      }
+    }
   }
 
   // |local_location| already includes the offset of the <foreignObject>

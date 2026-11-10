@@ -7,15 +7,16 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/component_export.h"
 #include "base/containers/span.h"
 #include "base/dcheck_is_on.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
-#include "base/strings/string_piece.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "sql/database.h"
@@ -135,22 +136,25 @@ class COMPONENT_EXPORT(SQL) Statement {
   void BindInt64(int param_index, int64_t val);
   void BindDouble(int param_index, double val);
   void BindCString(int param_index, const char* val);
-  void BindString(int param_index, base::StringPiece val);
+  void BindString(int param_index, std::string_view val);
 
   // If you need to store (potentially invalid) UTF-16 strings losslessly,
   // store them as BLOBs instead. `BindBlob()` has an overload for this purpose.
-  void BindString16(int param_index, base::StringPiece16 value);
+  void BindString16(int param_index, std::u16string_view value);
+
+  // Binds a blob to the statement.
+  void BindBlob(int param_index, scoped_refptr<base::RefCountedMemory> blob);
+
+  // Convenience overloads for `BindBlob()`.
+  void BindBlob(int param_index, std::string blob);
+  void BindBlob(int param_index, std::u16string blob);
+  void BindBlob(int param_index, std::vector<uint8_t> blob);
   void BindBlob(int param_index, base::span<const uint8_t> value);
 
-  // Overload that makes it easy to pass in std::string values.
-  void BindBlob(int param_index, base::span<const char> value) {
-    BindBlob(param_index, base::as_bytes(base::make_span(value)));
-  }
-
-  // Overload that makes it easy to pass in std::u16string values.
-  void BindBlob(int param_index, base::span<const char16_t> value) {
-    BindBlob(param_index, base::as_bytes(base::make_span(value)));
-  }
+  // Reserves `size` bytes of space for a blob. The actual bytes should be set
+  // via a `StreamingBlobHandle`. This method will assert if `size` is too big
+  // for the database, which by default means > 1GB.
+  void BindBlobForStreaming(int param_index, uint64_t size);
 
   // Conforms with base::Time serialization recommendations.
   //
@@ -162,7 +166,8 @@ class COMPONENT_EXPORT(SQL) Statement {
   // InMillisecondsSinceUnixEpoch(), will require a database migration to be
   // converted to this (recommended) serialization method.
   //
-  // TODO(crbug.com/1195962): Migrate all time serialization to this method, and
+  // TODO(crbug.com/40176243): Migrate all time serialization to this method,
+  // and
   //                          then remove the migration details above.
   void BindTime(int param_index, base::Time time);
 
@@ -172,7 +177,8 @@ class COMPONENT_EXPORT(SQL) Statement {
   // * BindInt64(col, delta.ToInternalValue())
   // * BindInt64(col, delta.InMicroseconds())
   //
-  // TODO(crbug.com/1402777): Migrate all TimeDelta serialization to this method
+  // TODO(crbug.com/40251269): Migrate all TimeDelta serialization to this
+  // method
   //                          and remove the migration details above.
   void BindTimeDelta(int param_index, base::TimeDelta delta);
 
@@ -201,6 +207,19 @@ class COMPONENT_EXPORT(SQL) Statement {
   // `ColumnBlobAsString16()`.
   std::u16string ColumnString16(int column_index);
 
+  // Returns a string view pointing to a buffer containing the string data.
+  //
+  // This can be used to avoid allocating a temporary string when the value is
+  // immediately passed to a function accepting a string view. Otherwise, the
+  // string view's contents should be copied to a caller-owned buffer
+  // immediately. Any method call on the `Statement` may invalidate the string
+  // view.
+  //
+  // The string view will be empty (and may have a null data) if the underlying
+  // string is empty. Code that needs to distinguish between empty strings and
+  // NULL should call `GetColumnType()` before calling `ColumnStringView()`.
+  std::string_view ColumnStringView(int column_index);
+
   // Conforms with base::Time serialization recommendations.
   //
   // This is equivalent to the following snippets, which should be replaced.
@@ -208,7 +227,8 @@ class COMPONENT_EXPORT(SQL) Statement {
   // * base::Time::FromDeltaSinceWindowsEpoch(
   //       base::Microseconds(ColumnInt64(col)))
   //
-  // TODO(crbug.com/1195962): Migrate all time serialization to this method, and
+  // TODO(crbug.com/40176243): Migrate all time serialization to this method,
+  // and
   //                          then remove the migration details above.
   base::Time ColumnTime(int column_index);
 
@@ -217,7 +237,8 @@ class COMPONENT_EXPORT(SQL) Statement {
   // This is equivalent to the following snippets, which should be replaced.
   // * base::TimeDelta::FromInternalValue(ColumnInt64(column_index))
   //
-  // TODO(crbug.com/1402777): Migrate all TimeDelta serialization to this method
+  // TODO(crbug.com/40251269): Migrate all TimeDelta serialization to this
+  // method
   //                          and remove the migration details above.
   base::TimeDelta ColumnTimeDelta(int column_index);
 
@@ -233,7 +254,6 @@ class COMPONENT_EXPORT(SQL) Statement {
 
   bool ColumnBlobAsString(int column_index, std::string* result);
   bool ColumnBlobAsString16(int column_index, std::u16string* result);
-  bool ColumnBlobAsVector(int column_index, std::vector<char>* result);
   bool ColumnBlobAsVector(int column_index, std::vector<uint8_t>* result);
 
   // Diagnostics --------------------------------------------------------------
@@ -277,6 +297,12 @@ class COMPONENT_EXPORT(SQL) Statement {
   // Retrieve and log the count of VM steps required to execute the query.
   void ReportQueryExecutionMetrics() const;
 
+  // Runs some basic sanity checks and frees memory previously associated with
+  // `param_index`, if any. Should be called when a parameter is about to be
+  // bound regardless of its type.
+  void WillBindParameter(int param_index)
+      VALID_CONTEXT_REQUIRED(sequence_checker_);
+
   // The actual sqlite statement. This may be unique to us, or it may be cached
   // by the Database, which is why it's ref-counted. This pointer is
   // guaranteed non-null.
@@ -291,6 +317,8 @@ class COMPONENT_EXPORT(SQL) Statement {
   bool step_called_ GUARDED_BY_CONTEXT(sequence_checker_) = false;
   bool run_called_ GUARDED_BY_CONTEXT(sequence_checker_) = false;
 #endif  // DCHECK_IS_ON()
+
+  std::optional<base::TimeDelta> time_spent_stepping_ = std::nullopt;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/MRx8c8-avx2.c.in
 //   Generator: tools/xngen
@@ -8,13 +9,17 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/igemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_qu8_igemm_minmax_fp32_ukernel_1x8c8__avx2(
@@ -29,7 +34,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x8c8__avx2(
     size_t cn_stride,
     size_t a_offset,
     const uint8_t* zero,
-    const union xnn_qu8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qu8_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -45,6 +50,17 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x8c8__avx2(
   kc = round_up_po2(kc, 8 * sizeof(uint8_t));
   uint8_t* c0 = c;
 
+  const __m256 vscale = _mm256_set1_ps(params->fp32_scalar.scale);
+  // XNN_FORCE_REALIZATION(vscale);
+  const __m256 voutput_max_less_zero_point = _mm256_set1_ps((int32_t) params->fp32_scalar.output_max - (int32_t) params->fp32_scalar.output_zero_point);
+  const __m256i voutput_zero_point = _mm256_set1_epi16(params->fp32_scalar.output_zero_point);
+  const __m256i voutput_min = _mm256_set1_epi8(params->fp32_scalar.output_min);
+  // XNN_FORCE_REALIZATION(voutput_max_less_zero_point);
+  // XNN_FORCE_REALIZATION(voutput_zero_point);
+  // XNN_FORCE_REALIZATION(voutput_min);
+
+  const __m256i vb_zero_point = _mm256_set1_epi16(params->fp32_scalar.kernel_zero_point);
+  XNN_FORCE_REALIZATION(vb_zero_point);
   do {
     const __m128i vbias0x0 = _mm_cvtsi32_si128(((const int*) w)[0]);
     const __m128i vbias0x1 = _mm_cvtsi32_si128(((const int*) w)[1]);
@@ -61,7 +77,6 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x8c8__avx2(
     w = (const int32_t*) w + 8;
 
     size_t p = ks;
-    const __m256i vb_zero_point = _mm256_load_si256((const __m256i*) params->fp32_avx2.kernel_zero_point);
     do {
       const uint8_t* restrict a0 = a[0];
       if XNN_UNPREDICTABLE(a0 != zero) {
@@ -108,22 +123,19 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x8c8__avx2(
 
     __m256 vscaled0x01234567 = _mm256_cvtepi32_ps(vacc0x01234567);
 
-    const __m256 vscale = _mm256_load_ps(params->fp32_avx2.scale);
     vscaled0x01234567 = _mm256_mul_ps(vscaled0x01234567, vscale);
 
-    const __m256 voutput_max_less_zero_point = _mm256_load_ps(params->fp32_avx2.output_max_less_zero_point);
     vscaled0x01234567 = _mm256_min_ps(vscaled0x01234567, voutput_max_less_zero_point);
 
     vacc0x01234567 = _mm256_cvtps_epi32(vscaled0x01234567);
 
-    const __m256i voutput_zero_point = _mm256_load_si256((const __m256i*) params->fp32_avx2.output_zero_point);
     __m256i vacc00x01234567 = _mm256_adds_epi16(_mm256_packs_epi32(vacc0x01234567, vacc0x01234567), voutput_zero_point);
 
     vacc00x01234567 = _mm256_permute4x64_epi64(vacc00x01234567, _MM_SHUFFLE(3, 1, 2, 0));
 
     __m256i vout = _mm256_packus_epi16(vacc00x01234567, vacc00x01234567);
 
-    vout = _mm256_max_epu8(vout, _mm256_load_si256((const __m256i*) params->fp32_avx2.output_min));
+    vout = _mm256_max_epu8(vout, voutput_min);
 
     __m128i vout_lo = _mm256_castsi256_si128(vout);
     __m128i vout_hi = _mm256_extracti128_si256(vout, 1);

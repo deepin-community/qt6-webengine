@@ -18,7 +18,9 @@ class ReadOnlySharedMemoryRegion;
 }
 
 namespace device {
-class Gamepad;
+template <class T>
+class GamepadImpl;
+using Gamepad = GamepadImpl<void>;
 class Gamepads;
 }  // namespace device
 
@@ -53,12 +55,11 @@ class GamepadSharedMemoryReader
                         const device::Gamepad& gamepad) override;
   void GamepadDisconnected(uint32_t index,
                            const device::Gamepad& gamepad) override;
-  void GamepadChanged(device::mojom::blink::GamepadChangesPtr changes) override;
 
   base::ReadOnlySharedMemoryRegion renderer_shared_buffer_region_;
   base::ReadOnlySharedMemoryMapping renderer_shared_buffer_mapping_;
-  raw_ptr<const device::GamepadHardwareBuffer, ExperimentalRenderer>
-      gamepad_hardware_buffer_ = nullptr;
+  raw_ptr<const device::GamepadHardwareBuffer> gamepad_hardware_buffer_ =
+      nullptr;
 
   bool ever_interacted_with_ = false;
 
@@ -66,7 +67,7 @@ class GamepadSharedMemoryReader
                    GamepadSharedMemoryReader>
       receiver_;
   HeapMojoRemote<device::mojom::blink::GamepadMonitor> gamepad_monitor_remote_;
-  raw_ptr<blink::GamepadListener, ExperimentalRenderer> listener_ = nullptr;
+  raw_ptr<blink::GamepadListener> listener_ = nullptr;
 };
 
 }  // namespace blink

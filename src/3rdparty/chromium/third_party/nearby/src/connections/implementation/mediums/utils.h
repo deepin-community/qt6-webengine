@@ -15,10 +15,9 @@
 #ifndef CORE_INTERNAL_MEDIUMS_UTILS_H_
 #define CORE_INTERNAL_MEDIUMS_UTILS_H_
 
-#include <memory>
+#include <cstddef>
 #include <string>
 
-#include "connections/implementation/proto/offline_wire_formats.pb.h"
 #include "internal/platform/byte_array.h"
 
 namespace nearby {
@@ -29,8 +28,8 @@ class Utils {
   static ByteArray GenerateRandomBytes(size_t length);
   static ByteArray Sha256Hash(const ByteArray& source, size_t length);
   static ByteArray Sha256Hash(const std::string& source, size_t length);
-  static location::nearby::connections::LocationHint BuildLocationHint(
-      const std::string& location);
+  static std::string GenerateSalt();
+  static std::string GenerateSalt(size_t length);
 };
 
 }  // namespace connections

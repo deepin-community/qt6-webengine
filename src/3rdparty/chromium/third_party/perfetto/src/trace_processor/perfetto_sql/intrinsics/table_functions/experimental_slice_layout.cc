@@ -16,97 +16,84 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/experimental_slice_layout.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <map>
+#include <memory>
 #include <optional>
+#include <set>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
+#include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "perfetto/ext/base/string_view.h"
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/containers/string_pool.h"
+#include "src/trace_processor/dataframe/specs.h"
+#include "src/trace_processor/perfetto_sql/intrinsics/table_functions/static_table_function.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/tables_py.h"
-#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/slice_tables_py.h"
 
-namespace perfetto {
-namespace trace_processor {
-namespace tables {
-
-ExperimentalSliceLayoutTable::~ExperimentalSliceLayoutTable() = default;
-}
+namespace perfetto::trace_processor {
 
 namespace {
 
 struct GroupInfo {
   GroupInfo(int64_t _start, int64_t _end, uint32_t _max_depth)
-      : start(_start), end(_end), layout_depth(0), max_depth(_max_depth) {}
+      : start(_start), end(_end), max_depth(_max_depth) {}
   int64_t start;
   int64_t end;
-  uint32_t layout_depth;
+  uint32_t layout_depth = 0;
   uint32_t max_depth;
 };
 
-static constexpr uint32_t kFilterTrackIdsColumnIndex =
-    tables::ExperimentalSliceLayoutTable::ColumnIndex::filter_track_ids;
-
 }  // namespace
 
-ExperimentalSliceLayout::ExperimentalSliceLayout(
+ExperimentalSliceLayout::Cursor::Cursor(
     StringPool* string_pool,
-    const tables::SliceTable* table)
+    const tables::SliceTable* table,
+    std::unordered_map<StringPool::Id, std::vector<CachedRow>>* cache)
     : string_pool_(string_pool),
       slice_table_(table),
-      empty_string_id_(string_pool_->InternString("")) {}
-ExperimentalSliceLayout::~ExperimentalSliceLayout() = default;
+      table_(string_pool),
+      cache_(cache) {}
 
-Table::Schema ExperimentalSliceLayout::CreateSchema() {
-  return tables::ExperimentalSliceLayoutTable::ComputeStaticSchema();
-}
+bool ExperimentalSliceLayout::Cursor::Run(
+    const std::vector<SqlValue>& arguments) {
+  PERFETTO_DCHECK(arguments.size() == 1);
+  table_.Clear();
 
-std::string ExperimentalSliceLayout::TableName() {
-  return tables::ExperimentalSliceLayoutTable::Name();
-}
-
-uint32_t ExperimentalSliceLayout::EstimateRowCount() {
-  return slice_table_->row_count();
-}
-
-base::Status ExperimentalSliceLayout::ValidateConstraints(
-    const QueryConstraints& cs) {
-  for (const auto& c : cs.constraints()) {
-    if (c.column == kFilterTrackIdsColumnIndex && sqlite_utils::IsOpEq(c.op)) {
-      return base::OkStatus();
-    }
-  }
-  return base::ErrStatus(
-      "experimental_slice_layout must have filter_track_ids constraint");
-}
-
-base::Status ExperimentalSliceLayout::ComputeTable(
-    const std::vector<Constraint>& cs,
-    const std::vector<Order>&,
-    const BitVector&,
-    std::unique_ptr<Table>& table_return) {
-  std::set<TrackId> selected_tracks;
-  std::string filter_string = "";
-  for (const auto& c : cs) {
-    bool is_filter_track_ids = c.col_idx == kFilterTrackIdsColumnIndex;
-    bool is_equal = c.op == FilterOp::kEq;
-    bool is_string = c.value.type == SqlValue::kString;
-    if (is_filter_track_ids && is_equal && is_string) {
-      filter_string = c.value.AsString();
-      for (base::StringSplitter sp(filter_string, ','); sp.Next();) {
-        std::optional<uint32_t> maybe = base::CStringToUInt32(sp.cur_token());
-        if (maybe) {
-          selected_tracks.insert(TrackId{maybe.value()});
-        }
-      }
-    }
+  if (arguments[0].type != SqlValue::Type::kString) {
+    return OnFailure(base::ErrStatus("invalid input track id list"));
   }
 
-  StringPool::Id filter_id =
-      string_pool_->InternString(base::StringView(filter_string));
+  const char* filter_string = arguments[0].string_value;
+  std::unordered_set<TrackId> selected_tracks;
+  for (base::StringSplitter sp(filter_string, ','); sp.Next();) {
+    std::optional<uint32_t> maybe = base::CStringToUInt32(sp.cur_token());
+    if (maybe) {
+      selected_tracks.insert(TrackId{maybe.value()});
+    }
+  }
 
   // Try and find the table in the cache.
-  auto cache_it = layout_table_cache_.find(filter_id);
-  if (cache_it != layout_table_cache_.end()) {
-    table_return.reset(new Table(cache_it->second->Copy()));
-    return base::OkStatus();
+  StringPool::Id filter_id = string_pool_->InternString(filter_string);
+  auto cache_it = cache_->find(filter_id);
+  if (cache_it != cache_->end()) {
+    for (const auto& row : cache_it->second) {
+      table_.Insert({row.id, row.layout_depth});
+    }
+    return OnSuccess(&table_.dataframe());
   }
 
   // Find all the slices for the tracks we want to filter and create a vector of
@@ -119,17 +106,17 @@ base::Status ExperimentalSliceLayout::ComputeTable(
   }
 
   // Compute the table and add it to the cache for future use.
-  std::unique_ptr<Table> layout_table =
-      ComputeLayoutTable(std::move(rows), filter_id);
-  auto res = layout_table_cache_.emplace(filter_id, std::move(layout_table));
-
-  table_return.reset(new Table(res.first->second->Copy()));
-  return base::OkStatus();
+  auto res = ComputeLayoutTable(rows);
+  for (const auto& row : res) {
+    table_.Insert({row.id, row.layout_depth});
+  }
+  cache_->emplace(filter_id, std::move(res));
+  return OnSuccess(&table_.dataframe());
 }
 
 // Build up a table of slice id -> root slice id by observing each
 // (id, opt_parent_id) pair in order.
-tables::SliceTable::Id ExperimentalSliceLayout::InsertSlice(
+tables::SliceTable::Id ExperimentalSliceLayout::Cursor::InsertSlice(
     std::map<tables::SliceTable::Id, tables::SliceTable::Id>& id_map,
     tables::SliceTable::Id id,
     std::optional<tables::SliceTable::Id> parent_id) {
@@ -137,10 +124,9 @@ tables::SliceTable::Id ExperimentalSliceLayout::InsertSlice(
     tables::SliceTable::Id root_id = id_map[parent_id.value()];
     id_map[id] = root_id;
     return root_id;
-  } else {
-    id_map[id] = id;
-    return id;
   }
+  id_map[id] = id;
+  return id;
 }
 
 // The problem we're trying to solve is this: given a number of tracks each of
@@ -171,18 +157,15 @@ tables::SliceTable::Id ExperimentalSliceLayout::InsertSlice(
 //    all previous stalactite's we've considered.
 // 3. Go though each slice and give it a layout_depth by summing it's
 //    current depth and the root layout_depth of the stalactite it belongs to.
-//
-std::unique_ptr<Table> ExperimentalSliceLayout::ComputeLayoutTable(
-    std::vector<tables::SliceTable::RowNumber> rows,
-    StringPool::Id filter_id) {
+std::vector<ExperimentalSliceLayout::CachedRow>
+ExperimentalSliceLayout::Cursor::ComputeLayoutTable(
+    const std::vector<tables::SliceTable::RowNumber>& rows) {
   std::map<tables::SliceTable::Id, GroupInfo> groups;
   // Map of id -> root_id
   std::map<tables::SliceTable::Id, tables::SliceTable::Id> id_map;
 
   // Step 1:
   // Find the bounding box (start ts, end ts, and max depth) for each group
-  // TODO(lalitm): Update this to use iterator (as this code will be slow after
-  // the event table is implemented)
   for (tables::SliceTable::RowNumber i : rows) {
     auto ref = i.ToRowReference(*slice_table_);
 
@@ -236,10 +219,24 @@ std::unique_ptr<Table> ExperimentalSliceLayout::ComputeLayoutTable(
       }
     }
 
+    uint32_t layout_depth = 0;
+
+    // In a pathological case you can end up stacking up slices forever
+    // triggering n^2 behaviour below. In those cases we want to give
+    // up on trying to find a pretty (height minimizing ) layout and
+    // just find *some* layout. To do that we start looking for
+    // a layout depth below the maximum open group which should
+    // immediately succeed.
+    if (still_open.size() > 500) {
+      for (const auto& open : still_open) {
+        layout_depth =
+            std::max(layout_depth, open->layout_depth + open->max_depth);
+      }
+    }
+
     // Find a start layout depth for this group s.t. our start depth +
     // our max depth will not intersect with the start depth + max depth for
     // any of the open groups:
-    uint32_t layout_depth = 0;
     bool done = false;
     while (!done) {
       done = true;
@@ -268,25 +265,42 @@ std::unique_ptr<Table> ExperimentalSliceLayout::ComputeLayoutTable(
   }
 
   // Step 3: Add the two new columns layout_depth and filter_track_ids:
-  ColumnStorage<uint32_t> layout_depth_column;
-  ColumnStorage<StringPool::Id> filter_column;
-
+  std::vector<CachedRow> cached;
   for (tables::SliceTable::RowNumber i : rows) {
     auto ref = i.ToRowReference(*slice_table_);
 
     // Each slice depth is it's current slice depth + root slice depth of the
     // group:
     uint32_t group_depth = groups.at(id_map[ref.id()]).layout_depth;
-    layout_depth_column.Append(ref.depth() + group_depth);
-    // We must set this to the value we got in the constraint to ensure our
-    // rows are not filtered out:
-    filter_column.Append(filter_id);
+    cached.emplace_back(ExperimentalSliceLayout::CachedRow{
+        ref.id(),
+        ref.depth() + group_depth,
+    });
   }
-
-  return tables::ExperimentalSliceLayoutTable::SelectAndExtendParent(
-      *slice_table_, std::move(rows), std::move(layout_depth_column),
-      std::move(filter_column));
+  return cached;
 }
 
-}  // namespace trace_processor
-}  // namespace perfetto
+ExperimentalSliceLayout::ExperimentalSliceLayout(
+    StringPool* string_pool,
+    const tables::SliceTable* table)
+    : string_pool_(string_pool), slice_table_(table) {}
+ExperimentalSliceLayout::~ExperimentalSliceLayout() = default;
+
+std::unique_ptr<StaticTableFunction::Cursor>
+ExperimentalSliceLayout::MakeCursor() {
+  return std::make_unique<Cursor>(string_pool_, slice_table_, &cache_);
+}
+
+dataframe::DataframeSpec ExperimentalSliceLayout::CreateSpec() {
+  return tables::ExperimentalSliceLayoutTable::kSpec.ToUntypedDataframeSpec();
+}
+
+std::string ExperimentalSliceLayout::TableName() {
+  return "experimental_slice_layout";
+}
+
+uint32_t ExperimentalSliceLayout::GetArgumentCount() const {
+  return 1;
+}
+
+}  // namespace perfetto::trace_processor

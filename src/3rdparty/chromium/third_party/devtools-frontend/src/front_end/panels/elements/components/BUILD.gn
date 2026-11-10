@@ -5,11 +5,11 @@
 import("../../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../../scripts/build/ninja/devtools_module.gni")
 import("../../../../scripts/build/ninja/generate_css.gni")
+import("../../../../scripts/build/typescript/typescript.gni")
 
 generate_css("css_files") {
   sources = [
     "accessibilityTreeNode.css",
-    "adornerSettingsPane.css",
     "computedStyleProperty.css",
     "computedStyleTrace.css",
     "cssHintDetailsView.css",
@@ -18,7 +18,6 @@ generate_css("css_files") {
     "cssVariableValueView.css",
     "elementsBreadcrumbs.css",
     "elementsTreeExpandButton.css",
-    "layoutPane.css",
     "queryContainer.css",
     "stylePropertyEditor.css",
   ]
@@ -28,7 +27,6 @@ devtools_module("components") {
   sources = [
     "AccessibilityTreeNode.ts",
     "AdornerManager.ts",
-    "AdornerSettingsPane.ts",
     "CSSHintDetailsView.ts",
     "CSSPropertyDocsView.ts",
     "CSSPropertyIconResolver.ts",
@@ -40,8 +38,6 @@ devtools_module("components") {
     "ElementsBreadcrumbsUtils.ts",
     "ElementsTreeExpandButton.ts",
     "Helper.ts",
-    "LayoutPane.ts",
-    "LayoutPaneUtils.ts",
     "QueryContainer.ts",
     "StylePropertyEditor.ts",
   ]
@@ -61,7 +57,9 @@ devtools_module("components") {
     "../../../ui/components/survey_link:bundle",
     "../../../ui/components/tree_outline:bundle",
     "../../../ui/legacy:bundle",
-    "../../../ui/lit-html:bundle",
+    "../../../ui/legacy/components/inline_editor:bundle",
+    "../../../ui/lit:bundle",
+    "../../../ui/visual_logging:bundle",
   ]
 }
 
@@ -76,12 +74,40 @@ devtools_entrypoint("bundle") {
   ]
 
   visibility = [
+    ":*",
     "..:*",
-    "../../../../test/unittests/front_end/panels/elements/components",
     "../../../ui/components/docs/*",
     "../../application/components/*",
 
     # TODO : Remove after moving CSSHintDetailView to ui folder
     "../../protocol_monitor/*",
+  ]
+}
+
+ts_library("unittests") {
+  testonly = true
+  sources = [
+    "AccessibilityTreeNode.test.ts",
+    "AdornerManager.test.ts",
+    "CSSHintDetailsView.test.ts",
+    "CSSPropertyDocsView.test.ts",
+    "CSSPropertyIconResolver.test.ts",
+    "CSSQuery.test.ts",
+    "CSSVariableValueView.test.ts",
+    "ComputedStyleProperty.test.ts",
+    "ComputedStyleTrace.test.ts",
+    "ElementsBreadcrumbs.test.ts",
+    "ElementsTreeExpandButton.test.ts",
+    "QueryContainer.test.ts",
+    "StylePropertyEditor.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../../core/sdk:bundle",
+    "../../../testing",
+    "../../../ui/components/node_text:bundle",
+    "../../../ui/components/render_coordinator:bundle",
+    "../../../ui/legacy/components/inline_editor:bundle",
   ]
 }

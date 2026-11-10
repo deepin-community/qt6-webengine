@@ -13,7 +13,6 @@
 #include "base/scoped_observation.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
-#include "base/time/time.h"
 #include "base/timer/wall_clock_timer.h"
 #include "content/common/content_export.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
@@ -52,12 +51,6 @@ class CONTENT_EXPORT ReportSchedulerTimer
     virtual void OnReportingTimeReached(base::Time now,
                                         base::Time timer_desired_run_time) = 0;
 
-    // Called when the connection changes from online to offline. When this
-    // happens the timer is paused which means `OnReportingTimeReached` will not
-    // be called until it gets resumed. Before resuming the timer,
-    // `AdjustOfflineReportTimes` will be called.
-    virtual void OnReportingPaused() {}
-
     // Called when the connection changes from offline to online. May also be
     // called on a connection change if there are no stored reports, see
     // `OnConnectionChanged()`. Running the callback will call `MaybeSet()` with
@@ -86,8 +79,13 @@ class CONTENT_EXPORT ReportSchedulerTimer
   void OnTimerFired();
   void Refresh(base::Time now) VALID_CONTEXT_REQUIRED(sequence_checker_);
 
+  // This method is marked `final` to enable the constructor to call it while
+  // complying with the style guide, which forbids constructors from making
+  // virtual method calls.
+  // https://google.github.io/styleguide/cppguide.html#Doing_Work_in_Constructors
+  //
   // network::NetworkConnectionTracker::NetworkConnectionObserver:
-  void OnConnectionChanged(network::mojom::ConnectionType) override;
+  void OnConnectionChanged(network::mojom::ConnectionType) final;
 
   bool IsOffline() const VALID_CONTEXT_REQUIRED(sequence_checker_);
 

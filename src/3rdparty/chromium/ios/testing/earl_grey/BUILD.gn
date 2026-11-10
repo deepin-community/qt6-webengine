@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/test.gni")
+
 source_set("eg_app_support+eg2") {
   testonly = true
 
@@ -10,7 +12,7 @@ source_set("eg_app_support+eg2") {
     "//build/config/ios:xctest",
     "//ios/third_party/earl_grey2:app_framework+link",
     "//ios/web/common:uikit",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
   ]
 
   sources = [
@@ -29,7 +31,6 @@ source_set("eg_test_support+eg2") {
   testonly = true
 
   sources = [
-    "app_launch_configuration.h",
     "app_launch_manager.h",
     "app_launch_manager.mm",
     "app_launch_manager_app_interface.h",
@@ -53,6 +54,7 @@ source_set("eg_test_support+eg2") {
   ]
 
   deps = [
+    ":launch_configuration",
     "//base",
     "//base/test:test_support",
     "//components/variations",
@@ -60,9 +62,38 @@ source_set("eg_test_support+eg2") {
     "//ios/third_party/earl_grey2:test_lib",
     "//ios/third_party/edo",
     "//ios/web/common",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
     "//ui/display",
   ]
 
   public_deps = [ "//ios/third_party/earl_grey2:test_lib" ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
+}
+
+source_set("launch_configuration") {
+  testonly = true
+  sources = [
+    "app_launch_argument_generator.h",
+    "app_launch_argument_generator.mm",
+    "app_launch_configuration.h",
+  ]
+  deps = [
+    "//base/test:test_support",
+    "//components/variations",
+  ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [ "app_launch_argument_generator_unittest.mm" ]
+  frameworks = [ "Foundation.framework" ]
+  deps = [
+    ":launch_configuration",
+    "//base",
+    "//base/test:test_support",
+    "//testing/gtest",
+  ]
 }

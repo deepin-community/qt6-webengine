@@ -1,272 +1,6 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-function(assertTargets)
-    cmake_parse_arguments(PARSE_ARGV 0 arg
-        "" "" "MODULES;TARGETS"
-    )
-    _qt_internal_validate_all_args_are_parsed(arg)
-
-    foreach(module ${arg_MODULES})
-        if(NOT DEFINED ${module}_SUPPORT)
-            set(${module}_SUPPORT ON PARENT_SCOPE)
-            set(${module}_SUPPORT ON)
-        endif()
-        if(${module}_SUPPORT)
-            foreach(qtTarget ${arg_TARGETS})
-                if(NOT TARGET Qt::${qtTarget})
-                    set(${module}_ERROR "Missing required Qt::${qtTarget}." PARENT_SCOPE)
-                    set(${module}_SUPPORT OFF PARENT_SCOPE)
-                    break()
-                endif()
-            endforeach()
-        endif()
-    endforeach()
-endfunction()
-
-# TODO: this should be idealy in qtbase
-function(add_check_for_support)
-    cmake_parse_arguments(PARSE_ARGV 0 arg
-        "" "" "MODULES;MESSAGE;CONDITION"
-    )
-    _qt_internal_validate_all_args_are_parsed(arg)
-
-    foreach(module ${arg_MODULES})
-        if(NOT DEFINED ${module}_SUPPORT)
-            set(${module}_SUPPORT ON PARENT_SCOPE)
-            set(${module}_SUPPORT ON)
-        endif()
-        if(${module}_SUPPORT)
-            if("x${arg_CONDITION}" STREQUAL "x")
-                set(arg_CONDITION ON)
-            endif()
-            qt_evaluate_config_expression(result ${arg_CONDITION})
-            if(NOT ${result})
-                set(${module}_SUPPORT OFF PARENT_SCOPE)
-                set(${module}_ERROR ${arg_MESSAGE} PARENT_SCOPE)
-            qt_configure_add_report_entry(TYPE WARNING
-                MESSAGE "${module} won't be built. ${arg_MESSAGE}"
-                CONDITION ON
-            )
-            endif()
-        endif()
-    endforeach()
-endfunction()
-
-function(create_cxx_config cmakeTarget arch configFileName)
-    if(NOT QT_SUPERBUILD AND QT_WILL_INSTALL)
-        get_target_property(mocFilePath Qt6::moc IMPORTED_LOCATION)
-    else()
-        if(CMAKE_CROSSCOMPILING)
-            set(mocFilePath "${QT_HOST_PATH}/${INSTALL_LIBEXECDIR}/moc${CMAKE_EXECUTABLE_SUFFIX}")
-        else()
-            set(mocFilePath "${QT_BUILD_DIR}/${INSTALL_LIBEXECDIR}/moc${CMAKE_EXECUTABLE_SUFFIX}")
-        endif()
-    endif()
-    file(GENERATE
-        OUTPUT $<CONFIG>/${arch}/${configFileName}
-        CONTENT "\
-            set(GN_INCLUDES \"$<TARGET_PROPERTY:INCLUDE_DIRECTORIES>\")\n\
-            set(GN_DEFINES \"$<TARGET_PROPERTY:COMPILE_DEFINITIONS>\")\n\
-            set(GN_LINK_OPTIONS \"$<TARGET_PROPERTY:LINK_OPTIONS>\")\n\
-            set(GN_CXX_COMPILE_OPTIONS \"$<TARGET_PROPERTY:COMPILE_OPTIONS>\")\n\
-            set(GN_MOC_PATH \"${mocFilePath}\")"
-#           set(GN_LIBS $<TARGET_PROPERTY:LINK_LIBRARIES>)
-        CONDITION $<COMPILE_LANGUAGE:CXX>
-        TARGET ${cmakeTarget}
-    )
-endfunction()
-
-function(create_static_config cmakeTarget arch configFileName)
-    list(APPEND libs Png Jpeg Harfbuzz Freetype Zlib)
-    foreach(lib IN LISTS libs)
-        string(TOUPPER ${lib} out)
-        set(lib Qt::${lib}Private)
-        list(APPEND contents "set(GN_${out}_INCLUDES \"$<$<STREQUAL:$<TARGET_NAME_IF_EXISTS:${lib}>,${lib}>:$<TARGET_PROPERTY:${lib},INTERFACE_INCLUDE_DIRECTORIES>>\")")
-    endforeach()
-    list(JOIN contents "\n" contents)
-    file(GENERATE
-        OUTPUT $<CONFIG>/${arch}/${configFileName}
-        CONTENT "${contents}"
-    )
-endfunction()
-
-function(create_c_config cmakeTarget arch configFileName)
-    file(GENERATE
-          OUTPUT $<CONFIG>/${arch}/${configFileName}
-          CONTENT "set(GN_C_COMPILE_OPTIONS $<TARGET_PROPERTY:COMPILE_OPTIONS>)"
-          CONDITION $<COMPILE_LANGUAGE:C>
-          TARGET ${cmakeTarget})
-endfunction()
-
-function(create_gn_target_config target configFile)
-    get_target_property(elementList ${target} ELEMENTS)
-    get_target_property(prefix ${target} PREFIX)
-    file(WRITE ${configFile}
-        "set(PREFIX ${prefix})\nset(ELEMENTS ${elementList})\n"
-    )
-    foreach(element IN LISTS elementList)
-         get_target_property(prop ${target} ${prefix}_${element})
-         if(prop)
-             file(APPEND ${configFile} "set(${prefix}_${element} ${prop})\n")
-         endif()
-    endforeach()
-endfunction()
-
-function(add_gn_target target config arch)
-    add_custom_target(${target})
-    list(REMOVE_ITEM ARGN ${target})
-    list(REMOVE_ITEM ARGN ${config})
-    list(REMOVE_ITEM ARGN ${arch})
-    set_target_properties(${target} PROPERTIES
-        ELEMENTS "${ARGN}"
-        PREFIX "GN"
-        CONFIG ${config}
-        ARCH ${arch}
-    )
-endfunction()
-
-function(init_gn_config filePath)
-    include(${filePath})
-    set_directory_properties(PROPERTIES
-        ELEMENTS "${ELEMENTS}"
-        PREFIX "${PREFIX}"
-    )
-    applyToGnTarget(DIRECTORY)
-endfunction()
-
-function(read_gn_config filePath)
-    include(${filePath})
-    applyToGnTarget(DIRECTORY)
-endfunction()
-
-# this runs also in script mode, so we use than DIRECTORY
-macro(applyToGnTarget)
-    set(type ${ARGV0})
-    set(target ${ARGV1})
-    get_property(elementList ${type} ${target} PROPERTY ELEMENTS)
-    get_property(prefix ${type} ${target} PROPERTY PREFIX)
-    foreach(element IN LISTS elementList)
-        if(${prefix}_${element})
-            message(DEBUG "${prefix}_${element} = ${${prefix}_${element}}")
-            set_property(${type} ${target} APPEND PROPERTY ${prefix}_${element} ${${prefix}_${element}})
-        endif()
-    endforeach()
-endmacro()
-
-function(extend_gn_target target)
-    get_target_property(elements ${target} ELEMENTS)
-    cmake_parse_arguments(PARSE_ARGV 1 GN "" "" "CONDITION;${elements}")
-    _qt_internal_validate_all_args_are_parsed(GN)
-
-    if("x${GN_CONDITION}" STREQUAL "x")
-        set(GN_CONDITION ON)
-    endif()
-    qt_evaluate_config_expression(result ${GN_CONDITION})
-    if(${result})
-        message(DEBUG "extend_gn_target(${target} CONDITION ${GN_CONDITION} ...): Evaluated")
-        applyToGnTarget(TARGET ${target})
-    endif()
-endfunction()
-
-function(extend_gn_list outList)
-    cmake_parse_arguments(PARSE_ARGV 1 GN "" "" "ARGS;CONDITION")
-    _qt_internal_validate_all_args_are_parsed(GN)
-
-    if("x${GN_CONDITION}" STREQUAL "x")
-        set(GN_CONDITION ON)
-    endif()
-    qt_evaluate_config_expression(result ${GN_CONDITION})
-    if(${result})
-        set(value "true")
-    else()
-        set(value "false")
-    endif()
-    message(DEBUG "extend_gn_list(${outList} ${GN_ARGS} CONDITION ${GN_CONDITION} ...): Evaluated to ${value}")
-    foreach(gnArg ${GN_ARGS})
-        set(${outList} "${${outList}}" "${gnArg}=${value}")
-    endforeach()
-    set(${outList} "${${outList}}" PARENT_SCOPE)
-endfunction()
-
-function(configure_gn_target sourceDir inFilePath outFilePath)
-    # FIXME: GN_CONFIG
-    set(GN_CONFIG NOTUSED)
-
-    set(path_mode REALPATH)
-    if(APPLE AND QT_ALLOW_SYMLINK_IN_PATHS)
-        set(path_mode ABSOLUTE)
-    endif()
-
-    # GN_SOURCES GN_HEADERS
-    get_property(gnSources DIRECTORY PROPERTY GN_SOURCES)
-    foreach(gnSourceFile ${gnSources})
-        get_filename_component(gnSourcePath ${sourceDir}/${gnSourceFile} ${path_mode})
-        list(APPEND sourceList \"${gnSourcePath}\")
-    endforeach()
-    set(GN_HEADERS ${sourceList})
-    set(GN_SOURCES ${sourceList})
-    list(FILTER GN_HEADERS INCLUDE REGEX "^.+\\.h\"$")
-    list(FILTER GN_SOURCES EXCLUDE REGEX "^.+\\.h\"$")
-
-    # GN_DEFINES
-    get_property(gnDefines DIRECTORY PROPERTY GN_DEFINES)
-    list(REMOVE_DUPLICATES gnDefines)
-    foreach(gnDefine ${gnDefines})
-        list(APPEND GN_ARGS_DEFINES \"-D${gnDefine}\")
-        list(APPEND GN_DEFINES \"${gnDefine}\")
-    endforeach()
-
-    # GN_INCLUDES
-    get_property(gnIncludes DIRECTORY PROPERTY GN_INCLUDES)
-    list(REMOVE_DUPLICATES gnIncludes)
-    foreach(gnInclude ${gnIncludes})
-        get_filename_component(gnInclude ${gnInclude} ${path_mode})
-        list(APPEND GN_ARGS_INCLUDES \"-I${gnInclude}\")
-        list(APPEND GN_INCLUDE_DIRS \"${gnInclude}\")
-    endforeach()
-
-    # MOC
-    get_property(mocFilePath DIRECTORY PROPERTY GN_MOC_PATH)
-    set(GN_ARGS_MOC_BIN \"${mocFilePath}\")
-
-    # GN_CFLAGS_CC
-    get_property(gnCxxCompileOptions DIRECTORY PROPERTY GN_CXX_COMPILE_OPTIONS)
-    foreach(gnCxxCompileOption ${gnCxxCompileOptions})
-        list(APPEND GN_CFLAGS_CC \"${gnCxxCompileOption}\")
-    endforeach()
-    list(REMOVE_DUPLICATES GN_CFLAGS_CC)
-
-    # GN_CFLAGS_C
-    get_property(gnCCompileOptions DIRECTORY PROPERTY GN_C_COMPILE_OPTIONS)
-    foreach(gnCCompileOption ${gnCCompileOptions})
-        list(APPEND GN_CFLAGS_C \"${gnCCompileOption}\")
-    endforeach()
-    list(REMOVE_DUPLICATES GN_CFLAGS_C)
-
-    # GN_SOURCE_ROOT
-    get_filename_component(GN_SOURCE_ROOT "${sourceDir}" ${path_mode})
-
-    if(APPLE) # this runs in scrpit mode without qt-cmake so on MACOS here
-        recoverFrameworkBuild(GN_INCLUDE_DIRS GN_CFLAGS_C)
-    endif()
-
-    # Static setup
-    set(libs PNG JPEG FREETYPE HARFBUZZ ZLIB)
-    foreach(lib ${libs})
-        get_property(staticIncludes DIRECTORY PROPERTY GN_${lib}_INCLUDES)
-        foreach(is ${staticIncludes})
-            list(APPEND GN_${lib}_INCLUDES \"${is}\")
-        endforeach()
-    endforeach()
-    foreach(item GN_HEADERS GN_SOURCES GN_ARGS_DEFINES GN_DEFINES GN_ARGS_INCLUDES
-        GN_INCLUDE_DIRS GN_CFLAGS_CC GN_CFLAGS_C GN_PNG_INCLUDES GN_JPEG_INCLUDES
-        GN_FREETYPE_INCLUDES GN_HARFBUZZ_INCLUDES GN_ZLIB_INCLUDES)
-        string(REPLACE ";" ",\n  " ${item} "${${item}}")
-    endforeach()
-    configure_file(${inFilePath} ${outFilePath} @ONLY)
-endfunction()
-
 # we had no qtsync on headers during configure, so take current interface from expression
 # generator from our WebEngieCore target so we can apply it for our buildGn target
 function(resolve_target_includes resultVar target)
@@ -296,20 +30,6 @@ function(get_install_config result)
     endif()
 endfunction()
 
-# we need to pass -F or -iframework in case of frameworks builds, which gn treats as
-# compiler flag and cmake as include dir, so swap it.
-function(recoverFrameworkBuild includeDirs compilerFlags)
-    foreach(includeDir ${${includeDirs}})
-        if(includeDir MATCHES "^\"(.*/([^/]+)\\.framework)\"$")
-            list(APPEND frameworkDirs \"-iframework${CMAKE_MATCH_1}/..\")
-        else()
-            list(APPEND newIncludeDirs ${includeDir})
-        endif()
-    endforeach()
-    set(${includeDirs} ${newIncludeDirs} PARENT_SCOPE)
-    set(${compilerFlags} ${${compilerFlags}} ${frameworkDirs} PARENT_SCOPE)
-endfunction()
-
 # we need to fix namespace ambiguity issues between Qt and Chromium like
 # forward declarations of NSString.
 function(get_forward_declaration_macro result)
@@ -318,39 +38,6 @@ function(get_forward_declaration_macro result)
     else()
         set(${result} "Q_FORWARD_DECLARE_OBJC_CLASS=QT_FORWARD_DECLARE_CLASS" PARENT_SCOPE)
     endif()
-endfunction()
-
-function(get_darwin_sdk_version result)
-    if(APPLE)
-        if(IOS)
-            set(sdk_name "iphoneos")
-        elseif(TVOS)
-            set(sdk_name "appletvos")
-        elseif(WATCHOS)
-            set(sdk_name "watchos")
-        else()
-            # Default to macOS
-            set(sdk_name "macosx")
-        endif()
-        set(xcrun_version_arg "--show-sdk-version")
-        execute_process(COMMAND /usr/bin/xcrun --sdk ${sdk_name} ${xcrun_version_arg}
-                        OUTPUT_VARIABLE sdk_version
-                        ERROR_VARIABLE xcrun_error)
-        if(NOT sdk_version)
-            message(FATAL_ERROR
-                    "Can't determine darwin ${sdk_name} SDK version. Error: ${xcrun_error}")
-        endif()
-        string(STRIP "${sdk_version}" sdk_version)
-        set(${result} "${sdk_version}" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(get_ios_target_triple_and_sysroot result arch)
-    get_ios_sysroot(sysroot ${arch})
-    set(${result}
-        -target ${arch}-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}
-        -isysroot ${sysroot} PARENT_SCOPE
-    )
 endfunction()
 
 function(add_ninja_target)
@@ -394,17 +81,16 @@ function(get_copy_of_response_file result target rsp)
     add_dependencies(${cmakeTarget} ${cmakeTarget}_${rsp}_copy_${config})
 endfunction()
 
-function(add_archiver_options target buildDir completeStatic)
-    get_target_property(config ${target} CONFIG)
-    string(TOUPPER ${config} cfg)
-    get_target_property(ninjaTarget ${target} NINJA_TARGET)
-    get_target_property(cmakeTarget ${target} CMAKE_TARGET)
-    set(objects_out "${buildDir}/${cmakeTarget}_objects.o")
-    add_library(GnObject_${cmakeTarget}_${config} OBJECT IMPORTED GLOBAL)
-    target_link_libraries(${cmakeTarget} PRIVATE $<$<CONFIG:${config}>:GnObject_${cmakeTarget}_${config}>)
-    set_property(TARGET GnObject_${cmakeTarget}_${config} PROPERTY IMPORTED_OBJECTS_${cfg} ${objects_out})
-endfunction()
-
+# Links Chromium object files and static libraries to a target Qt library (e.g. Pdf or
+# WebEngineCore), using response files.
+#
+# The function is used on all platforms except for:
+# - universal macOS
+# - static single-arch macOS
+# - iOS of any kind
+# The function IS used for single-arch shared-library macOS builds.
+# The function IS NOT used for static macOS builds and iOS, as the default macOS 'ar'
+# static library archiver does not support response files.
 function(add_linker_options target buildDir completeStatic)
     get_target_property(config ${target} CONFIG)
     get_target_property(ninjaTarget ${target} NINJA_TARGET)
@@ -415,15 +101,23 @@ function(add_linker_options target buildDir completeStatic)
     set(archives_rsp "${buildDir}/${ninjaTarget}_archives.rsp")
     set(libs_rsp "${buildDir}/${ninjaTarget}_libs.rsp")
     set(ldir_rsp "${buildDir}/${ninjaTarget}_ldir.rsp")
+    set(lflags_rsp "${buildDir}/${ninjaTarget}_lflags.rsp")
     set_target_properties(${cmakeTarget} PROPERTIES STATIC_LIBRARY_OPTIONS "@${objects_rsp}")
-    if(LINUX OR ANDROID)
+    if(LINUX OR ANDROID OR OHOS)
          get_gn_arch(cpu ${TEST_architecture_arch})
+
+         #QTBUG-145054#
+         if(CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm" AND cmakeTarget STREQUAL "WebEngineCore")
+             target_link_options(${cmakeTarget} PRIVATE "LINKER:--strip-debug")
+         endif()
+
          if(CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm" AND ${config} STREQUAL "Debug")
              target_link_options(${cmakeTarget} PRIVATE "LINKER:--long-plt")
          endif()
          target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${objects_rsp}>")
          # Chromium is meant for linking with gc-sections, which seems to not always get applied otherwise
          target_link_options(${cmakeTarget} PRIVATE "-Wl,--gc-sections")
+         target_link_options(${cmakeTarget} PRIVATE $<$<CONFIG:${config}>:@${lflags_rsp}>)
          if(NOT completeStatic)
              target_link_libraries(${cmakeTarget} PRIVATE
                  "$<1:-Wl,--start-group $<$<CONFIG:${config}>:@${archives_rsp}> -Wl,--end-group>"
@@ -441,7 +135,7 @@ function(add_linker_options target buildDir completeStatic)
         if(NOT completeStatic)
             target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${archives_rsp}>")
         endif()
-        target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${ldir_rsp}>" "$<$<CONFIG:${config}>:@${libs_rsp}>")
+        target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${ldir_rsp}>" "$<$<CONFIG:${config}>:@${libs_rsp}>" "$<$<CONFIG:${config}>:@${lflags_rsp}>")
     endif()
     if(WIN32)
         get_copy_of_response_file(objects_rsp ${target} objects)
@@ -451,7 +145,7 @@ function(add_linker_options target buildDir completeStatic)
             )
             # enable larger PDBs if webenginecore debug build
             if(cmakeTarget STREQUAL "WebEngineCore")
-                target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:Debug>:/pdbpagesize:8192>")
+                target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:Debug>:/pdbpagesize:16384>")
             endif()
         endif()
         target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${objects_rsp}>")
@@ -463,9 +157,27 @@ function(add_linker_options target buildDir completeStatic)
         target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${libs_rsp}>")
         # we need libs rsp also when linking process with sandbox lib
         set_property(TARGET ${cmakeTarget} PROPERTY LIBS_RSP ${libs_rsp})
+        set_property(TARGET ${cmakeTarget} PROPERTY ARCHIVES_RSP ${archives_rsp})
     endif()
 endfunction()
 
+# Creates a single config, arch-specific static library archive from multiple Chromium object
+# files and static libraries.
+#
+# Steps:
+# 1. Merges multiple object files into a single object file via partial linking, aka `clang -r`
+# 2. If completeStatic is false, merges all static archives into a single object (not archive)
+#    file with `clang -r`.
+#    This is done for WebEngineCore, but not Pdf, as Pdf uses only object files.
+# 3. Creates a single final archive with the above created object and archive object files with
+#    `ar -crs`.
+#
+# The complicated setup is used due to missing response file support in the macOS `ar` archiver.
+#
+# This is only used for universal macOS builds of QtPdf and QtWebEngineCore.
+#
+# TODO: This currently loses debug information for static Qt builds, because `clang -r` does NOT
+# transfer debug information, but only adds debug link info, see QTBUG-116619.
 function(add_intermediate_archive target buildDir completeStatic)
     get_target_property(config ${target} CONFIG)
     get_target_property(arch ${target} ARCH)
@@ -475,11 +187,18 @@ function(add_intermediate_archive target buildDir completeStatic)
     string(TOUPPER ${config} cfg)
     set(objects_rsp "${buildDir}/${ninjaTarget}_objects.rsp")
     set(objects_out "${buildDir}/${cmakeTarget}_objects.o")
+    if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(deployment_target_arg -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
+    else()
+        unset(deployment_target_arg)
+    endif()
+
     if(NOT completeStatic)
         set(archives_rsp "${buildDir}/${ninjaTarget}_archives.rsp")
         set(archives_out "${buildDir}/${cmakeTarget}_archives.o")
         set(archives_command
             COMMAND clang++ -r -nostdlib -arch ${arch}
+            ${deployment_target_arg}
             -o ${archives_out}
             -Wl,-keep_private_externs
             -Wl,-all_load
@@ -490,6 +209,7 @@ function(add_intermediate_archive target buildDir completeStatic)
         OUTPUT ${buildDir}/${cmakeTarget}.a
         BYPRODUCTS ${objects_out} ${archives_out}
         COMMAND clang++ -r -nostdlib -arch ${arch}
+            ${deployment_target_arg}
             -o ${objects_out}
             -Wl,-keep_private_externs
             @${objects_rsp}
@@ -508,32 +228,131 @@ function(add_intermediate_archive target buildDir completeStatic)
     )
 endfunction()
 
-function(add_intermediate_object target buildDir completeStatic)
+# Overrides the cmake archive creation rule with `libtool`, instead of `ar`, because it supports
+# response files and that simplifies linking to the Chromium static libraries and object files a
+# lot. libtool supports all the input kinds we need, including single or multi-arch object files
+# and static libraries, in any combination, which means we don't need to manually merge them or
+# lipo them.
+macro(qt_webengine_set_apple_archiver_flags)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+        set(CMAKE_CXX_ARCHIVE_CREATE
+            "libtool -o <TARGET> <LINK_FLAGS> -no_warning_for_no_symbols <OBJECTS>")
+        set(CMAKE_CXX_ARCHIVE_APPEND
+            "libtool -o <TARGET> <LINK_FLAGS> -no_warning_for_no_symbols <TARGET> <OBJECTS>")
+    endif()
+endmacro()
+
+# Given the <module>_objects.rsp file, creates a new response file with symlinked object files
+# that have unique names, to avoid issues with duplicate object names when archiving and running
+# dsymutil.
+# Uses a custom CMake script to create the symlinks in a separate dir.
+function(symlink_renamed_objects_in_new_rsp_file target buildDir output_rsp output_stamp)
     get_target_property(config ${target} CONFIG)
     get_target_property(arch ${target} ARCH)
-    get_target_property(ninjaTarget ${target} NINJA_TARGET)
     get_target_property(cmakeTarget ${target} CMAKE_TARGET)
+    get_target_property(ninjaTarget ${target} NINJA_TARGET)
     get_target_property(ninjaStamp ${target} NINJA_STAMP)
-    string(TOUPPER ${config} cfg)
-    if(IOS)
-        get_ios_target_triple_and_sysroot(args ${arch})
-    endif()
+
     set(objects_rsp "${buildDir}/${ninjaTarget}_objects.rsp")
-    set(objects_out "${buildDir}/${cmakeTarget}_objects.o")
+    set(symlinked_objects_rsp "${buildDir}/${ninjaTarget}_symlinked_objects.rsp")
+    set(symlinker_stamp_file "${buildDir}/${ninjaTarget}_symlink_stamp.txt")
+
+    # This is where the symlinks are created.
+    set(symlinks_dir "${buildDir}/${ninjaTarget}_symlinked_objects")
+
+    # This is used to make the symlink paths relative to the build dir.
+    set(symlink_base_dir "${buildDir}")
+    file(MAKE_DIRECTORY "${symlinks_dir}")
+
+    set(symlinker_script
+        "${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtWebEngineRspSymlinker.cmake")
+
     add_custom_command(
-        OUTPUT ${objects_out}
-        COMMAND clang++ -r -nostdlib
-            ${args}
-            -o ${objects_out}
-            -Wl,-keep_private_externs
-            @${objects_rsp}
+        OUTPUT "${symlinker_stamp_file}"
+        COMMAND
+            "${CMAKE_COMMAND}"
+            "-DINPUT_RESPONSE_FILE_PATH=${objects_rsp}"
+            "-DOUTPUT_RESPONSE_FILE_PATH=${symlinked_objects_rsp}"
+            "-DOUTPUT_SYMLINKS_DIR=${symlinks_dir}"
+            "-DSYMLINK_BASE_DIR=${symlink_base_dir}"
+            -P
+            "${symlinker_script}"
+        COMMAND
+            ${CMAKE_COMMAND} -E touch "${symlinker_stamp_file}"
         DEPENDS
-            ${buildDir}/${ninjaStamp}
+            "${symlinker_script}"
+            "${buildDir}/${ninjaStamp}"
         WORKING_DIRECTORY "${buildDir}/../../.."
-        COMMENT "Creating intermediate object files for ${cmakeTarget}/${config}/${arch}"
+        COMMENT "Creating symlink response file for ${cmakeTarget}/${config}/${arch}"
         USES_TERMINAL
         VERBATIM
         COMMAND_EXPAND_LISTS
+    )
+    set(${output_rsp} "${symlinked_objects_rsp}" PARENT_SCOPE)
+    set(${output_stamp} "${symlinker_stamp_file}" PARENT_SCOPE)
+endfunction()
+
+# Adds the arch-specific objects from <module>_objects.rsp into a single universal static
+# library, using libtool.
+# Appends the response file to the STATIC_LIBRARY_OPTIONS property of the module target.
+# Used on static macOS and iOS builds for the QtPdf module.
+function(add_objects_to_apple_static_library target buildDir)
+    get_target_property(config ${target} CONFIG)
+    get_target_property(cmakeTarget ${target} CMAKE_TARGET)
+    get_target_property(ninjaTarget ${target} NINJA_TARGET)
+
+    symlink_renamed_objects_in_new_rsp_file(
+        "${target}" "${buildDir}" symlinked_objects_rsp symlinker_stamp_file)
+
+    # We need a way to cause QtPdf to be recreated when any of the source object files change.
+    # The dependency chain is:
+    #   Chromium ninja stamp
+    #   -> create new rsp with symlinked objects
+    #   -> re-create QtPdf static archive
+    # CMake doesn't allow to directly model the last step.
+    # So there is no way to say that add_library(QtPdf) static should be recreated when the
+    # rsp file in STATIC_LIBRARY_OPTIONS changes.
+    #
+    # To work around that, create an empty OBJECT library target that depends on the
+    # symlink stamp file by adding it to OBJECT_DEPENDS, and then link that OBJECT library into
+    # the module target. This creates the needed dependency, at the cost of one more build rule
+    # to build the empty object file.
+    set(sym_objects_target ${target}_sym_objects)
+    set(sym_object_fake_cpp_path
+        "${buildDir}/${ninjaTarget}_sym_objects_${config}_${arch}.cpp")
+    file(GENERATE
+        OUTPUT "${sym_object_fake_cpp_path}"
+        CONTENT "// Empty source file to drive the ${sym_objects_target} target\n"
+    )
+
+    add_library("${sym_objects_target}" OBJECT "${sym_object_fake_cpp_path}")
+    set_property(SOURCE "${sym_object_fake_cpp_path}" PROPERTY OBJECT_DEPENDS
+        "${symlinker_stamp_file}"
+    )
+
+    # This genex construct is used to prevent leakage of the
+    # ${sym_objects_target} target into the INTERFACE_LINK_LIBRARIES
+    # property of the <module> target in its exported
+    # <module>Targets.cmake file, and in the accompanying .prl file.
+    set(config_genex "$<CONFIG:${config}>")
+
+    # This prevents the .prl leakage, it always evaluates to true.
+    set(skip_walk_genex "$<BOOL:QT_SKIP_WALK_LIBS_PROCESSING>")
+
+    # This prevents the INTERFACE_LINK_LIBRARIES leakage.
+    if(CMAKE_VERSION VERSION_LESS "3.26")
+        set(build_genex "BUILD_INTERFACE")
+    else()
+        set(build_genex "BUILD_LOCAL_INTERFACE")
+    endif()
+
+    set(link_genex "$<${build_genex}:${sym_objects_target}>")
+    set(condition "$<AND:${config_genex},${skip_walk_genex}>")
+    set(final_genex "$<${condition}:${link_genex}>")
+    target_link_libraries("${cmakeTarget}" PRIVATE "${final_genex}")
+
+    set_property(TARGET ${cmakeTarget} APPEND PROPERTY STATIC_LIBRARY_OPTIONS
+        "$<$<CONFIG:${config}>:@${symlinked_objects_rsp}>"
     )
 endfunction()
 
@@ -556,23 +375,16 @@ function(create_lipo_command target buildDir fileName)
     )
 endfunction()
 
-# this function only deals with objects as it is only
-# used by qtpdf and we do not need anything more
-function(add_ios_lipo_command target buildDir)
-    get_target_property(config ${target} CONFIG)
-    get_target_property(cmakeTarget ${target} CMAKE_TARGET)
-    set(fileName ${cmakeTarget}_objects.o)
-    create_lipo_command(${target} ${buildDir} ${fileName})
-    add_custom_target(lipo_${cmakeTarget}_${config} DEPENDS
-        ${buildDir}/${fileName}
-    )
-    add_dependencies(${cmakeTarget} lipo_${cmakeTarget}_${config})
-    qt_internal_get_target_property(options ${cmakeTarget} STATIC_LIBRARY_OPTIONS)
-    set_target_properties(${cmakeTarget} PROPERTIES STATIC_LIBRARY_OPTIONS
-        "${options}$<$<CONFIG:${config}>:${buildDir}/${fileName}>"
-    )
-endfunction()
-
+# Lipos-s two arch-specific static archives into a single universal static archive.
+#
+# The resulting lipo-ed static archive is added as an IMPORTED static library, and is linked
+# to the module target (e.g. Pdf)
+#
+# Only used for universal macOS builds.
+#
+# TODO: Currently broken for universal static macOS builds, because target_link_libraries() will
+# not try to merge the lipo-ed static archive with the module static archive. The Qt build will
+# succeed, but user projects will fail with linker errors.
 function(add_lipo_command target buildDir)
     get_target_property(config ${target} CONFIG)
     get_target_property(cmakeTarget ${target} CMAKE_TARGET)
@@ -593,6 +405,12 @@ function(add_lipo_command target buildDir)
     # TODO: this is evil hack, since cmake has no idea about libs
     set(libs_rsp "${buildDir}/x86_64/${ninjaTarget}_libs.rsp")
     target_link_options(${cmakeTarget} PRIVATE "$<$<CONFIG:${config}>:@${libs_rsp}>")
+
+    # Linking Rust libraries adds an additional personality symbol, which exceeds
+    # the compact-unwind limit. Disable it here as a workaround.
+    if (QT_FEATURE_webengine_rust_build)
+        target_link_options(${cmakeTarget} PRIVATE "-Wl,-no_compact_unwind")
+    endif()
 endfunction()
 
 function(qt_internal_add_external_project_dependency_to_root_project name)
@@ -615,518 +433,16 @@ function(qt_internal_add_external_project_dependency_to_root_project name)
     cmake_policy(POP)
 endfunction()
 
-# Function maps TEST_architecture_arch or CMAKE_SYSTEM_PROCESSOR into gn architecture
-function(get_gn_arch result arch)
-    set(armList arm armv7-a)
-    set(arm64List arm64 ARM64 aarch64)
-    set(mips64List mips64 mipsel64)
-    set(x86List i386 i686)
-    set(x64List x86_64 AMD64 x86_64h)
-    if(arch IN_LIST x86List)
-        set(${result} "x86" PARENT_SCOPE)
-    elseif(arch IN_LIST x64List)
-        set(${result} "x64" PARENT_SCOPE)
-    elseif(arch IN_LIST armList)
-        set(${result} "arm" PARENT_SCOPE)
-    elseif(arch IN_LIST arm64List)
-        set(${result} "arm64" PARENT_SCOPE)
-    elseif(arch STREQUAL "mipsel")
-        set(${result} "mipsel" PARENT_SCOPE)
-    elseif(arch IN_LIST mipsList)
-        set(${result} "mips64el" PARENT_SCOPE)
-    elseif(arch STREQUAL "riscv64")
-        set(${result} "riscv64" PARENT_SCOPE)
-    else()
-        message(FATAL_ERROR "Unknown architecture: ${arch}")
-    endif()
-endfunction()
-
-# Function maps gn architecture for v8
-function(get_v8_arch result targetArch hostArch)
-    set(list32 x86 arm mipsel riscv32)
-    if(hostArch STREQUAL targetArch)
-        set(${result} "${targetArch}" PARENT_SCOPE)
-    elseif(targetArch IN_LIST list32)
-        # 32bit target which needs a 32bit compatible host
-        if(hostArch STREQUAL "x64")
-            set(${result} "x86" PARENT_SCOPE)
-        elseif(hostArch STREQUAL "arm64")
-            set(${result} "arm" PARENT_SCOPE)
-        elseif(hostArch STREQUAL "mips64el")
-            set(${result} "mipsel" PARENT_SCOPE)
-        elseif(hostArch STREQUAL "riscv64")
-            set(${result} "riscv32" PARENT_SCOPE)
-        elseif(hostArch IN_LIST list32)
-            set(${result} "${hostArch}" PARENT_SCOPE)
-        else()
-            message(FATAL_ERROR "Unknown architecture: ${hostArch}")
-        endif()
-    else()
-        # assume 64bit target which matches 64bit host
-        set(${result} "${hostArch}" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(get_gn_os result)
-    if(WIN32)
-        set(${result} "win" PARENT_SCOPE)
-    elseif(LINUX)
-        set(${result} "linux" PARENT_SCOPE)
-    elseif(MACOS)
-        set(${result} "mac" PARENT_SCOPE)
-    elseif(IOS)
-        set(${result} "ios" PARENT_SCOPE)
-    else()
-        message(DEBUG "Unrecognized OS")
-    endif()
-endfunction()
-
-function(get_gn_is_clang result)
-    if(CLANG)
-        set(${result} "true" PARENT_SCOPE)
-    else()
-        set(${result} "false" PARENT_SCOPE)
-    endif()
-endfunction()
-
-
-function(get_gn_is_mingw result)
-    if(MINGW)
-        set(${result} "true" PARENT_SCOPE)
-    else()
-        set(${result} "false" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(get_ios_sysroot result arch)
-    if(NOT CMAKE_APPLE_ARCH_SYSROOTS)
-      message(FATAL_ERROR "CMAKE_APPLE_ARCH_SYSROOTS not set.")
-    endif()
-    get_architectures(archs)
-    list(FIND archs ${arch} known_arch)
-    if (known_arch EQUAL "-1")
-        message(FATAL_ERROR "Unknown iOS architecture ${arch}.")
-    endif()
-    list(GET CMAKE_APPLE_ARCH_SYSROOTS ${known_arch} sysroot)
-    set(${result} ${sysroot} PARENT_SCOPE)
-endfunction()
-
-function(configure_gn_toolchain name cpu v8Cpu toolchainIn toolchainOut)
-    set(GN_TOOLCHAIN ${name})
-    get_gn_os(GN_OS)
-    get_gn_is_clang(GN_IS_CLANG)
-    get_gn_is_mingw(GN_IS_MINGW)
-    set(GN_CPU ${cpu})
-    set(GN_V8_CPU ${v8Cpu})
-    configure_file(${toolchainIn} ${toolchainOut}/BUILD.gn @ONLY)
-endfunction()
-
-function(create_pkg_config_wrapper wrapperName wrapperCmd)
-    file(WRITE ${wrapperName}
-        "#!/bin/sh\n"
-        "unset PKG_CONFIG_LIBDIR\n"
-        "unset PKG_CONFIG_PATH\n"
-        "unset PKG_CONFIG_SYSROOT_DIR\n"
-        "exec ${wrapperCmd} \"$@\""
-    )
-    file(CHMOD ${wrapperName} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
-endfunction()
-
-function(extract_cflag result cflag)
-    set(i 1)
-    while(NOT "x${CMAKE_CXX_COMPILER_ARG${i}}" STREQUAL "x")
-        list(APPEND cflags ${CMAKE_CXX_COMPILER_ARG${i}})
-        math(EXPR i "${i} + 1")
-    endwhile()
-    list(APPEND cflags ${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS})
-    string(REPLACE ";" " " cflags "${cflags}")
-    message(DEBUG "Found cflags: ${cflags}")
-    if(cflags MATCHES "-${cflag}=([^ ]+)")
-        set(${result} ${CMAKE_MATCH_1} PARENT_SCOPE)
-        return()
-    endif()
-    if(cflags MATCHES "-${cflag}")
-       set(${result} ON PARENT_SCOPE)
-    else()
-       set(${result} OFF PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(extend_gn_list_cflag outList)
-    cmake_parse_arguments(PARSE_ARGV 1 GN "" "" "ARG;CFLAG")
-    _qt_internal_validate_all_args_are_parsed(GN)
-
-    extract_cflag(cflag "${GN_CFLAG}")
-    if(cflag)
-        set(${outList} "${${outList}}" "${GN_ARG}=\"${cflag}\"" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(get_arm_version result cflag)
-    if(cflag MATCHES "^armv([0-9])")
-        set(${result} ${CMAKE_MATCH_1} PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(check_thumb result)
-    extract_cflag(thumb "mthumb")
-    if(thumb)
-        set(${result} TRUE PARENT_SCOPE)
-        return()
-    else()
-        extract_cflag(marm "marm")
-        if(marm)
-            set(${result} FALSE PARENT_SCOPE)
-            return()
-        else()
-            extract_cflag(march "march")
-            get_arm_version(arm_version ${march})
-            if(arm_version GREATER_EQUAL 7)
-                set(${result} TRUE PARENT_SCOPE)
-                return()
-            endif()
-        endif()
-    endif()
-    set(${result} FALSE PARENT_SCOPE)
-endfunction()
-
-macro(create_pkg_config_host_wrapper buildDir)
-    find_package(PkgConfigHost)
-        if(CMAKE_CROSSCOMPILING)
-            create_pkg_config_wrapper("${buildDir}/pkg-config-host_wrapper.sh" "${PKG_CONFIG_HOST_EXECUTABLE}")
-            set(PKG_CONFIG_HOST_EXECUTABLE "${buildDir}/pkg-config-host_wrapper.sh")
-        endif()
-endmacro()
-
-macro(setup_toolchains)
-    get_gn_arch(gn_arch ${TEST_architecture_arch})
-    if(NOT CMAKE_CROSSCOMPILING) # delivered by hostBuild project
-        configure_gn_toolchain(host ${gn_arch} ${gn_arch}
-            ${WEBENGINE_ROOT_SOURCE_DIR}/src/host/BUILD.toolchain.gn.in
-            ${buildDir}/host_toolchain)
-        configure_gn_toolchain(v8 ${gn_arch} ${gn_arch}
-            ${WEBENGINE_ROOT_SOURCE_DIR}/src/host/BUILD.toolchain.gn.in
-            ${buildDir}/v8_toolchain)
-    endif()
-    configure_gn_toolchain(target ${gn_arch} ${gn_arch}
-        ${WEBENGINE_ROOT_SOURCE_DIR}/src/host/BUILD.toolchain.gn.in
-        ${buildDir}/target_toolchain)
-    unset(gn_arch)
-endmacro()
-
-macro(append_build_type_setup)
-    list(APPEND gnArgArg
-        is_qtwebengine=true
-        init_stack_vars=false
-        is_component_build=false
-        is_shared=true
-        use_sysroot=false
-        forbid_non_component_debug_builds=false
-        treat_warnings_as_errors=false
-        use_allocator_shim=false
-        use_partition_alloc=true
-        use_partition_alloc_as_malloc=false
-        use_custom_libcxx=false
-        enable_rust=false # We do not yet support rust
-    )
-    if(${config} STREQUAL "Debug")
-        list(APPEND gnArgArg is_debug=true symbol_level=2)
-        if(WIN32)
-            list(APPEND gnArgArg enable_iterator_debugging=true)
-        endif()
-    elseif(${config} STREQUAL "Release")
-        list(APPEND gnArgArg is_debug=false symbol_level=0)
-    elseif(${config} STREQUAL "RelWithDebInfo")
-        list(APPEND gnArgArg is_debug=false)
-        if(WIN32 AND NOT CLANG)
-            list(APPEND gnArgArg symbol_level=2)
-        else()
-            list(APPEND gnArgArg symbol_level=1)
-        endif()
-    elseif(${config} STREQUAL "MinSizeRel")
-        list(APPEND gnArgArg is_debug=false symbol_level=0 optimize_for_size=true)
-    endif()
-    if(FEATURE_developer_build OR (${config} STREQUAL "Debug") OR QT_FEATURE_webengine_sanitizer)
-        list(APPEND gnArgArg
-             is_official_build=false
-             use_viz_debugger=false
-        )
-    else()
-        list(APPEND gnArgArg is_official_build=true)
-        if(NOT CLANG OR NOT QT_FEATURE_use_lld_linker)
-            list(APPEND gnArgArg
-                use_thin_lto=false
-            )
-        endif()
-    endif()
-    extend_gn_list(gnArgArg
-        ARGS is_unsafe_developer_build
-        CONDITION FEATURE_developer_build
-    )
-
-    #TODO: refactor to not check for IOS here
-    if(NOT QT_FEATURE_webengine_full_debug_info AND NOT IOS)
-        list(APPEND gnArgArg blink_symbol_level=0 v8_symbol_level=0)
-    endif()
-
-    extend_gn_list(gnArgArg ARGS use_jumbo_build CONDITION QT_FEATURE_webengine_jumbo_build)
-    if(QT_FEATURE_webengine_jumbo_build)
-        list(APPEND gnArgArg jumbo_file_merge_limit=${QT_FEATURE_webengine_jumbo_file_merge_limit})
-        if(QT_FEATURE_webengine_jumbo_file_merge_limit LESS_EQUAL 8)
-            list(APPEND gnArgArg "jumbo_build_excluded=[\"browser\"]")
-        endif()
-    endif()
-
-    extend_gn_list(gnArgArg
-        ARGS enable_precompiled_headers
-        CONDITION BUILD_WITH_PCH AND NOT LINUX
-    )
-    extend_gn_list(gnArgArg
-        ARGS dcheck_always_on
-        CONDITION QT_FEATURE_force_asserts
-    )
-endmacro()
-
-macro(append_compiler_linker_sdk_setup)
-    if(CMAKE_CXX_COMPILER_LAUNCHER)
-        list(APPEND gnArgArg cc_wrapper="${CMAKE_CXX_COMPILER_LAUNCHER}")
-    endif()
-
-    extend_gn_list(gnArgArg ARGS is_clang CONDITION CLANG)
-    extend_gn_list(gnArgArg ARGS is_mingw CONDITION MINGW)
-    extend_gn_list(gnArgArg ARGS is_msvc CONDITION MSVC)
-    extend_gn_list(gnArgArg ARGS is_gcc CONDITION LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-
-    if(CLANG)
-        if(MACOS)
-            get_darwin_sdk_version(macSdkVersion)
-            # macOS needs to use the objcxx compiler as the cxx compiler is just a link
-            get_filename_component(clangBasePath ${CMAKE_OBJCXX_COMPILER} DIRECTORY)
-            get_filename_component(clangBasePath ${clangBasePath} DIRECTORY)
-        else()
-            get_filename_component(clangBasePath ${CMAKE_CXX_COMPILER} DIRECTORY)
-            get_filename_component(clangBasePath ${clangBasePath} DIRECTORY)
-        endif()
-
-        string(REGEX MATCH "[0-9]+" clangVersion ${CMAKE_CXX_COMPILER_VERSION})
-        list(APPEND gnArgArg
-            clang_base_path="${clangBasePath}"
-            clang_use_chrome_plugins=false
-            clang_version=${clangVersion}
-            fatal_linker_warnings=false
-        )
-
-        if(MACOS)
-            list(APPEND gnArgArg
-                use_system_xcode=true
-                mac_deployment_target="${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                mac_sdk_min="${macSdkVersion}"
-                use_libcxx=true
-            )
-            _qt_internal_get_apple_sdk_version(apple_sdk_version)
-            if (apple_sdk_version LESS 13.2)
-                list(APPEND gnArgArg
-                    use_sck=false
-                )
-            endif()
-        endif()
-        if(IOS)
-            list(APPEND gnArgArg
-                use_system_xcode=true
-                enable_ios_bitcode=true
-                ios_deployment_target="${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                ios_enable_code_signing=false
-                use_libcxx=true
-            )
-        endif()
-        if(DEFINED QT_FEATURE_stdlib_libcpp AND LINUX)
-            extend_gn_list(gnArgArg ARGS use_libcxx
-                CONDITION QT_FEATURE_stdlib_libcpp
-            )
-        endif()
-        if(ANDROID)
-            list(APPEND gnArgArg
-                android_ndk_root="${CMAKE_ANDROID_NDK}"
-                android_ndk_version="${CMAKE_ANDROID_NDK_VERSION}"
-                clang_use_default_sample_profile=false
-                #android_ndk_major_version=22
-            )
-        endif()
-    else()
-        if(QT_FEATURE_use_lld_linker)
-            get_filename_component(clangBasePath ${CMAKE_LINKER} DIRECTORY)
-            get_filename_component(clangBasePath ${clangBasePath} DIRECTORY)
-            list(APPEND gnArgArg
-                clang_base_path="${clangBasePath}"
-                fatal_linker_warnings=false
-            )
-        endif()
-    endif()
-
-    if(MSVC)
-        get_filename_component(windowsSdkPath $ENV{WINDOWSSDKDIR} ABSOLUTE)
-        get_filename_component(visualStudioPath $ENV{VSINSTALLDIR} ABSOLUTE)
-        set(windowSdkVersion $ENV{WindowsSDKVersion})
-        list(APPEND gnArgArg
-            win_linker_timing=true
-            use_incremental_linking=false
-            visual_studio_version=2022
-            visual_studio_path=\"${visualStudioPath}\"
-            windows_sdk_version=\"${windowsSdkVersion}\"
-            windows_sdk_path=\"${windowsSdkPath}\"
-        )
-    endif()
-    get_gn_arch(cpu ${TEST_architecture_arch})
-    if(LINUX AND CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm")
-
-        extend_gn_list_cflag(gnArgArg
-            ARG arm_tune
-            CFLAG mtune
-        )
-        extend_gn_list_cflag(gnArgArg
-            ARG arm_float_abi
-            CFLAG mfloat-abi
-        )
-        extend_gn_list_cflag(gnArgArg
-            ARG arm_arch
-            CFLAG march
-        )
-        extend_gn_list_cflag(gnArgArg
-            ARG arm_cpu
-            CFLAG mcpu
-        )
-        extract_cflag(cflag "mfpu")
-        get_arm_version(arm_version "${cflag}")
-        extend_gn_list(gnArgArg
-            ARGS arm_use_neon
-            CONDITION (arm_version GREATER_EQUAL 8) OR ("${cflag}" MATCHES ".*neon.*")
-        )
-        if(arm_version EQUAL 7 AND NOT "${cflag}" MATCHES ".*neon.*")
-            # If the toolchain does not explicitly specify to use NEON instructions
-            # we use arm_neon_optional for ARMv7
-            list(APPEND gnArgArg arm_optionally_use_neon=true)
-        endif()
-        extract_cflag(march "march")
-        get_arm_version(arm_version ${march})
-        if(arm_version EQUAL 7)
-            list(APPEND gnArgArg use_arm_crc32=false)
-        endif()
-        check_thumb(armThumb)
-        extend_gn_list(gnArgArg
-            ARGS arm_use_thumb
-            CONDITION armThumb
-        )
-    endif()
-    extend_gn_list(gnArgArg
-        ARGS use_gold
-        CONDITION QT_FEATURE_use_gold_linker
-    )
-    extend_gn_list(gnArgArg
-        ARGS use_lld
-        CONDITION QT_FEATURE_use_lld_linker
-    )
-    unset(cpu)
-endmacro()
-
-macro(append_sanitizer_setup)
-    if(QT_FEATURE_webengine_sanitizer)
-        extend_gn_list(gnArgArg
-            ARGS is_asan
-            CONDITION address IN_LIST ECM_ENABLE_SANITIZERS
-        )
-        extend_gn_list(gnArgArg
-            ARGS is_tsan
-            CONDITION thread IN_LIST ECM_ENABLE_SANITIZERS
-        )
-        extend_gn_list(gnArgArg
-            ARGS is_msan
-            CONDITION memory IN_LIST ECM_ENABLE_SANITIZERS
-        )
-        extend_gn_list(gnArgArg
-            ARGS is_ubsan is_ubsan_vptr
-            CONDITION undefined IN_LIST ECM_ENABLE_SANITIZERS
-        )
-        if(APPLE)
-            list(APPEND gnArgArg
-                clang_version=\"${QT_COMPILER_VERSION_MAJOR}.${QT_COMPILER_VERSION_MINOR}.${QT_COMPILER_VERSION_PATCH}\"
-            )
-        endif()
-    endif()
-endmacro()
-
-macro(append_toolchain_setup)
-    if(WIN32)
-        get_gn_arch(cpu ${arch})
-        list(APPEND gnArgArg target_cpu="${cpu}")
-        if(MINGW)
-            get_gn_arch(cpu ${TEST_architecture_arch})
-            list(APPEND gnArgArg
-                # note '/' prefix
-                custom_toolchain="/${buildDir}/target_toolchain:target"
-                host_toolchain="/${buildDir}/host_toolchain:host"
-                host_cpu="${cpu}"
-            )
-        endif()
-    elseif(LINUX)
-        get_gn_arch(cpu ${TEST_architecture_arch})
-        list(APPEND gnArgArg
-            custom_toolchain="${buildDir}/target_toolchain:target"
-            host_toolchain="${buildDir}/host_toolchain:host"
-        )
-        if(CMAKE_CROSSCOMPILING)
-            list(APPEND gnArgArg
-                v8_snapshot_toolchain="${buildDir}/v8_toolchain:v8"
-                target_cpu="${cpu}"
-            )
-        else()
-            list(APPEND gnArgArg host_cpu="${cpu}")
-        endif()
-        if(CMAKE_SYSROOT)
-            list(APPEND gnArgArg target_sysroot="${CMAKE_SYSROOT}")
-        endif()
-    elseif(MACOS)
-        get_gn_arch(cpu ${arch})
-        list(APPEND gnArgArg target_cpu="${cpu}")
-    elseif(IOS)
-        get_gn_arch(cpu ${arch})
-        get_ios_sysroot(sysroot ${arch})
-        list(APPEND gnArgArg target_cpu="${cpu}" target_sysroot="${sysroot}" target_os="ios")
-    elseif(ANDROID)
-        get_gn_arch(cpu ${TEST_architecture_arch})
-        list(APPEND gnArgArg target_os="android" target_cpu="${cpu}")
-        if(CMAKE_HOST_WIN32)
-            list(APPEND gnArgArg
-                host_toolchain="/${buildDir}/host_toolchain:host"
-                host_cpu="x64"
-                v8_snapshot_toolchain="/${buildDir}/v8_toolchain:v8"
-            )
-        endif()
-    endif()
-    unset(cpu)
-endmacro()
-
-
-macro(append_pkg_config_setup)
-    if(PkgConfig_FOUND)
-        list(APPEND gnArgArg
-            pkg_config="${PKG_CONFIG_EXECUTABLE}"
-            host_pkg_config="${PKG_CONFIG_HOST_EXECUTABLE}"
-        )
-        if(NOT "$ENV{PKG_CONFIG_LIBDIR}" STREQUAL "")
-            list(APPEND gnArgArg
-                system_libdir="$ENV{PKG_CONFIG_LIBDIR}"
-            )
-        endif()
-    endif()
-endmacro()
-
 function(add_ninja_command)
     cmake_parse_arguments(PARSE_ARGV 0 arg
-        "" "TARGET;BUILDDIR;MODULE" "OUTPUT;BYPRODUCTS"
+        "" "TARGET;BUILDDIR;MODULE" "OUTPUT;BYPRODUCTS;DEPENDS"
     )
     _qt_internal_validate_all_args_are_parsed(arg)
 
-    string(REPLACE " " ";" NINJAFLAGS "$ENV{NINJAFLAGS}")
+    string(REPLACE " " ";" ninja_flags "$ENV{NINJAFLAGS}")
+    if(CMAKE_VERBOSE_MAKEFILE)
+        list(APPEND ninja_flags -v)
+    endif()
     list(TRANSFORM arg_OUTPUT PREPEND "${arg_BUILDDIR}/")
     list(TRANSFORM arg_BYPRODUCTS PREPEND "${arg_BUILDDIR}/")
     add_custom_command(
@@ -1135,44 +451,23 @@ function(add_ninja_command)
             ${arg_BUILDDIR}/${arg_TARGET} # use generator expression in CMAKE 3.20
         BYPRODUCTS ${arg_BYPRODUCTS}
         COMMENT "Running ninja for ${arg_TARGET} in ${arg_BUILDDIR}"
-        COMMAND Ninja::ninja
-            ${NINJAFLAGS}
+        COMMAND ${CMAKE_COMMAND}
+            -E env
+            "NODEJS_EXECUTABLE=${Nodejs_EXECUTABLE}"
+            $<TARGET_FILE:Ninja::ninja>
+            ${ninja_flags}
             -C ${arg_BUILDDIR}
             ${arg_TARGET}
         USES_TERMINAL
         VERBATIM
         COMMAND_EXPAND_LISTS
-        DEPENDS run_${arg_MODULE}_NinjaReady
+        DEPENDS run_${arg_MODULE}_NinjaReady ${arg_DEPENDS}
     )
-endfunction()
-
-function(get_configs result)
-    if(QT_GENERATOR_IS_MULTI_CONFIG)
-        set(${result} ${CMAKE_CONFIGURATION_TYPES})
-    else()
-        set(${result} ${CMAKE_BUILD_TYPE})
-    endif()
-    if(NOT ${result})
-        message(FATAL_ERROR "No valid configurations found !")
-    endif()
-    set(${result} ${${result}} PARENT_SCOPE)
-endfunction()
-
-function(get_architectures result)
-    if(CMAKE_OSX_ARCHITECTURES)
-        set(${result} ${CMAKE_OSX_ARCHITECTURES})
-    else()
-        set(${result} ${CMAKE_SYSTEM_PROCESSOR})
-    endif()
-    if(NOT ${result})
-    message(FATAL_ERROR "No valid architectures found. In case of cross-compiling make sure you have CMAKE_SYSTEM_PROCESSOR in your toolchain file.")
-    endif()
-    set(${result} ${${result}} PARENT_SCOPE)
 endfunction()
 
 function(add_gn_build_artifacts_to_target)
     cmake_parse_arguments(PARSE_ARGV 0 arg
-        "" "CMAKE_TARGET;NINJA_TARGET;BUILDDIR;MODULE;COMPLETE_STATIC;NINJA_STAMP;NINJA_DATA_STAMP" ""
+        "" "CMAKE_TARGET;NINJA_TARGET;BUILDDIR;MODULE;COMPLETE_STATIC;NINJA_STAMP;NINJA_DATA_STAMP;DEPENDS" ""
     )
     _qt_internal_validate_all_args_are_parsed(arg)
 
@@ -1185,12 +480,16 @@ function(add_gn_build_artifacts_to_target)
         foreach(arch ${archs})
             set(target ${arg_NINJA_TARGET}_${config}_${arch})
             set(stamps ${arg_NINJA_STAMP} ${arg_NINJA_DATA_STAMP})
+            set(data_stamp_option "")
+            if(arg_NINJA_DATA_STAMP)
+                set(data_stamp_option NINJA_DATA_STAMP ${arg_NINJA_DATA_STAMP})
+            endif()
             add_ninja_target(
                 TARGET ${target}
                 NINJA_TARGET ${arg_NINJA_TARGET}
                 CMAKE_TARGET ${arg_CMAKE_TARGET}
                 NINJA_STAMP ${arg_NINJA_STAMP}
-                NINJA_DATA_STAMP ${arg_NINJA_DATA_STAMP}
+                ${data_stamp_option}
                 CONFIG ${config}
                 ARCH ${arch}
                 BUILDDIR ${arg_BUILDDIR}
@@ -1200,23 +499,39 @@ function(add_gn_build_artifacts_to_target)
                 OUTPUT ${stamps}
                 BUILDDIR ${arg_BUILDDIR}/${config}/${arch}
                 MODULE ${arg_MODULE}
+                DEPENDS ${arg_DEPENDS}
             )
+            qt_webengine_add_gn_target_to_sbom(${arg_NINJA_TARGET} ${arg_BUILDDIR}/${config}/${arch})
+            qt_webengine_add_gn_artifact_relationship_to_sbom(${arg_NINJA_TARGET} ${arg_CMAKE_TARGET})
             add_dependencies(run_${arg_MODULE}_NinjaDone ${target})
             set_target_properties(${arg_CMAKE_TARGET} PROPERTIES
                 LINK_DEPENDS ${arg_BUILDDIR}/${config}/${arch}/${arg_NINJA_STAMP}
             )
-            if(QT_IS_MACOS_UNIVERSAL)
-                add_intermediate_archive(${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
-            elseif(IOS)
-                add_intermediate_object(${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
-            else()
-                if(MACOS AND QT_FEATURE_static)
-                    # mac archiver does not support @file notation, do intermediate object istead
-                    add_intermediate_object(${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
-                    add_archiver_options(${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
+            if(APPLE)
+                if(QT_IS_MACOS_UNIVERSAL AND QT_FEATURE_shared)
+                    # For universal macOS builds we create (merge) per-arch intermediate archives
+                    # from objects and static archives, to lipo them later, and then link them to
+                    # the module target via target_link_libraries().
+                    add_intermediate_archive(
+                        ${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
+                elseif(MACOS AND QT_FEATURE_shared)
+                    # For single-arch macOS shared builds, we directly link the response files to
+                    # the module target, like for all other platforms below..
+                    add_linker_options(
+                        ${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
                 else()
-                    add_linker_options(${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
+                    # For macOS/iOS static builds that only support building QtPdf, but not
+                    # QtWebEngine, directly add the objects response file to the module target via
+                    # STATIC_LIBRARY_OPTIONS. libtool takes care of the lipo-ing. Works for
+                    # both single-arch and universal builds.
+                    add_objects_to_apple_static_library(
+                        ${target} ${arg_BUILDDIR}/${config}/${arch})
                 endif()
+           else()
+                # For all other platforms (Linux, Windows, Android), instead of merging objects,
+                # we directly link the response files to the module target.
+                add_linker_options(
+                    ${target} ${arg_BUILDDIR}/${config}/${arch} ${arg_COMPLETE_STATIC})
             endif()
             unset(target)
         endforeach()
@@ -1227,26 +542,17 @@ function(add_gn_build_artifacts_to_target)
         # TODO: remove once this has been fixed by Apple. See issue FB13667242
         # or QTBUG-122655 for details.
         if(APPLECLANG)
-            if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0.0")
+            if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0.0" AND
+                    CMAKE_CXX_COMPILER_VERSION VERSION_LESS "17.0.0")
                 target_link_options(${arg_CMAKE_TARGET} PRIVATE -ld_classic)
                 set_target_properties(${arg_CMAKE_TARGET} PROPERTIES
                     QT_NO_DISABLE_WARN_DUPLICATE_LIBRARIES TRUE)
             endif()
         endif()
-        if(QT_IS_MACOS_UNIVERSAL)
+        if(QT_IS_MACOS_UNIVERSAL AND QT_FEATURE_shared)
             add_lipo_command(${target} ${arg_BUILDDIR}/${config})
         endif()
-        if(IOS)
-            add_ios_lipo_command(${target} ${arg_BUILDDIR}/${config})
-        endif()
     endforeach()
-endfunction()
-
-function(get_config_filenames c_config cxx_config static_config target_config)
-    set(${target_config} gn_config_target.cmake PARENT_SCOPE)
-    set(${cxx_config} gn_config_cxx.cmake PARENT_SCOPE)
-    set(${c_config} gn_config_c.cmake PARENT_SCOPE)
-    set(${static_config} gn_static.cmake PARENT_SCOPE)
 endfunction()
 
 function(add_gn_command)
@@ -1278,14 +584,15 @@ function(add_gn_command)
              -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
              -DGN_THREADS=$ENV{QTWEBENGINE_GN_THREADS}
              -DQT_ALLOW_SYMLINK_IN_PATHS=${QT_ALLOW_SYMLINK_IN_PATHS}
-             -P ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/Gn.cmake
+             -P ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtGnGen.cmake
         WORKING_DIRECTORY ${WEBENGINE_ROOT_BUILD_DIR}
         COMMENT "Run gn for target ${arg_CMAKE_TARGET} in ${arg_BUILDDIR}"
         DEPENDS
             ${gnArgArgFile}
             run_${arg_MODULE}_GnReady
             "${WEBENGINE_ROOT_SOURCE_DIR}/src/${arg_MODULE}/configure/BUILD.root.gn.in"
-            "${WEBENGINE_ROOT_SOURCE_DIR}/cmake/Gn.cmake"
+            "${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtGnGen.cmake"
+            "${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtBuildGnHelpers.cmake"
     )
     add_custom_target(runGn_${arg_GN_TARGET}
         DEPENDS #TODO this is fixed in cmake 3.20 so we could simply use GN_TARGET and not create new one
@@ -1299,13 +606,6 @@ function(add_gn_command)
         add_dependencies(runGn_${arg_GN_TARGET} thirdparty_sync_headers)
     endif()
     create_gn_target_config(${arg_GN_TARGET} ${arg_BUILDDIR}/${targetConfigFileName})
-endfunction()
-
-function(create_cxx_configs cmakeTarget arch)
-    get_config_filenames(cConfigFileName cxxConfigFileName staticConfigFileName targetConfigFileName)
-    create_c_config(${cmakeTarget} ${arch} ${cConfigFileName})
-    create_cxx_config(${cmakeTarget} ${arch} ${cxxConfigFileName})
-    create_static_config(${cmakeTarget} ${arch} ${staticConfigFileName})
 endfunction()
 
 # targets to gather per config / architecture targets
@@ -1324,62 +624,8 @@ function(addCopyCommand target src dst)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${dst}
         COMMAND ${CMAKE_COMMAND} -E copy ${src} ${dst}
         TARGET ${target}
-        DEPENDS ${src}
         USES_TERMINAL
     )
-endfunction()
-
-function(check_for_ulimit)
-    message("-- Checking 'ulimit -n'")
-    execute_process(COMMAND bash -c "ulimit -n"
-        OUTPUT_VARIABLE ulimitOutput
-    )
-    string(REGEX MATCHALL "[0-9]+" limit "${ulimitOutput}")
-    message(" -- Open files limit ${limit}")
-    if(NOT (QT_FEATURE_use_gold_linker OR QT_FEATURE_use_lld_linker) AND ulimitOutput LESS 4096)
-        if(NOT ${CMAKE_VERSION} VERSION_LESS "3.21.0")
-            message(" -- Creating linker launcher")
-            file(GENERATE OUTPUT ${PROJECT_BINARY_DIR}/linker_ulimit.sh
-                CONTENT "#!/bin/bash\nulimit -n 4096\nexec \"$@\""
-                FILE_PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-            )
-            set(COIN_BUG_699 ON PARENT_SCOPE)
-        else()
-            set(PRINT_BFD_LINKER_WARNING ON PARENT_SCOPE)
-        endif()
-    endif()
-endfunction()
-
-function(add_build feature value)
-    list(APPEND cmakeArgs
-        "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
-        "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-        "-DMATRIX_SUBBUILD=ON"
-        "-DFEATURE_${feature}=${value}"
-    )
-    if(CMAKE_C_COMPILER_LAUNCHER)
-        list(APPEND cmakeArgs "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}")
-    endif()
-    if(CMAKE_CXX_COMPILER_LAUNCHER)
-        list(APPEND cmakeArgs "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}")
-    endif()
-
-    externalproject_add(${feature}
-        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
-        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${feature}-${value}
-        PREFIX ${feature}-${value}
-        CMAKE_ARGS ${cmakeArgs}
-        USES_TERMINAL_BUILD ON
-        USES_TERMINAL_CONFIGURE ON
-        BUILD_ALWAYS TRUE
-        INSTALL_COMMAND ""
-    )
-    get_property(depTracker GLOBAL PROPERTY MATRIX_DEPENDENCY_TRACKER)
-    foreach(dep ${depTracker})
-        add_dependencies(${feature} ${dep})
-    endforeach()
-    set(depTracker "${depTracker}" ${feature})
-    set_property(GLOBAL PROPERTY MATRIX_DEPENDENCY_TRACKER "${depTracker}")
 endfunction()
 
 function(add_code_attributions_target)
@@ -1401,13 +647,13 @@ function(add_code_attributions_target)
             -DBUILDDIR=${arg_BUILDDIR}
             -DOUTPUT=${arg_OUTPUT}
             -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
-            -P ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/License.cmake
+            -P ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtGnCredits.cmake
         WORKING_DIRECTORY ${WEBENGINE_ROOT_BUILD_DIR}
         DEPENDS
             ${WEBENGINE_ROOT_SOURCE_DIR}/src/3rdparty/chromium/tools/licenses/licenses.py
             ${arg_FILE_TEMPLATE}
             ${arg_ENTRY_TEMPLATE}
-            ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/License.cmake
+            ${WEBENGINE_ROOT_SOURCE_DIR}/cmake/QtGnCredits.cmake
         USES_TERMINAL
      )
      add_custom_target(${arg_TARGET} DEPENDS ${arg_OUTPUT})
@@ -1433,15 +679,62 @@ macro(qt_webengine_build_and_install_gn)
 endmacro()
 
 macro(qt_webengine_externalproject_add)
+    # On macOS, force the architecture variable to be populated to avoid issues with ccache
+    # picking the wrong object artifacts on CI
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "")
+        set(OSX_ARCH_STR ${CMAKE_HOST_SYSTEM_PROCESSOR})
+    else()
+        list(JOIN CMAKE_OSX_ARCHITECTURES "," OSX_ARCH_STR)
+    endif()
     externalproject_add(${ARGN}
         PREFIX      gn
         USES_TERMINAL_BUILD TRUE
+        LIST_SEPARATOR ","
         CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release
                    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
                    -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+                   -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
                    -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
                    -DCMAKE_PREFIX_PATH:PATH=<INSTALL_DIR>
-                   -DWEBENGINE_ROOT_BUILD_DIR=${PROJECT_BINARY_DIR}
+                   -DCMAKE_OSX_ARCHITECTURES=${OSX_ARCH_STR}
+                   -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
+                   -DCMAKE_VERBOSE_MAKEFILE=${CMAKE_VERBOSE_MAKEFILE}
                    -DQT_ALLOW_SYMLINK_IN_PATHS=${QT_ALLOW_SYMLINK_IN_PATHS}
+                   -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+                   -DGCC_LEGACY_SUPPORT=${QT_FEATURE_webengine_gcc_legacy_support}
     )
+    unset(OSX_ARCH_STR)
 endmacro()
+
+macro(qt_webengine_install_version_override_for_module feature module)
+    if(QT_FEATURE_${feature})
+        set(staging_file
+            "${buildDir}/ConfigVersionOverrides/${module}/Override_1000_qtproject.cmake")
+        string(CONCAT override_version_file
+            "${INSTALL_LIBDIR}/cmake/"
+            "${INSTALL_CMAKE_NAMESPACE}${module}/"
+            "${INSTALL_CMAKE_NAMESPACE}${module}ConfigVersionImpl.cmake")
+        configure_file(
+            "${WEBENGINE_ROOT_SOURCE_DIR}/cmake/ConfigVersionOverride.cmake.in"
+            "${staging_file}"
+            @ONLY
+        )
+        qt_install(FILES
+            "${staging_file}"
+            DESTINATION "${installDir}/ConfigVersionOverrides/${module}"
+        )
+        unset(override_version_file)
+    endif()
+endmacro()
+
+function(qt_webengine_install_version_overrides)
+    qt_path_join(installDir ${QT_CONFIG_INSTALL_DIR} "${INSTALL_CMAKE_NAMESPACE}")
+    qt_path_join(buildDir ${QT_CONFIG_BUILD_DIR} "${INSTALL_CMAKE_NAMESPACE}")
+
+    qt_webengine_install_version_override_for_module(qtwebengine_core_build WebEngineCore)
+    qt_webengine_install_version_override_for_module(qtwebengine_widgets_build WebEngineWidgets)
+    qt_webengine_install_version_override_for_module(qtwebengine_quick_build WebEngineQuick)
+    qt_webengine_install_version_override_for_module(qtpdf_build Pdf)
+    qt_webengine_install_version_override_for_module(qtpdf_widgets_build PdfWidgets)
+    qt_webengine_install_version_override_for_module(qtpdf_quick_build PdfQuick)
+endfunction()

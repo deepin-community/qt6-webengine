@@ -7,6 +7,8 @@
 #include <cmath>
 #include <initializer_list>
 #include <memory>
+#include <string_view>
+#include <variant>
 
 #include "base/check.h"
 #include "base/strings/strcat.h"
@@ -38,7 +40,9 @@ class WebIDLCompatTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
     v8_scope_ =
         std::make_unique<AuctionV8Helper::FullIsolateScope>(v8_helper_.get());
-    time_limit_ = v8_helper_->CreateTimeLimit(/*script_timeout=*/std::nullopt);
+    // Using a large timeout because bots are sometimes very slow.
+    time_limit_ =
+        v8_helper_->CreateTimeLimit(/*script_timeout=*/base::Milliseconds(500));
     time_limit_scope_ =
         std::make_unique<AuctionV8Helper::TimeLimitScope>(time_limit_.get());
   }
@@ -54,16 +58,16 @@ class WebIDLCompatTest : public testing::Test {
   // Compiles and runs script, returning error vector.
   std::vector<std::string> RunScript(v8::Local<v8::Context> context,
                                      const std::string& script_source,
-                                     bool expect_success) {
+                                     AuctionV8Helper::Result expect_result) {
     std::optional<std::string> error;
-    v8::MaybeLocal<v8::UnboundScript> maybe_script =
-        v8_helper_->Compile(script_source, GURL("https://example.org"),
-                            /*debug_id=*/nullptr, error);
+    v8::MaybeLocal<v8::UnboundScript> maybe_script = v8_helper_->Compile(
+        script_source, GURL("https://example.org"),
+        /*debug_id=*/nullptr, /*cached_data=*/nullptr, error);
     EXPECT_EQ(error.value_or(""), "");
     v8::Local<v8::UnboundScript> script = maybe_script.ToLocalChecked();
 
     std::vector<std::string> errors;
-    EXPECT_EQ(expect_success,
+    EXPECT_EQ(expect_result,
               v8_helper_->RunScript(context, script, /*debug_id=*/nullptr,
                                     time_limit_.get(), errors));
     return errors;
@@ -73,12 +77,14 @@ class WebIDLCompatTest : public testing::Test {
   v8::Local<v8::Value> MakeValueFromScript(v8::Local<v8::Context> context,
                                            const std::string& script_source) {
     std::vector<std::string> errors =
-        RunScript(context, script_source, /*expect_success=*/true);
+        RunScript(context, script_source,
+                  /*expect_result=*/AuctionV8Helper::Result::kSuccess);
     EXPECT_THAT(errors, ElementsAre());
 
-    v8::MaybeLocal<v8::Value> maybe_result = v8_helper_->CallFunction(
-        context, /*debug_id=*/nullptr, "some script", "make", /*args=*/{},
-        time_limit_.get(), errors);
+    v8::MaybeLocal<v8::Value> maybe_result;
+    v8_helper_->CallFunction(context, /*debug_id=*/nullptr, "some script",
+                             "make", /*args=*/{}, time_limit_.get(),
+                             maybe_result, errors);
     v8::Local<v8::Value> result;
     if (!maybe_result.ToLocal(&result)) {
       result = v8::Undefined(v8_helper_->isolate());
@@ -98,16 +104,17 @@ class WebIDLCompatTest : public testing::Test {
   }
 
   bool GetSequence(DictConverter* converter,
-                   base::StringPiece field,
+                   std::string_view field,
                    v8::LocalVector<v8::Value>& out) {
     out.clear();  // For tests that re-use `out`.
     bool got_it = false;
     bool result = converter->GetOptionalSequence(
         field, base::BindLambdaForTesting([&]() { got_it = true; }),
-        base::BindLambdaForTesting([&](v8::Local<v8::Value> value) -> bool {
-          out.push_back(value);
-          return true;
-        }));
+        base::BindLambdaForTesting(
+            [&](v8::Local<v8::Value> value) -> IdlConvert::Status {
+              out.push_back(value);
+              return IdlConvert::Status::MakeSuccess();
+            }));
     return got_it && result;
   }
 
@@ -583,30 +590,328 @@ TEST_F(WebIDLCompatTest, StandaloneLong) {
   }
 }
 
+TEST_F(WebIDLCompatTest, StandaloneUnsignedLong) {
+  v8::Local<v8::Context> context = v8_helper_->CreateContext();
+  v8::Context::Scope ctx(context);
+
+  {
+    auto in_value = MakeValueFromScript(context, "make = () => -1");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test1", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(0xFFFFFFFFu, out);
+  }
+
+  {
+    // Rules for handling signs.
+    auto in_value = MakeValueFromScript(context, "make = () => 3e9");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test2", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(3000000000u, out);
+  }
+
+  {
+    // Rules for taking modulo.
+    auto in_value = MakeValueFromScript(context, "make = () => 5e9");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test3", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(705032704u, out);
+  }
+
+  {
+    // Can round.
+    auto in_value = MakeValueFromScript(context, "make = () => 3.14");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test4", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(3u, out);
+  }
+
+  {
+    // Rounding is towards zero.
+    auto in_value = MakeValueFromScript(context, "make = () => -1.14");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test5", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(0xFFFFFFFFu, out);
+  }
+
+  {
+    // This can fail.
+    auto in_value = MakeValueFromScript(context, "make = () => BigInt(123)");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test6", {}, in_value, out);
+    EXPECT_FALSE(res.is_success());
+    EXPECT_EQ(
+        "undefined:0 Uncaught TypeError: Cannot convert a BigInt value to a "
+        "number.",
+        res.ConvertToErrorString(v8_helper_->isolate()));
+  }
+
+  {
+    // NaN gets converted to 0.
+    auto in_value = MakeValueFromScript(context, "make = () => 0/0");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test7", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(0u, out);
+  }
+
+  {
+    // +inf gets converted to 0.
+    auto in_value = MakeValueFromScript(context, "make = () => 1/0");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test8", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(0u, out);
+  }
+
+  {
+    // -inf gets converted to 0.
+    auto in_value = MakeValueFromScript(context, "make = () => -1/0");
+    uint32_t out;
+    auto res =
+        IdlConvert::Convert(v8_helper_->isolate(), "test9", {}, in_value, out);
+    EXPECT_EQ(res.type(), IdlConvert::Status::Type::kSuccess);
+    EXPECT_EQ(0u, out);
+  }
+}
+
+TEST_F(WebIDLCompatTest, SequenceDetection) {
+  v8::Local<v8::Context> context = v8_helper_->CreateContext();
+  v8::Isolate* isolate = v8_helper_->isolate();
+  v8::Context::Scope ctx(context);
+
+  {
+    // An empty object isn't iterable.
+    const char kScript[] = R"(
+      make = () => {
+        return {};
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test1 ", {"v1", "scalar"}, in_obj, iterator_factory);
+    // This is just a non-iterable --- so it's success, and `iterator_factory`
+    // is kept empty.
+    EXPECT_TRUE(status.is_success());
+    EXPECT_TRUE(iterator_factory.IsEmpty());
+  }
+
+  {
+    // Having an explicit null for @@iterator is non-iterable, too.
+    const char kScript[] = R"(
+      make = () => {
+        let o = {};
+        o[Symbol.iterator] = null;
+        return o;
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test2 ", {"v1", "scalar"}, in_obj, iterator_factory);
+    // This is just a non-iterable --- so it's success, and `iterator_factory`
+    // is kept empty.
+    EXPECT_TRUE(status.is_success());
+    EXPECT_TRUE(iterator_factory.IsEmpty());
+  }
+
+  {
+    // If get for @iterator throws an error, however, that's trouble. We can use
+    // a proxy object to inject that.
+    const char kScript[] = R"(
+      make = () => {
+        let o = {};
+        let handler = {
+          get: () => { throw "Nope"; }
+        }
+        return new Proxy(o, handler);
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test3 ", {"v1", "scalar"}, in_obj, iterator_factory);
+    EXPECT_FALSE(status.is_success());
+    EXPECT_TRUE(iterator_factory.IsEmpty());
+    EXPECT_EQ("https://example.org/:5 Uncaught Nope.",
+              status.ConvertToErrorString(isolate));
+  }
+
+  {
+    // A non-object @iterator is an error.
+    const char kScript[] = R"(
+      make = () => {
+        let o = {};
+        o[Symbol.iterator] = 123;
+        return o;
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test3 ", {"v1", "scalar"}, in_obj, iterator_factory);
+    EXPECT_FALSE(status.is_success());
+    EXPECT_TRUE(iterator_factory.IsEmpty());
+    EXPECT_EQ("test3 Trouble iterating over v1scalar.",
+              status.ConvertToErrorString(isolate));
+  }
+
+  {
+    // A non-callable @iterator is also an error.
+    const char kScript[] = R"(
+      make = () => {
+        let o = {};
+        o[Symbol.iterator] = {};
+        return o;
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test4 ", {"v1", "scalar"}, in_obj, iterator_factory);
+    EXPECT_FALSE(status.is_success());
+    EXPECT_TRUE(iterator_factory.IsEmpty());
+    EXPECT_EQ("test4 Trouble iterating over v1scalar.",
+              status.ConvertToErrorString(isolate));
+  }
+
+  {
+    // As far as CheckForSequence, any function for @@iterator is good enough;
+    // the actual iteration will fail, but it's precise enough to resolve the
+    // union properly.
+    const char kScript[] = R"(
+      make = () => {
+        let o = {};
+        o[Symbol.iterator] = function() {};
+        return o;
+      }
+    )";
+    auto in_obj = MakeValueFromScript(context, kScript).As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        isolate, "test5 ", {"v1", "scalar"}, in_obj, iterator_factory);
+
+    EXPECT_TRUE(status.is_success());
+    EXPECT_FALSE(iterator_factory.IsEmpty());
+    EXPECT_TRUE(iterator_factory->IsCallable());
+  }
+}
+
+TEST_F(WebIDLCompatTest, StandaloneSequence) {
+  // Sequences are tested more thoroughly as parts of dictionaries for historic
+  // reasons.
+  v8::Local<v8::Context> context = v8_helper_->CreateContext();
+  v8::Isolate* isolate = v8_helper_->isolate();
+  v8::Context::Scope ctx(context);
+
+  {
+    auto in_value = MakeValueFromScript(context, "make = () => [1, 2, 3]");
+    std::vector<double> out;
+    ASSERT_TRUE(in_value->IsObject());
+    v8::Local<v8::Object> in_obj = in_value.As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        v8_helper_->isolate(), "test1 ", {"v1", "scalar"}, in_obj,
+        iterator_factory);
+    ASSERT_TRUE(status.is_success());
+    ASSERT_FALSE(iterator_factory.IsEmpty());
+
+    status = IdlConvert::ConvertSequence(
+        v8_helper_.get(), "test1 ", {"v1", "scalar"}, in_obj, iterator_factory,
+        base::BindLambdaForTesting(
+            [&](v8::Local<v8::Value> in) -> IdlConvert::Status {
+              double result = -1;
+              IdlConvert::Status status = IdlConvert::Convert(
+                  isolate, "inner ", {"sequence item"}, in, result);
+              out.push_back(result);
+              return status;
+            }));
+    EXPECT_TRUE(status.is_success());
+    ASSERT_EQ(3u, out.size());
+    EXPECT_THAT(out, ElementsAre(1.0, 2.0, 3.0));
+  }
+
+  {
+    // Sequence where conversion fails in the middle.
+    auto in_value =
+        MakeValueFromScript(context, "make = () => [1, 0.0/0.0, 3]");
+    std::vector<double> out;
+    ASSERT_TRUE(in_value->IsObject());
+    v8::Local<v8::Object> in_obj = in_value.As<v8::Object>();
+    v8::Local<v8::Object> iterator_factory;
+
+    IdlConvert::Status status = IdlConvert::CheckForSequence(
+        v8_helper_->isolate(), "test2 ", {"v1", "scalar"}, in_obj,
+        iterator_factory);
+    ASSERT_TRUE(status.is_success());
+    ASSERT_FALSE(iterator_factory.IsEmpty());
+
+    status = IdlConvert::ConvertSequence(
+        v8_helper_.get(), "test2 ", {"v1", "scalar"}, in_obj, iterator_factory,
+        base::BindLambdaForTesting(
+            [&](v8::Local<v8::Value> in) -> IdlConvert::Status {
+              double result = -1;
+              IdlConvert::Status status = IdlConvert::Convert(
+                  isolate, "inner2 ", {"a sequence item"}, in, result);
+              if (status.is_success()) {
+                out.push_back(result);
+              }
+              return status;
+            }));
+    EXPECT_FALSE(status.is_success());
+    EXPECT_EQ(
+        "inner2 Converting a sequence item to a Number did not produce a "
+        "finite double.",
+        status.ConvertToErrorString(isolate));
+    ASSERT_EQ(1u, out.size());
+    EXPECT_THAT(out, ElementsAre(1.0));
+  }
+}
+
 TEST_F(WebIDLCompatTest, BigIntOrLong) {
   v8::Local<v8::Context> context = v8_helper_->CreateContext();
   v8::Context::Scope ctx(context);
 
   {
     // Number goes towards long.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, "make = () => -123");
     auto res =
         IdlConvert::Convert(v8_helper_->isolate(), "test1", {}, in_value, out);
     EXPECT_TRUE(res.is_success());
-    ASSERT_TRUE(absl::holds_alternative<int32_t>(out));
-    EXPECT_EQ(-123, absl::get<int32_t>(out));
+    ASSERT_TRUE(std::holds_alternative<int32_t>(out));
+    EXPECT_EQ(-123, std::get<int32_t>(out));
   }
 
   {
     // BigInt goes towards bigint.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, "make = () => BigInt(-123)");
     auto res =
         IdlConvert::Convert(v8_helper_->isolate(), "test2", {}, in_value, out);
     EXPECT_TRUE(res.is_success());
-    ASSERT_TRUE(absl::holds_alternative<v8::Local<v8::BigInt>>(out));
-    v8::Local<v8::BigInt> bigint_out = absl::get<v8::Local<v8::BigInt>>(out);
+    ASSERT_TRUE(std::holds_alternative<v8::Local<v8::BigInt>>(out));
+    v8::Local<v8::BigInt> bigint_out = std::get<v8::Local<v8::BigInt>>(out);
     bool lossless = false;
     ASSERT_FALSE(bigint_out.IsEmpty());
     EXPECT_EQ(-123, bigint_out->Int64Value(&lossless));
@@ -615,7 +920,7 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
 
   {
     // Other things may need conversions.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, R"(
       make = () => {
         return {
@@ -632,7 +937,7 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
 
   {
     // Conversion produces BigInt.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, R"(
       make = () => {
         return {
@@ -643,8 +948,8 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
     auto res =
         IdlConvert::Convert(v8_helper_->isolate(), "test4", {}, in_value, out);
     EXPECT_TRUE(res.is_success());
-    ASSERT_TRUE(absl::holds_alternative<v8::Local<v8::BigInt>>(out));
-    v8::Local<v8::BigInt> bigint_out = absl::get<v8::Local<v8::BigInt>>(out);
+    ASSERT_TRUE(std::holds_alternative<v8::Local<v8::BigInt>>(out));
+    v8::Local<v8::BigInt> bigint_out = std::get<v8::Local<v8::BigInt>>(out);
     bool lossless = false;
     ASSERT_FALSE(bigint_out.IsEmpty());
     EXPECT_EQ(456, bigint_out->Int64Value(&lossless));
@@ -653,7 +958,7 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
 
   {
     // Conversion produces a bool --- that goes towards the number branch.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, R"(
       make = () => {
         return {
@@ -664,13 +969,13 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
     auto res =
         IdlConvert::Convert(v8_helper_->isolate(), "test5", {}, in_value, out);
     EXPECT_TRUE(res.is_success());
-    ASSERT_TRUE(absl::holds_alternative<int32_t>(out));
-    EXPECT_EQ(1, absl::get<int32_t>(out));
+    ASSERT_TRUE(std::holds_alternative<int32_t>(out));
+    EXPECT_EQ(1, std::get<int32_t>(out));
   }
 
   {
     // Conversion produces a string that converts to a number.
-    absl::variant<int32_t, v8::Local<v8::BigInt>> out;
+    std::variant<int32_t, v8::Local<v8::BigInt>> out;
     auto in_value = MakeValueFromScript(context, R"(
       make = () => {
         return {
@@ -681,8 +986,8 @@ TEST_F(WebIDLCompatTest, BigIntOrLong) {
     auto res =
         IdlConvert::Convert(v8_helper_->isolate(), "test6", {}, in_value, out);
     EXPECT_TRUE(res.is_success());
-    ASSERT_TRUE(absl::holds_alternative<int32_t>(out));
-    EXPECT_EQ(789, absl::get<int32_t>(out));
+    ASSERT_TRUE(std::holds_alternative<int32_t>(out));
+    EXPECT_EQ(789, std::get<int32_t>(out));
   }
 }
 
@@ -737,24 +1042,25 @@ TEST_F(WebIDLCompatTest, PropagateErrorsToV8Timeout) {
     } catch(e) {}
   )";
 
-  std::vector<std::string> errors =
-      RunScript(context, kScript, /*expect_success=*/false);
+  std::vector<std::string> errors = RunScript(
+      context, kScript, /*expect_result=*/AuctionV8Helper::Result::kTimeout);
   EXPECT_THAT(
       errors,
       ElementsAre("https://example.org/ top-level execution timed out."));
 }
 
 TEST_F(WebIDLCompatTest, PropagateErrorsToV8ErrorMessage) {
+  v8::Isolate* isolate = v8_helper_->isolate();
   v8::Local<v8::Context> context = v8_helper_->CreateContext();
   v8::Context::Scope ctx(context);
-  v8::TryCatch try_catch(v8_helper_->isolate());
+  v8::TryCatch try_catch(isolate);
   IdlConvert::Status::MakeErrorMessage("Bad bug.")
       .PropagateErrorsToV8(v8_helper_.get());
   EXPECT_TRUE(try_catch.HasCaught());
   EXPECT_FALSE(try_catch.HasTerminated());
-  EXPECT_EQ(
-      "undefined:0 Uncaught TypeError: Bad bug.",
-      AuctionV8Helper::FormatExceptionMessage(context, try_catch.Message()));
+  EXPECT_EQ("undefined:0 Uncaught TypeError: Bad bug.",
+            AuctionV8Helper::FormatExceptionMessage(isolate, context,
+                                                    try_catch.Message()));
 }
 
 TEST_F(WebIDLCompatTest, PropagateErrorsToV8Exception) {
@@ -771,9 +1077,9 @@ TEST_F(WebIDLCompatTest, PropagateErrorsToV8Exception) {
   status.PropagateErrorsToV8(v8_helper_.get());
   EXPECT_TRUE(try_catch.HasCaught());
   EXPECT_FALSE(try_catch.HasTerminated());
-  EXPECT_EQ(
-      "undefined:0 Uncaught SyntaxError: typo.",
-      AuctionV8Helper::FormatExceptionMessage(context, try_catch.Message()));
+  EXPECT_EQ("undefined:0 Uncaught SyntaxError: typo.",
+            AuctionV8Helper::FormatExceptionMessage(isolate, context,
+                                                    try_catch.Message()));
   EXPECT_EQ("undefined:0 Uncaught SyntaxError: typo.",
             status.ConvertToErrorString(isolate));
 }
@@ -1580,10 +1886,11 @@ TEST_F(WebIDLCompatTest, EmptySequence) {
 
   EXPECT_TRUE(converter->GetOptionalSequence(
       "a", base::BindLambdaForTesting([&]() { saw_a = true; }),
-      base::BindLambdaForTesting([&](v8::Local<v8::Value> item) -> bool {
-        saw_a_item = true;
-        return false;
-      })));
+      base::BindLambdaForTesting(
+          [&](v8::Local<v8::Value> item) -> IdlConvert::Status {
+            saw_a_item = true;
+            return IdlConvert::Status::MakeErrorMessage("Badness");
+          })));
   EXPECT_TRUE(saw_a);
   EXPECT_FALSE(saw_a_item);
 
@@ -1592,10 +1899,11 @@ TEST_F(WebIDLCompatTest, EmptySequence) {
 
   EXPECT_TRUE(converter->GetOptionalSequence(
       "b", base::BindLambdaForTesting([&]() { saw_b = true; }),
-      base::BindLambdaForTesting([&](v8::Local<v8::Value> item) -> bool {
-        saw_b_item = true;
-        return false;
-      })));
+      base::BindLambdaForTesting(
+          [&](v8::Local<v8::Value> item) -> IdlConvert::Status {
+            saw_b_item = true;
+            return IdlConvert::Status::MakeErrorMessage("Badness");
+          })));
   EXPECT_FALSE(saw_b);
   EXPECT_FALSE(saw_b_item);
 }
@@ -1618,20 +1926,19 @@ TEST_F(WebIDLCompatTest, SeqItemError) {
 
   EXPECT_FALSE(converter->GetOptionalSequence(
       "f1", base::BindLambdaForTesting([&]() { saw_field = true; }),
-      base::BindLambdaForTesting([&](v8::Local<v8::Value> item) -> bool {
-        std::string str;
-        EXPECT_TRUE(gin::Converter<std::string>::FromV8(v8_helper_->isolate(),
-                                                        item, &str));
-        if (str == "error") {
-          return false;
-        }
-        out.push_back(item);
-        return true;
-      })));
+      base::BindLambdaForTesting(
+          [&](v8::Local<v8::Value> item) -> IdlConvert::Status {
+            std::string str;
+            EXPECT_TRUE(gin::Converter<std::string>::FromV8(
+                v8_helper_->isolate(), item, &str));
+            if (str == "error") {
+              return IdlConvert::Status::MakeErrorMessage("Helpful error");
+            }
+            out.push_back(item);
+            return IdlConvert::Status::MakeSuccess();
+          })));
   ExpectStringList({"a", "b"}, out);
-  EXPECT_EQ(
-      "<error prefix> Conversion for an item for sequence field 'f1' failed.",
-      converter->ErrorMessage());
+  EXPECT_EQ("Helpful error", converter->ErrorMessage());
   EXPECT_FALSE(converter->FailureIsTimeout());
 }
 
@@ -1654,19 +1961,19 @@ TEST_F(WebIDLCompatTest, SeqItemErrorPropagation) {
 
   EXPECT_FALSE(converter->GetOptionalSequence(
       "f1", base::BindLambdaForTesting([&]() { saw_field = true; }),
-      base::BindLambdaForTesting([&](v8::Local<v8::Value> item) -> bool {
-        DictConverter inner(v8_helper_.get(), *time_limit_scope_,
-                            "'f1' entry: ", item);
-        double entry;
-        bool ok = inner.GetRequired("f", entry);
-        if (ok) {
-          out.push_back(entry);
-          return true;
-        } else {
-          converter->SetStatus(inner.TakeStatus());
-          return false;
-        }
-      })));
+      base::BindLambdaForTesting(
+          [&](v8::Local<v8::Value> item) -> IdlConvert::Status {
+            DictConverter inner(v8_helper_.get(), *time_limit_scope_,
+                                "'f1' entry: ", item);
+            double entry;
+            bool ok = inner.GetRequired("f", entry);
+            if (ok) {
+              out.push_back(entry);
+              return IdlConvert::Status::MakeSuccess();
+            } else {
+              return inner.TakeStatus();
+            }
+          })));
   EXPECT_THAT(out, ElementsAre(1.0, 2.0));
   EXPECT_EQ("https://example.org/:3 Uncaught Ouch.", converter->ErrorMessage());
   v8::MaybeLocal<v8::Value> exception = converter->FailureException();
@@ -1697,19 +2004,19 @@ TEST_F(WebIDLCompatTest, SeqItemTimeoutPropagation) {
 
   EXPECT_FALSE(converter->GetOptionalSequence(
       "f1", base::BindLambdaForTesting([&]() { saw_field = true; }),
-      base::BindLambdaForTesting([&](v8::Local<v8::Value> item) -> bool {
-        DictConverter inner(v8_helper_.get(), *time_limit_scope_,
-                            "'f1' entry: ", item);
-        double entry;
-        bool ok = inner.GetRequired("f", entry);
-        if (ok) {
-          out.push_back(entry);
-          return true;
-        } else {
-          converter->SetStatus(inner.TakeStatus());
-          return false;
-        }
-      })));
+      base::BindLambdaForTesting(
+          [&](v8::Local<v8::Value> item) -> IdlConvert::Status {
+            DictConverter inner(v8_helper_.get(), *time_limit_scope_,
+                                "'f1' entry: ", item);
+            double entry;
+            bool ok = inner.GetRequired("f", entry);
+            if (ok) {
+              out.push_back(entry);
+              return IdlConvert::Status::MakeSuccess();
+            } else {
+              return inner.TakeStatus();
+            }
+          })));
   EXPECT_THAT(out, ElementsAre(1.0, 2.0));
   EXPECT_EQ("'f1' entry: Converting field 'f' to Number timed out.",
             converter->ErrorMessage());
@@ -1785,8 +2092,10 @@ TEST_F(WebIDLCompatTest, SequenceNonIter) {
   auto converter = MakeFromScript(context, kScript);
   v8::LocalVector<v8::Value> out(v8_helper_->isolate());
   EXPECT_FALSE(GetSequence(converter.get(), "a", out));
-  EXPECT_EQ("<error prefix> Trouble iterating over 'a'.",
-            converter->ErrorMessage());
+  EXPECT_EQ(
+      "<error prefix> Trouble iterating over field 'a' as it does not appear "
+      "to be a sequence.",
+      converter->ErrorMessage());
   EXPECT_FALSE(converter->FailureIsTimeout());
 }
 
@@ -1806,7 +2115,7 @@ TEST_F(WebIDLCompatTest, SequenceNonIter2) {
   auto converter = MakeFromScript(context, kScript);
   v8::LocalVector<v8::Value> out(v8_helper_->isolate());
   EXPECT_FALSE(GetSequence(converter.get(), "a", out));
-  EXPECT_EQ("<error prefix> Trouble iterating over 'a'.",
+  EXPECT_EQ("<error prefix> Trouble iterating over field 'a'.",
             converter->ErrorMessage());
   EXPECT_FALSE(converter->FailureIsTimeout());
 }
@@ -1848,7 +2157,7 @@ TEST_F(WebIDLCompatTest, SequenceNonIter4) {
   auto converter = MakeFromScript(context, kScript);
   v8::LocalVector<v8::Value> out(v8_helper_->isolate());
   EXPECT_FALSE(GetSequence(converter.get(), "a", out));
-  EXPECT_EQ("<error prefix> Trouble iterating over 'a'.",
+  EXPECT_EQ("<error prefix> Trouble iterating over field 'a'.",
             converter->ErrorMessage());
   EXPECT_FALSE(converter->FailureIsTimeout());
 }
@@ -1869,7 +2178,7 @@ TEST_F(WebIDLCompatTest, SequenceNonIter5) {
   auto converter = MakeFromScript(context, kScript);
   v8::LocalVector<v8::Value> out(v8_helper_->isolate());
   EXPECT_FALSE(GetSequence(converter.get(), "a", out));
-  EXPECT_EQ("<error prefix> Trouble iterating over 'a'.",
+  EXPECT_EQ("<error prefix> Trouble iterating over field 'a'.",
             converter->ErrorMessage());
   EXPECT_FALSE(converter->FailureIsTimeout());
 }
@@ -2005,7 +2314,7 @@ TEST_F(WebIDLCompatTest, SequenceNonTermIter) {
   auto converter = MakeFromScript(context, kScript);
   v8::LocalVector<v8::Value> out(v8_helper_->isolate());
   EXPECT_FALSE(GetSequence(converter.get(), "a", out));
-  EXPECT_EQ("<error prefix> Timeout iterating over 'a'.",
+  EXPECT_EQ("<error prefix> Timeout iterating over field 'a'.",
             converter->ErrorMessage());
   EXPECT_TRUE(converter->FailureIsTimeout());
 }
@@ -2055,8 +2364,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter) {
   const char kTest[] = R"(
     binding();
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/false);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kFailure);
   EXPECT_THAT(errors,
               ElementsAre("https://example.org/:2 Uncaught TypeError: "
                           "binding(): at least 2 argument(s) are required."));
@@ -2069,8 +2378,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter2) {
   const char kTest[] = R"(
     binding("hi");
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/false);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kFailure);
   EXPECT_THAT(errors,
               ElementsAre("https://example.org/:2 Uncaught TypeError: "
                           "binding(): at least 2 argument(s) are required."));
@@ -2086,8 +2395,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter3) {
     }
     binding(notS, 0/0);
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/false);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kFailure);
   EXPECT_THAT(errors, ElementsAre("https://example.org/:5 Uncaught TypeError: "
                                   "Cannot convert object to primitive value."));
 }
@@ -2099,8 +2408,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter4) {
   const char kTest[] = R"(
       binding("hi", 0/0);
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/false);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kFailure);
   EXPECT_THAT(
       errors,
       ElementsAre(
@@ -2116,8 +2425,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter5) {
   const char kTest[] = R"(
       binding("hi", 10);
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/true);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kSuccess);
   EXPECT_THAT(errors, ElementsAre());
   EXPECT_EQ(arg0_, "hi");
   EXPECT_EQ(arg1_, 10.0);
@@ -2131,8 +2440,8 @@ TEST_F(WebIDLCompatTest, ArgsConverter6) {
   const char kTest[] = R"(
       binding(23, "12");
   )";
-  std::vector<std::string> errors =
-      RunScript(context, kTest, /*expect_success=*/true);
+  std::vector<std::string> errors = RunScript(
+      context, kTest, /*expect_result=*/AuctionV8Helper::Result::kSuccess);
   EXPECT_THAT(errors, ElementsAre());
   EXPECT_EQ(arg0_, "23");
   EXPECT_EQ(arg1_, 12.0);

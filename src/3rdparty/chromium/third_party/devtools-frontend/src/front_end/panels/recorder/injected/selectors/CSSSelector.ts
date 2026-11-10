@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {SelectorPart, type Selector} from './Selector.js';
+import {type Selector, SelectorPart} from './Selector.js';
 
 export interface QueryableNode extends Node {
   querySelectorAll(selectors: string): NodeListOf<Element>;
@@ -98,7 +98,7 @@ export const getSelectorPart = (
     return;
   }
 
-  // Declared attibutes have the greatest priority.
+  // Declared attributes have the greatest priority.
   for (const attribute of attributes) {
     const value = node.getAttribute(attribute);
     if (value) {
@@ -291,12 +291,12 @@ export const queryCSSSelectorAll = (selectors: Selector): Element[] => {
   } else if (selectors.length === 0) {
     return [];
   }
-  let lists: NodeListOf<Element>[] = [
+  let lists: Array<NodeListOf<Element>> = [
     [document.documentElement] as unknown as NodeListOf<Element>,
   ];
   do {
     const selector = selectors.shift() as string;
-    const roots: NodeListOf<Element>[] = [];
+    const roots: Array<NodeListOf<Element>> = [];
     for (const nodes of lists) {
       for (const node of nodes) {
         const list = (node.shadowRoot ?? node).querySelectorAll(selector);

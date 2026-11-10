@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/barrier_closure.h"
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/gmock_callback_support.h"
@@ -42,7 +43,6 @@ class MockGamepadConsumer : public GamepadConsumer {
 
   MOCK_METHOD2(OnGamepadConnected, void(uint32_t, const Gamepad&));
   MOCK_METHOD2(OnGamepadDisconnected, void(uint32_t, const Gamepad&));
-  MOCK_METHOD1(OnGamepadChanged, void(const mojom::GamepadChanges&));
 };
 
 class GamepadServiceTest : public testing::Test {
@@ -52,7 +52,7 @@ class GamepadServiceTest : public testing::Test {
 
  protected:
   GamepadServiceTest() {
-    memset(&test_data_, 0, sizeof(test_data_));
+    UNSAFE_TODO(memset(&test_data_, 0, sizeof(test_data_)));
 
     // Configure the pad to have one button. We need our mock gamepad
     // to have at least one input so we can simulate a user gesture.

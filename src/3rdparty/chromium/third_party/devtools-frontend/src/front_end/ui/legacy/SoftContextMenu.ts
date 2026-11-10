@@ -28,7 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import * as Host from '../../core/host/host.js';
+/* eslint-disable rulesdir/no-imperative-dom-api */
+
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
 import * as IconButton from '../../ui/components/icon_button/icon_button.js';
@@ -37,8 +38,7 @@ import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 import * as ARIAUtils from './ARIAUtils.js';
 import {AnchorBehavior, GlassPane, MarginBehavior, PointerEventsBehavior, SizeBehavior} from './GlassPane.js';
 import {InspectorView} from './InspectorView.js';
-import softContextMenuStyles from './softContextMenu.css.legacy.js';
-import * as ThemeSupport from './theme_support/theme_support.js';
+import softContextMenuStyles from './softContextMenu.css.js';
 import {Tooltip} from './Tooltip.js';
 import {createTextChild, ElementFocusRestorer} from './UIUtils.js';
 
@@ -64,7 +64,11 @@ const UIStrings = {
    *@example {44 %} PH2
    */
   sS: '{PH1}, {PH2}',
-};
+  /**
+   * @description Accessible text exposed to screen readers appended to menu items that have a new badge.
+   */
+  newFeature: 'This is a new feature',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/SoftContextMenu.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -84,10 +88,11 @@ export class SoftContextMenu {
   private onMenuClosed?: () => void;
   private focusOnTheFirstItem = true;
   private keepOpen: boolean;
+  private loggableParent: Element|null;
 
   constructor(
       items: SoftContextMenuDescriptor[], itemSelectedCallback: (arg0: number) => void, keepOpen: boolean,
-      parentMenu?: SoftContextMenu, onMenuClosed?: () => void) {
+      parentMenu?: SoftContextMenu, onMenuClosed?: () => void, loggableParent?: Element|null) {
     this.items = items;
     this.itemSelectedCallback = itemSelectedCallback;
     this.parentMenu = parentMenu;
@@ -96,6 +101,7 @@ export class SoftContextMenu {
     this.detailsForElementMap = new WeakMap();
     this.onMenuClosed = onMenuClosed;
     this.keepOpen = keepOpen;
+    this.loggableParent = loggableParent || null;
   }
 
   getItems(): SoftContextMenuDescriptor[] {
@@ -111,28 +117,35 @@ export class SoftContextMenu {
 
     this.glassPane = new GlassPane();
     this.glassPane.setPointerEventsBehavior(
-        this.parentMenu ? PointerEventsBehavior.PierceGlassPane : PointerEventsBehavior.BlockedByGlassPane);
+        this.parentMenu ? PointerEventsBehavior.PIERCE_GLASS_PANE : PointerEventsBehavior.BLOCKED_BY_GLASS_PANE);
     this.glassPane.registerRequiredCSS(softContextMenuStyles);
     this.glassPane.setContentAnchorBox(anchorBox);
-    this.glassPane.setSizeBehavior(SizeBehavior.MeasureContent);
-    this.glassPane.setMarginBehavior(MarginBehavior.NoMargin);
-    this.glassPane.setAnchorBehavior(this.parentMenu ? AnchorBehavior.PreferRight : AnchorBehavior.PreferBottom);
+    this.glassPane.setSizeBehavior(SizeBehavior.MEASURE_CONTENT);
+    this.glassPane.setMarginBehavior(MarginBehavior.NO_MARGIN);
+    this.glassPane.setAnchorBehavior(this.parentMenu ? AnchorBehavior.PREFER_RIGHT : AnchorBehavior.PREFER_BOTTOM);
 
     this.contextMenuElement = this.glassPane.contentElement.createChild('div', 'soft-context-menu');
+    this.contextMenuElement.setAttribute('jslog', `${VisualLogging.menu().track({resize: true}).parent('mapped').track({
+                                           keydown: 'ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Enter|Space|Escape',
+                                         })}`);
+    if (this.loggableParent) {
+      VisualLogging.setMappedParent(this.contextMenuElement, this.loggableParent);
+    }
     this.contextMenuElement.tabIndex = -1;
     ARIAUtils.markAsMenu(this.contextMenuElement);
     this.contextMenuElement.addEventListener('mouseup', e => e.consume(), false);
     this.contextMenuElement.addEventListener('keydown', this.menuKeyDown.bind(this), false);
 
+    const menuContainsCheckbox = this.items.find(item => item.type === 'checkbox') ? true : false;
     for (let i = 0; i < this.items.length; ++i) {
-      this.contextMenuElement.appendChild(this.createMenuItem(this.items[i]));
+      this.contextMenuElement.appendChild(this.createMenuItem(this.items[i], menuContainsCheckbox));
     }
 
     this.glassPane.show(document);
     this.focusRestorer = new ElementFocusRestorer(this.contextMenuElement);
 
     if (!this.parentMenu) {
-      this.hideOnUserMouseDownUnlessInMenu = (event: Event): void => {
+      this.hideOnUserMouseDownUnlessInMenu = (event: Event) => {
         // If a user clicks on any submenu, prevent the menu system from closing.
         let subMenu: (SoftContextMenu|undefined) = this.subMenu;
         while (subMenu) {
@@ -209,13 +222,13 @@ export class SoftContextMenu {
     this.onMenuClosed?.();
   }
 
-  private createMenuItem(item: SoftContextMenuDescriptor): HTMLElement {
+  private createMenuItem(item: SoftContextMenuDescriptor, menuContainsCheckbox: boolean): HTMLElement {
     if (item.type === 'separator') {
       return this.createSeparator();
     }
 
     if (item.type === 'subMenu') {
-      return this.createSubMenu(item);
+      return this.createSubMenu(item, menuContainsCheckbox);
     }
 
     const menuItemElement = document.createElement('div');
@@ -225,11 +238,15 @@ export class SoftContextMenu {
     if (item.checked) {
       menuItemElement.setAttribute('checked', '');
     }
-    const checkMarkElement = IconButton.Icon.create('checkmark', 'checkmark');
     if (item.id !== undefined) {
       menuItemElement.setAttribute('data-action-id', item.id.toString());
     }
-    menuItemElement.appendChild(checkMarkElement);
+
+    // If the menu contains a checkbox, add checkbox space in front of the label to align the items
+    if (menuContainsCheckbox) {
+      const checkMarkElement = IconButton.Icon.create('checkmark', 'checkmark');
+      menuItemElement.appendChild(checkMarkElement);
+    }
     if (item.tooltip) {
       Tooltip.install(menuItemElement, item.tooltip);
     }
@@ -241,7 +258,7 @@ export class SoftContextMenu {
       subMenuTimer: undefined,
     };
 
-    if (item.jslogContext) {
+    if (item.jslogContext && !item.element?.hasAttribute('jslog')) {
       if (item.type === 'checkbox') {
         menuItemElement.setAttribute(
             'jslog', `${VisualLogging.toggle().track({click: true}).context(item.jslogContext)}`);
@@ -293,6 +310,9 @@ export class SoftContextMenu {
     } else if (item.shortcut) {
       accessibleName = i18nString(UIStrings.sS, {PH1: String(item.label), PH2: item.shortcut});
     }
+    if (item.element?.className === 'new-badge') {
+      accessibleName = i18nString(UIStrings.sS, {PH1: String(item.label), PH2: i18nString(UIStrings.newFeature)});
+    }
     ARIAUtils.setLabel(menuItemElement, accessibleName);
 
     this.detailsForElementMap.set(menuItemElement, detailsForElement);
@@ -300,7 +320,7 @@ export class SoftContextMenu {
     return menuItemElement;
   }
 
-  private createSubMenu(item: SoftContextMenuDescriptor): HTMLElement {
+  private createSubMenu(item: SoftContextMenuDescriptor, menuContainsCheckbox: boolean): HTMLElement {
     const menuItemElement = document.createElement('div');
     menuItemElement.classList.add('soft-context-menu-item');
     menuItemElement.tabIndex = -1;
@@ -313,22 +333,17 @@ export class SoftContextMenu {
       subMenuTimer: undefined,
     });
 
-    // Occupy the same space on the left in all items.
-    const checkMarkElement = IconButton.Icon.create('checkmark', 'checkmark soft-context-menu-item-checkmark');
-    menuItemElement.appendChild(checkMarkElement);
+    // If the menu contains a checkbox, add checkbox space in front of the label to align the items
+    if (menuContainsCheckbox) {
+      const checkMarkElement = IconButton.Icon.create('checkmark', 'checkmark soft-context-menu-item-checkmark');
+      menuItemElement.appendChild(checkMarkElement);
+    }
 
     createTextChild(menuItemElement, item.label || '');
     ARIAUtils.setExpanded(menuItemElement, false);
 
-    // TODO: Consider removing this branch and use the same icon on all platforms.
-    if (Host.Platform.isMac() && !ThemeSupport.ThemeSupport.instance().hasTheme()) {
-      const subMenuArrowElement = menuItemElement.createChild('span', 'soft-context-menu-item-submenu-arrow');
-      ARIAUtils.markAsHidden(subMenuArrowElement);
-      subMenuArrowElement.textContent = '\u25B6';  // BLACK RIGHT-POINTING TRIANGLE
-    } else {
-      const subMenuArrowElement = IconButton.Icon.create('triangle-right', 'soft-context-menu-item-submenu-arrow');
-      menuItemElement.appendChild(subMenuArrowElement);
-    }
+    const subMenuArrowElement = IconButton.Icon.create('keyboard-arrow-right', 'soft-context-menu-item-submenu-arrow');
+    menuItemElement.appendChild(subMenuArrowElement);
 
     menuItemElement.addEventListener('mousedown', this.menuItemMouseDown.bind(this), false);
     menuItemElement.addEventListener('mouseup', this.menuItemMouseUp.bind(this), false);
@@ -364,11 +379,12 @@ export class SoftContextMenu {
 
   private menuItemMouseUp(event: Event): void {
     this.triggerAction((event.target as HTMLElement), event);
+    void VisualLogging.logClick(event.target as HTMLElement, event);
     event.consume();
   }
 
   private root(): SoftContextMenu {
-    let root: SoftContextMenu = (this as SoftContextMenu);
+    let root: SoftContextMenu = this;
     while (root.parentMenu) {
       root = root.parentMenu;
     }
@@ -440,10 +456,10 @@ export class SoftContextMenu {
     this.subMenu = new SoftContextMenu(detailsForElement.subItems, this.itemSelectedCallback, false, this);
     const anchorBox = menuItemElement.boxInWindow();
     // Adjust for padding.
-    anchorBox.y -= 5;
+    anchorBox.y -= 9;
     anchorBox.x += 3;
     anchorBox.width -= 6;
-    anchorBox.height += 10;
+    anchorBox.height += 18;
     this.subMenu.show(this.document, anchorBox);
   }
 
@@ -474,7 +490,7 @@ export class SoftContextMenu {
       const detailsForElement = this.detailsForElementMap.get(this.highlightedMenuItemElement);
       this.highlightedMenuItemElement.classList.remove('force-white-icons');
       this.highlightedMenuItemElement.classList.remove('soft-context-menu-item-mouse-over');
-      if (detailsForElement && detailsForElement.subItems && detailsForElement.subMenuTimer) {
+      if (detailsForElement?.subItems && detailsForElement.subMenuTimer) {
         window.clearTimeout(detailsForElement.subMenuTimer);
         delete detailsForElement.subMenuTimer;
       }
@@ -485,13 +501,12 @@ export class SoftContextMenu {
       this.highlightedMenuItemElement.classList.add('force-white-icons');
       this.highlightedMenuItemElement.classList.add('soft-context-menu-item-mouse-over');
       const detailsForElement = this.detailsForElementMap.get(this.highlightedMenuItemElement);
-      if (detailsForElement && detailsForElement.customElement &&
-          !detailsForElement.customElement.classList.contains('location-menu')) {
+      if (detailsForElement?.customElement && !detailsForElement.customElement.classList.contains('location-menu')) {
         detailsForElement.customElement.focus();
       } else {
         this.highlightedMenuItemElement.focus();
       }
-      if (scheduleSubMenu && detailsForElement && detailsForElement.subItems && !detailsForElement.subMenuTimer) {
+      if (scheduleSubMenu && detailsForElement?.subItems && !detailsForElement.subMenuTimer) {
         detailsForElement.subMenuTimer =
             window.setTimeout(this.showSubMenu.bind(this, this.highlightedMenuItemElement), 150);
       }
@@ -528,7 +543,7 @@ export class SoftContextMenu {
     let menuItemDetails: (ElementMenuDetails|undefined) =
         menuItemElement ? this.detailsForElementMap.get((menuItemElement as HTMLElement)) : undefined;
     while (menuItemElement &&
-           (menuItemDetails && menuItemDetails.isSeparator ||
+           (menuItemDetails?.isSeparator ||
             (menuItemElement as HTMLElement).classList.contains('soft-context-menu-disabled'))) {
       menuItemElement = menuItemElement.nextSibling;
       menuItemDetails = menuItemElement ? this.detailsForElementMap.get((menuItemElement as HTMLElement)) : undefined;
@@ -538,8 +553,7 @@ export class SoftContextMenu {
     }
   }
 
-  private menuKeyDown(event: Event): void {
-    const keyboardEvent = (event as KeyboardEvent);
+  private menuKeyDown(keyboardEvent: KeyboardEvent): void {
     function onEnterOrSpace(this: SoftContextMenu): void {
       if (!this.highlightedMenuItemElement) {
         return;
@@ -549,6 +563,7 @@ export class SoftContextMenu {
         // The custom element will handle the event, so return early and do not consume it.
         return;
       }
+      VisualLogging.logClick(this.highlightedMenuItemElement, keyboardEvent);
       this.triggerAction(this.highlightedMenuItemElement, keyboardEvent);
       if (detailsForElement.subItems && this.subMenu) {
         this.subMenu.highlightNext();
@@ -577,7 +592,7 @@ export class SoftContextMenu {
           break;
         }
         const detailsForElement = this.detailsForElementMap.get(this.highlightedMenuItemElement);
-        if (detailsForElement && detailsForElement.subItems) {
+        if (detailsForElement?.subItems) {
           this.showSubMenu(this.highlightedMenuItemElement);
           if (this.subMenu) {
             this.subMenu.highlightNext();
@@ -632,13 +647,18 @@ export interface SoftContextMenuDescriptor {
   type: 'checkbox'|'item'|'separator'|'subMenu';
   id?: number;
   label?: string;
+  accelerator?: {keyCode: number, modifiers: number};
+  isExperimentalFeature?: boolean;
   enabled?: boolean;
   checked?: boolean;
+  isDevToolsPerformanceMenuItem?: boolean;
   subItems?: SoftContextMenuDescriptor[];
   element?: Element;
   shortcut?: string;
   tooltip?: Platform.UIString.LocalizedString;
   jslogContext?: string;
+  /** A no-op. For native context menus, feature name will request showing a new badge. */
+  featureName?: string;
 }
 interface ElementMenuDetails {
   customElement?: HTMLElement;

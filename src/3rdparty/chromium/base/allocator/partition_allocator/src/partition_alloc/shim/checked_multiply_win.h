@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_
+#define PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_
 
 #include "partition_alloc/partition_alloc_base/numerics/checked_math.h"
 
@@ -20,4 +25,4 @@ size_t CheckedMultiply(size_t multiplicand, size_t multiplier) {
 
 }  // namespace allocator_shim::internal
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_
+#endif  // PARTITION_ALLOC_SHIM_CHECKED_MULTIPLY_WIN_H_

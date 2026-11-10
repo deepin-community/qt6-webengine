@@ -9,6 +9,7 @@
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "gles2_impl_export.h"
 
 namespace gpu {
 
@@ -18,9 +19,9 @@ namespace gles2 {
 
 class GLES2CmdHelper;
 
-class ReadbackBufferShadowTracker {
+class GLES2_IMPL_EXPORT ReadbackBufferShadowTracker {
  public:
-  class Buffer : public base::SupportsWeakPtr<Buffer> {
+  class GLES2_IMPL_EXPORT Buffer final {
    public:
     explicit Buffer(GLuint buffer_id,
                     MappedMemoryManager* mapped_memory,
@@ -44,6 +45,8 @@ class ReadbackBufferShadowTracker {
 
     GLuint id() const { return buffer_id_; }
 
+    base::WeakPtr<Buffer> AsWeakPtr() { return weak_ptr_factory_.GetWeakPtr(); }
+
    private:
     friend class ReadbackBufferShadowTracker;
 
@@ -57,6 +60,7 @@ class ReadbackBufferShadowTracker {
     uint64_t serial_of_readback_data_ = 0;
     uint32_t size_ = 0;
     bool is_mapped_ = false;
+    base::WeakPtrFactory<Buffer> weak_ptr_factory_{this};
   };
 
   ReadbackBufferShadowTracker(MappedMemoryManager* mapped_memory,

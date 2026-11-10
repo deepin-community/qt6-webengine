@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_SHADER_PIXEL_LOCAL_STORAGE_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
-#include "third_party/blink/renderer/core/typed_arrays/nadc_typed_array_view.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_extension.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
@@ -14,6 +13,7 @@ namespace blink {
 
 class WebGLFramebuffer;
 class WebGLTexture;
+class ExecutionContext;
 
 class WebGLShaderPixelLocalStorage final : public WebGLExtension {
   DEFINE_WRAPPERTYPEINFO();
@@ -22,33 +22,24 @@ class WebGLShaderPixelLocalStorage final : public WebGLExtension {
   static bool Supported(WebGLRenderingContextBase*);
   static const char* ExtensionName();
 
-  explicit WebGLShaderPixelLocalStorage(WebGLRenderingContextBase*);
+  WebGLShaderPixelLocalStorage(WebGLRenderingContextBase*, ExecutionContext*);
 
   WebGLExtensionName GetName() const override;
 
-  GLboolean isCoherent() const;
+  bool isCoherent() const;
 
   void framebufferTexturePixelLocalStorageWEBGL(GLint plane,
                                                 WebGLTexture*,
                                                 GLint level,
                                                 GLint layer);
   void framebufferPixelLocalClearValuefvWEBGL(GLint plane,
-                                              NADCTypedArrayView<GLfloat>,
-                                              GLuint src_offset);
-  void framebufferPixelLocalClearValuefvWEBGL(GLint plane,
-                                              const Vector<GLfloat>& value,
+                                              base::span<const GLfloat>,
                                               GLuint src_offset);
   void framebufferPixelLocalClearValueivWEBGL(GLint plane,
-                                              NADCTypedArrayView<GLint>,
-                                              GLuint src_offset);
-  void framebufferPixelLocalClearValueivWEBGL(GLint plane,
-                                              const Vector<GLint>& value,
+                                              base::span<const GLint>,
                                               GLuint src_offset);
   void framebufferPixelLocalClearValueuivWEBGL(GLint plane,
-                                               NADCTypedArrayView<GLuint>,
-                                               GLuint src_offset);
-  void framebufferPixelLocalClearValueuivWEBGL(GLint plane,
-                                               const Vector<GLuint>& value,
+                                               base::span<const GLuint>,
                                                GLuint src_offset);
   void beginPixelLocalStorageWEBGL(const Vector<GLenum>& loadops);
   void endPixelLocalStorageWEBGL(const Vector<GLenum>& storeops);

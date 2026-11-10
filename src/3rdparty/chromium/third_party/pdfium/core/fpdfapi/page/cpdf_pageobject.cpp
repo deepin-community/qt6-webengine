@@ -11,7 +11,7 @@
 #include "core/fxcrt/fx_coordinates.h"
 
 CPDF_PageObject::CPDF_PageObject(int32_t content_stream)
-    : m_ContentStream(content_stream) {}
+    : content_stream_(content_stream) {}
 
 CPDF_PageObject::~CPDF_PageObject() = default;
 
@@ -81,13 +81,24 @@ pdfium::span<const ByteString> CPDF_PageObject::GetGraphicsResourceNames()
 }
 
 void CPDF_PageObject::SetDefaultStates() {
-  m_GraphicStates.SetDefaultStates();
+  graphic_states_.SetDefaultStates();
 }
 
 void CPDF_PageObject::CopyData(const CPDF_PageObject* pSrc) {
-  m_GraphicStates = pSrc->m_GraphicStates;
-  m_Rect = pSrc->m_Rect;
-  m_bDirty = true;
+  graphic_states_ = pSrc->graphic_states_;
+  rect_ = pSrc->rect_;
+  dirty_ = true;
+}
+
+void CPDF_PageObject::InitializeOriginalMatrix(const CFX_Matrix& matrix) {
+  original_matrix_ = matrix;
+}
+
+void CPDF_PageObject::SetIsActive(bool value) {
+  if (is_active_ != value) {
+    is_active_ = value;
+    dirty_ = true;
+  }
 }
 
 void CPDF_PageObject::TransformClipPath(const CFX_Matrix& matrix) {
@@ -96,15 +107,6 @@ void CPDF_PageObject::TransformClipPath(const CFX_Matrix& matrix) {
     return;
   }
   clip_path.Transform(matrix);
-  SetDirty(true);
-}
-
-void CPDF_PageObject::TransformGeneralState(const CFX_Matrix& matrix) {
-  CPDF_GeneralState& general_state = mutable_general_state();
-  if (!general_state.HasRef()) {
-    return;
-  }
-  general_state.GetMutableMatrix()->Concat(matrix);
   SetDirty(true);
 }
 

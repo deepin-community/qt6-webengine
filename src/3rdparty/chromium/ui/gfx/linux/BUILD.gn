@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/linux/pkg_config.gni")
 import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
 
@@ -14,8 +15,9 @@ source_set("drm") {
   ]
 
   deps = [
-    "//base:base",
+    "//base",
     "//build/config/linux/libdrm",
+    "//components/viz/common:shared_image_format",
     "//ui/gfx:buffer_types",
   ]
 }
@@ -35,15 +37,15 @@ source_set("gbm") {
 
   deps = [
     ":drm",
-    "//base:base",
+    "//base",
     "//build/config/linux/libdrm",
     "//skia",
-    "//third_party/minigbm",
     "//ui/gfx:buffer_types",
-    "//ui/gfx:gfx_switches",
     "//ui/gfx:memory_buffer",
-    "//ui/gfx/geometry:geometry",
+    "//ui/gfx/geometry",
   ]
+
+  public_deps = [ "//third_party/minigbm", ]
 }
 
 if (ozone_platform_x11) {

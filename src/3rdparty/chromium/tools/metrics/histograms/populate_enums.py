@@ -9,11 +9,9 @@ import os
 import sys
 import xml.dom.minidom
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
+import codegen_shared
 import xml_utils
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'ukm'))
-import codegen
-
 
 EventDetails = namedtuple("EventDetails", "name hash is_obsolete")
 
@@ -31,7 +29,7 @@ def _GetEventDetails(event):
   name = event.getAttribute('name')
   # The value is UKM event name hash truncated to 31 bits. This is recorded in
   # https://cs.chromium.org/chromium/src/components/ukm/ukm_recorder_impl.cc?q=LogEventHashasUmaHistogram
-  hash = codegen.HashName(name) & 0x7fffffff
+  hash = codegen_shared.HashName(name) & 0x7fffffff
 
   def _HasDirectObsoleteTag(node):
     return any(

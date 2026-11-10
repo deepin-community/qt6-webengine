@@ -288,8 +288,8 @@ class ServiceWorkerHidDelegateObserverTest
     TestFuture<blink::ServiceWorkerStatusCode,
                scoped_refptr<ServiceWorkerRegistration>>
         future;
-    registry()->FindRegistrationForId(registration_id, key,
-                                      future.GetCallback());
+    registry().FindRegistrationForId(registration_id, key,
+                                     future.GetCallback());
     return future.Take();
   }
 
@@ -601,7 +601,8 @@ TEST_F(ServiceWorkerHidDelegateObserverTest, OnPermissionRevoked) {
     base::RunLoop run_loop;
     auto origin = url::Origin::Create(origins[idx]);
     EXPECT_CALL(hid_delegate(), GetDeviceInfo).WillOnce(Return(device.get()));
-    EXPECT_CALL(hid_delegate(), HasDevicePermission(_, origin, Ref(*device)))
+    EXPECT_CALL(hid_delegate(),
+                HasDevicePermission(_, nullptr, origin, Ref(*device)))
         .WillOnce(Return(false));
     EXPECT_CALL(hid_delegate(), DecrementConnectionCount(_, origin))
         .WillOnce(RunClosure(run_loop.QuitClosure()));
@@ -628,9 +629,10 @@ TEST_F(ServiceWorkerHidDelegateObserverTest,
   EXPECT_FALSE(hid_delegate().observer_list().empty());
 
   TestFuture<blink::ServiceWorkerStatusCode> unregister_future;
-  context()->UnregisterServiceWorker(registration->scope(), registration->key(),
-                                     /*is_immediate=*/true,
-                                     unregister_future.GetCallback());
+  context()->UnregisterServiceWorker(
+      registration->scope(), registration->key(),
+      /*is_immediate=*/true, ServiceWorkerRegistration::DeleteInitiator::kTest,
+      unregister_future.GetCallback());
   EXPECT_EQ(unregister_future.Get<0>(), blink::ServiceWorkerStatusCode::kOk);
   // Wait until all of the
   // ServiceWorkerDeviceDelegateObserver::OnRegistrationDeleted are called.

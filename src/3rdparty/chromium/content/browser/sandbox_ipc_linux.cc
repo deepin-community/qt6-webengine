@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/linux_util.h"
 #include "base/logging.h"
@@ -88,7 +89,7 @@ void SandboxIPCHandler::HandleRequestFromChild(int fd) {
   // kMaxSandboxIPCMessagePayloadSize set to 64 should be plenty.
   // 128 bytes padding are necessary so recvmsg() does not return MSG_TRUNC
   // error for a maximum length message.
-  char buf[kMaxSandboxIPCMessagePayloadSize + 128];
+  uint8_t buf[kMaxSandboxIPCMessagePayloadSize + 128];
 
   const ssize_t len =
       base::UnixDomainSocket::RecvMsg(fd, buf, sizeof(buf), &fds);
@@ -98,15 +99,16 @@ void SandboxIPCHandler::HandleRequestFromChild(int fd) {
       NOTREACHED() << "Sandbox host message is larger than "
                       "kMaxSandboxIPCMessagePayloadSize";
     } else {
-      PLOG(ERROR) << "Recvmsg failed";
-      NOTREACHED();
+      // TODO(pbos): Consider implementing PNOTREACHED() instead of using PCHECK
+      // here.
+      PCHECK(false) << "Recvmsg failed";
     }
-    return;
   }
   if (fds.empty())
     return;
 
-  base::Pickle pickle(buf, len);
+  base::Pickle pickle = base::Pickle::WithUnownedBuffer(
+      UNSAFE_TODO(base::span(buf, base::checked_cast<size_t>(len))));
   base::PickleIterator iter(pickle);
 
   int kind;
@@ -133,7 +135,7 @@ void SandboxIPCHandler::HandleMakeSharedMemorySegment(
   uint32_t size;
   if (!iter.ReadUInt32(&size))
     return;
-  // TODO(crbug.com/982879): executable shared memory should be removed when
+  // TODO(crbug.com/41470149): executable shared memory should be removed when
   // NaCl is unshipped.
   bool executable;
   if (!iter.ReadBool(&executable))
@@ -158,7 +160,7 @@ void SandboxIPCHandler::SendRendererReply(
     const base::Pickle& reply,
     int reply_fd) {
   struct msghdr msg;
-  memset(&msg, 0, sizeof(msg));
+  UNSAFE_TODO(memset(&msg, 0, sizeof(msg)));
   struct iovec iov = {const_cast<uint8_t*>(reply.data()), reply.size()};
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
@@ -181,7 +183,7 @@ void SandboxIPCHandler::SendRendererReply(
     cmsg->cmsg_level = SOL_SOCKET;
     cmsg->cmsg_type = SCM_RIGHTS;
     cmsg->cmsg_len = CMSG_LEN(sizeof(reply_fd));
-    memcpy(CMSG_DATA(cmsg), &reply_fd, sizeof(reply_fd));
+    UNSAFE_TODO(memcpy(CMSG_DATA(cmsg), &reply_fd, sizeof(reply_fd)));
     msg.msg_controllen = cmsg->cmsg_len;
   }
 

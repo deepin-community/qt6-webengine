@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/service/scheduler.h"
@@ -24,7 +25,6 @@ GpuInProcessThreadService::GpuInProcessThreadService(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     Scheduler* scheduler,
     SyncPointManager* sync_point_manager,
-    MailboxManager* mailbox_manager,
     gl::GLSurfaceFormat share_group_surface_format,
     const GpuFeatureInfo& gpu_feature_info,
     const GpuPreferences& gpu_preferences,
@@ -33,7 +33,6 @@ GpuInProcessThreadService::GpuInProcessThreadService(
     : CommandBufferTaskExecutor(gpu_preferences,
                                 gpu_feature_info,
                                 sync_point_manager,
-                                mailbox_manager,
                                 share_group_surface_format,
                                 shared_image_manager,
                                 program_cache),
@@ -77,6 +76,11 @@ GpuInProcessThreadService::GetSharedContextState() {
 
 scoped_refptr<gl::GLShareGroup> GpuInProcessThreadService::GetShareGroup() {
   return delegate_->GetShareGroup();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+GpuInProcessThreadService::GetTaskRunner() {
+  return task_runner_;
 }
 
 }  // namespace gpu

@@ -32,14 +32,14 @@ inline bool InlineLengthMayChange(const ComputedStyle& style,
   DCHECK_EQ(new_space.InlineAutoBehavior(), old_space.InlineAutoBehavior());
 
   bool is_unspecified =
-      (length.IsAuto() && type != LengthResolveType::kMinSize) ||
-      length.IsFitContent() || length.IsFillAvailable();
+      (length.HasAuto() && type != LengthResolveType::kMinSize) ||
+      length.HasFitContent() || length.HasStretch();
 
   // Percentage inline margins will affect the size if the size is unspecified
   // (auto and similar).
   if (is_unspecified && style.MayHaveMargin() &&
-      (style.MarginInlineStart().IsPercentOrCalc() ||
-       style.MarginInlineEnd().IsPercentOrCalc()) &&
+      (style.MarginInlineStart().HasPercent() ||
+       style.MarginInlineEnd().HasPercent()) &&
       (new_space.PercentageResolutionInlineSize() !=
        old_space.PercentageResolutionInlineSize())) {
     return true;
@@ -51,7 +51,7 @@ inline bool InlineLengthMayChange(const ComputedStyle& style,
       return true;
   }
 
-  if (length.IsPercentOrCalc()) {
+  if (length.MayHavePercentDependence()) {
     if (new_space.PercentageResolutionInlineSize() !=
         old_space.PercentageResolutionInlineSize())
       return true;
@@ -63,8 +63,8 @@ inline bool BlockLengthMayChange(const Length& length,
                                  const ConstraintSpace& new_space,
                                  const ConstraintSpace& old_space) {
   DCHECK_EQ(new_space.BlockAutoBehavior(), old_space.BlockAutoBehavior());
-  if (length.IsFillAvailable() ||
-      (length.IsAuto() && new_space.IsBlockAutoBehaviorStretch())) {
+  if (length.HasStretch() ||
+      (length.HasAuto() && new_space.IsBlockAutoBehaviorStretch())) {
     if (new_space.AvailableSize().block_size !=
         old_space.AvailableSize().block_size)
       return true;
@@ -103,9 +103,6 @@ bool BlockSizeMayChange(const BlockNode& node,
     if (layout_result.GetPhysicalFragment().DependsOnPercentageBlockSize()) {
       if (new_space.PercentageResolutionBlockSize() !=
           old_space.PercentageResolutionBlockSize())
-        return true;
-      if (new_space.ReplacedPercentageResolutionBlockSize() !=
-          old_space.ReplacedPercentageResolutionBlockSize())
         return true;
     }
   }
@@ -157,11 +154,11 @@ bool SizeMayChange(const BlockNode& node,
           old_space.PercentageResolutionInlineSize()) {
     // Percentage-based padding is resolved against the inline content box size
     // of the containing block.
-    if (style.PaddingTop().IsPercentOrCalc() ||
-        style.PaddingRight().IsPercentOrCalc() ||
-        style.PaddingBottom().IsPercentOrCalc() ||
-        style.PaddingLeft().IsPercentOrCalc())
+    if (style.PaddingTop().HasPercent() || style.PaddingRight().HasPercent() ||
+        style.PaddingBottom().HasPercent() ||
+        style.PaddingLeft().HasPercent()) {
       return true;
+    }
   }
 
   return BlockSizeMayChange(node, new_space, old_space, layout_result);
@@ -219,9 +216,9 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatusWithGeometry(
       intrinsic_block_size = layout_result.IntrinsicBlockSize();
     }
 
-    // Grid/flex/fieldset can have their children calculate their size based on
-    // their parent's final block-size. E.g.
-    // <div style="display: flex;">
+    // Grid/flex/fieldset/masonry can have their children calculate their size
+    // based on their parent's final block-size. E.g. <div style="display:
+    // flex;">
     //   <div style="display: flex;"> <!-- or "display: grid;" -->
     //     <!-- Child will stretch to the parent's block-size -->
     //     <div></div>
@@ -247,17 +244,20 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatusWithGeometry(
     // custom-layout.
     if (old_space.IsFixedBlockSize() ||
         (old_space.IsBlockAutoBehaviorStretch() &&
-         style.LogicalHeight().IsAuto())) {
-      if (node.IsFlexibleBox() || node.IsGrid() || node.IsFieldsetContainer())
+         style.LogicalHeight().HasAuto())) {
+      if (node.IsFlexibleBox() || node.IsGrid() || node.IsMasonry() ||
+          node.IsFieldsetContainer()) {
         intrinsic_block_size = kIndefiniteSize;
+      }
     }
 
-    // Grid/flex can have their intrinsic block-size depend on the
+    // Grid/flex/masonry can have their intrinsic block-size depend on the
     // %-block-size. This occurs when:
     //  - A column flex-box has "max-height: 100%" (or similar) on itself.
     //  - A row flex-box has "height: 100%" (or similar) and children which
     //    stretch to this size.
-    //  - A grid with "grid-template-rows: repeat(auto-fill, 50px)" or similar.
+    //  - A grid/masonry with "grid-template-rows: repeat(auto-fill, 50px)" or
+    //  similar.
     //
     // Similar to above we can't use the |intrinsic_block_size| for determining
     // the new block-size.
@@ -267,19 +267,25 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatusWithGeometry(
     if (physical_fragment.DependsOnPercentageBlockSize() &&
         new_space.PercentageResolutionBlockSize() !=
             old_space.PercentageResolutionBlockSize()) {
-      if (node.IsFlexibleBox() || node.IsGrid())
+      if (node.IsFlexibleBox() || node.IsGrid() || node.IsMasonry()) {
         intrinsic_block_size = kIndefiniteSize;
+      }
     }
 
     block_size = ComputeBlockSizeForFragment(
-        new_space, style, fragment_geometry.border + fragment_geometry.padding,
+        new_space, node, fragment_geometry.border + fragment_geometry.padding,
         intrinsic_block_size, fragment_geometry.border_box_size.inline_size);
 
     if (block_size == kIndefiniteSize)
       return LayoutCacheStatus::kNeedsLayout;
   }
 
-  bool is_block_size_equal = block_size == fragment.BlockSize();
+  const bool is_block_size_equal = block_size == fragment.BlockSize();
+
+  if (RuntimeEnabledFeatures::LayoutStretchCacheFixEnabled() &&
+      !is_block_size_equal) {
+    return LayoutCacheStatus::kNeedsLayout;
+  }
 
   if (!is_block_size_equal) {
     // Only block-flow supports changing the block-size for simplified layout.
@@ -317,15 +323,17 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatusWithGeometry(
   // Miss the cache if the initial block-size change from indefinite to
   // definite (or visa-versa), and:
   //  - We have a descendant which depends on the %-block-size.
-  //  - We are a grid.
+  //  - We are a grid/masonry.
   //
-  // TODO(ikilpatrick): There is an "optimization" for grid which would involve
-  // *always* setting the initial block-size for grid as indefinite, then
-  // re-running computing the grid if we have any "auto" tracks etc.
+  // TODO(ikilpatrick): There is an "optimization" for grid/masonry which would
+  // involve *always* setting the initial block-size for grid as indefinite,
+  // then re-running computing the grid if we have any "auto" tracks etc.
   if (is_old_initial_block_size_indefinite !=
       is_initial_block_size_indefinite) {
-    if (node.IsGrid() || has_descendant_that_depends_on_percentage_block_size)
+    if (node.IsGrid() || node.IsMasonry() ||
+        has_descendant_that_depends_on_percentage_block_size) {
       return LayoutCacheStatus::kNeedsLayout;
+    }
   }
 
   if (has_descendant_that_depends_on_percentage_block_size) {
@@ -353,9 +361,6 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatusWithGeometry(
       DCHECK(is_old_initial_block_size_indefinite);
       if (new_space.PercentageResolutionBlockSize() !=
           old_space.PercentageResolutionBlockSize())
-        return LayoutCacheStatus::kNeedsLayout;
-      if (new_space.ReplacedPercentageResolutionBlockSize() !=
-          old_space.ReplacedPercentageResolutionBlockSize())
         return LayoutCacheStatus::kNeedsLayout;
     }
   }
@@ -434,7 +439,7 @@ bool IntrinsicSizeWillChange(
     const BlockBreakToken* break_token,
     const LayoutResult& cached_layout_result,
     const ConstraintSpace& new_space,
-    absl::optional<FragmentGeometry>* fragment_geometry) {
+    std::optional<FragmentGeometry>* fragment_geometry) {
   const ComputedStyle& style = node.Style();
   if (new_space.IsInlineAutoBehaviorStretch() && !NeedMinMaxSize(style))
     return false;
@@ -462,7 +467,7 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatus(
     const BlockBreakToken* break_token,
     const LayoutResult& cached_layout_result,
     const ConstraintSpace& new_space,
-    absl::optional<FragmentGeometry>* fragment_geometry) {
+    std::optional<FragmentGeometry>* fragment_geometry) {
   DCHECK_EQ(cached_layout_result.Status(), LayoutResult::kSuccess);
 
   const ConstraintSpace& old_space =
@@ -501,7 +506,7 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatus(
 bool MaySkipLayoutWithinBlockFormattingContext(
     const LayoutResult& cached_layout_result,
     const ConstraintSpace& new_space,
-    absl::optional<LayoutUnit>* bfc_block_offset,
+    std::optional<LayoutUnit>* bfc_block_offset,
     LayoutUnit* block_offset_delta,
     MarginStrut* end_margin_strut) {
   DCHECK_EQ(cached_layout_result.Status(), LayoutResult::kSuccess);
@@ -682,6 +687,34 @@ bool MaySkipLayoutWithinBlockFormattingContext(
   }
 
   return true;
+}
+
+LayoutUnit AlignmentOffset(LayoutUnit container_size,
+                           LayoutUnit size,
+                           LayoutUnit margin_start,
+                           LayoutUnit margin_end,
+                           LayoutUnit baseline_offset,
+                           AxisEdge axis_edge,
+                           bool is_overflow_safe) {
+  LayoutUnit free_space = container_size - size - margin_start - margin_end;
+  // If overflow is 'safe', we have to make sure we don't overflow the
+  // 'start' edge (potentially cause some data loss as the overflow is
+  // unreachable).
+  if (is_overflow_safe) {
+    free_space = free_space.ClampNegativeToZero();
+  }
+  switch (axis_edge) {
+    case AxisEdge::kStart:
+      return margin_start;
+    case AxisEdge::kCenter:
+      return margin_start + (free_space / 2);
+    case AxisEdge::kEnd:
+      return margin_start + free_space;
+    case AxisEdge::kFirstBaseline:
+    case AxisEdge::kLastBaseline:
+      return baseline_offset;
+  }
+  NOTREACHED();
 }
 
 }  // namespace blink

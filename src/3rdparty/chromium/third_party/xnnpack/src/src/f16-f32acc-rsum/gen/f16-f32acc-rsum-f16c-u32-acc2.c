@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-f32acc-rsum/f16c.c.in
 //   Generator: tools/xngen
@@ -8,21 +9,27 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/reduce.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/reduce.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_f16_f32acc_rsum_ukernel__f16c_u32_acc2(
     size_t batch,
-    const void* input,
-    void* output,
-    const union xnn_f16_f32acc_scale_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const xnn_float16* input,
+    float* output,
+    const struct xnn_f16_f32acc_scale_params* restrict params)
 {
+  static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
+
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
   assert(input != NULL);
@@ -43,17 +50,29 @@ void xnn_f16_f32acc_rsum_ukernel__f16c_u32_acc2(
     vacc0 = _mm256_add_ps(vacc0, vt2);
     vacc1 = _mm256_add_ps(vacc1, vt3);
   }
-  vacc0 = _mm256_add_ps(vacc0, vacc1);
-  for (; batch >= 8 * sizeof(uint16_t); batch -= 8 * sizeof(uint16_t)) {
+  if (batch >= 8 * sizeof(uint16_t)) {
     const __m256 vt = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i*) i));
     i += 8;
-
+    batch -= 8 * sizeof(uint16_t);
     vacc0 = _mm256_add_ps(vacc0, vt);
   }
+  if (batch >= 8 * sizeof(uint16_t)) {
+    const __m256 vt = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i*) i));
+    i += 8;
+    batch -= 8 * sizeof(uint16_t);
+    vacc1 = _mm256_add_ps(vacc1, vt);
+  }
+  if (batch >= 8 * sizeof(uint16_t)) {
+    const __m256 vt = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i*) i));
+    i += 8;
+    batch -= 8 * sizeof(uint16_t);
+    vacc0 = _mm256_add_ps(vacc0, vt);
+  }
+  vacc0 = _mm256_add_ps(vacc0, vacc1);
   if XNN_UNLIKELY(batch != 0) {
     assert(batch >= 1 * sizeof(uint16_t));
     assert(batch <= 7 * sizeof(uint16_t));
-    const __m128i vmask = _mm_loadu_si128((const __m128i*) ((uintptr_t) &params->avx.mask_table[7] - batch));
+    const __m128i vmask = _mm_loadu_si128((const __m128i*) ((uintptr_t) &mask_table[7] - batch));
     const __m128i vh = _mm_castps_si128(_mm_maskload_ps((const float*) i, vmask));
     const __m256 vt = _mm256_cvtph_ps(vh);
     vacc0 = _mm256_add_ps(vacc0, vt);
@@ -67,7 +86,8 @@ void xnn_f16_f32acc_rsum_ukernel__f16c_u32_acc2(
   __m128 vacc = _mm_add_ps(_mm256_castps256_ps128(vacc0), _mm256_extractf128_ps(vacc0, 1));
   vacc = _mm_add_ps(vacc, _mm_movehl_ps(vacc, vacc));
   vacc = _mm_add_ss(vacc, _mm_movehdup_ps(vacc));
-  vacc = _mm_mul_ss(vacc, _mm_load_ss(&params->avx.scale));
-  const __m128i vout = _mm_cvtps_ph(vacc, _MM_FROUND_TO_NEAREST_INT);
-  unaligned_store_u16(output, (uint16_t) _mm_extract_epi16(vout, 0));
+  vacc = _mm_mul_ss(vacc, _mm_load_ss(&params->scalar.scale));
+
+  float vout = _mm_cvtss_f32(vacc);
+  *output += vout;
 }

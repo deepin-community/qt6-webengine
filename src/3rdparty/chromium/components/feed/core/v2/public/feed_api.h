@@ -6,11 +6,11 @@
 #define COMPONENTS_FEED_CORE_V2_PUBLIC_FEED_API_H_
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
 #include "base/observer_list_types.h"
-#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "components/feed/core/v2/public/common_enums.h"
 #include "components/feed/core/v2/public/refresh_task_scheduler.h"
@@ -145,7 +145,7 @@ class FeedApi {
   // |feedpacking::DismissData| message.
   virtual EphemeralChangeId CreateEphemeralChangeFromPackedData(
       SurfaceId surface_id,
-      base::StringPiece data) = 0;
+      std::string_view data) = 0;
   // Commits a change. Returns false if the change does not exist.
   virtual bool CommitEphemeralChange(SurfaceId surface_id,
                                      EphemeralChangeId id) = 0;
@@ -156,13 +156,13 @@ class FeedApi {
   // Sends 'ThereAndBackAgainData' back to the server. |data| is a serialized
   // |feedwire::ThereAndBackAgainData| message.
   virtual void ProcessThereAndBackAgain(
-      base::StringPiece data,
+      std::string_view data,
       const LoggingParameters& logging_parameters) = 0;
   // Saves a view action for eventual upload. |data| is a serialized
   //|feedwire::FeedAction| message. `logging_parameters` are the logging
   // parameters associated with this item, see `feedui::StreamUpdate`.
   virtual void ProcessViewAction(
-      base::StringPiece data,
+      std::string_view data,
       const LoggingParameters& logging_parameters) = 0;
 
   // Returns whether `url` is a suggested Feed URLs, recently
@@ -216,6 +216,7 @@ class FeedApi {
   // TODO(harringtond): Remove this one.
   virtual void ReportOtherUserAction(const StreamType& stream_type,
                                      FeedUserActionType action_type) = 0;
+  virtual void ReportOtherUserAction(FeedUserActionType action_type) = 0;
   // Reports that the info card is being tracked for its full visibility.
   virtual void ReportInfoCardTrackViewStarted(SurfaceId surface_id,
                                               int info_card_type) = 0;
@@ -240,6 +241,9 @@ class FeedApi {
   virtual void ReportContentSliceVisibleTimeForGoodVisits(
       SurfaceId surface_id,
       base::TimeDelta elapsed) = 0;
+
+  // Returns a list of feed article urls.
+  virtual std::vector<std::string> GetFeedUrls(SurfaceId surface_id) = 0;
 
   // The following methods are used for the internals page.
 

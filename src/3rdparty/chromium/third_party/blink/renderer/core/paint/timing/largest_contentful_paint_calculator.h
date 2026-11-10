@@ -12,6 +12,9 @@
 
 namespace blink {
 
+class TextRecord;
+class ImageRecord;
+
 // LargestContentfulPaintCalculator is responsible for tracking the largest
 // image paint and the largest text paint and notifying WindowPerformance
 // whenever a new LatestLargestContentfulPaint entry should be dispatched.
@@ -42,7 +45,7 @@ class CORE_EXPORT LargestContentfulPaintCalculator final
       uint64_t image_paint_size,
       ImageRecord* image_record,
       double image_bpp,
-      absl::optional<WebURLRequest::Priority> priority);
+      std::optional<WebURLRequest::Priority> priority);
 
   bool NotifyMetricsIfLargestTextPaintChanged(base::TimeTicks text_paint_time,
                                               uint64_t text_paint_size);
@@ -74,7 +77,8 @@ class CORE_EXPORT LargestContentfulPaintCalculator final
       bool is_triggered_by_soft_navigation);
   std::unique_ptr<TracedValue> ImageCandidateTraceData(
       const ImageRecord* largest_image,
-      bool is_triggered_by_soft_navigation);
+      bool is_triggered_by_soft_navigation,
+      Element* image_element);
 
   Member<WindowPerformance> window_performance_;
 

@@ -24,8 +24,9 @@
 #include "printing/backend/print_backend.h"
 #include "printing/buildflags/buildflags.h"
 #include "printing/print_settings.h"
+#include "ui/gfx/native_widget_types.h"
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/browser_process.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -33,14 +34,14 @@
 #include "chrome/browser/android/tab_printer.h"
 #include "printing/printing_context_android.h"
 #endif
-#else // !defined(TOOLKIT_QT)
+#else // !BUILDFLAG(IS_QTWEBENGINE)
 namespace printing {
 std::string getApplicationLocale();
 }
 #endif
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-#include "chrome/browser/printing/prefs_util.h"
+#include "chrome/browser/printing/oop_features.h"
 #include "chrome/browser/printing/printer_query_oop.h"
 #endif
 
@@ -52,13 +53,13 @@ namespace printing {
 
 namespace {
 
-PrintingContext::ProcessBehavior GetPrintingContextProcessBehavior() {
+PrintingContext::OutOfProcessBehavior GetPrintingContextOutOfProcessBehavior() {
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
   if (ShouldPrintJobOop()) {
-    return PrintingContext::ProcessBehavior::kOopEnabledSkipSystemCalls;
+    return PrintingContext::OutOfProcessBehavior::kEnabledSkipSystemCalls;
   }
 #endif
-  return PrintingContext::ProcessBehavior::kOopDisabled;
+  return PrintingContext::OutOfProcessBehavior::kDisabled;
 }
 
 class PrintingContextDelegate : public PrintingContext::Delegate {
@@ -90,7 +91,7 @@ PrintingContextDelegate::~PrintingContextDelegate() = default;
 
 gfx::NativeView PrintingContextDelegate::GetParentView() {
   content::WebContents* wc = GetWebContents();
-  return wc ? wc->GetNativeView() : nullptr;
+  return wc ? wc->GetNativeView() : gfx::NativeView();
 }
 
 content::WebContents* PrintingContextDelegate::GetWebContents() {
@@ -100,11 +101,11 @@ content::WebContents* PrintingContextDelegate::GetWebContents() {
 }
 
 std::string PrintingContextDelegate::GetAppLocale() {
-#if defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_QTWEBENGINE)
   return getApplicationLocale();
 #else
   return g_browser_process->GetApplicationLocale();
-#endif // if defined(TOOLKIT_QT)
+#endif // if BUILDFLAG(IS_QTWEBENGINE)
 }
 
 CreatePrinterQueryCallback* g_create_printer_query_for_testing = nullptr;
@@ -131,7 +132,7 @@ PrinterQuery::PrinterQuery(content::GlobalRenderFrameHostId rfh_id)
           std::make_unique<PrintingContextDelegate>(rfh_id)),
       printing_context_(
           PrintingContext::Create(printing_context_delegate_.get(),
-                                  GetPrintingContextProcessBehavior())),
+                                  GetPrintingContextOutOfProcessBehavior())),
       rfh_id_(rfh_id),
       cookie_(PrintSettings::NewCookie()) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -272,7 +273,7 @@ void PrinterQuery::UpdatePrintableArea(
     PrintSettings* print_settings,
     OnDidUpdatePrintableAreaCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-#ifdef TOOLKIT_QT
+#if BUILDFLAG(IS_QTWEBENGINE)
   scoped_refptr<PrintBackend> print_backend =
       PrintBackend::CreateInstance(getApplicationLocale());
 #else
@@ -313,7 +314,7 @@ void PrinterQuery::ApplyDefaultPrintableAreaToVirtualPrinterPrintSettings(
   // so, it doesn't need a RFH, so just default initialize the RFH id.
   PrintingContextDelegate delegate((content::GlobalRenderFrameHostId()));
   std::unique_ptr<PrintingContext> print_context = PrintingContext::Create(
-      &delegate, PrintingContext::ProcessBehavior::kOopDisabled);
+      &delegate, PrintingContext::OutOfProcessBehavior::kDisabled);
   print_context->SetPrintSettings(print_settings);
   print_context->SetDefaultPrintableAreaForVirtualPrinters();
   print_settings = print_context->settings();
@@ -322,7 +323,7 @@ void PrinterQuery::ApplyDefaultPrintableAreaToVirtualPrinterPrintSettings(
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
 void PrinterQuery::SetClientId(PrintBackendServiceManager::ClientId client_id) {
   // Only supposed to be called for `PrinterQueryOop` objects.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 #endif
 
@@ -352,7 +353,7 @@ void PrinterQuery::UpdatePrintSettings(base::Value::Dict new_settings,
     base::ScopedAllowBlocking allow_blocking;
 #endif
     scoped_refptr<PrintBackend> print_backend =
-#ifdef TOOLKIT_QT
+#if BUILDFLAG(IS_QTWEBENGINE)
         PrintBackend::CreateInstance(getApplicationLocale());
 #else
         PrintBackend::CreateInstance(g_browser_process->GetApplicationLocale());

@@ -26,6 +26,11 @@ FilteredGestureProvider::FilteredGestureProvider(
 
 FilteredGestureProvider::~FilteredGestureProvider() = default;
 
+void FilteredGestureProvider::Shutdown() {
+  client_ = nullptr;
+  gesture_filter_.Shutdown();
+}
+
 void FilteredGestureProvider::UpdateConfig(
     const GestureProvider::Config& config) {
   gesture_provider_ = std::make_unique<ui::GestureProvider>(config, this);
@@ -63,7 +68,7 @@ void FilteredGestureProvider::OnTouchEventAck(
     uint32_t unique_event_id,
     bool event_consumed,
     bool is_source_touch_event_set_blocking,
-    const absl::optional<EventLatencyMetadata>& event_latency_metadata) {
+    const std::optional<EventLatencyMetadata>& event_latency_metadata) {
   gesture_filter_.OnTouchEventAck(unique_event_id, event_consumed,
                                   is_source_touch_event_set_blocking,
                                   event_latency_metadata);
@@ -99,10 +104,16 @@ const ui::MotionEvent* FilteredGestureProvider::GetCurrentDownEvent() const {
   return gesture_provider_->current_down_event();
 }
 
+const ui::MotionEvent* FilteredGestureProvider::GetLastEventWithoutHistory()
+    const {
+  return gesture_provider_->last_event_without_history();
+}
+
 void FilteredGestureProvider::OnGestureEvent(const GestureEventData& event) {
   if (handling_event_) {
-    if (event.details.type() == ui::ET_GESTURE_SCROLL_BEGIN)
+    if (event.details.type() == ui::EventType::kGestureScrollBegin) {
       any_touch_moved_beyond_slop_region_ = true;
+    }
 
     pending_gesture_packet_.Push(event);
     return;
@@ -113,12 +124,14 @@ void FilteredGestureProvider::OnGestureEvent(const GestureEventData& event) {
 }
 
 bool FilteredGestureProvider::RequiresDoubleTapGestureEvents() const {
-  return client_->RequiresDoubleTapGestureEvents();
+  return client_ ? client_->RequiresDoubleTapGestureEvents() : false;
 }
 
 void FilteredGestureProvider::ForwardGestureEvent(
     const GestureEventData& event) {
-  client_->OnGestureEvent(event);
+  if (client_) {
+    client_->OnGestureEvent(event);
+  }
 }
 
 }  // namespace ui

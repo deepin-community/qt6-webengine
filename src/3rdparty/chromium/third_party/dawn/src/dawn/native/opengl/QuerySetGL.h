@@ -39,13 +39,17 @@ class Device;
 
 class QuerySet final : public QuerySetBase {
   public:
-    QuerySet(Device* device, const QuerySetDescriptor* descriptor);
-    GLuint Get(uint32_t index) const;
+    static ResultOrError<Ref<QuerySet>> Create(Device* device,
+                                               const QuerySetDescriptor* descriptor);
+
+    GLuint Get(QueryIndex index) const;
 
   private:
+    QuerySet(Device* device, const QuerySetDescriptor* descriptor);
+
     ~QuerySet() override;
     void DestroyImpl() override;
-    std::vector<GLuint> mQueries;
+    ityp::vector<QueryIndex, GLuint> mQueries;
 };
 
 }  // namespace dawn::native::opengl

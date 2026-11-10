@@ -8,9 +8,11 @@
 
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/hash/sha1.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "crypto/hash.h"
 #include "crypto/sha2.h"
 #include "net/cert/asn1_util.h"
 #include "net/cert/signed_certificate_timestamp.h"
@@ -42,7 +44,8 @@ const uint8_t kSHA256Oid[] = {0x60, 0x86, 0x48, 0x01, 0x65,
 bool StringEqualToCBS(const std::string& value1, const CBS* value2) {
   if (CBS_len(value2) != value1.size())
     return false;
-  return memcmp(value1.data(), CBS_data(value2), CBS_len(value2)) == 0;
+  return UNSAFE_TODO(
+             memcmp(value1.data(), CBS_data(value2), CBS_len(value2))) == 0;
 }
 
 bool SkipElements(CBS* cbs, int count) {
@@ -62,23 +65,23 @@ bool SkipOptionalElement(CBS* cbs, unsigned tag) {
 // must be a subset of |outer|.
 bool CopyBefore(const CBS& outer, const CBS& inner, CBB* out) {
   CHECK_LE(CBS_data(&outer), CBS_data(&inner));
-  CHECK_LE(CBS_data(&inner) + CBS_len(&inner),
-           CBS_data(&outer) + CBS_len(&outer));
+  CHECK_LE(UNSAFE_TODO(CBS_data(&inner) + CBS_len(&inner)),
+           UNSAFE_TODO(CBS_data(&outer) + CBS_len(&outer)));
 
   return !!CBB_add_bytes(out, CBS_data(&outer),
-                         CBS_data(&inner) - CBS_data(&outer));
+                         UNSAFE_TODO(CBS_data(&inner) - CBS_data(&outer)));
 }
 
 // Copies all the bytes in |outer| which are after |inner| to |out|. |inner|
 // must be a subset of |outer|.
 bool CopyAfter(const CBS& outer, const CBS& inner, CBB* out) {
   CHECK_LE(CBS_data(&outer), CBS_data(&inner));
-  CHECK_LE(CBS_data(&inner) + CBS_len(&inner),
-           CBS_data(&outer) + CBS_len(&outer));
+  CHECK_LE(UNSAFE_TODO(CBS_data(&inner) + CBS_len(&inner)),
+           UNSAFE_TODO(CBS_data(&outer) + CBS_len(&outer)));
 
-  return !!CBB_add_bytes(
-      out, CBS_data(&inner) + CBS_len(&inner),
-      CBS_data(&outer) + CBS_len(&outer) - CBS_data(&inner) - CBS_len(&inner));
+  return !!CBB_add_bytes(out, UNSAFE_TODO(CBS_data(&inner) + CBS_len(&inner)),
+                         UNSAFE_TODO(CBS_data(&outer) + CBS_len(&outer) -
+                                     CBS_data(&inner) - CBS_len(&inner)));
 }
 
 // Skips |tbs_cert|, which must be a TBSCertificate body, to just before the
@@ -328,8 +331,8 @@ bool GetPrecertSignedEntry(const CRYPTO_BUFFER* leaf,
   result->type = ct::SignedEntryData::LOG_ENTRY_TYPE_PRECERT;
   result->tbs_certificate.assign(
       reinterpret_cast<const char*>(new_tbs_cert_der), new_tbs_cert_len);
-  crypto::SHA256HashString(issuer_key, result->issuer_key_hash.data,
-                           sizeof(result->issuer_key_hash.data));
+  result->issuer_key_hash =
+      crypto::hash::Sha256(base::as_byte_span(issuer_key));
 
   return true;
 }

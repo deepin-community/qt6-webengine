@@ -13,6 +13,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/process/process.h"
 #include "base/strings/escape.h"
@@ -44,6 +45,12 @@ std::unique_ptr<SystemMediaControls> SystemMediaControls::Create(
       std::make_unique<internal::SystemMediaControlsLinux>(product_name);
   service->StartService();
   return std::move(service);
+}
+
+// static
+void SystemMediaControls::SetVisibilityChangedCallbackForTesting(
+    base::RepeatingCallback<void(bool)>*) {
+  NOTIMPLEMENTED();
 }
 
 namespace internal {
@@ -111,12 +118,7 @@ SystemMediaControlsLinux::SystemMediaControlsLinux(
       file_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_VISIBLE})) {}
 
-SystemMediaControlsLinux::~SystemMediaControlsLinux() {
-  if (bus_) {
-    dbus_thread_linux::GetTaskRunner()->PostTask(
-        FROM_HERE, base::BindOnce(&dbus::Bus::ShutdownAndBlock, bus_));
-  }
-}
+SystemMediaControlsLinux::~SystemMediaControlsLinux() = default;
 
 void SystemMediaControlsLinux::StartService() {
   if (started_) {
@@ -240,6 +242,11 @@ void SystemMediaControlsLinux::ClearMetadata() {
   ClearPosition();
 }
 
+bool SystemMediaControlsLinux::GetVisibilityForTesting() const {
+  NOTIMPLEMENTED();
+  return false;
+}
+
 std::string SystemMediaControlsLinux::GetServiceName() const {
   return service_name_;
 }
@@ -282,11 +289,7 @@ void SystemMediaControlsLinux::InitializeProperties() {
 void SystemMediaControlsLinux::InitializeDbusInterface() {
   // Bus may be set for testing.
   if (!bus_) {
-    dbus::Bus::Options bus_options;
-    bus_options.bus_type = dbus::Bus::SESSION;
-    bus_options.connection_type = dbus::Bus::PRIVATE;
-    bus_options.dbus_task_runner = dbus_thread_linux::GetTaskRunner();
-    bus_ = base::MakeRefCounted<dbus::Bus>(bus_options);
+    bus_ = dbus_thread_linux::GetSharedSessionBus();
   }
 
   exported_object_ =
@@ -508,7 +511,7 @@ void SystemMediaControlsLinux::ClearTrackId() {
 }
 
 void SystemMediaControlsLinux::ClearPosition() {
-  position_ = absl::nullopt;
+  position_ = std::nullopt;
   StopPositionUpdateTimer();
   UpdatePosition(/*emit_signal=*/true);
 }

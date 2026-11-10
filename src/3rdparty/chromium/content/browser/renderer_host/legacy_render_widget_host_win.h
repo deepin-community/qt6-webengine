@@ -5,10 +5,10 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_LEGACY_RENDER_WIDGET_HOST_WIN_H_
 #define CONTENT_BROWSER_RENDERER_HOST_LEGACY_RENDER_WIDGET_HOST_WIN_H_
 
-#include "base/memory/raw_ptr.h"
-
-// Must be included before <atlapp.h>.
-#include "base/win/atl.h"  // NOLINT(build/include_order)
+// clang-format off
+// This needs to be included before ATL headers.
+#include "base/win/atl.h"
+// clang-format on
 
 #include <atlapp.h>
 #include <atlcrack.h>
@@ -17,6 +17,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "ui/accessibility/platform/ax_fragment_root_delegate_win.h"
@@ -70,7 +71,9 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
 
   // Creates and returns an instance of the LegacyRenderWidgetHostHWND class on
   // successful creation of a child window parented to the parent window passed
-  // in.
+  // in. May return nullptr on failure.
+  // Owner must call Destroy() to destroy the returned object, rather than
+  // directly deleting it.
   static LegacyRenderWidgetHostHWND* Create(HWND parent,
                                             RenderWidgetHostViewAura* host);
 
@@ -78,7 +81,7 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   LegacyRenderWidgetHostHWND& operator=(const LegacyRenderWidgetHostHWND&) =
       delete;
 
-  // Destroys the HWND managed by this class.
+  // Destroys the HWND managed by this class. The class will then delete itself.
   void Destroy();
 
   BEGIN_MSG_MAP_EX(LegacyRenderWidgetHostHWND)
@@ -135,7 +138,7 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   friend class AccessibilityObjectLifetimeWinBrowserTest;
   friend class DirectManipulationBrowserTestBase;
 
-  LegacyRenderWidgetHostHWND(RenderWidgetHostViewAura* host);
+  explicit LegacyRenderWidgetHostHWND(RenderWidgetHostViewAura* host);
   ~LegacyRenderWidgetHostHWND() override;
 
   // If initialization fails, deletes `this` and returns false.
@@ -198,6 +201,11 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   // cause re-entrancy during teardown. https://crbug.com/1087553
   bool did_return_uia_object_ = false;
 
+  // Set to true immediately before disconnecting the fragment root's element
+  // provider. From that point onward, any request for UiaRootObjectId via
+  // WM_GET_OBJECT will be ignored.
+  bool disconnecting_fragment_root_ = false;
+
   // This class provides functionality to register the legacy window as a
   // Direct Manipulation consumer. This allows us to support smooth scroll
   // in Chrome on Windows 10.
@@ -212,4 +220,3 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_RENDERER_HOST_LEGACY_RENDER_WIDGET_HOST_WIN_H_
-

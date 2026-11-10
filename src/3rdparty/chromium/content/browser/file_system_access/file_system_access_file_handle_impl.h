@@ -17,8 +17,8 @@
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "storage/browser/file_system/file_system_url.h"
-#include "third_party/blink/public/mojom/file_system_access/file_system_access_capacity_allocation_host.mojom.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_file_handle.mojom.h"
+#include "third_party/blink/public/mojom/file_system_access/file_system_access_file_modification_host.mojom.h"
 
 namespace content {
 
@@ -36,6 +36,7 @@ class CONTENT_EXPORT FileSystemAccessFileHandleImpl
   FileSystemAccessFileHandleImpl(FileSystemAccessManagerImpl* manager,
                                  const BindingContext& context,
                                  const storage::FileSystemURL& url,
+                                 const std::string& display_name,
                                  const SharedHandleState& handle_state);
   FileSystemAccessFileHandleImpl(const FileSystemAccessFileHandleImpl&) =
       delete;
@@ -44,9 +45,9 @@ class CONTENT_EXPORT FileSystemAccessFileHandleImpl
   ~FileSystemAccessFileHandleImpl() override;
 
   // blink::mojom::FileSystemAccessFileHandle:
-  void GetPermissionStatus(bool writable,
+  void GetPermissionStatus(blink::mojom::FileSystemAccessPermissionMode mode,
                            GetPermissionStatusCallback callback) override;
-  void RequestPermission(bool writable,
+  void RequestPermission(blink::mojom::FileSystemAccessPermissionMode mode,
                          RequestPermissionCallback callback) override;
   void AsBlob(AsBlobCallback callback) override;
   void CreateFileWriter(
@@ -71,6 +72,8 @@ class CONTENT_EXPORT FileSystemAccessFileHandleImpl
       override;
   void GetUniqueId(GetUniqueIdCallback callback) override;
   void GetCloudIdentifiers(GetCloudIdentifiersCallback callback) override;
+
+  const std::string& display_name() const { return display_name_; }
 
   void set_max_swap_files_for_testing(int max) { max_swap_files_ = max; }
 #if BUILDFLAG(IS_MAC)
@@ -188,11 +191,18 @@ class CONTENT_EXPORT FileSystemAccessFileHandleImpl
   void IsSameEntryImpl(IsSameEntryCallback callback,
                        FileSystemAccessTransferTokenImpl* other);
 
+  const std::string display_name_;
+
   // A FileWriter will write to a "swap" file until the `Close()` operation is
   // called to swap the file into the target path. For each writer, a new swap
   // file is created. This sets the limit on the number of swap files per
   // handle.
   int max_swap_files_ = 100;
+
+#if BUILDFLAG(IS_ANDROID)
+  // Directory in app cache dir for writing swap files.
+  base::FilePath swap_dir_;
+#endif
 
 #if BUILDFLAG(IS_MAC)
   // Used to test that swap file creation attempts to use file cloning in some

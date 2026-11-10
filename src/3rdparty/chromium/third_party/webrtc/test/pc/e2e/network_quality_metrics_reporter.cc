@@ -9,28 +9,33 @@
  */
 #include "test/pc/e2e/network_quality_metrics_reporter.h"
 
+#include <cstdint>
+#include <string>
 #include <utility>
 
-#include "api/stats/rtc_stats.h"
+#include "absl/strings/string_view.h"
+#include "api/scoped_refptr.h"
+#include "api/stats/rtc_stats_report.h"
 #include "api/stats/rtcstats_objects.h"
 #include "api/test/metrics/metric.h"
+#include "api/test/metrics/metrics_logger.h"
+#include "api/test/network_emulation/network_emulation_interfaces.h"
+#include "api/test/network_emulation_manager.h"
+#include "api/test/track_id_stream_info_map.h"
+#include "api/units/data_size.h"
+#include "api/units/time_delta.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/event.h"
-#include "system_wrappers/include/field_trial.h"
+#include "rtc_base/synchronization/mutex.h"
 
 namespace webrtc {
 namespace webrtc_pc_e2e {
 namespace {
 
-using ::webrtc::test::ImprovementDirection;
-using ::webrtc::test::Unit;
+using test::ImprovementDirection;
+using test::Unit;
 
 constexpr TimeDelta kStatsWaitTimeout = TimeDelta::Seconds(1);
-
-// Field trial which controls whether to report standard-compliant bytes
-// sent/received per stream.  If enabled, padding and headers are not included
-// in bytes sent or received.
-constexpr char kUseStandardBytesStats[] = "WebRTC-UseStandardBytesStats";
 
 }  // namespace
 
@@ -72,7 +77,7 @@ void NetworkQualityMetricsReporter::Start(
 
 void NetworkQualityMetricsReporter::OnStatsReports(
     absl::string_view pc_label,
-    const rtc::scoped_refptr<const RTCStatsReport>& report) {
+    const scoped_refptr<const RTCStatsReport>& report) {
   DataSize payload_received = DataSize::Zero();
   DataSize payload_sent = DataSize::Zero();
 
@@ -107,11 +112,6 @@ void NetworkQualityMetricsReporter::StopAndReportResults() {
   ReportStats(alice_network_label_, alice_stats, alice_packets_loss);
   ReportStats(bob_network_label_, bob_stats, bob_packets_loss);
 
-  if (!webrtc::field_trial::IsEnabled(kUseStandardBytesStats)) {
-    RTC_LOG(LS_ERROR)
-        << "Non-standard GetStats; \"payload\" counts include RTP headers";
-  }
-
   MutexLock lock(&lock_);
   for (const auto& pair : pc_stats_) {
     ReportPCStats(pair.first, pair.second);
@@ -120,7 +120,7 @@ void NetworkQualityMetricsReporter::StopAndReportResults() {
 
 EmulatedNetworkStats NetworkQualityMetricsReporter::PopulateStats(
     EmulatedNetworkManagerInterface* network) {
-  rtc::Event wait;
+  Event wait;
   EmulatedNetworkStats stats;
   network->GetStats([&](EmulatedNetworkStats s) {
     stats = std::move(s);

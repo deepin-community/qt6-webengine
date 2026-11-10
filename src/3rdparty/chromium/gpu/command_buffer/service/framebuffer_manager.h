@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/containers/small_map.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/service/context_group.h"
@@ -43,6 +44,7 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
     virtual GLsizei samples() const = 0;
     virtual GLuint object_name() const = 0;
     virtual GLint level() const = 0;
+    virtual GLenum target() const = 0;
     virtual bool cleared() const = 0;
     virtual void SetCleared(
         RenderbufferManager* renderbuffer_manager,
@@ -55,6 +57,7 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
     virtual bool IsRenderbuffer(Renderbuffer* renderbuffer) const = 0;
     virtual bool IsSameAttachment(const Attachment* attachment) const = 0;
     virtual bool Is3D() const = 0;
+    virtual GLint layer() const;
 
     // If it's a 3D texture attachment, return true if
     // FRAMEBUFFER_ATTACHMENT_TEXTURE_LAYER is smaller than the number of
@@ -113,6 +116,9 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   // bound when calling this.
   void DoUnbindGLAttachmentsForWorkaround(GLenum target);
 
+  // Re-attaches all current attachments for recreateFbo workaround.
+  void ReattachAttachments(GLenum framebuffer_target);
+
   // Attaches a renderbuffer to a particlar attachment.
   // Pass null to detach.
   void AttachRenderbuffer(
@@ -169,6 +175,7 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   // returns 0.
   GLenum GetReadBufferTextureType() const;
   bool GetReadBufferIsMultisampledTexture() const;
+  bool GetReadBufferIsMultisampledRenderbuffer() const;
 
   // Verify all the rules in OpenGL ES 2.0.25 4.4.5 are followed.
   // Returns GL_FRAMEBUFFER_COMPLETE if there are no reasons we know we can't
@@ -187,7 +194,8 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
 
   GLenum GetDrawBuffer(GLenum draw_buffer) const;
 
-  void SetDrawBuffers(GLsizei n, const GLenum* bufs);
+  void SetDrawBuffers(GLsizei spanification_suspected_redundant_n,
+                      base::span<const GLenum> bufs);
 
   // If a color buffer is attached to GL_COLOR_ATTACHMENTi, enable that
   // draw buffer for glClear().
@@ -242,6 +250,7 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
 
  private:
   friend class FramebufferManager;
+  void set_service_id(GLuint id) { service_id_ = id; }
   friend class base::RefCounted<Framebuffer>;
 
   ~Framebuffer();
@@ -363,6 +372,9 @@ class GPU_GLES2_EXPORT FramebufferManager {
   // Gets a client id for a given service id.
   bool GetClientId(GLuint service_id, GLuint* client_id) const;
 
+  // Recreates the service ID for a framebuffer (allocates new, deletes old).
+  void RecreateFramebufferServiceId(Framebuffer* framebuffer);
+
   void MarkAttachmentsAsCleared(
     Framebuffer* framebuffer,
     RenderbufferManager* renderbuffer_manager,
@@ -371,6 +383,12 @@ class GPU_GLES2_EXPORT FramebufferManager {
   void MarkAsComplete(Framebuffer* framebuffer);
 
   bool IsComplete(const Framebuffer* framebuffer);
+
+  std::vector<std::pair<scoped_refptr<Framebuffer>, GLenum>>
+  GetBindingFramebuffersForTexture(TextureRef* texture_ref);
+
+  std::vector<std::pair<scoped_refptr<Framebuffer>, GLenum>>
+  GetBindingFramebuffersForRenderbuffer(Renderbuffer* renderbuffer);
 
   void IncFramebufferStateChangeCount() {
     // make sure this is never 0.

@@ -7,9 +7,10 @@
 
 #include "base/metrics/field_trial.h"
 #include "base/task/single_thread_task_runner.h"
+#include "build/buildflag.h"
 #include "content/common/content_export.h"
 #include "content/public/common/content_client.h"
-#include "mojo/public/cpp/bindings/binder_map.h"
+#include "gpu/command_buffer/service/shared_context_state.h"
 
 namespace gpu {
 struct GpuPreferences;
@@ -19,12 +20,13 @@ class SharedImageManager;
 class SyncPointManager;
 }
 
-namespace gl {
-class GLShareGroup;
+namespace mojo {
+class BinderMap;
 }
 
 namespace viz {
 class VizCompositorThreadRunner;
+class GpuServiceImpl;
 }
 
 namespace content {
@@ -41,6 +43,7 @@ class CONTENT_EXPORT ContentGpuClient {
   // the browser. Binders registered here will never run until the GPU process
   // has received a |CreateGpuService()| call from the browser.
   virtual void ExposeInterfacesToBrowser(
+      viz::GpuServiceImpl* gpu_service,
       const gpu::GpuPreferences& gpu_preferences,
       const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
       mojo::BinderMap* binders) {}
@@ -53,15 +56,16 @@ class CONTENT_EXPORT ContentGpuClient {
   virtual void PostCompositorThreadCreated(
       base::SingleThreadTaskRunner* task_runner) {}
 
+#if BUILDFLAG(IS_ANDROID)
   // Allows client to supply these object instances instead of having content
   // internally create one.
   virtual gpu::SyncPointManager* GetSyncPointManager();
   virtual gpu::SharedImageManager* GetSharedImageManager();
   virtual gpu::Scheduler* GetScheduler();
   virtual viz::VizCompositorThreadRunner* GetVizCompositorThreadRunner();
-  // Allow an embedder to provide a share group reimplementation to connect renderer
-  // GL contexts with the root compositor.
-  virtual gl::GLShareGroup* GetInProcessGpuShareGroup();
+  virtual const gpu::SharedContextState::GrContextOptionsProvider*
+  GetGrContextOptionsProvider();
+#endif
 };
 
 }  // namespace content

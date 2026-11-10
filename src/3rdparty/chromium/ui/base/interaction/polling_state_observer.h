@@ -5,13 +5,14 @@
 #ifndef UI_BASE_INTERACTION_POLLING_STATE_OBSERVER_H_
 #define UI_BASE_INTERACTION_POLLING_STATE_OBSERVER_H_
 
+#include <optional>
 #include <utility>
 
 #include "base/functional/callback_forward.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/interaction/element_tracker.h"
+#include "ui/base/interaction/interactive_test_definitions.h"
 #include "ui/base/interaction/interactive_test_internal.h"
 #include "ui/base/interaction/state_observer.h"
 
@@ -25,8 +26,8 @@ namespace ui::test {
 // deterministic state observation, custom events, etc.
 //
 // Designed for use with the `InteractiveTestApi::PollState()` verb.
-template <typename T>
-class PollingStateObserver : public StateObserver<T> {
+template <typename T, typename M = internal::MatcherTypeFor<T>>
+class PollingStateObserver : public StateObserver<M> {
  public:
   using PollCallback = base::RepeatingCallback<T()>;
 
@@ -52,11 +53,13 @@ class PollingStateObserver : public StateObserver<T> {
   ~PollingStateObserver() override = default;
 
   // StateObserver:
-  T GetStateObserverInitialState() const final { return poll_callback_.Run(); }
+  M GetStateObserverInitialState() const final {
+    return M(poll_callback_.Run());
+  }
 
  private:
   void OnPoll() {
-    StateObserver<T>::OnStateObserverStateChanged(poll_callback_.Run());
+    StateObserver<M>::OnStateObserverStateChanged(M(poll_callback_.Run()));
   }
 
   // The callback that returns the value when polled.
@@ -67,15 +70,15 @@ class PollingStateObserver : public StateObserver<T> {
 };
 
 // Need out-of-line declaration of static class variables on some platforms.
-template <typename T>
+template <typename T, typename M>
 // static
-constexpr base::TimeDelta PollingStateObserver<T>::kDefaultPollingInterval;
+constexpr base::TimeDelta PollingStateObserver<T, M>::kDefaultPollingInterval;
 
 // Observer which polls a specific element that cannot be observed via
 // listeners/callbacks. If an element with `identifier` in `context` is present,
 // the observed value will be updated to the result of `poll_element_callback`,
 // whereas if the element is not present in the context, it will be
-// absl::nullopt.
+// std::nullopt.
 //
 // If `context` is not specified, then the element will be located in any
 // context.
@@ -85,35 +88,36 @@ constexpr base::TimeDelta PollingStateObserver<T>::kDefaultPollingInterval;
 // deterministic state observation, custom events, etc.
 //
 // Designed for use with the `InteractiveTestApi::PollElement()` verb.
-template <typename T>
-class PollingElementStateObserver
-    : public PollingStateObserver<absl::optional<T>> {
+template <typename T,
+          typename Superclass =
+              PollingStateObserver<std::optional<T>,
+                                   std::optional<internal::MatcherTypeFor<T>>>>
+class PollingElementStateObserver : public Superclass {
  public:
   using PollElementCallback = base::RepeatingCallback<T(const TrackedElement*)>;
 
   // Calls `poll_element_callback` on the element with `identifier` in
   // `context` to update the value every `polling_interval`. If a matching
-  // element is not present, the value is `absl::nullopt`. The callback will be
+  // element is not present, the value is `std::nullopt`. The callback will be
   // called on initialization (if the element already exists) to get an initial
   // value.
   template <typename C>
   PollingElementStateObserver(
       ElementIdentifier identifier,
-      absl::optional<ElementContext> context,
+      std::optional<ElementContext> context,
       C&& poll_element_callback,
-      base::TimeDelta polling_interval =
-          PollingStateObserver<absl::optional<T>>::kDefaultPollingInterval)
-      : PollingStateObserver<absl::optional<T>>(
+      base::TimeDelta polling_interval = Superclass::kDefaultPollingInterval)
+      : Superclass(
             base::BindRepeating(
                 [](ElementIdentifier id,
-                   absl::optional<ElementContext> ctx,
+                   std::optional<ElementContext> ctx,
                    PollElementCallback cb) {
                   auto* const el = ctx.has_value()
                                        ? ElementTracker::GetElementTracker()
                                              ->GetFirstMatchingElement(id, *ctx)
                                        : ElementTracker::GetElementTracker()
                                              ->GetElementInAnyContext(id);
-                  return el ? absl::make_optional(cb.Run(el)) : absl::nullopt;
+                  return el ? std::make_optional(cb.Run(el)) : std::nullopt;
                 },
                 identifier,
                 context,
@@ -123,6 +127,11 @@ class PollingElementStateObserver
 
   ~PollingElementStateObserver() override = default;
 };
+
+template <typename T>
+concept IsPollingStateObserver = requires {
+  typename T::ValueType;
+} && std::derived_from<T, PollingStateObserver<typename T::ValueType>>;
 
 }  // namespace ui::test
 

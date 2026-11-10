@@ -33,9 +33,9 @@ jumbo_component("touch_selection") {
   defines = [ "UI_TOUCH_SELECTION_IMPLEMENTATION" ]
 
   deps = [
-    "//base:base",
-    "//ui/base:base",
-    "//ui/events:events",
+    "//base",
+    "//ui/base",
+    "//ui/events",
     "//ui/events:gesture_detection",
     "//ui/gfx",
     "//ui/gfx/geometry",
@@ -44,13 +44,13 @@ jumbo_component("touch_selection") {
   if (use_aura && toolkit_views) {
     deps += [
       "//cc/paint",
-      "//skia:skia",
+      "//skia",
       "//ui/aura",
       "//ui/base",
       "//ui/color",
       "//ui/color:mixers",
-      "//ui/compositor:compositor",
-      "//ui/gfx:gfx",
+      "//ui/compositor",
+      "//ui/gfx",
       "//ui/native_theme",
       "//ui/native_theme:native_theme_browser",
       "//ui/resources",
@@ -64,6 +64,12 @@ jumbo_component("touch_selection") {
       "touch_selection_magnifier_aura.h",
     ]
   }
+
+  if (use_blink) {
+    sources += [ "touch_editing_controller.h" ]
+
+    deps += [ "//ui/menus" ]
+  }
 }
 
 static_library("test_support") {
@@ -76,7 +82,7 @@ static_library("test_support") {
 
   deps = [
     ":touch_selection",
-    "//base:base",
+    "//base",
   ]
 }
 
@@ -87,26 +93,24 @@ test("ui_touch_selection_unittests") {
     "longpress_drag_selector_unittest.cc",
     "touch_handle_unittest.cc",
     "touch_selection_controller_unittest.cc",
-    "touch_selection_metrics_unittest.cc",
   ]
 
   deps = [
     ":test_support",
     ":touch_selection",
     "//base/test:run_all_unittests",
-    "//base/test:test_support",
-    "//testing/gmock:gmock",
-    "//testing/gtest:gtest",
-    "//ui/base:base",
+    "//testing/gmock",
+    "//testing/gtest",
+    "//ui/base",
     "//ui/events:test_support",
-    "//ui/gfx:gfx",
+    "//ui/gfx",
     "//ui/gfx:test_support",
   ]
 
-  data_deps = [ "//third_party/mesa_headers" ]
+  data_deps = [ "//third_party/angle:includes" ]
 
   if (use_aura) {
-    deps += [ "//ui/compositor:compositor" ]
+    deps += [ "//ui/compositor" ]
 
     sources += [ "touch_selection_magnifier_aura_unittest.cc" ]
   }

@@ -41,22 +41,6 @@ gfx::NativeWindow DesktopMediaID::GetNativeWindowById(
 }
 #endif
 
-bool DesktopMediaID::operator<(const DesktopMediaID& other) const {
-  return std::tie(type, id, window_id, web_contents_id, audio_share) <
-         std::tie(other.type, other.id, other.window_id, other.web_contents_id,
-                  other.audio_share);
-}
-
-bool DesktopMediaID::operator==(const DesktopMediaID& other) const {
-  return type == other.type && id == other.id && window_id == other.window_id &&
-         web_contents_id == other.web_contents_id &&
-         audio_share == other.audio_share;
-}
-
-bool DesktopMediaID::operator!=(const DesktopMediaID& other) const {
-  return !(*this == other);
-}
-
 // static
 // Input string should in format:
 // - For WebContents:
@@ -105,7 +89,6 @@ std::string DesktopMediaID::ToString() const {
   switch (type) {
     case TYPE_NONE:
       NOTREACHED();
-      return std::string();
     case TYPE_SCREEN:
       prefix = kScreenPrefix;
       break;

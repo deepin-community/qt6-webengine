@@ -11,8 +11,10 @@
 #include "include/core/SkCapabilities.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrDriverBugWorkarounds.h"
-#include "include/gpu/GrTypes.h"
+#include "include/gpu/GpuTypes.h"
+#include "include/gpu/ganesh/GrDriverBugWorkarounds.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/private/base/SkMacros.h"
 #include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/Blend.h"
@@ -45,7 +47,6 @@ struct SkISize;
 
 namespace skgpu {
     class KeyBuilder;
-    enum class Mipmapped : bool;
 }
 namespace GrTest {
     struct TestFormatColorTypeCombination;
@@ -62,7 +63,7 @@ public:
 
     const GrShaderCaps* shaderCaps() const { return fShaderCaps.get(); }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     std::string_view deviceName() const { return fDeviceName; }
 #endif
 
@@ -113,10 +114,11 @@ public:
 
     bool preferClientSideDynamicBuffers() const { return fPreferClientSideDynamicBuffers; }
 
-    // On tilers, an initial fullscreen clear is an OPTIMIZATION. It allows the hardware to
-    // initialize each tile with a constant value rather than loading each pixel from memory.
+    // The following 3 methods provide information that enables performance optimizations for tiler
+    // GPUs. Full clear operations (followed by discarding the content when finished) are more
+    // performant than load operations on these GPUs as they enable the hardware to initialize each
+    // tile with a constant value as opposed to loading each pixel from memory.
     bool preferFullscreenClears() const { return fPreferFullscreenClears; }
-
     // Should we discard stencil values after a render pass? (Tilers get better performance if we
     // always load stencil buffers with a "clear" op, and then discard the content when finished.)
     bool discardStencilValuesAfterRenderPass() const {
@@ -125,9 +127,14 @@ public:
 #if 0
         // This method is actually just a duplicate of preferFullscreenClears(), with a descriptive
         // name for the sake of readability.
-        return this->preferFullscreenClears();
+        return fDiscardStencilValuesAfterRenderPass;
 #endif
     }
+
+    // Returns whether clearing an attachment is faster than loading the attachment. This is useful
+    // when you know the values are already cleared so it doesn't matter if we load or clear at the
+    // start of a render pass.
+    bool clearsAreFasterThanLoads() const { return fClearsAreFasterThanLoads; }
 
     // D3D does not allow the refs or masks to differ on a two-sided stencil draw.
     bool twoSidedStencilRefsAndMasksMustMatch() const {
@@ -497,6 +504,8 @@ public:
 
     virtual uint64_t computeFormatKey(const GrBackendFormat&) const = 0;
 
+    skgpu::GpuStatsFlags supportedGpuStats() const { return fSupportedGpuStats; }
+
     const GrDriverBugWorkarounds& workarounds() const { return fDriverBugWorkarounds; }
 
     /**
@@ -520,7 +529,7 @@ public:
         // approach, but inline uploads are very rare and already slow.
         kVulkanHasResolveLoadSubpass = 0x1,
     };
-    GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(ProgramDescOverrideFlags);
+    SK_DECL_BITFIELD_CLASS_OPS_FRIENDS(ProgramDescOverrideFlags);
 
 
     virtual GrProgramDesc makeDesc(
@@ -538,7 +547,7 @@ public:
 
     virtual bool dmsaaResolveCanBeUsedAsTextureInSameRenderPass() const { return true; }
 
-    // skbug.com/11935. Task reordering is disabled for some GPUs on GL due to driver bugs.
+    // skbug.com/40042245. Task reordering is disabled for some GPUs on GL due to driver bugs.
     bool avoidReorderingRenderTasks() const {
         return fAvoidReorderingRenderTasks;
     }
@@ -563,7 +572,7 @@ public:
     std::tuple<GrColorType, GrBackendFormat> getFallbackColorTypeAndFormat(GrColorType,
                                                                            int sampleCount) const;
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     virtual std::vector<GrTest::TestFormatColorTypeCombination> getTestingCombinations() const = 0;
 #endif
 
@@ -573,7 +582,7 @@ protected:
     // NOTE: this method will only reduce the caps, never expand them.
     void finishInitialization(const GrContextOptions& options);
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     void setDeviceName(const char* n) {
         fDeviceName = n;
     }
@@ -602,6 +611,8 @@ protected:
     bool fUsePrimitiveRestart                        : 1;
     bool fPreferClientSideDynamicBuffers             : 1;
     bool fPreferFullscreenClears                     : 1;
+    bool fDiscardStencilValuesAfterRenderPass        : 1;
+    bool fClearsAreFasterThanLoads                   : 1;
     bool fTwoSidedStencilRefsAndMasksMustMatch       : 1;
     bool fMustClearUploadedBufferData                : 1;
     bool fBuffersAreInitiallyZero                    : 1;
@@ -665,9 +676,11 @@ protected:
     size_t fTransferFromBufferToBufferAlignment = 1;
     size_t fBufferUpdateDataPreserveAlignment = 1;
 
+    skgpu::GpuStatsFlags fSupportedGpuStats = skgpu::GpuStatsFlags::kNone;
+
     GrDriverBugWorkarounds fDriverBugWorkarounds;
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     std::string fDeviceName;
 #endif
 
@@ -705,6 +718,6 @@ private:
     using INHERITED = SkRefCnt;
 };
 
-GR_MAKE_BITFIELD_CLASS_OPS(GrCaps::ProgramDescOverrideFlags)
+SK_MAKE_BITFIELD_CLASS_OPS(GrCaps::ProgramDescOverrideFlags)
 
 #endif

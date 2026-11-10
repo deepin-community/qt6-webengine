@@ -7,14 +7,13 @@
 #include <stddef.h>
 
 #include <utility>
+#include <vector>
 
-#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "media/base/cdm_config.h"
 #include "media/base/eme_constants.h"
 #include "media/base/key_system_names.h"
@@ -28,11 +27,11 @@
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_media_key_system_configuration.h"
 #include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/public/web/modules/media/web_media_player_util.h"
-#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/renderer/platform/media/media_player_util.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
 namespace {
 
 using ::media::EmeConfig;
@@ -48,7 +47,6 @@ EmeConfig::Rule GetDistinctiveIdentifierConfigRule(
     EmeFeatureRequirement requirement) {
   if (support == EmeFeatureSupport::INVALID) {
     NOTREACHED();
-    return EmeConfig::UnsupportedRule();
   }
 
   // For kNotAllowed and kRequired, the result is as expected. For kRecommended,
@@ -89,7 +87,6 @@ EmeConfig::Rule GetPersistentStateConfigRule(
     EmeFeatureRequirement requirement) {
   if (support == EmeFeatureSupport::INVALID) {
     NOTREACHED();
-    return EmeConfig::UnsupportedRule();
   }
 
   // For kNotAllowed and kRequired, the result is as expected. For kRecommended,
@@ -139,7 +136,6 @@ bool IsPersistentSessionType(WebEncryptedMediaSessionType sessionType) {
   }
 
   NOTREACHED();
-  return false;
 }
 
 bool IsSupportedMediaType(const std::string& container_mime_type,
@@ -192,24 +188,9 @@ bool IsSupportedMediaType(const std::string& container_mime_type,
 
 }  // namespace
 
-bool KeySystemConfigSelector::WebLocalFrameDelegate::
-    IsCrossOriginToOutermostMainFrame() {
-  DCHECK(web_frame_);
-  return web_frame_->IsCrossOriginToOutermostMainFrame();
-}
-
-bool KeySystemConfigSelector::WebLocalFrameDelegate::AllowStorageAccessSync(
-    WebContentSettingsClient::StorageType storage_type) {
-  DCHECK(web_frame_);
-  WebContentSettingsClient* content_settings_client =
-      web_frame_->GetContentSettingsClient();
-  return !content_settings_client ||
-         content_settings_client->AllowStorageAccessSync(storage_type);
-}
-
 struct KeySystemConfigSelector::SelectionRequest {
   std::string key_system;
-  WebVector<WebMediaKeySystemConfiguration> candidate_configurations;
+  std::vector<WebMediaKeySystemConfiguration> candidate_configurations;
   SelectConfigCB cb;
   bool was_permission_requested = false;
   bool is_permission_granted = false;
@@ -334,7 +315,6 @@ class KeySystemConfigSelector::ConfigState {
     // No rule specified, this should not happen
     if (!rule.has_value()) {
       NOTREACHED();
-      return;
     }
 
     // Rule does not require or prohibit anything, so can be skipped.
@@ -399,7 +379,7 @@ KeySystemConfigSelector::KeySystemConfigSelector(
     : key_systems_(key_systems),
       media_permission_(media_permission),
       web_frame_delegate_(std::move(web_frame_delegate)),
-      is_supported_media_type_cb_(base::BindRepeating(&IsSupportedMediaType)) {
+      is_supported_media_type_cb_(WTF::BindRepeating(&IsSupportedMediaType)) {
   DCHECK(key_systems_);
   DCHECK(media_permission_);
   DCHECK(web_frame_delegate_);
@@ -489,13 +469,12 @@ EmeConfig::Rule KeySystemConfigSelector::GetEncryptionSchemeConfigRule(
   }
 
   NOTREACHED();
-  return EmeConfig::UnsupportedRule();
 }
 
 bool KeySystemConfigSelector::GetSupportedCapabilities(
     const std::string& key_system,
     EmeMediaType media_type,
-    const WebVector<WebMediaKeySystemMediaCapability>&
+    const std::vector<WebMediaKeySystemMediaCapability>&
         requested_media_capabilities,
     // Corresponds to the partial configuration, plus restrictions.
     KeySystemConfigSelector::ConfigState* config_state,
@@ -771,7 +750,7 @@ KeySystemConfigSelector::GetSupportedConfiguration(
   //         let session types be candidate configuration's sessionTypes member.
   //       - Otherwise, let session types be [ "temporary" ].
   //         (Done in MediaKeySystemAccessInitializer.)
-  WebVector<WebEncryptedMediaSessionType> session_types =
+  std::vector<WebEncryptedMediaSessionType> session_types =
       candidate.session_types;
 
   // 13. For each value in session types:
@@ -802,7 +781,6 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     switch (session_type) {
       case WebEncryptedMediaSessionType::kUnknown:
         NOTREACHED();
-        return CONFIGURATION_NOT_SUPPORTED;
       case WebEncryptedMediaSessionType::kTemporary:
         session_type_rule = EmeConfig::SupportedRule();
         break;
@@ -933,7 +911,6 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     } else {
       // We should not have passed step 6.
       NOTREACHED();
-      return CONFIGURATION_NOT_SUPPORTED;
     }
   }
 
@@ -972,7 +949,6 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     } else {
       // We should not have passed step 5.
       NOTREACHED();
-      return CONFIGURATION_NOT_SUPPORTED;
     }
   }
 
@@ -1017,7 +993,7 @@ KeySystemConfigSelector::GetSupportedConfiguration(
 
 void KeySystemConfigSelector::SelectConfig(
     const WebString& key_system,
-    const WebVector<WebMediaKeySystemConfiguration>& candidate_configurations,
+    const std::vector<WebMediaKeySystemConfiguration>& candidate_configurations,
     SelectConfigCB cb) {
   // Continued from requestMediaKeySystemAccess(), step 6, from
   // https://w3c.github.io/encrypted-media/#requestmediakeysystemaccess
@@ -1110,13 +1086,14 @@ void KeySystemConfigSelector::SelectConfigInternal(
         DVLOG(3) << "Request permission.";
         media_permission_->RequestPermission(
             media::MediaPermission::Type::kProtectedMediaIdentifier,
-            base::BindOnce(&KeySystemConfigSelector::OnPermissionResult,
-                           weak_factory_.GetWeakPtr(), std::move(request)));
+            WTF::BindOnce(&KeySystemConfigSelector::OnPermissionResult,
+                          weak_factory_.GetWeakPtr(), std::move(request)));
         return;
       case CONFIGURATION_SUPPORTED:
         std::string key_system = request->key_system;
-        if (key_systems_->ShouldUseBaseKeySystemName(key_system))
+        if (key_systems_->ShouldUseBaseKeySystemName(key_system)) {
           key_system = key_systems_->GetBaseKeySystemName(key_system);
+        }
         cdm_config.key_system = key_system;
 
         cdm_config.allow_distinctive_identifier =
@@ -1135,9 +1112,9 @@ void KeySystemConfigSelector::SelectConfigInternal(
             media::kHardwareSecureDecryptionFallbackPerSite.Get()) {
           if (!request->was_hardware_secure_decryption_preferences_requested) {
             media_permission_->IsHardwareSecureDecryptionAllowed(
-                base::BindOnce(&KeySystemConfigSelector::
-                                   OnHardwareSecureDecryptionAllowedResult,
-                               weak_factory_.GetWeakPtr(), std::move(request)));
+                WTF::BindOnce(&KeySystemConfigSelector::
+                                  OnHardwareSecureDecryptionAllowedResult,
+                              weak_factory_.GetWeakPtr(), std::move(request)));
             return;
           }
 

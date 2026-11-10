@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
+#include "media/mojo/clients/mojo_decryptor.h"
+
 #include <stdint.h>
 
 #include <memory>
@@ -15,10 +18,10 @@
 #include "media/base/test_helpers.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_frame.h"
-#include "media/mojo/clients/mojo_decryptor.h"
 #include "media/mojo/mojom/decryptor.mojom.h"
 #include "media/mojo/services/mojo_decryptor_service.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -75,11 +78,11 @@ class MojoDecryptorTest : public ::testing::Test {
     // VideoFrame.
     auto region = base::ReadOnlySharedMemoryRegion::Create(15000);
     CHECK(region.IsValid());
-    uint8_t* data = const_cast<uint8_t*>(region.mapping.GetMemoryAs<uint8_t>());
+    auto data = region.mapping.GetMemoryAsSpan<uint8_t>();
     scoped_refptr<VideoFrame> frame = VideoFrame::WrapExternalYuvData(
         PIXEL_FORMAT_I420, gfx::Size(100, 100), gfx::Rect(100, 100),
-        gfx::Size(100, 100), 100, 50, 50, data, data + 100 * 100,
-        data + (100 * 100 * 5 / 4), base::Seconds(100));
+        gfx::Size(100, 100), 100, 50, 50, data, data.subspan(100u * 100),
+        data.subspan(100u * 100 * 5 / 4), base::Seconds(100));
     auto read_only_mapping = region.region.Map();
     CHECK(read_only_mapping.IsValid());
     frame->BackWithOwnedSharedMemory(std::move(region.region),
@@ -149,7 +152,7 @@ TEST_F(MojoDecryptorTest, Reset_DuringDecryptAndDecode_Audio) {
     EXPECT_CALL(*this, AudioDecoded(_, _));
   }
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeAudio(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::AudioDecoded,
                                              base::Unretained(this)));
@@ -172,7 +175,7 @@ TEST_F(MojoDecryptorTest, Reset_DuringDecryptAndDecode_Audio_ChunkedWrite) {
     EXPECT_CALL(*this, AudioDecoded(_, _));
   }
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeAudio(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::AudioDecoded,
                                              base::Unretained(this)));
@@ -196,7 +199,7 @@ TEST_F(MojoDecryptorTest, Reset_DuringDecryptAndDecode_Video) {
     EXPECT_CALL(*this, OnFrameDestroyed());
   }
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeVideo(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                              base::Unretained(this)));
@@ -221,7 +224,7 @@ TEST_F(MojoDecryptorTest, Reset_DuringDecryptAndDecode_Video_ChunkedWrite) {
     EXPECT_CALL(*this, OnFrameDestroyed());
   }
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeVideo(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                              base::Unretained(this)));
@@ -259,7 +262,7 @@ TEST_F(MojoDecryptorTest, Reset_DuringDecryptAndDecode_AudioAndVideo) {
   EXPECT_CALL(*this, VideoDecoded(_, _));
   EXPECT_CALL(*this, OnFrameDestroyed());
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
 
   mojo_decryptor_->DecryptAndDecodeAudio(
       buffer, base::BindRepeating(&MojoDecryptorTest::AudioDecoded,
@@ -285,7 +288,7 @@ TEST_F(MojoDecryptorTest, VideoDecodeFreesBuffer) {
   EXPECT_CALL(*decryptor_, DecryptAndDecodeVideo(_, _))
       .WillOnce(Invoke(this, &MojoDecryptorTest::ReturnSharedBufferVideoFrame));
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeVideo(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                              base::Unretained(this)));
@@ -305,7 +308,7 @@ TEST_F(MojoDecryptorTest, VideoDecodeFreesMultipleBuffers) {
           Invoke(this, &MojoDecryptorTest::ReturnSharedBufferVideoFrame));
 
   for (int i = 0; i < TIMES; ++i) {
-    scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+    auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
     mojo_decryptor_->DecryptAndDecodeVideo(
         std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                                base::Unretained(this)));
@@ -329,7 +332,7 @@ TEST_F(MojoDecryptorTest, VideoDecodeHoldThenFreeBuffers) {
           Invoke(this, &MojoDecryptorTest::ReturnSharedBufferVideoFrame));
 
   for (int i = 0; i < 2; ++i) {
-    scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+    auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
     mojo_decryptor_->DecryptAndDecodeVideo(
         std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                                base::Unretained(this)));
@@ -356,7 +359,7 @@ TEST_F(MojoDecryptorTest, EOSBuffer) {
   EXPECT_CALL(*decryptor_, DecryptAndDecodeVideo(_, _))
       .WillOnce(Invoke(this, &MojoDecryptorTest::ReturnEOSVideoFrame));
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeVideo(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                              base::Unretained(this)));
@@ -378,11 +381,104 @@ TEST_F(MojoDecryptorTest, DestroyService) {
   EXPECT_CALL(*this, VideoDecoded(Decryptor::Status::kError, IsNull()));
   EXPECT_CALL(*decryptor_, DecryptAndDecodeVideo(_, _)).Times(0);
 
-  scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+  auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
   mojo_decryptor_->DecryptAndDecodeVideo(
       std::move(buffer), base::BindRepeating(&MojoDecryptorTest::VideoDecoded,
                                              base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
 }
 
+TEST_F(MojoDecryptorTest, Deinitialize_DuringDecryptAndDecode) {
+  decryptor_ = std::make_unique<StrictMock<MockDecryptor>>();
+  mojo_decryptor_service_ =
+      std::make_unique<MojoDecryptorService>(decryptor_.get(), nullptr);
+
+  mojo::Remote<mojom::Decryptor> remote_decryptor;
+  receiver_ = std::make_unique<mojo::Receiver<mojom::Decryptor>>(
+      mojo_decryptor_service_.get(),
+      remote_decryptor.BindNewPipeAndPassReceiver());
+
+  // Create the four DataPipes.
+  mojo::ScopedDataPipeConsumerHandle audio_consumer;
+  mojo::ScopedDataPipeProducerHandle audio_producer;
+  ASSERT_EQ(MOJO_RESULT_OK,
+            mojo::CreateDataPipe(nullptr, audio_producer, audio_consumer));
+
+  mojo::ScopedDataPipeConsumerHandle video_consumer;
+  mojo::ScopedDataPipeProducerHandle video_producer;
+  ASSERT_EQ(MOJO_RESULT_OK,
+            mojo::CreateDataPipe(nullptr, video_producer, video_consumer));
+
+  mojo::ScopedDataPipeConsumerHandle decrypt_consumer;
+  mojo::ScopedDataPipeProducerHandle decrypt_producer;
+  ASSERT_EQ(MOJO_RESULT_OK,
+            mojo::CreateDataPipe(nullptr, decrypt_producer, decrypt_consumer));
+
+  mojo::ScopedDataPipeProducerHandle decrypted_producer;
+  mojo::ScopedDataPipeConsumerHandle decrypted_consumer;
+  ASSERT_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(nullptr, decrypted_producer,
+                                                 decrypted_consumer));
+
+  remote_decryptor->Initialize(
+      std::move(audio_consumer), std::move(video_consumer),
+      std::move(decrypt_consumer), std::move(decrypted_producer));
+
+  bool deinitialized = false;
+
+  EXPECT_CALL(*decryptor_, InitializeAudioDecoder(_, _))
+      .Times(testing::AtMost(1))
+      .WillOnce([](const AudioDecoderConfig& config,
+                   Decryptor::DecoderInitCB cb) { std::move(cb).Run(true); });
+
+  EXPECT_CALL(*decryptor_, DeinitializeDecoder(Decryptor::kAudio))
+      .Times(testing::AtMost(1))
+      .WillOnce(testing::Assign(&deinitialized, true));
+
+  EXPECT_CALL(*decryptor_, DecryptAndDecodeAudio(_, _))
+      .WillRepeatedly([&deinitialized](scoped_refptr<DecoderBuffer> buffer,
+                                       Decryptor::AudioDecodeCB cb) {
+        ASSERT_FALSE(deinitialized) << "DecryptAndDecodeAudio called after "
+                                       "DeinitializeDecoder!";
+        std::move(cb).Run(Decryptor::kSuccess, Decryptor::AudioFrames());
+      });
+
+  auto data_buffer = mojom::DataDecoderBuffer::New();
+  data_buffer->timestamp = base::TimeDelta();
+  data_buffer->duration = base::Seconds(1);
+  data_buffer->is_key_frame = false;
+  data_buffer->data_size = 256;
+
+  auto mojo_buffer = mojom::DecoderBuffer::NewData(std::move(data_buffer));
+
+  bool decode_called = false;
+  remote_decryptor->DecryptAndDecodeAudio(
+      std::move(mojo_buffer),
+      base::BindOnce(
+          [](bool* called, Decryptor::Status status,
+             std::vector<mojom::AudioBufferPtr> buffers) { *called = true; },
+          &decode_called));
+
+  mojo::test::BadMessageObserver bad_message_observer;
+  remote_decryptor->DeinitializeDecoder(Decryptor::kAudio);
+
+  remote_decryptor->InitializeAudioDecoder(
+      AudioDecoderConfig(AudioCodec::kAAC, SampleFormat::kSampleFormatS16,
+                         ChannelLayoutConfig::Stereo(), 44100,
+                         std::vector<uint8_t>(),
+                         EncryptionScheme::kUnencrypted),
+      base::BindOnce(
+          [](mojo::ScopedDataPipeProducerHandle producer, bool success) {
+            LOG(INFO) << "InitializeAudioDecoder callback called. Success="
+                      << success;
+            std::vector<uint8_t> data(256, 0);
+            size_t bytes_written = 0;
+            std::ignore = producer->WriteData(data, MOJO_WRITE_DATA_FLAG_NONE,
+                                              bytes_written);
+          },
+          std::move(audio_producer)));
+
+  std::string bad_message = bad_message_observer.WaitForBadMessage();
+  EXPECT_EQ(bad_message,
+            "DeinitializeDecoder with pending DecryptAndDecode reads");
+}
 }  // namespace media

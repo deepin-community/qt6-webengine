@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -79,8 +80,8 @@ void HTMLFrameElementBase::OpenURL(bool replace_current_item) {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kRendering,
             mojom::ConsoleMessageLevel::kWarning,
-            "Invalid relative frame source URL (" + url_ +
-                ") within data URL."));
+            StrCat({"Invalid relative frame source URL (", url_,
+                    ") within data URL."})));
   }
   LoadOrRedirectSubframe(url, frame_name_, replace_current_item);
 }
@@ -176,9 +177,10 @@ void HTMLFrameElementBase::SetNameAndOpenURL() {
 Node::InsertionNotificationRequest HTMLFrameElementBase::InsertedInto(
     ContainerNode& insertion_point) {
   HTMLFrameOwnerElement::InsertedInto(insertion_point);
-  // We should never have a content frame at the point where we got inserted
-  // into a tree.
-  SECURITY_CHECK(!ContentFrame());
+  // Except for when state-preserving atomic moves are enabled, we should never
+  // have a content frame at the point where we got inserted into a tree.
+  SECURITY_CHECK(!ContentFrame() ||
+                 GetDocument().StatePreservingAtomicMoveInProgress());
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }
 
@@ -207,10 +209,6 @@ void HTMLFrameElementBase::SetLocation(const String& str) {
 
   if (isConnected())
     OpenURL(false);
-}
-
-bool HTMLFrameElementBase::SupportsFocus(UpdateBehavior) const {
-  return true;
 }
 
 int HTMLFrameElementBase::DefaultTabIndex() const {
@@ -266,7 +264,7 @@ void HTMLFrameElementBase::SetScrollbarMode(
   if (contentDocument()) {
     contentDocument()->WillChangeFrameOwnerProperties(
         margin_width_, margin_height_, scrollbar_mode, IsDisplayNone(),
-        GetColorScheme());
+        GetColorScheme(), GetPreferredColorScheme());
   }
   scrollbar_mode_ = scrollbar_mode;
   FrameOwnerPropertiesChanged();
@@ -279,7 +277,7 @@ void HTMLFrameElementBase::SetMarginWidth(int margin_width) {
   if (contentDocument()) {
     contentDocument()->WillChangeFrameOwnerProperties(
         margin_width, margin_height_, scrollbar_mode_, IsDisplayNone(),
-        GetColorScheme());
+        GetColorScheme(), GetPreferredColorScheme());
   }
   margin_width_ = margin_width;
   FrameOwnerPropertiesChanged();
@@ -292,7 +290,7 @@ void HTMLFrameElementBase::SetMarginHeight(int margin_height) {
   if (contentDocument()) {
     contentDocument()->WillChangeFrameOwnerProperties(
         margin_width_, margin_height, scrollbar_mode_, IsDisplayNone(),
-        GetColorScheme());
+        GetColorScheme(), GetPreferredColorScheme());
   }
   margin_height_ = margin_height;
   FrameOwnerPropertiesChanged();

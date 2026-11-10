@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #ifndef MEDIA_BASE_CODEC_WORKER_IMPL_H_
 #define MEDIA_BASE_CODEC_WORKER_IMPL_H_
 
@@ -146,7 +151,7 @@ class CodecWorkerImpl {
   // Protects `Worker::status_`. The other attributes in `Worker` are expected
   // to be updated in isolation.
   base::Lock mutex_;
-  // TODO(crbug.com/1514426): consider using sequenced task runner instead of
+  // TODO(crbug.com/41486982): consider using sequenced task runner instead of
   // dedicated threads.
   base::Thread thread_;
   // Avoids creating a WaitableEvent on stack when work needs to be depleted.

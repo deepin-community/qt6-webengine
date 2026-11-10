@@ -6,6 +6,7 @@
 
 #include "base/check.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_line_resolver.h"
+#include "third_party/blink/renderer/core/layout/grid/grid_track_sizing_algorithm.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 
 namespace blink {
@@ -63,45 +64,14 @@ void GridRange::SetIsImplicit() {
 }
 
 GridRangeBuilder::GridRangeBuilder(const ComputedStyle& grid_style,
-                                   const GridLineResolver& line_resolver,
                                    GridTrackSizingDirection track_direction,
+                                   wtf_size_t auto_repetitions,
                                    wtf_size_t start_offset)
-    : auto_repetitions_(line_resolver.AutoRepetitions(track_direction)),
-      start_offset_(start_offset),
-      must_sort_grid_lines_(false),
-      explicit_tracks_((track_direction == kForColumns)
-                           ? grid_style.GridTemplateColumns().track_list
-                           : grid_style.GridTemplateRows().track_list),
-      implicit_tracks_((track_direction == kForColumns)
-                           ? grid_style.GridAutoColumns()
-                           : grid_style.GridAutoRows()) {
-  // The implicit track list should have only one repeater, if any.
-  DCHECK_LE(implicit_tracks_.RepeaterCount(), 1u);
-  DCHECK_NE(auto_repetitions_, kNotFound);
-
-  const wtf_size_t repeater_count = explicit_tracks_.RepeaterCount();
-
-  // Add extra capacity for the extra lines needed for named grids.
-  start_lines_.ReserveInitialCapacity(repeater_count + 1);
-  end_lines_.ReserveInitialCapacity(repeater_count + 1);
-
-  wtf_size_t current_repeater_start_line = start_offset_;
-  for (wtf_size_t i = 0; i < repeater_count; ++i) {
-    const wtf_size_t repeater_track_count =
-        explicit_tracks_.RepeatCount(i, auto_repetitions_) *
-        explicit_tracks_.RepeatSize(i);
-
-    // Subgrids can have zero auto repetitions.
-    if (explicit_tracks_.IsSubgriddedAxis() && repeater_track_count == 0) {
-      continue;
-    }
-
-    DCHECK_NE(repeater_track_count, 0u);
-    start_lines_.emplace_back(current_repeater_start_line);
-    current_repeater_start_line += repeater_track_count;
-    end_lines_.emplace_back(current_repeater_start_line);
-  }
-
+    : GridRangeBuilder(
+          grid_style.TemplateTracks(track_direction).GetTrackList(),
+          grid_style.AutoTracks(track_direction),
+          auto_repetitions,
+          start_offset) {
   // There is a special scenario where named grid areas can be specified through
   // the "grid-template" property with no specified explicit grid; such case is
   // tricky because the computed value of "grid-template-columns" is expected to
@@ -116,6 +86,9 @@ GridRangeBuilder::GridRangeBuilder(const ComputedStyle& grid_style,
                                     ? grid_template_areas->column_count
                                     : grid_template_areas->row_count;
   }
+
+  const auto current_repeater_start_line =
+      end_lines_.empty() ? start_offset_ : end_lines_.back().grid_line;
 
   if (current_repeater_start_line < named_grid_area_end_line) {
     start_lines_.emplace_back(current_repeater_start_line);
@@ -137,7 +110,9 @@ void GridRangeBuilder::EnsureTrackCoverage(
   end_lines_.emplace_back(start_line + span_length, grid_item_end_range_index);
 }
 
-GridRangeVector GridRangeBuilder::FinalizeRanges() {
+GridRangeVector GridRangeBuilder::FinalizeRanges(
+    bool needs_auto_track_size,
+    Vector<wtf_size_t>* collapsed_track_indexes) {
   DCHECK_EQ(start_lines_.size(), end_lines_.size());
 
   // Sort start and ending tracks from low to high.
@@ -214,7 +189,7 @@ GridRangeVector GridRangeBuilder::FinalizeRanges() {
 
       is_in_auto_fit_range =
           explicit_tracks_.RepeatType(current_explicit_repeater_index) ==
-          NGGridTrackRepeater::RepeatType::kAutoFit;
+          GridTrackRepeater::RepeatType::kAutoFit;
       next_explicit_repeater_start +=
           explicit_tracks_.RepeatSize(current_explicit_repeater_index) *
           explicit_tracks_.RepeatCount(current_explicit_repeater_index,
@@ -318,9 +293,19 @@ GridRangeVector GridRangeBuilder::FinalizeRanges() {
         *end_lines_[line_index].grid_item_range_index_to_cache = ranges.size();
     }
 
-    if (is_in_auto_fit_range && open_items_or_repeaters == 1) {
+    // Don't collapse tracks if we are in the first track sizing pass used to
+    // calculate the track size/count for repeat(auto-fit, auto).
+    if (is_in_auto_fit_range && open_items_or_repeaters == 1 &&
+        !needs_auto_track_size) {
       range.SetIsCollapsed();
       range.set_count = 0;
+      if (collapsed_track_indexes) {
+        wtf_size_t start_line = range.start_line;
+        for (wtf_size_t i = start_line; i < start_line + range.track_count;
+             ++i) {
+          collapsed_track_indexes->emplace_back(i);
+        }
+      }
     } else {
       // If this is a non-collapsed range, the number of sets in this range is
       // the number of track definitions in the current repeater clamped by the
@@ -350,23 +335,43 @@ GridRangeVector GridRangeBuilder::FinalizeRanges() {
   return ranges;
 }
 
-GridRangeBuilder::GridRangeBuilder(const NGGridTrackList& explicit_tracks,
-                                   const NGGridTrackList& implicit_tracks,
-                                   wtf_size_t auto_repetitions)
+GridRangeBuilder::GridRangeBuilder(const GridTrackList& explicit_tracks,
+                                   const GridTrackList& implicit_tracks,
+                                   wtf_size_t auto_repetitions,
+                                   wtf_size_t start_offset)
     : auto_repetitions_(auto_repetitions),
-      start_offset_(0),
-      must_sort_grid_lines_(false),
+      start_offset_(start_offset),
       explicit_tracks_(explicit_tracks),
       implicit_tracks_(implicit_tracks) {
+  // The implicit track list should have only one repeater, if any.
+  DCHECK_LE(implicit_tracks_.RepeaterCount(), 1u);
+  DCHECK_NE(auto_repetitions_, kNotFound);
+
   const wtf_size_t repeater_count = explicit_tracks_.RepeaterCount();
 
-  wtf_size_t current_repeater_start_line = 0;
+  // Add extra capacity for the extra lines needed for named grids.
+  start_lines_.ReserveInitialCapacity(repeater_count + 1);
+  end_lines_.ReserveInitialCapacity(repeater_count + 1);
+
+  wtf_size_t current_repeater_start_line = start_offset_;
   for (wtf_size_t i = 0; i < repeater_count; ++i) {
     const wtf_size_t repeater_track_count =
         explicit_tracks_.RepeatCount(i, auto_repetitions_) *
         explicit_tracks_.RepeatSize(i);
-    DCHECK_NE(repeater_track_count, 0u);
 
+    // Subgrids can have zero auto repetitions. Grids with repeat(auto-fill,
+    // auto) also currently can have a track count of 0.
+    //
+    // TODO (almaher): Update this check depending on if we allow Grid to have
+    // repeat(auto-fill, auto) track definitions.
+    if (repeater_track_count == 0) {
+      DCHECK(explicit_tracks_.IsSubgriddedAxis() ||
+             explicit_tracks_.HasAutoSizedRepeater() ||
+             implicit_tracks_.HasAutoSizedRepeater());
+      continue;
+    }
+
+    DCHECK_NE(repeater_track_count, 0u);
     start_lines_.emplace_back(current_repeater_start_line);
     current_repeater_start_line += repeater_track_count;
     end_lines_.emplace_back(current_repeater_start_line);
@@ -383,7 +388,7 @@ GridSet::GridSet(wtf_size_t track_count,
     // Argument for 'fit-content' is a <percentage> that couldn't be resolved to
     // a definite <length>, normalize to 'minmax(auto, max-content)'.
     if (is_available_size_indefinite &&
-        track_size.FitContentTrackBreadth().IsPercent()) {
+        track_size.FitContentTrackBreadth().HasPercent()) {
       track_size = GridTrackSize(Length::Auto(), Length::MaxContent());
     }
   } else {
@@ -391,14 +396,14 @@ GridSet::GridSet(wtf_size_t track_count,
     // definitions from https://drafts.csswg.org/css-grid-2/#algo-terms.
     const auto normalized_min_track_sizing_function =
         ((is_available_size_indefinite &&
-          track_size.MinTrackBreadth().IsPercentOrCalc()) ||
+          track_size.MinTrackBreadth().HasPercent()) ||
          track_size.HasFlexMinTrackBreadth())
             ? Length::Auto()
             : track_size.MinTrackBreadth();
 
     const auto normalized_max_track_sizing_function =
         (is_available_size_indefinite &&
-         track_size.MaxTrackBreadth().IsPercentOrCalc())
+         track_size.MaxTrackBreadth().HasPercent())
             ? Length::Auto()
             : track_size.MaxTrackBreadth();
 
@@ -411,7 +416,7 @@ GridSet::GridSet(wtf_size_t track_count,
 
 float GridSet::FlexFactor() const {
   DCHECK(track_size.HasFlexMaxTrackBreadth());
-  return track_size.MaxTrackBreadth().GetFloatValue() * track_count;
+  return track_size.MaxTrackBreadth().Flex() * track_count;
 }
 
 LayoutUnit GridSet::BaseSize() const {
@@ -573,11 +578,11 @@ void GridLayoutTrackCollection::AdjustSetOffsets(wtf_size_t set_index,
     sets_geometry_[i].offset += delta;
 }
 
-LayoutUnit GridLayoutTrackCollection::ComputeSetSpanSize() const {
-  return ComputeSetSpanSize(0, GetSetCount());
+LayoutUnit GridLayoutTrackCollection::CalculateSetSpanSize() const {
+  return CalculateSetSpanSize(0, GetSetCount());
 }
 
-LayoutUnit GridLayoutTrackCollection::ComputeSetSpanSize(
+LayoutUnit GridLayoutTrackCollection::CalculateSetSpanSize(
     wtf_size_t begin_set_index,
     wtf_size_t end_set_index) const {
   DCHECK_LE(begin_set_index, end_set_index);
@@ -820,7 +825,7 @@ GridLayoutTrackCollection::CreateSubgridTrackCollection(
       std::swap(subgrid_baselines.major, subgrid_baselines.minor);
     }
 
-    subgrid_track_collection.baselines_ = std::move(subgrid_baselines);
+    subgrid_track_collection.baselines_.emplace(std::move(subgrid_baselines));
   }
 
   subgrid_track_collection.gutter_size_ = subgrid_gutter_size;
@@ -851,13 +856,14 @@ bool GridLayoutTrackCollection::HasIndefiniteSet() const {
 
 GridSizingTrackCollection::GridSizingTrackCollection(
     GridRangeVector&& ranges,
-    bool must_create_baselines,
-    GridTrackSizingDirection track_direction)
+    GridTrackSizingDirection track_direction,
+    bool must_create_baselines)
     : GridLayoutTrackCollection(track_direction) {
   ranges_ = std::move(ranges);
 
-  if (must_create_baselines)
-    baselines_ = Baselines();
+  if (must_create_baselines) {
+    baselines_.emplace();
+  }
 
   wtf_size_t set_count = 0;
   for (const auto& range : ranges_) {
@@ -997,23 +1003,25 @@ void GridSizingTrackCollection::SetMinorBaseline(
     baselines_->minor[set_index] = candidate_baseline;
 }
 
-void GridSizingTrackCollection::BuildSets(const ComputedStyle& grid_style,
-                                          LayoutUnit grid_available_size,
-                                          LayoutUnit gutter_size) {
-  const bool is_for_columns = track_direction_ == kForColumns;
-  gutter_size_ = gutter_size;
+void GridSizingTrackCollection::BuildSets(
+    const ComputedStyle& grid_style,
+    const LogicalSize& grid_available_size) {
+  gutter_size_ = GridTrackSizingAlgorithm::CalculateGutterSize(
+      grid_style, grid_available_size, track_direction_);
 
-  BuildSets(
-      is_for_columns ? grid_style.GridTemplateColumns().track_list
-                     : grid_style.GridTemplateRows().track_list,
-      is_for_columns ? grid_style.GridAutoColumns() : grid_style.GridAutoRows(),
-      grid_available_size == kIndefiniteSize);
-  InitializeSets(grid_available_size);
+  const auto& available_size = (track_direction_ == kForColumns)
+                                   ? grid_available_size.inline_size
+                                   : grid_available_size.block_size;
+
+  BuildSets(grid_style.TemplateTracks(track_direction_).GetTrackList(),
+            grid_style.AutoTracks(track_direction_),
+            available_size == kIndefiniteSize);
+  InitializeSets(available_size);
 }
 
 void GridSizingTrackCollection::BuildSets(
-    const NGGridTrackList& explicit_track_list,
-    const NGGridTrackList& implicit_track_list,
+    const GridTrackList& explicit_track_list,
+    const GridTrackList& implicit_track_list,
     bool is_available_size_indefinite) {
   properties_.Reset();
   sets_.Shrink(0);
@@ -1111,6 +1119,11 @@ void GridSizingTrackCollection::BuildSets(
               TrackSpanProperties::kIsDependentOnAvailableSize);
         }
 
+        if (auto_sized_repeater_track_index_ == kNotFound &&
+            set_track_size.IsTrackDefinitionAuto()) {
+          auto_sized_repeater_track_index_ = i;
+        }
+
         CacheSetProperties(sets_.emplace_back(set_track_count, set_track_size,
                                               is_available_size_indefinite));
       }
@@ -1126,7 +1139,7 @@ void GridSizingTrackCollection::InitializeSets(LayoutUnit grid_available_size) {
 
     if (track_size.IsFitContent()) {
       // Indefinite lengths cannot occur, as they must be normalized to 'auto'.
-      DCHECK(!track_size.FitContentTrackBreadth().IsPercentOrCalc() ||
+      DCHECK(!track_size.FitContentTrackBreadth().HasPercent() ||
              grid_available_size != kIndefiniteSize);
 
       LayoutUnit fit_content_argument = MinimumValueForLength(
@@ -1135,7 +1148,7 @@ void GridSizingTrackCollection::InitializeSets(LayoutUnit grid_available_size) {
     }
 
     if (track_size.HasFixedMaxTrackBreadth()) {
-      DCHECK(!track_size.MaxTrackBreadth().IsPercentOrCalc() ||
+      DCHECK(!track_size.MaxTrackBreadth().HasPercent() ||
              grid_available_size != kIndefiniteSize);
 
       // A fixed sizing function: Resolve to an absolute length and use that
@@ -1151,7 +1164,7 @@ void GridSizingTrackCollection::InitializeSets(LayoutUnit grid_available_size) {
     }
 
     if (track_size.HasFixedMinTrackBreadth()) {
-      DCHECK(!track_size.MinTrackBreadth().IsPercentOrCalc() ||
+      DCHECK(!track_size.MinTrackBreadth().HasPercent() ||
              grid_available_size != kIndefiniteSize);
 
       // A fixed sizing function: Resolve to an absolute length and use that

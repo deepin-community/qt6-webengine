@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_
 
 #include <cmath>
 #include <cstddef>
@@ -12,15 +17,11 @@
 
 #include "partition_alloc/partition_alloc_base/numerics/safe_conversions_impl.h"
 
-#if defined(__ARMEL__) && !defined(__native_client__)
+#if defined(__ARMEL__)
 #include "partition_alloc/partition_alloc_base/numerics/safe_conversions_arm_impl.h"
 #define PA_BASE_HAS_OPTIMIZED_SAFE_CONVERSIONS (1)
 #else
 #define PA_BASE_HAS_OPTIMIZED_SAFE_CONVERSIONS (0)
-#endif
-
-#if !PA_BASE_NUMERICS_DISABLE_OSTREAM_OPERATORS
-#include <ostream>
 #endif
 
 namespace partition_alloc::internal::base {
@@ -108,9 +109,10 @@ constexpr Dst checked_cast(Src value) {
   // This throws a compile-time error on evaluating the constexpr if it can be
   // determined at compile-time as failing, otherwise it will CHECK at runtime.
   using SrcType = typename internal::UnderlyingType<Src>::type;
-  return PA_BASE_NUMERICS_LIKELY((IsValueInRangeForNumericType<Dst>(value)))
-             ? static_cast<Dst>(static_cast<SrcType>(value))
-             : CheckHandler::template HandleFailure<Dst>();
+  if (IsValueInRangeForNumericType<Dst>(value)) [[likely]] {
+    return static_cast<Dst>(static_cast<SrcType>(value));
+  }
+  return CheckHandler::template HandleFailure<Dst>();
 }
 
 // Default boundaries for integral/float: max/infinity, lowest/-infinity, 0/NaN.
@@ -188,9 +190,10 @@ struct SaturateFastOp<Dst,
     const Dst saturated = CommonMaxOrMin<Dst, Src>(
         IsMaxInRangeForNumericType<Dst, Src>() ||
         (!IsMinInRangeForNumericType<Dst, Src>() && IsValueNegative(value)));
-    return PA_BASE_NUMERICS_LIKELY(IsValueInRangeForNumericType<Dst>(value))
-               ? static_cast<Dst>(value)
-               : saturated;
+    if (IsValueInRangeForNumericType<Dst>(value)) [[likely]] {
+      return static_cast<Dst>(value);
+    }
+    return saturated;
   }
 };
 
@@ -375,4 +378,4 @@ Dst ClampRound(Src value) {
 
 }  // namespace partition_alloc::internal::base
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_NUMERICS_SAFE_CONVERSIONS_H_

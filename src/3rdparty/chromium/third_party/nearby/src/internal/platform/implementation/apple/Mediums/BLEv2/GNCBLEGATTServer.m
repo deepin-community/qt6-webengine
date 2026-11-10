@@ -17,11 +17,13 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <Foundation/Foundation.h>
 
+#import "internal/platform/implementation/apple/Flags/GNCFeatureFlags.h"
+#import "internal/platform/implementation/apple/Log/GNCLogger.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/GNCBLEError.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/GNCBLEGATTCharacteristic.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/GNCPeripheralManager.h"
+#import "internal/platform/implementation/apple/Mediums/BLEv2/NSData+GNCBase85.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/NSData+GNCWebSafeBase64.h"
-#import "GoogleToolboxForMac/GTMLogger.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -203,17 +205,26 @@ static char *const kGNCBLEGATTServerQueueLabel = "com.nearby.GNCBLEGATTServer";
     // data is unavailable.
     CBUUID *serviceUUID = [serviceData.allKeys objectAtIndex:0];
     NSData *value = [serviceData objectForKey:serviceUUID];
-    NSString *encoded = [value webSafeBase64EncodedString];
+    NSString *encoded = GNCFeatureFlags.dctEnabled ? [value base85EncodedString]
+                                                   : [value webSafeBase64EncodedString];
 
-    // Apple only "guarantees" (best effort) 28 bytes of advertisement data. Base64 encoding
-    // increases the size of the original data so we must truncate it to ensure it still meets the
-    // 28 byte limit. Since we have a 2-byte service UUID and the header for local name and service
-    // UUID is 2 bytes each, that leaves us with a maximum of 22 bytes for the local name. However,
-    // it seems in practice we can only reliably advertise a 20-byte local name on iOS.
-    if (encoded.length > 20) {
-      encoded = [encoded substringToIndex:20];
+    // 23 bytes is the standard length which we used in the NC protocol with PSM. The BLE v2
+    // advertisement header is default with psm value included so the length is always 23 bytes.
+    // The IOS can advertise with more data than that, but we would still like to return
+    // fail early here since extra bytes are not expected in current NC protocol. This is not a
+    // hardware limit.
+    if (encoded.length > 23) {
+      if (completionHandler) {
+        completionHandler([NSError
+            errorWithDomain:GNCBLEErrorDomain
+                       code:GNCBLEErrorInvalidServiceData
+                   userInfo:@{
+                     NSLocalizedDescriptionKey :
+                         @"Failed to start advertising due to the advertising data is too large."
+                   }]);
+      }
+      return;
     }
-
     _advertisementData = @{
       CBAdvertisementDataLocalNameKey : encoded,
       CBAdvertisementDataServiceUUIDsKey : @[ serviceUUID ]
@@ -305,7 +316,7 @@ static char *const kGNCBLEGATTServerQueueLabel = "com.nearby.GNCBLEGATTServer";
                                            error:(nullable NSError *)error {
   dispatch_assert_queue(_queue);
   if (error) {
-    GTMLoggerError(@"Failed to start advertising: %@", error);
+    GNCLoggerError(@"Failed to start advertising: %@", error);
   }
 }
 
@@ -314,7 +325,7 @@ static char *const kGNCBLEGATTServerQueueLabel = "com.nearby.GNCBLEGATTServer";
                         error:(nullable NSError *)error {
   dispatch_assert_queue(_queue);
   if (error) {
-    GTMLoggerError(@"Failed to add service %@: %@", service, error);
+    GNCLoggerError(@"Failed to add service %@: %@", service, error);
   }
 }
 
@@ -327,7 +338,8 @@ static char *const kGNCBLEGATTServerQueueLabel = "com.nearby.GNCBLEGATTServer";
     [_peripheralManager respondToRequest:request withResult:CBATTErrorAttributeNotFound];
     return;
   }
-  request.value = value;
+  request.value =
+      [value subdataWithRange:NSMakeRange(request.offset, value.length - request.offset)];
   [_peripheralManager respondToRequest:request withResult:CBATTErrorSuccess];
 }
 

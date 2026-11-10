@@ -9,11 +9,10 @@
 
 #include <memory>
 #include <set>
-#include <vector>
 
+#include "core/fxcrt/span.h"
 #include "fxjs/cjs_object.h"
 #include "fxjs/js_define.h"
-#include "third_party/base/containers/span.h"
 
 class CJS_Runtime;
 class GlobalTimer;
@@ -156,9 +155,9 @@ class CJS_App final : public CJS_Object {
   void RunJsScript(CJS_Runtime* pRuntime, const WideString& wsScript);
   void ClearTimerCommon(CJS_Runtime* pRuntime, v8::Local<v8::Value> param);
 
-  bool m_bCalculate = true;
-  bool m_bRuntimeHighLight = false;
-  std::set<std::unique_ptr<GlobalTimer>> m_Timers;
+  bool calculate_ = true;
+  bool runtime_high_light_ = false;
+  std::set<std::unique_ptr<GlobalTimer>> timers_;
 };
 
 #endif  // FXJS_CJS_APP_H_

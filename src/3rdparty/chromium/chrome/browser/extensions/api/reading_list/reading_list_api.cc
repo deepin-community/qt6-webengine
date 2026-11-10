@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/reading_list/reading_list_api.h"
 
 #include "base/containers/flat_set.h"
+#include "base/location.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/reading_list/reading_list_api_constants.h"
 #include "chrome/browser/extensions/api/reading_list/reading_list_util.h"
@@ -70,7 +71,8 @@ ReadingListAddEntryFunction::AddEntryToReadingList() {
 
   reading_list_model_->AddOrReplaceEntry(
       url_, title_, reading_list::EntrySource::ADDED_VIA_EXTENSION,
-      /*estimated_read_time=*/base::TimeDelta());
+      /*estimated_read_time=*/std::nullopt,
+      /*creation_time=*/std::nullopt);
   reading_list_model_->SetReadStatusIfExists(url_, has_been_read_);
 
   return NoArguments();
@@ -123,7 +125,7 @@ ReadingListRemoveEntryFunction::RemoveEntryFromReadingList() {
     return Error(reading_list_api_constants::kURLNotFoundError);
   }
 
-  reading_list_model_->RemoveEntryByURL(url_);
+  reading_list_model_->RemoveEntryByURL(url_, FROM_HERE);
 
   return NoArguments();
 }

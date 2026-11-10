@@ -46,7 +46,7 @@ class GuestViewContainer::RenderFrameLifetimeObserver
   void OnDestruct() override;
 
  private:
-  const raw_ptr<GuestViewContainer, ExperimentalRenderer> container_;
+  const raw_ptr<GuestViewContainer> container_;
 };
 
 GuestViewContainer::RenderFrameLifetimeObserver::RenderFrameLifetimeObserver(
@@ -166,8 +166,9 @@ void GuestViewContainer::RunDestructionCallback(bool embedder_frame_destroyed) {
     v8::Local<v8::Function> callback = v8::Local<v8::Function>::New(
         destruction_isolate_, destruction_callback_);
     v8::Local<v8::Context> context;
-    if (!callback->GetCreationContext().ToLocal(&context))
+    if (!callback->GetCreationContext(destruction_isolate_).ToLocal(&context)) {
       return;
+    }
 
     v8::Context::Scope context_scope(context);
     v8::MicrotasksScope microtasks(destruction_isolate_,

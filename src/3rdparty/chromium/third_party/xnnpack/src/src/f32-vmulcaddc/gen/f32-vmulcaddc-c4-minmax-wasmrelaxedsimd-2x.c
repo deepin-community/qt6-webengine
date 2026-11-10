@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vmulcaddc/wasmsimd.c.in
 //   Generator: tools/xngen
@@ -11,8 +12,8 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/vmulcaddc.h>
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/vmulcaddc.h"
 
 
 void xnn_f32_vmulcaddc_minmax_ukernel_c4__wasmrelaxedsimd_2x(
@@ -23,7 +24,7 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c4__wasmrelaxedsimd_2x(
     const float* restrict weights,
     float* restrict output,
     size_t output_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(rows != 0);
   assert(channels != 0);
@@ -37,8 +38,10 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c4__wasmrelaxedsimd_2x(
   const size_t input_increment = input_stride * 2 - channels;
   const size_t output_increment = output_stride * 2 - channels;
 
-  const v128_t vmin = wasm_v128_load64_splat(params->wasmsimd.min);
-  const v128_t vmax = wasm_v128_load64_splat(params->wasmsimd.max);
+  const v128_t vmin = wasm_v128_load32_splat(&params->scalar.min);
+  const v128_t vmax = wasm_v128_load32_splat(&params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   do {
     if XNN_UNPREDICTABLE(rows < 2) {
       i1 = i0;

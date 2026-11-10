@@ -1,17 +1,19 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import type * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
+import * as IconButton from '../components/icon_button/icon_button.js';
 
 import * as ARIAUtils from './ARIAUtils.js';
-import infobarStyles from './infobar.css.legacy.js';
+import infobarStyles from './infobar.css.js';
 import {Keys} from './KeyboardShortcut.js';
-import {createTextButton} from './UIUtils.js';
-import * as Utils from './utils/utils.js';
-import {type Widget} from './Widget.js';
+import {createShadowRootWithCoreStyles, createTextButton, type DevToolsCloseButton} from './UIUtils.js';
+import type {Widget} from './Widget.js';
 
 const UIStrings = {
   /**
@@ -19,14 +21,10 @@ const UIStrings = {
    */
   dontShowAgain: 'Don\'t show again',
   /**
-   *@description Text that indicates that a short message can be expanded to a detailed message
-   */
-  showMore: 'Show more',
-  /**
    *@description Text to close something
    */
   close: 'Close',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/Infobar.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -34,101 +32,76 @@ export class Infobar {
   element: HTMLElement;
   private readonly shadowRoot: ShadowRoot;
   private readonly contentElement: HTMLDivElement;
-  private readonly mainRow: HTMLElement;
-  private readonly detailsRows: HTMLElement;
-  private hasDetails: boolean;
-  private detailsMessage: string|Element;
+  private detailsRows?: HTMLElement;
   private readonly infoContainer: HTMLElement;
   private readonly infoMessage: HTMLElement;
   private infoText: HTMLElement;
   private readonly actionContainer: HTMLElement;
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readonly disableSetting: Common.Settings.Setting<any>|null;
-  private readonly closeContainer: HTMLElement;
-  private readonly toggleElement: HTMLButtonElement;
-  private readonly closeButton: HTMLElement;
+  private readonly disableSetting: Common.Settings.Setting<boolean>|null;
+  private readonly closeButton: DevToolsCloseButton;
   private closeCallback: (() => void)|null;
-  #firstFocusableElement: HTMLElement|null = null;
   private parentView?: Widget;
+  mainRow: HTMLElement;
 
   constructor(
-      // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      type: Type, text: string, actions?: InfobarAction[], disableSetting?: Common.Settings.Setting<any>,
-      /* TODO(crbug.com/1354548) Remove with JS Profiler deprecation */ isCloseable: boolean = true,
-      jsLogContext?: string) {
+      type: Type, text: string, actions?: InfobarAction[], disableSetting?: Common.Settings.Setting<boolean>,
+      jslogContext?: string) {
     this.element = document.createElement('div');
-    if (jsLogContext) {
-      this.element.setAttribute('jslog', `${VisualLogging.infoBar().context(jsLogContext)}`);
+    if (jslogContext) {
+      this.element.setAttribute(
+          'jslog', `${VisualLogging.dialog(jslogContext).track({resize: true, keydown: 'Enter|Escape'})}`);
     }
     this.element.classList.add('flex-none');
-    this.shadowRoot =
-        Utils.createShadowRootWithCoreStyles(this.element, {cssFile: infobarStyles, delegatesFocus: undefined});
+    this.shadowRoot = createShadowRootWithCoreStyles(this.element, {cssFile: infobarStyles});
 
-    this.contentElement = this.shadowRoot.createChild('div', 'infobar infobar-' + type) as HTMLDivElement;
+    this.contentElement = this.shadowRoot.createChild('div', 'infobar infobar-' + type);
+    const icon = IconButton.Icon.create(TYPE_TO_ICON[type], type + '-icon');
+    this.contentElement.createChild('div', 'icon-container').appendChild(icon);
 
     this.mainRow = this.contentElement.createChild('div', 'infobar-main-row');
-    this.detailsRows = this.contentElement.createChild('div', 'infobar-details-rows hidden');
-    this.hasDetails = false;
-    this.detailsMessage = '';
-
     this.infoContainer = this.mainRow.createChild('div', 'infobar-info-container');
-
     this.infoMessage = this.infoContainer.createChild('div', 'infobar-info-message');
-
-    // Icon is in separate file and included via CSS.
-    this.infoMessage.createChild('div', type + '-icon icon');
 
     this.infoText = this.infoMessage.createChild('div', 'infobar-info-text');
     this.infoText.textContent = text;
     ARIAUtils.markAsAlert(this.infoText);
 
     this.actionContainer = this.infoContainer.createChild('div', 'infobar-info-actions');
+
+    let defaultActionButtonVariant = Buttons.Button.Variant.OUTLINED;
+    this.disableSetting = disableSetting || null;
+    if (disableSetting) {
+      const disableButton = createTextButton(
+          i18nString(UIStrings.dontShowAgain), this.onDisable.bind(this),
+          {className: 'infobar-button', jslogContext: 'dont-show-again'});
+      this.actionContainer.appendChild(disableButton);
+
+      // If we have a disable button, make the other buttons tonal (if not otherwise specified).
+      defaultActionButtonVariant = Buttons.Button.Variant.TONAL;
+    }
     if (actions) {
       this.contentElement.setAttribute('role', 'group');
 
       for (const action of actions) {
         const actionCallback = this.actionCallbackFactory(action);
-        let buttonClass = 'infobar-button';
-        if (action.highlight) {
-          buttonClass += ' primary-button';
-        }
+        const buttonVariant = action.buttonVariant ?? defaultActionButtonVariant;
 
         const button = createTextButton(action.text, actionCallback, {
-          className: buttonClass,
-          jslogContext: action.jsLogContext,
+          className: 'infobar-button',
+          jslogContext: action.jslogContext,
+          variant: buttonVariant,
         });
-        if (action.highlight && !this.#firstFocusableElement) {
-          this.#firstFocusableElement = button;
-        }
         this.actionContainer.appendChild(button);
       }
     }
 
-    this.disableSetting = disableSetting || null;
-    if (disableSetting) {
-      const disableButton = createTextButton(
-          i18nString(UIStrings.dontShowAgain), this.onDisable.bind(this), {className: 'infobar-button'});
-      this.actionContainer.appendChild(disableButton);
-    }
-
-    this.closeContainer = this.mainRow.createChild('div', 'infobar-close-container');
-    this.toggleElement = createTextButton(
-        i18nString(UIStrings.showMore), this.onToggleDetails.bind(this),
-        {className: 'link-style devtools-link hidden'});
-    this.toggleElement.setAttribute('role', 'link');
-    this.closeContainer.appendChild(this.toggleElement);
-    this.closeButton = this.closeContainer.createChild('div', 'close-button', 'dt-close-button');
-    this.closeButton.hidden = !isCloseable;
-    // @ts-ignore This is a custom element defined in UIUitls.js that has a `setTabbable` that TS doesn't
-    //            know about.
+    this.closeButton = this.contentElement.createChild('dt-close-button', 'icon-container');
     this.closeButton.setTabbable(true);
-    this.closeButton.setAttribute('jslog', `${VisualLogging.action().track({click: true}).context('close')}`);
+    this.closeButton.setSize(Buttons.Button.Size.SMALL);
     ARIAUtils.setDescription(this.closeButton, i18nString(UIStrings.close));
     self.onInvokeElement(this.closeButton, this.dispose.bind(this));
 
-    if (type !== Type.Issue) {
+    if (type !== Type.ISSUE) {
       this.contentElement.tabIndex = 0;
     }
     ARIAUtils.setLabel(this.contentElement, text);
@@ -138,29 +111,18 @@ export class Infobar {
         event.consume();
         return;
       }
-
-      if (event.target !== this.contentElement) {
-        return;
-      }
-
-      if (event.key === 'Enter' && this.hasDetails) {
-        this.onToggleDetails();
-        event.consume();
-        return;
-      }
     });
 
     this.closeCallback = null;
   }
 
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static create(type: Type, text: string, actions?: InfobarAction[], disableSetting?: Common.Settings.Setting<any>):
-      Infobar|null {
-    if (disableSetting && disableSetting.get()) {
+  static create(
+      type: Type, text: string, actions?: InfobarAction[], disableSetting?: Common.Settings.Setting<boolean>,
+      jslogContext?: string): Infobar|null {
+    if (disableSetting?.get()) {
       return null;
     }
-    return new Infobar(type, text, actions, disableSetting);
+    return new Infobar(type, text, actions, disableSetting, jslogContext);
   }
 
   dispose(): void {
@@ -214,23 +176,16 @@ export class Infobar {
     this.dispose();
   }
 
-  private onToggleDetails(): void {
-    this.detailsRows.classList.remove('hidden');
-    this.toggleElement.remove();
-    this.onResize();
-    ARIAUtils.alert(
-        typeof this.detailsMessage === 'string' ? this.detailsMessage : this.detailsMessage.textContent || '');
-    if (this.#firstFocusableElement) {
-      this.#firstFocusableElement.focus();
-    } else {
-      this.closeButton.focus();
-    }
-  }
-
   createDetailsRowMessage(message: Element|string): Element {
-    this.hasDetails = true;
-    this.detailsMessage = message;
-    this.toggleElement.classList.remove('hidden');
+    if (!this.detailsRows) {
+      const details = document.createElement('details');
+      const summary = details.createChild('summary');
+      const triangleIcon = IconButton.Icon.create('arrow-drop-down');
+      summary.createChild('div', 'icon-container').appendChild(triangleIcon);
+      this.contentElement.insertBefore(details, this.mainRow);
+      summary.appendChild(this.mainRow);
+      this.detailsRows = details.createChild('div', 'infobar-details-rows');
+    }
     const infobarDetailsRow = this.detailsRows.createChild('div', 'infobar-details-row');
     const detailsRowMessage = infobarDetailsRow.createChild('span', 'infobar-row-message');
     if (typeof message === 'string') {
@@ -243,15 +198,22 @@ export class Infobar {
 }
 export interface InfobarAction {
   text: string;
-  highlight: boolean;
   delegate: (() => void)|null;
   dismiss: boolean;
-  jsLogContext?: string;
+  buttonVariant?: Buttons.Button.Variant;
+  jslogContext?: string;
 }
 
 export const enum Type {
-  Warning = 'warning',
-  Info = 'info',
-  Issue = 'issue',
-  Error = 'error',
+  WARNING = 'warning',
+  INFO = 'info',
+  ISSUE = 'issue',
+  ERROR = 'error',
 }
+
+const TYPE_TO_ICON = {
+  [Type.WARNING]: 'warning',
+  [Type.INFO]: 'info',
+  [Type.ISSUE]: 'issue-text-filled',
+  [Type.ERROR]: 'cross-circle',
+};

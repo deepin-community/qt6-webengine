@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/scalar.c.in
 //   Generator: tools/xngen
@@ -8,9 +9,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_f32_gemm_relu_ukernel_2x4__scalar(
@@ -23,7 +28,7 @@ void xnn_f32_gemm_relu_ukernel_2x4__scalar(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_relu_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_relu_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 2);

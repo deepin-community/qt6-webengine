@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/6x8-aarch64-neonfma-ld128.S.in
 //   Generator: tools/xngen
@@ -7,7 +8,8 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
+
 
 # void xnn_f32_qc4w_gemm_minmax_ukernel_6x8__asm_aarch64_neonfma_ld128(
 #     size_t mr,                x0
@@ -18,7 +20,7 @@
 #     const void* w,            x5
 #     float* c,                 x6
 #     size_t cm_stride,         x7
-#     size_t cn_stride,         [sp] -> (x0)
+#     size_t cn_stride,         [sp, 16] -> (x0)
 #     const xnn_f32_qc4w_minmax_params* params)  [sp + 8] -> (x8)
 
 # d8-d15, x19-x30 need to be preserved if used. x18 is reserved by the OS.
@@ -81,6 +83,7 @@ BEGIN_FUNCTION xnn_f32_qc4w_gemm_minmax_ukernel_6x8__asm_aarch64_neonfma_ld128
         STP         d8,  d9, [sp, -16]!     // Save d8-d9 on stack
         # Load min/max/zerop values
         LD3R        {v6.4s, v7.4s, v8.4s}, [x8]
+        NEG         v8.4s, v8.4s
         MOVI        v9.16b, 15
 
 0:
@@ -219,7 +222,7 @@ BEGIN_FUNCTION xnn_f32_qc4w_gemm_minmax_ukernel_6x8__asm_aarch64_neonfma_ld128
         # Clamp
         FMAX        v20.4s, v20.4s, v6.4s
         # Load cn_stride
-        LDR         x0, [sp]
+        LDR         x0, [sp, 16]
         FMAX        v21.4s, v21.4s, v6.4s
         FMAX        v22.4s, v22.4s, v6.4s
         FMAX        v23.4s, v23.4s, v6.4s

@@ -23,7 +23,7 @@ class StreamSocket;
 class TlsConnectionFactoryPosix : public TlsConnectionFactory,
                                   public TlsDataRouterPosix::SocketObserver {
  public:
-  TlsConnectionFactoryPosix(Client* client,
+  TlsConnectionFactoryPosix(Client& client,
                             TaskRunner& task_runner,
                             PlatformClientPosix* platform_client =
                                 PlatformClientPosix::GetInstance());
@@ -62,7 +62,7 @@ class TlsConnectionFactoryPosix : public TlsConnectionFactory,
   void Initialize();
 
   // Handles their respective SSL handshake calls.  These will continue to be
-  // scheduled on |task_runner_| until the handshake completes.
+  // scheduled on `task_runner_` until the handshake completes.
   void Connect(std::unique_ptr<TlsConnectionPosix> connection);
   void Accept(std::unique_ptr<TlsConnectionPosix> connection);
 
@@ -78,7 +78,7 @@ class TlsConnectionFactoryPosix : public TlsConnectionFactory,
   // from the SSL_CTX is non-trivial, so we store a property instead.
   bool listen_credentials_set_ = false;
 
-  Client* const client_;
+  Client& client_;
   TaskRunner& task_runner_;
   PlatformClientPosix* const platform_client_;
 

@@ -159,16 +159,6 @@ int main(int argc, char *argv[])
                                     resources.FragmentPrecisionHigh = 1;
                                 }
                                 break;
-                            case 'd':
-                                if (argv[0][4] == 'c')
-                                {
-                                    spec = SH_GL_COMPATIBILITY_SPEC;
-                                }
-                                else
-                                {
-                                    spec = SH_GL_CORE_SPEC;
-                                }
-                                break;
                             default:
                                 failCode = EFailUsage;
                         }
@@ -264,6 +254,7 @@ int main(int argc, char *argv[])
                           break;
                       case 'y': resources.EXT_YUV_target = 1; break;
                       case 's': resources.OES_sample_variables = 1; break;
+                      case 't': resources.EXT_fragment_shading_rate = 1; break;
                       default: failCode = EFailUsage;
                     }
                         // clang-format on
@@ -350,7 +341,6 @@ int main(int argc, char *argv[])
                 {
                     case SH_HLSL_3_0_OUTPUT:
                     case SH_HLSL_4_1_OUTPUT:
-                    case SH_HLSL_4_0_FL9_3_OUTPUT:
                         compileOptions.selectViewInNvGLSLVertexShader = false;
                         break;
                     default:
@@ -458,8 +448,6 @@ void usage()
         "       -s=w     : use WebGL 1.0 spec\n"
         "       -s=wn    : use WebGL 1.0 spec with no highp support in fragment shaders\n"
         "       -s=w2    : use WebGL 2.0 spec\n"
-        "       -s=d     : use Desktop Core spec (in development)\n"
-        "       -s=dc    : use Desktop Compatibility spec (in development)\n"
         "       -b=e     : output GLSL ES code (this is by default)\n"
         "       -b=g     : output GLSL code (compatibility profile)\n"
         "       -b=g[NUM]: output GLSL code (NUM can be 130, 140, 150, 330, 400, 410, 420, 430, "
@@ -480,7 +468,8 @@ void usage()
         "       -x=a     : enable ARM_shader_framebuffer_fetch\n"
         "       -x=m     : enable OVR_multiview\n"
         "       -x=y     : enable YUV_target\n"
-        "       -x=s     : enable OES_sample_variables\n");
+        "       -x=s     : enable OES_sample_variables\n"
+        "       -x=t     : enable EXT_fragment_shading_rate\n");
     // clang-format on
 }
 
@@ -928,7 +917,9 @@ static void PrintSpirv(const sh::BinaryBlob &blob)
     spvtools::SpirvTools spirvTools(SPV_ENV_VULKAN_1_1);
 
     std::string readableSpirv;
-    spirvTools.Disassemble(blob, &readableSpirv, 0);
+    spirvTools.Disassemble(blob, &readableSpirv,
+                           SPV_BINARY_TO_TEXT_OPTION_COMMENT | SPV_BINARY_TO_TEXT_OPTION_INDENT |
+                               SPV_BINARY_TO_TEXT_OPTION_NESTED_INDENT);
 
     puts(readableSpirv.c_str());
 #endif

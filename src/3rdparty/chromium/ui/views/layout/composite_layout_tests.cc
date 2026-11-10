@@ -18,6 +18,7 @@
 #include "ui/views/layout/animating_layout_manager.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/test/test_views.h"
+#include "ui/views/test/views_test_utils.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
@@ -144,9 +145,6 @@ class SimulatedAvatarButton : public SimulatedToolbarElement {
   }
 
  private:
-  // views::View:
-  const char* GetClassName() const override { return "SimulatedAvatarButton"; }
-
   View* icon() { return children()[0]; }
   const View* icon() const { return children()[0]; }
   View* label() { return children()[1]; }
@@ -180,8 +178,9 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
 
   void AddIcons(std::vector<bool> visibility) {
     int insertion_point = children().size() - 1;
-    for (bool visible : visibility)
+    for (bool visible : visibility) {
       AddIconAt(insertion_point++, visible);
+    }
   }
 
   void AddIconAt(int position, bool initially_visible) {
@@ -189,8 +188,9 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
     DCHECK_LT(position, static_cast<int>(children().size()));
     auto new_child = std::make_unique<StaticSizedView>(kIconSize);
     new_child->SetVisible(initially_visible);
-    if (initially_visible)
+    if (initially_visible) {
       visible_views_.insert(new_child.get());
+    }
     AddChildViewAt(std::move(new_child), position);
   }
 
@@ -233,7 +233,7 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
   // If |expected_num_icons| is specified:
   // - while animating, serves as a lower bound on the number of icons displayed
   // - while not animating, must match the number of visible icons exactly
-  void EnsureLayout(absl::optional<int> expected_num_icons) const {
+  void EnsureLayout(std::optional<int> expected_num_icons) const {
     if (layout()->is_animating()) {
       // For animating layouts, we ensure that icons are the correct size and
       // appear between the left edge of the container and exactly overlapping
@@ -250,8 +250,9 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
           EXPECT_EQ(kIconSize, child->size()) << " icon " << i;
         }
       }
-      if (expected_num_icons.has_value())
+      if (expected_num_icons.has_value()) {
         EXPECT_GE(num_visible, expected_num_icons.value());
+      }
     } else {
       // Calculate how many icons *should* be visible given the available space.
       SizeBounds available_size = parent()->GetAvailableSize(this);
@@ -262,8 +263,9 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
             (available_size.width().value() - kIconDimension) / kIconDimension);
       }
       DCHECK_LT(num_visible, static_cast<int>(children().size()));
-      if (expected_num_icons.has_value())
+      if (expected_num_icons.has_value()) {
         EXPECT_EQ(expected_num_icons.value(), num_visible);
+      }
       // Verify that the correct icons are visible and are in the correct place
       // with the correct size.
       int x = 0;
@@ -296,14 +298,9 @@ class SimulatedExtensionsContainer : public SimulatedToolbarElement {
   }
 
  private:
-  // views::View:
-  const char* GetClassName() const override {
-    return "SimulatedExtensionsContainer";
-  }
-
   const View* main_button() const { return children()[children().size() - 1]; }
 
-  std::set<const View*> visible_views_;
+  std::set<raw_ptr<const View, SetExperimental>> visible_views_;
 };
 
 BEGIN_METADATA(SimulatedExtensionsContainer)
@@ -362,7 +359,7 @@ class SimulatedToolbar : public View {
   //
   // The parameter |expected_num_extension_icons| is passed to
   // SimulatedExtensionsContainer::EnsureLayout().
-  void EnsureLayout(absl::optional<int> expected_num_extension_icons) const {
+  void EnsureLayout(std::optional<int> expected_num_extension_icons) const {
     EXPECT_EQ(kIconDimension, height());
     EXPECT_EQ(gfx::Rect(gfx::Point(), kIconSize), children()[0]->bounds());
     EXPECT_EQ(gfx::Point(kIconDimension, 0), location()->origin());
@@ -375,16 +372,14 @@ class SimulatedToolbar : public View {
     avatar_->EnsureLayout();
     EXPECT_EQ(gfx::Rect(gfx::Point(avatar_->bounds().right(), 0), kIconSize),
               children()[4]->bounds());
-    if (location()->width() == kBarMinimumWidth)
+    if (location()->width() == kBarMinimumWidth) {
       EXPECT_LE(width(), children()[4]->bounds().right());
-    else
+    } else {
       EXPECT_EQ(width(), children()[4]->bounds().right());
+    }
   }
 
  private:
-  // views::View:
-  const char* GetClassName() const override { return "SimulatedToolbar"; }
-
   raw_ptr<SimulatedExtensionsContainer> extensions_;
   raw_ptr<SimulatedAvatarButton> avatar_;
 };
@@ -435,17 +430,19 @@ class CompositeLayoutTest : public testing::Test {
 
   void AdvanceAnimations(int ms) {
     const auto delta = base::Milliseconds(ms);
-    if (avatar()->layout()->is_animating())
+    if (avatar()->layout()->is_animating()) {
       avatar_test_api_->IncrementTime(delta);
-    if (extensions()->layout()->is_animating())
+    }
+    if (extensions()->layout()->is_animating()) {
       extensions_test_api_->IncrementTime(delta);
-    toolbar_->Layout();
+    }
+    views::test::RunScheduledLayout(toolbar());
   }
 
   void ResetAnimation() {
     avatar()->layout()->ResetLayout();
     extensions()->layout()->ResetLayout();
-    toolbar()->Layout();
+    views::test::RunScheduledLayout(toolbar());
   }
 
   bool IsAnimating() const {
@@ -459,8 +456,9 @@ class CompositeLayoutTest : public testing::Test {
     // animation could lead to another so basing our limit only on the current
     // animation durations is not necessarily reliable.
     for (int i = 0; i < 100; ++i) {
-      if (!IsAnimating())
+      if (!IsAnimating()) {
         return;
+      }
       // Advance by a small but significant step (1/10 of a second).
       AdvanceAnimations(100);
     }
@@ -473,7 +471,7 @@ class CompositeLayoutTest : public testing::Test {
   // at minimum that many if animating) simulated extension icons must be
   // visible.
   void EnsureLayout(
-      absl::optional<int> expected_num_extension_icons = absl::nullopt) {
+      std::optional<int> expected_num_extension_icons = std::nullopt) {
     toolbar_->EnsureLayout(expected_num_extension_icons);
   }
 
@@ -882,7 +880,7 @@ TEST_F(CompositeLayoutTest, ExtensionsNotShownWhenSpaceConstrained) {
 
 TEST_F(CompositeLayoutTest, SomeExtensionsNotShownWhenSpaceConstrained) {
   // Provide room for one of two icons.
-  SetWidth(toolbar()->GetPreferredSize().width() + kIconDimension);
+  SetWidth(toolbar()->GetPreferredSize({}).width() + kIconDimension);
   extensions()->AddIcons({true, true});
   FinishAnimations();
   EnsureLayout(1);
@@ -901,7 +899,7 @@ TEST_F(CompositeLayoutTest, SomeExtensionsNotShownWhenSpaceConstrained) {
 
 TEST_F(CompositeLayoutTest, ExtensionsShownSnapsWhenSpaceShrinks) {
   // Provide room for both icons.
-  SetWidth(toolbar()->GetPreferredSize().width() + 2 * kIconDimension);
+  SetWidth(toolbar()->GetPreferredSize({}).width() + 2 * kIconDimension);
   extensions()->AddIcons({true, true});
   FinishAnimations();
   EnsureLayout(2);
@@ -918,7 +916,7 @@ TEST_F(CompositeLayoutTest, ExtensionsShownSnapsWhenSpaceShrinks) {
 TEST_F(CompositeLayoutTest,
        ExtensionsShowingAnimationRedirectsDueToSmallerAvailableSpace) {
   // Provide room for both icons.
-  SetWidth(toolbar()->GetPreferredSize().width() + 2 * kIconDimension);
+  SetWidth(toolbar()->GetPreferredSize({}).width() + 2 * kIconDimension);
   extensions()->AddIcons({true, true});
   AdvanceAnimations(400);
 
@@ -933,7 +931,7 @@ TEST_F(CompositeLayoutTest,
 TEST_F(CompositeLayoutTest,
        ExtensionsShowingAnimationCancelsDueToSmallerAvailableSpace) {
   // Provide room for both icons.
-  SetWidth(toolbar()->GetPreferredSize().width() + 2 * kIconDimension);
+  SetWidth(toolbar()->GetPreferredSize({}).width() + 2 * kIconDimension);
   extensions()->AddIcons({true, true});
   AdvanceAnimations(800);
 
@@ -947,7 +945,7 @@ TEST_F(CompositeLayoutTest,
 TEST_F(CompositeLayoutTest,
        ExtensionsShowingAnimationRedirectsDueToLargerAvailableSpace) {
   // Provide room for one of two icons.
-  SetWidth(toolbar()->GetPreferredSize().width() + kIconDimension);
+  SetWidth(toolbar()->GetPreferredSize({}).width() + kIconDimension);
   extensions()->AddIcons({true, true});
   AdvanceAnimations(400);
 

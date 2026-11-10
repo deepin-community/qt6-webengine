@@ -18,12 +18,16 @@ SELECT RUN_METRIC('android/cpu_info.sql');
 
 -- Create the base tables and views containing the launch spans.
 INCLUDE PERFETTO MODULE android.startup.startups;
+
+-- TTID and TTFD
+INCLUDE PERFETTO MODULE android.startup.time_to_display;
+
 SELECT RUN_METRIC('android/process_metadata.sql');
 
 -- Define the helper functions which will be used throught the remainder
 -- of the metric.
 SELECT RUN_METRIC('android/startup/slice_functions.sql');
-INCLUDE PERFETTO MODULE common.timestamps;
+INCLUDE PERFETTO MODULE intervals.overlap;
 
 -- Define helper functions related to slow start reasons
 SELECT RUN_METRIC('android/startup/slow_start_reasons.sql');
@@ -44,6 +48,15 @@ SELECT RUN_METRIC('android/startup/gc_slices.sql');
 
 -- Define helper functions for system state.
 SELECT RUN_METRIC('android/startup/system_state.sql');
+
+CREATE OR REPLACE PERFETTO FUNCTION _is_spans_overlapping(
+  ts1 LONG,
+  ts_end1 LONG,
+  ts2 LONG,
+  ts_end2 LONG)
+RETURNS BOOL AS
+SELECT (IIF($ts1 < $ts2, $ts2, $ts1)
+      < IIF($ts_end1 < $ts_end2, $ts_end1, $ts_end2));
 
 -- Returns the slices for forked processes. Never present in hot starts.
 -- Prefer this over process start_ts, since the process might have
@@ -100,12 +113,10 @@ DROP VIEW IF EXISTS startup_view;
 CREATE PERFETTO VIEW startup_view AS
 SELECT
   AndroidStartupMetric_Startup(
-    'startup_id',launches.startup_id,
-    'startup_type', (
-      SELECT lp.startup_type
-      FROM android_startup_processes lp
-      WHERE lp.startup_id =launches.startup_id
-      LIMIT 1
+    'startup_id', launches.startup_id,
+    'startup_type', launches.startup_type,
+    'cpu_count', (
+      SELECT COUNT(DISTINCT cpu) from sched
     ),
     'package_name', launches.package,
     'process_name', (
@@ -152,6 +163,16 @@ SELECT
       SELECT COUNT(1) FROM android_startup_processes p
       WHERE p.startup_id =launches.startup_id
     ),
+    'time_to_initial_display', (
+      SELECT time_to_initial_display
+      FROM android_startup_time_to_display s
+      WHERE s.startup_id = launches.startup_id
+    ),
+    'time_to_full_display', (
+      SELECT time_to_full_display
+      FROM android_startup_time_to_display s
+      WHERE s.startup_id = launches.startup_id
+    ),
     'event_timestamps', AndroidStartupMetric_EventTimestamps(
       'intent_received', launches.ts,
       'first_frame', launches.ts_end
@@ -194,7 +215,7 @@ SELECT
       launch_to_main_thread_slice_proto(launches.startup_id, 'bindApplication'),
       'time_activity_manager', (
         SELECT startup_slice_proto(l.ts - launches.ts)
-        FROM internal_startup_events l
+        FROM _startup_events l
         WHERE l.ts BETWEEN launches.ts AND launches.ts + launches.dur
       ),
       'time_post_fork',
@@ -215,6 +236,8 @@ SELECT
       dur_sum_slice_proto_for_launch(launches.startup_id, 'inflate'),
       'time_get_resources',
       dur_sum_slice_proto_for_launch(launches.startup_id, 'ResourcesManager#getResources'),
+      'time_class_initialization',
+      dur_sum_slice_proto_for_launch(launches.startup_id, 'L*/*;'),
       'time_dex_open',
       dur_sum_slice_proto_for_launch(launches.startup_id, 'OpenDexFilesFromOat*'),
       'time_verify_class',
@@ -267,6 +290,10 @@ SELECT
         FROM ANDROID_SLICES_FOR_STARTUP_AND_SLICE_NAME(launches.startup_id, 'JIT compiling*')
         WHERE thread_name = 'Jit thread pool'
       ),
+      'class_initialization_count', (
+        SELECT IIF(COUNT(1) = 0, NULL, COUNT(1))
+        FROM ANDROID_SLICES_FOR_STARTUP_AND_SLICE_NAME(launches.startup_id, 'L*/*;')
+      ),
       'other_processes_spawned_count', (
         SELECT COUNT(1)
         FROM process
@@ -318,7 +345,7 @@ SELECT
       SELECT RepeatedField(package)
       FROM android_startups l
       WHERE l.startup_id != launches.startup_id
-        AND is_spans_overlapping(l.ts, l.ts_end, launches.ts, launches.ts_end)
+        AND _is_spans_overlapping(l.ts, l.ts_end, launches.ts, launches.ts_end)
     ),
     'dlopen_file', (
       SELECT RepeatedField(STR_SPLIT(slice_name, "dlopen: ", 1))
@@ -479,7 +506,7 @@ SELECT
           SELECT package
           FROM android_startups l
           WHERE l.startup_id != launches.startup_id
-            AND is_spans_overlapping(l.ts, l.ts_end, launches.ts, launches.ts_end)
+            AND _is_spans_overlapping(l.ts, l.ts_end, launches.ts, launches.ts_end)
         )
 
         UNION ALL
@@ -491,19 +518,9 @@ SELECT
 
       )
     ),
-    'slow_start_reason_detailed', get_slow_start_reason_detailed(launches.startup_id)
+    'slow_start_reason_with_details', get_slow_start_reason_with_details(launches.startup_id)
   ) AS startup
 FROM android_startups launches;
-
-DROP VIEW IF EXISTS android_startup_event;
-CREATE PERFETTO VIEW android_startup_event AS
-SELECT
-  'slice' AS track_type,
-  'Android App Startups' AS track_name,
-  l.ts AS ts,
-  l.dur AS dur,
-  l.package AS slice_name
-FROM android_startups l;
 
 DROP VIEW IF EXISTS android_startup_output;
 CREATE PERFETTO VIEW android_startup_output AS

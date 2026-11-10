@@ -4,6 +4,7 @@
 
 #include "quiche/quic/tools/quic_simple_server_session.h"
 
+#include <memory>
 #include <utility>
 
 #include "absl/memory/memory.h"
@@ -27,7 +28,10 @@ QuicSimpleServerSession::QuicSimpleServerSession(
     QuicCompressedCertsCache* compressed_certs_cache,
     QuicSimpleServerBackend* quic_simple_server_backend)
     : QuicServerSessionBase(config, supported_versions, connection, visitor,
-                            helper, crypto_config, compressed_certs_cache),
+                            helper, crypto_config, compressed_certs_cache,
+                            quic_simple_server_backend->SupportsWebTransport()
+                                ? QuicPriorityType::kWebTransport
+                                : QuicPriorityType::kHttp),
       quic_simple_server_backend_(quic_simple_server_backend) {
   QUICHE_DCHECK(quic_simple_server_backend_);
   set_max_streams_accepted_per_loop(5u);
@@ -87,19 +91,6 @@ QuicSpdyStream* QuicSimpleServerSession::CreateOutgoingBidirectionalStream() {
 
   QuicServerInitiatedSpdyStream* stream = new QuicServerInitiatedSpdyStream(
       GetNextOutgoingBidirectionalStreamId(), this, BIDIRECTIONAL);
-  ActivateStream(absl::WrapUnique(stream));
-  return stream;
-}
-
-QuicSimpleServerStream*
-QuicSimpleServerSession::CreateOutgoingUnidirectionalStream() {
-  if (!ShouldCreateOutgoingUnidirectionalStream()) {
-    return nullptr;
-  }
-
-  QuicSimpleServerStream* stream = new QuicSimpleServerStream(
-      GetNextOutgoingUnidirectionalStreamId(), this, WRITE_UNIDIRECTIONAL,
-      quic_simple_server_backend_);
   ActivateStream(absl::WrapUnique(stream));
   return stream;
 }

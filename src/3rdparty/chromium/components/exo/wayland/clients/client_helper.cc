@@ -8,7 +8,6 @@
 #include <content-type-v1-client-protocol.h>
 #include <input-timestamps-unstable-v1-client-protocol.h>
 #include <linux-dmabuf-unstable-v1-client-protocol.h>
-#include <linux-explicit-synchronization-unstable-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <single-pixel-buffer-v1-client-protocol.h>
 #include <wayland-client-core.h>
@@ -56,6 +55,7 @@ DEFAULT_DELETER(wp_presentation, wp_presentation_destroy)
 DEFAULT_DELETER(struct wp_presentation_feedback,
                 wp_presentation_feedback_destroy)
 DEFAULT_DELETER(zaura_output_manager, zaura_output_manager_destroy)
+DEFAULT_DELETER(zaura_output_manager_v2, zaura_output_manager_v2_destroy)
 DEFAULT_DELETER(zaura_shell, zaura_shell_destroy)
 DEFAULT_DELETER(zaura_surface, zaura_surface_destroy)
 DEFAULT_DELETER(zaura_toplevel, zaura_toplevel_destroy)
@@ -67,18 +67,12 @@ DEFAULT_DELETER(zcr_color_management_surface_v1,
                 zcr_color_management_surface_v1_destroy)
 DEFAULT_DELETER(zcr_color_space_creator_v1, zcr_color_space_creator_v1_destroy)
 DEFAULT_DELETER(zcr_color_space_v1, zcr_color_space_v1_destroy)
-DEFAULT_DELETER(zwp_linux_buffer_release_v1,
-                zwp_linux_buffer_release_v1_destroy)
 DEFAULT_DELETER(zwp_fullscreen_shell_v1, zwp_fullscreen_shell_v1_destroy)
 DEFAULT_DELETER(zwp_input_timestamps_manager_v1,
                 zwp_input_timestamps_manager_v1_destroy)
 DEFAULT_DELETER(zwp_input_timestamps_v1, zwp_input_timestamps_v1_destroy)
 DEFAULT_DELETER(zwp_linux_buffer_params_v1, zwp_linux_buffer_params_v1_destroy)
 DEFAULT_DELETER(zwp_linux_dmabuf_v1, zwp_linux_dmabuf_v1_destroy)
-DEFAULT_DELETER(zwp_linux_explicit_synchronization_v1,
-                zwp_linux_explicit_synchronization_v1_destroy)
-DEFAULT_DELETER(zwp_linux_surface_synchronization_v1,
-                zwp_linux_surface_synchronization_v1_destroy)
 DEFAULT_DELETER(zcr_vsync_feedback_v1, zcr_vsync_feedback_v1_destroy)
 DEFAULT_DELETER(zcr_vsync_timing_v1, zcr_vsync_timing_v1_destroy)
 DEFAULT_DELETER(wl_data_device_manager, wl_data_device_manager_destroy)
@@ -171,6 +165,42 @@ VkDevice DeleteVkDeviceTraits::InvalidValue() {
 }
 void DeleteVkDeviceTraits::Free(VkDevice device) {
   vkDestroyDevice(device, nullptr);
+}
+
+VkPipeline DeleteVkPipelineTraits::InvalidValue() {
+  return VK_NULL_HANDLE;
+}
+void DeleteVkPipelineTraits::Free(VkPipeline pipeline) {
+  vkDestroyPipeline(vk_device, pipeline, nullptr);
+}
+
+VkPipelineLayout DeleteVkPipelineLayoutTraits::InvalidValue() {
+  return VK_NULL_HANDLE;
+}
+void DeleteVkPipelineLayoutTraits::Free(VkPipelineLayout pipeline_layout) {
+  vkDestroyPipelineLayout(vk_device, pipeline_layout, nullptr);
+}
+
+VkSampler DeleteVkSamplerTraits::InvalidValue() {
+  return VK_NULL_HANDLE;
+}
+void DeleteVkSamplerTraits::Free(VkSampler sampler) {
+  vkDestroySampler(vk_device, sampler, nullptr);
+}
+
+VkDescriptorSetLayout DeleteVkDescriptorSetLayoutTraits::InvalidValue() {
+  return VK_NULL_HANDLE;
+}
+void DeleteVkDescriptorSetLayoutTraits::Free(
+    VkDescriptorSetLayout descriptor_set_layout) {
+  vkDestroyDescriptorSetLayout(vk_device, descriptor_set_layout, nullptr);
+}
+
+VkDescriptorPool DeleteVkDescriptorPoolTraits::InvalidValue() {
+  return VK_NULL_HANDLE;
+}
+void DeleteVkDescriptorPoolTraits::Free(VkDescriptorPool descriptor_pool) {
+  vkDestroyDescriptorPool(vk_device, descriptor_pool, nullptr);
 }
 
 VkCommandPool DeleteVkCommandPoolTraits::InvalidValue() {

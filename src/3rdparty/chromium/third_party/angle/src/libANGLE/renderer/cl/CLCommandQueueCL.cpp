@@ -40,7 +40,7 @@ void CheckCreateEvent(cl_event nativeEvent, CLEventImpl::CreateFunc *createFunc)
 CLCommandQueueCL::CLCommandQueueCL(const cl::CommandQueue &commandQueue, cl_command_queue native)
     : CLCommandQueueImpl(commandQueue), mNative(native)
 {
-    if (commandQueue.getProperties().isSet(CL_QUEUE_ON_DEVICE))
+    if (commandQueue.getProperties().intersects(CL_QUEUE_ON_DEVICE))
     {
         commandQueue.getContext().getImpl<CLContextCL>().mData->mDeviceQueues.emplace(
             commandQueue.getNative());
@@ -49,7 +49,7 @@ CLCommandQueueCL::CLCommandQueueCL(const cl::CommandQueue &commandQueue, cl_comm
 
 CLCommandQueueCL::~CLCommandQueueCL()
 {
-    if (mCommandQueue.getProperties().isSet(CL_QUEUE_ON_DEVICE))
+    if (mCommandQueue.getProperties().intersects(CL_QUEUE_ON_DEVICE))
     {
         const size_t numRemoved =
             mCommandQueue.getContext().getImpl<CLContextCL>().mData->mDeviceQueues.erase(
@@ -120,9 +120,9 @@ angle::Result CLCommandQueueCL::enqueueWriteBuffer(const cl::Buffer &buffer,
 
 angle::Result CLCommandQueueCL::enqueueReadBufferRect(const cl::Buffer &buffer,
                                                       bool blocking,
-                                                      const size_t bufferOrigin[3],
-                                                      const size_t hostOrigin[3],
-                                                      const size_t region[3],
+                                                      const cl::MemOffsets &bufferOrigin,
+                                                      const cl::MemOffsets &hostOrigin,
+                                                      const cl::Coordinate &region,
                                                       size_t bufferRowPitch,
                                                       size_t bufferSlicePitch,
                                                       size_t hostRowPitch,
@@ -138,11 +138,14 @@ angle::Result CLCommandQueueCL::enqueueReadBufferRect(const cl::Buffer &buffer,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t bufferOriginArray[3]              = {bufferOrigin.x, bufferOrigin.y, bufferOrigin.z};
+    size_t hostOriginArray[3]                = {hostOrigin.x, hostOrigin.y, hostOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueReadBufferRect(
-        mNative, nativeBuffer, block, bufferOrigin, hostOrigin, region, bufferRowPitch,
-        bufferSlicePitch, hostRowPitch, hostSlicePitch, ptr, numEvents, nativeEventsPtr,
-        nativeEventPtr));
+        mNative, nativeBuffer, block, bufferOriginArray, hostOriginArray, regionArray,
+        bufferRowPitch, bufferSlicePitch, hostRowPitch, hostSlicePitch, ptr, numEvents,
+        nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -150,9 +153,9 @@ angle::Result CLCommandQueueCL::enqueueReadBufferRect(const cl::Buffer &buffer,
 
 angle::Result CLCommandQueueCL::enqueueWriteBufferRect(const cl::Buffer &buffer,
                                                        bool blocking,
-                                                       const size_t bufferOrigin[3],
-                                                       const size_t hostOrigin[3],
-                                                       const size_t region[3],
+                                                       const cl::MemOffsets &bufferOrigin,
+                                                       const cl::MemOffsets &hostOrigin,
+                                                       const cl::Coordinate &region,
                                                        size_t bufferRowPitch,
                                                        size_t bufferSlicePitch,
                                                        size_t hostRowPitch,
@@ -168,11 +171,14 @@ angle::Result CLCommandQueueCL::enqueueWriteBufferRect(const cl::Buffer &buffer,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t bufferOriginArray[3]              = {bufferOrigin.x, bufferOrigin.y, bufferOrigin.z};
+    size_t hostOriginArray[3]                = {hostOrigin.x, hostOrigin.y, hostOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueWriteBufferRect(
-        mNative, nativeBuffer, block, bufferOrigin, hostOrigin, region, bufferRowPitch,
-        bufferSlicePitch, hostRowPitch, hostSlicePitch, ptr, numEvents, nativeEventsPtr,
-        nativeEventPtr));
+        mNative, nativeBuffer, block, bufferOriginArray, hostOriginArray, regionArray,
+        bufferRowPitch, bufferSlicePitch, hostRowPitch, hostSlicePitch, ptr, numEvents,
+        nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -204,9 +210,9 @@ angle::Result CLCommandQueueCL::enqueueCopyBuffer(const cl::Buffer &srcBuffer,
 
 angle::Result CLCommandQueueCL::enqueueCopyBufferRect(const cl::Buffer &srcBuffer,
                                                       const cl::Buffer &dstBuffer,
-                                                      const size_t srcOrigin[3],
-                                                      const size_t dstOrigin[3],
-                                                      const size_t region[3],
+                                                      const cl::MemOffsets &srcOrigin,
+                                                      const cl::MemOffsets &dstOrigin,
+                                                      const cl::Coordinate &region,
                                                       size_t srcRowPitch,
                                                       size_t srcSlicePitch,
                                                       size_t dstRowPitch,
@@ -221,10 +227,13 @@ angle::Result CLCommandQueueCL::enqueueCopyBufferRect(const cl::Buffer &srcBuffe
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t srcOriginArray[3]                 = {srcOrigin.x, srcOrigin.y, srcOrigin.z};
+    size_t dstOriginArray[3]                 = {dstOrigin.x, dstOrigin.y, dstOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueCopyBufferRect(
-        mNative, nativeSrc, nativeDst, srcOrigin, dstOrigin, region, srcRowPitch, srcSlicePitch,
-        dstRowPitch, dstSlicePitch, numEvents, nativeEventsPtr, nativeEventPtr));
+        mNative, nativeSrc, nativeDst, srcOriginArray, dstOriginArray, regionArray, srcRowPitch,
+        srcSlicePitch, dstRowPitch, dstSlicePitch, numEvents, nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -282,8 +291,8 @@ angle::Result CLCommandQueueCL::enqueueMapBuffer(const cl::Buffer &buffer,
 
 angle::Result CLCommandQueueCL::enqueueReadImage(const cl::Image &image,
                                                  bool blocking,
-                                                 const size_t origin[3],
-                                                 const size_t region[3],
+                                                 const cl::MemOffsets &origin,
+                                                 const cl::Coordinate &region,
                                                  size_t rowPitch,
                                                  size_t slicePitch,
                                                  void *ptr,
@@ -297,9 +306,11 @@ angle::Result CLCommandQueueCL::enqueueReadImage(const cl::Image &image,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t originArray[3]                    = {origin.x, origin.y, origin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueReadImage(
-        mNative, nativeImage, block, origin, region, rowPitch, slicePitch, ptr, numEvents,
+        mNative, nativeImage, block, originArray, regionArray, rowPitch, slicePitch, ptr, numEvents,
         nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
@@ -308,8 +319,8 @@ angle::Result CLCommandQueueCL::enqueueReadImage(const cl::Image &image,
 
 angle::Result CLCommandQueueCL::enqueueWriteImage(const cl::Image &image,
                                                   bool blocking,
-                                                  const size_t origin[3],
-                                                  const size_t region[3],
+                                                  const cl::MemOffsets &origin,
+                                                  const cl::Coordinate &region,
                                                   size_t inputRowPitch,
                                                   size_t inputSlicePitch,
                                                   const void *ptr,
@@ -323,10 +334,12 @@ angle::Result CLCommandQueueCL::enqueueWriteImage(const cl::Image &image,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t originArray[3]                    = {origin.x, origin.y, origin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueWriteImage(
-        mNative, nativeImage, block, origin, region, inputRowPitch, inputSlicePitch, ptr, numEvents,
-        nativeEventsPtr, nativeEventPtr));
+        mNative, nativeImage, block, originArray, regionArray, inputRowPitch, inputSlicePitch, ptr,
+        numEvents, nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -334,9 +347,9 @@ angle::Result CLCommandQueueCL::enqueueWriteImage(const cl::Image &image,
 
 angle::Result CLCommandQueueCL::enqueueCopyImage(const cl::Image &srcImage,
                                                  const cl::Image &dstImage,
-                                                 const size_t srcOrigin[3],
-                                                 const size_t dstOrigin[3],
-                                                 const size_t region[3],
+                                                 const cl::MemOffsets &srcOrigin,
+                                                 const cl::MemOffsets &dstOrigin,
+                                                 const cl::Coordinate &region,
                                                  const cl::EventPtrs &waitEvents,
                                                  CLEventImpl::CreateFunc *eventCreateFunc)
 {
@@ -347,10 +360,13 @@ angle::Result CLCommandQueueCL::enqueueCopyImage(const cl::Image &srcImage,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t srcOriginArray[3]                 = {srcOrigin.x, srcOrigin.y, srcOrigin.z};
+    size_t dstOriginArray[3]                 = {dstOrigin.x, dstOrigin.y, dstOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
-    ANGLE_CL_TRY(mNative->getDispatch().clEnqueueCopyImage(mNative, nativeSrc, nativeDst, srcOrigin,
-                                                           dstOrigin, region, numEvents,
-                                                           nativeEventsPtr, nativeEventPtr));
+    ANGLE_CL_TRY(mNative->getDispatch().clEnqueueCopyImage(
+        mNative, nativeSrc, nativeDst, srcOriginArray, dstOriginArray, regionArray, numEvents,
+        nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -358,8 +374,8 @@ angle::Result CLCommandQueueCL::enqueueCopyImage(const cl::Image &srcImage,
 
 angle::Result CLCommandQueueCL::enqueueFillImage(const cl::Image &image,
                                                  const void *fillColor,
-                                                 const size_t origin[3],
-                                                 const size_t region[3],
+                                                 const cl::MemOffsets &origin,
+                                                 const cl::Coordinate &region,
                                                  const cl::EventPtrs &waitEvents,
                                                  CLEventImpl::CreateFunc *eventCreateFunc)
 {
@@ -369,10 +385,12 @@ angle::Result CLCommandQueueCL::enqueueFillImage(const cl::Image &image,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t originArray[3]                    = {origin.x, origin.y, origin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
-    ANGLE_CL_TRY(mNative->getDispatch().clEnqueueFillImage(mNative, nativeImage, fillColor, origin,
-                                                           region, numEvents, nativeEventsPtr,
-                                                           nativeEventPtr));
+    ANGLE_CL_TRY(mNative->getDispatch().clEnqueueFillImage(mNative, nativeImage, fillColor,
+                                                           originArray, regionArray, numEvents,
+                                                           nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -380,8 +398,8 @@ angle::Result CLCommandQueueCL::enqueueFillImage(const cl::Image &image,
 
 angle::Result CLCommandQueueCL::enqueueCopyImageToBuffer(const cl::Image &srcImage,
                                                          const cl::Buffer &dstBuffer,
-                                                         const size_t srcOrigin[3],
-                                                         const size_t region[3],
+                                                         const cl::MemOffsets &srcOrigin,
+                                                         const cl::Coordinate &region,
                                                          size_t dstOffset,
                                                          const cl::EventPtrs &waitEvents,
                                                          CLEventImpl::CreateFunc *eventCreateFunc)
@@ -393,10 +411,12 @@ angle::Result CLCommandQueueCL::enqueueCopyImageToBuffer(const cl::Image &srcIma
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t srcOriginArray[3]                 = {srcOrigin.x, srcOrigin.y, srcOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueCopyImageToBuffer(
-        mNative, nativeSrc, nativeDst, srcOrigin, region, dstOffset, numEvents, nativeEventsPtr,
-        nativeEventPtr));
+        mNative, nativeSrc, nativeDst, srcOriginArray, regionArray, dstOffset, numEvents,
+        nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -405,8 +425,8 @@ angle::Result CLCommandQueueCL::enqueueCopyImageToBuffer(const cl::Image &srcIma
 angle::Result CLCommandQueueCL::enqueueCopyBufferToImage(const cl::Buffer &srcBuffer,
                                                          const cl::Image &dstImage,
                                                          size_t srcOffset,
-                                                         const size_t dstOrigin[3],
-                                                         const size_t region[3],
+                                                         const cl::MemOffsets &dstOrigin,
+                                                         const cl::Coordinate &region,
                                                          const cl::EventPtrs &waitEvents,
                                                          CLEventImpl::CreateFunc *eventCreateFunc)
 {
@@ -417,10 +437,12 @@ angle::Result CLCommandQueueCL::enqueueCopyBufferToImage(const cl::Buffer &srcBu
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t dstOriginArray[3]                 = {dstOrigin.x, dstOrigin.y, dstOrigin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueCopyBufferToImage(
-        mNative, nativeSrc, nativeDst, srcOffset, dstOrigin, region, numEvents, nativeEventsPtr,
-        nativeEventPtr));
+        mNative, nativeSrc, nativeDst, srcOffset, dstOriginArray, regionArray, numEvents,
+        nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -429,8 +451,8 @@ angle::Result CLCommandQueueCL::enqueueCopyBufferToImage(const cl::Buffer &srcBu
 angle::Result CLCommandQueueCL::enqueueMapImage(const cl::Image &image,
                                                 bool blocking,
                                                 cl::MapFlags mapFlags,
-                                                const size_t origin[3],
-                                                const size_t region[3],
+                                                const cl::MemOffsets &origin,
+                                                const cl::Coordinate &region,
                                                 size_t *imageRowPitch,
                                                 size_t *imageSlicePitch,
                                                 const cl::EventPtrs &waitEvents,
@@ -444,14 +466,16 @@ angle::Result CLCommandQueueCL::enqueueMapImage(const cl::Image &image,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    size_t originArray[3]                    = {origin.x, origin.y, origin.z};
+    size_t regionArray[3]                    = {region.x, region.y, region.z};
 
     cl_int errorCode = CL_SUCCESS;
     mapPtr           = mNative->getDispatch().clEnqueueMapImage(
-        mNative, nativeImage, block, mapFlags.get(), origin, region, imageRowPitch, imageSlicePitch,
-        numEvents, nativeEventsPtr, nativeEventPtr, &errorCode);
+        mNative, nativeImage, block, mapFlags.get(), originArray, regionArray, imageRowPitch,
+        imageSlicePitch, numEvents, nativeEventsPtr, nativeEventPtr, &errorCode);
     ANGLE_CL_TRY(errorCode);
 
-    // TODO(jplate) Remove workaround after bug is fixed http://anglebug.com/6066
+    // TODO(jplate) Remove workaround after bug is fixed http://anglebug.com/42264597
     if (imageSlicePitch != nullptr && (image.getType() == cl::MemObjectType::Image1D ||
                                        image.getType() == cl::MemObjectType::Image1D_Buffer ||
                                        image.getType() == cl::MemObjectType::Image2D))
@@ -509,10 +533,7 @@ angle::Result CLCommandQueueCL::enqueueMigrateMemObjects(const cl::MemoryPtrs &m
 }
 
 angle::Result CLCommandQueueCL::enqueueNDRangeKernel(const cl::Kernel &kernel,
-                                                     cl_uint workDim,
-                                                     const size_t *globalWorkOffset,
-                                                     const size_t *globalWorkSize,
-                                                     const size_t *localWorkSize,
+                                                     const cl::NDRange &ndrange,
                                                      const cl::EventPtrs &waitEvents,
                                                      CLEventImpl::CreateFunc *eventCreateFunc)
 {
@@ -522,10 +543,16 @@ angle::Result CLCommandQueueCL::enqueueNDRangeKernel(const cl::Kernel &kernel,
     const cl_event *const nativeEventsPtr    = nativeEvents.empty() ? nullptr : nativeEvents.data();
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = eventCreateFunc != nullptr ? &nativeEvent : nullptr;
+    std::array<size_t, 3> globalWorkOffset{ndrange.globalWorkOffset[0], ndrange.globalWorkOffset[1],
+                                           ndrange.globalWorkOffset[2]};
+    std::array<size_t, 3> globalWorkSize{ndrange.globalWorkSize[0], ndrange.globalWorkSize[1],
+                                         ndrange.globalWorkSize[2]};
+    std::array<size_t, 3> localWorkSize{ndrange.localWorkSize[0], ndrange.localWorkSize[1],
+                                        ndrange.localWorkSize[2]};
 
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueNDRangeKernel(
-        mNative, nativeKernel, workDim, globalWorkOffset, globalWorkSize, localWorkSize, numEvents,
-        nativeEventsPtr, nativeEventPtr));
+        mNative, nativeKernel, ndrange.workDimensions, globalWorkOffset.data(),
+        globalWorkSize.data(), localWorkSize.data(), numEvents, nativeEventsPtr, nativeEventPtr));
 
     CheckCreateEvent(nativeEvent, eventCreateFunc);
     return angle::Result::Continue;
@@ -553,7 +580,7 @@ angle::Result CLCommandQueueCL::enqueueNativeKernel(cl::UserFunc userFunc,
                                                     void *args,
                                                     size_t cbArgs,
                                                     const cl::BufferPtrs &buffers,
-                                                    const std::vector<size_t> bufferPtrOffsets,
+                                                    const std::vector<size_t> &bufferPtrOffsets,
                                                     const cl::EventPtrs &waitEvents,
                                                     CLEventImpl::CreateFunc *eventCreateFunc)
 {

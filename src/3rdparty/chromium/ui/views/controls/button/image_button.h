@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_IMAGE_BUTTON_H_
 #define UI_VIEWS_CONTROLS_BUTTON_IMAGE_BUTTON_H_
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -62,7 +63,8 @@ class VIEWS_EXPORT ImageButton : public Button {
   void SetDrawImageMirrored(bool mirrored) { draw_image_mirrored_ = mirrored; }
 
   // Overridden from View:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   views::PaintInfo::ScaleType GetPaintScaleType() const override;
   void OnThemeChanged() override;
 
@@ -75,7 +77,7 @@ class VIEWS_EXPORT ImageButton : public Button {
       const gfx::VectorIcon& icon,
       const std::u16string& accessible_name,
       MaterialIconStyle icon_style = MaterialIconStyle::kLarge,
-      absl::optional<gfx::Insets> insets = absl::nullopt);
+      std::optional<gfx::Insets> insets = std::nullopt);
 
  protected:
   // Overridden from Button:
@@ -89,7 +91,7 @@ class VIEWS_EXPORT ImageButton : public Button {
   void UpdateButtonBackground(ui::ResourceScaleFactor scale_factor);
 
   // The images used to render the different states of this button.
-  ui::ImageModel images_[STATE_COUNT];
+  std::array<ui::ImageModel, STATE_COUNT> images_;
 
   gfx::ImageSkia background_image_;
 
@@ -169,21 +171,29 @@ class VIEWS_EXPORT ToggleImageButton : public ImageButton {
   std::u16string GetToggledAccessibleName() const;
   void SetToggledAccessibleName(const std::u16string& name);
 
+  // Overridden from Button:
+  void UpdateAccessibleCheckedState() override;
+
   // Overridden from ImageButton:
   gfx::ImageSkia GetImage(ButtonState state) const override;
   void SetImageModel(ButtonState state,
                      const ui::ImageModel& image_model) override;
 
   // Overridden from View:
-  std::u16string GetTooltipText(const gfx::Point& p) const override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnPaintBackground(gfx::Canvas* canvas) override;
 
+  void OnTooltipTextChanged(const std::u16string& old_tooltip) override;
+
+  void UpdateAccessibleRoleIfNeeded();
+
  private:
+  void UpdateAccessibleName();
+  void UpdateTooltipText();
+
   // The parent class's images_ member is used for the current images,
   // and this array is used to hold the alternative images.
   // We swap between the two when toggling.
-  ui::ImageModel alternate_images_[STATE_COUNT];
+  std::array<ui::ImageModel, STATE_COUNT> alternate_images_;
 
   // True if the button is currently toggled.
   bool toggled_ = false;
@@ -197,6 +207,9 @@ class VIEWS_EXPORT ToggleImageButton : public ImageButton {
   // The parent class's accessibility data is used when not toggled, and this
   // one is used when toggled.
   std::u16string toggled_accessible_name_;
+
+  // The original tooltip text before toggling.
+  std::u16string untoggled_tooltip_text_;
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, ToggleImageButton, ImageButton)

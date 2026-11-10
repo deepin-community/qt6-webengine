@@ -39,14 +39,7 @@ import type * as Protocol from '../../generated/protocol.js';
 import * as Workspace from '../workspace/workspace.js';
 
 export function resourceForURL(url: Platform.DevToolsPath.UrlString): SDK.Resource.Resource|null {
-  for (const resourceTreeModel of SDK.TargetManager.TargetManager.instance().models(
-           SDK.ResourceTreeModel.ResourceTreeModel)) {
-    const resource = resourceTreeModel.resourceForURL(url);
-    if (resource) {
-      return resource;
-    }
-  }
-  return null;
+  return SDK.ResourceTreeModel.ResourceTreeModel.resourceForURL(url);
 }
 
 export function displayNameForURL(url: Platform.DevToolsPath.UrlString): string {
@@ -54,14 +47,14 @@ export function displayNameForURL(url: Platform.DevToolsPath.UrlString): string 
     return '';
   }
 
-  const resource = resourceForURL(url);
-  if (resource) {
-    return resource.displayName;
-  }
-
   const uiSourceCode = Workspace.Workspace.WorkspaceImpl.instance().uiSourceCodeForURL(url);
   if (uiSourceCode) {
     return uiSourceCode.displayName();
+  }
+
+  const resource = resourceForURL(url);
+  if (resource) {
+    return resource.displayName;
   }
 
   const inspectedURL = SDK.TargetManager.TargetManager.instance().inspectedURL();

@@ -35,6 +35,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 
@@ -611,10 +612,13 @@ static int ipmovie_read_header(AVFormatContext *s)
     unsigned char chunk_preamble[CHUNK_PREAMBLE_SIZE];
     int chunk_type, i;
     uint8_t signature_buffer[sizeof(signature)];
+    int ret;
 
     ipmovie->avf = s;
 
-    avio_read(pb, signature_buffer, sizeof(signature_buffer));
+    ret = ffio_read_size(pb, signature_buffer, sizeof(signature_buffer));
+    if (ret < 0)
+        return ret;
     while (memcmp(signature_buffer, signature, sizeof(signature))) {
         memmove(signature_buffer, signature_buffer + 1, sizeof(signature_buffer) - 1);
         signature_buffer[sizeof(signature_buffer) - 1] = avio_r8(pb);
@@ -700,9 +704,9 @@ static int ipmovie_read_packet(AVFormatContext *s,
     }
 }
 
-const AVInputFormat ff_ipmovie_demuxer = {
-    .name           = "ipmovie",
-    .long_name      = NULL_IF_CONFIG_SMALL("Interplay MVE"),
+const FFInputFormat ff_ipmovie_demuxer = {
+    .p.name         = "ipmovie",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Interplay MVE"),
     .priv_data_size = sizeof(IPMVEContext),
     .read_probe     = ipmovie_probe,
     .read_header    = ipmovie_read_header,

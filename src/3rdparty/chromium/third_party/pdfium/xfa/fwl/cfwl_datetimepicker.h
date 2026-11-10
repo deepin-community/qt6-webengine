@@ -15,6 +15,8 @@
 #include "xfa/fwl/cfwl_monthcalendar.h"
 #include "xfa/fwl/cfwl_widget.h"
 
+namespace pdfium {
+
 #define FWL_STYLEEXT_DTP_ShortDateFormat (1L << 1)
 #define FWL_STYLEEXT_DTP_EditHAlignMask (3L << 4)
 #define FWL_STYLEEXT_DTP_EditHNear (0L << 4)
@@ -55,13 +57,13 @@ class CFWL_DateTimePicker final : public CFWL_Widget {
 
   void SelectAll();
   void ClearSelection();
-  bool HasSelection() const { return m_pEdit->HasSelection(); }
+  bool HasSelection() const { return edit_->HasSelection(); }
   // Returns <start, count> of the selection.
   std::pair<size_t, size_t> GetSelection() const {
-    return m_pEdit->GetSelection();
+    return edit_->GetSelection();
   }
-  absl::optional<WideString> Copy();
-  absl::optional<WideString> Cut();
+  std::optional<WideString> Copy();
+  std::optional<WideString> Cut();
   bool Paste(const WideString& wsPaste);
   bool Undo();
   bool Redo();
@@ -69,7 +71,7 @@ class CFWL_DateTimePicker final : public CFWL_Widget {
   bool CanRedo();
 
   CFX_RectF GetBBox() const;
-  void SetEditLimit(int32_t nLimit) { m_pEdit->SetLimit(nLimit); }
+  void SetEditLimit(int32_t nLimit) { edit_->SetLimit(nLimit); }
   void ModifyEditStyleExts(uint32_t dwStyleExtsAdded,
                            uint32_t dwStyleExtsRemoved);
 
@@ -98,16 +100,21 @@ class CFWL_DateTimePicker final : public CFWL_Widget {
   bool NeedsToShowButton() const;
   void RepaintInflatedMonthCalRect();
 
-  bool m_bLBtnDown = false;
-  Mask<CFWL_PartState> m_iBtnState = CFWL_PartState::kChecked;
-  int32_t m_iYear = -1;
-  int32_t m_iMonth = -1;
-  int32_t m_iDay = -1;
-  float m_fBtn = 0.0f;
-  CFX_RectF m_BtnRect;
-  CFX_RectF m_ClientRect;
-  cppgc::Member<CFWL_DateTimeEdit> const m_pEdit;
-  cppgc::Member<CFWL_MonthCalendar> const m_pMonthCal;
+  bool lbtn_down_ = false;
+  Mask<CFWL_PartState> btn_state_ = CFWL_PartState::kChecked;
+  int32_t year_ = -1;
+  int32_t month_ = -1;
+  int32_t day_ = -1;
+  float btn_ = 0.0f;
+  CFX_RectF btn_rect_;
+  CFX_RectF client_rect_;
+  cppgc::Member<CFWL_DateTimeEdit> const edit_;
+  cppgc::Member<CFWL_MonthCalendar> const month_cal_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_DateTimePicker;
 
 #endif  // XFA_FWL_CFWL_DATETIMEPICKER_H_

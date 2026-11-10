@@ -37,7 +37,6 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/cross_thread_handle.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -102,7 +101,7 @@ void EncoderBase<Traits>::configure(const ConfigType* config,
   if (ThrowIfCodecStateClosed(state_, "configure", exception_state))
     return;
 
-  InternalConfigType* parsed_config = ParseConfig(config, exception_state);
+  InternalConfigType* parsed_config = OnNewConfigure(config, exception_state);
   if (!parsed_config) {
     DCHECK(exception_state.HadException());
     return;
@@ -137,13 +136,16 @@ void EncoderBase<Traits>::encode(InputType* input,
 
   DCHECK(active_config_);
 
+  OnNewEncode(input, exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+
   // This will fail if |input| is already closed.
-  auto* internal_input = input->clone(exception_state);
+  // Remove exceptions relating to cloning closed input.
+  auto* internal_input = input->clone(IGNORE_EXCEPTION);
 
   if (!internal_input) {
-    // Remove exceptions relating to cloning closed input.
-    exception_state.ClearException();
-
     exception_state.ThrowTypeError("Cannot encode closed input.");
     return;
   }
@@ -175,19 +177,20 @@ void EncoderBase<Traits>::close(ExceptionState& exception_state) {
 }
 
 template <typename Traits>
-ScriptPromise EncoderBase<Traits>::flush(ExceptionState& exception_state) {
+ScriptPromise<IDLUndefined> EncoderBase<Traits>::flush(
+    ExceptionState& exception_state) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (ThrowIfCodecStateClosed(state_, "flush", exception_state))
-    return ScriptPromise();
+    return EmptyPromise();
 
   if (ThrowIfCodecStateUnconfigured(state_, "flush", exception_state))
-    return ScriptPromise();
+    return EmptyPromise();
 
   MarkCodecActive();
 
   Request* request = MakeGarbageCollected<Request>();
   request->resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(script_state_);
+      MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state_);
   request->reset_count = reset_count_;
   request->type = Request::Type::kFlush;
   EnqueueRequest(request);

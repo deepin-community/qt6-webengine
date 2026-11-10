@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 // Implementation of a client that produces output in the form of RGBA
 // buffers when receiving pointer/touch events. RGB contains the lower
 // 24 bits of the event timestamp and A is 0xff.
@@ -11,6 +12,7 @@
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -23,7 +25,6 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump_type.h"
-#include "base/ranges/algorithm.h"
 #include "base/scoped_generic.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_executor.h"
@@ -35,7 +36,7 @@
 #include "third_party/skia/include/core/SkFont.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace exo {
@@ -202,10 +203,10 @@ void FeedbackDiscarded(void* data,
                        struct wp_presentation_feedback* presentation_feedback) {
   Presentation* presentation = static_cast<Presentation*>(data);
   DCHECK_GT(presentation->scheduled_frames.size(), 0u);
-  auto it = base::ranges::find(
+  auto it = std::ranges::find(
       presentation->scheduled_frames, presentation_feedback,
       [](std::unique_ptr<Frame>& frame) { return frame->feedback.get(); });
-  DCHECK(it != presentation->scheduled_frames.end());
+  CHECK(it != presentation->scheduled_frames.end());
   presentation->scheduled_frames.erase(it);
   LOG(WARNING) << "Frame discarded";
 }
@@ -230,7 +231,7 @@ void InputTimestamp(void* data,
 
 class RectsClient : public ClientBase {
  public:
-  RectsClient() {}
+  RectsClient() = default;
 
   RectsClient(const RectsClient&) = delete;
   RectsClient& operator=(const RectsClient&) = delete;

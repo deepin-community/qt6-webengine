@@ -20,12 +20,11 @@ TEST_F(LayoutSVGTextTest, RectBasedHitTest) {
     </svg>
   )HTML");
 
-  const auto& svg = *GetDocument().getElementById(AtomicString("svg"));
-  const auto& text =
-      *GetDocument().getElementById(AtomicString("text"))->firstChild();
+  const auto& svg = *GetElementById("svg");
+  const auto& text = *GetElementById("text")->firstChild();
 
   // Rect based hit testing
-  auto results = RectBasedHitTest(PhysicalRect(0, 0, 300, 300));
+  auto& results = RectBasedHitTest(PhysicalRect(0, 0, 300, 300));
   int count = 0;
   EXPECT_EQ(2u, results.size());
   for (auto result : results) {
@@ -34,6 +33,35 @@ TEST_F(LayoutSVGTextTest, RectBasedHitTest) {
       count++;
   }
   EXPECT_EQ(2, count);
+}
+
+TEST_F(LayoutSVGTextTest, RectBasedHitTest_RotatedText) {
+  LoadAhem();
+  SetBodyInnerHTML(R"HTML(
+    <style>body { margin: 0 }</style>
+    <svg id="svg" width="300" height="300">
+      <path id="path" d="M50,80L150,180"/>
+      <text font-size="100" font-family="Ahem">
+        <textPath href="#path">MM</textPath>
+      </text>
+    </svg>
+  )HTML");
+
+  auto* svg = GetElementById("svg");
+
+  {
+    // Non-intersecting.
+    auto& results = RectBasedHitTest(PhysicalRect(25, 10, 10, 100));
+    EXPECT_EQ(1u, results.size());
+    EXPECT_TRUE(results.Contains(svg));
+  }
+  {
+    // Intersects the axis-aligned bounding box of the text but not the actual
+    // (local) bounding box.
+    auto& results = RectBasedHitTest(PhysicalRect(12, 12, 50, 50));
+    EXPECT_EQ(1u, results.size());
+    EXPECT_TRUE(results.Contains(svg));
+  }
 }
 
 TEST_F(LayoutSVGTextTest, TransformAffectsVectorEffect) {
@@ -54,16 +82,10 @@ TEST_F(LayoutSVGTextTest, TransformAffectsVectorEffect) {
   EXPECT_TRUE(text2->TransformAffectsVectorEffect());
   EXPECT_TRUE(text3->TransformAffectsVectorEffect());
 
-  GetDocument()
-      .getElementById(AtomicString("tspan1"))
-      ->setAttribute(svg_names::kVectorEffectAttr,
-                     AtomicString("non-scaling-stroke"));
-  GetDocument()
-      .getElementById(AtomicString("text2"))
-      ->removeAttribute(svg_names::kVectorEffectAttr);
-  GetDocument()
-      .getElementById(AtomicString("tspan3"))
-      ->removeAttribute(svg_names::kVectorEffectAttr);
+  GetElementById("tspan1")->setAttribute(svg_names::kVectorEffectAttr,
+                                         AtomicString("non-scaling-stroke"));
+  GetElementById("text2")->removeAttribute(svg_names::kVectorEffectAttr);
+  GetElementById("tspan3")->removeAttribute(svg_names::kVectorEffectAttr);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(text1->TransformAffectsVectorEffect());
   EXPECT_FALSE(text2->TransformAffectsVectorEffect());
@@ -88,24 +110,6 @@ body { margin:0; padding: 0; }
   gfx::RectF bounding = quads.back().BoundingBox();
   EXPECT_EQ(7.0f, bounding.x());
   EXPECT_EQ(307.0f, bounding.right());
-}
-
-TEST_F(LayoutSVGTextTest, LocalVisualRect) {
-  LoadAhem();
-  SetBodyInnerHTML(R"HTML(
-<style>
-body { margin:0; padding: 0; }
-text { font-family: Ahem; }
-</style>
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
-  <text id="t" font-size="20" y="32" rotate="45">Foo</text>
-</svg>)HTML");
-  UpdateAllLifecyclePhasesForTest();
-
-  auto* object = GetLayoutObjectByElementId("t");
-  // The descent of the font is 4px.  The bottom of the visual rect should
-  // be greater than 32 + 4 if rotate is specified.
-  EXPECT_GT(object->LocalVisualRect().Bottom(), LayoutUnit(36));
 }
 
 TEST_F(LayoutSVGTextTest, ObjectBoundingBox) {

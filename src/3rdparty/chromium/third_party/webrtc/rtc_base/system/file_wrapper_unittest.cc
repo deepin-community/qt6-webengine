@@ -10,7 +10,14 @@
 
 #include "rtc_base/system/file_wrapper.h"
 
-#include "rtc_base/checks.h"
+#include <stdio.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
 #include "test/gtest.h"
 #include "test/testsupport/file_utils.h"
 
@@ -21,7 +28,8 @@ TEST(FileWrapper, FileSize) {
   std::string test_name =
       std::string(test_info->test_case_name()) + "_" + test_info->name();
   std::replace(test_name.begin(), test_name.end(), '/', '_');
-  const std::string temp_filename = test::OutputPath() + test_name;
+  const std::string temp_filename =
+      test::OutputPathWithRandomDirectory() + test_name;
 
   // Write
   {

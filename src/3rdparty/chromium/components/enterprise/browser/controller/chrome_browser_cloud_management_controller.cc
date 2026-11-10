@@ -20,8 +20,12 @@
 #include "build/build_config.h"
 #include "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_helper.h"
+#include "components/enterprise/browser/device_trust/device_trust_key_manager.h"
 #include "components/enterprise/browser/enterprise_switches.h"
 #include "components/enterprise/browser/reporting/real_time_report_controller.h"
+#include "components/enterprise/browser/reporting/report_scheduler.h"
+#include "components/enterprise/browser/reporting/reporting_delegate_factory.h"
+#include "components/enterprise/client_certificates/core/certificate_provisioning_service.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/client_data_delegate.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
@@ -48,6 +52,12 @@ const base::FilePath::CharType
 std::unique_ptr<enterprise_connectors::DeviceTrustKeyManager>
 ChromeBrowserCloudManagementController::Delegate::
     CreateDeviceTrustKeyManager() {
+  return nullptr;
+}
+
+std::unique_ptr<client_certificates::CertificateProvisioningService>
+ChromeBrowserCloudManagementController::Delegate::
+    CreateCertificateProvisioningService() {
   return nullptr;
 }
 
@@ -158,14 +168,14 @@ void ChromeBrowserCloudManagementController::Init(
     PrefService* local_state,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   if (!IsEnabled()) {
-    LOG_POLICY(ERROR, CBCM_ENROLLMENT)
+    VLOG_POLICY(1, CBCM_ENROLLMENT)
         << "Cloud management controller initialization aborted as CBCM is not "
            "enabled. Please use the `--enable-chrome-browser-cloud-management` "
            "command line flag to enable it if you are not using the official "
            "Google Chrome build.";
     return;
   }
-  LOG_POLICY(INFO, CBCM_ENROLLMENT)
+  VLOG_POLICY(1, CBCM_ENROLLMENT)
       << "Starting CBCM Controller Initialization";
 
   delegate_->InitializeOAuthTokenFactory(url_loader_factory, local_state);
@@ -345,16 +355,6 @@ void ChromeBrowserCloudManagementController::UnenrollCallback(
   NotifyBrowserUnenrolled(success);
 }
 
-void ChromeBrowserCloudManagementController::OnPolicyFetched(
-    CloudPolicyClient* client) {
-  // Ignored.
-}
-
-void ChromeBrowserCloudManagementController::OnRegistrationStateChanged(
-    CloudPolicyClient* client) {
-  // Ignored.
-}
-
 void ChromeBrowserCloudManagementController::OnClientError(
     CloudPolicyClient* client) {
   // DM_STATUS_SERVICE_DEVICE_NOT_FOUND being the last status implies the
@@ -388,6 +388,16 @@ ChromeBrowserCloudManagementController::GetDeviceTrustKeyManager() {
     device_trust_key_manager_ = delegate_->CreateDeviceTrustKeyManager();
   }
   return device_trust_key_manager_.get();
+}
+
+client_certificates::CertificateProvisioningService*
+ChromeBrowserCloudManagementController::GetCertificateProvisioningService() {
+  if (!certificate_provisioning_service_) {
+    certificate_provisioning_service_ =
+        delegate_->CreateCertificateProvisioningService();
+  }
+
+  return certificate_provisioning_service_.get();
 }
 
 void ChromeBrowserCloudManagementController::SetGaiaURLLoaderFactory(
@@ -442,9 +452,6 @@ void ChromeBrowserCloudManagementController::
         << "No DM token returned from browser registration.";
     RecordEnrollmentResult(
         ChromeBrowserCloudManagementEnrollmentResult::kFailedToFetch);
-    base::UmaHistogramTimes(
-        "Enterprise.MachineLevelUserCloudPolicyEnrollment.RequestFailureTime",
-        enrollment_time);
     MachineLevelUserCloudPolicyManager* policy_manager =
         delegate_->GetMachineLevelUserCloudPolicyManager();
 

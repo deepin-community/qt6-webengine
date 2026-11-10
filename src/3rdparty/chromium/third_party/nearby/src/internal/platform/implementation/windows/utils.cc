@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2020-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,26 +15,23 @@
 #include "internal/platform/implementation/windows/utils.h"
 
 #include <windows.h>
+#include <winsock2.h>
 
 // Standard C/C++ headers
-#include <codecvt>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-// Third party headers
-#include "absl/strings/ascii.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
-
 // Nearby connections headers
 #include "absl/strings/string_view.h"
-#include "internal/platform/bluetooth_utils.h"
 #include "internal/platform/byte_array.h"
 #include "internal/platform/implementation/crypto.h"
+#include "internal/platform/implementation/windows/string_utils.h"
 #include "internal/platform/logging.h"
+#include "internal/platform/mac_address.h"
 #include "internal/platform/uuid.h"
 #include "winrt/Windows.Foundation.Collections.h"
 #include "winrt/Windows.Networking.Connectivity.h"
@@ -47,32 +44,32 @@ namespace {
 using ::winrt::Windows::Networking::HostNameType;
 using ::winrt::Windows::Networking::Connectivity::NetworkAdapter;
 using ::winrt::Windows::Networking::Connectivity::NetworkInformation;
+using ::winrt::Windows::Networking::Connectivity::NetworkTypes;
 
 }  // namespace
 
 std::string uint64_to_mac_address_string(uint64_t bluetoothAddress) {
-  std::string buffer = absl::StrFormat(
-      "%02llx:%02llx:%02llx:%02llx:%02llx:%02llx", bluetoothAddress >> 40,
-      (bluetoothAddress >> 32) & 0xff, (bluetoothAddress >> 24) & 0xff,
-      (bluetoothAddress >> 16) & 0xff, (bluetoothAddress >> 8) & 0xff,
-      bluetoothAddress & 0xff);
-
-  return absl::AsciiStrToUpper(buffer);
+  MacAddress mac_address;
+  if (!MacAddress::FromUint64(bluetoothAddress, mac_address)) {
+    return "";
+  }
+  return mac_address.ToString();
 }
 
 uint64_t mac_address_string_to_uint64(absl::string_view mac_address) {
-  ByteArray mac_address_array = BluetoothUtils::FromString(mac_address);
-  uint64_t mac_address_uint64 = 0;
-  for (int i = 0; i < mac_address_array.size(); i++) {
-    mac_address_uint64 <<= 8;
-    mac_address_uint64 |= static_cast<uint8_t>(
-        static_cast<unsigned char>(*(mac_address_array.data() + i)));
+  MacAddress address;
+  if (!MacAddress::FromString(mac_address, address)) {
+    return 0;
   }
-  return mac_address_uint64;
+  return address.address();
 }
 
 std::string ipaddr_4bytes_to_dotdecimal_string(
     absl::string_view ipaddr_4bytes) {
+  if (ipaddr_4bytes.size() != 4) {
+    return {};
+  }
+
   in_addr address;
   address.S_un.S_un_b.s_b1 = ipaddr_4bytes[0];
   address.S_un.S_un_b.s_b2 = ipaddr_4bytes[1];
@@ -103,16 +100,6 @@ std::string ipaddr_dotdecimal_to_4bytes_string(std::string ipv4_s) {
   return std::string(ipv4_b, 4);
 }
 
-std::wstring string_to_wstring(std::string str) {
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-  return converter.from_bytes(str);
-}
-
-std::string wstring_to_string(std::wstring wstr) {
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-  return converter.to_bytes(wstr);
-}
-
 std::vector<std::string> GetIpv4Addresses() {
   std::vector<std::string> result;
   std::vector<std::string> wifi_addresses;
@@ -126,6 +113,11 @@ std::vector<std::string> GetIpv4Addresses() {
           host_name.IPInformation().NetworkAdapter() != nullptr &&
           host_name.Type() == HostNameType::Ipv4) {
         NetworkAdapter adapter = host_name.IPInformation().NetworkAdapter();
+        if (adapter.NetworkItem().GetNetworkTypes() == NetworkTypes::None) {
+          // If we're not connected to a network, we don't want to add this
+          // address.
+          continue;
+        }
         if (adapter.IanaInterfaceType() == Constants::kInterfaceTypeWifi) {
           wifi_addresses.push_back(winrt::to_string(host_name.ToString()));
         } else if (adapter.IanaInterfaceType() ==
@@ -137,16 +129,13 @@ std::vector<std::string> GetIpv4Addresses() {
       }
     }
   } catch (std::exception exception) {
-    NEARBY_LOGS(ERROR) << __func__
-                       << ": Cannot get IPv4 addresses. Exception : "
-                       << exception.what();
+    LOG(ERROR) << __func__ << ": Cannot get IPv4 addresses. Exception : "
+               << exception.what();
   } catch (const winrt::hresult_error& error) {
-    NEARBY_LOGS(ERROR) << __func__
-                       << ": Cannot get IPv4 addresses. WinRT exception: "
-                       << error.code() << ": "
-                       << winrt::to_string(error.message());
+    LOG(ERROR) << __func__ << ": Cannot get IPv4 addresses. WinRT exception: "
+               << error.code() << ": " << winrt::to_string(error.message());
   } catch (...) {
-    NEARBY_LOGS(ERROR) << __func__ << ": Unknown exeption.";
+    LOG(ERROR) << __func__ << ": Unknown exeption.";
   }
 
   result.insert(result.end(), wifi_addresses.begin(), wifi_addresses.end());
@@ -176,14 +165,47 @@ std::vector<std::string> Get4BytesIpv4Addresses() {
   return result;
 }
 
+std::vector<std::string> GetWifiIpv4Addresses() {
+  std::vector<std::string> result;
+
+  try {
+    auto host_names = NetworkInformation::GetHostNames();
+    for (const auto& host_name : host_names) {
+      if (host_name.IPInformation() != nullptr &&
+          host_name.IPInformation().NetworkAdapter() != nullptr &&
+          host_name.Type() == HostNameType::Ipv4) {
+        NetworkAdapter adapter = host_name.IPInformation().NetworkAdapter();
+        if (adapter.NetworkItem().GetNetworkTypes() == NetworkTypes::None) {
+          // If we're not connected to a network, we don't want to add this
+          // address.
+          continue;
+        }
+        if (adapter.IanaInterfaceType() == Constants::kInterfaceTypeWifi) {
+          result.push_back(winrt::to_string(host_name.ToString()));
+        }
+      }
+    }
+  } catch (std::exception exception) {
+    LOG(ERROR) << __func__ << ": Cannot get IPv4 addresses. Exception : "
+               << exception.what();
+  } catch (const winrt::hresult_error& error) {
+    LOG(ERROR) << __func__ << ": Cannot get IPv4 addresses. WinRT exception: "
+               << error.code() << ": " << winrt::to_string(error.message());
+  } catch (...) {
+    LOG(ERROR) << __func__ << ": Unknown exeption.";
+  }
+
+  return result;
+}
+
 Uuid winrt_guid_to_nearby_uuid(const ::winrt::guid& guid) {
   int64_t data1 = guid.Data1;
   int64_t data2 = guid.Data2;
   int64_t data3 = guid.Data3;
 
   int64_t msb = ((data1 >> 24) & 0xff) << 56 | ((data1 >> 16) & 0xff) << 48 |
-                ((data1 >> 8) & 0xff) << 40 | ((data1)&0xff) << 32 |
-                ((data2 >> 8) & 0xff) << 24 | ((data2)&0xff) << 16 |
+                ((data1 >> 8) & 0xff) << 40 | ((data1) & 0xff) << 32 |
+                ((data2 >> 8) & 0xff) << 24 | ((data2) & 0xff) << 16 |
                 ((data3 >> 8) & 0xff) << 8 | (data3 & 0xff);
 
   int64_t lsb =
@@ -215,7 +237,7 @@ winrt::guid nearby_uuid_to_winrt_guid(Uuid uuid) {
 }
 
 bool is_nearby_uuid_equal_to_winrt_guid(const Uuid& uuid,
-                                     const ::winrt::guid& guid) {
+                                        const ::winrt::guid& guid) {
   return uuid == winrt_guid_to_nearby_uuid(guid);
 }
 
@@ -242,7 +264,7 @@ bool InspectableReader::ReadBoolean(IInspectable inspectable) {
   return property_value.GetBoolean();
 }
 
-uint16 InspectableReader::ReadUint16(IInspectable inspectable) {
+uint16_t InspectableReader::ReadUint16(IInspectable inspectable) {
   if (inspectable == nullptr) {
     return 0;
   }
@@ -260,7 +282,7 @@ uint16 InspectableReader::ReadUint16(IInspectable inspectable) {
   return property_value.GetUInt16();
 }
 
-uint32 InspectableReader::ReadUint32(IInspectable inspectable) {
+uint32_t InspectableReader::ReadUint32(IInspectable inspectable) {
   if (inspectable == nullptr) {
     return 0;
   }
@@ -293,7 +315,8 @@ std::string InspectableReader::ReadString(IInspectable inspectable) {
     throw std::invalid_argument("not string data type.");
   }
 
-  return wstring_to_string(property_value.GetString().c_str());
+  return nearby::windows::string_utils::WideStringToString(
+      property_value.GetString().c_str());
 }
 
 std::vector<std::string> InspectableReader::ReadStringArray(
@@ -316,7 +339,7 @@ std::vector<std::string> InspectableReader::ReadStringArray(
   winrt::com_array<winrt::hstring> strings;
   property_value.GetStringArray(strings);
 
-  for (winrt::hstring str : strings) {
+  for (const winrt::hstring& str : strings) {
     result.push_back(winrt::to_string(str));
   }
   return result;

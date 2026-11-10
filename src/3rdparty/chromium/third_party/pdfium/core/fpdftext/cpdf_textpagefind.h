@@ -10,12 +10,12 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxcrt/widestring.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CPDF_TextPage;
 
@@ -31,7 +31,7 @@ class CPDF_TextPageFind {
       const CPDF_TextPage* pTextPage,
       const WideString& findwhat,
       const Options& options,
-      absl::optional<size_t> startPos);
+      std::optional<size_t> startPos);
 
   ~CPDF_TextPageFind();
 
@@ -44,21 +44,21 @@ class CPDF_TextPageFind {
   CPDF_TextPageFind(const CPDF_TextPage* pTextPage,
                     const std::vector<WideString>& findwhat_array,
                     const Options& options,
-                    absl::optional<size_t> startPos);
+                    std::optional<size_t> startPos);
 
   // Should be called immediately after construction.
   bool FindFirst();
 
   int GetCharIndex(int index) const;
 
-  UnownedPtr<const CPDF_TextPage> const m_pTextPage;
-  const WideString m_strText;
-  const std::vector<WideString> m_csFindWhatArray;
-  absl::optional<size_t> m_findNextStart;
-  absl::optional<size_t> m_findPreStart;
-  int m_resStart = 0;
-  int m_resEnd = -1;
-  const Options m_options;
+  UnownedPtr<const CPDF_TextPage> const text_page_;
+  const WideString str_text_;
+  const std::vector<WideString> find_what_array_;
+  std::optional<size_t> find_next_start_;
+  std::optional<size_t> find_pre_start_;
+  int res_start_ = 0;
+  int res_end_ = -1;
+  const Options options_;
 };
 
 #endif  // CORE_FPDFTEXT_CPDF_TEXTPAGEFIND_H_

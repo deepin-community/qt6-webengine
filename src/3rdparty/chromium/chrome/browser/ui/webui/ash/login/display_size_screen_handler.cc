@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/ash/login/display_size_screen_handler.h"
 
 #include "base/logging.h"
-
 #include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ui/webui/ash/login/base_screen_handler.h"
@@ -52,6 +51,10 @@ void DisplaySizeScreenHandler::DeclareLocalizedValues(
 
 void DisplaySizeScreenHandler::Show(base::Value::Dict data) {
   ShowInWebUI(std::move(data));
+}
+
+base::WeakPtr<DisplaySizeScreenView> DisplaySizeScreenHandler::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 }  // namespace ash

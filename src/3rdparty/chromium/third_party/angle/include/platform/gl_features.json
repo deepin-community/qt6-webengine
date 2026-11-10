@@ -36,19 +36,18 @@
             ]
         },
         {
+            "name": "clears_with_gaps_need_flush",
+            "category": "Workarounds",
+            "description": [
+                "Clearing an FBO with multiple attachments may need a flush to avoid race conditions"
+            ]
+        },
+        {
             "name": "does_SRGB_clears_on_linear_framebuffer_attachments",
             "category": "Workarounds",
             "description": [
                 "Issue clearing framebuffers with linear attachments when GL_FRAMEBUFFER_SRGB is enabled"
             ]
-        },
-        {
-            "name": "do_while_GLSL_causes_GPU_hang",
-            "category": "Workarounds",
-            "description": [
-                "Some GLSL constructs involving do-while loops cause GPU hangs"
-            ],
-            "issue": "http://crbug.com/644669"
         },
         {
             "name": "vertex_ID_does_not_include_base_vertex",
@@ -114,7 +113,7 @@
             "description": [
                 "When uploading textures from an unpack buffer, some drivers count an extra row padding"
             ],
-            "issue": "http://anglebug.com/1512"
+            "issue": "http://anglebug.com/42260492"
         },
         {
             "name": "pack_last_row_separately_for_padding_inclusion",
@@ -122,15 +121,7 @@
             "description": [
                 "When uploading textures from an pack buffer, some drivers count an extra row padding"
             ],
-            "issue": "http://anglebug.com/1512"
-        },
-        {
-            "name": "emulate_isnan_float",
-            "category": "Workarounds",
-            "description": [
-                "Using isnan() on highp float will get wrong answer"
-            ],
-            "issue": "http://crbug.com/650547"
+            "issue": "http://anglebug.com/42260492"
         },
         {
             "name": "use_unused_blocks_with_standard_or_shared_layout",
@@ -147,14 +138,6 @@
             ]
         },
         {
-            "name": "rewrite_float_unary_minus_operator",
-            "category": "Workarounds",
-            "description": [
-                "Using '-<float>' will get wrong answer"
-            ],
-            "issue": "http://crbug.com/308366"
-        },
-        {
             "name": "emulate_atan_2_float",
             "category": "Workarounds",
             "description": [
@@ -168,7 +151,7 @@
             "description": [
                 "Some drivers forget about UBO bindings when using program binaries"
             ],
-            "issue": "http://anglebug.com/1637"
+            "issue": "http://anglebug.com/42260591"
         },
         {
             "name": "emulate_max_vertex_attrib_stride",
@@ -176,7 +159,7 @@
             "description": [
                 "Some drivers return 0 when MAX_VERTEX_ATTRIB_STRIED queried"
             ],
-            "issue": "http://anglebug.com/1936"
+            "issue": "http://anglebug.com/42260722"
         },
         {
             "name": "dont_initialize_uninitialized_locals",
@@ -184,7 +167,7 @@
             "description": [
                 "Initializing uninitialized locals caused odd behavior in a few WebGL 2 tests"
             ],
-            "issue": "http://anglebug.com/2046"
+            "issue": "http://anglebug.com/40096454"
         },
         {
             "name": "clamp_point_size",
@@ -192,6 +175,14 @@
             "description": [
                 "The point size range reported from the API is inconsistent with the actual behavior"
             ]
+        },
+        {
+            "name": "force_max_combined_shader_output_resources",
+            "category": "Features",
+            "description": [
+                "Force GL_MAX_COMBINED_SHADER_OUTPUT_RESOURCES to be the sum of GL_MAX_COMBINED_IMAGE_UNIFORMS, GL_MAX_COMBINED_SHADER_STORAGE_BLOCKS, and GL_MAX_COLOR_ATTACHMENTS"
+            ],
+            "issue": ""
         },
         {
             "name": "dont_use_loops_to_initialize_variables",
@@ -224,14 +215,6 @@
             ]
         },
         {
-            "name": "disable_blend_func_extended",
-            "category": "Workarounds",
-            "description": [
-                "ARB_blend_func_extended does not pass the tests"
-            ],
-            "issue": "http://anglebug.com/1085"
-        },
-        {
             "name": "unsized_SRGB_read_pixels_doesnt_transform",
             "category": "Workarounds",
             "description": [
@@ -246,7 +229,7 @@
             "description": [
                 "Drivers generate errors when querying the number of bits in timer queries"
             ],
-            "issue": "http://anglebug.com/3027"
+            "issue": "http://anglebug.com/42261713"
         },
         {
             "name": "limit_webgl_max_texture_size_to_4096",
@@ -256,6 +239,15 @@
                 "out-of-memory errors"
             ],
             "issue": "http://crbug.com/927470"
+        },
+        {
+            "name": "limit_webgl_max_texture_size_to_8192",
+            "category": "Workarounds",
+            "description": [
+                "Limit webgl max texture size to 8192 to avoid frequent ",
+                "out-of-memory errors"
+            ],
+            "issue": "http://anglebug.com/42267045"
         },
         {
             "name": "limit_max_MSAA_samples_to_4",
@@ -280,7 +272,7 @@
             "description": [
                 "Clamp uniform array access to avoid reading invalid memory."
             ],
-            "issue": "http://anglebug.com/2978"
+            "issue": "http://anglebug.com/40096539"
         },
         {
             "name": "reset_TexImage2D_base_level",
@@ -292,12 +284,31 @@
             "issue": "https://crbug.com/705865"
         },
         {
-            "name": "clear_to_zero_or_one_broken",
+            "name": "reset_base_level_for_ASTC_sub_image",
             "category": "Workarounds",
             "description": [
-                "Clears when the clear color is all zeros or ones do not work."
+                "Reset texture base level before calling glCompressedTexSubImage2D for ASTC textures to ",
+                "work around PowerVR driver bug."
             ],
-            "issue": "https://crbug.com/710443"
+            "issue": "https://crbug.com/528131939"
+        },
+        {
+            "name": "recreate_immutable_texture_on_base_level_increase",
+            "category": "Workarounds",
+            "description": [
+                "Recreate native storage for immutable textures when TEXTURE_BASE_LEVEL is increased to ",
+                "work around PowerVR sparse page map OOB driver bug."
+            ],
+            "issue": "https://crbug.com/528131119"
+        },
+        {
+            "name": "use_temp_for_non_zero_base_level_GenMipmap_using_CopyImageSubData",
+            "category": "Workarounds",
+            "description": [
+                "Allocate a temporary texture when generating mipmaps on an immutable texture with a ",
+                "non-zero base level to avoid driver bugs."
+            ],
+            "issue": "https://crbug.com/534923522"
         },
         {
             "name": "limit_max_3d_array_texture_size_to_1024",
@@ -329,7 +340,7 @@
             "description": [
                 "Sampling BLACK texels from RGB DXT1 textures returns transparent black on Mac."
             ],
-            "issue": "http://anglebug.com/3729"
+            "issue": "http://anglebug.com/42262386"
         },
         {
             "name": "unfold_short_circuits",
@@ -338,7 +349,7 @@
                 "Mac incorrectly executes both sides of && and || expressions when they should ",
                 "short-circuit."
             ],
-            "issue": "http://anglebug.com/482"
+            "issue": "http://anglebug.com/42263407"
         },
         {
             "name": "emulate_primitive_restart_fixed_index",
@@ -347,7 +358,7 @@
                 "When GL_PRIMITIVE_RESTART_FIXED_INDEX is not available, emulate it with ",
                 "GL_PRIMITIVE_RESTART and glPrimitiveRestartIndex."
             ],
-            "issue": "http://anglebug.com/3997"
+            "issue": "http://anglebug.com/40096648"
         },
         {
             "name": "set_primitive_restart_fixed_index_for_draw_arrays",
@@ -356,7 +367,7 @@
                 "Some drivers discard vertex data in DrawArrays calls when the fixed primitive restart ",
                 "index is within the number of primitives being drawn."
             ],
-            "issue": "http://anglebug.com/3997"
+            "issue": "http://anglebug.com/40096648"
         },
         {
             "name": "remove_dynamic_indexing_of_swizzled_vector",
@@ -393,7 +404,7 @@
                 "Quite some OpenGL ES drivers don't implement readPixels for RGBA/UNSIGNED_SHORT from ",
                 "EXT_texture_norm16 correctly"
             ],
-            "issue": "http://anglebug.com/4214"
+            "issue": "http://anglebug.com/40096661"
         },
         {
             "name": "flush_before_delete_texture_if_copied_to",
@@ -402,7 +413,7 @@
                 "Some drivers track CopyTex{Sub}Image texture dependencies incorrectly. Flush",
                 " before glDeleteTextures in this case"
             ],
-            "issue": "http://anglebug.com/4267"
+            "issue": "http://anglebug.com/40644715"
         },
         {
             "name": "rewrite_row_major_matrices",
@@ -410,7 +421,7 @@
             "description": [
                 "Rewrite row major matrices in shaders as column major as a driver bug workaround"
             ],
-            "issue": "http://anglebug.com/2273"
+            "issue": "http://anglebug.com/40096480"
         },
         {
             "name": "disable_draw_buffers_indexed",
@@ -441,7 +452,7 @@
             "description": [
                 "Decode and encode before generateMipmap for srgb format textures."
             ],
-            "issue": "http://anglebug.com/4646"
+            "issue": "http://anglebug.com/40644730"
         },
         {
             "name": "emulate_CopyTexImage2D",
@@ -456,7 +467,7 @@
             "description": [
                 "CopyTexImage2D spuriously returns errors on iOS when copying from renderbuffers."
             ],
-            "issue": "https://anglebug.com/4674"
+            "issue": "https://anglebug.com/42263273"
         },
         {
             "name": "disable_GPU_switching_support",
@@ -480,7 +491,7 @@
             "description": [
                 "GL_PACK_SKIP_ROWS and GL_PACK_SKIP_PIXELS are ignored in Apple's OpenGL driver."
             ],
-            "issue": "https://anglebug.com/4849"
+            "issue": "https://anglebug.com/40096712"
         },
         {
             "name": "clamp_msc_rate",
@@ -497,7 +508,7 @@
                 "Bind transform feedback buffers to the generic binding point before calling ",
                 "glBindBufferBase or glBindBufferRange."
             ],
-            "issue": "https://anglebug.com/5140"
+            "issue": "https://anglebug.com/42263702"
         },
         {
             "name": "disable_sync_control_support",
@@ -528,7 +539,7 @@
             "description": [
                 "Packed color formats are buggy on Macs with AMD GPUs"
             ],
-            "issue": "http://anglebug.com/5469"
+            "issue": "http://anglebug.com/42264008"
         },
         {
             "name": "init_fragment_output_variables",
@@ -547,12 +558,20 @@
             "issue": "http://crbug.com/1144207"
         },
         {
-            "name": "sync_vertex_arrays_to_default",
+            "name": "sync_all_vertex_arrays_to_default",
             "category": "Workarounds",
             "description": [
                 "Only use the default VAO because of missing support or driver bugs"
             ],
-            "issue": "http://anglebug.com/5577"
+            "issue": "http://anglebug.com/40096758"
+        },
+        {
+            "name": "sync_default_vertex_arrays_to_default",
+            "category": "Workarounds",
+            "description": [
+                "Sync all frontend vertex array objects to the driver default vertex array"
+            ],
+            "issue": "http://anglebug.com/355034686"
         },
         {
             "name": "sanitize_AMDGPU_renderer_string",
@@ -585,7 +604,7 @@
             "description": [
                 "Many drivers have bugs when using GL_EXT_multisampled_render_to_texture"
             ],
-            "issue": "http://anglebug.com/2894"
+            "issue": "http://anglebug.com/40096530"
         },
         {
             "name": "upload_texture_data_in_chunks",
@@ -617,7 +636,7 @@
             "description": [
                 "Force unbind framebufferTexture2D before binding renderbuffer to work around driver bug."
             ],
-            "issue": "https://anglebug.com/5536"
+            "issue": "https://anglebug.com/42264072"
         },
         {
             "name": "disable_texture_clamp_to_border",
@@ -625,7 +644,7 @@
             "description": [
                 "Imagination devices generate INVALID_ENUM when setting the texture border color."
             ],
-            "issue": "https://anglebug.com/7405"
+            "issue": "https://anglebug.com/42265877"
         },
         {
             "name": "pass_highp_to_pack_unorm_snorm_builtins",
@@ -633,7 +652,7 @@
             "description": [
                 "packUnorm4x8 fails on Pixel 4 if it is not passed a highp vec4."
             ],
-            "issue": "http://anglebug.com/7527"
+            "issue": "http://anglebug.com/42265995"
         },
         {
             "name": "emulate_clip_distance_state",
@@ -664,7 +683,7 @@
             "description": [
                 "Some drivers have buggy implementations of glDraw*BaseVertex*."
             ],
-            "issue": "http://anglebug.com/8172"
+            "issue": "http://anglebug.com/42266610"
         },
         {
             "name": "supports_fragment_shader_interlock_NV",
@@ -672,7 +691,7 @@
             "description": [
                 "Backend GL context supports NV_fragment_shader_interlock extension"
             ],
-            "issue": "http://anglebug.com/7279"
+            "issue": "http://anglebug.com/40096838"
         },
         {
             "name": "supports_fragment_shader_ordering_INTEL",
@@ -680,7 +699,7 @@
             "description": [
                 "Backend GL context supports GL_INTEL_fragment_shader_ordering extension"
             ],
-            "issue": "http://anglebug.com/7279"
+            "issue": "http://anglebug.com/40096838"
         },
         {
             "name": "supports_fragment_shader_interlock_ARB",
@@ -688,7 +707,7 @@
             "description": [
                 "Backend GL context supports ARB_fragment_shader_interlock extension"
             ],
-            "issue": "http://anglebug.com/7279"
+            "issue": "http://anglebug.com/40096838"
         },
         {
             "name": "supports_shader_framebuffer_fetch_EXT",
@@ -696,7 +715,7 @@
             "description": [
                 "Backend GL context supports EXT_shader_framebuffer_fetch extension"
             ],
-            "issue": "http://anglebug.com/7279"
+            "issue": "http://anglebug.com/40096838"
         },
         {
             "name": "supports_shader_framebuffer_fetch_non_coherent_EXT",
@@ -704,15 +723,7 @@
             "description": [
                 "Backend GL context supports EXT_shader_framebuffer_fetch_non_coherent extension"
             ],
-            "issue": "http://anglebug.com/7279"
-        },
-        {
-            "name": "supports_shader_pixel_local_storage_EXT",
-            "category": "Features",
-            "description": [
-                "Backend GL context supports EXT_shader_pixel_local_storage extension"
-            ],
-            "issue": "http://anglebug.com/7279"
+            "issue": "http://anglebug.com/40096838"
         },
         {
             "name": "disable_clip_control",
@@ -744,7 +755,7 @@
             "description": [
                 "Always write explicit location layout qualifiers for fragment outputs."
             ],
-            "issue": "https://anglebug.com/8308"
+            "issue": "https://anglebug.com/42266740"
         },
         {
             "name": "disable_render_snorm",
@@ -752,7 +763,7 @@
             "description": [
                 "Disable EXT_render_snorm extension."
             ],
-            "issue": "https://anglebug.com/8315"
+            "issue": "https://anglebug.com/42266745"
         },
         {
             "name": "disable_texture_mirror_clamp_to_edge",
@@ -760,7 +771,7 @@
             "description": [
                 "Disable EXT_texture_mirror_clamp_to_edge extension."
             ],
-            "issue": "https://anglebug.com/8319"
+            "issue": "https://anglebug.com/42266748"
         },
         {
             "name": "resync_depth_range_on_clip_control",
@@ -768,7 +779,7 @@
             "description": [
                 "Resync depth range to apply clip control updates."
             ],
-            "issue": "https://anglebug.com/8381"
+            "issue": "https://anglebug.com/42266811"
         },
         {
             "name": "corrupt_program_binary_for_testing",
@@ -776,7 +787,140 @@
             "description": [
                 "Corrupt the program binary retrieved from the driver for testing purposes."
             ],
-            "issue": "https://anglebug.com/8471"
+            "issue": "https://anglebug.com/41488638"
+        },
+        {
+            "name": "use_intermediate_texture_for_generate_mipmap",
+            "category": "Workarounds",
+            "description": [
+                "Some drivers lose context when repeatedly generating mipmaps on textures that were used as framebuffers."
+            ],
+            "issue": "https://crbug.com/40279678"
+        },
+        {
+            "name": "avoid_bind_frag_data_location",
+            "category": "Workarounds",
+            "description": [
+                "Qualcomm drivers fail to link after binding fragment data locations."
+            ],
+            "issue": "https://anglebug.com/8646"
+        },
+        {
+            "name": "srgb_blending_broken",
+            "category": "Workarounds",
+            "description": [
+                "SRGB blending does not appear to work correctly on the some Qualcomm devices. ",
+                "Writing to an SRGB framebuffer with GL_FRAMEBUFFER_SRGB enabled and ",
+                "then reading back returns the same value. Disabling GL_FRAMEBUFFER_SRGB ",
+                "will then convert in the wrong direction."
+            ],
+            "issue": "https://crbug.com/40488750"
+        },
+        {
+            "name": "bgra_tex_image_formats_broken",
+            "category": "Workarounds",
+            "description": [
+                "BGRA formats do not appear to be accepted by some qualcomm despite the extension being exposed."
+            ],
+            "issue": "https://anglebug.com/40096376"
+        },
+        {
+            "name": "disable_tiled_rendering",
+            "category": "Workarounds",
+            "description": [
+                "Disable QCOM_tiled_rendering on devices with rendering artifacts or which improperly expose the extension."
+            ],
+            "issue": "http://skbug.com/9491 https://github.com/flutter/flutter/issues/47164 https://github.com/flutter/flutter/issues/47804"
+        },
+        {
+            "name": "disable_blend_equation_advanced",
+            "category": "Workarounds",
+            "description": [
+                "Disable GL_KHR_blend_equation_advanced due to various driver issues."
+            ],
+            "issue": "https://anglebug.com/42267098"
+        },
+        {
+            "name": "reset_sample_coverage_on_FBO_change",
+            "category": "Workarounds",
+            "description": [
+                "Some Adreno drivers assume incorrect glSampleCoverage if new FBO is bound with different sample count"
+            ],
+            "issue": "https://crbug.com/408364831"
+         },
+         {
+            "name": "expand_fragment_outputs_to_vec4",
+            "category": "Workarounds",
+            "description": [
+                "Expand fragment shader outputs to 4 components to work around compiler bugs."
+            ],
+            "issue": "http://crbug.com/491732188"
+        },
+        {
+             "name": "recreate_mipmap_levels_before_generate",
+             "category": "Workarounds",
+             "description": [
+                 "Before calling glGenerateMipmap on a mutable texture, recreate levels that the driver is ",
+                 "supposed to recreate to work around driver bugs."
+             ],
+             "issue": "http://crbug.com/491732188"
+         },
+         {
+             "name": "limit_max_buffer_size_to_1gb",
+             "category": "Workarounds",
+             "description": [
+                 "Some drivers have internal failures when attempting to allocate and initialize buffers larger than 1gb."
+             ],
+             "issue": "http://crbug.com/475877320"
+        },
+        {
+            "name": "recreate_fbo_upon_flush",
+            "category": "Workarounds",
+            "description": [
+                "Recreate FBO upon flush/finish/fencesync under certain conditions to work around driver bugs."
+            ],
+            "issue": "http://crbug.com/493747593"
+        },
+        {
+            "name": "reattach_fbo_depth_stencil_on_reallocation",
+            "category": "Workarounds",
+            "description": [
+                "Reattach FBO depth and stencil attachments when they are reallocated."
+            ],
+            "issue": "http://crbug.com/520656244"
+        },
+        {
+            "name": "flush_before_generate_mipmap",
+            "category": "Workarounds",
+            "description": [
+                "Force a flush before calling generateMipmap to work around driver bugs."
+            ],
+            "issue": "http://crbug.com/549350408"
+        },
+        {
+            "name": "split_level_0_pbo_full_sub_image_2D",
+            "category": "Workarounds",
+            "description": [
+                "Split full-image level 0 PBO uploads via TexSubImage2D into two calls to work around driver bugs."
+            ],
+            "issue": "http://crbug.com/496807874"
+        },
+        {
+            "name": "limit_output_varyings_to_256_at_compile_time",
+            "category": "Workarounds",
+            "description": [
+                "Limit the number of declared varying components at compile time to work around a PowerVR driver bug."
+            ],
+            "issue": "http://crbug.com/529991907"
+        },
+        {
+            "name": "flush_queries_before_deleting_or_unbinding_fbo",
+            "category": "Workarounds",
+            "description": [
+                "Flush pending GPU jobs/queries before unbinding or deleting a user framebuffer ",
+                "object on ARM Mali Valhall/Avalon GPUs to avoid driver crash."
+            ],
+            "issue": "http://crbug.com/534468209"
         }
     ]
 }

@@ -8,7 +8,7 @@
 #ifndef LIBANGLE_RENDERER_CLEVENTIMPL_H_
 #define LIBANGLE_RENDERER_CLEVENTIMPL_H_
 
-#include "libANGLE/renderer/CLtypes.h"
+#include "libANGLE/renderer/cl_types.h"
 
 namespace rx
 {
@@ -21,6 +21,8 @@ class CLEventImpl : angle::NonCopyable
 
     CLEventImpl(const cl::Event &event);
     virtual ~CLEventImpl();
+
+    virtual angle::Result onEventCreate() = 0;
 
     virtual angle::Result getCommandExecutionStatus(cl_int &executionStatus) = 0;
 

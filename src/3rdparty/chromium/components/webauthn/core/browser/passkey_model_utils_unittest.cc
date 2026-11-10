@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #include "components/webauthn/core/browser/passkey_model_utils.h"
-#include "components/webauthn/core/browser/passkey_model.h"
 
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
-#include "crypto/ec_private_key.h"
+#include "components/webauthn/core/browser/passkey_model.h"
+#include "crypto/keypair.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace webauthn::passkey_model_utils {
@@ -44,16 +44,17 @@ TEST(PasskeyModelUtilsTest, DecryptWebauthnCredentialSpecificsData_Encrypted) {
        false,
        {}},
       // Empty message
-      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\xda\xf7\x90\xc6\xd2"
-       "\x9a\x8f\xa1\x87\xb9\x0a\xb3\x17\xf0\xf3\x0c",
+      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x9d\xfb\xc6\xda\x41"
+       "\x6f\x5f\x7c\x06\x84\x02\xf8\x7f\x13\x61\x2f\xe4\xae\x37\x1b\x40\x7b"
+       "\x8a\x65\x94\x65",
        true,
        {}},
-      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x26\xe3\x98\x81\x29"
-       "\x44\x58\xfa\x17\x52\xeb\x83\x47\xed\x9c\x08\x63\x70\x1d\x2e\x82\x36"
-       "\x5f\x0f\x57\x75\x3b\x7f\x5c\x72\x5e\x75\x39\x6b\xa2\x25\x72\xee\xed"
-       "\xac\xec\xfb\x88\x5f\xea\x59\x14\x07\x62\x79\x2d\x9d\x6e\x38\xab\x1e"
-       "\xaa\x06\x79\x83\x27\x4e\x13\x2e\x04\x32\x8a\x68\x67\xae\x02\xf1\xd3"
-       "\xc7\xe0\xc3\x08\x74\x59",
+      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x9d\xf5\xa0\xbf\x28"
+       "\x1b\x0d\x0e\x47\xf2\x0f\x33\x7d\x71\xe7\x62\x00\x25\xe4\xde\x99\x78"
+       "\x0c\x2a\xa8\xe3\x30\x4c\xc2\x1e\xa4\x53\x25\xba\xdc\xa1\x21\xfb\x11"
+       "\x0c\x40\x92\x08\xa8\x8f\xb8\x9f\xaa\xad\x51\xfc\xf9\x75\x9a\xbe\x91"
+       "\x0e\xaf\xb4\x5c\x46\x0a\x05\x9e\xb2\xda\x98\xd0\xb3\x87\xd2\x3c\x52"
+       "\x57\xb2\x57\x08\xb7\x18",
        true,
        {"testprivatekey", "testhmacsecret", "testcredblob", "testlargeblob",
         23}},
@@ -87,12 +88,12 @@ TEST(PasskeyModelUtilsTest, DecryptWebauthnCredentialSpecificsData_PrivateKey) {
       // Short ciphertext
       {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a", false, ""},
       // Empty key
-      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x83\x9b\x47\xee\x3c"
-       "\x1f\x4f\xf6\x00\x73\x0e\xfb\x78\x39\x35\x33",
+      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x54\x2a\x4c\x37\xe0"
+       "\x35\xbc\xc6\x64\x9d\x57\x9c\x8f\x12\xe6\xa3",
        true, ""},
-      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x58\x88\x9f\x90\x2a"
-       "\x42\x41\xfe\x1f\x50\xef\x9c\x47\xff\x8f\x3b\x0f\x1a\x44\x75\x99\x78"
-       "\x1d\xcd\xb2\x99\xf4\x9d\x1d\xde",
+      {"\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\x0a\xe3\x9e\xa7\xae\x2b"
+       "\x1d\x14\x0a\x4f\xf0\x0b\x2c\x7d\x63\xc6\x88\x33\x45\x2f\xbb\x29\x73"
+       "\xff\xdd\xc2\x63\xfc\x57\xae\x3a",
        true, "testprivatekey"},
   };
   int i = 0;
@@ -142,7 +143,8 @@ TEST(PasskeyModelUtilsTest, EncryptWebauthnCredentialSpecificsData) {
 
 TEST(PasskeyModelUtilsTest, GeneratePasskeyAndEncryptSecrets) {
   auto [passkey, public_key_spki_der] = GeneratePasskeyAndEncryptSecrets(
-      kRpId, kTestUser, kTestKey, kTestKeyVersion);
+      kRpId, kTestUser, kTestKey, kTestKeyVersion, /*extension_input_data=*/{},
+      /*extension_output_data=*/nullptr);
   EXPECT_EQ(passkey.sync_id().size(), 16u);
   EXPECT_EQ(passkey.credential_id().size(), 16u);
   EXPECT_EQ(passkey.rp_id(), kRpId);
@@ -164,17 +166,61 @@ TEST(PasskeyModelUtilsTest, GeneratePasskeyAndEncryptSecrets) {
   ASSERT_TRUE(DecryptWebauthnCredentialSpecificsData(kTestKey, passkey,
                                                      &encrypted_data));
   EXPECT_FALSE(encrypted_data.private_key().empty());
-  auto ec_key = crypto::ECPrivateKey::CreateFromPrivateKeyInfo(
-      base::as_bytes(base::make_span(encrypted_data.private_key())));
-  EXPECT_NE(ec_key, nullptr);
-  std::vector<uint8_t> ec_key_pub;
-  EXPECT_TRUE(ec_key->ExportPublicKey(&ec_key_pub));
+  auto ec_key = crypto::keypair::PrivateKey::FromPrivateKeyInfo(
+      base::as_byte_span(encrypted_data.private_key()));
+  ASSERT_TRUE(ec_key.has_value());
+  ASSERT_TRUE(ec_key->IsEc());
+  std::vector<uint8_t> ec_key_pub = ec_key->ToSubjectPublicKeyInfo();
   EXPECT_EQ(ec_key_pub, public_key_spki_der);
 
   EXPECT_TRUE(encrypted_data.hmac_secret().empty());
   EXPECT_TRUE(encrypted_data.cred_blob().empty());
   EXPECT_TRUE(encrypted_data.large_blob().empty());
   EXPECT_EQ(encrypted_data.large_blob_uncompressed_size(), 0u);
+}
+
+TEST(PasskeyModelUtilsTest, GeneratePasskeyWithPRFAndEncryptSecrets) {
+  std::vector<uint8_t> prf_input1, prf_input2;
+  prf_input1.emplace_back('a');
+  ExtensionInputData extension_input_data(prf_input1, prf_input2);
+  ExtensionOutputData extension_output_data;
+  auto [passkey, public_key_spki_der] = GeneratePasskeyAndEncryptSecrets(
+      kRpId, kTestUser, kTestKey, kTestKeyVersion, extension_input_data,
+      &extension_output_data);
+  EXPECT_EQ(passkey.sync_id().size(), 16u);
+  EXPECT_EQ(passkey.credential_id().size(), 16u);
+  EXPECT_EQ(passkey.rp_id(), kRpId);
+  EXPECT_EQ(passkey.user_id(),
+            std::string(reinterpret_cast<const char*>(kTestUser.id.data()),
+                        kTestUser.id.size()));
+  EXPECT_EQ(passkey.user_name(), kTestUser.name);
+  EXPECT_EQ(passkey.user_display_name(), kTestUser.display_name);
+  EXPECT_FALSE(passkey.third_party_payments_support());
+  EXPECT_EQ(passkey.last_used_time_windows_epoch_micros(), 0u);
+  EXPECT_GT(passkey.creation_time(), 0u);
+  EXPECT_EQ(passkey.key_version(), kTestKeyVersion);
+
+  // Filled in by the Sync model.
+  EXPECT_TRUE(passkey.newly_shadowed_credential_ids().empty());
+
+  EXPECT_TRUE(passkey.has_encrypted());
+  sync_pb::WebauthnCredentialSpecifics_Encrypted encrypted_data;
+  ASSERT_TRUE(DecryptWebauthnCredentialSpecificsData(kTestKey, passkey,
+                                                     &encrypted_data));
+  EXPECT_FALSE(encrypted_data.private_key().empty());
+  auto ec_key = crypto::keypair::PrivateKey::FromPrivateKeyInfo(
+      base::as_byte_span(encrypted_data.private_key()));
+  ASSERT_TRUE(ec_key.has_value());
+  ASSERT_TRUE(ec_key->IsEc());
+  std::vector<uint8_t> ec_key_pub = ec_key->ToSubjectPublicKeyInfo();
+  EXPECT_EQ(ec_key_pub, public_key_spki_der);
+
+  EXPECT_EQ(encrypted_data.hmac_secret().size(), 32u);
+  EXPECT_TRUE(encrypted_data.cred_blob().empty());
+  EXPECT_TRUE(encrypted_data.large_blob().empty());
+  EXPECT_EQ(encrypted_data.large_blob_uncompressed_size(), 0u);
+
+  EXPECT_EQ(extension_output_data.prf_result.size(), 32u);
 }
 
 }  // namespace

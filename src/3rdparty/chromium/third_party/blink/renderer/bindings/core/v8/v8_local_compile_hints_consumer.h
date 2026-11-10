@@ -19,6 +19,10 @@ class CORE_EXPORT V8LocalCompileHintsConsumer {
  public:
   explicit V8LocalCompileHintsConsumer(CachedMetadata* cached_metadata);
 
+  V8LocalCompileHintsConsumer(const V8LocalCompileHintsConsumer&) = delete;
+  V8LocalCompileHintsConsumer& operator=(const V8LocalCompileHintsConsumer&) =
+      delete;
+
   // Suitable for being used as a callback. data must be a ptr to a
   // V8LocalCompileHintsConsumer object.
   static bool GetCompileHint(int position, void* data);
@@ -28,7 +32,7 @@ class CORE_EXPORT V8LocalCompileHintsConsumer {
   bool IsRejected() const { return rejected_; }
 
  private:
-  WTF::Vector<int> compile_hints_;
+  Vector<int32_t> compile_hints_;
   wtf_size_t current_index_ = 0;
   bool rejected_ = false;
 };

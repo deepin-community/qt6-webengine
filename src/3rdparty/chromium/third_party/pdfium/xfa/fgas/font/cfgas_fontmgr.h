@@ -7,6 +7,7 @@
 #ifndef XFA_FGAS_FONT_CFGAS_FONTMGR_H_
 #define XFA_FGAS_FONT_CFGAS_FONTMGR_H_
 
+#include <array>
 #include <deque>
 #include <map>
 #include <memory>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "build/build_config.h"
+#include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_codepage_forward.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/widestring.h"
@@ -24,8 +26,8 @@ class IFX_SeekableReadStream;
 
 #if BUILDFLAG(IS_WIN)
 struct FX_FONTSIGNATURE {
-  uint32_t fsUsb[4];
-  uint32_t fsCsb[2];
+  std::array<uint32_t, 4> fsUsb;
+  std::array<uint32_t, 2> fsCsb;
 };
 
 inline bool operator==(const FX_FONTSIGNATURE& left,
@@ -47,7 +49,7 @@ inline bool operator==(const FX_FONTDESCRIPTOR& left,
   return left.uCharSet == right.uCharSet &&
          left.dwFontStyles == right.dwFontStyles &&
          left.FontSignature == right.FontSignature &&
-         wcscmp(left.wsFontFace, right.wsFontFace) == 0;
+         UNSAFE_TODO(wcscmp(left.wsFontFace, right.wsFontFace)) == 0;
 }
 
 #else  // BUILDFLAG(IS_WIN)
@@ -57,17 +59,18 @@ class CFGAS_FontDescriptor {
   CFGAS_FontDescriptor();
   ~CFGAS_FontDescriptor();
 
-  int32_t m_nFaceIndex = 0;
-  uint32_t m_dwFontStyles = 0;
-  WideString m_wsFaceName;
-  std::vector<WideString> m_wsFamilyNames;
-  uint32_t m_dwUsb[4] = {};
-  uint32_t m_dwCsb[2] = {};
+  int32_t face_index_ = 0;
+  uint32_t font_styles_ = 0;
+  WideString face_name_;
+  RetainPtr<CFX_Face> face_;
+  std::vector<WideString> family_names_;
+  std::array<uint32_t, 4> usb_ = {};
+  std::array<uint32_t, 2> csb_ = {};
 };
 
 struct CFGAS_FontDescriptorInfo {
  public:
-  UNOWNED_PTR_EXCLUSION CFGAS_FontDescriptor* pFont;  // POD struct.
+  UNOWNED_PTR_EXCLUSION CFGAS_FontDescriptor* font;  // POD struct.
   int32_t nPenalty;
 
   bool operator>(const CFGAS_FontDescriptorInfo& other) const {
@@ -76,8 +79,9 @@ struct CFGAS_FontDescriptorInfo {
   bool operator<(const CFGAS_FontDescriptorInfo& other) const {
     return nPenalty < other.nPenalty;
   }
-  bool operator==(const CFGAS_FontDescriptorInfo& other) const {
-    return nPenalty == other.nPenalty;
+  friend inline bool operator==(const CFGAS_FontDescriptorInfo& lhs,
+                                const CFGAS_FontDescriptorInfo& rhs) {
+    return lhs.nPenalty == rhs.nPenalty;
   }
 };
 
@@ -118,7 +122,7 @@ class CFGAS_FontMgr {
 #else   // BUILDFLAG(IS_WIN)
   bool EnumFontsFromFontMapper();
   void RegisterFace(RetainPtr<CFX_Face> pFace, const WideString& wsFaceName);
-  void RegisterFaces(const RetainPtr<IFX_SeekableReadStream>& pFontStream,
+  void RegisterFaces(const RetainPtr<IFX_SeekableReadStream>& font_stream,
                      const WideString& wsFaceName);
   std::vector<CFGAS_FontDescriptorInfo> MatchFonts(FX_CodePage wCodePage,
                                                    uint32_t dwFontStyles,
@@ -128,15 +132,15 @@ class CFGAS_FontMgr {
                                            int32_t iFaceIndex);
 #endif  // BUILDFLAG(IS_WIN)
 
-  std::map<uint32_t, std::vector<RetainPtr<CFGAS_GEFont>>> m_Hash2Fonts;
-  std::set<wchar_t> m_FailedUnicodesSet;
+  std::map<uint32_t, std::vector<RetainPtr<CFGAS_GEFont>>> hash_2fonts_;
+  std::set<wchar_t> failed_unicodes_set_;
 
 #if BUILDFLAG(IS_WIN)
-  std::deque<FX_FONTDESCRIPTOR> m_FontFaces;
+  std::deque<FX_FONTDESCRIPTOR> font_faces_;
 #else
-  std::vector<std::unique_ptr<CFGAS_FontDescriptor>> m_InstalledFonts;
+  std::vector<std::unique_ptr<CFGAS_FontDescriptor>> installed_fonts_;
   std::map<uint32_t, std::vector<CFGAS_FontDescriptorInfo>>
-      m_Hash2CandidateList;
+      hash_2candidate_list_;
 #endif  // BUILDFLAG(IS_WIN)
 };
 

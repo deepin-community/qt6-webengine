@@ -37,15 +37,20 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"dawn.googlesource.com/dawn/tools/src/cmd/run-cts/common"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
 )
 
+// TODO(crbug.com/416755658): Add unittest coverage when there is a way to fake
+// the node process.
 // runTestCasesWithCmdline() calls the CTS command-line test runner to run each
 // test case in a separate process. This reduces possibility of state leakage
 // between tests.
 // Up to c.flags.numRunners tests will be run concurrently.
-func (c *cmd) runTestCasesWithCmdline(ctx context.Context, testCases []common.TestCase, results chan<- common.Result) {
+func (c *cmd) runTestCasesWithCmdline(
+	ctx context.Context, testCases []common.TestCase, results chan<- common.Result, fsReader oswrapper.FilesystemReader) {
 	// Create a chan of test indices.
 	// This will be read by the test runner goroutines.
 	testCaseIndices := make(chan int, 256)
@@ -63,7 +68,7 @@ func (c *cmd) runTestCasesWithCmdline(ctx context.Context, testCases []common.Te
 		go func() {
 			defer wg.Done()
 			for idx := range testCaseIndices {
-				res := c.runTestCaseWithCmdline(ctx, testCases[idx])
+				res := c.runTestCaseWithCmdline(ctx, testCases[idx], fsReader)
 				res.Index = idx
 				results <- res
 				if err := ctx.Err(); err != nil {
@@ -75,9 +80,11 @@ func (c *cmd) runTestCasesWithCmdline(ctx context.Context, testCases []common.Te
 	wg.Wait()
 }
 
+// TODO(crbug.com/416755658): Add unittest coverage when exec is handled via
+// dependency injection.
 // runTestCaseWithCmdline() runs a single CTS test case with the command line tool,
 // returning the test result.
-func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCase) common.Result {
+func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCase, fsReader oswrapper.FilesystemReader) common.Result {
 	ctx, cancel := context.WithTimeout(ctx, common.TestCaseTimeout)
 	defer cancel()
 
@@ -108,6 +115,12 @@ func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCa
 	if c.flags.compatibilityMode {
 		args = append(args, "--compat")
 	}
+	if c.flags.enforceDefaultLimits {
+		args = append(args, "--enforce-default-limits")
+	}
+	if c.flags.blockAllFeatures {
+		args = append(args, "--block-all-features")
+	}
 	for _, f := range c.flags.dawn {
 		args = append(args, "--gpu-provider-flag", f)
 	}
@@ -121,8 +134,10 @@ func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCa
 	cmd.Stderr = &buf
 
 	if c.flags.Verbose {
-		PrintCommand(cmd)
+		PrintCommand(cmd, c.flags.skipVSCodeInfo)
 	}
+
+	start := time.Now()
 	err := cmd.Run()
 
 	msg := buf.String()
@@ -131,6 +146,7 @@ func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCa
 		Status:   common.Pass,
 		Message:  msg,
 		Error:    err,
+		Duration: time.Since(start),
 	}
 
 	if err == nil && c.coverage != nil {
@@ -141,7 +157,7 @@ func (c *cmd) runTestCaseWithCmdline(ctx context.Context, testCase common.TestCa
 				footerStart += headerStart
 				path := msg[headerStart+len(header) : footerStart]
 				res.Message = msg[:headerStart] + msg[footerStart+len(footer):] // Strip out the coverage from the message
-				coverage, covErr := c.coverage.Env.Import(path)
+				coverage, covErr := c.coverage.Env.Import(path, fsReader)
 				os.Remove(path)
 				if covErr == nil {
 					res.Coverage = coverage

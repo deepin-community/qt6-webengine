@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <unordered_map>
@@ -28,7 +29,6 @@
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/floss/floss_version.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace floss {
 
@@ -78,6 +78,8 @@ inline constexpr char kSetName[] = "SetName";
 inline constexpr char kGetDiscoverable[] = "GetDiscoverable";
 inline constexpr char kGetDiscoverableTimeout[] = "GetDiscoverableTimeout";
 inline constexpr char kSetDiscoverable[] = "SetDiscoverable";
+inline constexpr char kIsLeExtendedAdvertisingSupported[] =
+    "IsLeExtendedAdvertisingSupported";
 inline constexpr char kStartDiscovery[] = "StartDiscovery";
 inline constexpr char kCancelDiscovery[] = "CancelDiscovery";
 inline constexpr char kCreateBond[] = "CreateBond";
@@ -88,6 +90,7 @@ inline constexpr char kGetRemoteClass[] = "GetRemoteClass";
 inline constexpr char kGetRemoteAppearance[] = "GetRemoteAppearance";
 inline constexpr char kGetRemoteVendorProductInfo[] =
     "GetRemoteVendorProductInfo";
+inline constexpr char kGetRemoteAddressType[] = "GetRemoteAddressType";
 inline constexpr char kGetConnectionState[] = "GetConnectionState";
 inline constexpr char kGetRemoteUuids[] = "GetRemoteUuids";
 inline constexpr char kFetchRemoteUuids[] = "FetchRemoteUuids";
@@ -117,6 +120,7 @@ inline constexpr char kGetConnectedDevices[] = "GetConnectedDevices";
 inline constexpr char kSdpSearch[] = "SdpSearch";
 inline constexpr char kCreateSdpRecord[] = "CreateSdpRecord";
 inline constexpr char kRemoveSdpRecord[] = "RemoveSdpRecord";
+inline constexpr char kGetSupportedRoles[] = "GetSupportedRoles";
 
 // TODO(abps) - Rename this to AdapterCallback in platform and here
 inline constexpr char kCallbackInterface[] =
@@ -130,6 +134,7 @@ inline constexpr char kOnNameChanged[] = "OnNameChanged";
 inline constexpr char kOnDiscoverableChanged[] = "OnDiscoverableChanged";
 inline constexpr char kOnDeviceFound[] = "OnDeviceFound";
 inline constexpr char kOnDeviceCleared[] = "OnDeviceCleared";
+inline constexpr char kOnDeviceKeyMissing[] = "OnDeviceKeyMissing";
 inline constexpr char kOnDevicePropertiesChanged[] =
     "OnDevicePropertiesChanged";
 inline constexpr char kOnDiscoveringChanged[] = "OnDiscoveringChanged";
@@ -142,6 +147,7 @@ inline constexpr char kOnSdpSearchComplete[] = "OnSdpSearchComplete";
 inline constexpr char kOnSdpRecordCreated[] = "OnSdpRecordCreated";
 inline constexpr char kOnDeviceConnected[] = "OnDeviceConnected";
 inline constexpr char kOnDeviceDisconnected[] = "OnDeviceDisconnected";
+inline constexpr char kOnDeviceConnectionFailed[] = "OnDeviceConnectionFailed";
 
 inline constexpr char kOnScannerRegistered[] = "OnScannerRegistered";
 inline constexpr char kOnScanResult[] = "OnScanResult";
@@ -339,6 +345,7 @@ inline constexpr char kOnDevicePolicyEffectChanged[] =
 inline constexpr char kSetAllowedServices[] = "SetAllowedServices";
 inline constexpr char kGetAllowedServices[] = "GetAllowedServices";
 inline constexpr char kGetDevicePolicyEffect[] = "GetDevicePolicyEffect";
+inline constexpr char kSetSimpleSecurePairingEnabled[] = "SetAcceptSspRequest";
 }  // namespace admin
 
 namespace adapter_logging {
@@ -348,7 +355,6 @@ inline constexpr char kSetDebugLogging[] = "SetDebugLogging";
 
 namespace experimental {
 inline constexpr char kSetLLPrivacy[] = "SetLLPrivacy";
-inline constexpr char kSetDevCoredump[] = "SetDevCoredump";
 }  // namespace experimental
 
 // BluetoothDevice structure for DBus apis.
@@ -491,7 +497,7 @@ const DBusTypeInfo& GetDBusTypeInfo(const std::map<T, U>*) {
 }
 
 template <typename T>
-const DBusTypeInfo& GetDBusTypeInfo(const absl::optional<T>*) {
+const DBusTypeInfo& GetDBusTypeInfo(const std::optional<T>*) {
   static const base::NoDestructor<DBusTypeInfo> elem_info(
       GetDBusTypeInfo(static_cast<T*>(nullptr)));
   static const base::NoDestructor<DBusTypeInfo> info{
@@ -521,6 +527,9 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
     kJniThreadAttachError,
     kWakelockError,
     kTimeout,
+    kDeviceNotFound,
+    kUnexpectedState,
+    kSocketError,
   };
 
   enum class BluetoothTransport {
@@ -541,7 +550,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
   // Error: Invalid return.
   static const char kErrorInvalidReturn[];
 
-  // Property key for absl::Optional dbus serialization.
+  // Property key for std::optional dbus serialization.
   static const char kOptionalValueKey[];
 
   // Error: does not exist.
@@ -564,6 +573,10 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
 
   // Convert adapter number to logging object path.
   static dbus::ObjectPath GenerateLoggingPath(int adapter_index);
+
+  // Convert Floss error codes to BluetoothDevice defined error codes.
+  static device::BluetoothDevice::ConnectErrorCode BtifStatusToConnectErrorCode(
+      FlossDBusClient::BtifStatus status);
 
   // Generalized DBus serialization (used for generalized method call
   // invocation).
@@ -612,10 +625,16 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
     writer->CloseContainer(&array);
   }
 
+  // Specialized write for base::span<const uint8_t>.
+  static void WriteDBusParam(dbus::MessageWriter* writer,
+                             base::span<const uint8_t> value) {
+    writer->AppendArrayOfBytes(value);
+  }
+
   // Optional container type needs to be explicitly listed here.
   template <typename T>
   static void WriteDBusParam(dbus::MessageWriter* writer,
-                             const absl::optional<T>& data) {
+                             const std::optional<T>& data) {
     dbus::MessageWriter array(nullptr);
     dbus::MessageWriter dict(nullptr);
 
@@ -633,7 +652,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
 
   template <typename T>
   static void WriteDBusParamIntoVariant(dbus::MessageWriter* writer,
-                                        const absl::optional<T>& data) {
+                                        const std::optional<T>& data) {
     dbus::MessageWriter variant(nullptr);
     writer->OpenVariant("a{sv}", &variant);
     WriteDBusParam(&variant, data);
@@ -727,7 +746,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
   // Optional container type needs to be explicitly implemented here.
   template <typename T>
   static bool ReadDBusParam(dbus::MessageReader* reader,
-                            absl::optional<T>* value) {
+                            std::optional<T>* value) {
     dbus::MessageReader array(nullptr);
     dbus::MessageReader dict(nullptr);
 
@@ -746,7 +765,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusClient {
           return false;
         }
 
-        *value = std::move(absl::optional<T>(std::move(inner)));
+        *value = std::move(std::optional<T>(std::move(inner)));
       }
     }
 

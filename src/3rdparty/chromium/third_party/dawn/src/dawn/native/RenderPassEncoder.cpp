@@ -31,8 +31,7 @@
 #include <cstring>
 #include <utility>
 
-#include "dawn/common/Constants.h"
-#include "dawn/native/Buffer.h"
+#include "dawn/native/Adapter.h"
 #include "dawn/native/ChainUtils.h"
 #include "dawn/native/CommandEncoder.h"
 #include "dawn/native/CommandValidation.h"
@@ -42,13 +41,14 @@
 #include "dawn/native/QuerySet.h"
 #include "dawn/native/RenderBundle.h"
 #include "dawn/native/RenderPipeline.h"
+#include "dawn/native/ValidationUtils.h"
 
 namespace dawn::native {
 namespace {
 
 // Check the query at queryIndex is unavailable, otherwise it cannot be written.
 MaybeError ValidateQueryIndexOverwrite(QuerySetBase* querySet,
-                                       uint32_t queryIndex,
+                                       QueryIndex queryIndex,
                                        const QueryAvailabilityMap& queryAvailabilityMap) {
     auto it = queryAvailabilityMap.find(querySet);
     DAWN_INVALID_IF(it != queryAvailabilityMap.end() && it->second[queryIndex],
@@ -73,7 +73,7 @@ RenderPassEncoder::RenderPassEncoder(DeviceBase* device,
                                      uint32_t renderTargetHeight,
                                      bool depthReadOnly,
                                      bool stencilReadOnly,
-                                     std::function<void()> endCallback)
+                                     EndCallback endCallback)
     : RenderEncoderBase(device,
                         descriptor->label,
                         encodingContext,
@@ -86,7 +86,7 @@ RenderPassEncoder::RenderPassEncoder(DeviceBase* device,
       mOcclusionQuerySet(descriptor->occlusionQuerySet),
       mEndCallback(std::move(endCallback)) {
     mUsageTracker = std::move(usageTracker);
-    if (auto* maxDrawCountInfo = descriptor.Get<RenderPassDescriptorMaxDrawCount>()) {
+    if (auto* maxDrawCountInfo = descriptor.Get<RenderPassMaxDrawCount>()) {
         mMaxDrawCount = maxDrawCountInfo->maxDrawCount;
     }
     GetObjectTrackingList()->Track(this);
@@ -104,7 +104,7 @@ Ref<RenderPassEncoder> RenderPassEncoder::Create(
     uint32_t renderTargetHeight,
     bool depthReadOnly,
     bool stencilReadOnly,
-    std::function<void()> endCallback) {
+    EndCallback endCallback) {
     return AcquireRef(new RenderPassEncoder(device, descriptor, commandEncoder, encodingContext,
                                             std::move(usageTracker), std::move(attachmentState),
                                             renderTargetWidth, renderTargetHeight, depthReadOnly,
@@ -115,7 +115,7 @@ RenderPassEncoder::RenderPassEncoder(DeviceBase* device,
                                      CommandEncoder* commandEncoder,
                                      EncodingContext* encodingContext,
                                      ErrorTag errorTag,
-                                     const char* label)
+                                     StringView label)
     : RenderEncoderBase(device, encodingContext, errorTag, label),
       mCommandEncoder(commandEncoder) {}
 
@@ -123,12 +123,19 @@ RenderPassEncoder::RenderPassEncoder(DeviceBase* device,
 Ref<RenderPassEncoder> RenderPassEncoder::MakeError(DeviceBase* device,
                                                     CommandEncoder* commandEncoder,
                                                     EncodingContext* encodingContext,
-                                                    const char* label) {
+                                                    StringView label) {
     return AcquireRef(
         new RenderPassEncoder(device, commandEncoder, encodingContext, ObjectBase::kError, label));
 }
 
+RenderPassEncoder::~RenderPassEncoder() {
+    mEncodingContext = nullptr;
+}
+
 void RenderPassEncoder::DestroyImpl() {
+    mIndirectDrawMetadata.ClearIndexedIndirectBufferValidationInfo();
+    mCommandBufferState.End();
+
     RenderEncoderBase::DestroyImpl();
     // Ensure that the pass has exited. This is done for passes only since validation requires
     // they exit before destruction while bundles do not.
@@ -139,20 +146,9 @@ ObjectType RenderPassEncoder::GetType() const {
     return ObjectType::RenderPassEncoder;
 }
 
-void RenderPassEncoder::TrackQueryAvailability(QuerySetBase* querySet, uint32_t queryIndex) {
-    DAWN_ASSERT(querySet != nullptr);
-
-    // Track the query availability with true on render pass for rewrite validation and query
-    // reset on render pass on Vulkan
-    mUsageTracker.TrackQueryAvailability(querySet, queryIndex);
-
-    // Track it again on command encoder for zero-initializing when resolving unused queries.
-    mCommandEncoder->TrackQueryAvailability(querySet, queryIndex);
-}
-
 void RenderPassEncoder::APIEnd() {
     // The encoding context might create additional resources, so we need to lock the device.
-    auto deviceLock(GetDevice()->GetScopedLock());
+    auto deviceGuard = GetDevice()->GetGuard();
     End();
 }
 
@@ -165,6 +161,7 @@ void RenderPassEncoder::End() {
     }
 
     mEnded = true;
+    mCommandBufferState.End();
 
     mEncodingContext->TryEncode(
         this,
@@ -183,17 +180,16 @@ void RenderPassEncoder::End() {
             }
 
             allocator->Allocate<EndRenderPassCmd>(Command::EndRenderPass);
-
             DAWN_TRY(mEncodingContext->ExitRenderPass(this, std::move(mUsageTracker),
                                                       mCommandEncoder.Get(),
                                                       std::move(mIndirectDrawMetadata)));
+            if (mEndCallback) {
+                mEncodingContext->ConsumedError(mEndCallback());
+            }
+
             return {};
         },
         "encoding %s.End().", this);
-
-    if (mEndCallback) {
-        mEndCallback();
-    }
 }
 
 void RenderPassEncoder::APISetStencilReference(uint32_t reference) {
@@ -213,6 +209,9 @@ void RenderPassEncoder::APISetBlendConstant(const Color* color) {
     mEncodingContext->TryEncode(
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
+            if (IsValidationEnabled()) {
+                DAWN_TRY(ValidateColor("color", *color));
+            }
             SetBlendConstantCmd* cmd =
                 allocator->Allocate<SetBlendConstantCmd>(Command::SetBlendConstant);
             cmd->color = *color;
@@ -232,24 +231,45 @@ void RenderPassEncoder::APISetViewport(float x,
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
             if (IsValidationEnabled()) {
-                DAWN_INVALID_IF((isnan(x) || isnan(y) || isnan(width) || isnan(height) ||
-                                 isnan(minDepth) || isnan(maxDepth)),
-                                "A parameter of the viewport (x: %f, y: %f, width: %f, height: %f, "
-                                "minDepth: %f, maxDepth: %f) is NaN.",
-                                x, y, width, height, minDepth, maxDepth);
+                DAWN_TRY(ValidateFloat("x", x));
+                DAWN_TRY(ValidateFloat("y", y));
+                DAWN_TRY(ValidateFloat("width", width));
+                DAWN_TRY(ValidateFloat("height", height));
+                DAWN_TRY(ValidateFloat("minDepth", minDepth));
+                DAWN_TRY(ValidateFloat("maxDepth", maxDepth));
+
+                const CombinedLimits& limits = GetDevice()->GetLimits();
+                uint32_t maxViewportSize = limits.v1.maxTextureDimension2D;
+                float maxViewportBounds = maxViewportSize * 2.0;
 
                 DAWN_INVALID_IF(
-                    x < 0 || y < 0 || width < 0 || height < 0,
-                    "Viewport bounds (x: %f, y: %f, width: %f, height: %f) contains a negative "
-                    "value.",
-                    x, y, width, height);
+                    width < 0 || height < 0,
+                    "Viewport bounds (width: %f, height: %f) contains a negative value.", width,
+                    height);
 
                 DAWN_INVALID_IF(
-                    x + width > mRenderTargetWidth || y + height > mRenderTargetHeight,
-                    "Viewport bounds (x: %f, y: %f, width: %f, height: %f) are not contained "
-                    "in "
-                    "the render target dimensions (%u x %u).",
-                    x, y, width, height, mRenderTargetWidth, mRenderTargetHeight);
+                    width > maxViewportSize, "Viewport width (%f) exceeds the maximum (%u).%s",
+                    width, maxViewportSize,
+                    DAWN_INCREASE_LIMIT_MESSAGE(GetDevice()->GetAdapter()->GetLimits().v1,
+                                                maxTextureDimension2D, width));
+
+                DAWN_INVALID_IF(
+                    height > maxViewportSize,
+                    "Viewport size height (%f) exceeds the maximum (%u).%s", height,
+                    maxViewportSize,
+                    DAWN_INCREASE_LIMIT_MESSAGE(GetDevice()->GetAdapter()->GetLimits().v1,
+                                                maxTextureDimension2D, height));
+
+                DAWN_INVALID_IF(x < -maxViewportBounds || y < -maxViewportBounds,
+                                "Viewport offset (x: %f, y: %f) is less than the minimum "
+                                "supported bounds (%f x %f).",
+                                x, y, -maxViewportBounds, -maxViewportBounds);
+
+                DAWN_INVALID_IF(
+                    x + width > maxViewportBounds - 1 || y + height > maxViewportBounds - 1,
+                    "Viewport bounds (x: %f, y: %f, width: %f, height: %f) exceed "
+                    "the maximum supported bounds (%f x %f).",
+                    x, y, width, height, maxViewportBounds - 1, maxViewportBounds - 1);
 
                 // Check for depths being in [0, 1] and min <= max in 3 checks instead of 5.
                 DAWN_INVALID_IF(minDepth < 0 || minDepth > maxDepth || maxDepth > 1,
@@ -333,32 +353,37 @@ void RenderPassEncoder::APIExecuteBundles(uint32_t count, RenderBundleBase* cons
                 }
             }
 
+            // Always reset state
             mCommandBufferState = CommandBufferStateTracker{};
 
-            ExecuteBundlesCmd* cmd =
-                allocator->Allocate<ExecuteBundlesCmd>(Command::ExecuteBundles);
-            cmd->count = count;
+            if (count) {
+                ExecuteBundlesCmd* cmd =
+                    allocator->Allocate<ExecuteBundlesCmd>(Command::ExecuteBundles);
+                cmd->count = count;
 
-            Ref<RenderBundleBase>* bundles = allocator->AllocateData<Ref<RenderBundleBase>>(count);
-            for (uint32_t i = 0; i < count; ++i) {
-                bundles[i] = renderBundles[i];
+                Ref<RenderBundleBase>* bundles =
+                    allocator->AllocateData<Ref<RenderBundleBase>>(count);
+                for (uint32_t i = 0; i < count; ++i) {
+                    bundles[i] = renderBundles[i];
 
-                const RenderPassResourceUsage& usages = bundles[i]->GetResourceUsage();
-                for (uint32_t j = 0; j < usages.buffers.size(); ++j) {
-                    mUsageTracker.BufferUsedAs(usages.buffers[j], usages.bufferSyncInfos[j].usage,
-                                               usages.bufferSyncInfos[j].shaderStages);
+                    const RenderPassResourceUsage& usages = bundles[i]->GetResourceUsage();
+                    for (uint32_t j = 0; j < usages.buffers.size(); ++j) {
+                        mUsageTracker.BufferUsedAs(usages.buffers[j],
+                                                   usages.bufferSyncInfos[j].usage,
+                                                   usages.bufferSyncInfos[j].shaderStages);
+                    }
+
+                    for (uint32_t j = 0; j < usages.textures.size(); ++j) {
+                        mUsageTracker.AddRenderBundleTextureUsage(usages.textures[j],
+                                                                  usages.textureSyncInfos[j]);
+                    }
+
+                    if (IsValidationEnabled()) {
+                        mIndirectDrawMetadata.AddBundle(renderBundles[i]);
+                    }
+
+                    mDrawCount += bundles[i]->GetDrawCount();
                 }
-
-                for (uint32_t j = 0; j < usages.textures.size(); ++j) {
-                    mUsageTracker.AddRenderBundleTextureUsage(usages.textures[j],
-                                                              usages.textureSyncInfos[j]);
-                }
-
-                if (IsValidationEnabled()) {
-                    mIndirectDrawMetadata.AddBundle(renderBundles[i]);
-                }
-
-                mDrawCount += bundles[i]->GetDrawCount();
             }
 
             return {};
@@ -366,7 +391,9 @@ void RenderPassEncoder::APIExecuteBundles(uint32_t count, RenderBundleBase* cons
         "encoding %s.ExecuteBundles(%u, ...).", this, count);
 }
 
-void RenderPassEncoder::APIBeginOcclusionQuery(uint32_t queryIndex) {
+void RenderPassEncoder::APIBeginOcclusionQuery(uint32_t queryIndexUntyped) {
+    QueryIndex queryIndex{queryIndexUntyped};
+
     mEncodingContext->TryEncode(
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
@@ -414,7 +441,11 @@ void RenderPassEncoder::APIEndOcclusionQuery() {
                 DAWN_INVALID_IF(!mOcclusionQueryActive, "No occlusion queries are active.");
             }
 
-            TrackQueryAvailability(mOcclusionQuerySet.Get(), mCurrentOcclusionQueryIndex);
+            // The render pass usage tracker contains data about written queries. This is
+            // necessary on Vulkan to be able to reset queries before the start of render passes
+            // (it can only be done outside of a render pass).
+            mUsageTracker.TrackQueryAvailability(mOcclusionQuerySet.Get(),
+                                                 mCurrentOcclusionQueryIndex);
 
             mOcclusionQueryActive = false;
 
@@ -428,7 +459,9 @@ void RenderPassEncoder::APIEndOcclusionQuery() {
         "encoding %s.EndOcclusionQuery().", this);
 }
 
-void RenderPassEncoder::APIWriteTimestamp(QuerySetBase* querySet, uint32_t queryIndex) {
+void RenderPassEncoder::APIWriteTimestamp(QuerySetBase* querySet, uint32_t queryIndexUntyped) {
+    QueryIndex queryIndex{queryIndexUntyped};
+
     mEncodingContext->TryEncode(
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
@@ -442,7 +475,12 @@ void RenderPassEncoder::APIWriteTimestamp(QuerySetBase* querySet, uint32_t query
                                  querySet);
             }
 
-            TrackQueryAvailability(querySet, queryIndex);
+            mCommandEncoder->TrackUsedQuerySet(querySet);
+
+            // The render pass usage tracker contains data about written queries. This is
+            // necessary on Vulkan to be able to reset queries before the start of render passes
+            // (it can only be done outside of a render pass).
+            mUsageTracker.TrackQueryAvailability(querySet, queryIndex);
 
             WriteTimestampCmd* cmd =
                 allocator->Allocate<WriteTimestampCmd>(Command::WriteTimestamp);

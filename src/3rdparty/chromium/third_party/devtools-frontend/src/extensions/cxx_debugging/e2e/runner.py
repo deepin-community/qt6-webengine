@@ -108,6 +108,9 @@ def list_tests(path):
                     if f.endswith('.yaml'))
 
 
+NODE = repo_path('//third_party/node/node.py')
+
+
 class Test(object):
     def __init__(self, build_root, path):
         output_directory = repo_path(build_root,
@@ -181,7 +184,7 @@ class Test(object):
 
             flags += ' -c'
             # Build the object file from the source file
-            yield f'rule build_{object_rule_name}\n  command = cd {test_directory} && {compiler} {flags} {source_file_name} -o {object_rule_name}\n  description = Linking test {self.name} to binary with flags: "{flags}"\n'  #.format(
+            yield f'rule build_{object_rule_name}\n  command = cd {test_directory} && {compiler} {flags} {source_file_name} -o {object_rule_name}\n  description = Linking test {self.name} to binary with flags: "{flags}"\n'  # .format(
 
             if '-gsplit-dwarf' in flags:
                 # Generate the dwarf package file if necessary
@@ -238,9 +241,6 @@ class Compile(RunnerCommand):
     Command = 'compile'
     Help = 'Compile the tests and the dependencies'
 
-    def _register_options(self, parser):
-        parser.add_argument('--goma')
-
     def __call__(self, options):
         self.build_extension(options)
         self.build_devtools(options.build_root, options.verbose)
@@ -266,7 +266,8 @@ class Compile(RunnerCommand):
             rules = set()
             for test in tests:
                 for rule in test.compile():
-                    if rule in rules: continue
+                    if rule in rules:
+                        continue
                     ninja_file.write('{}\n'.format(rule))
                     rules.add(rule)
 
@@ -275,10 +276,9 @@ class Compile(RunnerCommand):
         ninja(build_root, 'test_suite', verbose)
 
     def build_driver(self, build_root, verbose):
-        node = repo_path('//third_party/node/node.py')
         tsc = repo_path('//node_modules/typescript/bin/tsc')
         run_process(sys.executable,
-                    node,
+                    NODE,
                     '--output',
                     tsc,
                     '-p',
@@ -288,7 +288,7 @@ class Compile(RunnerCommand):
                     verbose=verbose)
 
     def build_extension(self, options):
-        args = ['-goma', options.goma] if options.goma else ['-no-goma']
+        args = []
         if options.release or options.release_version:
             args.append('-release-version')
             args.append(options.release_version or 0)
@@ -371,6 +371,10 @@ class Init(RunnerCommand):
                           'extensions/cxx_debugging/e2e/MochaRootHooks.js'),
                 'source-map-support/register'
             ],
+            'ui':
+            repo_path(options.build_root,
+                      get_artifact_dir('devtools-frontend'),
+                      'gen/test/conductor/mocha-interface.js'),
             'spec': [
                 repo_path(
                     options.build_root,
@@ -386,9 +390,8 @@ class Init(RunnerCommand):
             0 if options.debug else 120000
         }
         with open(repo_path(test_suite_dir, '.mocharc.js'), 'w') as mocharc:
-            mocharc.write(
-                'process.env.TEST_SERVER_TYPE = "hosted-mode";\nmodule.exports = {};'
-                .format(json.dumps(mocha_spec, indent=2)))
+            mocharc.write('module.exports = {};'.format(
+                json.dumps(mocha_spec, indent=2)))
 
         with open(repo_path(test_suite_dir, 'tests.json'), 'w') as tests_file:
             tests = [Init.generate_tests(t, test_suite_dir) for t in tests]
@@ -492,7 +495,6 @@ class Run(Init):
             return init
 
         if options.compile:
-            options.goma = None
             Compile()(options)
         else:
             ninja(options.build_root, 'test_suite', options.verbose)
@@ -506,20 +508,19 @@ class Run(Init):
                       repo_path(options.build_root,
                                 get_artifact_dir('devtools-frontend'),
                                 'gen'))),
-            'TEST_SUITE':
-            repo_path(options.build_root, get_artifact_dir('test_suite')),
         }
+        args = ['--']
         if options.debug:
-            env['DEBUG_TEST'] = '1'
+            args.append('--debug')
         run_process(sys.executable,
-                    repo_path('//scripts/test/run_test_suite.py'),
-                    '--chrome-features=WebAssemblySimd',
-                    '--chrome-features=SharedArrayBuffer',
-                    '--test-suite',
+                    NODE,
+                    '--output',
+                    repo_path('//node_modules/mocha/bin/mocha.js'),
+                    '--config',
                     repo_path(options.build_root,
-                              get_artifact_dir('test_suite')),
+                              get_artifact_dir('test_suite'), '.mocharc.js'),
+                    *args,
                     env=env,
-                    cwd=repo_path(options.build_root),
                     verbose=options.verbose or options.debug)
 
 

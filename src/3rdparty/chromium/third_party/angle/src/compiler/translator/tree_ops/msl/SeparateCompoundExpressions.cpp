@@ -7,9 +7,9 @@
 #include <unordered_map>
 
 #include "common/system_utils.h"
-#include "compiler/translator/msl/IntermRebuild.h"
-#include "compiler/translator/tree_ops/SimplifyLoopConditions.h"
+#include "compiler/translator/IntermRebuild.h"
 #include "compiler/translator/tree_ops/msl/SeparateCompoundExpressions.h"
+#include "compiler/translator/tree_util/IntermNode_util.h"
 #include "compiler/translator/util.h"
 
 using namespace sh;
@@ -173,6 +173,12 @@ class Separator : public TIntermRebuild
         return mStmtsStack.back();
     }
 
+    bool nodeExistsInCurrStmts(TIntermNode *node)
+    {
+        const auto &currStmts = getCurrStmts();
+        return std::find(currStmts.begin(), currStmts.end(), node) != currStmts.end();
+    }
+
     std::unordered_map<const TVariable *, TIntermDeclaration *> &getCurrBindingMap()
     {
         ASSERT(!mBindingMapStack.empty());
@@ -261,9 +267,7 @@ class Separator : public TIntermRebuild
             return;
         }
         auto &bindingMap = getCurrBindingMap();
-        const Name name  = mIdGen.createNewName();
-        auto *var =
-            new TVariable(&mSymbolTable, name.rawName(), &newExpr.getType(), name.symbolType());
+        auto *var        = CreateTempVariable(&mSymbolTable, &newExpr.getType(), EvqTemporary);
         auto *decl = new TIntermDeclaration(var, &newExpr);
         pushStmt(*decl);
         mExprMap[&oldExpr] = new TIntermSymbol(var);
@@ -455,7 +459,16 @@ class Separator : public TIntermRebuild
         TIntermTyped *newRight      = pullMappedExpr(right, isAssign && !isCompoundAssign);
         if (op == TOperator::EOpComma)
         {
-            pushBinding(node, *newRight);
+            // Avoid adding a redundant right child statement to the statement stack for the current
+            // block. This could occur because the right node is a TIntermAggregate type (such as
+            // EOpCallFunctionInAST type) and as part of the post traversal action for a
+            // TIntermAggregate node, it gets added to the statement stack. In that case, when the
+            // code execution reaches this point, the right node will get added again resulting in a
+            // reudundant statement.
+            if (!nodeExistsInCurrStmts(newRight))
+            {
+                pushBinding(node, *newRight);
+            }
             return node;
         }
         else
@@ -496,11 +509,7 @@ class Separator : public TIntermRebuild
         TIntermTyped *then  = node.getTrueExpression();
         TIntermTyped *else_ = node.getFalseExpression();
 
-        const Name name = mIdGen.createNewName();
-        TType *newType  = new TType(node.getType());
-        newType->setInterfaceBlock(nullptr);
-        auto *var = new TVariable(&mSymbolTable, name.rawName(), newType, name.symbolType());
-
+        auto *var               = CreateTempVariable(&mSymbolTable, &node.getType(), EvqTemporary);
         TIntermTyped *newElse   = pullMappedExpr(else_, false);
         TIntermBlock *elseBlock = &buildBlockWithTailAssign(*var, *newElse);
         TIntermTyped *newThen   = pullMappedExpr(then, true);
@@ -635,7 +644,7 @@ class Separator : public TIntermRebuild
     PostResult visitConstantUnionPost(TIntermConstantUnion &node) override
     {
         const TType &type = node.getType();
-        if (!type.isScalar())
+        if (!type.isScalar() && !type.isVector() && !type.isMatrix())
         {
             pushBinding(node, node);
         }
@@ -663,11 +672,6 @@ bool sh::SeparateCompoundExpressions(TCompiler &compiler,
     if (angle::GetBoolEnvironmentVar("GMT_DISABLE_SEPARATE_COMPOUND_EXPRESSIONS"))
     {
         return true;
-    }
-
-    if (!SimplifyLoopConditions(&compiler, &root, &compiler.getSymbolTable()))
-    {
-        return false;
     }
 
     if (!PrePass(compiler).rebuildRoot(root))

@@ -79,10 +79,10 @@ StyleSheetContents::StyleSheetContents(const CSSParserContext* context,
       did_load_error_occur_(false),
       is_mutable_(false),
       has_font_face_rule_(false),
-      has_viewport_rule_(false),
       has_media_queries_(false),
       has_single_owner_document_(true),
       is_used_from_text_cache_(false),
+      is_used_from_resource_cache_(false),
       parser_context_(context) {}
 
 StyleSheetContents::StyleSheetContents(const StyleSheetContents& o)
@@ -100,10 +100,10 @@ StyleSheetContents::StyleSheetContents(const StyleSheetContents& o)
       did_load_error_occur_(false),
       is_mutable_(false),
       has_font_face_rule_(o.has_font_face_rule_),
-      has_viewport_rule_(o.has_viewport_rule_),
       has_media_queries_(o.has_media_queries_),
       has_single_owner_document_(true),
       is_used_from_text_cache_(false),
+      is_used_from_resource_cache_(false),
       parser_context_(o.parser_context_) {
   for (unsigned i = 0; i < pre_import_layer_statement_rules_.size(); ++i) {
     pre_import_layer_statement_rules_[i] = To<StyleRuleLayerStatement>(
@@ -265,44 +265,12 @@ void StyleSheetContents::ClearRules() {
   child_rules_.clear();
 }
 
-static wtf_size_t ReplaceRuleIfExistsInternal(
-    const StyleRuleBase* old_rule,
+wtf_size_t StyleSheetContents::ReplaceChildRuleIfExists(
+    StyleRuleBase* old_rule,
     StyleRuleBase* new_rule,
-    HeapVector<Member<StyleRuleBase>>& child_rules) {
-  for (wtf_size_t i = 0; i < child_rules.size(); ++i) {
-    StyleRuleBase* rule = child_rules[i].Get();
-    if (rule == old_rule) {
-      child_rules[i] = new_rule;
-      return i;
-    }
-    if (auto* style_rule_group = DynamicTo<StyleRuleGroup>(rule)) {
-      if (ReplaceRuleIfExistsInternal(old_rule, new_rule,
-                                      style_rule_group->ChildRules()) !=
-          std::numeric_limits<wtf_size_t>::max()) {
-        return 0;  // Dummy non-failure value.
-      }
-    }
-  }
-
-  // Not found.
-  return std::numeric_limits<wtf_size_t>::max();
-}
-
-wtf_size_t StyleSheetContents::ReplaceRuleIfExists(StyleRuleBase* old_rule,
-                                                   StyleRuleBase* new_rule,
-                                                   wtf_size_t position_hint) {
-  if (rule_set_diff_) {
-    rule_set_diff_->AddDiff(old_rule);
-    rule_set_diff_->AddDiff(new_rule);
-  }
-
-  if (position_hint < child_rules_.size() &&
-      child_rules_[position_hint] == old_rule) {
-    child_rules_[position_hint] = new_rule;
-    return position_hint;
-  }
-
-  return ReplaceRuleIfExistsInternal(old_rule, new_rule, child_rules_);
+    wtf_size_t position_hint) {
+  return ReplaceStyleRuleInVector(old_rule, new_rule, position_hint,
+                                  child_rules_);
 }
 
 bool StyleSheetContents::WrapperInsertRule(StyleRuleBase* rule,
@@ -459,7 +427,7 @@ void StyleSheetContents::ParserAddNamespace(const AtomicString& prefix,
 const AtomicString& StyleSheetContents::NamespaceURIFromPrefix(
     const AtomicString& prefix) const {
   auto it = namespaces_.find(prefix);
-  return it != namespaces_.end() ? it->value : WTF::g_null_atom;
+  return it != namespaces_.end() ? it->value : g_null_atom;
 }
 
 void StyleSheetContents::ParseAuthorStyleSheet(
@@ -491,13 +459,14 @@ void StyleSheetContents::ParseAuthorStyleSheet(
                         CSSDeferPropertyParsing::kYes);
 }
 
-ParseSheetResult StyleSheetContents::ParseString(const String& sheet_text,
-                                                 bool allow_import_rules) {
+ParseSheetResult StyleSheetContents::ParseString(
+    const String& sheet_text,
+    bool allow_import_rules,
+    CSSDeferPropertyParsing defer_property_parsing) {
   const auto* context =
       MakeGarbageCollected<CSSParserContext>(ParserContext(), this);
   return CSSParser::ParseSheet(context, this, sheet_text,
-                               CSSDeferPropertyParsing::kNo,
-                               allow_import_rules);
+                               defer_property_parsing, allow_import_rules);
 }
 
 bool StyleSheetContents::IsLoading() const {
@@ -617,14 +586,36 @@ Document* StyleSheetContents::SingleOwnerDocument() const {
   return root->ClientSingleOwnerDocument();
 }
 
+CSSStyleSheet* StyleSheetContents::ClientInTreeScope(
+    const TreeScope& tree_scope) const {
+  auto is_in_tree_scope = [&](CSSStyleSheet* sheet,
+                              const TreeScope& tree_scope) -> bool {
+    return sheet->IsAdoptedByTreeScope(tree_scope) ||
+           (sheet->ownerNode() != nullptr &&
+            sheet->ownerNode()->GetTreeScope() == tree_scope);
+  };
+
+  StyleSheetContents* root = RootStyleSheet();
+  for (CSSStyleSheet* sheet : root->completed_clients_) {
+    if (is_in_tree_scope(sheet, tree_scope)) {
+      return sheet;
+    }
+  }
+  for (CSSStyleSheet* sheet : root->loading_clients_) {
+    if (is_in_tree_scope(sheet, tree_scope)) {
+      return sheet;
+    }
+  }
+  return nullptr;
+}
+
 Document* StyleSheetContents::AnyOwnerDocument() const {
   return RootStyleSheet()->ClientAnyOwnerDocument();
 }
 
 static bool ChildRulesHaveFailedOrCanceledSubresources(
-    const HeapVector<Member<StyleRuleBase>>& rules) {
-  for (unsigned i = 0; i < rules.size(); ++i) {
-    const StyleRuleBase* rule = rules[i].Get();
+    const base::span<const Member<StyleRuleBase>>& rules) {
+  for (const StyleRuleBase* rule : rules) {
     switch (rule->GetType()) {
       case StyleRuleBase::kStyle:
         if (To<StyleRule>(rule)->PropertiesHaveFailedOrCanceledSubresources()) {
@@ -651,8 +642,10 @@ static bool ChildRulesHaveFailedOrCanceledSubresources(
       case StyleRuleBase::kCharset:
       case StyleRuleBase::kImport:
       case StyleRuleBase::kNamespace:
+      case StyleRuleBase::kMixin:
         NOTREACHED();
-        break;
+      case StyleRuleBase::kNestedDeclarations:
+      case StyleRuleBase::kFunctionDeclarations:
       case StyleRuleBase::kPage:
       case StyleRuleBase::kPageMargin:
       case StyleRuleBase::kProperty:
@@ -663,9 +656,14 @@ static bool ChildRulesHaveFailedOrCanceledSubresources(
       case StyleRuleBase::kFontPaletteValues:
       case StyleRuleBase::kFontFeatureValues:
       case StyleRuleBase::kFontFeature:
-      case StyleRuleBase::kPositionFallback:
-      case StyleRuleBase::kTry:
       case StyleRuleBase::kViewTransition:
+      case StyleRuleBase::kFunction:
+      case StyleRuleBase::kPositionTry:
+      case StyleRuleBase::kCustomMedia:
+        break;
+      case StyleRuleBase::kApplyMixin:
+        // TODO(sesse): Should we go down into the rules here?
+        // Do we need to do a new name lookup then?
         break;
       case StyleRuleBase::kCounterStyle:
         if (To<StyleRuleCounterStyle>(rule)
@@ -785,8 +783,17 @@ RuleSet& StyleSheetContents::EnsureRuleSet(const MediaQueryEvaluator& medium) {
     if (rule_set_diff_) {
       rule_set_diff_->NewRuleSetCreated(rule_set_);
     }
+    rule_set_->CompactRulesIfNeeded();
   }
   return *rule_set_.Get();
+}
+
+RuleSet* StyleSheetContents::CreateUnconnectedRuleSet(
+    const MediaQueryEvaluator& medium) const {
+  auto* rule_set = MakeGarbageCollected<RuleSet>();
+  rule_set->AddRulesFromSheet(this, medium);
+  rule_set->CompactRulesIfNeeded();
+  return rule_set;
 }
 
 static void SetNeedsActiveStyleUpdateForClients(

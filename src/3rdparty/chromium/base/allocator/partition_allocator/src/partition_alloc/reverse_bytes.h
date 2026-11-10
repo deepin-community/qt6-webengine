@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_REVERSE_BYTES_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_REVERSE_BYTES_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_REVERSE_BYTES_H_
+#define PARTITION_ALLOC_REVERSE_BYTES_H_
 
 // This header defines drop-in constexpr replacements for the
 // byte-reversing routines that we used from `//base/sys_byteorder.h`.
@@ -12,7 +17,7 @@
 
 #include <cstdint>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_config.h"
 
 namespace partition_alloc::internal {
@@ -46,4 +51,4 @@ constexpr uintptr_t ReverseBytes(uintptr_t value) {
 
 }  // namespace partition_alloc::internal
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_REVERSE_BYTES_H_
+#endif  // PARTITION_ALLOC_REVERSE_BYTES_H_

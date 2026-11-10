@@ -6,8 +6,7 @@
 
 #include <sstream>
 
-#include "core/fxcrt/span_util.h"
-#include "third_party/base/notreached.h"
+#include "core/fxcrt/notreached.h"
 
 CPDF_StringArchiveStream::CPDF_StringArchiveStream(fxcrt::ostringstream* stream)
     : stream_(stream) {}
@@ -15,11 +14,11 @@ CPDF_StringArchiveStream::CPDF_StringArchiveStream(fxcrt::ostringstream* stream)
 CPDF_StringArchiveStream::~CPDF_StringArchiveStream() = default;
 
 FX_FILESIZE CPDF_StringArchiveStream::CurrentOffset() const {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool CPDF_StringArchiveStream::WriteBlock(pdfium::span<const uint8_t> buffer) {
-  auto chars = fxcrt::reinterpret_span<const char>(buffer);
+  auto chars = pdfium::as_chars(buffer);
   stream_->write(chars.data(), chars.size());
   return true;
 }

@@ -4,6 +4,7 @@
 
 #include "components/power_metrics/system_power_monitor.h"
 
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -15,10 +16,10 @@ class FakeProvider : public EnergyMetricsProvider {
  public:
   void set_metrics(EnergyMetrics metrics) { metrics_ = metrics; }
 
-  absl::optional<EnergyMetrics> CaptureMetrics() override { return metrics_; }
+  std::optional<EnergyMetrics> CaptureMetrics() override { return metrics_; }
 
  private:
-  absl::optional<EnergyMetrics> metrics_;
+  std::optional<EnergyMetrics> metrics_;
 };
 
 class FakeDelegate : public SystemPowerMonitorDelegate {
@@ -31,23 +32,23 @@ class FakeDelegate : public SystemPowerMonitorDelegate {
                          base::TimeTicks timestamp,
                          int64_t power) override {
     timestamp_ = timestamp;
-    if (strcmp(category, "Package Power (mW)") == 0) {
+    if (UNSAFE_TODO(strcmp(category, "Package Power (mW)")) == 0) {
       system_power_.package_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "CPU Power (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "CPU Power (mW)")) == 0) {
       system_power_.cpu_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "iGPU Power (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "iGPU Power (mW)")) == 0) {
       system_power_.gpu_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "DRAM Power (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "DRAM Power (mW)")) == 0) {
       system_power_.dram_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "Psys Power (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "Psys Power (mW)")) == 0) {
       system_power_.psys_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "VDDCR VDD (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "VDDCR VDD (mW)")) == 0) {
       system_power_.vdd_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "VDDCR SOC (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "VDDCR SOC (mW)")) == 0) {
       system_power_.soc_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "Current Socket (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "Current Socket (mW)")) == 0) {
       system_power_.socket_nanojoules = static_cast<uint64_t>(power);
-    } else if (strcmp(category, "APU Power (mW)") == 0) {
+    } else if (UNSAFE_TODO(strcmp(category, "APU Power (mW)")) == 0) {
       system_power_.apu_nanojoules = static_cast<uint64_t>(power);
     }
   }
@@ -140,7 +141,7 @@ TEST_F(SystemPowerMonitorHelperTest, MonitorHelperStartStop) {
 
 TEST_F(SystemPowerMonitorHelperTest, TimerStartFailed_InvalidSample) {
   // We haven't set metrics for provider, so monitor gets an
-  // absl::nullopt sample at the beginning and it will not start.
+  // std::nullopt sample at the beginning and it will not start.
   helper()->Start();
   ASSERT_FALSE(helper()->IsTimerRunningForTesting());
 }

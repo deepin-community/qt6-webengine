@@ -4,12 +4,19 @@
 
 /**
  * @fileoverview PasswordManagerProxy is an abstraction over
- * chrome.passwordsPrivate which facilitates testing.
+ * chrome.passwordsPrivate and a Mojo remote. It is intended to facilitate
+ * testing. The chrome.passwordsPrivate API is being migrated to use Mojo.
  */
+
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+
+import {PageCallbackRouter, PageHandlerFactory, PageHandlerRemote} from './password_manager.mojom-webui.js';
 
 export type BlockedSite = chrome.passwordsPrivate.ExceptionEntry;
 
-export type AccountStorageOptInStateChangedListener = (optInState: boolean) =>
+export type AccountStorageEnabledStateChangedListener =
+    (enabledState: boolean) => void;
+export type ShouldShowAccountStorageToggleChangedListener = (show: boolean) =>
     void;
 export type CredentialsChangedListener =
     (credentials: chrome.passwordsPrivate.PasswordUiEntry[]) => void;
@@ -27,8 +34,7 @@ export type PasswordManagerAuthTimeoutListener = () => void;
  * These values are persisted to logs. Entries should not be renumbered and
  * numeric values should never be reused.
  *
- * Needs to stay in sync with PasswordCheckInteraction in enums.xml and
- * password_manager_metrics_util.h.
+ * Needs to stay in sync with PasswordCheckInteraction in enums.xml.
  */
 export enum PasswordCheckInteraction {
   START_CHECK_AUTOMATICALLY = 0,
@@ -46,8 +52,7 @@ export enum PasswordCheckInteraction {
 }
 
 /**
- * Should be kept in sync with
- * |password_manager::metrics_util::PasswordViewPageInteractions|.
+ * Should be kept in sync with PasswordViewPageInteractions in enums.xml.
  * These values are persisted to logs. Entries should not be renumbered and
  * numeric values should never be reused.
  */
@@ -193,6 +198,14 @@ export interface PasswordManagerProxy {
       reason: chrome.passwordsPrivate.PlaintextReason): Promise<string>;
 
   /**
+   * Copies the backup password for a specific ID to the clipboard.
+   * @param id The id for the password entry being being retrieved.
+   * @return A promise that resolves to `true` if the copy was successful, and
+   *     `false` otherwise.
+   */
+  copyPlaintextBackupPassword(id: number): Promise<boolean>;
+
+  /**
    * Saves a new password entry described by the given |options|.
    * @param options Details about a new password and storage to be used.
    * @return A promise that resolves when the new entry is added.
@@ -231,6 +244,14 @@ export interface PasswordManagerProxy {
    */
   removeCredential(
       id: number, fromStores: chrome.passwordsPrivate.PasswordStoreSet): void;
+
+  /**
+   * Should remove the backup password of a credential and notify that the list
+   * has changed.
+   * @param id The id for the credential being updated. No-op if |id| is not in
+   *     the list.
+   */
+  removeBackupPassword(id: number): void;
 
   /**
    * Should remove the blocked site and notify that the list has changed.
@@ -306,8 +327,9 @@ export interface PasswordManagerProxy {
   /**
    * Switches Biometric authentication before filling state after
    * successful authentication.
+   * @return A promise that resolves with authentication result.
    */
-  switchBiometricAuthBeforeFillingState(): void;
+  switchBiometricAuthBeforeFillingState(): Promise<boolean>;
 
   /**
    * Shows the file with the exported passwords in the OS shell.
@@ -341,36 +363,48 @@ export interface PasswordManagerProxy {
   extendAuthValidity(): void;
 
   /**
-   * Add an observer to the account storage opt-in state.
+   * Add an observer to the account storage enabled state.
    */
-  addAccountStorageOptInStateListener(
-      listener: AccountStorageOptInStateChangedListener): void;
+  addAccountStorageEnabledStateListener(
+      listener: AccountStorageEnabledStateChangedListener): void;
 
   /**
-   * Remove an observer to the account storage opt-in state.
+   * Remove an observer to the account storage enabled state.
    */
-  removeAccountStorageOptInStateListener(
-      listener: AccountStorageOptInStateChangedListener): void;
+  removeAccountStorageEnabledStateListener(
+      listener: AccountStorageEnabledStateChangedListener): void;
 
   /**
-   * Requests the account-storage opt-in state of the current user.
-   * @return A promise that resolves to the opt-in state.
+   * Add an observer to the account storage toggle visibility state.
    */
-  isOptedInForAccountStorage(): Promise<boolean>;
+  addShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener): void;
+
 
   /**
-   * Triggers the opt-in or opt-out flow for the account storage.
-   * @param optIn Whether the user wants to opt in or opt out.
+   * Remove an observer to the account storage toggle visibility state.
    */
-  optInForAccountStorage(optIn: boolean): void;
+  removeShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener): void;
 
   /**
-   * Requests whether the account store is a default location for saving
-   * passwords. False means the device store is a default one. Must be called
-   * when the current user has already opted-in for account storage.
-   * @return A promise that resolves to whether the account store is default.
+   * Requests the account-storage enabled state of the current user.
+   * @return A promise that resolves to the enabled state.
    */
-  isAccountStoreDefault(): Promise<boolean>;
+  isAccountStorageEnabled(): Promise<boolean>;
+
+  /**
+   * Triggers the enabling/disabling flow for the account storage.
+   * @param enabled Whether the user wants to enable or disable.
+   */
+  setAccountStorageEnabled(enabled: boolean): void;
+
+  /**
+   * Requests whether the account storage toggle should be shown.
+   * @return A promise that resolves to whether the toggle should be shown.
+   */
+  shouldShowAccountStorageSettingToggle(): Promise<boolean>;
+
 
   /**
    * Moves a list of passwords from the device to the account
@@ -380,12 +414,45 @@ export interface PasswordManagerProxy {
 
   /** Dismiss the menu notifications for the Safety Hub password module. */
   dismissSafetyHubPasswordMenuNotification(): void;
+
+  /** Starts the flow for changing Password Manager PIN. */
+  changePasswordManagerPin(): Promise<boolean>;
+
+  /** Checks whether changing the Password Manager PIN is possible. */
+  isPasswordManagerPinAvailable(): Promise<boolean>;
+
+  /**
+   * Starts the flow for disconnecting the Cloud Authenticator
+   * (Passkeys Enclave).
+   */
+  disconnectCloudAuthenticator(): Promise<boolean>;
+
+  /**
+   * Checks whether the Chrome client is connected to the Cloud Authenticator
+   * (Passkeys Enclave).
+   */
+  isConnectedToCloudAuthenticator(): Promise<boolean>;
+
+  /**
+   * Deletes all password manager data (passwords, passkeys, etc.)
+   */
+  deleteAllPasswordManagerData(): Promise<boolean>;
 }
 
 /**
  * Implementation that accesses the private API.
  */
 export class PasswordManagerImpl implements PasswordManagerProxy {
+  callbackRouter: PageCallbackRouter = new PageCallbackRouter();
+  handler: PageHandlerRemote = new PageHandlerRemote();
+
+  constructor() {
+    const factory = PageHandlerFactory.getRemote();
+    factory.createPageHandler(
+        this.callbackRouter.$.bindNewPipeAndPassRemote(),
+        this.handler.$.bindNewPipeAndPassReceiver());
+  }
+
   addSavedPasswordListChangedListener(listener: CredentialsChangedListener) {
     chrome.passwordsPrivate.onSavedPasswordsListChanged.addListener(listener);
   }
@@ -479,6 +546,11 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
     return chrome.passwordsPrivate.requestPlaintextPassword(id, reason);
   }
 
+  copyPlaintextBackupPassword(id: number) {
+    return this.handler.copyPlaintextBackupPassword(id).then(
+        result => result.success);
+  }
+
   addPassword(options: chrome.passwordsPrivate.AddPasswordOptions) {
     return chrome.passwordsPrivate.addPassword(options);
   }
@@ -490,6 +562,10 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
   removeCredential(
       id: number, fromStores: chrome.passwordsPrivate.PasswordStoreSet) {
     chrome.passwordsPrivate.removeCredential(id, fromStores);
+  }
+
+  removeBackupPassword(id: number) {
+    this.handler.removeBackupPassword(id);
   }
 
   removeBlockedSite(id: number) {
@@ -551,7 +627,7 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
   }
 
   switchBiometricAuthBeforeFillingState() {
-    chrome.passwordsPrivate.switchBiometricAuthBeforeFillingState();
+    return chrome.passwordsPrivate.switchBiometricAuthBeforeFillingState();
   }
 
   showExportedFileInShell(filePath: string) {
@@ -577,28 +653,40 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
     chrome.passwordsPrivate.extendAuthValidity();
   }
 
-  addAccountStorageOptInStateListener(
-      listener: AccountStorageOptInStateChangedListener) {
-    chrome.passwordsPrivate.onAccountStorageOptInStateChanged.addListener(
+  addAccountStorageEnabledStateListener(
+      listener: AccountStorageEnabledStateChangedListener) {
+    chrome.passwordsPrivate.onAccountStorageEnabledStateChanged.addListener(
         listener);
   }
 
-  removeAccountStorageOptInStateListener(
-      listener: AccountStorageOptInStateChangedListener) {
-    chrome.passwordsPrivate.onAccountStorageOptInStateChanged.removeListener(
+  removeAccountStorageEnabledStateListener(
+      listener: AccountStorageEnabledStateChangedListener) {
+    chrome.passwordsPrivate.onAccountStorageEnabledStateChanged.removeListener(
         listener);
   }
 
-  isOptedInForAccountStorage() {
-    return chrome.passwordsPrivate.isOptedInForAccountStorage();
+  addShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener) {
+    chrome.passwordsPrivate.onShouldShowAccountStorageSettingToggleChanged
+        .addListener(listener);
   }
 
-  optInForAccountStorage(optIn: boolean) {
-    chrome.passwordsPrivate.optInForAccountStorage(optIn);
+  removeShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener) {
+    chrome.passwordsPrivate.onShouldShowAccountStorageSettingToggleChanged
+        .removeListener(listener);
   }
 
-  isAccountStoreDefault() {
-    return chrome.passwordsPrivate.isAccountStoreDefault();
+  isAccountStorageEnabled() {
+    return chrome.passwordsPrivate.isAccountStorageEnabled();
+  }
+
+  setAccountStorageEnabled(enabled: boolean) {
+    chrome.passwordsPrivate.setAccountStorageEnabled(enabled);
+  }
+
+  shouldShowAccountStorageSettingToggle() {
+    return chrome.passwordsPrivate.shouldShowAccountStorageSettingToggle();
   }
 
   movePasswordsToAccount(ids: number[]) {
@@ -609,12 +697,35 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
     chrome.send('dismissSafetyHubPasswordMenuNotification');
   }
 
+  changePasswordManagerPin() {
+    return chrome.passwordsPrivate.changePasswordManagerPin();
+  }
+
+  isPasswordManagerPinAvailable() {
+    return chrome.passwordsPrivate.isPasswordManagerPinAvailable();
+  }
+
+  disconnectCloudAuthenticator() {
+    return chrome.passwordsPrivate.disconnectCloudAuthenticator();
+  }
+
+  isConnectedToCloudAuthenticator() {
+    return chrome.passwordsPrivate.isConnectedToCloudAuthenticator();
+  }
+
+  deleteAllPasswordManagerData() {
+    return loadTimeData.getBoolean('enablePasswordManagerMojoApi') ?
+        this.handler.deleteAllPasswordManagerData().then(
+            result => result.success) :
+        chrome.passwordsPrivate.deleteAllPasswordManagerData();
+  }
+
   static getInstance(): PasswordManagerProxy {
     return instance || (instance = new PasswordManagerImpl());
   }
 
-  static setInstance(obj: PasswordManagerProxy) {
-    instance = obj;
+  static setInstance(proxy: PasswordManagerProxy) {
+    instance = proxy;
   }
 }
 

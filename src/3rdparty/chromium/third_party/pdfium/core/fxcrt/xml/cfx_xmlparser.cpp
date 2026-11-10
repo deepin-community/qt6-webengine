@@ -9,24 +9,25 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <stack>
 #include <utility>
 
 #include "core/fxcrt/autorestorer.h"
 #include "core/fxcrt/cfx_seekablestreamproxy.h"
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_codepage.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/notreached.h"
 #include "core/fxcrt/xml/cfx_xmlchardata.h"
 #include "core/fxcrt/xml/cfx_xmldocument.h"
 #include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "core/fxcrt/xml/cfx_xmlinstruction.h"
 #include "core/fxcrt/xml/cfx_xmlnode.h"
 #include "core/fxcrt/xml/cfx_xmltext.h"
-#include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
 
 namespace {
 
@@ -57,9 +58,8 @@ constexpr FX_XMLNAMECHAR kXMLNameChars[] = {
 
 // static
 bool CFX_XMLParser::IsXMLNameChar(wchar_t ch, bool bFirstChar) {
-  auto* it = std::lower_bound(
-      std::begin(kXMLNameChars), std::end(kXMLNameChars), ch,
-      [](const FX_XMLNAMECHAR& arg, wchar_t ch) { return arg.wEnd < ch; });
+  auto* it = std::ranges::lower_bound(kXMLNameChars, ch, std::less<>{},
+                                      &FX_XMLNAMECHAR::wEnd);
   return it != std::end(kXMLNameChars) && ch >= it->wStart &&
          (!bFirstChar || it->bStartChar);
 }
@@ -75,10 +75,10 @@ CFX_XMLParser::CFX_XMLParser(const RetainPtr<IFX_SeekableReadStream>& pStream) {
   }
   stream_ = proxy;
 
-  xml_plane_size_ = std::min(
-      xml_plane_size_, pdfium::base::checked_cast<size_t>(stream_->GetSize()));
+  xml_plane_size_ = std::min(xml_plane_size_,
+                             pdfium::checked_cast<size_t>(stream_->GetSize()));
 
-  current_text_.reserve(kCurrentTextReserve);
+  current_text_.Reserve(kCurrentTextReserve);
 }
 
 CFX_XMLParser::~CFX_XMLParser() = default;
@@ -87,17 +87,22 @@ std::unique_ptr<CFX_XMLDocument> CFX_XMLParser::Parse() {
   auto doc = std::make_unique<CFX_XMLDocument>();
   AutoRestorer<UnownedPtr<CFX_XMLNode>> restorer(&current_node_);
   current_node_ = doc->GetRoot();
-  return DoSyntaxParse(doc.get()) ? std::move(doc) : nullptr;
+  if (!DoSyntaxParse(doc.get())) {
+    return nullptr;
+  }
+  return doc;
 }
 
 bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
-  if (xml_plane_size_ <= 0)
+  if (xml_plane_size_ <= 0) {
     return false;
+  }
 
   FX_SAFE_SIZE_T alloc_size_safe = xml_plane_size_;
   alloc_size_safe += 1;  // For NUL.
-  if (!alloc_size_safe.IsValid())
+  if (!alloc_size_safe.IsValid()) {
     return false;
+  }
 
   size_t current_buffer_idx = 0;
   size_t buffer_size = 0;
@@ -114,12 +119,15 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
 
   while (true) {
     if (current_buffer_idx >= buffer_size) {
-      if (stream_->IsEOF())
+      if (stream_->IsEOF()) {
         return true;
+      }
 
-      size_t buffer_chars = stream_->ReadBlock(buffer.data(), xml_plane_size_);
-      if (buffer_chars == 0)
+      size_t buffer_chars =
+          stream_->ReadBlock(pdfium::span(buffer).first(xml_plane_size_));
+      if (buffer_chars == 0) {
         return true;
+      }
 
       current_buffer_idx = 0;
       buffer_size = buffer_chars;
@@ -130,7 +138,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
       switch (current_parser_state) {
         case FDE_XmlSyntaxState::Text:
           if (ch == L'<') {
-            if (!current_text_.empty()) {
+            if (!current_text_.IsEmpty()) {
               current_node_->AppendLastChild(
                   doc->CreateNode<CFX_XMLText>(GetTextData()));
             } else {
@@ -140,8 +148,9 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           } else {
             // Fail if there is text outside of the root element, ignore
             // whitespace/null.
-            if (node_type_stack.empty() && ch && !FXSYS_iswspace(ch))
+            if (node_type_stack.empty() && ch && !FXSYS_iswspace(ch)) {
               return false;
+            }
             ProcessTextChar(ch);
             current_buffer_idx++;
           }
@@ -163,9 +172,10 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           }
           break;
         case FDE_XmlSyntaxState::Target:
-          if (!IsXMLNameChar(ch, current_text_.empty())) {
-            if (current_text_.empty())
+          if (!IsXMLNameChar(ch, current_text_.IsEmpty())) {
+            if (current_text_.IsEmpty()) {
               return false;
+            }
 
             current_parser_state = FDE_XmlSyntaxState::TargetData;
 
@@ -177,14 +187,15 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
               current_node_ = node;
             }
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_buffer_idx++;
           }
           break;
         case FDE_XmlSyntaxState::Tag:
-          if (!IsXMLNameChar(ch, current_text_.empty())) {
-            if (current_text_.empty())
+          if (!IsXMLNameChar(ch, current_text_.IsEmpty())) {
+            if (current_text_.IsEmpty()) {
               return false;
+            }
 
             current_parser_state = FDE_XmlSyntaxState::AttriName;
 
@@ -192,17 +203,17 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             current_node_->AppendLastChild(child);
             current_node_ = child;
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_buffer_idx++;
           }
           break;
         case FDE_XmlSyntaxState::AttriName:
-          if (current_text_.empty() && IsXMLWhiteSpace(ch)) {
+          if (current_text_.IsEmpty() && IsXMLWhiteSpace(ch)) {
             current_buffer_idx++;
             break;
           }
-          if (!IsXMLNameChar(ch, current_text_.empty())) {
-            if (current_text_.empty()) {
+          if (!IsXMLNameChar(ch, current_text_.IsEmpty())) {
+            if (current_text_.IsEmpty()) {
               if (node_type_stack.top() == CFX_XMLNode::Type::kElement) {
                 if (ch == L'>' || ch == L'/') {
                   current_parser_state = FDE_XmlSyntaxState::BreakElement;
@@ -230,7 +241,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
               current_attribute_name = GetTextData();
             }
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_buffer_idx++;
           }
           break;
@@ -265,16 +276,18 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           break;
         case FDE_XmlSyntaxState::AttriValue:
           if (ch == current_quote_character) {
-            if (entity_start_.has_value())
+            if (entity_start_.has_value()) {
               return false;
+            }
 
             current_quote_character = 0;
             current_buffer_idx++;
             current_parser_state = FDE_XmlSyntaxState::AttriName;
 
             CFX_XMLElement* elem = ToXMLElement(current_node_);
-            if (elem)
+            if (elem) {
               elem->SetAttribute(current_attribute_name, GetTextData());
+            }
 
             current_attribute_name.clear();
           } else {
@@ -284,21 +297,23 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           break;
         case FDE_XmlSyntaxState::CloseInstruction:
           if (ch != L'>') {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_parser_state = FDE_XmlSyntaxState::TargetData;
-          } else if (!current_text_.empty()) {
+          } else if (!current_text_.IsEmpty()) {
             ProcessTargetData();
           } else {
             current_buffer_idx++;
-            if (node_type_stack.empty())
+            if (node_type_stack.empty()) {
               return false;
+            }
 
             node_type_stack.pop();
             current_parser_state = FDE_XmlSyntaxState::Text;
 
             if (current_node_ &&
-                current_node_->GetType() == CFX_XMLNode::Type::kInstruction)
+                current_node_->GetType() == CFX_XMLNode::Type::kInstruction) {
               current_node_ = current_node_->GetParent();
+            }
           }
           break;
         case FDE_XmlSyntaxState::BreakElement:
@@ -312,17 +327,19 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           current_buffer_idx++;
           break;
         case FDE_XmlSyntaxState::CloseElement:
-          if (!IsXMLNameChar(ch, current_text_.empty())) {
+          if (!IsXMLNameChar(ch, current_text_.IsEmpty())) {
             if (ch == L'>') {
-              if (node_type_stack.empty())
+              if (node_type_stack.empty()) {
                 return false;
+              }
 
               node_type_stack.pop();
               current_parser_state = FDE_XmlSyntaxState::Text;
 
               CFX_XMLElement* element = ToXMLElement(current_node_);
-              if (!element)
+              if (!element) {
                 return false;
+              }
 
               WideString element_name = GetTextData();
               if (element_name.GetLength() > 0 &&
@@ -335,17 +352,17 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
               return false;
             }
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
           }
           current_buffer_idx++;
           break;
         case FDE_XmlSyntaxState::SkipCommentOrDecl: {
-          auto current_span =
-              pdfium::make_span(buffer).subspan(current_buffer_idx);
-          if (FXSYS_wcsnicmp(current_span.data(), L"--", 2) == 0) {
+          auto current_view =
+              WideStringView(pdfium::span(buffer).subspan(current_buffer_idx));
+          if (current_view.First(2).EqualsASCII("--")) {
             current_buffer_idx += 2;
             current_parser_state = FDE_XmlSyntaxState::SkipComment;
-          } else if (FXSYS_wcsnicmp(current_span.data(), L"[CDATA[", 7) == 0) {
+          } else if (current_view.First(7).EqualsASCIINoCase("[CDATA[")) {
             current_buffer_idx += 7;
             current_parser_state = FDE_XmlSyntaxState::SkipCData;
           } else {
@@ -356,15 +373,15 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           break;
         }
         case FDE_XmlSyntaxState::SkipCData: {
-          auto current_span =
-              pdfium::make_span(buffer).subspan(current_buffer_idx);
-          if (FXSYS_wcsnicmp(current_span.data(), L"]]>", 3) == 0) {
+          auto current_view =
+              WideStringView(pdfium::span(buffer).subspan(current_buffer_idx));
+          if (current_view.First(3).EqualsASCII("]]>")) {
             current_buffer_idx += 3;
             current_parser_state = FDE_XmlSyntaxState::Text;
             current_node_->AppendLastChild(
                 doc->CreateNode<CFX_XMLCharData>(GetTextData()));
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_buffer_idx++;
           }
           break;
@@ -373,14 +390,16 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           if (current_character_to_skip_to == L'\'' ||
               current_character_to_skip_to == L'\"') {
             current_buffer_idx++;
-            if (ch != current_character_to_skip_to)
+            if (ch != current_character_to_skip_to) {
               break;
+            }
 
             character_to_skip_too_stack.pop();
-            if (character_to_skip_too_stack.empty())
+            if (character_to_skip_too_stack.empty()) {
               current_parser_state = FDE_XmlSyntaxState::Text;
-            else
+            } else {
               current_character_to_skip_to = character_to_skip_too_stack.top();
+            }
           } else {
             switch (ch) {
               case L'<':
@@ -419,9 +438,9 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           }
           break;
         case FDE_XmlSyntaxState::SkipComment: {
-          auto current_span =
-              pdfium::make_span(buffer).subspan(current_buffer_idx);
-          if (FXSYS_wcsnicmp(current_span.data(), L"-->", 3) == 0) {
+          auto current_view =
+              WideStringView(pdfium::span(buffer).subspan(current_buffer_idx));
+          if (current_view.First(3).EqualsASCII("-->")) {
             current_buffer_idx += 2;
             current_parser_state = FDE_XmlSyntaxState::Text;
           }
@@ -430,7 +449,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
         }
         case FDE_XmlSyntaxState::TargetData:
           if (IsXMLWhiteSpace(ch)) {
-            if (current_text_.empty()) {
+            if (current_text_.IsEmpty()) {
               current_buffer_idx++;
               break;
             }
@@ -455,7 +474,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
               return false;
             }
           } else {
-            current_text_.push_back(ch);
+            current_text_ += ch;
             current_buffer_idx++;
           }
           break;
@@ -463,20 +482,22 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
     }
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void CFX_XMLParser::ProcessTextChar(wchar_t character) {
-  current_text_.push_back(character);
+  current_text_ += character;
 
   if (entity_start_.has_value() && character == L';') {
-    // Copy the entity out into a string and remove from the vector. When we
-    // copy the entity we don't want to copy out the & or the ; so we start
+    // Copy the entity out into a string and remove from the current text. When
+    // we copy the entity we don't want to copy out the & or the ; so we start
     // shifted by one and want to copy 2 less characters in total.
-    WideString csEntity(current_text_.data() + entity_start_.value() + 1,
-                        current_text_.size() - entity_start_.value() - 2);
-    current_text_.erase(current_text_.begin() + entity_start_.value(),
-                        current_text_.end());
+    WideString csEntity = current_text_.Substr(
+        entity_start_.value() + 1,
+        current_text_.GetLength() - entity_start_.value() - 2);
+
+    current_text_.Delete(entity_start_.value(),
+                         current_text_.GetLength() - entity_start_.value());
 
     size_t iLen = csEntity.GetLength();
     if (iLen > 0) {
@@ -484,57 +505,62 @@ void CFX_XMLParser::ProcessTextChar(wchar_t character) {
         uint32_t ch = 0;
         if (iLen > 1 && csEntity[1] == L'x') {
           for (size_t i = 2; i < iLen; i++) {
-            if (!FXSYS_IsHexDigit(csEntity[i]))
+            if (!FXSYS_IsHexDigit(csEntity[i])) {
               break;
+            }
             ch = (ch << 4) + FXSYS_HexCharToInt(csEntity[i]);
           }
         } else {
           for (size_t i = 1; i < iLen; i++) {
-            if (!FXSYS_IsDecimalDigit(csEntity[i]))
+            if (!FXSYS_IsDecimalDigit(csEntity[i])) {
               break;
+            }
             ch = ch * 10 + FXSYS_DecimalCharToInt(csEntity[i]);
           }
         }
-        if (ch > kMaxCharRange)
+        if (ch > kMaxCharRange) {
           ch = ' ';
+        }
 
         character = static_cast<wchar_t>(ch);
-        if (character != 0)
-          current_text_.push_back(character);
+        if (character != 0) {
+          current_text_ += character;
+        }
       } else {
-        if (csEntity == L"amp") {
-          current_text_.push_back(L'&');
-        } else if (csEntity == L"lt") {
-          current_text_.push_back(L'<');
-        } else if (csEntity == L"gt") {
-          current_text_.push_back(L'>');
-        } else if (csEntity == L"apos") {
-          current_text_.push_back(L'\'');
-        } else if (csEntity == L"quot") {
-          current_text_.push_back(L'"');
+        if (csEntity.EqualsASCII("amp")) {
+          current_text_ += L'&';
+        } else if (csEntity.EqualsASCII("lt")) {
+          current_text_ += L'<';
+        } else if (csEntity.EqualsASCII("gt")) {
+          current_text_ += L'>';
+        } else if (csEntity.EqualsASCII("apos")) {
+          current_text_ += L'\'';
+        } else if (csEntity.EqualsASCII("quot")) {
+          current_text_ += L'"';
         }
       }
     }
-    entity_start_ = absl::nullopt;
+    entity_start_ = std::nullopt;
   } else if (!entity_start_.has_value() && character == L'&') {
-    entity_start_ = current_text_.size() - 1;
+    entity_start_ = current_text_.GetLength() - 1;
   }
 }
 
 void CFX_XMLParser::ProcessTargetData() {
   WideString target_data = GetTextData();
-  if (target_data.IsEmpty())
+  if (target_data.IsEmpty()) {
     return;
+  }
 
   CFX_XMLInstruction* instruction = ToXMLInstruction(current_node_);
-  if (instruction)
+  if (instruction) {
     instruction->AppendData(target_data);
+  }
 }
 
 WideString CFX_XMLParser::GetTextData() {
-  WideString ret(current_text_.data(), current_text_.size());
-  entity_start_ = absl::nullopt;
-  current_text_.clear();
-  current_text_.reserve(kCurrentTextReserve);
+  WideString ret = std::move(current_text_);
+  current_text_.Reserve(kCurrentTextReserve);
+  entity_start_ = std::nullopt;
   return ret;
 }

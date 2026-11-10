@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_STATS_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_STATS_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PARTITION_STATS_H_
+#define PARTITION_ALLOC_PARTITION_STATS_H_
 
 #include <cstddef>
 #include <cstdint>
 
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_config.h"
 #include "partition_alloc/partition_alloc_constants.h"
 
@@ -38,7 +43,7 @@ struct ThreadCacheStats {
   uint32_t metadata_overhead;
 
 #if PA_CONFIG(THREAD_CACHE_ALLOC_STATS)
-  uint64_t allocs_per_bucket_[internal::kNumBuckets + 1];
+  uint64_t allocs_per_bucket_[BucketIndexLookup::kNumBuckets + 1];
 #endif  // PA_CONFIG(THREAD_CACHE_ALLOC_STATS)
 };
 
@@ -56,7 +61,7 @@ struct ThreadAllocStats {
   uint64_t dealloc_total_size;
 };
 
-struct LightweightQuarantineStats {
+struct SchedulerLoopQuarantineStats {
   size_t size_in_bytes;
   size_t count;
   size_t cumulative_size_in_bytes;
@@ -77,7 +82,7 @@ struct PartitionMemoryStats {
   size_t total_active_count;  // Total count of active objects in the partition.
   size_t total_decommittable_bytes;  // Total bytes that could be decommitted.
   size_t total_discardable_bytes;    // Total bytes that could be discarded.
-#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   size_t
       total_brp_quarantined_bytes;  // Total bytes that are quarantined by BRP.
   size_t total_brp_quarantined_count;       // Total number of slots that are
@@ -91,6 +96,9 @@ struct PartitionMemoryStats {
   bool has_thread_cache;
   ThreadCacheStats current_thread_cache_stats;
   ThreadCacheStats all_thread_caches_stats;
+
+  bool has_scheduler_loop_quarantine;
+  SchedulerLoopQuarantineStats scheduler_loop_quarantine_stats_total;
 
   // Count and total duration of system calls made since process start. May not
   // be reported on all platforms.
@@ -159,4 +167,4 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) SimplePartitionStatsDumper
 
 }  // namespace partition_alloc
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_STATS_H_
+#endif  // PARTITION_ALLOC_PARTITION_STATS_H_

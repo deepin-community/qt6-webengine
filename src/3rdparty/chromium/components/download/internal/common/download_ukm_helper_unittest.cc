@@ -5,6 +5,7 @@
 #include "components/download/public/common/download_ukm_helper.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -34,8 +35,8 @@ class DownloadUkmHelperTest : public testing::Test {
     test_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
   }
 
-  void ExpectUkmMetrics(const base::StringPiece entry_name,
-                        const std::vector<base::StringPiece>& keys,
+  void ExpectUkmMetrics(std::string_view entry_name,
+                        const std::vector<std::string_view>& keys,
                         const std::vector<int>& values) {
     const auto& entries = test_recorder_->GetEntriesByName(entry_name);
     EXPECT_EQ(1u, entries.size());
@@ -58,7 +59,7 @@ class DownloadUkmHelperTest : public testing::Test {
 TEST_F(DownloadUkmHelperTest, TestBasicReporting) {
   // RecordDownloadStarted
   ukm::SourceId source_id = ukm::UkmRecorder::GetNewSourceID();
-  DownloadContent file_type = DownloadContent::AUDIO;
+  DownloadContent file_type = DownloadContent::kAudio;
   DownloadSource download_source = DownloadSource::UNKNOWN;
   DownloadConnectionSecurity state =
       DownloadConnectionSecurity::DOWNLOAD_SECURE;

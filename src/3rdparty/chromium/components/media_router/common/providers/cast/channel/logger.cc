@@ -71,7 +71,6 @@ ChallengeReplyError AuthErrorToChallengeReplyError(
       return ChallengeReplyError::DIGEST_UNSUPPORTED;
     default:
       NOTREACHED();
-      return ChallengeReplyError::NONE;
   }
 }
 
@@ -82,7 +81,7 @@ LastError::LastError()
       challenge_reply_error(ChallengeReplyError::NONE),
       net_return_value(net::OK) {}
 
-LastError::~LastError() {}
+LastError::~LastError() = default;
 
 Logger::Logger() {
   // Logger may not be necessarily be created on the IO thread, but logging
@@ -90,7 +89,7 @@ Logger::Logger() {
   DETACH_FROM_THREAD(thread_checker_);
 }
 
-Logger::~Logger() {}
+Logger::~Logger() = default;
 
 void Logger::LogSocketEventWithRv(int channel_id,
                                   ChannelEvent channel_event,
@@ -120,8 +119,9 @@ void Logger::MaybeSetLastError(int channel_id,
                                int rv,
                                ChallengeReplyError challenge_reply_error) {
   auto it = last_errors_.find(channel_id);
-  if (it == last_errors_.end())
+  if (it == last_errors_.end()) {
     last_errors_[channel_id] = LastError();
+  }
 
   LastError* last_error = &last_errors_[channel_id];
   if (rv < net::ERR_IO_PENDING) {

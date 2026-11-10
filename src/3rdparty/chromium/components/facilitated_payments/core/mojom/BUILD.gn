@@ -4,8 +4,8 @@
 
 import("//mojo/public/tools/bindings/mojom.gni")
 
-mojom("mojom") {
-  sources = [ "facilitated_payments_agent.mojom" ]
+mojom("pix_code_validator_mojom") {
+  sources = [ "pix_code_validator.mojom" ]
 
   deps = [ "//mojo/public/mojom/base" ]
 }

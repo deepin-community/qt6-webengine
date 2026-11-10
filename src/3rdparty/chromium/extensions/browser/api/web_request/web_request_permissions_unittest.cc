@@ -7,8 +7,8 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
-#include "components/safe_browsing/core/browser/hashprefix_realtime/hash_realtime_utils.h"
 #include "components/safe_browsing/core/common/features.h"
+#include "components/safe_browsing/core/common/hashprefix_realtime/hash_realtime_utils.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/permission_helper.h"
@@ -17,6 +17,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_test.h"
 #include "extensions/browser/process_map.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -148,6 +149,9 @@ TEST_P(ExtensionWebRequestPermissionsWithHashRealTimeDependenceTest,
       {"https://clients2.google.com/service/update2/crx", HIDE_ALL},
       {"https://chrome.google.com/webstore/inlineinstall/detail/"
        "kcnhkahnjcbndmmehfkdnkjomaanaooo",
+       HIDE_ALL},
+      {"https://chromewebstore.googleapis.com/v2/items/"
+       "kcnhkahnjcbndmmehfkdnkjomaanaooo:fetchItemSnippet",
        HIDE_ALL},
   };
   std::vector<TestCase> additional_cases;
@@ -389,7 +393,7 @@ TEST_F(ExtensionWebRequestPermissionsTest,
        CanExtensionAccessURLWithWithheldPermissions) {
   ExtensionsAPIClient api_client;
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("ext").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("ext").AddHostPermission("<all_urls>").Build();
   URLPatternSet all_urls(
       {URLPattern(Extension::kValidHostPermissionSchemes, "<all_urls>")});
   // Simulate withholding the <all_urls> permission.
@@ -490,7 +494,9 @@ TEST_F(ExtensionWebRequestPermissionsTest,
   // Set up the extension to have access to kGoogleCom and withheld access to
   // kExampleCom.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("ext").AddPermissions({kGoogleCom, kExampleCom}).Build();
+      ExtensionBuilder("ext")
+          .AddHostPermissions({kGoogleCom, kExampleCom})
+          .Build();
 
   URLPatternSet kActivePatternSet(
       {URLPattern(Extension::kValidHostPermissionSchemes, kGoogleCom)});

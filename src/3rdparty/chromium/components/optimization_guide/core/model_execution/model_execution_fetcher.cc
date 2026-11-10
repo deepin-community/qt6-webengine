@@ -4,13 +4,18 @@
 
 #include "components/optimization_guide/core/model_execution/model_execution_fetcher.h"
 
+#include "base/command_line.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "components/optimization_guide/core/access_token_helper.h"
+#include "components/optimization_guide/core/model_execution/feature_keys.h"
+#include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
+#include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "google_apis/gaia/gaia_constants.h"
+#include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -26,9 +31,9 @@ namespace {
 constexpr char kGoogleAPITypeName[] = "type.googleapis.com/";
 
 net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
-    proto::ModelExecutionFeature feature) {
+    ModelBasedCapabilityKey feature) {
   switch (feature) {
-    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_WALLPAPER_SEARCH:
+    case ModelBasedCapabilityKey::kWallpaperSearch:
       return net::DefineNetworkTrafficAnnotation(
           "wallpaper_create_themes_model_execution",
           R"(
@@ -61,7 +66,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
             }
           }
         })");
-    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_TAB_ORGANIZATION:
+    case ModelBasedCapabilityKey::kTabOrganization:
       return net::DefineNetworkTrafficAnnotation(
           "tab_organizer_model_execution", R"(
         semantics {
@@ -95,7 +100,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
             }
           }
         })");
-    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_COMPOSE:
+    case ModelBasedCapabilityKey::kCompose:
       return net::DefineNetworkTrafficAnnotation(
           "help_me_write_model_execution", R"(
         semantics {
@@ -130,20 +135,159 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
             }
           }
         })");
-    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_TEST:
+    case ModelBasedCapabilityKey::kTextSafety:
+      // TODO: b/330346344 - Add traffic annotation.
+    case ModelBasedCapabilityKey::kPasswordChangeSubmission:
+      return net::DefineNetworkTrafficAnnotation(
+          "password_change_submission_model_execution", R"(
+        semantics {
+          sender: "Automated Password Change"
+          description:
+            "Analyze page content to find elements that open and submit"
+            " password change forms for Chrome actuation."
+            " Lastly identities if the password change was successful."
+          trigger:
+            "User logged-in with a compromised credential and accepted "
+            "an option from the dialog to change password automatically."
+          destination: GOOGLE_OWNED_SERVICE
+          data:
+            "Title, URL, and content of the page, which may "
+            "potentially contain user input."
+          internal {
+            contacts {
+              email: "chrome-intelligence-core@google.com"
+            }
+          }
+          user_data {
+            type: ACCESS_TOKEN
+            type: SENSITIVE_URL
+            type: WEB_CONTENT
+          }
+          last_reviewed: "2026-07-03"
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "There is no dedicated setting for this feature."
+            "Users are free to choose whether to use the feature "
+            "or not when it's offered."
+          chrome_policy {
+            AutomatedPasswordChangeSettings {
+              AutomatedPasswordChangeSettings: 2
+            }
+          }
+        })");
+    case ModelBasedCapabilityKey::kTest:
+    case ModelBasedCapabilityKey::kBlingPrototyping:
       // Used for testing purposes. No real features use this.
       return MISSING_TRAFFIC_ANNOTATION;
-    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_UNSPECIFIED:
+    case ModelBasedCapabilityKey::kFormsClassifications:
+      return net::DefineNetworkTrafficAnnotation(
+          "forms_classifications_model_execution", R"(
+    semantics {
+      sender: "AutofillAI - Forms Classifications"
+      description:
+        "Analyze page content to classify the types of form fields and store "
+        "those classifications for subsequent autofilling of forms."
+      trigger: "User encounters a web form on page load and the Autofill "
+               "server has selected the form as relevant for model execution."
+      destination: GOOGLE_OWNED_SERVICE
+      data: "Title, URL, and content of the page."
+      internal {
+        contacts {
+          email: "chrome-intelligence-core@google.com"
+        }
+      }
+      user_data {
+        type: ACCESS_TOKEN
+        type: SENSITIVE_URL
+        type: WEB_CONTENT
+        type: USER_CONTENT
+      }
+      last_reviewed: "2025-04-23"
+    }
+    policy {
+      cookies_allowed: NO
+      setting:
+        "Users can control this by signing-in to Chrome, and via the "
+        "'Autofill with AI' setting in the 'Autofill and passwords' "
+        "section."
+      chrome_policy {
+        AutofillPredictionSettings {
+          AutofillPredictionSettings: 2
+        }
+      }
+    })");
+    case ModelBasedCapabilityKey::kEnhancedCalendar:
+      // TODO(crbug.com/398296762): Add network traffic annotation.
       return MISSING_TRAFFIC_ANNOTATION;
+    case ModelBasedCapabilityKey::kZeroStateSuggestions:
+      return net::DefineNetworkTrafficAnnotation(
+          "zero_state_suggestions_model_execution", R"(
+    semantics {
+      sender: "Gemini in Chrome - Zero State Suggestions"
+      description:
+        "Generates contextual suggestions about the current page when Gemini "
+        "in Chrome does not have a query."
+      trigger:
+        "User opens Gemini in Chrome via browser entrypoint, OS entrypoint, or"
+        " hot key."
+      destination: GOOGLE_OWNED_SERVICE
+      data:
+        "Title, URL, and content of the page, which may potentially contain "
+        "user input. The access token is also sent to verify user is of "
+        "sufficient age to use Gemini in Chrome."
+      internal {
+        contacts {
+          email: "chrome-intelligence-core@google.com"
+        }
+      }
+      user_data {
+        type: ACCESS_TOKEN
+        type: SENSITIVE_URL
+        type: WEB_CONTENT
+      }
+      last_reviewed: "2025-05-21"
+    }
+    policy {
+      cookies_allowed: NO
+      setting:
+        "This feature can be disabled via GeminiSettings."
+      chrome_policy {
+        GeminiSettings {
+          GeminiSettings: 1
+        }
+      }
+    })");
+    case ModelBasedCapabilityKey::kHistorySearch:
+    case ModelBasedCapabilityKey::kHistoryQueryIntent:
+    case ModelBasedCapabilityKey::kPromptApi:
+    case ModelBasedCapabilityKey::kScamDetection:
+    case ModelBasedCapabilityKey::kPermissionsAi:
+    case ModelBasedCapabilityKey::kSummarize:
+    case ModelBasedCapabilityKey::kWritingAssistanceApi:
+    case ModelBasedCapabilityKey::kProofreaderApi:
+      // On-device only feature.
+      NOTREACHED();
   }
 }
 
-void RecordRequestStatusHistogram(proto::ModelExecutionFeature feature,
+void RecordRequestStatusHistogram(ModelBasedCapabilityKey feature,
                                   FetcherRequestStatus status) {
   base::UmaHistogramEnumeration(
       base::StrCat({"OptimizationGuide.ModelExecutionFetcher.RequestStatus.",
                     GetStringNameForModelExecutionFeature(feature)}),
       status);
+}
+
+// Appends headers as specified by the command line arguments.
+void AppendHeadersIfNeeded(network::ResourceRequest& request) {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kModelExecutionEnableRemoteDebugLogging)) {
+    return;
+  }
+  request.headers.SetHeaderIfMissing(
+      kOptimizationGuideModelExecutionDebugLogsHeaderKey, "");
 }
 
 }  // namespace
@@ -158,14 +302,15 @@ ModelExecutionFetcher::ModelExecutionFetcher(
     : optimization_guide_service_url_(optimization_guide_service_url),
       url_loader_factory_(url_loader_factory),
       optimization_guide_logger_(optimization_guide_logger) {
-  CHECK(optimization_guide_service_url_.SchemeIs(url::kHttpsScheme));
+  if (!net::IsLocalhost(optimization_guide_service_url_)) {
+    CHECK(optimization_guide_service_url_.SchemeIs(url::kHttpsScheme));
+  }
 }
 
 ModelExecutionFetcher::~ModelExecutionFetcher() {
-  if (active_url_loader_) {
-    DCHECK_NE(proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_UNSPECIFIED,
-              model_execution_feature_);
-    RecordRequestStatusHistogram(model_execution_feature_,
+  if (model_execution_callback_) {
+    DCHECK(model_execution_feature_);
+    RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kRequestCanceled);
     std::move(model_execution_callback_)
         .Run(base::unexpected(
@@ -175,13 +320,12 @@ ModelExecutionFetcher::~ModelExecutionFetcher() {
 }
 
 void ModelExecutionFetcher::ExecuteModel(
-    proto::ModelExecutionFeature feature,
+    ModelBasedCapabilityKey feature,
     signin::IdentityManager* identity_manager,
     const google::protobuf::MessageLite& request_metadata,
+    std::optional<base::TimeDelta> timeout,
     ModelExecuteResponseCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_NE(proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_UNSPECIFIED,
-            feature);
 
   if (model_execution_callback_) {
     RecordRequestStatusHistogram(feature, FetcherRequestStatus::kFetcherBusy);
@@ -196,7 +340,7 @@ void ModelExecutionFetcher::ExecuteModel(
   model_execution_callback_ = std::move(callback);
 
   proto::ExecuteRequest execute_request;
-  execute_request.set_feature(feature);
+  execute_request.set_feature(ToModelExecutionFeatureProto(feature));
   proto::Any* any_metadata = execute_request.mutable_request_metadata();
   any_metadata->set_type_url(
       base::StrCat({kGoogleAPITypeName, request_metadata.GetTypeName()}));
@@ -204,18 +348,20 @@ void ModelExecutionFetcher::ExecuteModel(
   std::string serialized_request;
   execute_request.SerializeToString(&serialized_request);
 
-  RequestAccessToken(
-      identity_manager,
-      {GaiaConstants::kOptimizationGuideServiceModelExecutionOAuth2Scope},
+  HandleTokenRequestFlow(
+      /*require_token=*/true, identity_manager,
+      signin::OAuthConsumerId::kOptimizationGuideModelExecution,
       base::BindOnce(&ModelExecutionFetcher::OnAccessTokenReceived,
-                     weak_ptr_factory_.GetWeakPtr(), serialized_request));
+                     weak_ptr_factory_.GetWeakPtr(), serialized_request,
+                     timeout));
 }
 
 void ModelExecutionFetcher::OnAccessTokenReceived(
     const std::string& serialized_request,
+    std::optional<base::TimeDelta> timeout,
     const std::string& access_token) {
   if (access_token.empty()) {
-    RecordRequestStatusHistogram(model_execution_feature_,
+    RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kUserNotSignedIn);
     std::move(model_execution_callback_)
         .Run(base::unexpected(
@@ -228,17 +374,21 @@ void ModelExecutionFetcher::OnAccessTokenReceived(
   if (!access_token.empty()) {
     PopulateAuthorizationRequestHeader(resource_request.get(), access_token);
   }
+  if (timeout && timeout->is_positive()) {
+    PopulateServerTimeoutRequestHeader(resource_request.get(), *timeout);
+  }
 
   resource_request->url = optimization_guide_service_url_;
   resource_request->method = "POST";
   resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  AppendHeadersIfNeeded(*resource_request);
 
   active_url_loader_ = variations::CreateSimpleURLLoaderWithVariationsHeader(
       std::move(resource_request),
       // This is always InIncognito::kNo as the server model execution is not
       // enabled on incognito sessions and is rechecked before each fetch.
       variations::InIncognito::kNo, variations::SignedIn::kNo,
-      GetNetworkTrafficAnnotation(model_execution_feature_));
+      GetNetworkTrafficAnnotation(*model_execution_feature_));
 
   active_url_loader_->AttachStringForUpload(serialized_request,
                                             "application/x-protobuf");
@@ -264,10 +414,10 @@ void ModelExecutionFetcher::OnURLLoadComplete(
   // handling may start a new fetch.
   active_url_loader_.reset();
 
-  base::UmaHistogramEnumeration(
-      "OptimizationGuide.ModelExecutionFetcher.Status",
-      static_cast<net::HttpStatusCode>(response_code),
-      net::HTTP_VERSION_NOT_SUPPORTED);
+  if (response_code >= 0) {
+    base::UmaHistogramSparse("OptimizationGuide.ModelExecutionFetcher.Status",
+                             response_code);
+  }
   // Net error codes are negative but histogram enums must be positive.
   base::UmaHistogramSparse(
       "OptimizationGuide.ModelExecutionFetcher.NetErrorCode", -net_error);
@@ -275,7 +425,7 @@ void ModelExecutionFetcher::OnURLLoadComplete(
   proto::ExecuteResponse execute_response;
 
   if (net_error != net::OK || response_code != net::HTTP_OK) {
-    RecordRequestStatusHistogram(model_execution_feature_,
+    RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kResponseError);
     std::move(model_execution_callback_)
         .Run(base::unexpected(
@@ -284,7 +434,7 @@ void ModelExecutionFetcher::OnURLLoadComplete(
     return;
   }
   if (!response_body || !execute_response.ParseFromString(*response_body)) {
-    RecordRequestStatusHistogram(model_execution_feature_,
+    RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kResponseError);
     std::move(model_execution_callback_)
         .Run(base::unexpected(
@@ -295,9 +445,9 @@ void ModelExecutionFetcher::OnURLLoadComplete(
   base::UmaHistogramMediumTimes(
       base::StrCat(
           {"OptimizationGuide.ModelExecutionFetcher.FetchLatency.",
-           GetStringNameForModelExecutionFeature(model_execution_feature_)}),
+           GetStringNameForModelExecutionFeature(*model_execution_feature_)}),
       base::TimeTicks::Now() - fetch_start_time_);
-  RecordRequestStatusHistogram(model_execution_feature_,
+  RecordRequestStatusHistogram(*model_execution_feature_,
                                FetcherRequestStatus::kSuccess);
   // This should be the last call, since the callback could be deleting `this`.
   std::move(model_execution_callback_).Run(base::ok(execute_response));

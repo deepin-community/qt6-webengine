@@ -42,19 +42,6 @@ def exec_extension():
     return ".exe" if is_windows() else ""
 
 
-def get_gomacc(OPTIONS):
-    if OPTIONS.no_goma:
-        return None
-    if OPTIONS.goma:
-        return OPTIONS.goma
-    else:
-        goma_ctl = shutil.which('goma_ctl')
-        if goma_ctl:
-            depot_tools_dir = os.path.dirname(goma_ctl)
-            gomacc = os.path.join(depot_tools_dir, '.cipd_bin', 'gomacc')
-            return gomacc
-    return None
-
 
 def call(cmd, verbose=False, **kwargs):
     if verbose:
@@ -70,9 +57,14 @@ def stage1(sysroot_dir, source_dir, OPTIONS):
         os.path.join(OPTIONS.build_dir, 'DevTools_CXX_Debugging.stage1'))
     if not os.path.exists(binary_dir):
         os.makedirs(binary_dir)
+    emscripten_install_dir = os.path.join(devtools_dir(source_dir),
+                                          'third_party',
+                                          'emscripten-releases', 'install')
+    libcxx_dir = os.path.join(emscripten_install_dir, 'lib')
 
     cmake_settings = {
         'build_shared': 'OFF' if OPTIONS.static else 'ON',
+        'libcxx_dir': libcxx_dir,
     }
     cmake_args = [
         OPTIONS.cmake,
@@ -80,6 +72,8 @@ def stage1(sysroot_dir, source_dir, OPTIONS):
         *CMAKE_DEFAULTS,
         '-DBUILD_SHARED_LIBS={build_shared}'.format(**cmake_settings),
         '-DCMAKE_BUILD_TYPE=Release',
+        '-DCMAKE_CXX_FLAGS=-stdlib=libc++ -pthread -I{libcxx_dir}/include/c++/v1'.format(**cmake_settings),
+        '-DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++ -L{libcxx_dir}'.format(**cmake_settings),
     ]
     if not OPTIONS.no_sysroot:
         cmake_args.extend(('-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY',
@@ -89,16 +83,13 @@ def stage1(sysroot_dir, source_dir, OPTIONS):
         cmake_args.append('-DCMAKE_C_COMPILER={}'.format(OPTIONS.cc))
     if OPTIONS.cxx:
         cmake_args.append('-DCMAKE_CXX_COMPILER={}'.format(OPTIONS.cxx))
-    gomacc = get_gomacc(OPTIONS)
-    if gomacc:
-        cmake_args.extend(('-DCMAKE_CXX_COMPILER_LAUNCHER={}'.format(gomacc),
-                           '-DCMAKE_C_COMPILER_LAUNCHER={}'.format(gomacc)))
 
     maybe_cmake(binary_dir, cmake_args, OPTIONS.verbose)
 
-    autoninja = shutil.which('autoninja')
+    ninja = os.path.join(devtools_dir(source_dir), 'third_party', 'ninja',
+                         'ninja')
     call([
-        autoninja, 'lldb-tblgen', 'clang-tblgen', 'llvm-tblgen', 'llvm-dwp',
+        ninja, 'lldb-tblgen', 'clang-tblgen', 'llvm-tblgen', 'llvm-dwp',
         'llvm-mc'
     ],
          verbose=OPTIONS.verbose,
@@ -112,6 +103,9 @@ def stage2(source_dir, stage1_dir, OPTIONS):
         os.path.join(stage1_dir, 'third_party', 'llvm', 'src', 'llvm', 'bin'))
     emcc = os.path.join(devtools_dir(source_dir), 'third_party',
                         'emscripten-releases', 'install', 'emscripten', 'emcc')
+    wasm_ld_dir = os.path.join(devtools_dir(source_dir), 'third_party',
+                               'emscripten-releases', 'install', 'bin')
+
 
     binary_dir = os.path.abspath(
         os.path.join(OPTIONS.build_dir, 'DevTools_CXX_Debugging.stage2'))
@@ -122,6 +116,8 @@ def stage2(source_dir, stage1_dir, OPTIONS):
         'toolchain_file':
         os.path.join(os.path.dirname(emcc), 'cmake', 'Modules', 'Platform',
                      'Emscripten.cmake'),
+        'wasm_ld':
+        os.path.join(wasm_ld_dir, 'wasm-ld' + exec_extension()),
         'llvm_dwp':
         os.path.join(llvm_tools_dir, 'llvm-dwp' + exec_extension()),
         'llvm_tblgen':
@@ -147,7 +143,8 @@ def stage2(source_dir, stage1_dir, OPTIONS):
         '-DLLVM_DWP={llvm_dwp}'.format(**cmake_settings),
         '-DLLVM_TABLEGEN={llvm_tblgen}'.format(**cmake_settings),
         '-DCLANG_TABLEGEN={clang_tblgen}'.format(**cmake_settings),
-        '-DLLDB_TABLEGEN={lldb_tblgen}'.format(**cmake_settings)
+        '-DLLDB_TABLEGEN={lldb_tblgen}'.format(**cmake_settings),
+        '-DWASM_LD={wasm_ld}'.format(**cmake_settings)
     ]
     if is_windows():
         cmake_args.append('-DLLVM_HOST_TRIPLE=x86_64')
@@ -194,24 +191,18 @@ def stage2(source_dir, stage1_dir, OPTIONS):
 
     maybe_cmake(binary_dir, cmake_args, OPTIONS.verbose)
 
-    gomacc = get_gomacc(OPTIONS)
     num_cores = os.cpu_count()
     env = os.environ.copy()
-    if gomacc:
-        env['EM_COMPILER_WRAPPER'] = gomacc
-        # autoninja does not recognize the environment variable, so set the
-        # jobs manually
-        num_cores *= int(os.environ.get('NINJA_CORE_MULTIPLIER', '40'))
-    else:
-        num_cores += 2
 
+    ninja = os.path.join(devtools_dir(source_dir), 'third_party', 'ninja',
+                         'ninja')
     if not OPTIONS.no_check:
-        call(['ninja', '-j%d' % num_cores, 'all', 'check-extension'],
+        call([ninja, '-j%d' % num_cores, 'all', 'check-extension'],
              verbose=OPTIONS.verbose,
              cwd=binary_dir,
              env=env)
     else:
-        call(['ninja', '-j%d' % num_cores, 'all'],
+        call([ninja, '-j%d' % num_cores, 'all'],
              verbose=OPTIONS.verbose,
              cwd=binary_dir,
              env=env)
@@ -261,9 +252,6 @@ def script_main(args):
     parser.add_argument('-cmake',
                         default=shutil.which('cmake', path=cmake_dir),
                         help='Path to the cmake configure tool.')
-    parser.add_argument('-goma',
-                        default=shutil.which('gomacc'),
-                        help='Path to the goma compiler launcher (gomacc).')
     parser.add_argument('-cc',
                         default=shutil.which('clang', path=clang_dir),
                         help='The C compiler.')
@@ -273,7 +261,6 @@ def script_main(args):
     parser.add_argument('-extension-source',
                         default=source_dir,
                         help='Path to alternate repo for source.')
-    parser.add_argument('-check', action='store_true')  # TODO(pfaffe) remove
     parser.add_argument('-verbose', action='store_true')
     parser.add_argument('-stage1', help='Path to a pre-built stage 1')
     parser.add_argument('-static',
@@ -285,10 +272,6 @@ def script_main(args):
                         default=True,
                         dest='static',
                         help='Link the first stage dynamically.')
-    parser.add_argument('-sysroot', default='')  # TODO(pfaffe) remove
-    parser.add_argument('-no-goma',
-                        action='store_true',
-                        help='Build without goma.')
     parser.add_argument('-no-sysroot',
                         action='store_true',
                         help='Disable sysroot.')
@@ -345,11 +328,6 @@ def script_main(args):
         if OPTIONS.no_sysroot:
             sys.stderr.write('-infra overrides -no-sysroot')
         OPTIONS.no_sysroot = False
-
-    if OPTIONS.sysroot:
-        sys.stderr.write('The -sysroot option is deprecated and has no effect')
-    if OPTIONS.check:
-        sys.stderr.write('The -check option is deprecated and has no effect')
 
     if OPTIONS.stage1:
         stage1_dir = OPTIONS.stage1

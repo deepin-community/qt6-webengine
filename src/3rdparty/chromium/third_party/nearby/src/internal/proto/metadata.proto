@@ -16,6 +16,8 @@ syntax = "proto3";
 
 package nearby.internal;
 
+import "internal/proto/credential.proto";
+
 // option java_api_version = 2;
 option java_multiple_files = true;
 option java_package = "com.google.nearby.presence";
@@ -24,7 +26,7 @@ option optimize_for = LITE_RUNTIME;
 
 // The metadata of a device. Contains confidential data not to be broadcasted
 // directly in OTA.
-// NEXT_ID=5
+// NEXT_ID=8
 message DeviceIdentityMetaData {
   // The type of the device.
   DeviceType device_type = 1;
@@ -42,6 +44,23 @@ message DeviceIdentityMetaData {
   // The device_id from the MultideviceParameters file of the broadcasting
   // device
   bytes device_id = 5;
+
+  // The device's model name
+  string device_model_name = 6;
+
+  // The device's manufacturer name
+  string device_manufacturer = 7;
+
+  // identity of the user profile
+  PresenceIdentity identity = 8;
+}
+
+message PresenceIdentity {
+  // The type of the identity.
+  IdentityType identity_type = 1;
+
+  // The name of the identity provider.
+  string identity_provider_name = 2;
 }
 
 // The metadata of a device.

@@ -5,8 +5,10 @@
 #include "ui/base/dragdrop/os_exchange_data.h"
 
 #include <objbase.h>
+
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -197,7 +199,7 @@ TEST_F(OSExchangeDataWinTest, StringDataWritingViaCOM) {
   HGLOBAL glob = GlobalAlloc(GPTR, sizeof(wchar_t) * (input.size() + 1));
   base::win::ScopedHGlobal<wchar_t*> global_lock(glob);
   wchar_t* buffer_handle = global_lock.data();
-  wcscpy_s(buffer_handle, input.size() + 1, input.c_str());
+  UNSAFE_TODO(wcscpy_s(buffer_handle, input.size() + 1, input.c_str()));
   medium.hGlobal = glob;
   medium.pUnkForRelease = NULL;
   EXPECT_EQ(S_OK, com_data->SetData(&format_etc, &medium, TRUE));
@@ -206,12 +208,11 @@ TEST_F(OSExchangeDataWinTest, StringDataWritingViaCOM) {
   // APIs.
   OSExchangeData data2(data.provider().Clone());
   EXPECT_TRUE(data2.HasURL(FilenameToURLPolicy::CONVERT_FILENAMES));
-  GURL url_from_data;
-  std::u16string title;
-  EXPECT_TRUE(data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES,
-                                   &url_from_data, &title));
+  std::optional<OSExchangeData::UrlInfo> url_info =
+      data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES);
+  ASSERT_TRUE(url_info.has_value());
   GURL reference_url(base::AsStringPiece16(input));
-  EXPECT_EQ(reference_url.spec(), url_from_data.spec());
+  EXPECT_EQ(reference_url, url_info->url);
 }
 
 // Verifies SetData invoked twice with the same data clobbers existing data.
@@ -233,7 +234,7 @@ TEST_F(OSExchangeDataWinTest, RemoveData) {
     HGLOBAL glob = GlobalAlloc(GPTR, sizeof(wchar_t) * (input.size() + 1));
     base::win::ScopedHGlobal<wchar_t*> global_lock(glob);
     wchar_t* buffer_handle = global_lock.data();
-    wcscpy_s(buffer_handle, input.size() + 1, input.c_str());
+    UNSAFE_TODO(wcscpy_s(buffer_handle, input.size() + 1, input.c_str()));
     medium.hGlobal = glob;
     medium.pUnkForRelease = NULL;
     EXPECT_EQ(S_OK, com_data->SetData(&format_etc, &medium, TRUE));
@@ -243,7 +244,7 @@ TEST_F(OSExchangeDataWinTest, RemoveData) {
     HGLOBAL glob = GlobalAlloc(GPTR, sizeof(wchar_t) * (input2.size() + 1));
     base::win::ScopedHGlobal<wchar_t*> global_lock(glob);
     wchar_t* buffer_handle = global_lock.data();
-    wcscpy_s(buffer_handle, input2.size() + 1, input2.c_str());
+    UNSAFE_TODO(wcscpy_s(buffer_handle, input2.size() + 1, input2.c_str()));
     medium.hGlobal = glob;
     medium.pUnkForRelease = NULL;
     EXPECT_EQ(S_OK, com_data->SetData(&format_etc, &medium, TRUE));
@@ -254,11 +255,10 @@ TEST_F(OSExchangeDataWinTest, RemoveData) {
   // APIs.
   OSExchangeData data2(data.provider().Clone());
   EXPECT_TRUE(data2.HasURL(FilenameToURLPolicy::CONVERT_FILENAMES));
-  GURL url_from_data;
-  std::u16string title;
-  EXPECT_TRUE(data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES,
-                                   &url_from_data, &title));
-  EXPECT_EQ(GURL(base::AsStringPiece16(input2)).spec(), url_from_data.spec());
+  std::optional<OSExchangeData::UrlInfo> url_info =
+      data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES);
+  ASSERT_TRUE(url_info.has_value());
+  EXPECT_EQ(GURL(base::AsStringPiece16(input2)), url_info->url);
 }
 
 TEST_F(OSExchangeDataWinTest, URLDataAccessViaCOM) {
@@ -440,11 +440,11 @@ TEST_F(OSExchangeDataWinTest, FileContents) {
   data.SetFileContents(base::FilePath(L"filename.txt"), file_contents);
 
   OSExchangeData copy(data.provider().Clone());
-  base::FilePath filename;
-  std::string read_contents;
-  EXPECT_TRUE(copy.GetFileContents(&filename, &read_contents));
-  EXPECT_EQ(L"filename.txt", filename.value());
-  EXPECT_EQ(file_contents, read_contents);
+  std::optional<OSExchangeData::FileContentsInfo> file_contents_info =
+      copy.GetFileContents();
+  EXPECT_TRUE(file_contents_info.has_value());
+  EXPECT_EQ(L"filename.txt", file_contents_info->filename.value());
+  EXPECT_EQ(file_contents, file_contents_info->file_contents);
 }
 
 TEST_F(OSExchangeDataWinTest, VirtualFiles) {
@@ -466,12 +466,14 @@ TEST_F(OSExchangeDataWinTest, VirtualFiles) {
                                                      tymed);
 
     OSExchangeData copy(data.provider().Clone());
-    std::vector<FileInfo> file_infos;
-    EXPECT_TRUE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
-    for (size_t i = 0; i < file_infos.size(); i++) {
-      EXPECT_EQ(kTestFilenamesAndContents[i].first, file_infos[i].display_name);
-      EXPECT_EQ(kPathPlaceholder, file_infos[i].path);
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    ASSERT_TRUE(file_infos.has_value());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
+    for (size_t i = 0; i < file_infos.value().size(); i++) {
+      EXPECT_EQ(kTestFilenamesAndContents[i].first,
+                file_infos.value()[i].display_name);
+      EXPECT_EQ(kPathPlaceholder, file_infos.value()[i].path);
     }
 
     base::FilePath temp_dir;
@@ -545,14 +547,14 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesRealFilesPreferred) {
 
     OSExchangeData copy(data.provider().Clone());
 
-    std::vector<FileInfo> real_filenames;
-    EXPECT_TRUE(copy.GetFilenames(&real_filenames));
-    EXPECT_EQ(kTestFilenames.size(), real_filenames.size());
-    EXPECT_EQ(kTestFilenames, real_filenames);
+    std::optional<std::vector<FileInfo>> real_filenames = copy.GetFilenames();
+    ASSERT_TRUE(real_filenames.has_value());
+    EXPECT_EQ(kTestFilenames.size(), real_filenames.value().size());
+    EXPECT_EQ(kTestFilenames, real_filenames.value());
 
-    std::vector<FileInfo> file_infos;
-    EXPECT_FALSE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(static_cast<size_t>(0), file_infos.size());
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    EXPECT_FALSE(file_infos.has_value());
 
     // Callback for GetVirtualFilesAsTempFiles is executed when all virtual
     // files are backed by temp files.
@@ -589,15 +591,16 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesDuplicateNames) {
                                                      tymed);
 
     OSExchangeData copy(data.provider().Clone());
-    std::vector<FileInfo> file_infos;
-    EXPECT_TRUE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
-    for (size_t i = 0; i < file_infos.size(); i++) {
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    ASSERT_TRUE(file_infos.has_value());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
+    for (size_t i = 0; i < file_infos.value().size(); i++) {
       // Check that display name is unique.
       for (size_t j = 0; j < i; j++) {
         EXPECT_FALSE(base::FilePath::CompareEqualIgnoreCase(
-            file_infos[j].display_name.value(),
-            file_infos[i].display_name.value()));
+            file_infos.value()[j].display_name.value(),
+            file_infos.value()[i].display_name.value()));
       }
     }
 
@@ -616,7 +619,7 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesDuplicateNames) {
     // RunUntilIdle assures all async tasks are run.
     task_environment_.RunUntilIdle();
 
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
     for (size_t i = 0; i < retrieved_virtual_files_.size(); i++) {
       // Check that display name is unique.
       for (size_t j = 0; j < i; j++) {
@@ -673,15 +676,16 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesDuplicateNamesCaseInsensitivity) {
                                                      tymed);
 
     OSExchangeData copy(data.provider().Clone());
-    std::vector<FileInfo> file_infos;
-    EXPECT_TRUE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
-    for (size_t i = 0; i < file_infos.size(); i++) {
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    ASSERT_TRUE(file_infos.has_value());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
+    for (size_t i = 0; i < file_infos.value().size(); i++) {
       // Check that display name is unique.
       for (size_t j = 0; j < i; j++) {
         EXPECT_FALSE(base::FilePath::CompareEqualIgnoreCase(
-            file_infos[j].display_name.value(),
-            file_infos[i].display_name.value()));
+            file_infos.value()[j].display_name.value(),
+            file_infos.value()[i].display_name.value()));
       }
     }
 
@@ -700,7 +704,7 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesDuplicateNamesCaseInsensitivity) {
     // RunUntilIdle assures all async tasks are run.
     task_environment_.RunUntilIdle();
 
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
     for (size_t i = 0; i < retrieved_virtual_files_.size(); i++) {
       // Check that display name is unique.
       for (size_t j = 0; j < i; j++) {
@@ -780,19 +784,20 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesInvalidAndDuplicateNames) {
                                                      tymed);
 
     OSExchangeData copy(data.provider().Clone());
-    std::vector<FileInfo> file_infos;
-    EXPECT_TRUE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
-    for (size_t i = 0; i < file_infos.size(); i++) {
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    ASSERT_TRUE(file_infos.has_value());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
+    for (size_t i = 0; i < file_infos.value().size(); i++) {
       // Check that display name does not contain invalid characters.
       EXPECT_EQ(std::wstring::npos,
-                file_infos[i].display_name.value().find_first_of(
+                file_infos.value()[i].display_name.value().find_first_of(
                     kInvalidFileNameCharacters));
       // Check that display name is unique.
       for (size_t j = 0; j < i; j++) {
         EXPECT_FALSE(base::FilePath::CompareEqualIgnoreCase(
-            file_infos[j].display_name.value(),
-            file_infos[i].display_name.value()));
+            file_infos.value()[j].display_name.value(),
+            file_infos.value()[i].display_name.value()));
       }
     }
 
@@ -811,7 +816,7 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesInvalidAndDuplicateNames) {
     // RunUntilIdle assures all async tasks are run.
     task_environment_.RunUntilIdle();
 
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
     for (size_t i = 0; i < retrieved_virtual_files_.size(); i++) {
       // Check that display name does not contain invalid characters.
       EXPECT_EQ(std::wstring::npos,
@@ -875,11 +880,13 @@ TEST_F(OSExchangeDataWinTest, VirtualFilesEmptyContents) {
                                                      tymed);
 
     OSExchangeData copy(data.provider().Clone());
-    std::vector<FileInfo> file_infos;
-    EXPECT_TRUE(copy.GetVirtualFilenames(&file_infos));
-    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.size());
-    for (size_t i = 0; i < file_infos.size(); i++) {
-      EXPECT_EQ(kTestFilenamesAndContents[i].first, file_infos[i].display_name);
+    std::optional<std::vector<FileInfo>> file_infos =
+        copy.GetVirtualFilenames();
+    ASSERT_TRUE(file_infos.has_value());
+    EXPECT_EQ(kTestFilenamesAndContents.size(), file_infos.value().size());
+    for (size_t i = 0; i < file_infos.value().size(); i++) {
+      EXPECT_EQ(kTestFilenamesAndContents[i].first,
+                file_infos.value()[i].display_name);
     }
 
     base::FilePath temp_dir;
@@ -965,11 +972,10 @@ TEST_F(OSExchangeDataWinTest, ProvideURLForPlainTextURL) {
 
   OSExchangeData data2(data.provider().Clone());
   ASSERT_TRUE(data2.HasURL(FilenameToURLPolicy::CONVERT_FILENAMES));
-  GURL read_url;
-  std::u16string title;
-  EXPECT_TRUE(data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES,
-                                   &read_url, &title));
-  EXPECT_EQ(GURL("http://google.com"), read_url);
+  std::optional<OSExchangeData::UrlInfo> url_info =
+      data2.GetURLAndTitle(FilenameToURLPolicy::CONVERT_FILENAMES);
+  ASSERT_TRUE(url_info.has_value());
+  EXPECT_EQ(GURL("http://google.com"), url_info->url);
 }
 
 class MockDownloadFileProvider : public DownloadFileProvider {

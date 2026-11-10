@@ -3,14 +3,14 @@ Execution Tests for matrix-scalar and scalar-matrix f16 multiplication expressio
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../gpu_test.js';
-import { TypeF16, TypeMat } from '../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
+import { Type } from '../../../../util/conversion.js';
 import { allInputSources, run } from '../expression.js';
 
 import { binary, compoundBinary } from './binary.js';
 import { d } from './f16_matrix_scalar_multiplication.cache.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('matrix_scalar')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
@@ -26,10 +26,8 @@ Accuracy: Correctly rounded
       .combine('cols', [2, 3, 4] as const)
       .combine('rows', [2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cols = t.params.cols;
     const rows = t.params.rows;
     const cases = await d.get(
@@ -40,8 +38,8 @@ Accuracy: Correctly rounded
     await run(
       t,
       binary('*'),
-      [TypeMat(cols, rows, TypeF16), TypeF16],
-      TypeMat(cols, rows, TypeF16),
+      [Type.mat(cols, rows, Type.f16), Type.f16],
+      Type.mat(cols, rows, Type.f16),
       t.params,
       cases
     );
@@ -61,10 +59,8 @@ Accuracy: Correctly rounded
       .combine('cols', [2, 3, 4] as const)
       .combine('rows', [2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cols = t.params.cols;
     const rows = t.params.rows;
     const cases = await d.get(
@@ -75,8 +71,8 @@ Accuracy: Correctly rounded
     await run(
       t,
       compoundBinary('*='),
-      [TypeMat(cols, rows, TypeF16), TypeF16],
-      TypeMat(cols, rows, TypeF16),
+      [Type.mat(cols, rows, Type.f16), Type.f16],
+      Type.mat(cols, rows, Type.f16),
       t.params,
       cases
     );
@@ -96,10 +92,8 @@ Accuracy: Correctly rounded
       .combine('cols', [2, 3, 4] as const)
       .combine('rows', [2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cols = t.params.cols;
     const rows = t.params.rows;
     const cases = await d.get(
@@ -110,8 +104,8 @@ Accuracy: Correctly rounded
     await run(
       t,
       binary('*'),
-      [TypeF16, TypeMat(cols, rows, TypeF16)],
-      TypeMat(cols, rows, TypeF16),
+      [Type.f16, Type.mat(cols, rows, Type.f16)],
+      Type.mat(cols, rows, Type.f16),
       t.params,
       cases
     );

@@ -8,6 +8,7 @@
 ** Copyright (C) 2016 The Qt Company Ltd.
 **
 ** SPDX-License-Identifier: BSD-3-Clause
+** Qt-Security score:critical reason:data-parser
 **
 ** This tool converts Hunspell .aff/.dic pairs to a combined binary dictionary
 ** format (.bdic). This format is more compact, and can be more efficiently
@@ -31,6 +32,8 @@
 #include <QLibraryInfo>
 #include <QDir>
 #include <QCoreApplication>
+
+using namespace Qt::StringLiterals;
 
 // see also src/core/type_conversion.h
 inline base::FilePath::StringType toFilePathString(const QString &str)
@@ -68,11 +71,11 @@ template<class T>
 QTextStream &operator<<(QTextStream &out, base::span<T> span)
 {
     out << '[';
-    QString prefix;
+    QLatin1StringView prefix;
     for (const auto &element : span) {
         out << prefix;
         out << element;
-        prefix = QStringLiteral(",");
+        prefix = ","_L1;
     }
     out << ']';
     return out;
@@ -84,8 +87,8 @@ inline bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
                         const std::string& serialized, QTextStream& out)
 {
     hunspell::BDictReader reader;
-    if (!reader.Init(reinterpret_cast<const unsigned char*>(serialized.data()),
-                     serialized.size())) {
+    if (!reader.Init({reinterpret_cast<const unsigned char*>(serialized.data()),
+                     serialized.size()})) {
         out << "BDict is invalid\n";
         return false;
     }
@@ -93,20 +96,20 @@ inline bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
 
     int affix_ids[hunspell::BDict::MAX_AFFIXES_PER_WORD];
 
-    static const int buf_size = 128;
-    char buf[buf_size];
     for (size_t i = 0; i < org_words.size(); i++) {
-        int affix_matches = iter.Advance(buf, buf_size, affix_ids);
+        auto buf_size = org_words[i].first.size() + 1;
+        std::string buf(buf_size, '\0');
+        int affix_matches = iter.Advance(buf.data(), buf_size, affix_ids);
         if (affix_matches == 0) {
             out << "Found the end before we expected\n";
             return false;
         }
 
-        if (org_words[i].first != buf) {
+        if (buf.back() != '\0' || buf.compare(0, buf_size - 1, org_words[i].first) != 0) {
             out << "Word does not match!\n"
                 << "  Index:    " << i << "\n"
                 << "  Expected: " << QString::fromStdString(org_words[i].first) << "\n"
-                << "  Actual:   " << QString::fromUtf8(buf) << "\n";
+                << "  Actual:   " << QString::fromStdString(buf) << "\n";
             return false;
         }
 
@@ -118,7 +121,7 @@ inline bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
                         [](int a, int b) { return a == b; })) {
             out << "Affixes do not match!\n"
                 << "  Index:    " << i << "\n"
-                << "  Word:     " << QString::fromUtf8(buf) << "\n"
+                << "  Word:     " << QString::fromStdString(buf) << "\n"
                 << "  Expected: " << expectedAffixes << "\n"
                 << "  Actual:   " << actualAffixes << "\n";
             return false;
@@ -131,8 +134,8 @@ inline bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
 #if defined(Q_OS_DARWIN) && defined(QT_MAC_FRAMEWORK_BUILD)
 QString frameworkIcuDataPath()
 {
-    return QLibraryInfo::location(QLibraryInfo::LibrariesPath) +
-            QStringLiteral("/QtWebEngineCore.framework/Resources/");
+    return QLibraryInfo::location(QLibraryInfo::LibrariesPath)
+            + "/QtWebEngineCore.framework/Resources/"_L1;
 }
 #endif
 
@@ -155,15 +158,14 @@ int main(int argc, char *argv[])
     }
 #if defined(USE_ICU_FILE)
     bool icuDataDirFound = false;
-    QString icuDataDir = QLibraryInfo::path(QLibraryInfo::DataPath)
-            % QLatin1String("/resources");
+    QString icuDataDir = QLibraryInfo::path(QLibraryInfo::DataPath) % "/resources"_L1;
 
     // Try to look up the path to the ICU data directory via an environment variable
     // (e.g. for the case when the tool is ran during build phase, and regular installed
     // ICU data file is not available).
     const QString icuPossibleEnvDataDir = qEnvironmentVariable("QT_WEBENGINE_ICU_DATA_DIR");
     const QString appPath = QCoreApplication::applicationDirPath();
-    QLatin1String icuDataFilePath("/icudtl.dat");
+    const auto icuDataFilePath = "/icudtl.dat"_L1;
     if (!icuPossibleEnvDataDir.isEmpty() && QFileInfo::exists(icuPossibleEnvDataDir)) {
         icuDataDir = icuPossibleEnvDataDir;
         icuDataDirFound = true;

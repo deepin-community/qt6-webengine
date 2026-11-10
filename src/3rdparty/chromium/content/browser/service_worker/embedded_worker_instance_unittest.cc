@@ -382,7 +382,7 @@ TEST_F(EmbeddedWorkerInstanceTest, CacheStorageOptimization) {
   RegistrationAndVersionPair pair =
       helper_->PrepareRegistrationAndVersion(scope, url);
   // We should set COEP, or cache storage pipe won't be made.
-  pair.second->set_policy_container_host(
+  pair.second->SetPolicyContainerHost(
       base::MakeRefCounted<PolicyContainerHost>());
   auto worker = std::make_unique<EmbeddedWorkerInstance>(pair.second.get());
 
@@ -394,36 +394,6 @@ TEST_F(EmbeddedWorkerInstanceTest, CacheStorageOptimization) {
 
   // Cache storage should have been sent.
   EXPECT_TRUE(client->had_cache_storage());
-
-  // Stop the worker.
-  worker->Stop();
-  base::RunLoop().RunUntilIdle();
-}
-
-// Test that the worker is not given a CacheStoragePtr during startup when
-// the feature is disabled.
-TEST_F(EmbeddedWorkerInstanceTest, CacheStorageOptimizationIsDisabled) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      blink::features::kEagerCacheStorageSetupForServiceWorkers);
-
-  const GURL scope("http://example.com/");
-  const GURL url("http://example.com/worker.js");
-
-  RegistrationAndVersionPair pair =
-      helper_->PrepareRegistrationAndVersion(scope, url);
-  auto worker = std::make_unique<EmbeddedWorkerInstance>(pair.second.get());
-  auto* client =
-      helper_->AddNewPendingInstanceClient<RecordCacheStorageInstanceClient>(
-          helper_.get());
-
-  // Start the worker.
-  blink::mojom::EmbeddedWorkerStartParamsPtr params =
-      helper_->CreateStartParams(pair.second);
-  helper_->StartWorker(worker.get(), std::move(params));
-
-  // Cache storage should not have been sent.
-  EXPECT_FALSE(client->had_cache_storage());
 
   // Stop the worker.
   worker->Stop();

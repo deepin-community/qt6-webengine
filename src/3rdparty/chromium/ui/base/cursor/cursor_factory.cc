@@ -9,6 +9,7 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
@@ -51,8 +52,7 @@ void CursorFactory::RemoveObserver(CursorFactoryObserver* observer) {
 }
 
 void CursorFactory::NotifyObserversOnThemeLoaded() {
-  for (auto& observer : observers_)
-    observer.OnThemeLoaded();
+  observers_.Notify(&CursorFactoryObserver::OnThemeLoaded);
 }
 
 scoped_refptr<PlatformCursor> CursorFactory::GetDefaultCursor(
@@ -79,9 +79,8 @@ scoped_refptr<PlatformCursor> CursorFactory::CreateImageCursor(
   return nullptr;
 }
 
-absl::optional<CursorData> CursorFactory::GetCursorData(
-    mojom::CursorType type) {
-  return absl::nullopt;
+std::optional<CursorData> CursorFactory::GetCursorData(mojom::CursorType type) {
+  return std::nullopt;
 }
 
 scoped_refptr<PlatformCursor> CursorFactory::CreateAnimatedCursor(
@@ -210,13 +209,11 @@ std::vector<std::string> CursorNamesFromType(mojom::CursorType type) {
       // kCustom is for custom image cursors. The platform cursor will be set
       // at WebCursor::GetNativeCursor().
       NOTREACHED();
-      [[fallthrough]];
     case mojom::CursorType::kNull:
     case mojom::CursorType::kPointer:
       return {"left_ptr"};
   }
   NOTREACHED();
-  return {"left_ptr"};
 }
 
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)

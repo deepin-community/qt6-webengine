@@ -21,7 +21,7 @@ std::unique_ptr<DecryptConfig> DecryptConfig::CreateCencConfig(
     const std::string& iv,
     const std::vector<SubsampleEntry>& subsamples) {
   return std::make_unique<DecryptConfig>(EncryptionScheme::kCenc, key_id, iv,
-                                         subsamples, absl::nullopt);
+                                         subsamples, std::nullopt);
 }
 
 // static
@@ -29,7 +29,7 @@ std::unique_ptr<DecryptConfig> DecryptConfig::CreateCbcsConfig(
     const std::string& key_id,
     const std::string& iv,
     const std::vector<SubsampleEntry>& subsamples,
-    absl::optional<EncryptionPattern> encryption_pattern) {
+    std::optional<EncryptionPattern> encryption_pattern) {
   return std::make_unique<DecryptConfig>(EncryptionScheme::kCbcs, key_id, iv,
                                          subsamples,
                                          std::move(encryption_pattern));
@@ -40,19 +40,19 @@ DecryptConfig::DecryptConfig(
     const std::string& key_id,
     const std::string& iv,
     const std::vector<SubsampleEntry>& subsamples,
-    absl::optional<EncryptionPattern> encryption_pattern)
+    std::optional<EncryptionPattern> encryption_pattern)
     : encryption_scheme_(encryption_scheme),
       key_id_(key_id),
       iv_(iv),
       subsamples_(subsamples),
       encryption_pattern_(std::move(encryption_pattern)) {
   // Unencrypted blocks should not have a DecryptConfig.
-  DCHECK_NE(encryption_scheme_, EncryptionScheme::kUnencrypted);
+  CHECK_NE(encryption_scheme_, EncryptionScheme::kUnencrypted);
   CHECK_GT(key_id_.size(), 0u);
   CHECK_EQ(iv_.size(), static_cast<size_t>(DecryptConfig::kDecryptionKeySize));
 
   // Pattern not allowed for non-'cbcs' schemes.
-  DCHECK(encryption_scheme_ == EncryptionScheme::kCbcs || !encryption_pattern_);
+  CHECK(encryption_scheme_ == EncryptionScheme::kCbcs || !encryption_pattern_);
 }
 
 DecryptConfig::~DecryptConfig() = default;
@@ -63,7 +63,7 @@ std::unique_ptr<DecryptConfig> DecryptConfig::Clone() const {
 
 std::unique_ptr<DecryptConfig> DecryptConfig::CopyNewSubsamplesIV(
     const std::vector<SubsampleEntry>& subsamples,
-    const std::string& iv) {
+    const std::string& iv) const {
   return std::make_unique<DecryptConfig>(encryption_scheme_, key_id_, iv,
                                          subsamples, encryption_pattern_);
 }
@@ -91,9 +91,8 @@ bool DecryptConfig::Matches(const DecryptConfig& config) const {
 }
 
 std::ostream& DecryptConfig::Print(std::ostream& os) const {
-  os << "key_id:'" << base::HexEncode(key_id_.data(), key_id_.size()) << "'"
-     << " iv:'" << base::HexEncode(iv_.data(), iv_.size()) << "'"
-     << " scheme:" << encryption_scheme_;
+  os << "key_id:'" << base::HexEncode(key_id_) << "'" << " iv:'"
+     << base::HexEncode(iv_) << "'" << " scheme:" << encryption_scheme_;
 
   if (encryption_pattern_) {
     os << " pattern:" << encryption_pattern_->crypt_byte_block() << ":"

@@ -78,10 +78,9 @@ class ConvexPathsGM : public skiagm::GM {
                                        SkPathDirection::kCW));
 
         // large number of points
-        enum {
-            kLength = 100,
-            kPtsPerSide = (1 << 12),
-        };
+        static constexpr int kLength = 100;
+        static constexpr int kPtsPerSide = (1 << 12);
+
         b.moveTo(0, 0);
         for (int i = 1; i < kPtsPerSide; ++i) { // skip the first point due to moveTo.
             b.lineTo(kLength * SkIntToScalar(i) / kPtsPerSide, 0);
@@ -215,7 +214,7 @@ class ConvexPathsGM : public skiagm::GM {
         fPaths.push_back(b.quadTo(50, 50, 100, 100).detach());
         fPaths.push_back(b.cubicTo(0, 0, 0, 0, 100, 100).detach());
 
-        // skbug.com/8928
+        // skbug.com/40040207
         fPaths.push_back(b.moveTo(16.875f, 192.594f)
                           .cubicTo(45.625f, 192.594f, 74.375f, 192.594f, 103.125f, 192.594f)
                           .cubicTo(88.75f, 167.708f, 74.375f, 142.823f, 60, 117.938f)

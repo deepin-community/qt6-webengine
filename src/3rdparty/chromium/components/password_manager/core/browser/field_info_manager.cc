@@ -5,6 +5,7 @@
 #include "components/password_manager/core/browser/field_info_manager.h"
 
 #include "base/i18n/case_conversion.h"
+#include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/password_manager/core/browser/password_store/psl_matching_helper.h"
 
 using autofill::FieldRendererId;
@@ -23,7 +24,7 @@ bool IsSameField(const FieldInfo& lhs, const FieldInfo& rhs) {
 bool StoresPredictionsForInfo(const FormPredictions& predictions,
                               FieldInfo& field_info) {
   FieldRendererId field_id = field_info.field_id;
-  auto field = base::ranges::find_if(
+  auto field = std::ranges::find_if(
       predictions.fields, [field_id](const PasswordFieldPrediction& field) {
         return field.renderer_id == field_id;
       });
@@ -82,7 +83,7 @@ void FieldInfoManager::AddFieldInfo(
   // Safe to use "this", because the timer will be destructed before "this" is
   // destructed.
   field_info_cache_.back().timer->Start(
-      FROM_HERE, kFieldInfoLifetime, this,
+      FROM_HERE, kSingleUsernameTimeToLive, this,
       &FieldInfoManager::ClearOldestFieldInfoEntry);
 
   FieldInfo& field_info = field_info_cache_.back().field_info;
@@ -95,7 +96,8 @@ std::vector<FieldInfo> FieldInfoManager::GetFieldInfo(
     const std::string& signon_realm) {
   std::vector<FieldInfo> relevant_info;
   for (const auto& entry : field_info_cache_) {
-    // TODO(crbug/1468297): Consider affiliated matches and PSL extension list.
+    // TODO(crbug.com/40277063): Consider affiliated matches and PSL extension
+    // list.
     if (IsPublicSuffixDomainMatch(entry.field_info.signon_realm,
                                   signon_realm)) {
       relevant_info.push_back(entry.field_info);
@@ -105,7 +107,8 @@ std::vector<FieldInfo> FieldInfoManager::GetFieldInfo(
 }
 
 void FieldInfoManager::ProcessServerPredictions(
-    const std::map<autofill::FormSignature, FormPredictions>& predictions) {
+    const std::map<std::pair<autofill::FormSignature, int>, FormPredictions>&
+        predictions) {
   for (auto& entry : field_info_cache_) {
     FieldInfo& field_info = entry.field_info;
     // Do nothing if predictions are already stored.
@@ -113,12 +116,12 @@ void FieldInfoManager::ProcessServerPredictions(
       continue;
     }
 
-    for (const auto& prediction : predictions) {
-      // Do nothing if drivers do not match.
-      if (field_info.driver_id != prediction.second.driver_id) {
+    for (const auto& [key, form_predictions] : predictions) {
+      const int driver_id = key.second;
+      if (driver_id != field_info.driver_id) {
         continue;
       }
-      if (StoresPredictionsForInfo(prediction.second, field_info)) {
+      if (StoresPredictionsForInfo(form_predictions, field_info)) {
         break;
       }
     }

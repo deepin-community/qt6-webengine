@@ -4,45 +4,16 @@
 
 from __future__ import annotations
 
-import pathlib
-from typing import TYPE_CHECKING, Optional
+from typing_extensions import override
 
-from crossbench.browsers.chromium.chromium import Chromium
-
-from .helper import ChromePathMixin
-
-if TYPE_CHECKING:
-  from crossbench.browsers.splash_screen import SplashScreen
-  from crossbench.browsers.viewport import Viewport
-  from crossbench.flags import Flags
-  from crossbench import plt
-  from crossbench.network.base import Network
+from crossbench.browsers.attributes import BrowserAttributes
+from crossbench.browsers.chrome.base import ChromeBaseMixin
+from crossbench.browsers.chromium_based.chromium_based import ChromiumBased
 
 
-class Chrome(ChromePathMixin, Chromium):
+class Chrome(ChromeBaseMixin, ChromiumBased):
 
-  def __init__(
-      self,
-      label: str,
-      path: pathlib.Path,
-      flags: Optional[Flags.InitialDataType] = None,
-      js_flags: Optional[Flags.InitialDataType] = None,
-      cache_dir: Optional[pathlib.Path] = None,
-      type: str = "chrome",  # pylint: disable=redefined-builtin
-      network: Optional[Network] = None,
-      driver_path: Optional[pathlib.Path] = None,
-      viewport: Optional[Viewport] = None,
-      splash_screen: Optional[SplashScreen] = None,
-      platform: Optional[plt.Platform] = None):
-    super().__init__(
-        label,
-        path,
-        flags,
-        js_flags,
-        cache_dir,
-        type=type,
-        network=network,
-        driver_path=driver_path,
-        viewport=viewport,
-        splash_screen=splash_screen,
-        platform=platform)
+  @classmethod
+  @override
+  def attributes(cls) -> BrowserAttributes:
+    return BrowserAttributes.CHROME | BrowserAttributes.CHROMIUM_BASED

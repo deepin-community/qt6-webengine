@@ -34,6 +34,9 @@ class MEDIA_EXPORT AudioDecoderConfig {
                      EncryptionScheme encryption_scheme);
 
   AudioDecoderConfig(const AudioDecoderConfig& other);
+  AudioDecoderConfig(AudioDecoderConfig&& other);
+  AudioDecoderConfig& operator=(const AudioDecoderConfig& other);
+  AudioDecoderConfig& operator=(AudioDecoderConfig&& other);
 
   ~AudioDecoderConfig();
 
@@ -119,11 +122,6 @@ class MEDIA_EXPORT AudioDecoderConfig {
     return target_output_sample_format_;
   }
 
-  void set_aac_extra_data(std::vector<uint8_t> aac_extra_data) {
-    aac_extra_data_ = std::move(aac_extra_data);
-  }
-  const std::vector<uint8_t>& aac_extra_data() const { return aac_extra_data_; }
-
  private:
   // WARNING: When modifying or adding any parameters, update the following:
   // - AudioDecoderConfig::AsHumanReadableString()
@@ -159,17 +157,12 @@ class MEDIA_EXPORT AudioDecoderConfig {
   // Desired output format of bitstream. Optionally set. See setter comments.
   SampleFormat target_output_sample_format_ = kUnknownSampleFormat;
 
-  // This is a hack for backward compatibility. For AAC, to preserve existing
-  // behavior, we set `aac_extra_data_` on all platforms but only set
-  // `extra_data` on Android.
-  // TODO(crbug.com/1250841): Remove this after we land a long term fix.
-  std::vector<uint8_t> aac_extra_data_;
-
   // Indicates if a decoder should implicitly discard decoder delay without it
   // being explicitly marked in discard padding.
   bool should_discard_decoder_delay_ = true;
 
-  // Derived values from mandatory and optional parameters above:
+  // Derived values from mandatory and optional parameters above.
+  // A frame contains samples across all channels.
 
   int bytes_per_channel_ = 0;
   int bytes_per_frame_ = 0;

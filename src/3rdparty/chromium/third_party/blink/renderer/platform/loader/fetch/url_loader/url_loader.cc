@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,9 +17,11 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -35,9 +38,8 @@
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/encoded_body_length.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
-#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/blink/public/common/loader/mime_sniffing_throttle.h"
 #include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
@@ -55,6 +57,7 @@
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/loader/fetch/back_forward_cache_loader_helper.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/background_response_processor.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_sender.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_response.h"
@@ -117,7 +120,7 @@ class URLLoader::Context : public ResourceRequestClient {
   void OnReceivedResponse(
       network::mojom::URLResponseHeadPtr head,
       mojo::ScopedDataPipeConsumerHandle body,
-      absl::optional<mojo_base::BigBuffer> cached_metadata) override;
+      std::optional<mojo_base::BigBuffer> cached_metadata) override;
   void OnTransferSizeUpdated(int transfer_size_diff) override;
   void OnCompletedRequest(
       const network::URLLoaderCompletionStatus& status) override;
@@ -128,7 +131,7 @@ class URLLoader::Context : public ResourceRequestClient {
  private:
   ~Context() override;
 
-  raw_ptr<URLLoader, ExperimentalRenderer> loader_;
+  raw_ptr<URLLoader> loader_;
 
   KURL url_;
   // This is set in Start() and is used by SetSecurityStyleAndDetails() to
@@ -139,7 +142,7 @@ class URLLoader::Context : public ResourceRequestClient {
   // DevTools request id to that new request, and it will propagate here.
   bool has_devtools_request_id_;
 
-  raw_ptr<URLLoaderClient, ExperimentalRenderer> client_;
+  raw_ptr<URLLoaderClient> client_;
   // TODO(https://crbug.com/1137682): Remove |freezable_task_runner_|, migrating
   // the current usage to use |unfreezable_task_runner_| instead. Also, rename
   // |unfreezable_task_runner_| to |maybe_unfreezable_task_runner_| here and
@@ -152,7 +155,7 @@ class URLLoader::Context : public ResourceRequestClient {
   mojo::PendingRemote<mojom::blink::KeepAliveHandle> keep_alive_handle_;
   LoaderFreezeMode freeze_mode_ = LoaderFreezeMode::kNone;
   const Vector<String> cors_exempt_header_list_;
-  raw_ptr<base::WaitableEvent, ExperimentalRenderer> terminate_sync_load_event_;
+  raw_ptr<base::WaitableEvent> terminate_sync_load_event_;
 
   int request_id_;
 
@@ -346,7 +349,7 @@ void URLLoader::Context::OnReceivedRedirect(
 void URLLoader::Context::OnReceivedResponse(
     network::mojom::URLResponseHeadPtr head,
     mojo::ScopedDataPipeConsumerHandle body,
-    absl::optional<mojo_base::BigBuffer> cached_metadata) {
+    std::optional<mojo_base::BigBuffer> cached_metadata) {
   if (!client_) {
     return;
   }
@@ -431,7 +434,7 @@ void URLLoader::LoadSynchronously(
     base::TimeDelta timeout_interval,
     URLLoaderClient* client,
     WebURLResponse& response,
-    absl::optional<WebURLError>& error,
+    std::optional<WebURLError>& error,
     scoped_refptr<SharedBuffer>& data,
     int64_t& encoded_data_length,
     uint64_t& encoded_body_length,
@@ -441,6 +444,12 @@ void URLLoader::LoadSynchronously(
   if (!context_) {
     return;
   }
+
+  base::ElapsedTimer timer;
+  absl::Cleanup record_time = [&]() {
+    base::UmaHistogramMediumTimes("Blink.LoadURLSynchronouslyDuration",
+                                  timer.Elapsed());
+  };
 
   TRACE_EVENT0("loading", "URLLoader::loadSynchronously");
   SyncLoadResponse sync_load_response;
@@ -562,6 +571,12 @@ void URLLoader::SetResourceRequestSenderForTesting(
 void URLLoader::Context::SetResourceRequestSenderForTesting(
     std::unique_ptr<blink::ResourceRequestSender> resource_request_sender) {
   resource_request_sender_ = std::move(resource_request_sender);
+}
+
+void URLLoader::SetBackgroundResponseProcessorFactory(
+    std::unique_ptr<BackgroundResponseProcessorFactory>
+        background_response_processor_factory) {
+  NOTREACHED();
 }
 
 }  // namespace blink

@@ -4,6 +4,7 @@
 import QtQuick
 import QtTest
 import QtWebEngine
+import Test.Shared as Shared
 
 TestWebEngineView {
     id: webEngineView
@@ -13,7 +14,10 @@ TestWebEngineView {
     settings.screenCaptureEnabled: true
     profile.persistentPermissionsPolicy: WebEngineProfile.PersistentPermissionsPolicy.AskEveryTime
 
+    JsConsoleMessageSpy { id: promiseMessageSpy }
+
     TestCase {
+        id: testCase
         name: "GetUserMedia"
         when: windowShown
 
@@ -65,13 +69,18 @@ TestWebEngineView {
         }
 
         function test_getUserMedia(row) {
+            promiseMessageSpy.target = webEngineView;
             loadSync(Qt.resolvedUrl("test1.html"))
 
             // 1. Rejecting request on QML side should reject promise on JS side.
             jsGetUserMedia(row.constraints)
-            tryVerify(function(){ return gotExpectedRequests(row.feature) })
+            verifyPermissionType(row.feature)
             rejectPendingRequest()
-            tryVerify(function(){ return !jsPromiseFulfilled() && jsPromiseRejected() })
+            promiseMessageSpy.wait()
+            compare(promiseMessageSpy.popMessage(), "rejected")
+
+            resetRequestState()
+            wait(1000)
 
             // 2. Accepting request on QML side should either fulfill or reject the
             // Promise on JS side. Due to the potential lack of physical media devices
@@ -79,15 +88,25 @@ TestWebEngineView {
             // always be fulfilled, however in this case an error should be returned to
             // JS instead of leaving the Promise in limbo.
             jsGetUserMedia(row.constraints)
-            tryVerify(function(){ return gotExpectedRequests(row.feature) })
+            verifyPermissionType(row.feature)
             acceptPendingRequest()
-            tryVerify(function(){ return jsPromiseFulfilled() || jsPromiseRejected() });
+            promiseMessageSpy.wait()
+            var message = promiseMessageSpy.popMessage()
+            verify((message === "fulfilled") || (message === "rejected"))
+
+            resetRequestState()
+            wait(1000)
 
             // 3. Media feature permissions are not remembered.
             jsGetUserMedia(row.constraints);
-            tryVerify(function(){ return gotExpectedRequests(row.feature) })
+            verifyPermissionType(row.feature)
             acceptPendingRequest()
-            tryVerify(function(){ return jsPromiseFulfilled() || jsPromiseRejected() });
+            promiseMessageSpy.wait()
+            var message = promiseMessageSpy.popMessage()
+            verify((message === "fulfilled") || (message === "rejected"))
+
+            resetRequestState()
+            promiseMessageSpy.target = null;
         }
     }
 
@@ -117,7 +136,7 @@ TestWebEngineView {
     // synchronous permission requests
 
     property variant permissionObject
-    property bool gotDesktopMediaRequest: false
+    property bool isDesktopMediaRequestHandled: false
     property bool gotEmptyDesktopMediaRequest: false
 
     onPermissionRequested: function(perm) {
@@ -125,77 +144,61 @@ TestWebEngineView {
     }
 
     onDesktopMediaRequested: function(request) {
-        gotDesktopMediaRequest = true
         gotEmptyDesktopMediaRequest = request.screensModel.rowCount() == 0
         if (gotEmptyDesktopMediaRequest)
             request.cancel()
         else
             request.selectScreen(request.screensModel.index(0, 0))
+        isDesktopMediaRequestHandled = true
     }
 
-    function gotExpectedRequests(expectedFeature) {
-        var isDesktopPermission = expectedFeature == WebEnginePermission.PermissionType.DesktopAudioVideoCapture ||
-            expectedFeature == WebEnginePermission.PermissionType.DesktopVideoCapture;
-        if (isDesktopPermission != gotDesktopMediaRequest)
-            return false
-        if (isDesktopPermission && gotEmptyDesktopMediaRequest)
-            return permissionObject == undefined
-        return permissionObject && permissionObject.permissionType == expectedFeature
+    function verifyPermissionType(expectedFeature) {
+        // When webrtc is disabled, desktop media requests come through as non-desktop.
+        var isDesktopPermission = Shared.TestEnvironment.hasWebRTC() &&
+                (expectedFeature == WebEnginePermission.PermissionType.DesktopAudioVideoCapture ||
+                 expectedFeature == WebEnginePermission.PermissionType.DesktopVideoCapture)
+
+        if (isDesktopPermission) {
+            testCase.tryVerify(function() { return isDesktopMediaRequestHandled })
+
+            // Request has been cancelled
+            if (gotEmptyDesktopMediaRequest) {
+                testCase.compare(permissionObject, undefined)
+                return
+            }
+        }
+
+        testCase.tryVerify(function() { return permissionObject != undefined })
+        testCase.compare(permissionObject.permissionType, expectedFeature)
     }
 
     function acceptPendingRequest() {
         if (permissionObject)
             permissionObject.grant()
-        resetRequestState()
     }
 
     function resetRequestState() {
+        if (permissionObject)
+            permissionObject.reset()
+
         permissionObject = undefined
-        gotDesktopMediaRequest = false
+        isDesktopMediaRequestHandled = false
         gotEmptyDesktopMediaRequest = false
     }
 
     function rejectPendingRequest() {
         if (permissionObject)
             permissionObject.deny()
-        resetRequestState()
-    }
-
-    ////
-    // synchronous JavaScript evaluation
-
-    signal runJavaScriptFinished(variant result)
-
-    SignalSpy {
-        id: spyOnRunJavaScriptFinished
-        target: webEngineView
-        signalName: "runJavaScriptFinished"
-    }
-
-    function runJavaScriptSync(code) {
-        spyOnRunJavaScriptFinished.clear()
-        runJavaScript(code, runJavaScriptFinished)
-        spyOnRunJavaScriptFinished.wait()
-        return spyOnRunJavaScriptFinished.signalArguments[0][0]
     }
 
     ////
     // JavaScript snippets
 
     function jsGetUserMedia(constraints) {
+        promiseMessageSpy.clear();
         runJavaScript(
-            "var promiseFulfilled = false;" +
-            "var promiseRejected = false;" +
             "navigator.mediaDevices.getUserMedia(" + JSON.stringify(constraints) + ")" +
-            ".then(stream => { promiseFulfilled = true})" +
-            ".catch(err => { promiseRejected = true})")
-    }
-
-    function jsPromiseFulfilled() {
-        return runJavaScriptSync("promiseFulfilled")
-    }
-
-    function jsPromiseRejected() {
-        return runJavaScriptSync("promiseRejected")
+            ".then(stream => { console.info('fulfilled') })" +
+            ".catch(err => { console.info('rejected') })")
     }
 }

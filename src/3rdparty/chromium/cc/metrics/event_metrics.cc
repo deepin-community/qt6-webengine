@@ -5,11 +5,14 @@
 #include "cc/metrics/event_metrics.h"
 
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <utility>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/time/default_tick_clock.h"
@@ -23,7 +26,7 @@ constexpr base::TimeDelta kScrollHistogramMin = base::Milliseconds(4);
 constexpr base::TimeDelta kScrollHistogramMax = base::Milliseconds(500);
 constexpr size_t kScrollHistogramBucketCount = 50;
 
-constexpr struct {
+struct InterestingEvents {
   EventMetrics::EventType metrics_event_type;
   const char* name;
 
@@ -34,29 +37,30 @@ constexpr struct {
 
   std::optional<EventMetrics::HistogramBucketing> histogram_bucketing =
       std::nullopt;
-} kInterestingEvents[] = {
+};
+constexpr auto kInterestingEvents = std::to_array<InterestingEvents>({
 #define EVENT_TYPE(type_name, ui_type, ...)                      \
   {                                                              \
     .metrics_event_type = EventMetrics::EventType::k##type_name, \
     .name = #type_name, .ui_event_type = ui_type, __VA_ARGS__    \
   }
-    EVENT_TYPE(MousePressed, ui::ET_MOUSE_PRESSED),
-    EVENT_TYPE(MouseReleased, ui::ET_MOUSE_RELEASED),
-    EVENT_TYPE(MouseWheel, ui::ET_MOUSEWHEEL),
-    EVENT_TYPE(KeyPressed, ui::ET_KEY_PRESSED),
-    EVENT_TYPE(KeyReleased, ui::ET_KEY_RELEASED),
-    EVENT_TYPE(TouchPressed, ui::ET_TOUCH_PRESSED),
-    EVENT_TYPE(TouchReleased, ui::ET_TOUCH_RELEASED),
-    EVENT_TYPE(TouchMoved, ui::ET_TOUCH_MOVED),
+    EVENT_TYPE(MousePressed, ui::EventType::kMousePressed),
+    EVENT_TYPE(MouseReleased, ui::EventType::kMouseReleased),
+    EVENT_TYPE(MouseWheel, ui::EventType::kMousewheel),
+    EVENT_TYPE(KeyPressed, ui::EventType::kKeyPressed),
+    EVENT_TYPE(KeyReleased, ui::EventType::kKeyReleased),
+    EVENT_TYPE(TouchPressed, ui::EventType::kTouchPressed),
+    EVENT_TYPE(TouchReleased, ui::EventType::kTouchReleased),
+    EVENT_TYPE(TouchMoved, ui::EventType::kTouchMoved),
     EVENT_TYPE(GestureScrollBegin,
-               ui::ET_GESTURE_SCROLL_BEGIN,
+               ui::EventType::kGestureScrollBegin,
                .scroll_is_inertial = false,
                .histogram_bucketing = {{.min = kScrollHistogramMin,
                                         .max = kScrollHistogramMax,
                                         .count = kScrollHistogramBucketCount,
                                         .version_suffix = "2"}}),
     EVENT_TYPE(GestureScrollUpdate,
-               ui::ET_GESTURE_SCROLL_UPDATE,
+               ui::EventType::kGestureScrollUpdate,
                .scroll_is_inertial = false,
                .scroll_update_type =
                    ScrollUpdateEventMetrics::ScrollUpdateType::kContinued,
@@ -65,23 +69,23 @@ constexpr struct {
                                         .count = kScrollHistogramBucketCount,
                                         .version_suffix = "2"}}),
     EVENT_TYPE(GestureScrollEnd,
-               ui::ET_GESTURE_SCROLL_END,
+               ui::EventType::kGestureScrollEnd,
                .scroll_is_inertial = false,
                .histogram_bucketing = {{.min = kScrollHistogramMin,
                                         .max = kScrollHistogramMax,
                                         .count = kScrollHistogramBucketCount,
                                         .version_suffix = "2"}}),
-    EVENT_TYPE(GestureDoubleTap, ui::ET_GESTURE_DOUBLE_TAP),
-    EVENT_TYPE(GestureLongPress, ui::ET_GESTURE_LONG_PRESS),
-    EVENT_TYPE(GestureLongTap, ui::ET_GESTURE_LONG_TAP),
-    EVENT_TYPE(GestureShowPress, ui::ET_GESTURE_SHOW_PRESS),
-    EVENT_TYPE(GestureTap, ui::ET_GESTURE_TAP),
-    EVENT_TYPE(GestureTapCancel, ui::ET_GESTURE_TAP_CANCEL),
-    EVENT_TYPE(GestureTapDown, ui::ET_GESTURE_TAP_DOWN),
-    EVENT_TYPE(GestureTapUnconfirmed, ui::ET_GESTURE_TAP_UNCONFIRMED),
-    EVENT_TYPE(GestureTwoFingerTap, ui::ET_GESTURE_TWO_FINGER_TAP),
+    EVENT_TYPE(GestureDoubleTap, ui::EventType::kGestureDoubleTap),
+    EVENT_TYPE(GestureLongPress, ui::EventType::kGestureLongPress),
+    EVENT_TYPE(GestureLongTap, ui::EventType::kGestureLongTap),
+    EVENT_TYPE(GestureShowPress, ui::EventType::kGestureShowPress),
+    EVENT_TYPE(GestureTap, ui::EventType::kGestureTap),
+    EVENT_TYPE(GestureTapCancel, ui::EventType::kGestureTapCancel),
+    EVENT_TYPE(GestureTapDown, ui::EventType::kGestureTapDown),
+    EVENT_TYPE(GestureTapUnconfirmed, ui::EventType::kGestureTapUnconfirmed),
+    EVENT_TYPE(GestureTwoFingerTap, ui::EventType::kGestureTwoFingerTap),
     EVENT_TYPE(FirstGestureScrollUpdate,
-               ui::ET_GESTURE_SCROLL_UPDATE,
+               ui::EventType::kGestureScrollUpdate,
                .scroll_is_inertial = false,
                .scroll_update_type =
                    ScrollUpdateEventMetrics::ScrollUpdateType::kStarted,
@@ -89,12 +93,12 @@ constexpr struct {
                                         .max = kScrollHistogramMax,
                                         .count = kScrollHistogramBucketCount,
                                         .version_suffix = "2"}}),
-    EVENT_TYPE(MouseDragged, ui::ET_MOUSE_DRAGGED),
-    EVENT_TYPE(GesturePinchBegin, ui::ET_GESTURE_PINCH_BEGIN),
-    EVENT_TYPE(GesturePinchEnd, ui::ET_GESTURE_PINCH_END),
-    EVENT_TYPE(GesturePinchUpdate, ui::ET_GESTURE_PINCH_UPDATE),
+    EVENT_TYPE(MouseDragged, ui::EventType::kMouseDragged),
+    EVENT_TYPE(GesturePinchBegin, ui::EventType::kGesturePinchBegin),
+    EVENT_TYPE(GesturePinchEnd, ui::EventType::kGesturePinchEnd),
+    EVENT_TYPE(GesturePinchUpdate, ui::EventType::kGesturePinchUpdate),
     EVENT_TYPE(InertialGestureScrollUpdate,
-               ui::ET_GESTURE_SCROLL_UPDATE,
+               ui::EventType::kGestureScrollUpdate,
                .scroll_is_inertial = true,
                .scroll_update_type =
                    ScrollUpdateEventMetrics::ScrollUpdateType::kContinued,
@@ -102,18 +106,19 @@ constexpr struct {
                                         .max = kScrollHistogramMax,
                                         .count = kScrollHistogramBucketCount,
                                         .version_suffix = "2"}}),
-    EVENT_TYPE(MouseMoved, ui::ET_MOUSE_MOVED),
+    EVENT_TYPE(MouseMoved, ui::EventType::kMouseMoved),
 #undef EVENT_TYPE
-};
+});
 static_assert(std::size(kInterestingEvents) ==
                   static_cast<int>(EventMetrics::EventType::kMaxValue) + 1,
               "EventMetrics::EventType has changed.");
 
-constexpr struct {
+struct ScrollTypes {
   ScrollEventMetrics::ScrollType metrics_scroll_type;
   ui::ScrollInputType ui_input_type;
   const char* name;
-} kScrollTypes[] = {
+};
+constexpr auto kScrollTypes = std::to_array<ScrollTypes>({
 #define SCROLL_TYPE(name)                                                  \
   {                                                                        \
     ScrollEventMetrics::ScrollType::k##name, ui::ScrollInputType::k##name, \
@@ -124,17 +129,18 @@ constexpr struct {
     SCROLL_TYPE(Touchscreen),
     SCROLL_TYPE(Wheel),
 #undef SCROLL_TYPE
-};
+});
 static_assert(std::size(kScrollTypes) ==
                   static_cast<int>(ScrollEventMetrics::ScrollType::kMaxValue) +
                       1,
               "ScrollEventMetrics::ScrollType has changed.");
 
-constexpr struct {
+struct PinchTypes {
   PinchEventMetrics::PinchType metrics_pinch_type;
   ui::ScrollInputType ui_input_type;
   const char* name;
-} kPinchTypes[] = {
+};
+constexpr auto kPinchTypes = std::to_array<PinchTypes>({
 #define PINCH_TYPE(metrics_name, ui_name)              \
   {                                                    \
     PinchEventMetrics::PinchType::k##metrics_name,     \
@@ -143,7 +149,7 @@ constexpr struct {
     PINCH_TYPE(Touchpad, Wheel),
     PINCH_TYPE(Touchscreen, Touchscreen),
 #undef PINCH_TYPE
-};
+});
 static_assert(std::size(kPinchTypes) ==
                   static_cast<int>(PinchEventMetrics::PinchType::kMaxValue) + 1,
               "PinchEventMetrics::PinchType has changed.");
@@ -176,7 +182,6 @@ ScrollEventMetrics::ScrollType ToScrollType(ui::ScrollInputType ui_input_type) {
     }
   }
   NOTREACHED();
-  return ScrollEventMetrics::ScrollType::kMaxValue;
 }
 
 PinchEventMetrics::PinchType ToPinchType(ui::ScrollInputType ui_input_type) {
@@ -188,23 +193,22 @@ PinchEventMetrics::PinchType ToPinchType(ui::ScrollInputType ui_input_type) {
     }
   }
   NOTREACHED();
-  return PinchEventMetrics::PinchType::kMaxValue;
 }
 
 bool IsGestureScroll(ui::EventType type) {
-  return type == ui::ET_GESTURE_SCROLL_BEGIN ||
-         type == ui::ET_GESTURE_SCROLL_UPDATE ||
-         type == ui::ET_GESTURE_SCROLL_END;
+  return type == ui::EventType::kGestureScrollBegin ||
+         type == ui::EventType::kGestureScrollUpdate ||
+         type == ui::EventType::kGestureScrollEnd;
 }
 
 bool IsGesturePinch(ui::EventType type) {
-  return type == ui::ET_GESTURE_PINCH_BEGIN ||
-         type == ui::ET_GESTURE_PINCH_UPDATE ||
-         type == ui::ET_GESTURE_PINCH_END;
+  return type == ui::EventType::kGesturePinchBegin ||
+         type == ui::EventType::kGesturePinchUpdate ||
+         type == ui::EventType::kGesturePinchEnd;
 }
 
 bool IsGestureScrollUpdate(ui::EventType type) {
-  return type == ui::ET_GESTURE_SCROLL_UPDATE;
+  return type == ui::EventType::kGestureScrollUpdate;
 }
 
 }  // namespace
@@ -225,7 +229,7 @@ std::unique_ptr<EventMetrics> EventMetrics::Create(
     base::TimeTicks timestamp,
     base::TimeTicks arrived_in_browser_main_timestamp,
     std::optional<TraceId> trace_id) {
-  // TODO(crbug.com/1157090): We expect that `timestamp` is not null, but there
+  // TODO(crbug.com/40160689): We expect that `timestamp` is not null, but there
   // seems to be some tests that are emitting events with null timestamp. We
   // should investigate and try to fix those cases and add a `DCHECK` here to
   // assert `timestamp` is not null.
@@ -335,7 +339,7 @@ EventMetrics::EventMetrics(const EventMetrics& other)
 EventMetrics::~EventMetrics() {
   if (should_record_tracing()) {
     EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
-        this, base::TimeTicks::Now(), base::TimeDelta(), nullptr, nullptr);
+        this, base::TimeTicks::Now(), nullptr, nullptr, nullptr, std::nullopt);
   }
 }
 
@@ -358,29 +362,32 @@ void EventMetrics::SetHighLatencyStage(const std::string& stage) {
 }
 
 void EventMetrics::SetDispatchStageTimestamp(DispatchStage stage) {
-  DCHECK(dispatch_stage_timestamps_[static_cast<size_t>(stage)].is_null());
+  DCHECK(UNSAFE_TODO(dispatch_stage_timestamps_[static_cast<size_t>(stage)])
+             .is_null());
 
-  dispatch_stage_timestamps_[static_cast<size_t>(stage)] =
+  UNSAFE_TODO(dispatch_stage_timestamps_[static_cast<size_t>(stage)]) =
       tick_clock_->NowTicks();
 }
 
 void EventMetrics::SetDispatchStageTimestamp(DispatchStage stage,
                                              base::TimeTicks timestamp) {
-  DCHECK(dispatch_stage_timestamps_[static_cast<size_t>(stage)].is_null());
+  DCHECK(UNSAFE_TODO(dispatch_stage_timestamps_[static_cast<size_t>(stage)])
+             .is_null());
 
-  dispatch_stage_timestamps_[static_cast<size_t>(stage)] = timestamp;
+  UNSAFE_TODO(dispatch_stage_timestamps_[static_cast<size_t>(stage)]) =
+      timestamp;
 }
 
 base::TimeTicks EventMetrics::GetDispatchStageTimestamp(
     DispatchStage stage) const {
-  return dispatch_stage_timestamps_[static_cast<size_t>(stage)];
+  return UNSAFE_TODO(dispatch_stage_timestamps_[static_cast<size_t>(stage)]);
 }
 
 void EventMetrics::ResetToDispatchStage(DispatchStage stage) {
   for (size_t stage_index = static_cast<size_t>(stage) + 1;
        stage_index <= static_cast<size_t>(DispatchStage::kMaxValue);
        stage_index++) {
-    dispatch_stage_timestamps_[stage_index] = base::TimeTicks();
+    UNSAFE_TODO(dispatch_stage_timestamps_[stage_index] = base::TimeTicks());
   }
 }
 
@@ -419,10 +426,10 @@ std::unique_ptr<EventMetrics> EventMetrics::Clone() const {
 void EventMetrics::CopyTimestampsFrom(const EventMetrics& other,
                                       DispatchStage last_dispatch_stage) {
   DCHECK_LE(last_dispatch_stage, DispatchStage::kMaxValue);
-  std::copy(other.dispatch_stage_timestamps_,
-            other.dispatch_stage_timestamps_ +
-                static_cast<size_t>(last_dispatch_stage) + 1,
-            dispatch_stage_timestamps_);
+  UNSAFE_TODO(std::copy(other.dispatch_stage_timestamps_,
+                        other.dispatch_stage_timestamps_ +
+                            static_cast<size_t>(last_dispatch_stage) + 1,
+                        dispatch_stage_timestamps_));
 }
 
 // ScrollEventMetrics
@@ -436,7 +443,7 @@ std::unique_ptr<ScrollEventMetrics> ScrollEventMetrics::Create(
     base::TimeTicks arrived_in_browser_main_timestamp,
     base::TimeTicks blocking_touch_dispatched_to_renderer,
     std::optional<TraceId> trace_id) {
-  // TODO(crbug.com/1157090): We expect that `timestamp` is not null, but there
+  // TODO(crbug.com/40160689): We expect that `timestamp` is not null, but there
   // seems to be some tests that are emitting events with null timestamp.  We
   // should investigate and try to fix those cases and add a `DCHECK` here to
   // assert `timestamp` is not null.
@@ -558,7 +565,7 @@ ScrollEventMetrics::ScrollEventMetrics(const ScrollEventMetrics&) = default;
 ScrollEventMetrics::~ScrollEventMetrics() {
   if (should_record_tracing()) {
     EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
-        this, base::TimeTicks::Now(), base::TimeDelta(), nullptr, nullptr);
+        this, base::TimeTicks::Now(), nullptr, nullptr, nullptr, std::nullopt);
   }
 }
 
@@ -585,9 +592,9 @@ std::unique_ptr<ScrollUpdateEventMetrics> ScrollUpdateEventMetrics::Create(
     float delta,
     base::TimeTicks timestamp,
     base::TimeTicks arrived_in_browser_main_timestamp,
-    TraceId trace_id,
-    base::TimeTicks blocking_touch_dispatched_to_renderer) {
-  // TODO(crbug.com/1157090): We expect that `timestamp` is not null, but there
+    base::TimeTicks blocking_touch_dispatched_to_renderer,
+    std::optional<TraceId> trace_id) {
+  // TODO(crbug.com/40160689): We expect that `timestamp` is not null, but there
   // seems to be some tests that are emitting events with null timestamp. We
   // should investigate and try to fix those cases and add a `DCHECK` here to
   // assert `timestamp` is not null.
@@ -620,8 +627,8 @@ ScrollUpdateEventMetrics::CreateForBrowser(ui::EventType type,
                                            TraceId trace_id) {
   return Create(
       type, input_type, is_inertial, scroll_update_type, delta, timestamp,
-      /*arrived_in_browser_main_timestamp=*/base::TimeTicks(), trace_id,
-      /*blocking_touch_dispatched_to_renderer=*/base::TimeTicks());
+      /*arrived_in_browser_main_timestamp=*/base::TimeTicks(),
+      /*blocking_touch_dispatched_to_renderer=*/base::TimeTicks(), trace_id);
 }
 
 // static
@@ -728,7 +735,7 @@ ScrollUpdateEventMetrics::ScrollUpdateEventMetrics(
 ScrollUpdateEventMetrics::~ScrollUpdateEventMetrics() {
   if (should_record_tracing()) {
     EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
-        this, base::TimeTicks::Now(), base::TimeDelta(), nullptr, nullptr);
+        this, base::TimeTicks::Now(), nullptr, nullptr, nullptr, std::nullopt);
   }
 }
 
@@ -756,7 +763,7 @@ std::unique_ptr<PinchEventMetrics> PinchEventMetrics::Create(
     ui::ScrollInputType input_type,
     base::TimeTicks timestamp,
     TraceId trace_id) {
-  // TODO(crbug.com/1157090): We expect that `timestamp` is not null, but there
+  // TODO(crbug.com/40160689): We expect that `timestamp` is not null, but there
   // seems to be some tests that are emitting events with null timestamp.  We
   // should investigate and try to fix those cases and add a `DCHECK` here to
   // assert `timestamp` is not null.
@@ -822,7 +829,7 @@ PinchEventMetrics::PinchEventMetrics(const PinchEventMetrics&) = default;
 PinchEventMetrics::~PinchEventMetrics() {
   if (should_record_tracing()) {
     EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
-        this, base::TimeTicks::Now(), base::TimeDelta(), nullptr, nullptr);
+        this, base::TimeTicks::Now(), nullptr, nullptr, nullptr, std::nullopt);
   }
 }
 
@@ -842,9 +849,11 @@ std::unique_ptr<EventMetrics> PinchEventMetrics::Clone() const {
 EventMetricsSet::EventMetricsSet() = default;
 EventMetricsSet::~EventMetricsSet() = default;
 EventMetricsSet::EventMetricsSet(EventMetrics::List main_thread_event_metrics,
-                                 EventMetrics::List impl_thread_event_metrics)
+                                 EventMetrics::List impl_thread_event_metrics,
+                                 EventMetrics::List raster_thread_event_metrics)
     : main_event_metrics(std::move(main_thread_event_metrics)),
-      impl_event_metrics(std::move(impl_thread_event_metrics)) {}
+      impl_event_metrics(std::move(impl_thread_event_metrics)),
+      raster_event_metrics(std::move(raster_thread_event_metrics)) {}
 EventMetricsSet::EventMetricsSet(EventMetricsSet&& other) = default;
 EventMetricsSet& EventMetricsSet::operator=(EventMetricsSet&& other) = default;
 

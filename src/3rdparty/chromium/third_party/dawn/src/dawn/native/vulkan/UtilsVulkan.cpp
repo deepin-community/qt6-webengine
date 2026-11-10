@@ -34,8 +34,10 @@
 #include "dawn/native/ShaderModule.h"
 #include "dawn/native/vulkan/DeviceVk.h"
 #include "dawn/native/vulkan/Forward.h"
+#include "src/dawn/native/vulkan/PhysicalDeviceVk.h"
 #include "dawn/native/vulkan/TextureVk.h"
 #include "dawn/native/vulkan/VulkanError.h"
+#include "dawn/native/vulkan/VulkanFunctions.h"
 
 namespace dawn::native::vulkan {
 
@@ -81,6 +83,18 @@ VkCompareOp ToVulkanCompareOp(wgpu::CompareFunction op) {
             return VK_COMPARE_OP_ALWAYS;
 
         case wgpu::CompareFunction::Undefined:
+            break;
+    }
+    DAWN_UNREACHABLE();
+}
+
+VkFilter ToVulkanSamplerFilter(wgpu::FilterMode filter) {
+    switch (filter) {
+        case wgpu::FilterMode::Linear:
+            return VK_FILTER_LINEAR;
+        case wgpu::FilterMode::Nearest:
+            return VK_FILTER_NEAREST;
+        case wgpu::FilterMode::Undefined:
             break;
     }
     DAWN_UNREACHABLE();
@@ -149,14 +163,14 @@ Extent3D ComputeTextureCopyExtent(const TextureCopy& textureCopy, const Extent3D
 VkBufferImageCopy ComputeBufferImageCopyRegion(const BufferCopy& bufferCopy,
                                                const TextureCopy& textureCopy,
                                                const Extent3D& copySize) {
-    TextureDataLayout passDataLayout;
+    TexelCopyBufferLayout passDataLayout;
     passDataLayout.offset = bufferCopy.offset;
     passDataLayout.rowsPerImage = bufferCopy.rowsPerImage;
     passDataLayout.bytesPerRow = bufferCopy.bytesPerRow;
     return ComputeBufferImageCopyRegion(passDataLayout, textureCopy, copySize);
 }
 
-VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayout,
+VkBufferImageCopy ComputeBufferImageCopyRegion(const TexelCopyBufferLayout& dataLayout,
                                                const TextureCopy& textureCopy,
                                                const Extent3D& copySize) {
     const Texture* texture = ToBackend(textureCopy.texture.Get());
@@ -211,9 +225,9 @@ VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayo
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
 
-            DAWN_ASSERT(!textureCopy.texture->GetFormat().isCompressed);
-            region.imageExtent.width = copySize.width;
-            region.imageExtent.height = copySize.height;
+            Extent3D imageExtent = ComputeTextureCopyExtent(textureCopy, copySize);
+            region.imageExtent.width = imageExtent.width;
+            region.imageExtent.height = imageExtent.height;
             region.imageExtent.depth = copySize.depthOrArrayLayers;
             break;
         }
@@ -226,8 +240,12 @@ void SetDebugNameInternal(Device* device,
                           VkObjectType objectType,
                           uint64_t objectHandle,
                           const char* prefix,
-                          std::string label) {
-    if (!objectHandle) {
+                          std::string_view label) {
+    if (!device->IsToggleEnabled(Toggle::UseUserDefinedLabelsInBackend)) {
+        return;
+    }
+
+    if (!objectHandle || !device->GetVkDevice()) {
         return;
     }
 
@@ -242,9 +260,10 @@ void SetDebugNameInternal(Device* device,
         // Prefix with the device's message ID so that if this label appears in a validation
         // message it can be parsed out and the message can be associated with the right device.
         objectNameStream << device->GetDebugPrefix() << kDeviceDebugSeparator << prefix;
-        if (!label.empty() && device->IsToggleEnabled(Toggle::UseUserDefinedLabelsInBackend)) {
+        if (!label.empty()) {
             objectNameStream << "_" << label;
         }
+
         std::string objectName = objectNameStream.str();
         objectNameInfo.pObjectName = objectName.c_str();
         device->fn.SetDebugUtilsObjectNameEXT(device->GetVkDevice(), &objectNameInfo);
@@ -274,6 +293,121 @@ std::string GetDeviceDebugPrefixFromDebugName(const char* debugName) {
 
     size_t length = separator - debugName;
     return std::string(debugName, length);
+}
+
+std::vector<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format) {
+    VkFormatProperties2 formatProps = {};
+    formatProps.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    PNextChainBuilder formatPropsChain(&formatProps);
+
+    // Obtain the list of Linux DRM format modifiers compatible with a VkFormat
+    VkDrmFormatModifierPropertiesListEXT formatModifierPropsList = {};
+    formatModifierPropsList.drmFormatModifierCount = 0;
+    formatModifierPropsList.pDrmFormatModifierProperties = nullptr;
+    formatPropsChain.Add(&formatModifierPropsList,
+                         VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT);
+
+    fn.GetPhysicalDeviceFormatProperties2(vkPhysicalDevice, format, &formatProps);
+
+    const uint32_t modifierCount = formatModifierPropsList.drmFormatModifierCount;
+
+    std::vector<VkDrmFormatModifierPropertiesEXT> formatModifierPropsVector;
+    formatModifierPropsVector.resize(modifierCount);
+    formatModifierPropsList.pDrmFormatModifierProperties = formatModifierPropsVector.data();
+
+    fn.GetPhysicalDeviceFormatProperties2(vkPhysicalDevice, format, &formatProps);
+    return formatModifierPropsVector;
+}
+
+ResultOrError<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format,
+    uint64_t modifier) {
+    std::vector<VkDrmFormatModifierPropertiesEXT> formatModifierPropsVector =
+        GetFormatModifierProps(fn, vkPhysicalDevice, format);
+
+    // Find the modifier props that match the modifier, and return them.
+    for (const auto& props : formatModifierPropsVector) {
+        if (props.drmFormatModifier == modifier) {
+            return VkDrmFormatModifierPropertiesEXT{props};
+        }
+    }
+    return DAWN_VALIDATION_ERROR("DRM format modifier %u not supported.", modifier);
+}
+
+ResultOrError<VkSamplerYcbcrConversion> CreateSamplerYCbCrConversionCreateInfo(
+    YCbCrVkDescriptor yCbCrDescriptor,
+    Device* device) {
+    uint64_t externalFormat = yCbCrDescriptor.externalFormat;
+    VkFormat vulkanFormat = static_cast<VkFormat>(yCbCrDescriptor.vkFormat);
+    DAWN_INVALID_IF((externalFormat == 0 && vulkanFormat == VK_FORMAT_UNDEFINED),
+                    "Both VkFormat and VkExternalFormatANDROID are undefined.");
+
+    VkComponentMapping vulkanComponent;
+    vulkanComponent.r = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleRed);
+    vulkanComponent.g = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleGreen);
+    vulkanComponent.b = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleBlue);
+    vulkanComponent.a = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleAlpha);
+
+    VkSamplerYcbcrConversionCreateInfo vulkanYCbCrCreateInfo;
+    vulkanYCbCrCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO;
+    vulkanYCbCrCreateInfo.pNext = nullptr;
+    vulkanYCbCrCreateInfo.format = vulkanFormat;
+    vulkanYCbCrCreateInfo.ycbcrModel =
+        static_cast<VkSamplerYcbcrModelConversion>(yCbCrDescriptor.vkYCbCrModel);
+    vulkanYCbCrCreateInfo.ycbcrRange =
+        static_cast<VkSamplerYcbcrRange>(yCbCrDescriptor.vkYCbCrRange);
+    vulkanYCbCrCreateInfo.components = vulkanComponent;
+    vulkanYCbCrCreateInfo.xChromaOffset =
+        static_cast<VkChromaLocation>(yCbCrDescriptor.vkXChromaOffset);
+    vulkanYCbCrCreateInfo.yChromaOffset =
+        static_cast<VkChromaLocation>(yCbCrDescriptor.vkYChromaOffset);
+    vulkanYCbCrCreateInfo.chromaFilter = ToVulkanSamplerFilter(yCbCrDescriptor.vkChromaFilter);
+    vulkanYCbCrCreateInfo.forceExplicitReconstruction =
+        static_cast<VkBool32>(yCbCrDescriptor.forceExplicitReconstruction);
+
+    // VUID-VkSamplerYcbcrConversionCreateInfo-chromaFilter-01657
+    // Adjust linear filter to nearest if the format doesn't support linear. This is to support
+    // samplers created with YCrCb conversion info directly, which can't easily validate against the
+    // driver information at creation time.
+    if (vulkanFormat != VK_FORMAT_UNDEFINED &&
+        vulkanYCbCrCreateInfo.chromaFilter == VK_FILTER_LINEAR) {
+        VkPhysicalDevice vkPhysicalDevice =
+            ToBackend(device->GetPhysicalDevice())->GetVkPhysicalDevice();
+        VkFormatProperties formatProperties;
+        device->fn.GetPhysicalDeviceFormatProperties(vkPhysicalDevice, vulkanFormat,
+                                                     &formatProperties);
+        bool supportsLinear = IsSubset(
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT,
+            formatProperties.optimalTilingFeatures | formatProperties.linearTilingFeatures);
+        if (!supportsLinear) {
+            vulkanYCbCrCreateInfo.chromaFilter = VK_FILTER_NEAREST;
+        }
+    }
+
+#if DAWN_PLATFORM_IS(ANDROID)
+    VkExternalFormatANDROID vulkanExternalFormat;
+    // Chain VkExternalFormatANDROID only if needed.
+    if (externalFormat != 0) {
+        vulkanExternalFormat.sType = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
+        vulkanExternalFormat.pNext = nullptr;
+        vulkanExternalFormat.externalFormat = externalFormat;
+
+        vulkanYCbCrCreateInfo.pNext = &vulkanExternalFormat;
+    }
+#endif  // DAWN_PLATFORM_IS(ANDROID)
+
+    VkSamplerYcbcrConversion samplerYCbCrConversion = VK_NULL_HANDLE;
+    DAWN_TRY(CheckVkSuccess(
+        device->fn.CreateSamplerYcbcrConversion(device->GetVkDevice(), &vulkanYCbCrCreateInfo,
+                                                nullptr, &*samplerYCbCrConversion),
+        "CreateSamplerYcbcrConversion"));
+
+    return samplerYCbCrConversion;
 }
 
 }  // namespace dawn::native::vulkan

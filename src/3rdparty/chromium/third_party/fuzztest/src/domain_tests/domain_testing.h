@@ -35,11 +35,11 @@
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "./fuzztest/internal/domains/mutation_metadata.h"
 #include "./fuzztest/internal/logging.h"
 #include "./fuzztest/internal/meta.h"
 #include "./fuzztest/internal/serialization.h"
 #include "./fuzztest/internal/test_protobuf.pb.h"
-#include "./fuzztest/internal/type_support.h"
 #include "google/protobuf/util/field_comparator.h"
 #include "google/protobuf/util/message_differencer.h"
 
@@ -151,15 +151,20 @@ struct Value {
         }()),
         user_value(std::move(user_value)) {}
 
-  void Mutate(Domain& domain, absl::BitGenRef prng, bool only_shrink) {
-    domain.Mutate(corpus_value, prng, only_shrink);
+  void Mutate(Domain& domain, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
+    domain.Mutate(corpus_value, prng, metadata, only_shrink);
     user_value = domain.GetValue(corpus_value);
   }
 
-  void RandomizeByRepeatedMutation(Domain& domain, absl::BitGenRef prng) {
+  void RandomizeByRepeatedMutation(
+      Domain& domain, absl::BitGenRef prng,
+      const domain_implementor::MutationMetadata& metadata = {},
+      bool only_shrink = false) {
     static constexpr int kMutations = 1000;
     for (int i = 0; i < kMutations; ++i) {
-      domain.Mutate(corpus_value, prng, /*only_shrink=*/false);
+      domain.Mutate(corpus_value, prng, metadata, only_shrink);
     }
     user_value = domain.GetValue(corpus_value);
   }
@@ -256,8 +261,9 @@ template <typename Domain>
 Value(Domain&, absl::BitGenRef) -> Value<Domain>;
 
 template <typename Domain>
-auto GenerateValues(Domain domain, int num_seeds = 10,
-                    int num_mutations = 100) {
+auto GenerateValues(Domain domain, int num_seeds = 10, int num_mutations = 100,
+                    const domain_implementor::MutationMetadata& metadata = {},
+                    bool only_shrink = false) {
   absl::BitGen bitgen;
 
   absl::flat_hash_set<Value<Domain>> seeds;
@@ -276,7 +282,7 @@ auto GenerateValues(Domain domain, int num_seeds = 10,
     // As above, we repeat until we find enough unique ones.
     while (mutations.size() < num_mutations) {
       const auto previous = value;
-      value.Mutate(domain, bitgen, false);
+      value.Mutate(domain, bitgen, metadata, only_shrink);
       // Make sure that it changed in some way.
       mutations.insert(value);
       EXPECT_NE(previous, value) << "Value=" << value << " Prev=" << previous;
@@ -288,8 +294,10 @@ auto GenerateValues(Domain domain, int num_seeds = 10,
 }
 
 template <typename Domain>
-auto GenerateNonUniqueValues(Domain domain, int num_seeds = 10,
-                             int num_mutations = 100) {
+auto GenerateNonUniqueValues(
+    Domain domain, int num_seeds = 10, int num_mutations = 100,
+    const domain_implementor::MutationMetadata& metadata = {},
+    bool only_shrink = false) {
   absl::BitGen bitgen;
 
   std::vector<Value<Domain>> seeds;
@@ -303,7 +311,7 @@ auto GenerateNonUniqueValues(Domain domain, int num_seeds = 10,
     auto value = seed;
     std::vector<Value<Domain>> mutations = {value};
     while (mutations.size() < num_mutations) {
-      value.Mutate(domain, bitgen, false);
+      value.Mutate(domain, bitgen, metadata, only_shrink);
       mutations.push_back(value);
     }
     values.insert(values.end(), mutations.begin(), mutations.end());
@@ -331,28 +339,32 @@ void CheckValues(const Values& values, Pred pred) {
 }
 
 template <typename Domain>
-auto MutateUntilFoundN(Domain domain, size_t n) {
+auto MutateUntilFoundN(
+    Domain domain, size_t n,
+    const domain_implementor::MutationMetadata& metadata = {},
+    bool only_shrink = false) {
   absl::flat_hash_set<Value<Domain>> seen;
   absl::BitGen bitgen;
   Value val(domain, bitgen);
   while (seen.size() < n) {
     seen.insert(Value(val, domain));
-    val.Mutate(domain, bitgen, false);
+    val.Mutate(domain, bitgen, metadata, only_shrink);
   }
   return seen;
 }
 
 template <typename Domain, typename IsTerminal, typename IsCloser,
           typename T = internal::value_type_t<Domain>>
-absl::Status TestShrink(Domain domain,
-                        const absl::flat_hash_set<Value<Domain>>& values,
-                        IsTerminal is_terminal, IsCloser is_closer_to_zero) {
+absl::Status TestShrink(
+    Domain domain, const absl::flat_hash_set<Value<Domain>>& values,
+    IsTerminal is_terminal, IsCloser is_closer_to_zero,
+    const domain_implementor::MutationMetadata& metadata = {}) {
   absl::BitGen bitgen;
 
   for (auto value : values) {
     while (!is_terminal(value.user_value)) {
       auto previous_value = value;
-      value.Mutate(domain, bitgen, true);
+      value.Mutate(domain, bitgen, metadata, true);
       if (value == previous_value) {
         return absl::InternalError(
             absl::StrCat("Mutate failed to produce a new value starting from ",
@@ -378,7 +390,7 @@ void TestShrink(Domain domain, const Values& values, Pred pred) {
 
   for (const auto& value : values) {
     auto other_value = value;
-    other_value.Mutate(domain, bitgen, true);
+    other_value.Mutate(domain, bitgen, {}, true);
     ASSERT_TRUE(pred(value.user_value, other_value.user_value))
         << value << " " << other_value;
   }
@@ -576,6 +588,16 @@ inline bool TowardsZero(const internal::TestProtobuf& prev,
     ADD_FAILURE() << "Failed on field: " << error_field;
     return false;
   }
+}
+
+// Returns the number of iterations needed to hit `num_cases`, with the
+// probability of hitting a case given as `hit_probability`, so that the
+// probability of failure is upper-bounded by `10^(-confidence_level)`.
+inline int IterationsToHitAll(int num_cases, double hit_probability,
+                              int confidence_level = 15) {
+  return static_cast<int>(
+      -(confidence_level * std::log(10) + std::log(num_cases)) /
+      std::log(1.0 - hit_probability));
 }
 
 }  // namespace fuzztest

@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 
-#include "base/hash/md5.h"
+#include "base/containers/span.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
@@ -21,7 +21,6 @@ SpellCheckHostMetrics::SpellCheckHostMetrics()
       last_suggestion_show_count_(-1),
       replaced_word_count_(0),
       last_replaced_word_count_(-1),
-      last_unique_word_count_(0),
       start_time_(base::TimeTicks::Now()) {
   const uint64_t kHistogramTimerDurationInMinutes = 30;
   recording_timer_.Start(FROM_HERE,
@@ -48,12 +47,6 @@ void SpellCheckHostMetrics::RecordCheckedWordStats(const std::u16string& word,
     if (misspelled_word_count_ == 1)
       RecordReplacedWordStats(0);
   }
-
-  // Collects actual number of checked words, excluding duplication.
-  base::MD5Digest digest;
-  base::MD5Sum(reinterpret_cast<const unsigned char*>(word.c_str()),
-               word.size() * sizeof(char16_t), &digest);
-  checked_word_hashes_.insert(base::MD5DigestToBase16(digest));
 
   RecordWordCounts();
 }
@@ -111,14 +104,6 @@ void SpellCheckHostMetrics::RecordWordCounts() {
     DCHECK(replaced_word_count_ > last_replaced_word_count_);
     UMA_HISTOGRAM_COUNTS_1M("SpellCheck.ReplacedWords", replaced_word_count_);
     last_replaced_word_count_ = replaced_word_count_;
-  }
-
-  if (checked_word_hashes_.size() != last_unique_word_count_) {
-    DCHECK(checked_word_hashes_.size() > last_unique_word_count_);
-    UMA_HISTOGRAM_COUNTS_1M(
-        "SpellCheck.UniqueWords",
-        base::saturated_cast<int>(checked_word_hashes_.size()));
-    last_unique_word_count_ = checked_word_hashes_.size();
   }
 
   if (suggestion_show_count_ != last_suggestion_show_count_) {

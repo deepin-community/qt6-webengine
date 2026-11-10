@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ui/base/cocoa/tool_tip_base_view.h"
 
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 
 // Below is the nasty tooltip stuff -- copied from WebKit's WebHTMLView.mm
+// https://github.com/WebKit/WebKit/blob/main/Source/WebKitLegacy/mac/WebView/WebHTMLView.mm
 // with minor modifications for code style and commenting.
 //
 //  The 'public' interface is -setToolTipAtMousePoint:. This differs from
@@ -53,19 +60,10 @@
 @implementation ToolTipBaseView {
   // These are part of the magic tooltip code from WebKit's WebHTMLView:
   id __weak _trackingRectOwner;
-  raw_ptr<void, DanglingUntriaged> _trackingRectUserData;
+  raw_ptr<void> _trackingRectUserData;
   NSTrackingRectTag _lastToolTipTag;
   NSString* __strong _toolTip;
 }
-
-#ifndef MAC_OS_VERSION_13_0
-#define MAC_OS_VERSION_13_0 130000
-#endif
-
-// Remove these methods once macOS 13 becomes the minimum deployment version
-// (see comment in -setToolTipAtMousePoint: below). Consider moving the
-// remainder into BaseView.
-#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
 
 // Any non-zero value will do, but using something recognizable might help us
 // debug some day.
@@ -75,37 +73,37 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
 // See above for rationale.
 - (NSTrackingRectTag)addTrackingRect:(NSRect)rect
                                owner:(id)owner
-                            userData:(void *)data
+                            userData:(void*)data
                         assumeInside:(BOOL)assumeInside {
-  DCHECK(_trackingRectOwner == nil);
+  DCHECK_EQ(_trackingRectOwner, nil);
   _trackingRectOwner = owner;
   _trackingRectUserData = data;
   return kTrackingRectTag;
 }
 
-// Override of (apparently) a private NSView method(!) See above for rationale.
+// Override of a private NSView method. See above for rationale.
 - (NSTrackingRectTag)_addTrackingRect:(NSRect)rect
                                 owner:(id)owner
-                             userData:(void *)data
+                             userData:(void*)data
                          assumeInside:(BOOL)assumeInside
                        useTrackingNum:(int)tag {
   DCHECK(tag == 0 || tag == kTrackingRectTag);
-  DCHECK(_trackingRectOwner == nil);
+  DCHECK_EQ(_trackingRectOwner, nil);
   _trackingRectOwner = owner;
   _trackingRectUserData = data;
   return kTrackingRectTag;
 }
 
-// Override of (apparently) a private NSView method(!) See above for rationale.
-- (void)_addTrackingRects:(NSRect *)rects
+// Override of a private NSView method. See above for rationale.
+- (void)_addTrackingRects:(NSRect*)rects
                     owner:(id)owner
-             userDataList:(void **)userDataList
-         assumeInsideList:(BOOL *)assumeInsideList
-             trackingNums:(NSTrackingRectTag *)trackingNums
+             userDataList:(void**)userDataList
+         assumeInsideList:(BOOL*)assumeInsideList
+             trackingNums:(NSTrackingRectTag*)trackingNums
                     count:(int)count {
-  DCHECK(count == 1);
+  DCHECK_EQ(count, 1);
   DCHECK(trackingNums[0] == 0 || trackingNums[0] == kTrackingRectTag);
-  DCHECK(_trackingRectOwner == nil);
+  DCHECK_EQ(_trackingRectOwner, nil);
   _trackingRectOwner = owner;
   _trackingRectUserData = userDataList[0];
   trackingNums[0] = kTrackingRectTag;
@@ -114,11 +112,13 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
 // Override of a public NSView method, replacing the inherited functionality.
 // See above for rationale.
 - (void)removeTrackingRect:(NSTrackingRectTag)tag {
-  if (tag == 0)
+  if (tag == 0) {
     return;
+  }
 
   if (tag == kTrackingRectTag) {
     _trackingRectOwner = nil;
+    _trackingRectUserData = nullptr;
     return;
   }
 
@@ -129,18 +129,20 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
   }
 
   // If any other tracking rect is being removed, we don't know how it was
-  // created and it's possible there's a leak involved (see Radar 3500217).
+  // created and it's possible there's a leak involved (see rdar://3500217).
   NOTREACHED();
 }
 
-// Override of (apparently) a private NSView method(!)
-- (void)_removeTrackingRects:(NSTrackingRectTag *)tags count:(int)count {
+// Override of a private NSView method.
+- (void)_removeTrackingRects:(NSTrackingRectTag*)tags count:(int)count {
   for (int i = 0; i < count; ++i) {
     NSTrackingRectTag tag = tags[i];
-    if (tag == 0)
+    if (tag == 0) {
       continue;
-    DCHECK(tag == kTrackingRectTag);
+    }
+    DCHECK_EQ(tag, kTrackingRectTag);
     _trackingRectOwner = nil;
+    _trackingRectUserData = nullptr;
   }
 }
 
@@ -158,7 +160,7 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
                           eventNumber:0
                        trackingNumber:kTrackingRectTag
                              userData:_trackingRectUserData];
-  [_trackingRectOwner mouseExited:fakeEvent];
+  [self._toolTipOwnerForSendingMouseEvents mouseExited:fakeEvent];
 }
 
 // Sends a fake NSEventTypeMouseEntered event to the view for its current
@@ -167,7 +169,7 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
   NSInteger windowNumber = self.window.windowNumber;
 
   // Only send a fake mouse enter if the mouse is actually over the window,
-  // versus over a window which overlaps it (see http://crbug.com/883269).
+  // versus over a window which overlaps it (see https://crbug.com/40092440).
   if ([NSWindow windowNumberAtPoint:NSEvent.mouseLocation
           belowWindowWithWindowNumber:0] != windowNumber) {
     return;
@@ -184,40 +186,49 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
                           eventNumber:0
                        trackingNumber:kTrackingRectTag
                              userData:_trackingRectUserData];
-  [_trackingRectOwner mouseEntered:fakeEvent];
+  [self._toolTipOwnerForSendingMouseEvents mouseEntered:fakeEvent];
 }
 
-#endif  // MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
+// Identifies the owner responsible for handling mouse events related to
+// tooltips. This method ensures correct tooltip behavior by checking the
+// primary tracking rect owner and, if not found, searching through
+// `NSTrackingArea` objects to find the tooltip manager.
+- (id)_toolTipOwnerForSendingMouseEvents {
+  if (id owner = _trackingRectOwner) {
+    return owner;
+  }
+
+  static Class managerClass = nil;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    managerClass = NSClassFromString(@"NSToolTipManager");
+  });
+
+  for (CrTrackingArea* trackingArea in self.trackingAreas) {
+    id owner = trackingArea.owner;
+    if ([owner isKindOfClass:managerClass]) {
+      return owner;
+    }
+  }
+  return nil;
+}
 
 // Sets the view's current tooltip, to be displayed at the current mouse
 // location. (This does not make the tooltip appear -- as usual, it only
 // appears after a delay.) Pass null to remove the tooltip.
-- (void)setToolTipAtMousePoint:(NSString *)string {
+- (void)setToolTipAtMousePoint:(NSString*)string {
   NSString* toolTip = string.length == 0 ? nil : string;
   if ((toolTip && _toolTip && [toolTip isEqualToString:_toolTip]) ||
       (!toolTip && !_toolTip)) {
     return;
   }
 
-#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
   if (_toolTip) {
     [self _sendToolTipMouseExited];
   }
-#endif  // MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
 
   _toolTip = [toolTip copy];
 
-  // It appears that as of macOS 13, tooltips are no longer set up with
-  // calls to addTrackingRect:... or removeTrackingRect:. As a result,
-  // _trackingRectOwner remains nil, which means the calls to
-  // [_trackingRectOwner mouseEntered:] in _sendToolTipMouseEntered and
-  // [_trackingRectOwner mouseExited:] in _sendToolTipMouseExited do nothing.
-  // It looks like this doesn't affect tooltip display, but the call to
-  // _sendToolTipMouseExited no longer orders it out. Therefore, when the user
-  // moves the mouse away from a tooltip on Ventura, the call to
-  // setToolTipAtMousePoint:nil initiated by the target view leaves the
-  // tooltip onscreen.
-  //
   // The logic below was
   //
   //   if (tooltip) {
@@ -227,28 +238,26 @@ const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
   //
   // By moving the call to -removeAllTooltips outside of the conditional,
   // we can ensure any visible tooltip will be removed from the screen.
-  // See crbug.com/1409942.
+  // See https://crbug.com/40889407.
   //
   // The strategy of removing all tooltips rather than the single one that
   // was added comes from WebKit, like the rest of the code here. It
-  // apparently works around some AppKit bug.
+  // apparently works around some AppKit bug, the same rdar://3500217 as above.
   [self removeAllToolTips];
   if (toolTip) {
     NSRect wideOpenRect = NSMakeRect(-100000, -100000, 200000, 200000);
     _lastToolTipTag = [self addToolTipRect:wideOpenRect
                                      owner:self
                                   userData:nullptr];
-#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
     [self _sendToolTipMouseEntered];
-#endif  // MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_VERSION_13_0
   }
 }
 
 // NSView calls this to get the text when displaying the tooltip.
-- (NSString *)view:(NSView *)view
-  stringForToolTip:(NSToolTipTag)tag
-             point:(NSPoint)point
-          userData:(void *)data {
+- (NSString*)view:(NSView*)view
+    stringForToolTip:(NSToolTipTag)tag
+               point:(NSPoint)point
+            userData:(void*)data {
   return [_toolTip copy];
 }
 

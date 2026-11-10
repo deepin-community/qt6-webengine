@@ -3,14 +3,14 @@ Execution Tests for the boolean conversion operations
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../gpu_test.js';
-import { TypeBool, TypeF16, TypeF32, TypeI32, TypeU32 } from '../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
+import { Type } from '../../../../util/conversion.js';
 import { ShaderBuilder, allInputSources, run } from '../expression.js';
 
 import { d } from './bool_conversion.cache.js';
 import { unary } from './unary.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 /** Generate expression builder based on how the test case is to be vectorized */
 function vectorizeToExpression(vectorize: undefined | 2 | 3 | 4): ShaderBuilder {
@@ -31,7 +31,14 @@ Identity operation
   )
   .fn(async t => {
     const cases = await d.get('bool');
-    await run(t, vectorizeToExpression(t.params.vectorize), [TypeBool], TypeBool, t.params, cases);
+    await run(
+      t,
+      vectorizeToExpression(t.params.vectorize),
+      [Type.bool],
+      Type.bool,
+      t.params,
+      cases
+    );
   });
 
 g.test('u32')
@@ -49,7 +56,7 @@ The result is false if e is 0, and true otherwise.
   )
   .fn(async t => {
     const cases = await d.get('u32');
-    await run(t, vectorizeToExpression(t.params.vectorize), [TypeU32], TypeBool, t.params, cases);
+    await run(t, vectorizeToExpression(t.params.vectorize), [Type.u32], Type.bool, t.params, cases);
   });
 
 g.test('i32')
@@ -67,7 +74,7 @@ The result is false if e is 0, and true otherwise.
   )
   .fn(async t => {
     const cases = await d.get('i32');
-    await run(t, vectorizeToExpression(t.params.vectorize), [TypeI32], TypeBool, t.params, cases);
+    await run(t, vectorizeToExpression(t.params.vectorize), [Type.i32], Type.bool, t.params, cases);
   });
 
 g.test('f32')
@@ -85,7 +92,7 @@ The result is false if e is 0.0 or -0.0, and true otherwise.
   )
   .fn(async t => {
     const cases = await d.get('f32');
-    await run(t, vectorizeToExpression(t.params.vectorize), [TypeF32], TypeBool, t.params, cases);
+    await run(t, vectorizeToExpression(t.params.vectorize), [Type.f32], Type.bool, t.params, cases);
   });
 
 g.test('f16')
@@ -101,10 +108,8 @@ The result is false if e is 0.0 or -0.0, and true otherwise.
   .params(u =>
     u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get('f16');
-    await run(t, vectorizeToExpression(t.params.vectorize), [TypeF16], TypeBool, t.params, cases);
+    await run(t, vectorizeToExpression(t.params.vectorize), [Type.f16], Type.bool, t.params, cases);
   });

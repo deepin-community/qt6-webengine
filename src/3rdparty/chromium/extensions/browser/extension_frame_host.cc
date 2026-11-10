@@ -6,28 +6,63 @@
 
 #include <string>
 
+#include "base/check.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/trace_event/typed_macros.h"
+#include "content/public/browser/browser_context.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_process_host.h"
-#include "extensions/browser/app_window/app_window.h"
-#include "extensions/browser/app_window/app_window_registry.h"
+#include "content/public/browser/web_contents.h"
 #include "extensions/browser/bad_message.h"
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_web_contents_observer.h"
 #include "extensions/browser/message_service_api.h"
 #include "extensions/browser/process_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/messaging/port_context.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/message_port.mojom.h"
 #include "extensions/common/trace_util.h"
+#include "third_party/blink/public/mojom/page/draggable_region.mojom.h"
+
+#if BUILDFLAG(ENABLE_PLATFORM_APPS)
+#include "extensions/browser/app_window/app_window.h"
+#include "extensions/browser/app_window/app_window_registry.h"
+#endif
 
 using perfetto::protos::pbzero::ChromeTrackEvent;
 
 namespace extensions {
 
-ExtensionFrameHost::ExtensionFrameHost(content::WebContents* web_contents)
-    : web_contents_(web_contents), receivers_(web_contents, this) {}
+namespace {
 
-ExtensionFrameHost::~ExtensionFrameHost() = default;
+// Generates a unique activity extra_data string for IPC keepalives originating
+// from a specific frame. This string is passed to `ProcessManager` to ensure
+// that keepalive decrements can only be applied against exact matching
+// increments from this frame.
+std::string GetFrameScopedIpcActivityData(
+    const content::GlobalRenderFrameHostId& frame_id) {
+  return base::StrCat({Activity::kIPC, ":",
+                       base::NumberToString(frame_id.child_id),
+                       ":", base::NumberToString(frame_id.frame_routing_id)});
+}
+
+}  // namespace
+
+ExtensionFrameHost::ExtensionFrameHost(content::WebContents* web_contents)
+    : web_contents_(web_contents),
+      receivers_(web_contents, this),
+      browser_context_(web_contents->GetBrowserContext()) {}
+
+ExtensionFrameHost::~ExtensionFrameHost() {
+  for (const auto& [frame_id, data] : frame_ipc_keepalives_) {
+    ReleaseIpcKeepaliveData(data);
+  }
+  frame_ipc_keepalives_.clear();
+}
 
 void ExtensionFrameHost::BindLocalFrameHost(
     mojo::PendingAssociatedReceiver<mojom::LocalFrameHost> receiver,
@@ -35,8 +70,13 @@ void ExtensionFrameHost::BindLocalFrameHost(
   receivers_.Bind(render_frame_host, std::move(receiver));
 }
 
+void ExtensionFrameHost::RenderFrameDeleted(
+    content::RenderFrameHost* render_frame_host) {
+  ReleaseIpcKeepaliveForFrame(render_frame_host->GetGlobalId());
+}
+
 void ExtensionFrameHost::RequestScriptInjectionPermission(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     mojom::InjectionType script_type,
     mojom::RunLocation run_location,
     RequestScriptInjectionPermissionCallback callback) {
@@ -90,8 +130,26 @@ void ExtensionFrameHost::IncrementLazyKeepaliveCount() {
         bad_message::EFH_NO_BACKGROUND_HOST_FOR_FRAME);
     return;
   }
-  process_manager->IncrementLazyKeepaliveCount(
-      extension, Activity::LIFECYCLE_MANAGEMENT, Activity::kIPC);
+
+  const content::GlobalRenderFrameHostId frame_id =
+      render_frame_host->GetGlobalId();
+  auto it = frame_ipc_keepalives_.find(frame_id);
+  if (it == frame_ipc_keepalives_.end()) {
+    // First keepalive increment for this frame: register tracking data and
+    // forward single increment to `ProcessManager` tagged with this frame's ID.
+    auto [inserted_it, inserted] = frame_ipc_keepalives_.insert(
+        {frame_id,
+         FrameIpcKeepaliveData{extension->id(),
+                               GetFrameScopedIpcActivityData(frame_id), 0}});
+    CHECK(inserted);
+    it = inserted_it;
+
+    process_manager->IncrementLazyKeepaliveCount(
+        extension, Activity::LIFECYCLE_MANAGEMENT, it->second.activity_data);
+  }
+  // Track active IPC counts locally. Repetitive increments from the renderer
+  // are handled here rather than spamming `ProcessManager`.
+  ++it->second.count;
 }
 
 void ExtensionFrameHost::DecrementLazyKeepaliveCount() {
@@ -106,8 +164,27 @@ void ExtensionFrameHost::DecrementLazyKeepaliveCount() {
         bad_message::EFH_NO_BACKGROUND_HOST_FOR_FRAME);
     return;
   }
-  process_manager->DecrementLazyKeepaliveCount(
-      extension, Activity::LIFECYCLE_MANAGEMENT, Activity::kIPC);
+
+  const content::GlobalRenderFrameHostId frame_id =
+      render_frame_host->GetGlobalId();
+  auto it = frame_ipc_keepalives_.find(frame_id);
+  // Silently ignore unbalanced decrements. The renderer-side bindings layer
+  // is not robust enough to guarantee perfectly balanced increment/decrement
+  // pairs, so an unmatched decrement is not by itself proof of a compromised
+  // renderer. Dropping the IPC on the floor still prevents counter underflow.
+  // See https://crbug.com/513156160.
+  if (it == frame_ipc_keepalives_.end() || it->second.count <= 0) {
+    return;
+  }
+
+  --it->second.count;
+  if (it->second.count == 0) {
+    std::string activity_data = std::move(it->second.activity_data);
+    frame_ipc_keepalives_.erase(it);
+
+    process_manager->DecrementLazyKeepaliveCount(
+        extension, Activity::LIFECYCLE_MANAGEMENT, activity_data);
+  }
 }
 
 const Extension* ExtensionFrameHost::GetExtension(
@@ -121,34 +198,34 @@ const Extension* ExtensionFrameHost::GetExtension(
   return extension_host->extension();
 }
 
-void ExtensionFrameHost::UpdateDraggableRegions(
-    std::vector<mojom::DraggableRegionPtr> regions) {
-  content::RenderFrameHost* render_frame_host =
-      receivers_.GetCurrentTargetFrame();
+void ExtensionFrameHost::ReleaseIpcKeepaliveData(
+    const FrameIpcKeepaliveData& data) {
+  auto* registry = ExtensionRegistry::Get(browser_context_);
+  const Extension* extension =
+      registry->enabled_extensions().GetByID(data.extension_id);
+  if (!extension) {
+    return;
+  }
+  auto* process_manager = ProcessManager::Get(browser_context_);
+  process_manager->DecrementLazyKeepaliveCount(
+      extension, Activity::LIFECYCLE_MANAGEMENT, data.activity_data);
+}
 
-  // TODO(dtapuska): We should restrict sending the draggable region
-  // only to AppWindows.
-  AppWindowRegistry* registry =
-      AppWindowRegistry::Get(render_frame_host->GetBrowserContext());
-  if (!registry) {
-    return;
-  }
-  AppWindow* app_window = registry->GetAppWindowForWebContents(web_contents_);
-  if (!app_window) {
+void ExtensionFrameHost::ReleaseIpcKeepaliveForFrame(
+    const content::GlobalRenderFrameHostId& frame_id) {
+  auto it = frame_ipc_keepalives_.find(frame_id);
+  if (it == frame_ipc_keepalives_.end()) {
     return;
   }
 
-  // This message should come from a primary main frame.
-  if (!render_frame_host->IsInPrimaryMainFrame()) {
-    bad_message::ReceivedBadMessage(
-        render_frame_host->GetProcess(),
-        bad_message::AWCI_INVALID_CALL_FROM_NOT_PRIMARY_MAIN_FRAME);
-    return;
-  }
-  app_window->UpdateDraggableRegions(std::move(regions));
+  // The frame is being deleted or destroyed while it still has active IPC
+  // keepalives. Balance the keepalive count in `ProcessManager` before erasing.
+  ReleaseIpcKeepaliveData(it->second);
+  frame_ipc_keepalives_.erase(it);
 }
 
 void ExtensionFrameHost::AppWindowReady() {
+#if BUILDFLAG(ENABLE_PLATFORM_APPS)
   AppWindowRegistry* registry =
       AppWindowRegistry::Get(web_contents_->GetBrowserContext());
   if (!registry) {
@@ -159,6 +236,7 @@ void ExtensionFrameHost::AppWindowReady() {
     return;
   }
   app_window->AppWindowReady();
+#endif
 }
 
 void ExtensionFrameHost::OpenChannelToExtension(
@@ -175,13 +253,9 @@ void ExtensionFrameHost::OpenChannelToExtension(
   TRACE_EVENT("extensions", "ExtensionFrameHost::OpenChannelToExtension",
               ChromeTrackEvent::kRenderProcessHost, *process);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  bad_message::ReceivedBadMessage(process, bad_message::LEGACY_IPC_MISMATCH);
-#else
   MessageServiceApi::GetMessageService()->OpenChannelToExtension(
       render_frame_host->GetBrowserContext(), render_frame_host, port_id, *info,
       channel_type, channel_name, std::move(port), std::move(port_host));
-#endif
 }
 
 void ExtensionFrameHost::OpenChannelToNativeApp(
@@ -196,13 +270,9 @@ void ExtensionFrameHost::OpenChannelToNativeApp(
   TRACE_EVENT("extensions", "ExtensionFrameHost::OnOpenChannelToNativeApp",
               ChromeTrackEvent::kRenderProcessHost, *process);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  bad_message::ReceivedBadMessage(process, bad_message::LEGACY_IPC_MISMATCH);
-#else
   MessageServiceApi::GetMessageService()->OpenChannelToNativeApp(
       render_frame_host->GetBrowserContext(), render_frame_host, port_id,
       native_app_name, std::move(port), std::move(port_host));
-#endif
 }
 
 void ExtensionFrameHost::OpenChannelToTab(
@@ -221,14 +291,10 @@ void ExtensionFrameHost::OpenChannelToTab(
   TRACE_EVENT("extensions", "ExtensionFrameHost::OpenChannelToTab",
               ChromeTrackEvent::kRenderProcessHost, *process);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  bad_message::ReceivedBadMessage(process, bad_message::LEGACY_IPC_MISMATCH);
-#else
   MessageServiceApi::GetMessageService()->OpenChannelToTab(
       render_frame_host->GetBrowserContext(), render_frame_host, port_id,
       tab_id, frame_id, document_id ? *document_id : std::string(),
       channel_type, channel_name, std::move(port), std::move(port_host));
-#endif
 }
 
 }  // namespace extensions

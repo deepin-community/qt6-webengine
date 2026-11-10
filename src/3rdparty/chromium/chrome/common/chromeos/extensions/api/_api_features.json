@@ -12,12 +12,9 @@
       "permission:os.diagnostics"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
   },
   "os.events": {
@@ -25,12 +22,9 @@
       "permission:os.events"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
   },
   "os.management": {
@@ -39,12 +33,9 @@
       "permission:os.management.audio"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
   },
   "os.management.setAudioGain": {
@@ -62,15 +53,9 @@
       "permission:os.telemetry"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
-  },
-  "os.telemetry.getThermalInfo": {
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
   }
 }

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 // FilePath is a container for pathnames stored in a platform's native string
 // type, providing containers for manipulation in according with the
 // platform's conventions for pathnames.  It supports the following path
@@ -99,31 +104,31 @@
 //    paths (sometimes)?", available at:
 //    http://blogs.msdn.com/oldnewthing/archive/2005/11/22/495740.aspx
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_
 
 #include <cstddef>
 #include <iosfwd>
 #include <string>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
 
 // Windows-style drive letter support and pathname separator characters can be
 // enabled and disabled independently, to aid testing.  These #defines are
 // here so that the same setting can be used in both the implementation and
 // in the unit test.
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
 #define PA_FILE_PATH_USES_DRIVE_LETTERS
 #define PA_FILE_PATH_USES_WIN_SEPARATORS
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
 
 // Macros for string literal initialization of FilePath::CharType[].
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
 #define PA_FILE_PATH_LITERAL(x) L##x
-#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+#elif PA_BUILDFLAG(IS_POSIX) || PA_BUILDFLAG(IS_FUCHSIA)
 #define PA_FILE_PATH_LITERAL(x) x
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
 
 namespace partition_alloc::internal::base {
 
@@ -131,16 +136,16 @@ namespace partition_alloc::internal::base {
 // pathnames on different platforms.
 class PA_COMPONENT_EXPORT(PARTITION_ALLOC_BASE) FilePath {
  public:
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
   // On Windows, for Unicode-aware applications, native pathnames are wchar_t
   // arrays encoded in UTF-16.
   typedef std::wstring StringType;
-#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+#elif PA_BUILDFLAG(IS_POSIX) || PA_BUILDFLAG(IS_FUCHSIA)
   // On most platforms, native pathnames are char arrays, and the encoding
   // may or may not be specified.  On Mac OS X, native pathnames are encoded
   // in UTF-8.
   typedef std::string StringType;
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
 
   typedef StringType::value_type CharType;
 
@@ -228,4 +233,4 @@ struct hash<::partition_alloc::internal::base::FilePath> {
 
 }  // namespace std
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_FILES_FILE_PATH_H_

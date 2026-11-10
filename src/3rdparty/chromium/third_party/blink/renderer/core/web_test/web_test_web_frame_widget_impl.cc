@@ -8,7 +8,6 @@
 #include "content/web_test/renderer/event_sender.h"
 #include "content/web_test/renderer/test_runner.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_page_popup.h"
@@ -16,6 +15,7 @@
 #include "third_party/blink/public/web/web_widget.h"
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_supplement.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 
@@ -97,9 +97,8 @@ void WebTestWebFrameWidgetImpl::WillBeginMainFrame() {
   WebFrameWidgetImpl::WillBeginMainFrame();
 }
 
-void WebTestWebFrameWidgetImpl::ScheduleAnimation() {
-  if (GetTestRunner()->TestIsRunning())
-    ScheduleAnimationInternal(GetTestRunner()->animation_requires_raster());
+void WebTestWebFrameWidgetImpl::ScheduleAnimation(bool urgent) {
+  ScheduleAnimationInternal(GetTestRunner()->animation_requires_raster());
 }
 
 void WebTestWebFrameWidgetImpl::ScheduleAnimationForWebTests() {
@@ -109,8 +108,7 @@ void WebTestWebFrameWidgetImpl::ScheduleAnimationForWebTests() {
   // than just doing the main frame animate step. That way we know it will
   // submit a frame and later trigger the presentation callback in order to make
   // progress in the test.
-  if (GetTestRunner()->TestIsRunning())
-    ScheduleAnimationInternal(/*do_raster=*/true);
+  ScheduleAnimationInternal(/*do_raster=*/true);
 }
 
 void WebTestWebFrameWidgetImpl::WasShown(bool was_evicted) {
@@ -124,20 +122,21 @@ void WebTestWebFrameWidgetImpl::WasShown(bool was_evicted) {
 
 void WebTestWebFrameWidgetImpl::UpdateAllLifecyclePhasesAndComposite(
     base::OnceClosure callback) {
-  LayerTreeHost()->RequestSuccessfulPresentationTimeForNextFrame(WTF::BindOnce(
-      [](base::OnceClosure callback, base::TimeTicks presentation_timestamp) {
-        std::move(callback).Run();
-      },
-      std::move(callback)));
+  LayerTreeHost()->RequestSuccessfulPresentationTimeForNextFrame(
+      base::IgnoreArgs<const viz::FrameTimingDetails&>(std::move(callback)));
   LayerTreeHost()->SetNeedsCommitWithForcedRedraw();
   ScheduleAnimationForWebTests();
 }
 
 void WebTestWebFrameWidgetImpl::ScheduleAnimationInternal(bool do_raster) {
+  if (!GetTestRunner()->TestIsRunning()) {
+    return;
+  }
+
   // When using threaded compositing, have the WeFrameWidgetImpl normally
   // schedule a request for a frame, as we use the compositor's scheduler.
   if (Thread::CompositorThread()) {
-    WebFrameWidgetImpl::ScheduleAnimation();
+    WebFrameWidgetImpl::ScheduleAnimation(/*urgent=*/false);
     return;
   }
 
@@ -207,6 +206,10 @@ void WebTestWebFrameWidgetImpl::Reset() {
 
     SetMainFrameOverlayColor(SK_ColorTRANSPARENT);
     SetTextZoomFactor(1);
+    LocalRootImpl()
+        ->GetFrame()
+        ->GetEventHandler()
+        .ResetLastMousePositionForWebTest();
   }
 }
 
@@ -342,9 +345,10 @@ void WebTestWebFrameWidgetImpl::AnimateNow() {
 }
 
 void WebTestWebFrameWidgetImpl::RequestDecode(
-    const PaintImage& image,
-    base::OnceCallback<void(bool)> callback) {
-  WebFrameWidgetImpl::RequestDecode(image, std::move(callback));
+    const cc::DrawImage& image,
+    base::OnceCallback<void(bool)> callback,
+    bool speculative) {
+  WebFrameWidgetImpl::RequestDecode(image, std::move(callback), speculative);
 
   // In web tests the request does not actually cause a commit, because the
   // compositor is scheduled by the test runner to avoid flakiness. So for this

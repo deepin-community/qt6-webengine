@@ -6,13 +6,11 @@
 
 #include "fxjs/xfa/cjx_subform.h"
 
-#include <vector>
-
+#include "core/fxcrt/span.h"
 #include "fxjs/cfx_v8.h"
 #include "fxjs/fxv8.h"
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_engine.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/v8-object.h"
 #include "xfa/fxfa/cxfa_eventparam.h"
 #include "xfa/fxfa/cxfa_ffnotify.h"
@@ -38,8 +36,9 @@ bool CJX_Subform::DynamicTypeIs(TypeTag eType) const {
 
 CJS_Result CJX_Subform::execEvent(CFXJSE_Engine* runtime,
                                   pdfium::span<v8::Local<v8::Value>> params) {
-  if (params.size() != 1)
+  if (params.size() != 1) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   execSingleEventByName(runtime->ToWideString(params[0]).AsStringView(),
                         XFA_Element::Subform);
@@ -49,38 +48,44 @@ CJS_Result CJX_Subform::execEvent(CFXJSE_Engine* runtime,
 CJS_Result CJX_Subform::execInitialize(
     CFXJSE_Engine* runtime,
     pdfium::span<v8::Local<v8::Value>> params) {
-  if (!params.empty())
+  if (!params.empty()) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   CXFA_FFNotify* pNotify = GetDocument()->GetNotify();
-  if (pNotify)
+  if (pNotify) {
     pNotify->ExecEventByDeepFirst(GetXFANode(), XFA_EVENT_Initialize, false,
                                   true);
+  }
   return CJS_Result::Success();
 }
 
 CJS_Result CJX_Subform::execCalculate(
     CFXJSE_Engine* runtime,
     pdfium::span<v8::Local<v8::Value>> params) {
-  if (!params.empty())
+  if (!params.empty()) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   CXFA_FFNotify* pNotify = GetDocument()->GetNotify();
-  if (pNotify)
+  if (pNotify) {
     pNotify->ExecEventByDeepFirst(GetXFANode(), XFA_EVENT_Calculate, false,
                                   true);
+  }
   return CJS_Result::Success();
 }
 
 CJS_Result CJX_Subform::execValidate(
     CFXJSE_Engine* runtime,
     pdfium::span<v8::Local<v8::Value>> params) {
-  if (!params.empty())
+  if (!params.empty()) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   CXFA_FFNotify* pNotify = GetDocument()->GetNotify();
-  if (!pNotify)
+  if (!pNotify) {
     return CJS_Result::Success(runtime->NewBoolean(false));
+  }
 
   XFA_EventError iRet = pNotify->ExecEventByDeepFirst(
       GetXFANode(), XFA_EVENT_Validate, false, true);

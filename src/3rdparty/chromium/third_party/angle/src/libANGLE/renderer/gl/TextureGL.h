@@ -179,6 +179,18 @@ class TextureGL : public TextureImpl
 
     angle::Result generateMipmap(const gl::Context *context) override;
 
+    angle::Result clearImage(const gl::Context *context,
+                             GLint level,
+                             GLenum format,
+                             GLenum type,
+                             const uint8_t *data) override;
+    angle::Result clearSubImage(const gl::Context *context,
+                                GLint level,
+                                const gl::Box &area,
+                                GLenum format,
+                                GLenum type,
+                                const uint8_t *data) override;
+
     angle::Result bindTexImage(const gl::Context *context, egl::Surface *surface) override;
     angle::Result releaseTexImage(const gl::Context *context) override;
 
@@ -203,6 +215,9 @@ class TextureGL : public TextureImpl
     angle::Result initializeContents(const gl::Context *context,
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
+    angle::Result initializeContentsImpl(const gl::Context *context,
+                                         GLenum binding,
+                                         const gl::ImageIndex &imageIndex);
 
     GLint getRequiredExternalTextureImageUnits(const gl::Context *context) override;
 
@@ -218,6 +233,15 @@ class TextureGL : public TextureImpl
 
   private:
     angle::Result recreateTexture(const gl::Context *context);
+    // One of sourceTexture or destTexture must be mTextureID.
+    angle::Result copyLevelsBetweenTextures(const gl::Context *context,
+                                            GLuint sourceTexture,
+                                            size_t sourceLevel,
+                                            GLuint destTexture,
+                                            size_t destLevel,
+                                            size_t levelCount);
+    angle::Result recreateNativeStoragePreservingLevels(const gl::Context *context);
+    angle::Result useTempForNonZeroBaseLevelGenmipmap(const gl::Context *context);
 
     angle::Result setImageHelper(const gl::Context *context,
                                  gl::TextureTarget target,
@@ -255,12 +279,13 @@ class TextureGL : public TextureImpl
                                                const gl::PixelUnpackState &unpack,
                                                const gl::Buffer *unpackBuffer,
                                                const uint8_t *pixels);
+    angle::Result allocateMipmapLevelsForGeneration(const gl::Context *context);
 
     angle::Result syncTextureStateSwizzle(const gl::Context *context,
                                           const FunctionsGL *functions,
                                           GLenum name,
                                           GLenum value,
-                                          GLenum *outValue);
+                                          GLenum *currentlyAppliedValue);
 
     void setLevelInfo(const gl::Context *context,
                       gl::TextureTarget target,
@@ -287,6 +312,7 @@ class TextureGL : public TextureImpl
     gl::SamplerState mAppliedSampler;
     GLuint mAppliedBaseLevel;
     GLuint mAppliedMaxLevel;
+    GLenum mAppliedDepthStencilTextureMode;
 
     GLuint mTextureID;
 };

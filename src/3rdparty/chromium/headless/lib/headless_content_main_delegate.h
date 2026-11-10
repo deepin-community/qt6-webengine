@@ -6,9 +6,11 @@
 #define HEADLESS_LIB_HEADLESS_CONTENT_MAIN_DELEGATE_H_
 
 #include <memory>
-#include <string>
-
 #include <optional>
+#include <string>
+#include <variant>
+
+#include "base/feature_list.h"
 #include "build/build_config.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/browser/content_browser_client.h"
@@ -22,6 +24,11 @@ class CommandLine;
 }  // namespace base
 
 namespace headless {
+
+namespace features {
+// Enables virtual time, which allows for deterministic time control.
+HEADLESS_EXPORT BASE_DECLARE_FEATURE(kVirtualTime);
+}  // namespace features
 
 class HeadlessBrowserImpl;
 
@@ -42,7 +49,7 @@ class HEADLESS_EXPORT HeadlessContentMainDelegate
   // content::ContentMainDelegate implementation:
   std::optional<int> BasicStartupComplete() override;
   void PreSandboxStartup() override;
-  absl::variant<int, content::MainFunctionParams> RunProcess(
+  std::variant<int, content::MainFunctionParams> RunProcess(
       const std::string& process_type,
       content::MainFunctionParams main_function_params) override;
   std::optional<int> PreBrowserMain() override;
@@ -55,6 +62,12 @@ class HEADLESS_EXPORT HeadlessContentMainDelegate
   content::ContentRendererClient* CreateContentRendererClient() override;
 
   std::optional<int> PostEarlyInitialization(InvokedIn invoked_in) override;
+
+#if defined(HEADLESS_SUPPORT_FIELD_TRIALS)
+  bool ShouldCreateFeatureList(InvokedIn invoked_in) override;
+  bool ShouldInitializeMojo(InvokedIn invoked_in) override;
+#endif
+
 #if BUILDFLAG(IS_MAC)
   void PlatformPreBrowserMain();
 #endif

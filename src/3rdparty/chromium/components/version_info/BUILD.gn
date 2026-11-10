@@ -14,6 +14,19 @@ source_set("version_info") {
   public_deps = [
     ":channel",
     ":generate_version_info",
+    ":version_info_with_user_agent",
+    "//base",
+    "//base/version_info",
+  ]
+}
+
+source_set("version_info_with_user_agent") {
+  sources = [
+    "version_info_with_user_agent.cc",
+    "version_info_with_user_agent.h",
+  ]
+  deps = [
+    ":generate_version_info",
     "//base",
     "//base/version_info",
   ]
@@ -28,7 +41,7 @@ source_set("version_string") {
 # Facade for "//base/version_info:channel"
 source_set("channel") {
   sources = [ "channel.h" ]
-  public_deps = [ "//base/version_info:channel" ]
+  public_deps = [ "//base" ]
 }
 
 # Facade for "//base/version_info:generate_version_info"

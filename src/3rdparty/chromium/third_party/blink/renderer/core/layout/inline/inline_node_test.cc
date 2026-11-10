@@ -18,7 +18,7 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_item_span.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/inline/physical_line_box_fragment.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/core/testing/mock_hyphenation.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_spacing.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
@@ -44,13 +45,11 @@ class InlineNodeForTest : public InlineNode {
   using InlineNode::InlineNode;
 
   std::string Text() const { return Data().text_content.Utf8(); }
-  HeapVector<InlineItem>& Items() { return MutableData()->items; }
-  static HeapVector<InlineItem>& Items(InlineNodeData& data) {
-    return data.items;
-  }
+  InlineItems& Items() { return MutableData()->items; }
+  static InlineItems& Items(InlineNodeData& data) { return data.items; }
   bool IsNGShapeCacheAllowed(const String& text_content,
                              const Font* override_font,
-                             const HeapVector<InlineItem>& items,
+                             const InlineItems& items,
                              ShapeResultSpacing<String>& spacing) const {
     return InlineNode::IsNGShapeCacheAllowed(text_content, override_font, items,
                                              spacing);
@@ -60,16 +59,16 @@ class InlineNodeForTest : public InlineNode {
     InlineNodeData* data = MutableData();
     unsigned start = data->text_content.length();
     data->text_content = data->text_content + text;
-    data->items.push_back(InlineItem(InlineItem::kText, start,
-                                     start + text.length(), layout_object));
+    data->items.push_back(MakeGarbageCollected<InlineItem>(
+        InlineItem::kText, start, start + text.length(), layout_object));
   }
 
   void Append(UChar character) {
     InlineNodeData* data = MutableData();
     data->text_content = data->text_content + character;
     unsigned end = data->text_content.length();
-    data->items.push_back(
-        InlineItem(InlineItem::kBidiControl, end - 1, end, nullptr));
+    data->items.push_back(MakeGarbageCollected<InlineItem>(
+        InlineItem::kBidiControl, end - 1, end, nullptr));
     data->is_bidi_enabled_ = true;
   }
 
@@ -82,7 +81,7 @@ class InlineNodeForTest : public InlineNode {
   void SegmentText() {
     InlineNodeData* data = MutableData();
     data->is_bidi_enabled_ = true;
-    InlineNode::SegmentText(data);
+    InlineNode::SegmentText(data, nullptr);
   }
 
   void CollectInlines() { InlineNode::CollectInlines(MutableData()); }
@@ -93,7 +92,7 @@ class InlineNodeTest : public RenderingTest {
  protected:
   void SetupHtml(const char* id, String html) {
     SetBodyInnerHTML(html);
-    layout_block_flow_ = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId(id));
+    layout_block_flow_ = To<LayoutBlockFlow>(GetLayoutObjectByElementId(id));
     layout_object_ = layout_block_flow_->FirstChild();
   }
 
@@ -105,7 +104,7 @@ class InlineNodeTest : public RenderingTest {
   }
 
   InlineNodeForTest CreateInlineNode(
-      LayoutNGBlockFlow* layout_block_flow = nullptr) {
+      LayoutBlockFlow* layout_block_flow = nullptr) {
     if (layout_block_flow)
       layout_block_flow_ = layout_block_flow;
     if (!layout_block_flow_)
@@ -134,7 +133,7 @@ class InlineNodeTest : public RenderingTest {
     return data->text_content;
   }
 
-  HeapVector<InlineItem>& Items() {
+  InlineItems& Items() {
     InlineNodeData* data = layout_block_flow_->GetInlineNodeData();
     CHECK(data);
     return InlineNodeForTest::Items(*data);
@@ -175,33 +174,33 @@ class InlineNodeTest : public RenderingTest {
                      AtomicString("Google Sans"));
   }
 
-  Persistent<LayoutNGBlockFlow> layout_block_flow_;
+  Persistent<LayoutBlockFlow> layout_block_flow_;
   Persistent<LayoutObject> layout_object_;
   FontCachePurgePreventer purge_preventer_;
 };
 
 #define TEST_ITEM_TYPE_OFFSET(item, type, start, end) \
-  EXPECT_EQ(InlineItem::type, item.Type());           \
-  EXPECT_EQ(start, item.StartOffset());               \
-  EXPECT_EQ(end, item.EndOffset())
+  EXPECT_EQ(InlineItem::type, (item)->Type());        \
+  EXPECT_EQ(start, (item)->StartOffset());            \
+  EXPECT_EQ(end, (item)->EndOffset())
 
 #define TEST_ITEM_TYPE_OFFSET_LEVEL(item, type, start, end, level) \
-  EXPECT_EQ(InlineItem::type, item.Type());                        \
-  EXPECT_EQ(start, item.StartOffset());                            \
-  EXPECT_EQ(end, item.EndOffset());                                \
-  EXPECT_EQ(level, item.BidiLevel())
+  EXPECT_EQ(InlineItem::type, (item)->Type());                     \
+  EXPECT_EQ(start, (item)->StartOffset());                         \
+  EXPECT_EQ(end, (item)->EndOffset());                             \
+  EXPECT_EQ(level, (item)->BidiLevel())
 
 #define TEST_ITEM_OFFSET_DIR(item, start, end, direction) \
-  EXPECT_EQ(start, item.StartOffset());                   \
-  EXPECT_EQ(end, item.EndOffset());                       \
-  EXPECT_EQ(direction, item.Direction())
+  EXPECT_EQ(start, (item)->StartOffset());                \
+  EXPECT_EQ(end, (item)->EndOffset());                    \
+  EXPECT_EQ(direction, (item)->Direction())
 
 TEST_F(InlineNodeTest, CollectInlinesText) {
   SetupHtml("t", "<div id=t>Hello <span>inline</span> world.</div>");
   InlineNodeForTest node = CreateInlineNode();
   node.CollectInlines();
   EXPECT_FALSE(node.IsBidiEnabled());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 6u);
   TEST_ITEM_TYPE_OFFSET(items[1], kOpenTag, 6u, 6u);
   TEST_ITEM_TYPE_OFFSET(items[2], kText, 6u, 12u);
@@ -216,7 +215,7 @@ TEST_F(InlineNodeTest, CollectInlinesBR) {
   node.CollectInlines();
   EXPECT_EQ("Hello\nWorld", node.Text());
   EXPECT_FALSE(node.IsBidiEnabled());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 5u);
   TEST_ITEM_TYPE_OFFSET(items[1], kControl, 5u, 6u);
   TEST_ITEM_TYPE_OFFSET(items[2], kText, 6u, 11u);
@@ -234,15 +233,25 @@ TEST_F(InlineNodeTest, CollectInlinesFloat) {
             "</div>");
   InlineNodeForTest node = CreateInlineNode();
   node.CollectInlines();
-  EXPECT_EQ("abc\uFFFCghi\uFFFCmno", node.Text())
+  EXPECT_EQ(RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()
+                ? "abcghimno"
+                : "abc\uFFFCghi\uFFFCmno",
+            node.Text())
       << "floats are appeared as an object replacement character";
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(5u, items.size());
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 3u);
-  TEST_ITEM_TYPE_OFFSET(items[1], kFloating, 3u, 4u);
-  TEST_ITEM_TYPE_OFFSET(items[2], kText, 4u, 7u);
-  TEST_ITEM_TYPE_OFFSET(items[3], kFloating, 7u, 8u);
-  TEST_ITEM_TYPE_OFFSET(items[4], kText, 8u, 11u);
+  if (RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()) {
+    TEST_ITEM_TYPE_OFFSET(items[1], kFloating, 3u, 3u);
+    TEST_ITEM_TYPE_OFFSET(items[2], kText, 3u, 6u);
+    TEST_ITEM_TYPE_OFFSET(items[3], kFloating, 6u, 6u);
+    TEST_ITEM_TYPE_OFFSET(items[4], kText, 6u, 9u);
+  } else {
+    TEST_ITEM_TYPE_OFFSET(items[1], kFloating, 3u, 4u);
+    TEST_ITEM_TYPE_OFFSET(items[2], kText, 4u, 7u);
+    TEST_ITEM_TYPE_OFFSET(items[3], kFloating, 7u, 8u);
+    TEST_ITEM_TYPE_OFFSET(items[4], kText, 8u, 11u);
+  }
 }
 
 TEST_F(InlineNodeTest, CollectInlinesInlineBlock) {
@@ -254,7 +263,7 @@ TEST_F(InlineNodeTest, CollectInlinesInlineBlock) {
   node.CollectInlines();
   EXPECT_EQ("abc\uFFFCjkl", node.Text())
       << "inline-block is appeared as an object replacement character";
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(3u, items.size());
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 3u);
   TEST_ITEM_TYPE_OFFSET(items[1], kAtomicInline, 3u, 4u);
@@ -265,7 +274,17 @@ TEST_F(InlineNodeTest, CollectInlinesUTF16) {
   SetupHtml("t", u"<div id=t>Hello \u3042</div>");
   InlineNodeForTest node = CreateInlineNode();
   node.CollectInlines();
-  // |CollectInlines()| sets |IsBidiEnabled()| for any UTF-16 strings.
+  EXPECT_FALSE(node.IsBidiEnabled());
+  node.SegmentText();
+  EXPECT_FALSE(node.IsBidiEnabled());
+}
+
+TEST_F(InlineNodeTest, CollectInlinesMaybeRtl) {
+  // U+10000 "LINEAR B SYLLABLE B008 A" is strong LTR.
+  SetupHtml("t", u"<div id=t>Hello \U00010000</div>");
+  InlineNodeForTest node = CreateInlineNode();
+  node.CollectInlines();
+  // |CollectInlines()| sets |IsBidiEnabled()| for any surrogate pairs.
   EXPECT_TRUE(node.IsBidiEnabled());
   // |SegmentText()| analyzes the string and resets |IsBidiEnabled()| if all
   // characters are LTR.
@@ -289,7 +308,7 @@ TEST_F(InlineNodeTest, CollectInlinesRtlWithSpan) {
   EXPECT_TRUE(node.IsBidiEnabled());
   node.SegmentText();
   EXPECT_TRUE(node.IsBidiEnabled());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[0], kText, 0u, 2u, 1u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[1], kOpenTag, 2u, 2u, 1u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[2], kText, 2u, 3u, 1u);
@@ -305,7 +324,7 @@ TEST_F(InlineNodeTest, CollectInlinesMixedText) {
   EXPECT_TRUE(node.IsBidiEnabled());
   node.SegmentText();
   EXPECT_TRUE(node.IsBidiEnabled());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[0], kText, 0u, 7u, 0u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[1], kText, 7u, 9u, 1u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[2], kOpenTag, 9u, 9u, 1u);
@@ -321,7 +340,7 @@ TEST_F(InlineNodeTest, CollectInlinesMixedTextEndWithON) {
   EXPECT_TRUE(node.IsBidiEnabled());
   node.SegmentText();
   EXPECT_TRUE(node.IsBidiEnabled());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[0], kText, 0u, 7u, 0u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[1], kText, 7u, 9u, 1u);
   TEST_ITEM_TYPE_OFFSET_LEVEL(items[2], kOpenTag, 9u, 9u, 1u);
@@ -336,10 +355,10 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineBR) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<div id=t>a<br>z</div>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a z", node.Text());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(3u, items.size());
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 1u);
   TEST_ITEM_TYPE_OFFSET(items[1], kText, 1u, 2u) << "<br> isn't control";
@@ -350,7 +369,7 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineBR) {
 TEST_F(InlineNodeTest, CollectInlinesTextCombineListItemMarker) {
   InsertStyleElement(
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
-  SetupHtml("t", u"<li id=t>ab</li>");
+  SetupHtml("t", u"<ul><li id=t>ab</li></ul>");
   // LayoutListItem {LI}
   //   LayoutOutsideListMarker {::marker}
   //      LayoutTextCombine (anonymous)
@@ -360,11 +379,11 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineListItemMarker) {
   InlineNodeForTest node =
       CreateInlineNode(To<LayoutTextCombine>(layout_object_->SlowFirstChild()));
   node.CollectInlines();
-  EXPECT_EQ("\u2022", node.Text());
-  HeapVector<InlineItem>& items = node.Items();
+  EXPECT_EQ("\u2022 ", node.Text());
+  InlineItems& items = node.Items();
   ASSERT_EQ(1u, items.size());
-  TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 1u);
-  EXPECT_TRUE(items[0].IsSymbolMarker());
+  TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 2u);
+  EXPECT_TRUE(items[0]->IsSymbolMarker());
 }
 
 TEST_F(InlineNodeTest, CollectInlinesTextCombineNewline) {
@@ -372,10 +391,10 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineNewline) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<pre id=t>a\nz</pre>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a z", node.Text());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(3u, items.size());
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 1u);
   TEST_ITEM_TYPE_OFFSET(items[1], kText, 1u, 2u) << "newline isn't control";
@@ -387,10 +406,10 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineWBR) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<div id=t>a<wbr>z</div>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a\u200Bz", node.Text());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(3u, items.size());
   TEST_ITEM_TYPE_OFFSET(items[0], kText, 0u, 1u);
   TEST_ITEM_TYPE_OFFSET(items[1], kText, 1u, 2u) << "<wbr> isn't control";
@@ -401,7 +420,7 @@ TEST_F(InlineNodeTest, SegmentASCII) {
   InlineNodeForTest node = CreateInlineNode();
   node.Append("Hello", layout_object_);
   node.SegmentText();
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(1u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 5u, TextDirection::kLtr);
 }
@@ -411,7 +430,7 @@ TEST_F(InlineNodeTest, SegmentHebrew) {
   node.Append(u"\u05E2\u05D1\u05E8\u05D9\u05EA", layout_object_);
   node.SegmentText();
   ASSERT_EQ(1u, node.Items().size());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(1u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 5u, TextDirection::kRtl);
 }
@@ -420,7 +439,7 @@ TEST_F(InlineNodeTest, SegmentSplit1To2) {
   InlineNodeForTest node = CreateInlineNode();
   node.Append(u"Hello \u05E2\u05D1\u05E8\u05D9\u05EA", layout_object_);
   node.SegmentText();
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(2u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 6u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[1], 6u, 11u, TextDirection::kRtl);
@@ -432,7 +451,7 @@ TEST_F(InlineNodeTest, SegmentSplit3To4) {
   node.Append(u"lo \u05E2", layout_object_);
   node.Append(u"\u05D1\u05E8\u05D9\u05EA", layout_object_);
   node.SegmentText();
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(4u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 3u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[1], 3u, 6u, TextDirection::kLtr);
@@ -443,11 +462,11 @@ TEST_F(InlineNodeTest, SegmentSplit3To4) {
 TEST_F(InlineNodeTest, SegmentBidiOverride) {
   InlineNodeForTest node = CreateInlineNode();
   node.Append("Hello ", layout_object_);
-  node.Append(kRightToLeftOverrideCharacter);
+  node.Append(uchar::kRightToLeftOverride);
   node.Append("ABC", layout_object_);
-  node.Append(kPopDirectionalFormattingCharacter);
+  node.Append(uchar::kPopDirectionalFormatting);
   node.SegmentText();
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ASSERT_EQ(4u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 6u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[1], 6u, 7u, TextDirection::kRtl);
@@ -458,13 +477,13 @@ TEST_F(InlineNodeTest, SegmentBidiOverride) {
 static InlineNodeForTest CreateBidiIsolateNode(InlineNodeForTest node,
                                                LayoutObject* layout_object) {
   node.Append("Hello ", layout_object);
-  node.Append(kRightToLeftIsolateCharacter);
+  node.Append(uchar::kRightToLeftIsolate);
   node.Append(u"\u05E2\u05D1\u05E8\u05D9\u05EA ", layout_object);
-  node.Append(kLeftToRightIsolateCharacter);
+  node.Append(uchar::kLeftToRightIsolate);
   node.Append("A", layout_object);
-  node.Append(kPopDirectionalIsolateCharacter);
+  node.Append(uchar::kPopDirectionalIsolate);
   node.Append(u"\u05E2\u05D1\u05E8\u05D9\u05EA", layout_object);
-  node.Append(kPopDirectionalIsolateCharacter);
+  node.Append(uchar::kPopDirectionalIsolate);
   node.Append(" World", layout_object);
   node.SegmentText();
   return node;
@@ -473,7 +492,7 @@ static InlineNodeForTest CreateBidiIsolateNode(InlineNodeForTest node,
 TEST_F(InlineNodeTest, SegmentBidiIsolate) {
   InlineNodeForTest node = CreateInlineNode();
   node = CreateBidiIsolateNode(node, layout_object_);
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   EXPECT_EQ(9u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 6u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[1], 6u, 7u, TextDirection::kLtr);
@@ -486,80 +505,99 @@ TEST_F(InlineNodeTest, SegmentBidiIsolate) {
   TEST_ITEM_OFFSET_DIR(items[8], 22u, 28u, TextDirection::kLtr);
 }
 
-TEST_F(InlineNodeTest, MinMaxSizes) {
-  LoadAhem();
-  SetupHtml("t", "<div id=t style='font:10px Ahem'>AB CDEF</div>");
-  InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(40, sizes.min_size);
-  EXPECT_EQ(70, sizes.max_size);
+struct MinMaxData {
+  const char* content;
+  std::array<int, 2> min_max;
+  const char* target_style = "";
+  const char* style = "";
+  const char* lang = nullptr;
+} min_max_data[] = {
+    {"AB CDEF", {40, 70}},
+    // Element boundary is at the middle of a word.
+    {"A B<span>C D</span>", {20, 60}},
+    // A close tag after a forced break.
+    {"<span>12<br></span>", {80, 80}, "", "span { border: 30px solid blue; }"},
+    // `pre-wrap` with trailing spaces.
+    {"12345 6789 ", {50, 110}, "white-space: pre-wrap;"},
+    // `word-break: break-word` can break a space run.
+    {"M):\n<span>    </span>p",
+     {10, 90},
+     "white-space: pre-wrap; word-break: break-word;",
+     "span { font-size: 200%; }"},
+    // Tabulation characters with `break-word`.
+    {"&#9;&#9;<span>X</span>",
+     {10, 170},
+     "white-space: pre-wrap; word-break: break-word;"},
+    // Soft Hyphens.
+    {"abcd&shy;ef xx", {50, 90}},
+    {"abcd&shy;ef xx", {60, 90}, "hyphens: none;"},
+    {"abcd&shy; ef xx", {50, 100}, "hyphens: none;"},
+    // Hyphenations.
+    {"zz hyphenation xx", {50, 170}, "hyphens: auto;", "", "en-us"},
+    // Atomic inlines.
+    {"Hello <img>.", {50, 80}, "", "img { width: 1em; }"},
+    {"Hello <img>.", {50, 120}, "", "img { width: 5em; }"},
+    {"Hello <img>.", {60, 130}, "", "img { width: 6em; }"},
+    // `text-indent`.
+    {"6 12345 12", {60, 150}, "text-indent: 5em"},
+    {"6 1234567 12", {70, 170}, "text-indent: 5em"},
+    // `text-indent` with hyphenations.
+    // The "hy-" with the indent should be longest.
+    {"hyphenation a", {60, 160}, "hyphens: auto; text-indent: 3em", "", "en"},
+    {"hhhhh a", {80, 100}, "hyphens: auto; text-indent: 3em", "", "en"},
+    // Negative `text-indent`.
+    {"43210123 1234 12", {40, 110}, "text-indent: -5em"},
+    {"4321012345 1234 12", {50, 130}, "text-indent: -5em"},
+    {"432 012 1", {30, 40}, "text-indent: -5em"},
+    {"432 01 12", {20, 40}, "text-indent: -5em"},
+    // Floats.
+    {"XXX <div id=left></div> XXXX",
+     {50, 130},
+     "",
+     "#left { float: left; width: 50px; }"},
+    // Floats with clearances.
+    {"XXX <div id=left></div><div id=right></div><div id=left></div> XXX",
+     {50, 160},
+     "",
+     "#left { float: left; width: 40px; }"
+     "#right { float: right; clear: left; width: 50px; }"},
+};
+
+std::ostream& operator<<(std::ostream& os, const MinMaxData& data) {
+  return os << data.content << std::endl << data.style;
 }
 
-TEST_F(InlineNodeTest, MinMaxSizesElementBoundary) {
-  LoadAhem();
-  SetupHtml("t", "<div id=t style='font:10px Ahem'>A B<span>C D</span></div>");
-  InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-  // |min_content| should be the width of "BC" because there is an element
-  // boundary between "B" and "C" but no break opportunities.
-  EXPECT_EQ(20, sizes.min_size);
-  EXPECT_EQ(60, sizes.max_size);
-}
+class MinMaxTest : public InlineNodeTest,
+                   public testing::WithParamInterface<MinMaxData> {};
 
-TEST_F(InlineNodeTest, MinMaxSizesFloats) {
+INSTANTIATE_TEST_SUITE_P(InlineNodeTest,
+                         MinMaxTest,
+                         testing::ValuesIn(min_max_data));
+
+TEST_P(MinMaxTest, Data) {
+  const MinMaxData& data = GetParam();
   LoadAhem();
-  SetupHtml("t", R"HTML(
+  StringBuilder html;
+  html.AppendFormat(R"HTML("
+    <!DOCTYPE html>
     <style>
-      #left { float: left; width: 50px; }
+    #target { font: 10px Ahem;%s }
+    %s
     </style>
-    <div id=t style="font: 10px Ahem">
-      XXX <div id="left"></div> XXXX
-    </div>
-  )HTML");
-
+    <div id="target")HTML",
+                    data.target_style, data.style);
+  if (data.lang) {
+    html.AppendFormat(" lang='%s'", data.lang);
+    LayoutLocale::SetHyphenationForTesting(AtomicString(data.lang),
+                                           MockHyphenation::Create());
+  }
+  html.AppendFormat(">%s</div>", data.content);
+  SetupHtml("target", html.ToString());
   InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-
-  EXPECT_EQ(50, sizes.min_size);
-  EXPECT_EQ(130, sizes.max_size);
-}
-
-TEST_F(InlineNodeTest, MinMaxSizesCloseTagAfterForcedBreak) {
-  LoadAhem();
-  SetupHtml("t", R"HTML(
-    <style>
-      span { border: 30px solid blue; }
-    </style>
-    <div id=t style="font: 10px Ahem">
-      <span>12<br></span>
-    </div>
-  )HTML");
-
-  InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-  // The right border of the `</span>` is included in the line even if it
-  // appears after `<br>`. crbug.com/991320.
-  EXPECT_EQ(80, sizes.min_size);
-  EXPECT_EQ(80, sizes.max_size);
-}
-
-TEST_F(InlineNodeTest, MinMaxSizesFloatsClearance) {
-  LoadAhem();
-  SetupHtml("t", R"HTML(
-    <style>
-      #left { float: left; width: 40px; }
-      #right { float: right; clear: left; width: 50px; }
-    </style>
-    <div id=t style="font: 10px Ahem">
-      XXX <div id="left"></div><div id="right"></div><div id="left"></div> XXX
-    </div>
-  )HTML");
-
-  InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-
-  EXPECT_EQ(50, sizes.min_size);
-  EXPECT_EQ(160, sizes.max_size);
+  const MinMaxSizes actual_sizes = ComputeMinMaxSizes(node);
+  const MinMaxSizes expected_sizezs{LayoutUnit(data.min_max[0]),
+                                    LayoutUnit(data.min_max[1])};
+  EXPECT_EQ(actual_sizes, expected_sizezs);
 }
 
 // For http://crbug.com/1112560
@@ -585,25 +623,6 @@ TEST_F(InlineNodeTest, MinMaxSizesSaturated) {
   // Note: |sizes.max_size.Round()| isn't |LayoutUnit::Max()| on some platform.
 }
 
-TEST_F(InlineNodeTest, MinMaxSizesTabulationWithBreakWord) {
-  LoadAhem();
-  SetupHtml("t", R"HTML(
-    <style>
-    #t {
-      font: 10px Ahem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    </style>
-    <div id=t>&#9;&#9;<span>X</span></div>
-  )HTML");
-
-  InlineNodeForTest node = CreateInlineNode();
-  MinMaxSizes sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(10, sizes.min_size);
-  EXPECT_EQ(170, sizes.max_size);
-}
-
 // For http://crbug.com/1116713
 TEST_F(InlineNodeTest, MinMaxSizesNeedsLayout) {
   LoadAhem();
@@ -627,21 +646,18 @@ TEST_F(InlineNodeTest, AssociatedItemsWithControlItem) {
   SetBodyInnerHTML(
       "<pre id=t style='-webkit-rtl-ordering:visual'>ab\nde</pre>");
   auto* const layout_text =
-      To<LayoutText>(GetDocument()
-                         .getElementById(AtomicString("t"))
-                         ->firstChild()
-                         ->GetLayoutObject());
+      To<LayoutText>(GetElementById("t")->firstChild()->GetLayoutObject());
   ASSERT_TRUE(layout_text->HasValidInlineItems());
-  Vector<const InlineItem*> items;
-  for (const InlineItem& item : layout_text->InlineItems()) {
-    items.push_back(&item);
+  InlineItems items;
+  for (const Member<InlineItem>& item : layout_text->InlineItems()) {
+    items.push_back(item);
   }
   ASSERT_EQ(5u, items.size());
-  TEST_ITEM_TYPE_OFFSET((*items[0]), kText, 1u, 3u);
-  TEST_ITEM_TYPE_OFFSET((*items[1]), kBidiControl, 3u, 4u);
-  TEST_ITEM_TYPE_OFFSET((*items[2]), kControl, 4u, 5u);
-  TEST_ITEM_TYPE_OFFSET((*items[3]), kBidiControl, 5u, 6u);
-  TEST_ITEM_TYPE_OFFSET((*items[4]), kText, 6u, 8u);
+  TEST_ITEM_TYPE_OFFSET(items[0], kText, 1u, 3u);
+  TEST_ITEM_TYPE_OFFSET(items[1], kBidiControl, 3u, 4u);
+  TEST_ITEM_TYPE_OFFSET(items[2], kControl, 4u, 5u);
+  TEST_ITEM_TYPE_OFFSET(items[3], kBidiControl, 5u, 6u);
+  TEST_ITEM_TYPE_OFFSET(items[4], kText, 6u, 8u);
 }
 
 TEST_F(InlineNodeTest, NeedsCollectInlinesOnSetText) {
@@ -675,6 +691,20 @@ TEST_F(InlineNodeTest, NeedsCollectInlinesOnSetText) {
   EXPECT_FALSE(next->GetLayoutObject()->NeedsCollectInlines());
 }
 
+// crbug.com/325306591
+// We had a crash in OffsetMapping building during SetTextWithOffset().
+TEST_F(InlineNodeTest, SetTextWithOffsetWithTextTransform) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="container" style="text-transform:uppercase">&#xdf;X</div>)HTML");
+
+  Element* container = GetElementById("container");
+  auto* text = To<Text>(container->firstChild());
+
+  text->deleteData(1, 1, ASSERT_NO_EXCEPTION);
+  UpdateAllLifecyclePhasesForTest();
+  // Pass if no crash in InlineItemsBuilder.
+}
+
 struct StyleChangeData {
   const char* css;
   enum ChangedElements {
@@ -688,8 +718,8 @@ struct StyleChangeData {
     kAll = kText | kParentAndAbove,
   };
   unsigned needs_collect_inlines;
-  absl::optional<bool> is_line_dirty;
-  absl::optional<bool> invalidate_ink_overflow;
+  std::optional<bool> is_line_dirty;
+  std::optional<bool> invalidate_ink_overflow;
 } style_change_data[] = {
     // Changing color, text-decoration, outline, etc. should not re-run
     // |CollectInlines()|.
@@ -1162,7 +1192,7 @@ TEST_F(InlineNodeTest, RemoveInlineNodeDataIfBlockBecomesEmpty2) {
   SetupHtml("container", "<div id=container><b><i>foo</i></b></div>");
   ASSERT_TRUE(layout_block_flow_->GetInlineNodeData());
 
-  GetElementById("container")->setInnerHTML("");
+  GetElementById("container")->SetInnerHTMLWithoutTrustedTypes("");
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(layout_block_flow_->GetInlineNodeData());
@@ -1206,7 +1236,7 @@ TEST_F(InlineNodeTest, ClearFirstInlineFragmentOnSplitFlow) {
   // but there are some clients (e.g., Scroll Anchor) who try to read
   // associated fragments.
   //
-  // NGPaintFragment is owned by LayoutNGBlockFlow. Because the original owner
+  // NGPaintFragment is owned by LayoutBlockFlow. Because the original owner
   // no longer has an inline formatting context, the NGPaintFragment subtree is
   // destroyed, and should not be accessible.
   GetDocument().UpdateStyleAndLayoutTree();
@@ -1268,9 +1298,7 @@ TEST_F(InlineNodeTest, PreservedNewlineWithRemovedBidiAndRelayout) {
             "<pre id=container>foo<span dir=rtl>\nbar</span></pre>");
   EXPECT_EQ(String(u"foo\u2067\u2069\n\u2067bar\u2069"), GetText());
 
-  GetDocument()
-      .QuerySelector(AtomicString("span"))
-      ->removeAttribute(html_names::kDirAttr);
+  QuerySelector("span")->removeAttribute(html_names::kDirAttr);
   UpdateAllLifecyclePhasesForTest();
 
   // The bidi control characters around '\n' should not preserve
@@ -1282,9 +1310,7 @@ TEST_F(InlineNodeTest, PreservedNewlineWithRemovedLtrDirAndRelayout) {
             "<pre id=container>foo<span dir=ltr>\nbar</span></pre>");
   EXPECT_EQ(String(u"foo\u2066\u2069\n\u2066bar\u2069"), GetText());
 
-  GetDocument()
-      .QuerySelector(AtomicString("span"))
-      ->removeAttribute(html_names::kDirAttr);
+  QuerySelector("span")->removeAttribute(html_names::kDirAttr);
   UpdateAllLifecyclePhasesForTest();
 
   // The bidi control characters around '\n' should not preserve
@@ -1309,9 +1335,7 @@ TEST_F(InlineNodeTest, CollapsibleSpaceFollowingBRWithNoWrapStyle) {
   SetupHtml("t", "<div id=t><span style=white-space:pre><br></span> </div>");
   EXPECT_EQ("\n", GetText());
 
-  GetDocument()
-      .QuerySelector(AtomicString("span"))
-      ->removeAttribute(html_names::kStyleAttr);
+  QuerySelector("span")->removeAttribute(html_names::kStyleAttr);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ("\n", GetText());
 }
@@ -1320,9 +1344,7 @@ TEST_F(InlineNodeTest, CollapsibleSpaceFollowingNewlineWithPreStyle) {
   SetupHtml("t", "<div id=t><span style=white-space:pre>\n</span> </div>");
   EXPECT_EQ("\n", GetText());
 
-  GetDocument()
-      .QuerySelector(AtomicString("span"))
-      ->removeAttribute(html_names::kStyleAttr);
+  QuerySelector("span")->removeAttribute(html_names::kStyleAttr);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ("", GetText());
 }
@@ -1464,7 +1486,11 @@ TEST_F(InlineNodeTest, ReusingWithCollapsed) {
             "</div>");
   GetElementById("remove")->remove();
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_EQ(String(u"abc \uFFFCx"), GetText());
+  if (RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()) {
+    EXPECT_EQ(String(u"abc x"), GetText());
+  } else {
+    EXPECT_EQ(String(u"abc \uFFFCx"), GetText());
+  }
 }
 
 // https://crbug.com/109654
@@ -1505,7 +1531,7 @@ TEST_F(InlineNodeTest, ReuseFirstNonSafe) {
       <span>A</span>V
     </p>
   )HTML");
-  auto* block_flow = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId("p"));
+  auto* block_flow = To<LayoutBlockFlow>(GetLayoutObjectByElementId("p"));
   const InlineNodeData* data = block_flow->GetInlineNodeData();
   ASSERT_TRUE(data);
   const auto& items = data->items;
@@ -1513,7 +1539,7 @@ TEST_F(InlineNodeTest, ReuseFirstNonSafe) {
   // We shape "AV" together, which usually has kerning between "A" and "V", then
   // split the |ShapeResult| to two |InlineItem|s. The |InlineItem| for "V"
   // is not safe to reuse even if its style does not change.
-  const InlineItem& item_v = items[3];
+  const InlineItem& item_v = *items[3];
   EXPECT_EQ(item_v.Type(), InlineItem::kText);
   EXPECT_EQ(
       StringView(data->text_content, item_v.StartOffset(), item_v.Length()),
@@ -1534,11 +1560,11 @@ TEST_F(InlineNodeTest, ReuseFirstNonSafeRtl) {
       <span>A</span>V
     </p>
   )HTML");
-  auto* block_flow = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId("p"));
+  auto* block_flow = To<LayoutBlockFlow>(GetLayoutObjectByElementId("p"));
   const InlineNodeData* data = block_flow->GetInlineNodeData();
   ASSERT_TRUE(data);
   const auto& items = data->items;
-  const InlineItem& item_v = items[4];
+  const InlineItem& item_v = *items[4];
   EXPECT_EQ(item_v.Type(), InlineItem::kText);
   EXPECT_EQ(
       StringView(data->text_content, item_v.StartOffset(), item_v.Length()),
@@ -1557,13 +1583,13 @@ TEST_F(InlineNodeTest, ShouldNotResueLigature) {
   const LayoutText& layout_text =
       *To<Text>(sample.firstChild())->GetLayoutObject();
   const ShapeResult& shape_result_before =
-      *layout_text.InlineItems().begin()->TextShapeResult();
+      *layout_text.InlineItems().front().TextShapeResult();
   ASSERT_EQ(3u, shape_result_before.NumGlyphs());
 
   const LayoutText& layout_text_i =
       *To<Text>(sample.lastChild()->firstChild())->GetLayoutObject();
   const ShapeResult& shape_result_i =
-      *layout_text_i.InlineItems().begin()->TextShapeResult();
+      *layout_text_i.InlineItems().front().TextShapeResult();
   ASSERT_EQ(0u, shape_result_i.NumGlyphs());
 
   // To <div id=sample>abf</div>
@@ -1571,7 +1597,7 @@ TEST_F(InlineNodeTest, ShouldNotResueLigature) {
   UpdateAllLifecyclePhasesForTest();
 
   const ShapeResult& shape_result_after =
-      *layout_text.InlineItems().begin()->TextShapeResult();
+      *layout_text.InlineItems().front().TextShapeResult();
   EXPECT_NE(&shape_result_before, &shape_result_after);
 }
 
@@ -1592,7 +1618,7 @@ TEST_F(InlineNodeTest, InitialLetter) {
   EXPECT_TRUE(initial_letter_box.GetPhysicalFragment(0)->IsInitialLetterBox());
 
   const InlineNodeData& data = *block_flow.GetInlineNodeData();
-  const InlineItem& initial_letter_item = data.items[0];
+  const InlineItem& initial_letter_item = *data.items[0];
   EXPECT_EQ(InlineItem::kInitialLetterBox, initial_letter_item.Type());
 }
 
@@ -1630,7 +1656,8 @@ TEST_F(InlineNodeTest, TextCombineWordSpacing) {
   SetBodyInnerHTML("<div id=t1>ab</div>");
   const auto& text =
       *To<Text>(GetElementById("t1")->firstChild())->GetLayoutObject();
-  const auto& font_description = text.StyleRef().GetFont().GetFontDescription();
+  const auto& font_description =
+      text.StyleRef().GetFont()->GetFontDescription();
 
   EXPECT_EQ(0, font_description.LetterSpacing());
   EXPECT_EQ(0, font_description.WordSpacing());
@@ -1678,14 +1705,35 @@ TEST_F(InlineNodeTest, FindSvgTextChunksCrash3) {
   auto* tspan = GetElementById("target");
   // A trail surrogate, then a lead surrogate.
   constexpr UChar kText[2] = {0xDE48, 0xD864};
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
-  tspan->appendChild(GetDocument().createTextNode(String(kText, 2u)));
+  const String text{base::span(kText)};
+  tspan->appendChild(GetDocument().createTextNode(text));
+  tspan->appendChild(GetDocument().createTextNode(text));
+  tspan->appendChild(GetDocument().createTextNode(text));
+  tspan->appendChild(GetDocument().createTextNode(text));
+  tspan->appendChild(GetDocument().createTextNode(text));
+  tspan->appendChild(GetDocument().createTextNode(text));
   UpdateAllLifecyclePhasesForTest();
   // Pass if no CHECK() failures in FindSvgTextChunks().
+}
+
+TEST_F(InlineNodeTest, FontFeaturesInitial) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="initial"></div>
+    <div id="no-kern" style="font-kerning: none"></div>
+  )HTML");
+  const auto is_initial = [this](const char* id) {
+    const auto* layout_object = GetLayoutObjectByElementId(id);
+    Vector<FontFeatureRange, FontFeatureRange::kInitialSize> features;
+    FontFeatureRange::FromFontDescription(
+        layout_object->StyleRef().GetFont()->GetFontDescription(), features);
+    if (FontFeatureRange::IsInitial(features)) {
+      EXPECT_EQ(features.size(), FontFeatureRange::kInitialSize);
+      return true;
+    }
+    return false;
+  };
+  EXPECT_TRUE(is_initial("initial"));
+  EXPECT_FALSE(is_initial("no-kern"));
 }
 
 TEST_F(InlineNodeTest, ShapeCacheDisabled) {
@@ -1699,7 +1747,7 @@ TEST_F(InlineNodeTest, ShapeCacheDisabled) {
   EXPECT_EQ("abc", node.Text());
 
   const String& text_content(node.Text().c_str());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ShapeResultSpacing<String> spacing(text_content, node.IsSvgText());
 
   EXPECT_FALSE(
@@ -1709,16 +1757,28 @@ TEST_F(InlineNodeTest, ShapeCacheDisabled) {
 TEST_F(InlineNodeTest, ShapeCacheLongString) {
   ScopedLayoutNGShapeCacheForTest scoped_feature(true);
 
-  SetupHtml("t", "<div id=t>abcdefghijklmnopqrstuvwxyz</div>");
-  InlineNodeForTest node = CreateInlineNode();
-  node.CollectInlines();
+  for (const unsigned text_length :
+       {NGShapeCache::kMaxTextLengthOfEntries - 1,
+        NGShapeCache::kMaxTextLengthOfEntries,
+        NGShapeCache::kMaxTextLengthOfEntries + 1}) {
+    StringBuilder builder;
+    builder.Append("<div id=t>");
+    for (unsigned i = 0; i < text_length; ++i) {
+      builder.Append(static_cast<LChar>((i % 10) + '0'));
+    }
+    builder.Append("</div>");
 
-  const String& text_content(node.Text().c_str());
-  HeapVector<InlineItem>& items = node.Items();
-  ShapeResultSpacing<String> spacing(text_content, node.IsSvgText());
+    SetupHtml("t", builder.ToString());
+    InlineNodeForTest node = CreateInlineNode();
+    node.CollectInlines();
 
-  EXPECT_FALSE(
-      node.IsNGShapeCacheAllowed(text_content, nullptr, items, spacing));
+    const String& text_content(node.Text().c_str());
+    InlineItems& items = node.Items();
+    ShapeResultSpacing<String> spacing(text_content, node.IsSvgText());
+
+    EXPECT_EQ(node.IsNGShapeCacheAllowed(text_content, nullptr, items, spacing),
+              text_length <= NGShapeCache::kMaxTextLengthOfEntries);
+  }
 }
 
 TEST_F(InlineNodeTest, ShapeCacheMultiItems) {
@@ -1729,7 +1789,7 @@ TEST_F(InlineNodeTest, ShapeCacheMultiItems) {
   node.CollectInlines();
 
   const String& text_content(node.Text().c_str());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   EXPECT_EQ(5u, items.size());
   ShapeResultSpacing<String> spacing(text_content, node.IsSvgText());
 
@@ -1747,7 +1807,7 @@ TEST_F(InlineNodeTest, ShapeCacheSpacingRequired) {
   node.CollectInlines();
 
   const String& text_content(node.Text().c_str());
-  HeapVector<InlineItem>& items = node.Items();
+  InlineItems& items = node.Items();
   ShapeResultSpacing<String> spacing(text_content, node.IsSvgText());
 
   EXPECT_FALSE(

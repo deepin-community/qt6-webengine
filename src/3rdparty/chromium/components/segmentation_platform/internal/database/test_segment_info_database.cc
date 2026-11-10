@@ -4,11 +4,13 @@
 
 #include "components/segmentation_platform/internal/database/test_segment_info_database.h"
 
+#include <optional>
+
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "components/segmentation_platform/internal/metadata/metadata_writer.h"
 #include "components/segmentation_platform/internal/proto/model_prediction.pb.h"
 #include "components/segmentation_platform/public/proto/types.pb.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform::test {
 
@@ -61,7 +63,7 @@ const SegmentInfo* TestSegmentInfoDatabase::GetCachedSegmentInfo(
 void TestSegmentInfoDatabase::UpdateSegment(
     SegmentId segment_id,
     ModelSource model_source,
-    absl::optional<proto::SegmentInfo> segment_info,
+    std::optional<proto::SegmentInfo> segment_info,
     SuccessCallback callback) {
   if (segment_info.has_value()) {
     proto::SegmentInfo* info = FindOrCreateSegment(segment_id, model_source);
@@ -83,7 +85,7 @@ void TestSegmentInfoDatabase::UpdateSegment(
 void TestSegmentInfoDatabase::SaveSegmentResult(
     SegmentId segment_id,
     ModelSource model_source,
-    absl::optional<proto::PredictionResult> result,
+    std::optional<proto::PredictionResult> result,
     SuccessCallback callback) {
   proto::SegmentInfo* info = FindOrCreateSegment(segment_id, model_source);
   if (!result.has_value()) {
@@ -118,7 +120,7 @@ void TestSegmentInfoDatabase::GetTrainingData(SegmentId segment_id,
     }
   }
 
-  absl::optional<proto::TrainingData> result;
+  std::optional<proto::TrainingData> result;
   if (segment_info == nullptr) {
     std::move(callback).Run(result);
     return;
@@ -230,10 +232,10 @@ void TestSegmentInfoDatabase::AddDiscreteMapping(
       info->mutable_model_metadata()->mutable_discrete_mappings();
   auto& discrete_mappings = (*discrete_mappings_map)[discrete_mapping_key];
   for (int i = 0; i < num_pairs; i++) {
-    auto* pair = mappings[i];
+    auto* pair = UNSAFE_TODO(mappings[i]);
     auto* entry = discrete_mappings.add_entries();
     entry->set_min_result(pair[0]);
-    entry->set_rank(pair[1]);
+    entry->set_rank(UNSAFE_TODO(pair[1]));
   }
 }
 

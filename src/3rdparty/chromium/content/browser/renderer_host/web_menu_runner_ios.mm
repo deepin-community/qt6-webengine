@@ -61,12 +61,16 @@
       [[UIContextMenuInteraction alloc] initWithDelegate:self];
   [_view addInteraction:_selectContextMenuInteraction];
 
-  // TODO(https://crbug.com/1459846): _presentMenuAtLocation is a private API
+  // TODO(crbug.com/40274444): _presentMenuAtLocation is a private API
   // which triggers the ContextMenu immediately at a specified location. By
   // default, the ContextMenu is only triggered on long press or 3D touch. This
   // private API is needed to use because we expect the popup menu to appear
   // immediately when the user touches the <select> element area.
   [_selectContextMenuInteraction _presentMenuAtLocation:_elementBounds.origin];
+}
+
+- (void)dismissMenu {
+  [_selectContextMenuInteraction dismissMenu];
 }
 
 - (void)dealloc {
@@ -75,7 +79,7 @@
 
 #pragma mark - UIContextMenuInteractionDelegate
 
-// TODO(crbug.com/1440910): This menu is being shown with unwanted effects.
+// TODO(crbug.com/40266320): This menu is being shown with unwanted effects.
 // Need to find a way to show just the menu without using private API.
 - (UIContextMenuConfiguration*)contextMenuInteraction:
                                    (UIContextMenuInteraction*)interaction

@@ -19,17 +19,8 @@
 #include "net/base/host_port_pair.h"
 
 class ChromeDevToolsSession;
-class Profile;
 class ScopedKeepAlive;
 using RemoteLocations = std::set<net::HostPortPair>;
-
-namespace extensions {
-class Extension;
-}
-
-namespace web_app {
-class WebApp;
-}
 
 class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
  public:
@@ -48,20 +39,6 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   static ChromeDevToolsManagerDelegate* GetInstance();
   void UpdateDeviceDiscovery();
 
-  // |web_contents| may be null, in which case this function just checks
-  // the settings for |profile|.
-  static bool AllowInspection(Profile* profile,
-                              content::WebContents* web_contents);
-
-  // |extension| may be null, in which case this function just checks
-  // the settings for |profile|.
-  static bool AllowInspection(Profile* profile,
-                              const extensions::Extension* extension);
-
-  // |web_app| may be null, in which case this function just checks
-  // the settings for |profile|.
-  static bool AllowInspection(Profile* profile, const web_app::WebApp* web_app);
-
   // Resets |device_manager_|.
   void ResetAndroidDeviceManagerForTesting();
 
@@ -79,6 +56,9 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
 
   // content::DevToolsManagerDelegate implementation.
   void Inspect(content::DevToolsAgentHost* agent_host) override;
+  scoped_refptr<content::DevToolsAgentHost> OpenDevTools(
+      content::DevToolsAgentHost* agent_host) override;
+  void Activate(content::DevToolsAgentHost* agent_host) override;
   void HandleCommand(content::DevToolsAgentHostClientChannel* channel,
                      base::span<const uint8_t> message,
                      NotHandledCallback callback) override;
@@ -96,7 +76,8 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
       content::DevToolsAgentHostClientChannel* channel) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
       const GURL& url,
-      TargetType target_type) override;
+      TargetType target_type,
+      bool new_window) override;
   bool HasBundledFrontendResources() override;
 
   void DevicesAvailable(

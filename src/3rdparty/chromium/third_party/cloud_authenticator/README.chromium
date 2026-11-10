@@ -1,11 +1,13 @@
 Name: Cloud authenticator
 URL: https://cloudenclave.git.corp.google.com/enclave/
 Version: git
-License: Apache 2.0
+License: Apache-2.0
 License File: LICENSE.txt
 License Android Compatible: yes
 Security Critical: no
 Shipped: no
+Revision: fd6202b0821aba1fb1cb0e8f16df38ff78fb4d9f
+Update Mechanism: Manual
 
 Description:
 This directory contains the partial source code for the passkeys enclave. The

@@ -379,6 +379,12 @@ absl::StatusOr<ServiceType> ServiceType::FromExtension(const Extension& ext) {
     case kChromeIpBlinding:
       st.service_type = "chromeipblinding";
       break;
+    case kCronetIpBlinding:
+      st.service_type = "cronetipblinding";
+      break;
+    case kWebviewIpBlinding:
+      st.service_type = "webviewipblinding";
+      break;
     default:
       return absl::InvalidArgumentError(
           "[ServiceType] unknown service_type_id");
@@ -419,7 +425,7 @@ absl::StatusOr<DebugMode> DebugMode::FromExtension(const Extension& ext) {
     return absl::InvalidArgumentError(
         "[DebugMode] failed to read len from extension");
   }
-  if (dm.mode != kProd && dm.mode != kDebug) {
+  if (dm.mode != kProd && dm.mode != kDebug && dm.mode != kAdmin) {
     return absl::InvalidArgumentError(
         absl::StrCat("[DebugMode] invalid mode: ", dm.mode));
   }
@@ -668,14 +674,14 @@ absl::StatusOr<ExtendedTokenRequest> UnmarshalExtendedTokenRequest(
 }
 
 absl::Status ValidateExtensionsOrderAndValues(
-    const Extensions& extensions, absl::Span<uint16_t> expected_types,
+    const Extensions& extensions, absl::Span<const uint16_t> expected_types,
     absl::Time now) {
   if (expected_types.size() != extensions.extensions.size()) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Expected %d type, got %d", expected_types.size(),
                         extensions.extensions.size()));
   }
-  for (int i = 0; i < expected_types.size(); i++) {
+  for (size_t i = 0; i < expected_types.size(); i++) {
     if (expected_types[i] != extensions.extensions[i].extension_type) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Expected %x type at index %d, got %x", expected_types[i], i,
@@ -721,8 +727,10 @@ absl::Status ValidateExtensionsValues(const Extensions& extensions,
           }
         }
         for (const char& c : geo_hint->region) {
-          if (!absl::ascii_isupper(c) && !absl::ascii_ispunct(c)) {
-            return absl::InvalidArgumentError("Region is not uppercase");
+          if (!absl::ascii_isupper(c) && !absl::ascii_ispunct(c) &&
+              !absl::ascii_isdigit(c)) {
+            return absl::InvalidArgumentError(
+                "Region is not ascii uppercase, numerals, or punctuation");
           }
         }
         break;

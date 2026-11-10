@@ -2,22 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/core/layout/base_layout_algorithm_test.h"
+#include "third_party/blink/renderer/core/layout/inline/line_breaker.h"
+
+#include <array>
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/core/layout/base_layout_algorithm_test.h"
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_break_token.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_item_result_ruby_column.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
-#include "third_party/blink/renderer/core/layout/inline/line_breaker.h"
 #include "third_party/blink/renderer/core/layout/inline/line_info.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/positioned_float.h"
 #include "third_party/blink/renderer/core/layout/unpositioned_float.h"
-#include "third_party/blink/renderer/core/testing/mock_hyphenation.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -395,7 +397,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
     </style>
     <div id=container><span>123 456</span> 789</div>
   )HTML");
-  const HeapVector<InlineItem>& items = node.ItemsData(false).items;
+  const InlineItems& items = node.ItemsData(false).items;
 
   // While "123 456" can fit in a line, "456" has a right margin that cannot
   // fit. Since "456" and its right margin is not breakable, "456" should be on
@@ -405,7 +407,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
   EXPECT_EQ(3u, lines.size());
   EXPECT_EQ("123", lines[0].first);
   EXPECT_EQ("456", lines[1].first);
-  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second - 1].Type());
+  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second - 1]->Type());
   EXPECT_EQ("789", lines[2].first);
 
   // Same as above, but this time "456" overflows the line because it is 70px.
@@ -413,7 +415,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
   EXPECT_EQ(3u, lines.size());
   EXPECT_EQ("123", lines[0].first);
   EXPECT_EQ("456", lines[1].first);
-  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second].Type());
+  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second]->Type());
   EXPECT_EQ("789", lines[2].first);
 }
 
@@ -537,6 +539,36 @@ TEST_F(LineBreakerTest, BoundaryInFirstWord) {
   EXPECT_EQ(2u, lines.size());
   EXPECT_EQ("123456", lines[0].first);
   EXPECT_EQ("789", lines[1].first);
+}
+
+// Test for https://crbug.com/1505393, where ideographic trailing spaces counted
+// as kPreserved, except when they are in the last line of the paragraph and
+// overflow the line, in which case they counted as kNone.
+TEST_F(LineBreakerTest, IdeographicTrailingSpaces) {
+  LoadAhem();
+  InlineNode node = CreateInlineNode(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      #container {
+        font: 10px/1 Ahem;
+      }
+    </style>
+    <div id="container">xxx&#x3000;&#x3000;&#x3000;&#x3000;xxx&#x3000;&#x3000;&#x3000;&#x3000;</div>
+  )HTML");
+
+  String expectedLine = String::FromUTF8("xxx\u3000\u3000\u3000\u3000");
+
+  // The ideographic spaces overflows the line at 60px but fully fits at 90px.
+  for (LayoutUnit width : {LayoutUnit(60), LayoutUnit(90)}) {
+    Vector<std::pair<String, unsigned>> lines = BreakLines(node, width);
+    EXPECT_EQ(2u, lines.size());
+    EXPECT_EQ(expectedLine, lines[0].first);
+    EXPECT_EQ(expectedLine, lines[1].first);
+    EXPECT_EQ(LineBreaker::WhitespaceState::kPreserved,
+              trailing_whitespaces_[0]);
+    EXPECT_EQ(LineBreaker::WhitespaceState::kPreserved,
+              trailing_whitespaces_[1]);
+  }
 }
 
 struct WhitespaceStateTestData {
@@ -723,122 +755,6 @@ TEST_F(LineBreakerTest, TrailingCollapsedSpaces) {
   // But a layout pass should.
   UpdateAllLifecyclePhasesForTest();
   EXPECT_FALSE(space_text->NeedsLayout());
-}
-
-TEST_F(LineBreakerTest, MinMaxWithTrailingSpaces) {
-  LoadAhem();
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    #container {
-      font: 10px/1 Ahem;
-      white-space: pre-wrap;
-    }
-    </style>
-    <div id=container>12345 6789 </div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(50));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(110));
-}
-
-// `word-break: break-word` can break a space run.
-TEST_F(LineBreakerTest, MinMaxBreakSpaces) {
-  LoadAhem();
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    div {
-      font: 10px/1 Ahem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    span {
-      font-size: 200%;
-    }
-    </style>
-    <div id=container>M):
-<span>    </span>p</div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(10));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(90));
-}
-
-TEST_F(LineBreakerTest, MinMaxWithSoftHyphen) {
-  LoadAhem();
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    #container {
-      font: 10px/1 Ahem;
-    }
-    </style>
-    <div id=container>abcd&shy;ef xx</div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(50));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(90));
-}
-
-TEST_F(LineBreakerTest, MinMaxWithHyphensDisabled) {
-  LoadAhem();
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    #container {
-      font: 10px/1 Ahem;
-      hyphens: none;
-    }
-    </style>
-    <div id=container>abcd&shy;ef xx</div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(60));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(90));
-}
-
-TEST_F(LineBreakerTest, MinMaxWithHyphensDisabledWithTrailingSpaces) {
-  LoadAhem();
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    #container {
-      font: 10px/1 Ahem;
-      hyphens: none;
-    }
-    </style>
-    <div id=container>abcd&shy; ef xx</div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(50));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(100));
-}
-
-TEST_F(LineBreakerTest, MinMaxWithHyphensAuto) {
-  LoadAhem();
-  LayoutLocale::SetHyphenationForTesting(AtomicString("en-us"),
-                                         MockHyphenation::Create());
-  InlineNode node = CreateInlineNode(R"HTML(
-    <!DOCTYPE html>
-    <style>
-    #container {
-      font: 10px/1 Ahem;
-      hyphens: auto;
-    }
-    </style>
-    <div id=container lang="en-us">zz hyphenation xx</div>
-  )HTML");
-
-  const auto sizes = ComputeMinMaxSizes(node);
-  EXPECT_EQ(sizes.min_size, LayoutUnit(50));
-  EXPECT_EQ(sizes.max_size, LayoutUnit(170));
-  LayoutLocale::SetHyphenationForTesting(AtomicString("en-us"), nullptr);
 }
 
 // For http://crbug.com/1104534
@@ -1031,6 +947,9 @@ rt { margin: 17179869191em; }
 C c
 <rt>
 )HTML");
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInPerformLayout);
   // The test passes if we have no DCHECK failures in BreakLines().
   BreakLines(node, LayoutUnit::Max());
 }
@@ -1094,9 +1013,12 @@ TEST_F(LineBreakerTest, BreakAt) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{0, 2}}, LineBreakPoint{{1, 6}},
-                                LineBreakPoint{{2, 7}}};
-  LineInfo line_info_list[4];
+  auto break_points = std::to_array<LineBreakPoint>({
+      LineBreakPoint{{0, 2}},
+      LineBreakPoint{{1, 6}},
+      LineBreakPoint{{2, 7}},
+  });
+  std::array<LineInfo, 4> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 4u);
@@ -1133,8 +1055,9 @@ TEST_F(LineBreakerTest, BreakAtTrailingSpaces) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{7, 5}, {3, 4}}};
-  LineInfo line_info_list[2];
+  auto break_points =
+      std::to_array<LineBreakPoint>({LineBreakPoint{{7, 5}, {3, 4}}});
+  std::array<LineInfo, 2> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 2u);
@@ -1168,8 +1091,9 @@ TEST_F(LineBreakerTest, BreakAtTrailingSpacesAfterAtomicInline) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{4, 2}, {2, 1}}};
-  LineInfo line_info_list[2];
+  auto break_points =
+      std::to_array<LineBreakPoint>({LineBreakPoint{{4, 2}, {2, 1}}});
+  std::array<LineInfo, 2> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 2u);
@@ -1181,6 +1105,138 @@ TEST_F(LineBreakerTest, BreakAtTrailingSpacesAfterAtomicInline) {
   EXPECT_EQ(line_info_list[1].Width(), LayoutUnit(20));
   EXPECT_EQ(line_info_list[0].Results().back().item_index, 3u);
   EXPECT_EQ(line_info_list[1].Results().front().item_index, 4u);
+}
+
+// We have a crash with content wider than LayoutUnit::Max() in a ruby.
+// crbug.com/338437458
+TEST_F(LineBreakerTest, WideContentInRuby) {
+  InlineNode node = CreateInlineNode(R"HTML(
+      <div id=container style="text-wrap:nowrap">
+      <ruby><div style="width:109162843px; margin-right:1000px"></div><div>
+      a</div><rt>a</ruby>
+      </div>)HTML");
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
+  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInPerformLayout);
+  node.PrepareLayoutIfNeeded();
+  ConstraintSpace space = ConstraintSpaceForAvailableSize(LayoutUnit::Max());
+  ExclusionSpace exclusion_space;
+  LeadingFloats leading_floats;
+  LineBreaker line_breaker(node, LineBreakerMode::kContent, space,
+                           LineLayoutOpportunity(LayoutUnit::Max()),
+                           leading_floats, nullptr, nullptr, &exclusion_space);
+  LineInfo line_info;
+  line_breaker.NextLine(&line_info);
+  EXPECT_EQ(InlineItem::kOpenRubyColumn, line_info.Results()[1].item->Type());
+  // The base result should contain both <div>s.
+  const auto& base_results =
+      line_info.Results()[1].ruby_column->base_line.Results();
+  EXPECT_EQ(InlineItem::kAtomicInline, base_results[1].item->Type());
+  EXPECT_EQ(InlineItem::kAtomicInline, base_results[2].item->Type());
+}
+
+TEST_F(LineBreakerTest, SetInputRange) {
+  InlineNode node = CreateInlineNode(R"HTML(
+      <div id=container>before<span>content</span>after</div>)HTML");
+  node.PrepareLayoutIfNeeded();
+  ExclusionSpace exclusion_space;
+  LeadingFloats leading_floats;
+  LineBreaker line_breaker(node, LineBreakerMode::kContent,
+                           ConstraintSpaceForAvailableSize(LayoutUnit::Max()),
+                           LineLayoutOpportunity(LayoutUnit::Max()),
+                           leading_floats, nullptr, nullptr, &exclusion_space);
+  // <span> to just after </span>.
+  line_breaker.SetInputRange({1, 6}, 4, LineBreaker::WhitespaceState::kLeading,
+                             nullptr);
+  LineInfo line_info;
+  line_breaker.NextLine(&line_info);
+  // The result should contain only <span>...</span>.
+  EXPECT_EQ(3u, line_info.Results().size());
+  EXPECT_EQ(InlineItem::kOpenTag, line_info.Results()[0].item->Type());
+  EXPECT_EQ(InlineItem::kText, line_info.Results()[1].item->Type());
+  EXPECT_EQ(InlineItem::kCloseTag, line_info.Results()[2].item->Type());
+}
+
+// crbug.com/338350369 Floats should not update available_width_ for
+// sub-LineBreakers.
+TEST_F(LineBreakerTest, CreateSubLineInfoAvailableWidth) {
+  LoadAhem();
+  InlineNode node = CreateInlineNode(R"HTML(
+      <div id=container style="font: 40px Ahem"><ruby style="text-wrap:nowrap">
+      <b>foo bar foo bar foo bar foo bar foo bar
+      foo bar foo bar foo bar foo bar foo bar
+      <button style="float:left;">f</button></b>
+      <rt>annotation</ruby></div>)HTML");
+  node.PrepareLayoutIfNeeded();
+  ExclusionSpace exclusion_space;
+  LeadingFloats leading_floats;
+  LayoutUnit width(30);
+  ConstraintSpace space = ConstraintSpaceForAvailableSize(width);
+  LineBreaker line_breaker(node, LineBreakerMode::kContent, space,
+                           LineLayoutOpportunity(width), leading_floats,
+                           nullptr, nullptr, &exclusion_space);
+  LineInfo line_info;
+  line_breaker.NextLine(&line_info);
+  // The line should contain the whole text.
+  EXPECT_EQ(InlineItem::kOpenRubyColumn, line_info.Results()[1].item->Type());
+  EXPECT_GE(line_info.Results()[1].ruby_column->base_line.EndTextOffset(), 79u);
+}
+
+// crbug.com/341142174 A crash with an overflowing continuation ruby column.
+TEST_F(LineBreakerTest, OverflowingContinuationRuby) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container" style="width:1px; font-variant:small-caps;">
+<ruby>
+<q>
+AxBxC AxBxC
+</q>
+<rt>C b
+C AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+</ruby>)HTML");
+  ComputeMinMaxSizes(node);
+  // This test passes if no CHECK failures.
+}
+
+// crbug.com/342027571 A crash with an overflowing continuation ruby column.
+TEST_F(LineBreakerTest, OverflowingContinuationRuby2) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container" style="writing-mode:vertical-rl; word-wrap:break-word; font-size: 12px;">
+<ruby>)S
+<rb dir="rtl" style="margin-bottom:-6em;"><svg></svg></rb>
+<rt>x AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+</ruby>
+)HTML");
+  ComputeMinMaxSizes(node);
+  // This test passes if no DCHECK failures.
+}
+
+TEST_F(LineBreakerTest, MinMaxWithAtomicInlineInRuby) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container">
+<ruby><svg></svg><rt></ruby>)HTML");
+  ComputeMinMaxSizes(node);
+  // This test passes if no CHECK failures.
+}
+
+// crbug.com/342801061 LineInfo::Width() was zero unexpectedly.
+TEST_F(LineBreakerTest, RemoveTrailingCollapsibleSpace) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container" style="font-size:20px; word-spacing:2569999em;">
+<ruby dir="rtl">
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AxBxC
+<rt  dir="ltr">a AxBxC</ruby>
+</div>)HTML");
+  ComputeMinMaxSizes(node);
+  // Pass if no division-by-zero.
+}
+
+// crbug.com/350122891
+TEST_F(LineBreakerTest, MinMaxWithEmptyRubyBase) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container" style="display:inline-block;">
+<ruby><rt><wbr>++P}A[X9e+52FuYyMsuADbOcYXMu73ci73uDMfYQsD</ruby></div>)HTML");
+  ComputeMinMaxSizes(node);
+  // Pass if no CHECK failure.
 }
 
 struct CanBreakInsideTestData {
@@ -1196,6 +1252,20 @@ struct CanBreakInsideTestData {
     {true, "<span>a</span> b"},
     {true, "<span>a </span>b"},
     {true, "a<span> </span>b"},
+    {false, "a<span></span>b"},
+    {false, "<span> </span>", "span { position: absolute; }"},
+    {false, "a<span></span>", "span { position: absolute; }"},
+    {false, "a<span></span>b", "span { position: absolute; }"},
+    {false, "a<span></span><span></span>b", "span { position: absolute; }"},
+    {true, "<span></span>a b", "span { position: absolute; }"},
+    {true, "a <span></span>b", "span { position: absolute; }"},
+    {true, "a<span></span> b", "span { position: absolute; }"},
+    {false, "a<span></span><span></span>", "span { position: absolute; }"},
+    {true, "ab c<span></span>", "span { position: absolute; }"},
+    {false, "ab <span></span> <span></span> <span></span>",
+     "span { position: absolute; }"},
+    {false, "a<span></span>b", "span { flaot: left; }"},
+    {true, "a <span></span>b", "span { flaot: left; }"},
     {false, "<ib></ib>", nullptr, "ib { display: inline-block; }"},
     {true, "<ib></ib><ib></ib>", nullptr, "ib { display: inline-block; }"},
     {true, "a<ib></ib>", nullptr, "ib { display: inline-block; }"},
@@ -1224,7 +1294,7 @@ TEST_P(CanBreakInsideTest, Data) {
   )HTML",
                                   data.target_css, data.style, data.html));
   InlineNode target = GetInlineNodeByElementId("target");
-  LineInfo line_info_list[1];
+  std::array<LineInfo, 1> line_info_list;
   const LayoutUnit available_width = LayoutUnit(800);
   const wtf_size_t num_lines =
       BreakLines(target, available_width, line_info_list);
@@ -1240,6 +1310,15 @@ TEST_P(CanBreakInsideTest, Data) {
                            /* column_spanner_path */ nullptr, &exclusion_space);
   EXPECT_EQ(line_breaker.CanBreakInside(line_info_list[0]),
             data.can_break_insde);
+}
+
+// crbug.com/398527874
+TEST_F(LineBreakerTest, SplitTrailingBidiCrCrash) {
+  InlineNode node = CreateInlineNode(R"HTML(
+    <div id="container" dir="rtl" style="white-space: pre; font-size: 16px;">&#x0D; </div>
+  )HTML");
+  ComputeMinMaxSizes(node);
+  // Pass if no CHECK failure.
 }
 
 }  // namespace

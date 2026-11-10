@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/4x4-linear-aarch32-vfp-ld64.S.in
 //   Generator: tools/xngen
@@ -7,7 +8,7 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 .syntax unified
 
@@ -21,7 +22,7 @@
 //     float* c,                 sp + 104 -> r6
 //     size_t cm_stride,         sp + 108 -> (r7)
 //     size_t cn_stride,         sp + 112 -> r11
-//     const union xnn_f32_default_params params)  sp + 116 -> (r11)
+//     const struct xnn_f32_default_params params)  sp + 116 -> (r11)
 
 // d8-d15, r4-r11,r14(lr) need to be preserved if used. r13(sp),r15(pc) are reserved.
 

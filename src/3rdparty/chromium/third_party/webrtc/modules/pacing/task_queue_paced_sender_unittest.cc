@@ -11,35 +11,33 @@
 #include "modules/pacing/task_queue_paced_sender.h"
 
 #include <algorithm>
-#include <any>
-#include <atomic>
-#include <list>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
+#include "api/field_trials.h"
+#include "api/sequence_checker.h"
 #include "api/task_queue/task_queue_base.h"
 #include "api/task_queue/task_queue_factory.h"
 #include "api/transport/network_types.h"
 #include "api/units/data_rate.h"
 #include "api/units/data_size.h"
 #include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
 #include "modules/pacing/pacing_controller.h"
 #include "modules/pacing/packet_router.h"
 #include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/time_controller/simulated_time_controller.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
 using ::testing::AtMost;
-using ::testing::Lt;
 using ::testing::NiceMock;
-using ::testing::Return;
-using ::testing::SaveArg;
 
 namespace webrtc {
 namespace {
@@ -126,7 +124,7 @@ std::vector<std::unique_ptr<RtpPacketToSend>> GeneratePackets(
 TEST(TaskQueuePacedSenderTest, PacesPackets) {
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
@@ -145,8 +143,8 @@ TEST(TaskQueuePacedSenderTest, PacesPackets) {
   size_t packets_sent = 0;
   Timestamp end_time = Timestamp::PlusInfinity();
   EXPECT_CALL(packet_router, SendPacket)
-      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> packet,
-                          const PacedPacketInfo& cluster_info) {
+      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> /* packet */,
+                          const PacedPacketInfo& /* cluster_info */) {
         ++packets_sent;
         if (packets_sent == kPacketsToSend) {
           end_time = time_controller.GetClock()->CurrentTime();
@@ -168,9 +166,8 @@ TEST(TaskQueuePacedSenderTest, PacesPackets) {
 TEST(TaskQueuePacedSenderTest, PacesPacketsWithBurst) {
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
   pacer.SetSendBurstInterval(
@@ -191,8 +188,8 @@ TEST(TaskQueuePacedSenderTest, PacesPacketsWithBurst) {
   size_t packets_sent = 0;
   Timestamp end_time = Timestamp::PlusInfinity();
   EXPECT_CALL(packet_router, SendPacket)
-      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> packet,
-                          const PacedPacketInfo& cluster_info) {
+      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> /* packet */,
+                          const PacedPacketInfo& /* cluster_info */) {
         ++packets_sent;
         if (packets_sent == kPacketsToSend) {
           end_time = time_controller.GetClock()->CurrentTime();
@@ -215,9 +212,8 @@ TEST(TaskQueuePacedSenderTest, PacesPacketsWithBurst) {
 TEST(TaskQueuePacedSenderTest, ReschedulesProcessOnRateChange) {
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -243,8 +239,8 @@ TEST(TaskQueuePacedSenderTest, ReschedulesProcessOnRateChange) {
 
   EXPECT_CALL(packet_router, SendPacket)
       .Times(3)
-      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> packet,
-                          const PacedPacketInfo& cluster_info) {
+      .WillRepeatedly([&](std::unique_ptr<RtpPacketToSend> /* packet */,
+                          const PacedPacketInfo& /* cluster_info */) {
         if (first_packet_time.IsInfinite()) {
           first_packet_time = time_controller.GetClock()->CurrentTime();
         } else if (second_packet_time.IsInfinite()) {
@@ -269,9 +265,8 @@ TEST(TaskQueuePacedSenderTest, ReschedulesProcessOnRateChange) {
 TEST(TaskQueuePacedSenderTest, SendsAudioImmediately) {
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   NiceMock<MockPacketRouter> packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -297,9 +292,8 @@ TEST(TaskQueuePacedSenderTest, SleepsDuringCoalscingWindow) {
   const TimeDelta kCoalescingWindow = TimeDelta::Millis(5);
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   NiceMock<MockPacketRouter> packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              kCoalescingWindow,
                              TaskQueuePacedSender::kNoPacketHoldback);
   pacer.SetSendBurstInterval(TimeDelta::Zero());
@@ -335,9 +329,8 @@ TEST(TaskQueuePacedSenderTest, ProbingOverridesCoalescingWindow) {
   const TimeDelta kCoalescingWindow = TimeDelta::Millis(5);
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              kCoalescingWindow,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -369,12 +362,11 @@ TEST(TaskQueuePacedSenderTest, ProbingOverridesCoalescingWindow) {
 }
 
 TEST(TaskQueuePacedSenderTest, SchedulesProbeAtSentTime) {
-  ScopedKeyValueConfig trials(
-      "WebRTC-Bwe-ProbingBehavior/min_probe_delta:1ms/");
+  FieldTrials trials =
+      CreateTestFieldTrials("WebRTC-Bwe-ProbingBehavior/min_probe_delta:1ms/");
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   NiceMock<MockPacketRouter> packet_router;
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
   pacer.SetSendBurstInterval(TimeDelta::Zero());
@@ -443,12 +435,10 @@ TEST(TaskQueuePacedSenderTest, SchedulesProbeAtSentTime) {
 TEST(TaskQueuePacedSenderTest, NoMinSleepTimeWhenProbing) {
   // Set min_probe_delta to be less than kMinSleepTime (1ms).
   const TimeDelta kMinProbeDelta = TimeDelta::Micros(200);
-  ScopedKeyValueConfig trials(
-      "WebRTC-Bwe-ProbingBehavior/min_probe_delta:200us/");
+  FieldTrials trials = CreateTestFieldTrials();
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -473,6 +463,7 @@ TEST(TaskQueuePacedSenderTest, NoMinSleepTimeWhenProbing) {
       {{.at_time = time_controller.GetClock()->CurrentTime(),
         .target_data_rate = kProbingRate,
         .target_duration = TimeDelta::Millis(15),
+        .min_probe_delta = kMinProbeDelta,
         .target_probe_count = 5,
         .id = kProbeClusterId}});
 
@@ -508,9 +499,8 @@ TEST(TaskQueuePacedSenderTest, PacketBasedCoalescing) {
 
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   NiceMock<MockPacketRouter> packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              kFixedCoalescingWindow, kPacketBasedHoldback);
   pacer.SetSendBurstInterval(TimeDelta::Zero());
 
@@ -559,9 +549,8 @@ TEST(TaskQueuePacedSenderTest, FixedHoldBackHasPriorityOverPackets) {
 
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              kFixedCoalescingWindow, kPacketBasedHoldback);
   pacer.SetSendBurstInterval(TimeDelta::Zero());
 
@@ -603,13 +592,12 @@ TEST(TaskQueuePacedSenderTest, FixedHoldBackHasPriorityOverPackets) {
 
 TEST(TaskQueuePacedSenderTest, ProbingStopDuringSendLoop) {
   // Set a low `min_probe_delta` to let probing finish during send loop.
-  ScopedKeyValueConfig trials(
+  FieldTrials trials = CreateTestFieldTrials(
       "WebRTC-Bwe-ProbingBehavior/min_probe_delta:100us/");
 
   GlobalSimulatedTimeController time_controller(Timestamp::Millis(1234));
   MockPacketRouter packet_router;
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -654,10 +642,9 @@ TEST(TaskQueuePacedSenderTest, ProbingStopDuringSendLoop) {
 TEST(TaskQueuePacedSenderTest, PostedPacketsNotSendFromRemovePacketsForSsrc) {
   static constexpr Timestamp kStartTime = Timestamp::Millis(1234);
   GlobalSimulatedTimeController time_controller(kStartTime);
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   MockPacketRouter packet_router;
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 
@@ -697,9 +684,8 @@ TEST(TaskQueuePacedSenderTest, Stats) {
   static constexpr Timestamp kStartTime = Timestamp::Millis(1234);
   GlobalSimulatedTimeController time_controller(kStartTime);
   NiceMock<MockPacketRouter> packet_router;
-  ScopedKeyValueConfig trials;
+  FieldTrials trials = CreateTestFieldTrials();
   TaskQueuePacedSender pacer(time_controller.GetClock(), &packet_router, trials,
-
                              PacingController::kMinSleepTime,
                              TaskQueuePacedSender::kNoPacketHoldback);
 

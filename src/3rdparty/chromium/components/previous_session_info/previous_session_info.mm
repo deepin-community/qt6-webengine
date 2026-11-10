@@ -10,6 +10,7 @@
 
 #import "base/ios/ios_util.h"
 #import "base/metrics/field_trial.h"
+#include "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/system/sys_info.h"
 #import "base/time/time.h"
@@ -140,8 +141,6 @@ NSString* const kDidSeeMemoryWarningShortlyBeforeTerminating =
 NSString* const kOSStartTime = @"OSStartTime";
 NSString* const kPreviousSessionInfoRestoringSession =
     @"PreviousSessionInfoRestoringSession";
-NSString* const kPreviousSessionInfoConnectedSceneSessionIDs =
-    @"PreviousSessionInfoConnectedSceneSessionIDs";
 NSString* const kPreviousSessionInfoParamsPrefix =
     @"PreviousSessionInfoParams.";
 NSString* const kPreviousSessionInfoMemoryFootprint =
@@ -183,7 +182,6 @@ NSString* const kPreviousSessionInfoWarmStartCount =
 @property(nonatomic, strong) NSDate* sessionStartTime;
 @property(nonatomic, strong) NSDate* sessionEndTime;
 @property(nonatomic, assign) BOOL terminatedDuringSessionRestoration;
-@property(nonatomic, strong) NSMutableSet<NSString*>* connectedSceneSessionsIDs;
 @property(atomic, copy) NSDictionary<NSString*, NSString*>* reportParameters;
 @property(nonatomic, assign) NSInteger memoryFootprint;
 @property(nonatomic, assign) BOOL applicationWillTerminateWasReceived;
@@ -247,12 +245,6 @@ static PreviousSessionInfo* gSharedInstance = nil;
         base::SysUTF8ToNSString(version_info::GetVersionNumber());
     gSharedInstance.isFirstSessionAfterUpgrade =
         ![lastRanVersion isEqualToString:currentVersion];
-
-    gSharedInstance.connectedSceneSessionsIDs = [NSMutableSet
-        setWithArray:[defaults
-                         stringArrayForKey:
-                             previous_session_info_constants::
-                                 kPreviousSessionInfoConnectedSceneSessionIDs]];
 
     NSTimeInterval lastSystemStartTime =
         [defaults doubleForKey:previous_session_info_constants::kOSStartTime];
@@ -341,6 +333,8 @@ static PreviousSessionInfo* gSharedInstance = nil;
 
   [[NSUserDefaults standardUserDefaults]
       removeObjectForKey:kPreviousSessionInfoAppWillTerminate];
+  [[NSUserDefaults standardUserDefaults]
+      removeObjectForKey:kPreviousSessionInfoAvailableDeviceStorage];
 
   [defaults setObject:[NSDate date] forKey:kPreviousSessionInfoStartTime];
 
@@ -446,17 +440,6 @@ static PreviousSessionInfo* gSharedInstance = nil;
 
 - (UIApplicationState*)applicationState {
   return _applicationState.get();
-}
-
-- (void)updateAvailableDeviceStorage:(NSInteger)availableStorage {
-  if (!self.recordingCurrentSession)
-    return;
-
-  [[NSUserDefaults standardUserDefaults]
-      setInteger:availableStorage
-          forKey:kPreviousSessionInfoAvailableDeviceStorage];
-
-  [self updateSessionEndTime];
 }
 
 - (void)updateSessionEndTime {
@@ -569,29 +552,6 @@ static PreviousSessionInfo* gSharedInstance = nil;
                              kDidSeeMemoryWarningShortlyBeforeTerminating];
   // Save critical state information for crash detection.
   [defaults synchronize];
-}
-
-- (void)synchronizeSceneSessionIDs {
-  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  [defaults setObject:[self.connectedSceneSessionsIDs allObjects]
-               forKey:previous_session_info_constants::
-                          kPreviousSessionInfoConnectedSceneSessionIDs];
-  [defaults synchronize];
-}
-
-- (void)addSceneSessionID:(NSString*)sessionID {
-  [self.connectedSceneSessionsIDs addObject:sessionID];
-  [self synchronizeSceneSessionIDs];
-}
-
-- (void)removeSceneSessionID:(NSString*)sessionID {
-  [self.connectedSceneSessionsIDs removeObject:sessionID];
-  [self synchronizeSceneSessionIDs];
-}
-
-- (void)resetConnectedSceneSessionIDs {
-  self.connectedSceneSessionsIDs = [[NSMutableSet alloc] init];
-  [self synchronizeSceneSessionIDs];
 }
 
 - (void)incrementWarmStartCount {

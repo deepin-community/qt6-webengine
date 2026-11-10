@@ -24,3 +24,7 @@ android_resources("java_resources") {
     "java/res/values/dimens.xml",
   ]
 }
+
+android_resources("java_test_resources") {
+  sources = [ "javatests/res/values/strings.xml" ]
+}

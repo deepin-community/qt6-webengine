@@ -45,14 +45,15 @@ void ComputePipeline::DestroyImpl() {
     DeleteProgram(ToBackend(GetDevice())->GetGL());
 }
 
-MaybeError ComputePipeline::Initialize() {
-    DAWN_TRY(
-        InitializeBase(ToBackend(GetDevice())->GetGL(), ToBackend(GetLayout()), GetAllStages()));
-    return {};
+MaybeError ComputePipeline::InitializeImpl() {
+    return InitializeBase(ToBackend(GetDevice())->GetGL(), ToBackend(GetLayout()), GetAllStages(),
+                          /* usesVertexIndex */ false, /* usesInstanceIndex */ false,
+                          /* usesFragDepth */ false, /* bgraSwizzleAttributes */ {});
 }
 
-void ComputePipeline::ApplyNow() {
-    PipelineGL::ApplyNow(ToBackend(GetDevice())->GetGL());
+MaybeError ComputePipeline::ApplyNow(const OpenGLFunctions& gl) {
+    DAWN_TRY(PipelineGL::ApplyNow(gl, ToBackend(GetLayout())));
+    return {};
 }
 
 }  // namespace dawn::native::opengl

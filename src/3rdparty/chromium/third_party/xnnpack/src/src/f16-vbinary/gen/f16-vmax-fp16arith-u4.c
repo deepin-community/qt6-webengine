@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-vbinary/vop-fp16arith.c.in
 //   Generator: tools/xngen
@@ -7,21 +8,24 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_fp16.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_f16_vmax_ukernel__fp16arith_u4(
     size_t batch,
-    const void* restrict input_a,
-    const void* restrict input_b,
-    void* restrict output,
-    const union xnn_f16_default_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const xnn_float16* restrict input_a,
+    const xnn_float16* restrict input_b,
+    xnn_float16* restrict output,
+    const struct xnn_f16_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float16_t) == 0);
@@ -32,7 +36,6 @@ void xnn_f16_vmax_ukernel__fp16arith_u4(
   const float16_t* a = (const float16_t*) input_a;
   const float16_t* b = (const float16_t*) input_b;
   float16_t* o = (float16_t*) output;
-
 
   for (; batch >= 4 * sizeof(float16_t); batch -= 4 * sizeof(float16_t)) {
     const float16_t va0 = *a++;
@@ -49,7 +52,6 @@ void xnn_f16_vmax_ukernel__fp16arith_u4(
     float16_t vacc1 = vmaxnmh_f16(va1, vb1);
     float16_t vacc2 = vmaxnmh_f16(va2, vb2);
     float16_t vacc3 = vmaxnmh_f16(va3, vb3);
-
 
 
     *o++ = vacc0;

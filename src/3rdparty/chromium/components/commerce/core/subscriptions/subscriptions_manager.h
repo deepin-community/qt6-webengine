@@ -18,6 +18,7 @@
 #include "components/commerce/core/account_checker.h"
 #include "components/commerce/core/proto/commerce_subscription_db_content.pb.h"
 #include "components/session_proto_db/session_proto_storage.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_change_event.h"
 
@@ -74,7 +75,8 @@ class SubscriptionsManager : public signin::IdentityManager::Observer {
       SessionProtoStorage<
           commerce_subscription_db::CommerceSubscriptionContentProto>*
           subscription_proto_db,
-      AccountChecker* account_checker);
+      AccountChecker* account_checker,
+      signin::ConsentLevel consent_level);
   // Used for tests. The passed in objects are ordinarily created with
   // parameters from the non-test constructor.
   SubscriptionsManager(signin::IdentityManager* identity_manager,
@@ -118,14 +120,6 @@ class SubscriptionsManager : public signin::IdentityManager::Observer {
 
   void AddObserver(SubscriptionsObserver* observer);
   void RemoveObserver(SubscriptionsObserver* observer);
-
-  // Wipes stored subscriptions and syncs again them from the server. Do not add
-  // new calls for this method - this as temporary flow to support switching
-  // BookmarkModel instances.
-  //
-  // TODO(crbug.com/1462978): Delete this when ConsentLevel::kSync is deleted.
-  //     See ConsentLevel::kSync documentation for details.
-  void WipeStorageAndSyncSubscriptions();
 
   // For tests only, return last_sync_succeeded_.
   bool GetLastSyncSucceededForTesting();

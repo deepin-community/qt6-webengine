@@ -5,16 +5,17 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_UNIQUE_IDS_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_UNIQUE_IDS_H_
 
+#include <stdint.h>
+
+#include <limits>
 #include <ostream>
 #include <string>
-
-#include <stdint.h>
-#include <limits>
+#include <variant>
 
 #include "base/types/id_type.h"
+#include "base/types/strong_alias.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace autofill {
 
@@ -39,7 +40,7 @@ class TokenType
 // LocalFrameToken and RemoteFrameToken identify AutofillDrivers and
 // AutofillAgents.
 //
-// TODO(crbug.com/1441921): Implement frame tokens as described below for iOS.
+// TODO(crbug.com/40266699): Implement frame tokens as described below for iOS.
 //
 // Every pair of associated AutofillAgent and AutofillDriver has a
 // LocalFrameToken, which uniquely identifies them and remains stable for their
@@ -85,7 +86,7 @@ class TokenType
 // FrameTokens to any renderer process.
 using RemoteFrameToken = internal::TokenType<class RemoteFrameTokenMarker>;
 using LocalFrameToken = internal::TokenType<class LocalFrameTokenMarker>;
-using FrameToken = absl::variant<RemoteFrameToken, LocalFrameToken>;
+using FrameToken = std::variant<RemoteFrameToken, LocalFrameToken>;
 
 namespace internal {
 
@@ -102,7 +103,7 @@ using FieldRendererIdType = ::base::IdTypeU64<class FieldRendererIdMarker>;
 // FormRendererId and FieldRendererId uniquely identify a DOM form or field
 // element, respectively, among all such elements in one frame.
 //
-// To uniquely identify frames across frames, see FormGlobalId and
+// To uniquely identify forms and fields across frames, see FormGlobalId and
 // FieldGlobalId.
 //
 // As a sentinel value, the FormRendererId of a synthetic form converts to
@@ -154,6 +155,24 @@ bool operator<(const GlobalId<RendererId>& a, const GlobalId<RendererId>& b) {
          std::tie(b.frame_token, b.renderer_id);
 }
 
+template <typename RendererId>
+bool operator<=(const GlobalId<RendererId>& a, const GlobalId<RendererId>& b) {
+  return std::tie(a.frame_token, a.renderer_id) <=
+        std::tie(b.frame_token, b.renderer_id);
+}
+
+template <typename RendererId>
+bool operator>(const GlobalId<RendererId>& a, const GlobalId<RendererId>& b) {
+ return std::tie(a.frame_token, a.renderer_id) >
+         std::tie(b.frame_token, b.renderer_id);
+}
+
+template <typename RendererId>
+bool operator>=(const GlobalId<RendererId>& a, const GlobalId<RendererId>& b) {
+  return std::tie(a.frame_token, a.renderer_id) >=
+         std::tie(b.frame_token, b.renderer_id);
+}
+
 }  // namespace internal
 
 // FormGlobalId and FieldGlobalId uniquely identify a DOM form or field
@@ -166,10 +185,10 @@ bool operator<(const GlobalId<RendererId>& a, const GlobalId<RendererId>& b) {
 // GlobalIds are not necessarily persistent across page loads.
 //
 // Since LocalFrameTokens must not be leaked to renderer processes other than
-// the one they originate from, so Autofill should generally not send GlobalIds
-// to any renderer process.
+// the one they originate from, Autofill does not send GlobalIds to any renderer
+// process.
 //
-// TODO(crbug/1207920) Move to core/browser.
+// TODO(crbug.com/40181498) Move to core/browser.
 using FormGlobalId = internal::GlobalId<FormRendererId>;
 using FieldGlobalId = internal::GlobalId<FieldRendererId>;
 

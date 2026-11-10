@@ -66,7 +66,7 @@ static av_cold int audio_write_header(AVFormatContext *s1)
     sample_rate = st->codecpar->sample_rate;
     codec_id    = st->codecpar->codec_id;
     res = ff_alsa_open(s1, SND_PCM_STREAM_PLAYBACK, &sample_rate,
-        st->codecpar->ch_layout.nb_channels, &codec_id);
+        &st->codecpar->ch_layout, &codec_id);
     if (sample_rate != st->codecpar->sample_rate) {
         av_log(s1, AV_LOG_ERROR,
                "sample rate %d not available, nearest is %d\n",
@@ -132,13 +132,6 @@ static int audio_write_frame(AVFormatContext *s1, int stream_index,
     pkt.data     = (*frame)->data[0];
     pkt.size     = (*frame)->nb_samples * s->frame_size;
     pkt.dts      = (*frame)->pkt_dts;
-#if FF_API_PKT_DURATION
-FF_DISABLE_DEPRECATION_WARNINGS
-    if ((*frame)->pkt_duration)
-        pkt.duration = (*frame)->pkt_duration;
-    else
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     pkt.duration = (*frame)->duration;
     return audio_write_packet(s1, &pkt);
 }

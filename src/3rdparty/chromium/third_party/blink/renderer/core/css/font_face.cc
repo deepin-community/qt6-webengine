@@ -33,23 +33,30 @@
 #include "base/metrics/histogram_macros.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_font_face_descriptors.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_font_face_load_status.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview_string.h"
 #include "third_party/blink/renderer/core/css/binary_data_font_face_source.h"
 #include "third_party/blink/renderer/core/css/css_font_face.h"
 #include "third_party/blink/renderer/core/css/css_font_face_src_value.h"
 #include "third_party/blink/renderer/core/css/css_font_family_value.h"
+#include "third_party/blink/renderer/core/css/css_font_feature_value.h"
 #include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/css/css_font_style_range_value.h"
+#include "third_party/blink/renderer/core/css/css_font_variation_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_unicode_range_value.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/local_font_face_source.h"
+#include "third_party/blink/renderer/core/css/media_values.h"
+#include "third_party/blink/renderer/core/css/media_values_cached.h"
+#include "third_party/blink/renderer/core/css/media_values_dynamic.h"
 #include "third_party/blink/renderer/core/css/offscreen_font_selector.h"
 #include "third_party/blink/renderer/core/css/parser/at_rule_descriptor_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/remote_font_face_source.h"
+#include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
@@ -70,8 +77,8 @@
 #include "third_party/blink/renderer/platform/fonts/font_metrics_override.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -90,7 +97,7 @@ const CSSValue* ParseCSSValue(const ExecutionContext* context,
 
 CSSFontFace* CreateCSSFontFace(FontFace* font_face,
                                const CSSValue* unicode_range) {
-  Vector<UnicodeRange> ranges;
+  HeapVector<UnicodeRange> ranges;
   if (const auto* range_list = To<CSSValueList>(unicode_range)) {
     unsigned num_ranges = range_list->length();
     for (unsigned i = 0; i < num_ranges; i++) {
@@ -100,7 +107,7 @@ CSSFontFace* CreateCSSFontFace(FontFace* font_face,
     }
   }
 
-  return MakeGarbageCollected<CSSFontFace>(font_face, ranges);
+  return MakeGarbageCollected<CSSFontFace>(font_face, std::move(ranges));
 }
 
 const CSSValue* ConvertFontMetricOverrideValue(const CSSValue* parsed_value) {
@@ -116,7 +123,7 @@ const CSSValue* ConvertFontMetricOverrideValue(const CSSValue* parsed_value) {
 const CSSValue* ConvertSizeAdjustValue(const CSSValue* parsed_value) {
   // We store the initial value 100% as nullptr
   if (parsed_value &&
-      To<CSSPrimitiveValue>(parsed_value)->GetFloatValue() == 100.0f) {
+      To<CSSPrimitiveValue>(parsed_value)->GetValueIfKnown() == 100.0) {
     return nullptr;
   }
   return parsed_value;
@@ -133,19 +140,18 @@ FontFace* FontFace::Create(
 
   switch (source->GetContentType()) {
     case V8UnionArrayBufferOrArrayBufferViewOrString::ContentType::kArrayBuffer:
-      return Create(execution_context, family, source->GetAsArrayBuffer(),
-                    descriptors);
+      return Create(execution_context, family,
+                    source->GetAsArrayBuffer()->ByteSpan(), descriptors);
     case V8UnionArrayBufferOrArrayBufferViewOrString::ContentType::
         kArrayBufferView:
       return Create(execution_context, family,
-                    source->GetAsArrayBufferView().Get(), descriptors);
+                    source->GetAsArrayBufferView()->ByteSpan(), descriptors);
     case V8UnionArrayBufferOrArrayBufferViewOrString::ContentType::kString:
       return Create(execution_context, family, source->GetAsString(),
                     descriptors);
   }
 
   NOTREACHED();
-  return nullptr;
 }
 
 FontFace* FontFace::Create(ExecutionContext* context,
@@ -159,8 +165,8 @@ FontFace* FontFace::Create(ExecutionContext* context,
   if (!src || !src->IsValueList()) {
     font_face->SetError(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kSyntaxError,
-        "The source provided ('" + source +
-            "') could not be parsed as a value list."));
+        StrCat({"The source provided ('", source,
+                "') could not be parsed as a value list."})));
   }
 
   font_face->InitCSSFontFace(context, *src);
@@ -169,25 +175,11 @@ FontFace* FontFace::Create(ExecutionContext* context,
 
 FontFace* FontFace::Create(ExecutionContext* context,
                            const AtomicString& family,
-                           DOMArrayBuffer* source,
+                           base::span<const uint8_t> data,
                            const FontFaceDescriptors* descriptors) {
   FontFace* font_face =
       MakeGarbageCollected<FontFace>(context, family, descriptors);
-  font_face->InitCSSFontFace(context,
-                             static_cast<const unsigned char*>(source->Data()),
-                             source->ByteLength());
-  return font_face;
-}
-
-FontFace* FontFace::Create(ExecutionContext* context,
-                           const AtomicString& family,
-                           DOMArrayBufferView* source,
-                           const FontFaceDescriptors* descriptors) {
-  FontFace* font_face =
-      MakeGarbageCollected<FontFace>(context, family, descriptors);
-  font_face->InitCSSFontFace(
-      context, static_cast<const unsigned char*>(source->BaseAddress()),
-      source->byteLength());
+  font_face->InitCSSFontFace(context, data);
   return font_face;
 }
 
@@ -223,6 +215,8 @@ FontFace* FontFace::Create(Document* document,
                                       AtRuleDescriptorID::FontVariant) &&
       font_face->SetPropertyFromStyle(
           properties, AtRuleDescriptorID::FontFeatureSettings) &&
+      font_face->SetPropertyFromStyle(
+          properties, AtRuleDescriptorID::FontVariationSettings) &&
       font_face->SetPropertyFromStyle(properties,
                                       AtRuleDescriptorID::FontDisplay) &&
       font_face->SetPropertyFromStyle(properties,
@@ -268,6 +262,10 @@ FontFace::FontFace(ExecutionContext* context,
                         AtRuleDescriptorID::FontVariant);
   SetPropertyFromString(context, descriptors->featureSettings(),
                         AtRuleDescriptorID::FontFeatureSettings);
+  if (RuntimeEnabledFeatures::FontVariationSettingsDescriptorEnabled()) {
+    SetPropertyFromString(context, descriptors->variationSettings(),
+                          AtRuleDescriptorID::FontVariationSettings);
+  }
   SetPropertyFromString(context, descriptors->display(),
                         AtRuleDescriptorID::FontDisplay);
   SetPropertyFromString(context, descriptors->ascentOverride(),
@@ -304,6 +302,10 @@ String FontFace::variant() const {
 
 String FontFace::featureSettings() const {
   return feature_settings_ ? feature_settings_->CssText() : "normal";
+}
+
+String FontFace::variationSettings() const {
+  return variation_settings_ ? variation_settings_->CssText() : "normal";
 }
 
 String FontFace::display() const {
@@ -368,6 +370,13 @@ void FontFace::setFeatureSettings(ExecutionContext* context,
                         &exception_state);
 }
 
+void FontFace::setVariationSettings(ExecutionContext* context,
+                                    const String& s,
+                                    ExceptionState& exception_state) {
+  SetPropertyFromString(context, s, AtRuleDescriptorID::FontVariationSettings,
+                        &exception_state);
+}
+
 void FontFace::setDisplay(ExecutionContext* context,
                           const String& s,
                           ExceptionState& exception_state) {
@@ -412,7 +421,7 @@ void FontFace::SetPropertyFromString(const ExecutionContext* context,
     return;
   }
 
-  String message = "Failed to set '" + s + "' as a property value.";
+  String message = StrCat({"Failed to set '", s, "' as a property value."});
   if (exception_state) {
     exception_state->ThrowDOMException(DOMExceptionCode::kSyntaxError, message);
   } else {
@@ -451,6 +460,9 @@ bool FontFace::SetPropertyValue(const CSSValue* value,
     case AtRuleDescriptorID::FontFeatureSettings:
       feature_settings_ = value;
       break;
+    case AtRuleDescriptorID::FontVariationSettings:
+      variation_settings_ = value;
+      break;
     case AtRuleDescriptorID::FontDisplay:
       display_ = value;
       if (css_font_face_) {
@@ -471,7 +483,6 @@ bool FontFace::SetPropertyValue(const CSSValue* value,
       break;
     default:
       NOTREACHED();
-      return false;
   }
   return true;
 }
@@ -480,20 +491,18 @@ void FontFace::SetFamilyValue(const CSSFontFamilyValue& family_value) {
   family_ = family_value.Value();
 }
 
-String FontFace::status() const {
+V8FontFaceLoadStatus FontFace::status() const {
   switch (status_) {
     case kUnloaded:
-      return "unloaded";
+      return V8FontFaceLoadStatus(V8FontFaceLoadStatus::Enum::kUnloaded);
     case kLoading:
-      return "loading";
+      return V8FontFaceLoadStatus(V8FontFaceLoadStatus::Enum::kLoading);
     case kLoaded:
-      return "loaded";
+      return V8FontFaceLoadStatus(V8FontFaceLoadStatus::Enum::kLoaded);
     case kError:
-      return "error";
-    default:
-      NOTREACHED();
+      return V8FontFaceLoadStatus(V8FontFaceLoadStatus::Enum::kError);
   }
-  return g_empty_string;
+  NOTREACHED();
 }
 
 void FontFace::SetLoadStatus(LoadStatusType status) {
@@ -551,7 +560,7 @@ void FontFace::SetError(DOMException* error) {
   SetLoadStatus(kError);
 }
 
-ScriptPromise FontFace::FontStatusPromise(ScriptState* script_state) {
+ScriptPromise<FontFace> FontFace::FontStatusPromise(ScriptState* script_state) {
   if (!loaded_property_) {
     loaded_property_ = MakeGarbageCollected<LoadedProperty>(
         ExecutionContext::From(script_state));
@@ -564,7 +573,7 @@ ScriptPromise FontFace::FontStatusPromise(ScriptState* script_state) {
   return loaded_property_->Promise(script_state->World());
 }
 
-ScriptPromise FontFace::load(ScriptState* script_state) {
+ScriptPromise<FontFace> FontFace::load(ScriptState* script_state) {
   if (status_ == kUnloaded) {
     css_font_face_->Load();
   }
@@ -670,24 +679,32 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
       // https://drafts.csswg.org/css-fonts/#font-prop-desc
       // "User agents must swap the computed value of the startpoint and
       // endpoint of the range in order to forbid decreasing ranges."
-      if (stretch_from->GetFloatValue() < stretch_to->GetFloatValue()) {
-        capabilities.width = {FontSelectionValue(stretch_from->GetFloatValue()),
-                              FontSelectionValue(stretch_to->GetFloatValue()),
-                              FontSelectionRange::RangeType::kSetExplicitly};
+      if (stretch_from->ComputeValueInCanonicalUnit(EnsureLengthResolver()) <
+          stretch_to->ComputeValueInCanonicalUnit(EnsureLengthResolver())) {
+        capabilities.width = {
+            FontSelectionValue(stretch_from->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionValue(stretch_to->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionRange::RangeType::kSetExplicitly};
       } else {
-        capabilities.width = {FontSelectionValue(stretch_to->GetFloatValue()),
-                              FontSelectionValue(stretch_from->GetFloatValue()),
-                              FontSelectionRange::RangeType::kSetExplicitly};
+        capabilities.width = {
+            FontSelectionValue(stretch_to->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionValue(stretch_from->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionRange::RangeType::kSetExplicitly};
       }
     } else if (auto* stretch_primitive_value =
                    DynamicTo<CSSPrimitiveValue>(stretch_.Get())) {
-      float stretch_value = stretch_primitive_value->GetFloatValue();
+      float stretch_value =
+          stretch_primitive_value->ComputeValueInCanonicalUnit(
+              EnsureLengthResolver());
       capabilities.width = {FontSelectionValue(stretch_value),
                             FontSelectionValue(stretch_value),
                             FontSelectionRange::RangeType::kSetExplicitly};
     } else {
       NOTREACHED();
-      return normal_capabilities;
     }
   }
 
@@ -735,7 +752,9 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
           if (oblique_values_size == 1) {
             const auto& range_start =
                 To<CSSPrimitiveValue>(range_value->GetObliqueValues()->Item(0));
-            FontSelectionValue oblique_range(range_start.GetFloatValue());
+            FontSelectionValue oblique_range(
+                range_start.ComputeValueInCanonicalUnit(
+                    EnsureLengthResolver()));
             capabilities.slope = {
                 oblique_range, oblique_range,
                 FontSelectionRange::RangeType::kSetExplicitly};
@@ -748,15 +767,21 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
             // https://drafts.csswg.org/css-fonts/#font-prop-desc
             // "User agents must swap the computed value of the startpoint and
             // endpoint of the range in order to forbid decreasing ranges."
-            if (range_start.GetFloatValue() < range_end.GetFloatValue()) {
+            if (range_start.ComputeValueInCanonicalUnit(
+                    EnsureLengthResolver()) <
+                range_end.ComputeValueInCanonicalUnit(EnsureLengthResolver())) {
               capabilities.slope = {
-                  FontSelectionValue(range_start.GetFloatValue()),
-                  FontSelectionValue(range_end.GetFloatValue()),
+                  FontSelectionValue(range_start.ComputeValueInCanonicalUnit(
+                      EnsureLengthResolver())),
+                  FontSelectionValue(range_end.ComputeValueInCanonicalUnit(
+                      EnsureLengthResolver())),
                   FontSelectionRange::RangeType::kSetExplicitly};
             } else {
               capabilities.slope = {
-                  FontSelectionValue(range_end.GetFloatValue()),
-                  FontSelectionValue(range_start.GetFloatValue()),
+                  FontSelectionValue(range_end.ComputeValueInCanonicalUnit(
+                      EnsureLengthResolver())),
+                  FontSelectionValue(range_start.ComputeValueInCanonicalUnit(
+                      EnsureLengthResolver())),
                   FontSelectionRange::RangeType::kSetExplicitly};
             }
           }
@@ -764,7 +789,6 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
       }
     } else {
       NOTREACHED();
-      return normal_capabilities;
     }
   }
 
@@ -785,7 +809,6 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
           break;
         default:
           NOTREACHED();
-          break;
       }
     } else if (const auto* weight_list =
                    DynamicTo<CSSValueList>(weight_.Get())) {
@@ -800,25 +823,35 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
         return normal_capabilities;
       }
       if (!weight_from->IsNumber() || !weight_to->IsNumber() ||
-          weight_from->GetFloatValue() < 1 ||
-          weight_to->GetFloatValue() > 1000) {
+          weight_from->ComputeValueInCanonicalUnit(EnsureLengthResolver()) <
+              1 ||
+          weight_to->ComputeValueInCanonicalUnit(EnsureLengthResolver()) >
+              1000) {
         return normal_capabilities;
       }
       // https://drafts.csswg.org/css-fonts/#font-prop-desc
       // "User agents must swap the computed value of the startpoint and
       // endpoint of the range in order to forbid decreasing ranges."
-      if (weight_from->GetFloatValue() < weight_to->GetFloatValue()) {
-        capabilities.weight = {FontSelectionValue(weight_from->GetFloatValue()),
-                               FontSelectionValue(weight_to->GetFloatValue()),
-                               FontSelectionRange::RangeType::kSetExplicitly};
+      if (weight_from->ComputeValueInCanonicalUnit(EnsureLengthResolver()) <
+          weight_to->ComputeValueInCanonicalUnit(EnsureLengthResolver())) {
+        capabilities.weight = {
+            FontSelectionValue(weight_from->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionValue(
+                weight_to->ComputeValueInCanonicalUnit(EnsureLengthResolver())),
+            FontSelectionRange::RangeType::kSetExplicitly};
       } else {
-        capabilities.weight = {FontSelectionValue(weight_to->GetFloatValue()),
-                               FontSelectionValue(weight_from->GetFloatValue()),
-                               FontSelectionRange::RangeType::kSetExplicitly};
+        capabilities.weight = {
+            FontSelectionValue(
+                weight_to->ComputeValueInCanonicalUnit(EnsureLengthResolver())),
+            FontSelectionValue(weight_from->ComputeValueInCanonicalUnit(
+                EnsureLengthResolver())),
+            FontSelectionRange::RangeType::kSetExplicitly};
       }
     } else if (auto* weight_primitive_value =
                    DynamicTo<CSSPrimitiveValue>(weight_.Get())) {
-      float weight_value = weight_primitive_value->GetFloatValue();
+      float weight_value = weight_primitive_value->ComputeValueInCanonicalUnit(
+          EnsureLengthResolver());
       if (weight_value < 1 || weight_value > 1000) {
         return normal_capabilities;
       }
@@ -827,7 +860,6 @@ FontSelectionCapabilities FontFace::GetFontSelectionCapabilities() const {
                              FontSelectionRange::RangeType::kSetExplicitly};
     } else {
       NOTREACHED();
-      return normal_capabilities;
     }
   }
 
@@ -897,17 +929,15 @@ void FontFace::InitCSSFontFace(ExecutionContext* context, const CSSValue& src) {
 }
 
 void FontFace::InitCSSFontFace(ExecutionContext* context,
-                               const unsigned char* data,
-                               size_t size) {
+                               base::span<const uint8_t> data) {
   css_font_face_ = CreateCSSFontFace(this, unicode_range_.Get());
   if (error_) {
     return;
   }
 
-  scoped_refptr<SharedBuffer> buffer = SharedBuffer::Create(data, size);
-  BinaryDataFontFaceSource* source =
-      MakeGarbageCollected<BinaryDataFontFaceSource>(
-          css_font_face_, buffer.get(), ots_parse_message_);
+  scoped_refptr<SharedBuffer> buffer = SharedBuffer::Create(data);
+  auto* source = MakeGarbageCollected<BinaryDataFontFaceSource>(
+      css_font_face_, buffer.get(), ots_parse_message_);
   if (source->IsValid()) {
     SetLoadStatus(kLoaded);
   } else {
@@ -915,7 +945,7 @@ void FontFace::InitCSSFontFace(ExecutionContext* context,
       context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::blink::ConsoleMessageSource::kOther,
           mojom::blink::ConsoleMessageLevel::kWarning,
-          "OTS parsing error: " + ots_parse_message_));
+          StrCat({"OTS parsing error: ", ots_parse_message_})));
     }
     SetError(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kSyntaxError, "Invalid font data in ArrayBuffer."));
@@ -930,6 +960,7 @@ void FontFace::Trace(Visitor* visitor) const {
   visitor->Trace(unicode_range_);
   visitor->Trace(variant_);
   visitor->Trace(feature_settings_);
+  visitor->Trace(variation_settings_);
   visitor->Trace(display_);
   visitor->Trace(ascent_override_);
   visitor->Trace(descent_override_);
@@ -941,6 +972,7 @@ void FontFace::Trace(Visitor* visitor) const {
   visitor->Trace(css_font_face_);
   visitor->Trace(callbacks_);
   visitor->Trace(style_rule_);
+  visitor->Trace(media_values_);
   ScriptWrappable::Trace(visitor);
   ExecutionContextClient::Trace(visitor);
 }
@@ -972,27 +1004,85 @@ FontMetricsOverride FontFace::GetFontMetricsOverride() const {
   FontMetricsOverride result;
   if (ascent_override_) {
     result.ascent_override =
-        To<CSSPrimitiveValue>(*ascent_override_).GetFloatValue() / 100;
+        To<CSSPrimitiveValue>(*ascent_override_)
+            .ComputeValueInCanonicalUnit(EnsureLengthResolver()) /
+        100;
   }
   if (descent_override_) {
     result.descent_override =
-        To<CSSPrimitiveValue>(*descent_override_).GetFloatValue() / 100;
+        To<CSSPrimitiveValue>(*descent_override_)
+            .ComputeValueInCanonicalUnit(EnsureLengthResolver()) /
+        100;
   }
   if (line_gap_override_) {
     result.line_gap_override =
-        To<CSSPrimitiveValue>(*line_gap_override_).GetFloatValue() / 100;
+        To<CSSPrimitiveValue>(*line_gap_override_)
+            .ComputeValueInCanonicalUnit(EnsureLengthResolver()) /
+        100;
   }
   return result;
 }
 
 float FontFace::GetSizeAdjust() const {
   DCHECK(size_adjust_);
-  return To<CSSPrimitiveValue>(*size_adjust_).GetFloatValue() / 100;
+  return To<CSSPrimitiveValue>(*size_adjust_)
+             .ComputeValueInCanonicalUnit(EnsureLengthResolver()) /
+         100;
+}
+
+scoped_refptr<FontFeatureSettings> FontFace::GetFontFeatureSettings() const {
+  DCHECK(RuntimeEnabledFeatures::FontFeatureSettingsDescriptorEnabled());
+  if (!feature_settings_) {
+    return FontFeatureSettings::Create();
+  }
+  return StyleBuilderConverterBase::ConvertFontFeatureSettings(
+      EnsureLengthResolver(), *feature_settings_);
+}
+
+scoped_refptr<FontVariationSettings> FontFace::GetFontVariationSettings()
+    const {
+  DCHECK(RuntimeEnabledFeatures::FontVariationSettingsDescriptorEnabled());
+  scoped_refptr<FontVariationSettings> settings =
+      FontVariationSettings::Create();
+  if (!variation_settings_) {
+    return settings;
+  }
+
+  auto* identifier_value = DynamicTo<CSSIdentifierValue>(*variation_settings_);
+  if ((identifier_value &&
+       identifier_value->GetValueID() == CSSValueID::kNormal)) {
+    return settings;
+  }
+
+  const auto& list = To<CSSValueList>(*variation_settings_);
+  std::map<uint32_t, float> axes;
+
+  for (const Member<const CSSValue>& value : list) {
+    const auto& variation = To<cssvalue::CSSFontVariationValue>(*value);
+    // Use a temporary std::map to remove duplicate tags, keeping the last
+    // occurrence of each.
+    axes[AtomicStringToFourByteTag(variation.Tag())] =
+        variation.Value()->ConvertTo<float>(EnsureLengthResolver());
+  }
+  for (const auto& [tag, value] : axes) {
+    settings->Append(FontVariationAxis(tag, value));
+  }
+  DCHECK(std::is_sorted(settings->begin(), settings->end()));
+  return settings;
 }
 
 Document* FontFace::GetDocument() const {
   auto* window = DynamicTo<LocalDOMWindow>(GetExecutionContext());
   return window ? window->document() : nullptr;
+}
+
+const CSSLengthResolver& FontFace::EnsureLengthResolver() const {
+  if (!media_values_) {
+    Document* document = GetDocument();
+    media_values_ = document ? MediaValuesDynamic::Create(*document)
+                             : MakeGarbageCollected<MediaValuesCached>();
+  }
+  return *media_values_;
 }
 
 }  // namespace blink

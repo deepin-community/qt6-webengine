@@ -11,11 +11,15 @@
 #ifndef PC_TEST_RTP_TRANSPORT_TEST_UTIL_H_
 #define PC_TEST_RTP_TRANSPORT_TEST_UTIL_H_
 
+#include <cstdint>
 #include <utility>
 
+#include "absl/functional/any_invocable.h"
 #include "call/rtp_packet_sink_interface.h"
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
 #include "pc/rtp_transport_internal.h"
+#include "rtc_base/copy_on_write_buffer.h"
+#include "rtc_base/network/sent_packet.h"
 
 namespace webrtc {
 
@@ -27,7 +31,7 @@ class TransportObserver : public RtpPacketSinkInterface {
 
   explicit TransportObserver(RtpTransportInternal* rtp_transport) {
     rtp_transport->SubscribeRtcpPacketReceived(
-        this, [this](rtc::CopyOnWriteBuffer* buffer, int64_t packet_time_ms) {
+        this, [this](CopyOnWriteBuffer* buffer, int64_t packet_time_ms) {
           OnRtcpPacketReceived(buffer, packet_time_ms);
         });
     rtp_transport->SubscribeReadyToSend(
@@ -35,7 +39,7 @@ class TransportObserver : public RtpPacketSinkInterface {
     rtp_transport->SetUnDemuxableRtpPacketReceivedHandler(
         [this](RtpPacketReceived& packet) { OnUndemuxableRtpPacket(packet); });
     rtp_transport->SubscribeSentPacket(this,
-                                       [this](const rtc::SentPacket& packet) {
+                                       [this](const SentPacketInfo& packet) {
                                          sent_packet_count_++;
                                          if (action_on_sent_packet_) {
                                            action_on_sent_packet_();
@@ -46,15 +50,14 @@ class TransportObserver : public RtpPacketSinkInterface {
   // RtpPacketInterface override.
   void OnRtpPacket(const RtpPacketReceived& packet) override {
     rtp_count_++;
-    last_recv_rtp_packet_ = packet.Buffer();
+    last_recv_rtp_packet_ = packet;
   }
 
   void OnUndemuxableRtpPacket(const RtpPacketReceived& packet) {
     un_demuxable_rtp_count_++;
   }
 
-  void OnRtcpPacketReceived(rtc::CopyOnWriteBuffer* packet,
-                            int64_t packet_time_us) {
+  void OnRtcpPacketReceived(CopyOnWriteBuffer* packet, int64_t packet_time_us) {
     rtcp_count_++;
     last_recv_rtcp_packet_ = *packet;
   }
@@ -64,13 +67,11 @@ class TransportObserver : public RtpPacketSinkInterface {
   int rtcp_count() const { return rtcp_count_; }
   int sent_packet_count() const { return sent_packet_count_; }
 
-  rtc::CopyOnWriteBuffer last_recv_rtp_packet() {
+  const RtpPacketReceived& last_recv_rtp_packet() {
     return last_recv_rtp_packet_;
   }
 
-  rtc::CopyOnWriteBuffer last_recv_rtcp_packet() {
-    return last_recv_rtcp_packet_;
-  }
+  CopyOnWriteBuffer last_recv_rtcp_packet() { return last_recv_rtcp_packet_; }
 
   void OnReadyToSend(bool ready) {
     if (action_on_ready_to_send_) {
@@ -98,8 +99,8 @@ class TransportObserver : public RtpPacketSinkInterface {
   int rtcp_count_ = 0;
   int sent_packet_count_ = 0;
   int ready_to_send_signal_count_ = 0;
-  rtc::CopyOnWriteBuffer last_recv_rtp_packet_;
-  rtc::CopyOnWriteBuffer last_recv_rtcp_packet_;
+  RtpPacketReceived last_recv_rtp_packet_;
+  CopyOnWriteBuffer last_recv_rtcp_packet_;
   absl::AnyInvocable<void(bool)> action_on_ready_to_send_;
   absl::AnyInvocable<void()> action_on_sent_packet_;
 };

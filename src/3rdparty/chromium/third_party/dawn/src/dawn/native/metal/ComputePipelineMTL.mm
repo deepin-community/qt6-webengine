@@ -29,7 +29,7 @@
 
 #include "dawn/common/Math.h"
 #include "dawn/native/Adapter.h"
-#include "dawn/native/CreatePipelineAsyncTask.h"
+#include "dawn/native/CreatePipelineAsyncEvent.h"
 #include "dawn/native/Instance.h"
 #include "dawn/native/metal/BackendMTL.h"
 #include "dawn/native/metal/DeviceMTL.h"
@@ -52,22 +52,17 @@ ComputePipeline::ComputePipeline(DeviceBase* dev,
 
 ComputePipeline::~ComputePipeline() = default;
 
-MaybeError ComputePipeline::Initialize() {
+MaybeError ComputePipeline::InitializeImpl() {
     auto mtlDevice = ToBackend(GetDevice())->GetMTLDevice();
 
     const ProgrammableStage& computeStage = GetStage(SingleShaderStage::Compute);
     ShaderModule::MetalFunctionData computeData;
 
     DAWN_TRY(ToBackend(computeStage.module.Get())
-                 ->CreateFunction(
-                     SingleShaderStage::Compute, computeStage, ToBackend(GetLayout()), &computeData,
-                     /* sampleMask */ 0xFFFFFFFF,
-                     /* renderPipeline */ nullptr,
-                     /* maxSubgroupSizeForFullSubgroups */
-                     IsFullSubgroupsRequired()
-                         ? std::make_optional(
-                               GetDevice()->GetLimits().experimentalSubgroupLimits.maxSubgroupSize)
-                         : std::nullopt));
+                 ->CreateFunction(SingleShaderStage::Compute, computeStage, ToBackend(GetLayout()),
+                                  &computeData,
+                                  /* sampleMask */ 0xFFFFFFFF,
+                                  /* renderPipeline */ nullptr));
 
     NSError* error = nullptr;
     NSRef<NSString> label = MakeDebugName(GetDevice(), "Dawn_ComputePipeline", GetLabel());
@@ -77,10 +72,6 @@ MaybeError ComputePipeline::Initialize() {
     MTLComputePipelineDescriptor* descriptor = descriptorRef.Get();
     descriptor.computeFunction = computeData.function.Get();
     descriptor.label = label.Get();
-
-    if (IsFullSubgroupsRequired()) {
-        descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = true;
-    }
 
     platform::metrics::DawnHistogramTimer timer(GetDevice()->GetPlatform());
     mMtlComputePipelineState.Acquire([mtlDevice
@@ -121,23 +112,6 @@ MTLSize ComputePipeline::GetLocalWorkGroupSize() const {
 
 bool ComputePipeline::RequiresStorageBufferLength() const {
     return mRequiresStorageBufferLength;
-}
-
-void ComputePipeline::InitializeAsync(Ref<ComputePipelineBase> computePipeline,
-                                      WGPUCreateComputePipelineAsyncCallback callback,
-                                      void* userdata) {
-    PhysicalDeviceBase* physicalDevice = computePipeline->GetDevice()->GetPhysicalDevice();
-    std::unique_ptr<CreateComputePipelineAsyncTask> asyncTask =
-        std::make_unique<CreateComputePipelineAsyncTask>(std::move(computePipeline), callback,
-                                                         userdata);
-    // Workaround a crash where the validation layers on AMD crash with partition alloc.
-    // See crbug.com/dawn/1200.
-    if (IsMetalValidationEnabled(physicalDevice) &&
-        gpu_info::IsAMD(physicalDevice->GetVendorId())) {
-        asyncTask->Run();
-        return;
-    }
-    CreateComputePipelineAsyncTask::RunAsync(std::move(asyncTask));
 }
 
 }  // namespace dawn::native::metal

@@ -2,13 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "media/gpu/h265_decoder.h"
+
 #include <algorithm>
+#include <array>
+#include <variant>
 
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
-#include "media/gpu/h265_decoder.h"
+#include "media/base/video_types.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace media {
 
@@ -45,7 +55,7 @@ bool IsValidBitDepth(uint8_t bit_depth, VideoCodecProfile profile) {
     // Spec A.3.5
     case HEVCPROFILE_REXT:
       return bit_depth == 8u || bit_depth == 10u || bit_depth == 12u ||
-             bit_depth == 14u || bit_depth == 16u;
+             bit_depth == 16u;
     // Spec A.3.6
     case HEVCPROFILE_HIGH_THROUGHPUT:
       return bit_depth == 8u || bit_depth == 10u || bit_depth == 14u ||
@@ -141,29 +151,27 @@ H265Decoder::~H265Decoder() = default;
     }                                                        \
   } while (0)
 
-void H265Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
-  const uint8_t* ptr = decoder_buffer.data();
-  const size_t size = decoder_buffer.data_size();
-  const DecryptConfig* decrypt_config = decoder_buffer.decrypt_config();
+void H265Decoder::SetStream(int32_t id,
+                            scoped_refptr<DecoderBuffer> decoder_buffer) {
+  CHECK(decoder_buffer);
+  decoder_buffer_ = std::move(decoder_buffer);
+  const DecryptConfig* decrypt_config = decoder_buffer_->decrypt_config();
 
-  DCHECK(ptr);
-  DCHECK(size);
-  DVLOG(4) << "New input stream id: " << id << " at: " << (void*)ptr
-           << " size: " << size;
+  DVLOG(4) << "New input stream id: " << id
+           << ", buffer: " << decoder_buffer_->AsHumanReadableString();
   stream_id_ = id;
-  current_stream_ = ptr;
-  current_stream_size_ = size;
-  current_stream_has_been_changed_ = true;
+  decoder_buffer_has_been_changed_ = true;
   if (decrypt_config) {
-    parser_.SetEncryptedStream(ptr, size, decrypt_config->subsamples());
+    parser_.SetEncryptedStream(decoder_buffer_->data(), decoder_buffer_->size(),
+                               decrypt_config->subsamples());
     current_decrypt_config_ = decrypt_config->Clone();
   } else {
-    parser_.SetStream(ptr, size);
+    parser_.SetStream(decoder_buffer_->data(), decoder_buffer_->size());
     current_decrypt_config_ = nullptr;
   }
-  if (decoder_buffer.has_side_data() &&
-      decoder_buffer.side_data()->secure_handle) {
-    secure_handle_ = decoder_buffer.side_data()->secure_handle;
+  if (decoder_buffer_->side_data() &&
+      decoder_buffer_->side_data()->secure_handle) {
+    secure_handle_ = decoder_buffer_->side_data()->secure_handle;
   } else {
     secure_handle_ = 0;
   }
@@ -193,6 +201,7 @@ void H265Decoder::Reset() {
   parser_.Reset();
   accelerator_->Reset();
 
+  decoder_buffer_.reset();
   secure_handle_ = 0;
 
   state_ = kAfterReset;
@@ -204,12 +213,11 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
     return kDecodeError;
   }
 
-  if (current_stream_has_been_changed_) {
+  if (decoder_buffer_has_been_changed_) {
     // Calling H265Accelerator::SetStream() here instead of when the stream is
     // originally set in case the accelerator needs to return kTryAgain.
     H265Accelerator::Status result = accelerator_->SetStream(
-        base::span<const uint8_t>(current_stream_, current_stream_size_),
-        current_decrypt_config_.get());
+        *decoder_buffer_, current_decrypt_config_.get());
     switch (result) {
       case H265Accelerator::Status::kOk:  // fallthrough
       case H265Accelerator::Status::kNotSupported:
@@ -225,7 +233,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
 
     // Reset the flag so that this is only called again next time SetStream()
     // is called.
-    current_stream_has_been_changed_ = false;
+    decoder_buffer_has_been_changed_ = false;
   }
 
   while (true) {
@@ -306,7 +314,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
             accelerator_->ProcessSPS(
                 parser_.GetSPS(sps_id),
                 base::span<const uint8_t>(
-                    curr_nalu_->data,
+                    curr_nalu_->data.get(),
                     base::checked_cast<size_t>(curr_nalu_->size)));
             break;
           }
@@ -319,7 +327,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
             accelerator_->ProcessPPS(
                 parser_.GetPPS(pps_id),
                 base::span<const uint8_t>(
-                    curr_nalu_->data,
+                    curr_nalu_->data.get(),
                     base::checked_cast<size_t>(curr_nalu_->size)));
             break;
           }
@@ -373,7 +381,13 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
           }
 
           state_ = kTryPreprocessCurrentSlice;
-          if (curr_slice_hdr_->irap_pic) {
+        }
+
+        if (state_ == kTryPreprocessCurrentSlice) {
+          CHECK_ACCELERATOR_RESULT(PreprocessCurrentSlice());
+          state_ = kEnsurePicture;
+
+          if (curr_slice_hdr_->first_slice_segment_in_pic_flag) {
             bool need_new_buffers = false;
             if (!ProcessPPS(curr_slice_hdr_->slice_pic_parameter_set_id,
                             &need_new_buffers)) {
@@ -385,11 +399,6 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
               return kConfigChange;
             }
           }
-        }
-
-        if (state_ == kTryPreprocessCurrentSlice) {
-          CHECK_ACCELERATOR_RESULT(PreprocessCurrentSlice());
-          state_ = kEnsurePicture;
         }
 
         if (state_ == kEnsurePicture) {
@@ -435,14 +444,14 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         if (par_res != H265Parser::kOk) {
           SET_ERROR_AND_RETURN();
         }
-        // TODO(crbug.com/1495665): Technically, we should cache a map of vps_id
-        // to aux_alpha_layer_id, and look up the aux_alpha_layer_id for each
-        // NALU.
+        // TODO(crbug.com/40937818): Technically, we should cache a map of
+        // vps_id to aux_alpha_layer_id, and look up the aux_alpha_layer_id for
+        // each NALU.
         aux_alpha_layer_id_ = parser_.GetVPS(vps_id)->aux_alpha_layer_id;
         accelerator_->ProcessVPS(
             parser_.GetVPS(vps_id),
             base::span<const uint8_t>(
-                curr_nalu_->data,
+                curr_nalu_->data.get(),
                 base::checked_cast<size_t>(curr_nalu_->size)));
         break;
       case H265NALU::SPS_NUT:
@@ -454,7 +463,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         accelerator_->ProcessSPS(
             parser_.GetSPS(sps_id),
             base::span<const uint8_t>(
-                curr_nalu_->data,
+                curr_nalu_->data.get(),
                 base::checked_cast<size_t>(curr_nalu_->size)));
         break;
       case H265NALU::PPS_NUT:
@@ -466,7 +475,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         accelerator_->ProcessPPS(
             parser_.GetPPS(pps_id),
             base::span<const uint8_t>(
-                curr_nalu_->data,
+                curr_nalu_->data.get(),
                 base::checked_cast<size_t>(curr_nalu_->size)));
 
         // For ARC CTS tests they expect us to request the buffers after only
@@ -510,31 +519,31 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         H265SEI sei;
         if (parser_.ParseSEI(&sei) != H265Parser::kOk)
           break;
-        for (auto& sei_msg : sei.msgs) {
-          switch (sei_msg.type) {
-            case H265SEIMessage::kSEIContentLightLevelInfo:
-              // HEVC HDR metadata may appears in the below places:
-              // 1. Container.
-              // 2. Bitstream.
-              // 3. Both container and bitstream.
-              // Thus we should also extract HDR metadata here in case we
-              // miss the information.
-              if (!hdr_metadata_.has_value()) {
-                hdr_metadata_.emplace();
-              }
-              hdr_metadata_->cta_861_3 =
-                  sei_msg.content_light_level_info.ToGfx();
-              break;
-            case H265SEIMessage::kSEIMasteringDisplayInfo:
-              if (!hdr_metadata_.has_value()) {
-                hdr_metadata_.emplace();
-              }
-              hdr_metadata_->smpte_st_2086 =
-                  sei_msg.mastering_display_info.ToGfx();
-              break;
-            default:
-              break;
-          }
+        for (const auto& sei_msg : sei.msgs) {
+          std::visit(absl::Overload{
+                         [](const H265SEIAlphaChannelInfo& info) {},
+                         [this](const H265SEIContentLightLevelInfo& info) {
+                           // HEVC HDR metadata may appears in the below
+                           // places:
+                           // 1. Container.
+                           // 2. Bitstream.
+                           // 3. Both container and bitstream.
+                           // Thus we should also extract HDR metadata here in
+                           // case we miss the information.
+                           if (!hdr_metadata_.has_value()) {
+                             hdr_metadata_.emplace();
+                           }
+                           hdr_metadata_->cta_861_3 = info.ToGfx();
+                         },
+                         [this](const H265SEIMasteringDisplayInfo& info) {
+                           if (!hdr_metadata_.has_value()) {
+                             hdr_metadata_.emplace();
+                           }
+                           hdr_metadata_->smpte_st_2086 = info.ToGfx();
+                         },
+                         [](std::monostate) {},
+                     },
+                     sei_msg);
         }
         break;
       }
@@ -571,7 +580,7 @@ VideoChromaSampling H265Decoder::GetChromaSampling() const {
 VideoColorSpace H265Decoder::GetVideoColorSpace() const {
   return picture_color_space_;
 }
-absl::optional<gfx::HDRMetadata> H265Decoder::GetHDRMetadata() const {
+std::optional<gfx::HDRMetadata> H265Decoder::GetHDRMetadata() const {
   return hdr_metadata_;
 }
 
@@ -640,17 +649,39 @@ bool H265Decoder::ProcessPPS(int pps_id, bool* need_new_buffers) {
     new_color_space = container_color_space_;
   }
 
+  if (new_color_space.matrix == VideoColorSpace::MatrixID::RGB &&
+      new_chroma_sampling != VideoChromaSampling::k444) {
+    // Some H.265 videos contain a VUI that specifies a color matrix of GBR,
+    // when they are actually ordinary YUV. Default to BT.709 if the format is
+    // not 4:4:4 as GBR is reasonable for 4:4:4 content. See
+    // crbug.com/342003180, and crbug.com/343014700.
+    new_color_space = VideoColorSpace::REC709();
+  }
+
   bool is_color_space_change = false;
   if (base::FeatureList::IsEnabled(kAVDColorSpaceChanges)) {
     is_color_space_change = new_color_space.IsSpecified() &&
                             new_color_space != picture_color_space_;
   }
 
-  if (pic_size_ != new_pic_size || dpb_.max_num_pics() != sps->max_dpb_size ||
+  const bool is_config_change =
+      pic_size_ != new_pic_size || dpb_.max_num_pics() != sps->max_dpb_size ||
       profile_ != new_profile || bit_depth_ != new_bit_depth ||
-      chroma_sampling_ != new_chroma_sampling || is_color_space_change) {
-    if (!Flush())
+      chroma_sampling_ != new_chroma_sampling;
+
+  if (is_config_change) {
+    // Only color space changes are allowed on non-IRAP pictures.
+    if (curr_slice_hdr_ && !curr_slice_hdr_->irap_pic && !first_picture_) {
+      DVLOG(1)
+          << "A configuration change on a non-IRAP picture is not allowed.";
       return false;
+    }
+  }
+
+  if (is_config_change || is_color_space_change) {
+    if (!Flush()) {
+      return false;
+    }
     DVLOG(1) << "Codec profile: " << GetProfileName(new_profile)
              << ", level(x30): " << sps->profile_tier_level.general_level_idc
              << ", DPB size: " << sps->max_dpb_size
@@ -682,6 +713,10 @@ H265Decoder::H265Accelerator::Status H265Decoder::PreprocessCurrentSlice() {
       return result;
 
     DCHECK(!curr_pic_);
+  } else if (!curr_pic_) {
+    DVLOG(1) << "Received slice segment with first_slice_segment_in_pic_flag "
+             << "equal to 0 without an active picture";
+    return H265Accelerator::Status::kFail;
   }
 
   return H265Accelerator::Status::kOk;
@@ -741,8 +776,9 @@ void H265Decoder::CalcPictureOrderCount(const H265PPS* pps,
                                         const H265SliceHeader* slice_hdr) {
   // 8.3.1 Decoding process for picture order count.
   curr_pic_->valid_for_prev_tid0_pic_ =
-      !pps->temporal_id && (slice_hdr->nal_unit_type < H265NALU::RADL_N ||
-                            slice_hdr->nal_unit_type > H265NALU::RSV_VCL_N14);
+      !slice_hdr->temporal_id &&
+      (slice_hdr->nal_unit_type < H265NALU::RADL_N ||
+       slice_hdr->nal_unit_type > H265NALU::RSV_VCL_N14);
   curr_pic_->slice_pic_order_cnt_lsb_ = slice_hdr->slice_pic_order_cnt_lsb;
 
   // Calculate POC for current picture.
@@ -870,8 +906,8 @@ bool H265Decoder::BuildRefPicLists(const H265SPS* sps,
   ref_pic_set_st_curr_after_.resize(kMaxDpbSize);
   ref_pic_set_st_curr_before_.clear();
   ref_pic_set_st_curr_before_.resize(kMaxDpbSize);
-  scoped_refptr<H265Picture> ref_pic_set_lt_foll[kMaxDpbSize];
-  scoped_refptr<H265Picture> ref_pic_set_st_foll[kMaxDpbSize];
+  std::array<scoped_refptr<H265Picture>, kMaxDpbSize> ref_pic_set_lt_foll;
+  std::array<scoped_refptr<H265Picture>, kMaxDpbSize> ref_pic_set_st_foll;
 
   // Mark everything in the DPB as unused for reference now. When we determine
   // the pics in the ref list, then we will mark them appropriately.
@@ -950,7 +986,7 @@ bool H265Decoder::BuildRefPicLists(const H265SPS* sps,
     int num_rps_curr_temp_list0 =
         std::max(slice_hdr->num_ref_idx_l0_active_minus1 + 1,
                  slice_hdr->num_pic_total_curr);
-    scoped_refptr<H265Picture> ref_pic_list_temp0[kMaxDpbSize];
+    std::array<scoped_refptr<H265Picture>, kMaxDpbSize> ref_pic_list_temp0;
 
     // Equation 8-8.
     int r_idx = 0;
@@ -985,7 +1021,7 @@ bool H265Decoder::BuildRefPicLists(const H265SPS* sps,
       int num_rps_curr_temp_list1 =
           std::max(slice_hdr->num_ref_idx_l1_active_minus1 + 1,
                    slice_hdr->num_pic_total_curr);
-      scoped_refptr<H265Picture> ref_pic_list_temp1[kMaxDpbSize];
+      std::array<scoped_refptr<H265Picture>, kMaxDpbSize> ref_pic_list_temp1;
 
       // Equation 8-10.
       r_idx = 0;
@@ -1176,6 +1212,15 @@ bool H265Decoder::PerformDpbOperations(const H265SPS* sps) {
   if (dpb_.IsFull()) {
     DVLOG(1) << "Could not free up space in DPB for current picture";
     return false;
+  }
+
+  // Non-decodable RASL frames are not stored in the DPB because the picture
+  // is not actually decoded so it doesn't make sense to store it.
+  if (curr_pic_->no_rasl_output_flag_ &&
+      (curr_pic_->nal_unit_type_ == H265NALU::RASL_N ||
+       curr_pic_->nal_unit_type_ == H265NALU::RASL_R)) {
+    DVLOG(1) << "Skipping storing non-decodable RASL frame in DPB";
+    return true;
   }
 
   // Put the current pic in the DPB.

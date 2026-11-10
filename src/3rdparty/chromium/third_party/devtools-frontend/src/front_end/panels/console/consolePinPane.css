@@ -6,8 +6,8 @@
 
 .close-button {
   position: absolute;
-  top: 3px;
-  left: 3px;
+  top: var(--sys-size-4);
+  left: var(--sys-size-2);
 }
 
 .console-pins {
@@ -45,7 +45,7 @@
 }
 
 .console-pin-name {
-  margin-left: -4px;
+  margin-left: -5px;
   margin-bottom: 1px;
   height: auto;
 }
@@ -69,6 +69,6 @@
 }
 
 .console-pin:focus-within .console-pin-preview,
-.console-pin-name:not(:focus-within):not(:hover) {
+.console-pin-name:not(:focus-within, :hover) {
   opacity: 60%;
 }

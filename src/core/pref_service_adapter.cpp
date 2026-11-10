@@ -1,5 +1,6 @@
 // Copyright (C) 2019 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "pref_service_adapter.h"
 
@@ -41,8 +42,10 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "components/guest_view/browser/guest_view_manager.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/browser/pref_types.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/constants.h"
 #endif
@@ -55,6 +58,8 @@ namespace {
 static const char kPrefMediaDeviceIDSalt[] = "qtwebengine.media_device_salt_id";
 }
 
+using namespace Qt::StringLiterals;
+
 namespace QtWebEngineCore {
 
 void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
@@ -64,11 +69,12 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     factory.set_command_line_prefs(base::MakeRefCounted<ChromeCommandLinePrefStore>(
             base::CommandLine::ForCurrentProcess()));
 
-    QString userPrefStorePath = profileAdapter.dataPath();
+    QString userPrefStorePath;
+    userPrefStorePath += profileAdapter.dataPath();
     if (!profileAdapter.isOffTheRecord() && !userPrefStorePath.isEmpty() &&
             const_cast<ProfileAdapter *>(&profileAdapter)->ensureDataPathExists()) {
         userPrefStorePath += QDir::separator();
-        userPrefStorePath += QStringLiteral("user_prefs.json");
+        userPrefStorePath += "user_prefs.json"_L1;
         factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(toFilePath(userPrefStorePath)));
     } else {
         factory.set_user_prefs(new InMemoryPrefStore);
@@ -87,13 +93,13 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     registry->RegisterBooleanPref(spellcheck::prefs::kSpellCheckEnable, false);
     registry->RegisterBooleanPref(spellcheck::prefs::kSpellCheckUseSpellingService, false);
 #endif // QT_CONFIG(webengine_spellchecker)
-    registry->RegisterBooleanPref(prefs::kShowInternalAccessibilityTree, false);
     registry->RegisterBooleanPref(prefs::kAccessibilityImageLabelsEnabled, false);
 
     // chrome/browser/notifications
     registry->RegisterIntegerPref(prefs::kNotificationNextPersistentId, 10000);
     // chrome/browser/push_messaging
     registry->RegisterDictionaryPref(prefs::kPushMessagingAppIdentifierMap);
+    registry->RegisterListPref(prefs::kPushMessagingUnsubscribedEntriesList);
     // chrome/browser/gcm
     gcm::RegisterPrefs(registry.get());
 
@@ -113,19 +119,23 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     registry->RegisterListPref(extensions::pref_names::kInstallDenyList);
     registry->RegisterDictionaryPref(extensions::pref_names::kInstallForceList);
     registry->RegisterListPref(extensions::pref_names::kAllowedTypes);
-    registry->RegisterBooleanPref(extensions::pref_names::kStorageGarbageCollect, false);
     registry->RegisterListPref(extensions::pref_names::kAllowedInstallSites);
     registry->RegisterStringPref(extensions::pref_names::kLastChromeVersion, std::string());
     registry->RegisterListPref(extensions::pref_names::kNativeMessagingBlocklist);
     registry->RegisterListPref(extensions::pref_names::kNativeMessagingAllowlist);
     registry->RegisterBooleanPref(extensions::pref_names::kNativeMessagingUserLevelHosts, true);
     registry->RegisterListPref(extensions::pref_names::kExtendedBackgroundLifetimeForPortConnectionsToUrls);
+    registry->RegisterDictionaryPref(extensions::kUserPermissions.name);
+    // Should match "kExternalUninstalls" in extensions/browser/extension_prefs.cc
+    registry->RegisterListPref("extensions.external_uninstalls");
+    registry->RegisterBooleanPref("migrated_user_scripts_toggle", false);
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
     // Media device salt id key
     // Can't be a random value since every time we run the setup code the
     // default value will be different. We'll need to initialize it later.
     registry->RegisterStringPref(kPrefMediaDeviceIDSalt, std::string());
+    registry->RegisterStringPref(prefs::kShownAccessibilityApiType, "qt");
 
     registry->RegisterBooleanPref(autofill::prefs::kAutofillEnabledDeprecated, false);
     registry->RegisterBooleanPref(autofill::prefs::kAutofillProfileEnabled, false);
@@ -205,7 +215,10 @@ QStringList PrefServiceAdapter::spellCheckLanguages() const
 
 void PrefServiceAdapter::setSpellCheckEnabled(bool enabled)
 {
-    if (!WebEngineLibraryInfo::getPath(base::DIR_APP_DICTIONARIES, true).empty()) {
+    if (enabled == m_prefService->GetBoolean(spellcheck::prefs::kSpellCheckEnable))
+        return;
+
+    if (!WebEngineLibraryInfo::getPath(base::DIR_APP_DICTIONARIES, enabled).empty()) {
         m_prefService->SetBoolean(spellcheck::prefs::kSpellCheckEnable, enabled);
         m_prefService->SchedulePendingLossyWrites();
     }

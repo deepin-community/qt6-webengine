@@ -192,8 +192,9 @@ int sqlite3LookasideUsed(sqlite3 *db, int *pHighwater){
   nInit += countLookasideSlots(db->lookaside.pSmallInit);
   nFree += countLookasideSlots(db->lookaside.pSmallFree);
 #endif /* SQLITE_OMIT_TWOSIZE_LOOKASIDE */
-  if( pHighwater ) *pHighwater = db->lookaside.nSlot - nInit;
-  return db->lookaside.nSlot - (nInit+nFree);
+  assert( db->lookaside.nSlot >= nInit+nFree );
+  if( pHighwater ) *pHighwater = (int)(db->lookaside.nSlot - nInit);
+  return (int)(db->lookaside.nSlot - (nInit+nFree));
 }
 
 /*
@@ -246,7 +247,7 @@ int sqlite3_db_status(
       assert( (op-SQLITE_DBSTATUS_LOOKASIDE_HIT)>=0 );
       assert( (op-SQLITE_DBSTATUS_LOOKASIDE_HIT)<3 );
       *pCurrent = 0;
-      *pHighwater = db->lookaside.anStat[op - SQLITE_DBSTATUS_LOOKASIDE_HIT];
+      *pHighwater = (int)db->lookaside.anStat[op-SQLITE_DBSTATUS_LOOKASIDE_HIT];
       if( resetFlag ){
         db->lookaside.anStat[op - SQLITE_DBSTATUS_LOOKASIDE_HIT] = 0;
       }
@@ -362,7 +363,7 @@ int sqlite3_db_status(
     case SQLITE_DBSTATUS_CACHE_MISS:
     case SQLITE_DBSTATUS_CACHE_WRITE:{
       int i;
-      int nRet = 0;
+      u64 nRet = 0;
       assert( SQLITE_DBSTATUS_CACHE_MISS==SQLITE_DBSTATUS_CACHE_HIT+1 );
       assert( SQLITE_DBSTATUS_CACHE_WRITE==SQLITE_DBSTATUS_CACHE_HIT+2 );
 
@@ -375,7 +376,7 @@ int sqlite3_db_status(
       *pHighwater = 0; /* IMP: R-42420-56072 */
                        /* IMP: R-54100-20147 */
                        /* IMP: R-29431-39229 */
-      *pCurrent = nRet;
+      *pCurrent = (int)nRet & 0x7fffffff;
       break;
     }
 

@@ -23,10 +23,10 @@
 #include "gtest/gtest.h"
 #include "absl/container/flat_hash_set.h"
 #include "./centipede/control_flow.h"
-#include "./centipede/logging.h"
 #include "./centipede/pc_info.h"
+#include "./common/logging.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 using ::testing::Contains;
@@ -125,4 +125,4 @@ TEST(CallGraph, BuildCgFromCfTable) {
 
 }  // namespace
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

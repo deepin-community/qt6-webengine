@@ -7,13 +7,18 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list_types.h"
+#include "build/buildflag.h"
 #include "ui/display/display_export.h"
 
 namespace display {
 class Display;
 enum class TabletState;
+
+using Displays = std::vector<Display>;
 
 // Observers for display configuration changes.
 class DISPLAY_EXPORT DisplayObserver : public base::CheckedObserver {
@@ -35,17 +40,14 @@ class DISPLAY_EXPORT DisplayObserver : public base::CheckedObserver {
   };
 
   // Called when |new_display| has been added.
-  virtual void OnDisplayAdded(const Display& new_display);
+  virtual void OnDisplayAdded(const Display& new_display) {}
 
-  // Called when |old_display| has been removed.
-  // In Ash, this is called *before* the display has been removed.
-  // Everywhere else, this is called *after* the display has been removed.
-  virtual void OnDisplayRemoved(const Display& old_display);
+  // Called before displays have been removed.
+  virtual void OnWillRemoveDisplays(const Displays& removed_displays) {}
 
-  // Called *after* any displays have been removed.  Not called per display.
-  // TODO(enne): resolve the Ash inconsistency for OnDisplayRemoved and
-  // remove this function.
-  virtual void OnDidRemoveDisplays();
+  // Called *after* `removed_displays` have been removed. Not called per
+  // display.
+  virtual void OnDisplaysRemoved(const Displays& removed_displays) {}
 
   // Called when the metrics of a display change.
   // |changed_metrics| is a bitmask of DisplayMetric types indicating which
@@ -53,14 +55,19 @@ class DISPLAY_EXPORT DisplayObserver : public base::CheckedObserver {
   // or false to true), than the DISPLAY_METRIC_MIRROR_STATE bit is set in
   // changed_metrics.
   virtual void OnDisplayMetricsChanged(const Display& display,
-                                       uint32_t changed_metrics);
+                                       uint32_t changed_metrics) {}
 
   // Called when the (platform-specific) workspace ID changes to
   // |new_workspace|.
-  virtual void OnCurrentWorkspaceChanged(const std::string& new_workspace);
+  virtual void OnCurrentWorkspaceChanged(const std::string& new_workspace) {}
 
   // Called when display changes between conventional and tablet mode.
-  virtual void OnDisplayTabletStateChanged(TabletState state);
+  virtual void OnDisplayTabletStateChanged(TabletState state) {}
+
+#if BUILDFLAG(IS_MAC)
+  // Called when the primary display that contains the (0,0) origin changed.
+  virtual void OnPrimaryDisplayChanged() {}
+#endif
 
  protected:
   ~DisplayObserver() override;

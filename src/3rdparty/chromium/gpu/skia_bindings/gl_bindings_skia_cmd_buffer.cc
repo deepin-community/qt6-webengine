@@ -8,7 +8,7 @@
 #include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLInterface.h"
 
 using gpu::gles2::GLES2Interface;
 using gpu::ContextSupport;
@@ -167,8 +167,6 @@ sk_sp<GrGLInterface> CreateGLES2InterfaceBindings(
   functions->fFinish =
       gles_bind(&GLES2Interface::Finish, impl, context_support);
   functions->fFlush = gles_bind(&GLES2Interface::Flush, impl, context_support);
-  functions->fFlushMappedBufferRange =
-      gles_bind(&GLES2Interface::FlushMappedBufferRange, impl, context_support);
   functions->fFrontFace =
       gles_bind(&GLES2Interface::FrontFace, impl, context_support);
   functions->fGenBuffers =
@@ -196,6 +194,10 @@ sk_sp<GrGLInterface> CreateGLES2InterfaceBindings(
       gles_bind(&GLES2Interface::GetQueryivEXT, impl, context_support);
   functions->fGetQueryObjectuiv =
       gles_bind(&GLES2Interface::GetQueryObjectuivEXT, impl, context_support);
+  functions->fGetQueryObjecti64v =
+      gles_bind(&GLES2Interface::GetQueryObjecti64vEXT, impl, context_support);
+  functions->fGetQueryObjectui64v =
+      gles_bind(&GLES2Interface::GetQueryObjectui64vEXT, impl, context_support);
   functions->fGetShaderInfoLog =
       gles_bind(&GLES2Interface::GetShaderInfoLog, impl, context_support);
   functions->fGetShaderiv =
@@ -220,8 +222,6 @@ sk_sp<GrGLInterface> CreateGLES2InterfaceBindings(
       gles_bind(&GLES2Interface::LineWidth, impl, context_support);
   functions->fLinkProgram =
       gles_bind(&GLES2Interface::LinkProgram, impl, context_support);
-  functions->fMapBufferRange =
-      gles_bind(&GLES2Interface::MapBufferRange, impl, context_support);
   functions->fMapBufferSubData = gles_bind(
       &GLES2Interface::MapBufferSubDataCHROMIUM, impl, context_support);
   functions->fMapTexSubImage2D = gles_bind(
@@ -366,6 +366,8 @@ sk_sp<GrGLInterface> CreateGLES2InterfaceBindings(
       &GLES2Interface::GetRenderbufferParameteriv, impl, context_support);
   functions->fGenQueries =
       gles_bind(&GLES2Interface::GenQueriesEXT, impl, context_support);
+  functions->fQueryCounter =
+      gles_bind(&GLES2Interface::QueryCounterEXT, impl, context_support);
   functions->fRenderbufferStorage =
       gles_bind(&GLES2Interface::RenderbufferStorage, impl, context_support);
   functions->fRenderbufferStorageMultisample =

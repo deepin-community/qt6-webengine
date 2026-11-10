@@ -28,12 +28,11 @@ bool ConvertToUtf8(std::string_view text,
 
   // A single byte in a legacy encoding can be expanded to 3 bytes in UTF-8.
   // A 'two-byte character' in a legacy encoding can be expanded to 4 bytes
-  // in UTF-8. Therefore, the expansion ratio is 3 at most. Add one for a
-  // trailing '\0'.
-  size_t output_length = text.length() * 3 + 1;
-  char* buf = base::WriteInto(output, output_length);
-  output_length = ucnv_toAlgorithmic(UCNV_UTF8, converter, buf, output_length,
-                                     text.data(), text.length(), &err);
+  // in UTF-8. Therefore, the expansion ratio is 3 at most.
+  output->resize(text.length() * 3);
+  size_t output_length =
+      ucnv_toAlgorithmic(UCNV_UTF8, converter, output->data(), output->length(),
+                         text.data(), text.length(), &err);
   ucnv_close(converter);
   if (U_FAILURE(err)) {
     output->clear();
@@ -64,7 +63,7 @@ bool ConvertToUTF16WithSubstitutions(std::string_view text,
       text, charset, base::OnStringConversionError::SUBSTITUTE, output);
 }
 
-bool ToUpper(std::u16string_view str, std::u16string* output) {
+bool ToUpperUsingLocale(std::u16string_view str, std::u16string* output) {
   *output = base::i18n::ToUpper(str);
   return true;
 }

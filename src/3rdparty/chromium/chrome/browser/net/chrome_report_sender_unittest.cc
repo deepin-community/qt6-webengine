@@ -59,7 +59,6 @@ class FakeSharedURLLoaderFactory : public network::SharedURLLoaderFactory {
 
   std::unique_ptr<network::PendingSharedURLLoaderFactory> Clone() override {
     NOTREACHED();
-    return nullptr;
   }
 
   std::vector<network::ResourceRequest> resource_requests_;

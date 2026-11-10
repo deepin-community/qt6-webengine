@@ -31,19 +31,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 
 	"dawn.googlesource.com/dawn/tools/src/cmd/gen/common"
 	"dawn.googlesource.com/dawn/tools/src/container"
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
 	"dawn.googlesource.com/dawn/tools/src/glob"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
 	"dawn.googlesource.com/dawn/tools/src/template"
 	"dawn.googlesource.com/dawn/tools/src/tint/intrinsic/gen"
 	"dawn.googlesource.com/dawn/tools/src/tint/intrinsic/parser"
@@ -70,15 +68,10 @@ func (c *Cmd) RegisterFlags(ctx context.Context, cfg *common.Config) ([]string, 
 	return nil, nil
 }
 
+// TODO(crbug.com/344014313): Add unittest coverage.
 func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 	staleFiles := common.StaleFiles{}
-	projectRoot := fileutils.DawnRoot()
-
-	// Find clang-format
-	clangFormatPath := findClangFormat(projectRoot)
-	if clangFormatPath == "" {
-		return fmt.Errorf("cannot find clang-format in <dawn>/buildtools nor PATH")
-	}
+	projectRoot := fileutils.DawnRoot(cfg.OsWrapper)
 
 	files := flag.Args()
 	if len(files) == 0 {
@@ -90,7 +83,7 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 				"src/tint/**.tmpl",
 				"test/tint/**.tmpl"
 			]}]
-		}`))
+		}`), cfg.OsWrapper)
 		if err != nil {
 			return err
 		}
@@ -112,7 +105,9 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 		}
 	}
 
-	cache := &genCache{}
+	cache := &genCache{
+		fsReader: cfg.OsWrapper,
+	}
 
 	// For each template file...
 	for _, relTmplPath := range files { // relative to project root
@@ -126,11 +121,25 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 		// Create or update the file at relPath if the file content has changed,
 		// preserving the copyright year in the header.
 		// relPath is a path relative to the template
-		writeFile := func(relPath, body string) error {
+		writeFile := func(relPath, body, commentPrefix string) error {
+			if strings.TrimSpace(body) == "" {
+				// Don't write empty files
+				return nil
+			}
+
 			outPath := filepath.Join(tmplDir, relPath)
 
+			switch filepath.Ext(relPath) {
+			case ".cc", ".h", ".inl":
+				var err error
+				body, err = common.ClangFormat(body, cfg.OsWrapper)
+				if err != nil {
+					return err
+				}
+			}
+
 			// Load the old file
-			existing, err := os.ReadFile(outPath)
+			existing, err := cfg.OsWrapper.ReadFile(outPath)
 			if err != nil {
 				existing = nil
 			}
@@ -140,7 +149,7 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 				fmt.Println("  writing", outPath)
 			}
 			sb := strings.Builder{}
-			sb.WriteString(common.Header(string(existing), filepath.ToSlash(relTmplPath), "//"))
+			sb.WriteString(common.Header(string(existing), filepath.ToSlash(relTmplPath), commentPrefix))
 			sb.WriteString("\n")
 			sb.WriteString(body)
 			oldContent, newContent := string(existing), sb.String()
@@ -149,10 +158,10 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 				if cfg.Flags.CheckStale {
 					staleFiles = append(staleFiles, outPath)
 				} else {
-					if err := os.MkdirAll(filepath.Dir(outPath), 0777); err != nil {
+					if err := cfg.OsWrapper.MkdirAll(filepath.Dir(outPath), 0777); err != nil {
 						return fmt.Errorf("failed to create directory for '%v': %w", outPath, err)
 					}
-					if err := os.WriteFile(outPath, []byte(newContent), 0666); err != nil {
+					if err := cfg.OsWrapper.WriteFile(outPath, []byte(newContent), 0666); err != nil {
 						return fmt.Errorf("failed to write file '%v': %w", outPath, err)
 					}
 				}
@@ -162,27 +171,10 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 		}
 
 		// Write the content generated using the template and semantic info
-		sb := strings.Builder{}
-		if err := generate(tmplPath, cache, &sb, writeFile); err != nil {
+		_, tmplFileName := filepath.Split(tmplPath)
+		outPath := strings.TrimSuffix(tmplFileName, ".tmpl")
+		if err := generate(tmplPath, outPath, cache, writeFile); err != nil {
 			return fmt.Errorf("while processing '%v': %w", tmplPath, err)
-		}
-
-		if body := sb.String(); body != "" {
-			_, tmplFileName := filepath.Split(tmplPath)
-			outFileName := strings.TrimSuffix(tmplFileName, ".tmpl")
-
-			switch filepath.Ext(outFileName) {
-			case ".cc", ".h", ".inl":
-				var err error
-				body, err = clangFormat(body, clangFormatPath)
-				if err != nil {
-					return err
-				}
-			}
-
-			if err := writeFile(outFileName, body); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -195,16 +187,17 @@ func (c Cmd) Run(ctx context.Context, cfg *common.Config) error {
 
 type intrinsicCache struct {
 	path           string
-	cachedSem      *sem.Sem            // lazily built by sem()
-	cachedTable    *gen.IntrinsicTable // lazily built by intrinsicTable()
-	cachedPermuter *gen.Permuter       // lazily built by permute()
+	cachedSem      *sem.Sem                   // lazily built by sem()
+	cachedTable    *gen.IntrinsicTable        // lazily built by intrinsicTable()
+	cachedPermuter *gen.Permutator            // lazily built by permute()
+	fsReader       oswrapper.FilesystemReader // Stored reference to a FilesystemReader.
 }
 
 // Sem lazily parses and resolves the intrinsic.def file, returning the semantic info.
 func (i *intrinsicCache) Sem() (*sem.Sem, error) {
 	if i.cachedSem == nil {
 		// Load the intrinsic definition file
-		defPath := filepath.Join(fileutils.DawnRoot(), i.path)
+		defPath := filepath.Join(fileutils.DawnRoot(i.fsReader), i.path)
 
 		defSource, err := os.ReadFile(defPath)
 		if err != nil {
@@ -252,17 +245,22 @@ func (i *intrinsicCache) Permute(overload *sem.Overload) ([]gen.Permutation, err
 		if err != nil {
 			return nil, err
 		}
-		i.cachedPermuter, err = gen.NewPermuter(sem)
+		i.cachedPermuter, err = gen.NewPermutator(sem)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return i.cachedPermuter.Permute(overload)
+	out, err := i.cachedPermuter.Permute(overload)
+	if err != nil {
+		return nil, fmt.Errorf("while permuting '%v'\n%w", overload, err)
+	}
+	return out, nil
 }
 
 // Cache for objects that are expensive to build, and can be reused between templates.
 type genCache struct {
 	intrinsicsCache container.Map[string, *intrinsicCache]
+	fsReader        oswrapper.FilesystemReader
 }
 
 func (g *genCache) intrinsics(path string) *intrinsicCache {
@@ -271,35 +269,45 @@ func (g *genCache) intrinsics(path string) *intrinsicCache {
 	}
 	i := g.intrinsicsCache[path]
 	if i == nil {
-		i = &intrinsicCache{path: path}
+		i = &intrinsicCache{path: path, fsReader: g.fsReader}
 		g.intrinsicsCache[path] = i
 	}
 	return i
 }
 
 type generator struct {
-	cache     *genCache
-	writeFile WriteFile
-	rnd       *rand.Rand
+	cache         *genCache
+	writeFile     WriteFile
+	rnd           *rand.Rand
+	commentPrefix string
+}
+
+// setCommentPrefix sets the prefix used for comments, as used by the template
+func (g *generator) setCommentPrefix(commentPrefix string) string {
+	g.commentPrefix = commentPrefix
+	return ""
 }
 
 // WriteFile is a function that Generate() may call to emit a new file from a
 // template.
 // relPath is the relative path from the currently executing template.
 // content is the file content to write.
-type WriteFile func(relPath, content string) error
+// comment is the prefix used for line comments
+type WriteFile func(relPath, content, comment string) error
 
-// generate executes the template tmpl, writing the output to w.
+// generate executes the template tmpl, calling writeFile with the output.
 // See https://golang.org/pkg/text/template/ for documentation on the template
 // syntax.
-func generate(tmplPath string, cache *genCache, w io.Writer, writeFile WriteFile) error {
+func generate(tmplPath, outPath string, cache *genCache, writeFile WriteFile) error {
 	g := generator{
-		cache:     cache,
-		writeFile: writeFile,
-		rnd:       rand.New(rand.NewSource(4561123)),
+		cache:         cache,
+		writeFile:     writeFile,
+		rnd:           rand.New(rand.NewSource(4561123)),
+		commentPrefix: "//",
 	}
 
 	funcs := map[string]any{
+		"SetCommentPrefix":                    g.setCommentPrefix,
 		"SplitDisplayName":                    gen.SplitDisplayName,
 		"Scramble":                            g.scramble,
 		"IsEnumEntry":                         is(sem.EnumEntry{}),
@@ -315,18 +323,25 @@ func generate(tmplPath string, cache *genCache, w io.Writer, writeFile WriteFile
 		"IsAbstract":                          gen.IsAbstract,
 		"IsDeclarable":                        gen.IsDeclarable,
 		"IsHostShareable":                     gen.IsHostShareable,
-		"OverloadUsesF16":                     gen.OverloadUsesF16,
+		"OverloadUsesType":                    gen.OverloadUsesType,
 		"OverloadUsesReadWriteStorageTexture": gen.OverloadUsesReadWriteStorageTexture,
+		"OverloadNeedsDesktopGLSL":            gen.OverloadNeedsDesktopGLSL,
 		"IsFirstIn":                           isFirstIn,
 		"IsLastIn":                            isLastIn,
 		"LoadIntrinsics":                      func(path string) *intrinsicCache { return g.cache.intrinsics(path) },
-		"WriteFile":                           func(relPath, content string) (string, error) { return "", g.writeFile(relPath, content) },
+		"WriteFile": func(relPath, content string) (string, error) {
+			return "", g.writeFile(relPath, content, g.commentPrefix)
+		},
 	}
 	t, err := template.FromFile(tmplPath)
 	if err != nil {
 		return err
 	}
-	return t.Run(w, nil, funcs)
+	w := &strings.Builder{}
+	if err := t.Run(w, nil, funcs); err != nil {
+		return err
+	}
+	return writeFile(outPath, w.String(), g.commentPrefix)
 }
 
 // scramble randomly modifies the input string so that it is no longer equal to
@@ -388,38 +403,4 @@ func isLastIn(v, slice any) bool {
 		return false
 	}
 	return s.Index(count-1).Interface() == v
-}
-
-// Invokes the clang-format executable at 'exe' to format the file content 'in'.
-// Returns the formatted file.
-func clangFormat(in, exe string) (string, error) {
-	cmd := exec.Command(exe)
-	cmd.Stdin = strings.NewReader(in)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("clang-format failed:\n%v\n%v", string(out), err)
-	}
-	return string(out), nil
-}
-
-// Looks for clang-format in the 'buildtools' directory, falling back to PATH
-func findClangFormat(projectRoot string) string {
-	var path string
-	switch runtime.GOOS {
-	case "linux":
-		path = filepath.Join(projectRoot, "buildtools/linux64/clang-format")
-	case "darwin":
-		path = filepath.Join(projectRoot, "buildtools/mac/clang-format")
-	case "windows":
-		path = filepath.Join(projectRoot, "buildtools/win/clang-format.exe")
-	}
-	if fileutils.IsExe(path) {
-		return path
-	}
-	var err error
-	path, err = exec.LookPath("clang-format")
-	if err == nil {
-		return path
-	}
-	return ""
 }

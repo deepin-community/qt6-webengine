@@ -3956,7 +3956,7 @@ static int fts3IncrmergePush(
 **
 ** It is assumed that the buffer associated with pNode is already large
 ** enough to accommodate the new entry. The buffer associated with pPrev
-** is extended by this function if requrired.
+** is extended by this function if required.
 **
 ** If an error (i.e. OOM condition) occurs, an SQLite error code is
 ** returned. Otherwise, SQLITE_OK.
@@ -5294,7 +5294,7 @@ static u64 fts3ChecksumIndex(
 ** If an error occurs (e.g. an OOM or IO error), return an SQLite error 
 ** code. The final value of *pbOk is undefined in this case.
 */
-static int fts3IntegrityCheck(Fts3Table *p, int *pbOk){
+int sqlite3Fts3IntegrityCheck(Fts3Table *p, int *pbOk){
   int rc = SQLITE_OK;             /* Return code */
   u64 cksum1 = 0;                 /* Checksum based on FTS index contents */
   u64 cksum2 = 0;                 /* Checksum based on %_content contents */
@@ -5372,7 +5372,12 @@ static int fts3IntegrityCheck(Fts3Table *p, int *pbOk){
     sqlite3_finalize(pStmt);
   }
 
-  *pbOk = (cksum1==cksum2);
+  if( rc==SQLITE_CORRUPT_VTAB ){
+    rc = SQLITE_OK;
+    *pbOk = 0;
+  }else{
+    *pbOk = (rc==SQLITE_OK && cksum1==cksum2);
+  }
   return rc;
 }
 
@@ -5412,7 +5417,7 @@ static int fts3DoIntegrityCheck(
 ){
   int rc;
   int bOk = 0;
-  rc = fts3IntegrityCheck(p, &bOk);
+  rc = sqlite3Fts3IntegrityCheck(p, &bOk);
   if( rc==SQLITE_OK && bOk==0 ) rc = FTS_CORRUPT_VTAB;
   return rc;
 }
@@ -5614,7 +5619,7 @@ int sqlite3Fts3DeferToken(
 /*
 ** SQLite value pRowid contains the rowid of a row that may or may not be
 ** present in the FTS3 table. If it is, delete it and adjust the contents
-** of subsiduary data structures accordingly.
+** of subsidiary data structures accordingly.
 */
 static int fts3DeleteByRowid(
   Fts3Table *p, 

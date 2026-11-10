@@ -8,7 +8,7 @@
 #define CORE_FPDFAPI_FONT_CPDF_CID2UNICODEMAP_H_
 
 #include "core/fpdfapi/font/cpdf_cidfont.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/raw_span.h"
 
 class CPDF_CID2UnicodeMap {
  public:
@@ -19,8 +19,8 @@ class CPDF_CID2UnicodeMap {
   wchar_t UnicodeFromCID(uint16_t cid) const;
 
  private:
-  const CIDSet m_Charset;
-  const pdfium::span<const uint16_t> m_pEmbeddedMap;
+  const CIDSet charset_;
+  const pdfium::raw_span<const uint16_t> embedded_map_;
 };
 
 #endif  // CORE_FPDFAPI_FONT_CPDF_CID2UNICODEMAP_H_

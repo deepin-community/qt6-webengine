@@ -8,7 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/base/win/mf_helpers.h"
@@ -38,6 +38,18 @@ PendingInputBuffer::~PendingInputBuffer() = default;
 
 MediaFoundationStreamWrapper::MediaFoundationStreamWrapper() = default;
 MediaFoundationStreamWrapper::~MediaFoundationStreamWrapper() = default;
+
+IFACEMETHODIMP_(ULONG) MediaFoundationStreamWrapper::Release() {
+  ULONG ref_count = InternalRelease();
+  if (ref_count == 0) {
+    if (!task_runner_->RunsTasksInCurrentSequence()) {
+      task_runner_->DeleteSoon(FROM_HERE, this);
+    } else {
+      delete this;
+    }
+  }
+  return ref_count;
+}
 
 /*static*/
 HRESULT MediaFoundationStreamWrapper::Create(
@@ -79,13 +91,17 @@ HRESULT MediaFoundationStreamWrapper::RuntimeClassInitialize(
   {
     base::AutoLock auto_lock(lock_);
     parent_source_ = parent_source;
+    demuxer_stream_ = demuxer_stream;
   }
-  demuxer_stream_ = demuxer_stream;
   stream_id_ = stream_id;
-  stream_type_ = demuxer_stream_->type();
+  stream_type_ = demuxer_stream->type();
+  is_encrypted_ = (stream_type_ == DemuxerStream::Type::VIDEO)
+                      ? demuxer_stream->video_decoder_config().is_encrypted()
+                      : demuxer_stream->audio_decoder_config().is_encrypted();
 
   DVLOG_FUNC(1) << "stream_id=" << stream_id
-                << ", stream_type=" << DemuxerStream::GetTypeName(stream_type_);
+                << ", stream_type=" << DemuxerStream::GetTypeName(stream_type_)
+                << ", is_encrypted=" << is_encrypted_;
 
   media_log_ = std::move(media_log);
   if (base::FeatureList::IsEnabled(kMediaFoundationBatchRead)) {
@@ -127,6 +143,7 @@ void MediaFoundationStreamWrapper::DetachDemuxerStream() {
   DVLOG_FUNC(1);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
+  base::AutoLock auto_lock(lock_);
   demuxer_stream_ = nullptr;
 }
 
@@ -502,9 +519,8 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
       // Continue to ProcessRequestsIfPossible() to satisfy pending sample
       // request by issuing DemuxerStream::Read() if necessary.
     } else {
-      NOTREACHED_NORETURN()
-          << "Unexpected demuxer stream status. status=" << status
-          << ", this=" << this;
+      NOTREACHED() << "Unexpected demuxer stream status. status=" << status
+                   << ", this=" << this;
     }
   }
 
@@ -623,6 +639,10 @@ HRESULT MediaFoundationStreamWrapper::GenerateStreamDescriptor() {
 
 bool MediaFoundationStreamWrapper::AreFormatChangesEnabled() {
   return true;
+}
+
+bool MediaFoundationStreamWrapper::IsEncrypted() const {
+  return is_encrypted_;
 }
 
 GUID MediaFoundationStreamWrapper::GetLastKeyId() const {

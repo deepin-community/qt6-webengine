@@ -4,6 +4,7 @@
 
 #include "content/common/input/synthetic_touch_driver.h"
 
+#include "base/notimplemented.h"
 #include "content/common/input/synthetic_gesture_target.h"
 
 namespace content {
@@ -166,7 +167,6 @@ int SyntheticTouchDriver::GetIndexFromMap(int value) const {
     }
   }
   NOTREACHED() << "Failed to find the value.";
-  return -1;
 }
 
 }  // namespace content

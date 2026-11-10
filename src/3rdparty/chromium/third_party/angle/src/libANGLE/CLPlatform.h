@@ -10,6 +10,10 @@
 #define LIBANGLE_CLPLATFORM_H_
 
 #include "libANGLE/CLObject.h"
+#include "libANGLE/Context.h"
+
+#include "common/WorkerThread.h"
+
 #include "libANGLE/renderer/CLPlatformImpl.h"
 
 #include "anglebase/no_destructor.h"
@@ -43,6 +47,8 @@ class Platform final : public _cl_platform_id, public Object
                                cl_device_id *devices,
                                cl_uint *numDevices) const;
 
+    bool hasDeviceType(DeviceType) const;
+
     static cl_context CreateContext(const cl_context_properties *properties,
                                     cl_uint numDevices,
                                     const cl_device_id *devices,
@@ -71,6 +77,10 @@ class Platform final : public _cl_platform_id, public Object
 
     static constexpr const char *GetVendor();
 
+    const std::shared_ptr<angle::WorkerThreadPool> &getMultiThreadPool() const;
+
+    angle::FrameCaptureShared *getFrameCaptureShared();
+
   private:
     explicit Platform(const rx::CLPlatformImpl::CreateFunc &createFunc);
 
@@ -81,9 +91,12 @@ class Platform final : public _cl_platform_id, public Object
     const rx::CLPlatformImpl::Ptr mImpl;
     const rx::CLPlatformImpl::Info mInfo;
     const DevicePtrs mDevices;
+    std::shared_ptr<angle::WorkerThreadPool> mMultiThreadPool;
 
     static constexpr char kVendor[]    = "ANGLE";
     static constexpr char kIcdSuffix[] = "ANGLE";
+
+    static angle::FrameCaptureShared *mFrameCaptureShared;
 };
 
 inline Platform *Platform::GetDefault()
@@ -137,6 +150,11 @@ inline const PlatformPtrs &Platform::GetPlatforms()
 constexpr const char *Platform::GetVendor()
 {
     return kVendor;
+}
+
+inline const std::shared_ptr<angle::WorkerThreadPool> &Platform::getMultiThreadPool() const
+{
+    return mMultiThreadPool;
 }
 
 inline PlatformPtrs &Platform::GetPointers()

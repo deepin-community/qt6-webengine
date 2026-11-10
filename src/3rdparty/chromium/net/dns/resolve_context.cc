@@ -4,6 +4,7 @@
 
 #include "net/dns/resolve_context.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 #include <utility>
@@ -19,8 +20,10 @@
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/time/clock.h"
+#include "base/time/tick_clock.h"
 #include "net/base/features.h"
 #include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
@@ -28,6 +31,7 @@
 #include "net/dns/dns_session.h"
 #include "net/dns/dns_util.h"
 #include "net/dns/host_cache.h"
+#include "net/dns/host_resolver_cache.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/doh_provider_entry.h"
 #include "net/dns/public/secure_dns_mode.h"
@@ -52,7 +56,7 @@ const size_t kRttBucketCount = 350;
 // Target percentile in the RTT histogram used for fallback period.
 const int kRttPercentile = 99;
 // Number of samples to seed the histogram with.
-const base::HistogramBase::Count kNumSeeds = 2;
+const base::HistogramBase::Count32 kNumSeeds = 2;
 
 DohProviderEntry::List FindDohProvidersMatchingServerConfig(
     DnsOverHttpsServerConfig server_config) {
@@ -95,7 +99,7 @@ class RttBuckets : public base::BucketRanges {
   RttBuckets() : base::BucketRanges(kRttBucketCount + 1) {
     base::Histogram::InitializeBucketRanges(
         1,
-        base::checked_cast<base::HistogramBase::Sample>(
+        base::checked_cast<base::HistogramBase::Sample32>(
             kRttMax.InMilliseconds()),
         this);
   }
@@ -111,10 +115,36 @@ static std::unique_ptr<base::SampleVector> GetRttHistogram(
   std::unique_ptr<base::SampleVector> histogram =
       std::make_unique<base::SampleVector>(GetRttBuckets());
   // Seed histogram with 2 samples at |rtt_estimate|.
-  histogram->Accumulate(base::checked_cast<base::HistogramBase::Sample>(
+  histogram->Accumulate(base::checked_cast<base::HistogramBase::Sample32>(
                             rtt_estimate.InMilliseconds()),
                         kNumSeeds);
   return histogram;
+}
+
+#if defined(ENABLE_BUILT_IN_DNS)
+constexpr size_t kDefaultCacheSize = 1000;
+#else
+constexpr size_t kDefaultCacheSize = 100;
+#endif
+
+std::unique_ptr<HostCache> CreateHostCache(bool enable_caching) {
+  if (enable_caching) {
+    return std::make_unique<HostCache>(kDefaultCacheSize);
+  } else {
+    return nullptr;
+  }
+}
+
+std::unique_ptr<HostResolverCache> CreateHostResolverCache(
+    bool enable_caching,
+    const base::Clock& clock,
+    const base::TickClock& tick_clock) {
+  if (enable_caching) {
+    return std::make_unique<HostResolverCache>(kDefaultCacheSize, clock,
+                                               tick_clock);
+  } else {
+    return nullptr;
+  }
 }
 
 }  // namespace
@@ -128,10 +158,14 @@ ResolveContext::ServerStats::ServerStats(ServerStats&&) = default;
 ResolveContext::ServerStats::~ServerStats() = default;
 
 ResolveContext::ResolveContext(URLRequestContext* url_request_context,
-                               bool enable_caching)
+                               bool enable_caching,
+                               const base::Clock& clock,
+                               const base::TickClock& tick_clock)
     : url_request_context_(url_request_context),
-      host_cache_(enable_caching ? HostCache::CreateDefaultCache() : nullptr),
-      isolation_info_(IsolationInfo::CreateTransient()) {
+      host_cache_(CreateHostCache(enable_caching)),
+      host_resolver_cache_(
+          CreateHostResolverCache(enable_caching, clock, tick_clock)),
+      isolation_info_(IsolationInfo::CreateTransient(/*nonce=*/std::nullopt)) {
   max_fallback_period_ = GetMaxFallbackPeriod();
 }
 
@@ -173,8 +207,8 @@ size_t ResolveContext::NumAvailableDohServers(const DnsSession* session) const {
   if (!IsCurrentSession(session))
     return 0;
 
-  return base::ranges::count_if(doh_server_stats_,
-                                &ServerStatsToDohAvailability);
+  return std::ranges::count_if(doh_server_stats_,
+                               &ServerStatsToDohAvailability);
 }
 
 void ResolveContext::RecordServerFailure(size_t server_index,
@@ -212,7 +246,7 @@ void ResolveContext::RecordServerFailure(size_t server_index,
   if (num_available_doh_servers_now < num_available_doh_servers_before) {
     NotifyDohStatusObserversOfUnavailable(false /* network_change */);
 
-    // TODO(crbug.com/1022059): Consider figuring out some way to only for the
+    // TODO(crbug.com/40106440): Consider figuring out some way to only for the
     // first context enabling DoH or the last context disabling DoH.
     if (num_available_doh_servers_now == 0)
       NetworkChangeNotifier::TriggerNonSystemDnsChange();
@@ -233,7 +267,7 @@ void ResolveContext::RecordServerSuccess(size_t server_index,
   stats->last_failure = base::TimeTicks();
   stats->last_success = base::TimeTicks::Now();
 
-  // TODO(crbug.com/1022059): Consider figuring out some way to only for the
+  // TODO(crbug.com/40106440): Consider figuring out some way to only for the
   // first context enabling DoH or the last context disabling DoH.
   bool doh_available_now = NumAvailableDohServers(session) > 0;
   if (doh_available_before != doh_available_now)
@@ -262,7 +296,7 @@ void ResolveContext::RecordRtt(size_t server_index,
 
   // Histogram-based method.
   stats->rtt_histogram->Accumulate(
-      base::saturated_cast<base::HistogramBase::Sample>(rtt.InMilliseconds()),
+      base::saturated_cast<base::HistogramBase::Sample32>(rtt.InMilliseconds()),
       1);
 }
 
@@ -339,8 +373,12 @@ void ResolveContext::InvalidateCachesAndPerSessionData(
   // to a network change.
   DCHECK(GetTargetNetwork() == handles::kInvalidNetworkHandle ||
          !network_change);
-  if (host_cache_)
+  if (host_cache_) {
     host_cache_->Invalidate();
+  }
+  if (host_resolver_cache_) {
+    host_resolver_cache_->MakeAllResultsStale();
+  }
 
   // DNS config is constant for any given session, so if the current session is
   // unchanged, any per-session data is safe to keep, even if it's dependent on
@@ -459,14 +497,14 @@ base::TimeDelta ResolveContext::NextFallbackPeriodHelper(
   if (initial_fallback_period_ > max_fallback_period_)
     return initial_fallback_period_;
 
-  static_assert(std::numeric_limits<base::HistogramBase::Count>::is_signed,
+  static_assert(std::numeric_limits<base::HistogramBase::Count32>::is_signed,
                 "histogram base count assumed to be signed");
 
   // Use fixed percentile of observed samples.
   const base::SampleVector& samples = *server_stats->rtt_histogram;
 
-  base::HistogramBase::Count total = samples.TotalCount();
-  base::HistogramBase::Count remaining_count = kRttPercentile * total / 100;
+  base::HistogramBase::Count32 total = samples.TotalCount();
+  base::HistogramBase::Count32 remaining_count = kRttPercentile * total / 100;
   size_t index = 0;
   while (remaining_count > 0 && index < GetRttBuckets()->size()) {
     remaining_count -= samples.GetCountAtIndex(index);

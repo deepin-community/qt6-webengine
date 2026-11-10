@@ -12,7 +12,7 @@ declare_args() {
   # Controls whether the build should use the version of minigbm library shipped
   # with the system. In release builds of desktop Linux and Chrome OS we use the
   # system version.
-  use_system_minigbm = (is_linux && !is_castos) || is_chromeos_lacros
+  use_system_minigbm = is_linux && !is_castos
 
   use_amdgpu_minigbm = false
   use_exynos_minigbm = false
@@ -103,6 +103,15 @@ if (!use_system_minigbm) {
 if (use_system_minigbm) {
   pkg_config("libgbm") {
     packages = [ "gbm" ]
+    gbm_atleast_version = exec_script(pkg_config_script,
+                                      common_pkg_config_args + pkg_config_args + [
+                                            "gbm",
+                                            "--atleast-version=21.1.0",
+                                          ],
+                                      "value")
+    if (gbm_atleast_version) {
+      defines = [ "HAVE_GBM_BO_GET_FD_FOR_PLANE" ]
+    }
   }
 
   group("minigbm") {

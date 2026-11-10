@@ -13,12 +13,16 @@ jumbo_static_library("core") {
     "lookalike_url_util.cc",
     "lookalike_url_util.h",
   ]
+  configs += [
+    "//build/config/compiler:wexit_time_destructors",
+    "//build/config/compiler:wglobal_constructors",
+  ]
   deps = [
     ":proto",
     ":safety_tips",
     "//base",
     "//components/pref_registry",
-    "//components/prefs:prefs",
+    "//components/prefs",
     "//components/security_interstitials/core",
     "//components/strings",
     "//components/url_formatter",
@@ -40,6 +44,10 @@ jumbo_static_library("safety_tips") {
     "safety_tip_test_utils.h",
     "safety_tips_config.cc",
     "safety_tips_config.h",
+  ]
+  configs += [
+    "//build/config/compiler:wexit_time_destructors",
+    "//build/config/compiler:wglobal_constructors",
   ]
   deps = [
     ":proto",
@@ -70,6 +78,10 @@ jumbo_source_set("unit_tests") {
     "//net:test_support",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 proto_library("proto") {

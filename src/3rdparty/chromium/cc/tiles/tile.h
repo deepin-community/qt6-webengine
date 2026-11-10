@@ -97,6 +97,8 @@ class CC_EXPORT Tile {
 
   int source_frame_number() const { return source_frame_number_; }
 
+  bool IsReadyToDraw() const { return draw_info().IsReadyToDraw(); }
+
   size_t GPUMemoryUsageInBytes() const;
 
   const gfx::Size& desired_texture_size() const { return content_rect_.size(); }
@@ -142,6 +144,7 @@ class CC_EXPORT Tile {
   void mark_used() { used_ = true; }
   void clear_used() { used_ = false; }
   bool used() const { return used_; }
+  bool deleted() const { return deleted_; }
 
  private:
   friend class TileManager;
@@ -188,6 +191,9 @@ class CC_EXPORT Tile {
   // Set to true if there is a raster task scheduled for this tile that will
   // rasterize a resource with checker images.
   bool raster_task_scheduled_with_checker_images_ : 1 = false;
+
+  // Set to true in destructor.
+  bool deleted_ : 1 = false;
 
   Id id_;
 

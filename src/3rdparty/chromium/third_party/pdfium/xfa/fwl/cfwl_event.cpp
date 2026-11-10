@@ -6,14 +6,18 @@
 
 #include "xfa/fwl/cfwl_event.h"
 
-CFWL_Event::CFWL_Event(CFWL_Event::Type type) : m_type(type) {}
+namespace pdfium {
+
+CFWL_Event::CFWL_Event(CFWL_Event::Type type) : type_(type) {}
 
 CFWL_Event::CFWL_Event(Type type, CFWL_Widget* pSrcTarget)
-    : m_type(type), m_pSrcTarget(pSrcTarget) {}
+    : type_(type), src_target_(pSrcTarget) {}
 
 CFWL_Event::CFWL_Event(Type type,
                        CFWL_Widget* pSrcTarget,
                        CFWL_Widget* pDstTarget)
-    : m_type(type), m_pSrcTarget(pSrcTarget), m_pDstTarget(pDstTarget) {}
+    : type_(type), src_target_(pSrcTarget), dst_target_(pDstTarget) {}
 
 CFWL_Event::~CFWL_Event() = default;
+
+}  // namespace pdfium

@@ -1,18 +1,24 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "render_widget_host_view_qt_delegate_item.h"
 
 #include "render_widget_host_view_qt_delegate_client.h"
 
+#include <QtCore/qrunnable.h>
+#include <QtCore/qthread.h>
 #include <QtGui/qevent.h>
 #include <QtGui/qguiapplication.h>
 #include <QtGui/qwindow.h>
 #include <QtQuick/qsgimagenode.h>
+#include <rhi/qrhi.h>
 
 #if QT_CONFIG(accessibility)
 #include <QtGui/qaccessible.h>
 #endif
+
+using namespace Qt::StringLiterals;
 
 namespace QtWebEngineCore {
 
@@ -30,12 +36,15 @@ RenderWidgetHostViewQtDelegateItem::RenderWidgetHostViewQtDelegateItem(RenderWid
         setFocus(true);
         setActiveFocusOnTab(true);
     }
-    bind(client->compositorId());
+    bind(client->compositorId()); // Compositor::Observer
 }
 
 RenderWidgetHostViewQtDelegateItem::~RenderWidgetHostViewQtDelegateItem()
 {
-    releaseTextureResources();
+    if (QQuickItem::window())
+        releaseResources();
+
+    unbind(); // Compositor::Observer
     if (m_widgetDelegate) {
         m_widgetDelegate->Unbind();
         m_widgetDelegate->Destroy();
@@ -46,19 +55,30 @@ void RenderWidgetHostViewQtDelegateItem::initAsPopup(const QRect &screenRect)
 {
     Q_ASSERT(m_isPopup);
     setSize(screenRect.size());
+    m_popupRect = screenRect;
     if (m_widgetDelegate)
         m_widgetDelegate->InitAsPopup(screenRect);
 }
 
 QRectF RenderWidgetHostViewQtDelegateItem::viewGeometry() const
 {
-    // Transform the entire rect to find the correct top left corner.
-    const QPointF p1 = mapToGlobal(mapFromScene(QPointF(0, 0)));
-    const QPointF p2 = mapToGlobal(mapFromScene(QPointF(width(), height())));
-    QRectF geometry = QRectF(p1, p2).normalized();
-    // But keep the size untransformed to behave like other QQuickItems.
-    geometry.setSize(size());
-    return geometry;
+    const QTransform transform = itemTransform(nullptr, nullptr);
+
+    const bool isTransformed = transform.type() > QTransform::TxTranslate;
+
+    if (!isTransformed) {
+        // find the correct top left corner
+        const QPointF tl = mapToGlobal(QPointF(0, 0));
+        return QRectF(tl, size());
+    } else if (!m_isPopup) {
+        // keep it simply untransformed, as we transform only delegate as there no way
+        // to return screen rect which would makes sense in that case
+        // this is just band-aid workaround to support rotation and scaling
+        return QRectF(QPointF(0, 0), size());
+    } else {
+        // this is transformed and popup, keep chromium unaware of transformations
+        return m_popupRect;
+    }
 }
 
 QRect RenderWidgetHostViewQtDelegateItem::windowGeometry() const
@@ -312,16 +332,19 @@ void RenderWidgetHostViewQtDelegateItem::inputMethodEvent(QInputMethodEvent *eve
 void RenderWidgetHostViewQtDelegateItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
-    m_client->visualPropertiesChanged();
+    polish();
 }
 
 void RenderWidgetHostViewQtDelegateItem::itemChange(ItemChange change, const ItemChangeData &value)
 {
     QQuickItem::itemChange(change, value);
     if (change == QQuickItem::ItemSceneChange) {
-        for (const QMetaObject::Connection &c : std::as_const(m_windowConnections))
-            disconnect(c);
-        m_windowConnections.clear();
+        if (!m_windowConnections.isEmpty()) {
+            for (const QMetaObject::Connection &c : std::as_const(m_windowConnections))
+                disconnect(c);
+            m_windowConnections.clear();
+        }
+
         if (value.window) {
             m_windowConnections.append(connect(value.window, &QQuickWindow::beforeRendering,
                                                this, &RenderWidgetHostViewQtDelegateItem::onBeforeRendering, Qt::DirectConnection));
@@ -331,24 +354,94 @@ void RenderWidgetHostViewQtDelegateItem::itemChange(ItemChange change, const Ite
             m_windowConnections.append(connect(value.window, SIGNAL(xChanged(int)), SLOT(onWindowPosChanged())));
             m_windowConnections.append(
                     connect(value.window, SIGNAL(yChanged(int)), SLOT(onWindowPosChanged())));
-            m_windowConnections.append(
-                    connect(value.window, &QQuickWindow::sceneGraphAboutToStop, this,
-                            &RenderWidgetHostViewQtDelegateItem::releaseTextureResources,
-                            Qt::DirectConnection));
+            m_windowConnections.append(connect(
+                    value.window, &QQuickWindow::sceneGraphAboutToStop, this,
+                    &RenderWidgetHostViewQtDelegateItem::releaseResources, Qt::DirectConnection));
+            m_windowConnections.append(connect(
+                    value.window, &QQuickWindow::sceneGraphInvalidated, this,
+                    &RenderWidgetHostViewQtDelegateItem::releaseResources, Qt::DirectConnection));
             if (!m_isPopup)
-                m_windowConnections.append(connect(value.window, SIGNAL(closing(QQuickCloseEvent *)), SLOT(onHide())));
+                m_windowConnections.append(connect(value.window, SIGNAL(closing(QQuickCloseEvent*)), SLOT(onHide())));
         }
-        m_client->visualPropertiesChanged();
+        polish();
     } else if (change == QQuickItem::ItemVisibleHasChanged) {
         if (value.boolValue) {
             m_client->notifyShown();
         } else {
+            if (!m_widgetDelegate)
+                return;
             m_client->notifyHidden();
             if (!m_isPopup)
                 onHide();
         }
     } else if (change == QQuickItem::ItemDevicePixelRatioHasChanged) {
-        m_client->visualPropertiesChanged();
+        polish();
+    }
+}
+
+class CleanupJob : public QRunnable
+{
+public:
+    CleanupJob(Compositor::Observer *o) : m_observer(o)
+    {
+        // Note this assumes observer and compositor calls unbind in destructor
+        o->lockForRelease();
+    }
+
+    ~CleanupJob() override
+    {
+        {
+            auto comp = m_observer->compositor();
+            Q_ASSERT(comp && !comp->hasResources());
+        }
+        m_observer->unlockForRelease();
+    }
+    void run() override
+    {
+        auto comp = m_observer->compositor();
+        Q_ASSERT(comp);
+        comp->releaseResources();
+    }
+    Compositor::Observer *m_observer;
+};
+
+void RenderWidgetHostViewQtDelegateItem::releaseResources()
+{
+    {
+        auto comp = compositor();
+        if (!comp || comp->type() != Compositor::Type::Native || !comp->hasResources())
+            return;
+
+        comp->releaseTexture();
+
+        QQuickWindow *win = QQuickItem::window();
+        if (!win) {
+            qWarning("Failed to release graphics resources because QQuickWindow is not available.");
+            return;
+        }
+
+        QRhi *rhi = win->rhi();
+        if (!rhi) {
+            qWarning("Failed to release graphics resources because RHI is not available.");
+            return;
+        }
+
+        // Do not schedule clean-up if the resources were created on the current thread.
+        if (QThread::currentThread() == rhi->thread()) {
+            comp->releaseResources();
+            return;
+        }
+        // make sure we release compositor handle before
+    }
+    QQuickWindow *win = QQuickItem::window();
+    if (win->isExposed()) {
+        CleanupJob *job = new CleanupJob(this);
+        win->scheduleRenderJob(job, QQuickWindow::NoStage);
+    } else {
+        // TODO: Try to find a proper way to schedule job on the render thread if the window is
+        // not exposed.
+        // This is reproducible with ./tst_qquickwebengineviewgraphics simpleGraphics simpleGraphics
+        qWarning("Failed to release graphics resources because QQuickWindow is not exposed.");
     }
 }
 
@@ -357,6 +450,12 @@ QSGNode *RenderWidgetHostViewQtDelegateItem::updatePaintNode(QSGNode *oldNode, U
     auto comp = compositor();
     if (!comp)
         return oldNode;
+
+    if (comp->type() == Compositor::Type::Native
+        && QGuiApplication::platformName() == "offscreen"_L1) {
+        comp->swapFrame();
+        return oldNode;
+    }
 
     QQuickWindow *win = QQuickItem::window();
 
@@ -375,9 +474,12 @@ QSGNode *RenderWidgetHostViewQtDelegateItem::updatePaintNode(QSGNode *oldNode, U
 
     comp->swapFrame();
 
-    QSize texSize = comp->size();
-    QSizeF texSizeInDips = QSizeF(texSize) / comp->devicePixelRatio();
-    node->setRect(QRectF(QPointF(0, 0), texSizeInDips));
+    // The size of the node inside the shader graph
+    node->setRect(QRectF(QPointF(0, 0), size()));
+
+    // The crop of the received texture we're actually interested in. Chromium can pass
+    // a larger texture during resizes and only draw to a portion of it
+    node->setSourceRect(QRectF(QPointF(0, 0), size() * comp->devicePixelRatio()));
 
     QQuickWindow::CreateTextureOptions texOpts;
     if (comp->requiresAlphaChannel() || m_clearColor.alpha() < 255)
@@ -400,6 +502,11 @@ QSGNode *RenderWidgetHostViewQtDelegateItem::updatePaintNode(QSGNode *oldNode, U
     return node;
 }
 
+void RenderWidgetHostViewQtDelegateItem::updatePolish()
+{
+    m_client->visualPropertiesChanged();
+}
+
 void RenderWidgetHostViewQtDelegateItem::onBeforeRendering()
 {
     auto comp = compositor();
@@ -418,22 +525,13 @@ void RenderWidgetHostViewQtDelegateItem::onAfterFrameEnd()
 
 void RenderWidgetHostViewQtDelegateItem::onWindowPosChanged()
 {
-    m_client->visualPropertiesChanged();
+    polish();
 }
 
 void RenderWidgetHostViewQtDelegateItem::onHide()
 {
     QFocusEvent event(QEvent::FocusOut, Qt::OtherFocusReason);
     m_client->forwardEvent(&event);
-}
-
-void RenderWidgetHostViewQtDelegateItem::releaseTextureResources()
-{
-    auto comp = compositor();
-    if (!comp || comp->type() != Compositor::Type::Native)
-        return;
-
-    comp->releaseResources();
 }
 
 void RenderWidgetHostViewQtDelegateItem::adapterClientChanged(WebContentsAdapterClient *client)

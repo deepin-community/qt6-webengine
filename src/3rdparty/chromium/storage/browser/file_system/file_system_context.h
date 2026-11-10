@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -154,10 +155,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemContext
       const base::FilePath& partition_path,
       const FileSystemOptions& options,
       base::PassKey<FileSystemContext>);
-
-  // Called by CookiesTreeModel, to be removed in crbug.com/1304449.
-  void DeleteDataForStorageKeyOnFileTaskRunner(
-      const blink::StorageKey& storage_key);
 
   // Creates a new QuotaReservation for the given `storage_key` and `type`.
   // Returns nullptr if `type` does not support quota or reservation fails.
@@ -363,12 +360,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemContext
   // Must be called after creating the FileSystemContext.
   void Initialize();
 
-  // The list of quota-managed storage types covered by file system backends.
-  //
-  // This is called during the constructor, before the file system backends are
-  // initialized.
-  std::vector<blink::mojom::StorageType> QuotaManagedStorageTypes();
-
   // Creates a new FileSystemOperation instance by getting an appropriate
   // FileSystemBackend for `url` and calling the backend's corresponding
   // CreateFileSystemOperation method.
@@ -402,8 +393,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemContext
   void OnGetBucketForDeleteFileSystem(FileSystemType type,
                                       StatusCallback callback,
                                       QuotaErrorOr<BucketInfo> result);
-  void OnGetBucketForStorageKeyDeletion(std::vector<FileSystemType> type,
-                                        QuotaErrorOr<BucketInfo> result);
   // OnGetOrCreateBucket is the callback for calling
   // QuotaManagerProxy::GetOrCreateDefault.
   void OnGetOrCreateBucket(const blink::StorageKey& storage_key,
@@ -459,7 +448,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemContext
   // This map itself doesn't retain each backend's ownership; ownerships
   // of the backends are held by additional_backends_ or other scoped_ptr
   // backend fields.
-  std::map<FileSystemType, FileSystemBackend*> backend_map_;
+  std::map<FileSystemType, raw_ptr<FileSystemBackend, CtnExperimental>>
+      backend_map_;
 
   // External mount points visible in the file system context (excluding system
   // external mount points).

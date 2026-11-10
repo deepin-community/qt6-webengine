@@ -13,9 +13,19 @@ const kCases = {
 enable f16;`,
     pass: false,
   },
-  after_decl: {
+  decl_after: {
     code: `enable f16;
 alias i = i32;`,
+    pass: true,
+  },
+  requires_before: {
+    code: `requires readonly_and_readwrite_storage_textures;
+enable f16;`,
+    pass: true,
+  },
+  diagnostic_before: {
+    code: `diagnostic(info, derivative_uniformity);
+enable f16;`,
     pass: true,
   },
   const_assert_before: {
@@ -48,7 +58,7 @@ f16;`,
 enable f16;`,
     pass: true,
   },
-  multipe_entries: {
+  multiple_entries: {
     code: `enable f16, f16, f16;`,
     pass: true,
   },
@@ -56,15 +66,38 @@ enable f16;`,
     code: `enable unknown;`,
     pass: false,
   },
+  subgroups: {
+    code: `enable subgroups;`,
+    pass: true,
+  },
+  subgroups_f16_pass1: {
+    code: `
+    enable f16;
+    enable subgroups;`,
+    pass: true,
+  },
+  subgroups_f16_pass2: {
+    code: `
+    enable subgroups;
+    enable f16;`,
+    pass: true,
+  },
+  in_comment_f16: {
+    code: `
+    /* enable f16; */
+    var<private> v: f16;
+    `,
+    pass: false,
+  },
 };
 
 g.test('enable')
   .desc(`Tests that enables are validated correctly`)
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .params(u => u.combine('case', keysOf(kCases)))
   .fn(t => {
+    if (t.params.case === 'requires_before') {
+      t.skipIfLanguageFeatureNotSupported('readonly_and_readwrite_storage_textures');
+    }
     const c = kCases[t.params.case];
     t.expectCompileResult(c.pass, c.code);
   });

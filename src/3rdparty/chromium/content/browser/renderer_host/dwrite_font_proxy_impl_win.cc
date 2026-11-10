@@ -4,6 +4,8 @@
 
 #include "content/browser/renderer_host/dwrite_font_proxy_impl_win.h"
 
+#include <windows.h>
+
 #include <shlobj.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -33,7 +35,6 @@
 #include "content/common/features.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
-#include "third_party/abseil-cpp/absl/utility/utility.h"
 #include "third_party/blink/public/common/font_unique_name_lookup/font_unique_name_table.pb.h"
 #include "third_party/blink/public/common/font_unique_name_lookup/icu_fold_case_util.h"
 #include "ui/gfx/win/direct_write.h"
@@ -47,9 +48,9 @@ namespace {
 
 // These are the fonts that Blink tries to load in getLastResortFallbackFont,
 // and will crash if none can be loaded.
-const wchar_t* kLastResortFontNames[] = {
-    L"Sans",     L"Arial",   L"MS UI Gothic",    L"Microsoft Sans Serif",
-    L"Segoe UI", L"Calibri", L"Times New Roman", L"Courier New"};
+constexpr auto kLastResortFontNames = std::to_array<const wchar_t*>(
+    {L"Sans", L"Arial", L"MS UI Gothic", L"Microsoft Sans Serif", L"Segoe UI",
+     L"Calibri", L"Times New Roman", L"Courier New"});
 
 struct RequiredFontStyle {
   const char16_t* family_name;
@@ -335,6 +336,9 @@ void DWriteFontProxyImpl::GetFontFileHandles(
                         base::File::FLAG_WIN_EXCLUSIVE_WRITE);
     if (file.IsValid()) {
       file_handles.push_back(std::move(file));
+    } else {
+      base::UmaHistogramSparse("Chrome.DWriteFontProxy.WinLastError",
+                               ::GetLastError());
     }
   }
   std::move(callback).Run(std::move(file_handles));
@@ -451,7 +455,7 @@ void DWriteFontProxyImpl::MatchUniqueFont(
     MatchUniqueFontCallback callback) {
   TRACE_EVENT0("dwrite,fonts", "DWriteFontProxyImpl::MatchUniqueFont");
 
-  DCHECK(base::FeatureList::IsEnabled(features::kFontSrcLocalMatching));
+  DCHECK(base::FeatureList::IsEnabled(::features::kFontSrcLocalMatching));
   callback = mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback),
                                                          base::File(), 0);
   InitializeDirectWrite();
@@ -576,11 +580,10 @@ void DWriteFontProxyImpl::InitializeDirectWrite() {
   }
 
   // Temp code to help track down crbug.com/561873
-  for (size_t font = 0; font < std::size(kLastResortFontNames); font++) {
+  for (const wchar_t* font : kLastResortFontNames) {
     uint32_t font_index = 0;
     BOOL exists = FALSE;
-    if (SUCCEEDED(collection_->FindFamilyName(kLastResortFontNames[font],
-                                              &font_index, &exists)) &&
+    if (SUCCEEDED(collection_->FindFamilyName(font, &font_index, &exists)) &&
         exists && font_index != UINT32_MAX) {
       last_resort_fonts_.push_back(font_index);
     }

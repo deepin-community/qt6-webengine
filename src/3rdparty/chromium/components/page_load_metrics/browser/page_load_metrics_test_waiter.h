@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
@@ -50,9 +51,6 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
     LayoutShiftOnlyInBothFrames,
     NoLayoutShift,
   };
-
-  using FrameTreeNodeId =
-      page_load_metrics::PageLoadMetricsObserver::FrameTreeNodeId;
 
   explicit PageLoadMetricsTestWaiter(content::WebContents* web_contents);
   explicit PageLoadMetricsTestWaiter(content::WebContents* web_contents,
@@ -142,6 +140,10 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
       ShiftFrame frame = ShiftFrame::LayoutShiftOnlyInMainFrame,
       uint64_t num_layout_shifts = 1);
 
+  // Adds a condition to wait for OnComplete invocation that indicates the
+  // observer will be gone, and Wait() can ensure all metrics are recorded.
+  void AddOnCompleteCalledExpectation();
+
   // Whether the given TimingField was observed in the page.
   bool DidObserveInPage(TimingField field) const;
 
@@ -185,7 +187,7 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
   // Manages a bitset of TimingFields.
   class TimingFieldBitSet {
    public:
-    TimingFieldBitSet() {}
+    TimingFieldBitSet() = default;
 
     // Returns whether this bitset has all bits unset.
     bool Empty() const { return bitmask_ == 0; }
@@ -303,6 +305,8 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
   void OnDidFinishSubFrameNavigation(
       content::NavigationHandle* navigation_handle);
 
+  void OnComplete(const mojom::PageLoadTiming& timing);
+
   // Called when V8 per-frame memory usage updates are available.
   void OnV8MemoryChanged(const std::vector<MemoryUpdate>& memory_updates);
 
@@ -353,11 +357,12 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
     bool did_set_main_frame_intersection_ = false;
     bool did_observed_main_frame_image_ad_rects_ = false;
     std::vector<gfx::Rect> main_frame_intersections_;
-    absl::optional<gfx::Rect> main_frame_viewport_rect_;
+    std::optional<gfx::Rect> main_frame_viewport_rect_;
     std::unordered_set<content::GlobalRenderFrameHostId,
                        content::GlobalRenderFrameHostIdHasher>
         memory_update_frame_ids_;
     uint64_t num_layout_shifts_ = 0;
+    bool on_complete_ = false;
   };
   State expected_;
   State observed_;

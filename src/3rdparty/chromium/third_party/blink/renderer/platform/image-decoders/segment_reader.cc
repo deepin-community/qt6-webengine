@@ -6,11 +6,12 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
+#include "skia/ext/skia_utils_base.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 #include "third_party/skia/include/core/SkData.h"
 
 namespace blink {
@@ -19,37 +20,38 @@ namespace {
 
 // Helpers for ROBufferSegmentReader and ParkableImageSegmentReader
 template <class Iter>
-size_t BufferGetSomeData(Iter& iter,
-                         size_t& position_of_block,
-                         const char*& data,
-                         size_t position) {
-  for (size_t size_of_block = iter.size(); size_of_block != 0;
-       position_of_block += size_of_block, size_of_block = iter.size()) {
+base::span<const uint8_t> BufferGetSomeData(Iter& iter,
+                                            size_t& position_of_block,
+                                            size_t position) {
+  auto current_span = *iter;
+  for (size_t size_of_block = current_span.size(); size_of_block != 0;
+       position_of_block += size_of_block,
+              size_of_block = current_span.size()) {
     DCHECK_LE(position_of_block, position);
 
     if (position_of_block + size_of_block > position) {
       // |position| is in this block.
       const size_t position_in_block = position - position_of_block;
-      data = static_cast<const char*>(iter.data()) + position_in_block;
-      return size_of_block - position_in_block;
+      return current_span.subspan(position_in_block);
     }
 
     // Move to next block.
     if (!iter.Next()) {
       break;
     }
+    current_span = *iter;
   }
-  return 0;
+  return {};
 }
 
 template <class Iter>
 sk_sp<SkData> BufferCopyAsSkData(Iter iter, size_t available) {
   sk_sp<SkData> data = SkData::MakeUninitialized(available);
-  char* dst = static_cast<char*>(data->writable_data());
+  auto dst = skia::as_writable_byte_span(*data);
   do {
-    size_t size = iter.size();
-    memcpy(dst, iter.data(), size);
-    dst += size;
+    auto src = *iter;
+    dst.copy_prefix_from(src);
+    dst = dst.subspan(src.size());
   } while (iter.Next());
   return data;
 }
@@ -66,7 +68,7 @@ class SharedBufferSegmentReader final : public SegmentReader {
   SharedBufferSegmentReader& operator=(const SharedBufferSegmentReader&) =
       delete;
   size_t size() const override;
-  size_t GetSomeData(const char*& data, size_t position) const override;
+  base::span<const uint8_t> GetSomeData(size_t position) const override;
   sk_sp<SkData> GetAsSkData() const override;
 
  private:
@@ -82,26 +84,21 @@ size_t SharedBufferSegmentReader::size() const {
   return shared_buffer_->size();
 }
 
-size_t SharedBufferSegmentReader::GetSomeData(const char*& data,
-                                              size_t position) const {
-  data = nullptr;
+base::span<const uint8_t> SharedBufferSegmentReader::GetSomeData(
+    size_t position) const {
   auto it = shared_buffer_->GetIteratorAt(position);
   if (it == shared_buffer_->cend()) {
-    return 0;
+    return {};
   }
-  data = it->data();
-  return it->size();
+  return base::as_byte_span(*it);
 }
 
 sk_sp<SkData> SharedBufferSegmentReader::GetAsSkData() const {
   sk_sp<SkData> data = SkData::MakeUninitialized(shared_buffer_->size());
-  char* buffer = static_cast<char*>(data->writable_data());
-  size_t offset = 0;
+  auto buffer = skia::as_writable_byte_span(*data);
   for (const auto& span : *shared_buffer_) {
-    memcpy(buffer + offset, span.data(), span.size());
-    offset += span.size();
+    buffer.take_first(span.size()).copy_from(base::as_bytes(span));
   }
-
   return data;
 }
 
@@ -114,7 +111,7 @@ class DataSegmentReader final : public SegmentReader {
   DataSegmentReader(const DataSegmentReader&) = delete;
   DataSegmentReader& operator=(const DataSegmentReader&) = delete;
   size_t size() const override;
-  size_t GetSomeData(const char*& data, size_t position) const override;
+  base::span<const uint8_t> GetSomeData(size_t position) const override;
   sk_sp<SkData> GetAsSkData() const override;
 
  private:
@@ -129,14 +126,12 @@ size_t DataSegmentReader::size() const {
   return data_->size();
 }
 
-size_t DataSegmentReader::GetSomeData(const char*& data,
-                                      size_t position) const {
+base::span<const uint8_t> DataSegmentReader::GetSomeData(
+    size_t position) const {
   if (position >= data_->size()) {
-    return 0;
+    return {};
   }
-
-  data = reinterpret_cast<const char*>(data_->bytes() + position);
-  return data_->size() - position;
+  return skia::as_byte_span(*data_).subspan(position);
 }
 
 sk_sp<SkData> DataSegmentReader::GetAsSkData() const {
@@ -152,7 +147,7 @@ class ROBufferSegmentReader final : public SegmentReader {
   ROBufferSegmentReader& operator=(const ROBufferSegmentReader&) = delete;
 
   size_t size() const override;
-  size_t GetSomeData(const char*& data, size_t position) const override;
+  base::span<const uint8_t> GetSomeData(size_t position) const override;
   sk_sp<SkData> GetAsSkData() const override;
 
  private:
@@ -173,10 +168,10 @@ size_t ROBufferSegmentReader::size() const {
   return ro_buffer_ ? ro_buffer_->size() : 0;
 }
 
-size_t ROBufferSegmentReader::GetSomeData(const char*& data,
-                                          size_t position) const {
+base::span<const uint8_t> ROBufferSegmentReader::GetSomeData(
+    size_t position) const {
   if (!ro_buffer_) {
-    return 0;
+    return {};
   }
 
   base::AutoLock lock(read_lock_);
@@ -187,15 +182,15 @@ size_t ROBufferSegmentReader::GetSomeData(const char*& data,
     position_of_block_ = 0;
   }
 
-  size_t size = BufferGetSomeData(iter_, position_of_block_, data, position);
+  auto data = BufferGetSomeData(iter_, position_of_block_, position);
 
-  if (!iter_.data()) {
+  if ((*iter_).empty()) {
     // Reset to the beginning, so future calls can succeed.
     iter_.Reset(ro_buffer_.get());
     position_of_block_ = 0;
   }
 
-  return size;
+  return data;
 }
 
 static void UnrefROBuffer(const void* ptr, void* context) {
@@ -215,7 +210,8 @@ sk_sp<SkData> ROBufferSegmentReader::GetAsSkData() const {
   if (!multiple_blocks) {
     // Contiguous data. No need to copy.
     ro_buffer_->AddRef();
-    return SkData::MakeWithProc(iter.data(), iter.size(), &UnrefROBuffer,
+    auto data = *iter;
+    return SkData::MakeWithProc(data.data(), data.size(), &UnrefROBuffer,
                                 ro_buffer_.get());
   }
 
@@ -246,11 +242,11 @@ sk_sp<SkData> SegmentReader::RWBufferCopyAsSkData(RWBuffer::ROIter iter,
 }
 
 // static
-size_t SegmentReader::RWBufferGetSomeData(RWBuffer::ROIter& iter,
-                                          size_t& position_of_block,
-                                          const char*& data,
-                                          size_t position) {
-  return BufferGetSomeData(iter, position_of_block, data, position);
+base::span<const uint8_t> SegmentReader::RWBufferGetSomeData(
+    RWBuffer::ROIter& iter,
+    size_t& position_of_block,
+    size_t position) {
+  return BufferGetSomeData(iter, position_of_block, position);
 }
 
 }  // namespace blink

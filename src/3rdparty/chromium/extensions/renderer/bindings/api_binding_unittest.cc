@@ -75,10 +75,11 @@ const char kFunctions[] =
     "  'parameters': [{"
     "    'name': 'int',"
     "    'type': 'integer'"
-    "  }, {"
+    "  }],"
+    "  'returns_async': {"
     "    'name': 'callback',"
     "    'type': 'function'"
-    "  }]"
+    "  }"
     "}]";
 
 constexpr char kFunctionsWithCallbackSignatures[] = R"(
@@ -90,21 +91,23 @@ constexpr char kFunctionsWithCallbackSignatures[] = R"(
        }]
      }, {
        "name": "intCallback",
-       "parameters": [{
+       "parameters": [],
+       "returns_async": {
          "name": "callback",
-         "type": "function",
+         "does_not_support_promises": "Test",
          "parameters": [{
            "name": "int",
            "type": "integer"
          }]
-       }]
+       }
      }, {
        "name": "noParamCallback",
-       "parameters": [{
+       "parameters": [],
+       "returns_async": {
          "name": "callback",
-         "type": "function",
+         "does_not_support_promises": "Test",
          "parameters": []
-       }]
+       }
      }])";
 
 constexpr char kFunctionsWithPromiseSignatures[] =
@@ -736,15 +739,11 @@ TEST_F(APIBindingUnittest, TestProperties) {
       "    'type': 'string',"
       "    'platforms': ['linux']"
       "  },"
-      "  'lacrosOnly': {"
-      "    'value': 'lacros',"
-      "    'type': 'string',"
-      "    'platforms': ['lacros']"
-      "  },"
-      "  'notLinuxOrLacros': {"
+      "  'notLinux': {"
       "    'value': 'nonlinux',"
       "    'type': 'string',"
-      "    'platforms': ['win', 'mac', 'chromeos', 'fuchsia']"
+      "    'platforms': ["
+      "       'win', 'mac', 'chromeos', 'fuchsia', 'desktop_android']"
       "  }"
       "}");
   InitializeBinding();
@@ -757,29 +756,16 @@ TEST_F(APIBindingUnittest, TestProperties) {
   EXPECT_EQ(R"({"subprop1":"some value","subprop2":true})",
             GetStringPropertyFromObject(binding_object, context, "prop2"));
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  EXPECT_EQ("\"lacros\"",
-            GetStringPropertyFromObject(binding_object, context, "lacrosOnly"));
-  EXPECT_EQ("undefined",
-            GetStringPropertyFromObject(binding_object, context, "linuxOnly"));
-  EXPECT_EQ("undefined", GetStringPropertyFromObject(binding_object, context,
-                                                     "notLinuxOrLacros"));
-#elif BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_LINUX)
   EXPECT_EQ("\"linux\"",
             GetStringPropertyFromObject(binding_object, context, "linuxOnly"));
-  EXPECT_EQ("undefined", GetStringPropertyFromObject(binding_object, context,
-                                                     "notLinuxOrLacros"));
   EXPECT_EQ("undefined",
-            GetStringPropertyFromObject(binding_object, context, "lacrosOnly"));
+            GetStringPropertyFromObject(binding_object, context, "notLinux"));
 #else
   EXPECT_EQ("undefined",
             GetStringPropertyFromObject(binding_object, context, "linuxOnly"));
-  EXPECT_EQ("undefined",
-            GetStringPropertyFromObject(binding_object, context, "lacrosOnly"));
-  EXPECT_EQ("\"nonlinux\"", GetStringPropertyFromObject(binding_object, context,
-                                                        "notLinuxOrLacros"));
+  EXPECT_EQ("\"nonlinux\"",
+            GetStringPropertyFromObject(binding_object, context, "notLinux"));
 #endif
 }
 
@@ -917,7 +903,8 @@ TEST_F(APIBindingUnittest, TestCustomHooks) {
       EXPECT_EQ(1u, arguments->size());
       return result;
     }
-    EXPECT_EQ("foo", gin::V8ToString(context->GetIsolate(), arguments->at(0)));
+    EXPECT_EQ("foo",
+              gin::V8ToString(v8::Isolate::GetCurrent(), arguments->at(0)));
     return result;
   };
   hooks->AddHandler("test.oneString", base::BindRepeating(hook, &did_call));
@@ -1342,9 +1329,9 @@ TEST_F(APIBindingUnittest, TestHandleRequestFailureCallback) {
 }
 
 // Tests that a JS handle request hook that calls the resolver callback more
-// than once will cause a crash on a DCHECK build, but fail gracefully on a
-// release build. Regression test for https://crbug.com/1298409.
-TEST_F(APIBindingDeathTest, TestHandleRequestFailureCallback) {
+// than once will fail gracefully on a release build. Regression test for
+// https://crbug.com/1298409.
+TEST_F(APIBindingUnittest, TestHandleRequestHookCalledTwiceGracefulRegression) {
   bool context_allows_promises = true;
   SetPromiseAvailabilityFlag(&context_allows_promises);
 
@@ -1376,23 +1363,14 @@ TEST_F(APIBindingDeathTest, TestHandleRequestFailureCallback) {
 
   // Calling supportsPromises will trigger the HandleRequest hook which attempts
   // to resolve the request twice by calling the success callback twice. This
-  // should cause a crash if DCHECKs are on, but otherwise should gracefully
-  // fail without a crash and still result in the request resolving as expected.
-#if DCHECK_IS_ON()
-  EXPECT_DEATH(
-      {
-        RunFunction(function, context, v8::Undefined(isolate()),
-                    std::size(args), args);
-      },
-      "Check failed: false. No callback found for the specified request ID.");
-#else
+  // should gracefully fail without a crash and still result in the request
+  // resolving as expected.
   v8::Local<v8::Value> result = RunFunction(
       function, context, v8::Undefined(isolate()), std::size(args), args);
   v8::Local<v8::Promise> promise;
   ASSERT_TRUE(GetValueAs(result, &promise));
   EXPECT_EQ(v8::Promise::kFulfilled, promise->State());
   EXPECT_EQ(R"(42)", V8ToString(promise->Result(), context));
-#endif
 }
 
 // Tests that JS custom hooks correctly handle the context being invalidated.
@@ -1461,7 +1439,7 @@ TEST_F(APIBindingUnittest,
       EXPECT_EQ(1u, arguments->size());
       return result;
     }
-    v8::Isolate* isolate = context->GetIsolate();
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
     std::string arg_value = gin::V8ToString(isolate, arguments->at(0));
     if (arg_value == "throw") {
       isolate->ThrowException(v8::Exception::Error(
@@ -1469,8 +1447,7 @@ TEST_F(APIBindingUnittest,
       result.code = APIBindingHooks::RequestResult::THROWN;
       return result;
     }
-    result.return_value =
-        gin::StringToV8(context->GetIsolate(), arg_value + " pong");
+    result.return_value = gin::StringToV8(isolate, arg_value + " pong");
     return result;
   };
   hooks->AddHandler("test.oneString", base::BindRepeating(hook, &did_call));
@@ -1701,7 +1678,7 @@ TEST_F(APIBindingUnittest, HooksInstanceInitializer) {
   int count = 0;
   auto hook = [](int* count, v8::Local<v8::Context> context,
                  v8::Local<v8::Object> object) {
-    v8::Isolate* isolate = context->GetIsolate();
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
     // Add a new property only for the first instance.
     if ((*count)++ == 0) {
       object
@@ -1799,8 +1776,8 @@ TEST_F(APIBindingUnittest, TestSendingRequestsAndSilentRequestsWithHooks) {
                              v8::Local<v8::Context> context,
                              v8::LocalVector<v8::Value>* arguments,
                              const APITypeReferenceMap& map) {
-        context->GetIsolate()->ThrowException(
-            gin::StringToV8(context->GetIsolate(), "some error"));
+        v8::Isolate* isolate = v8::Isolate::GetCurrent();
+        isolate->ThrowException(gin::StringToV8(isolate, "some error"));
         return RequestResult(RequestResult::THROWN);
       }));
   hooks->AddHandler(
@@ -1809,7 +1786,7 @@ TEST_F(APIBindingUnittest, TestSendingRequestsAndSilentRequestsWithHooks) {
                              v8::Local<v8::Context> context,
                              v8::LocalVector<v8::Value>* arguments,
                              const APITypeReferenceMap& map) {
-        arguments->push_back(v8::Integer::New(context->GetIsolate(), 42));
+        arguments->push_back(v8::Integer::New(v8::Isolate::GetCurrent(), 42));
         return RequestResult(RequestResult::HANDLED);
       }));
 
@@ -1860,10 +1837,11 @@ TEST_F(APIBindingUnittest, TestSendingRequestsAndSilentRequestsWithHooks) {
         context, base::StringPrintf("(function(binding) { binding.%s(%s); })",
                                     name.data(), string_args.data()));
     v8::Local<v8::Value> args[] = {binding_object};
-    v8::TryCatch try_catch(context->GetIsolate());
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::TryCatch try_catch(isolate);
     // The throwException call will throw an exception; ignore it.
-    std::ignore = call->Call(context, v8::Undefined(context->GetIsolate()),
-                             std::size(args), args);
+    std::ignore =
+        call->Call(context, v8::Undefined(isolate), std::size(args), args);
   };
 
   call_api_method("modifyArgs", "");
@@ -1992,9 +1970,9 @@ TEST_F(APIBindingUnittest, TestHooksWithResultModifier) {
     if (async_type == binding::AsyncResponseType::kCallback) {
       // For callback based calls change the result to a vector with
       // multiple arguments by appending "bar" to the end.
+      v8::Isolate* isolate = v8::Isolate::GetCurrent();
       v8::LocalVector<v8::Value> new_args(
-          context->GetIsolate(),
-          {result_args[0], gin::StringToV8(context->GetIsolate(), "bar")});
+          isolate, {result_args[0], gin::StringToV8(isolate, "bar")});
       return new_args;
     }
     return result_args;
@@ -2124,9 +2102,9 @@ TEST_F(APIBindingUnittest, TestHooksWithResultModifierAndJSHook) {
     if (async_type == binding::AsyncResponseType::kCallback) {
       // For callback based calls change the result to a vector with
       // multiple arguments by appending "bar" to the end.
+      v8::Isolate* isolate = v8::Isolate::GetCurrent();
       v8::LocalVector<v8::Value> new_args(
-          context->GetIsolate(),
-          {result_args[0], gin::StringToV8(context->GetIsolate(), "bar")});
+          isolate, {result_args[0], gin::StringToV8(isolate, "bar")});
       return new_args;
     }
     return result_args;
@@ -2677,6 +2655,32 @@ TEST_F(APIBindingUnittest, TestPromiseWithJSUpdateArgumentsPostValidate) {
     EXPECT_EQ(R"(6)", GetStringPropertyFromObject(context->Global(), context,
                                                   "firstArgument"));
   }
+}
+
+TEST_F(APIBindingUnittest, UnicodeArgumentsPassedCorrectly) {
+  SetFunctions(kFunctions);
+  InitializeBinding();
+
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  // This contains a non-BMP Unicode character, which should be correctly passed
+  // as an argument to the function, through the UTF-8 -> UTF-16 -> UTF-8 round
+  // trip.
+  constexpr char kSource[] = u8"(function(obj) { obj.oneString('🤡'); })";
+  constexpr char kExpectation[] = u8"🤡";
+
+  v8::Local<v8::Function> func = FunctionFromString(context, kSource);
+  ASSERT_FALSE(func.IsEmpty());
+
+  v8::Local<v8::Value> argv[] = {binding()->CreateInstance(context)};
+  RunFunction(func, context, 1, argv);
+  ASSERT_TRUE(last_request());
+
+  ASSERT_EQ(1u, last_request()->arguments_list.size());
+  base::Value str_value = last_request()->arguments_list.front().Clone();
+  ASSERT_TRUE(str_value.is_string());
+  ASSERT_EQ(kExpectation, *str_value.GetIfString());
 }
 
 }  // namespace extensions

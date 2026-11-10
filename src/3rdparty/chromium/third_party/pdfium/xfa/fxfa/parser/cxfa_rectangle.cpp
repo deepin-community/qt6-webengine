@@ -10,9 +10,9 @@
 
 #include <utility>
 
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/notreached.h"
 #include "fxjs/xfa/cjx_node.h"
-#include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
 #include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fxfa/parser/cxfa_corner.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
@@ -55,7 +55,7 @@ CXFA_Rectangle::CXFA_Rectangle(CXFA_Document* doc, XFA_PacketType packet)
                    doc->GetHeap()->GetAllocationHandle(),
                    this)) {}
 
-CXFA_Rectangle::CXFA_Rectangle(CXFA_Document* pDoc,
+CXFA_Rectangle::CXFA_Rectangle(CXFA_Document* doc,
                                XFA_PacketType ePacket,
                                Mask<XFA_XDPPACKET> validPackets,
                                XFA_ObjectType oType,
@@ -63,7 +63,7 @@ CXFA_Rectangle::CXFA_Rectangle(CXFA_Document* pDoc,
                                pdfium::span<const PropertyData> properties,
                                pdfium::span<const AttributeData> attributes,
                                CJX_Object* js_node)
-    : CXFA_Box(pDoc,
+    : CXFA_Box(doc,
                ePacket,
                validPackets,
                oType,
@@ -102,10 +102,12 @@ void CXFA_Rectangle::GetFillPath(const std::vector<CXFA_Stroke*>& strokes,
     }
     if (bSameStyles) {
       stroke1 = strokes[0];
-      if (stroke1->IsInverted())
+      if (stroke1->IsInverted()) {
         bSameStyles = false;
-      if (stroke1->GetJoinType() != XFA_AttributeValue::Square)
+      }
+      if (stroke1->GetJoinType() != XFA_AttributeValue::Square) {
         bSameStyles = false;
+      }
     }
   }
   if (bSameStyles) {
@@ -190,19 +192,23 @@ void CXFA_Rectangle::GetFillPath(const std::vector<CXFA_Stroke*>& strokes,
         }
         break;
     }
-    if (i == 0)
+    if (i == 0) {
       fillPath->MoveTo(CFX_PointF(cp1.x, cp1.y + fRadius1));
+    }
 
     if (bRound) {
-      if (fRadius1 < 0)
+      if (fRadius1 < 0) {
         sx -= FXSYS_PI;
-      if (bInverted)
+      }
+      if (bInverted) {
         sy *= -1;
+      }
 
       CFX_RectF rtRadius(cp1.x, cp1.y, fRadius1 * 2 * vx, fRadius1 * 2 * vy);
       rtRadius.Normalize();
-      if (bInverted)
+      if (bInverted) {
         rtRadius.Offset(-fRadius1 * vx, -fRadius1 * vy);
+      }
 
       fillPath->ArcTo(rtRadius.TopLeft(), rtRadius.Size(), sx, sy);
     } else {
@@ -232,8 +238,9 @@ void CXFA_Rectangle::Draw(const std::vector<CXFA_Stroke*>& strokes,
       break;
     }
   }
-  if (!bVisible)
+  if (!bVisible) {
     return;
+  }
 
   for (int32_t i = 1; i < 8; i += 2) {
     float fThickness = fmax(0.0, strokes[i]->GetThickness());
@@ -281,13 +288,11 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
                             CFGAS_GEGraphics* pGS,
                             CFX_RectF rtWidget,
                             const CFX_Matrix& matrix) {
-  bool bVisible;
-  float fThickness;
-  XFA_AttributeValue i3DType;
-  std::tie(i3DType, bVisible, fThickness) = Get3DStyle();
+  auto [i3DType, bVisible, fThickness] = Get3DStyle();
   if (i3DType != XFA_AttributeValue::Unknown) {
-    if (!bVisible || fThickness < 0.001f)
+    if (!bVisible || fThickness < 0.001f) {
       return;
+    }
 
     switch (i3DType) {
       case XFA_AttributeValue::Lowered:
@@ -303,7 +308,7 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
         StrokeEmbossed(pGS, rtWidget, fThickness, matrix);
         break;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
     return;
   }
@@ -334,10 +339,12 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
     }
     if (bSameStyles) {
       stroke1 = strokes[0];
-      if (stroke1->IsInverted())
+      if (stroke1->IsInverted()) {
         bSameStyles = false;
-      if (stroke1->GetJoinType() != XFA_AttributeValue::Square)
+      }
+      if (stroke1->GetJoinType() != XFA_AttributeValue::Square) {
         bSameStyles = false;
+      }
     }
   }
 
@@ -348,8 +355,9 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
     if ((i % 1) == 0 && stroke->GetRadius() < 0) {
       bool bEmpty = path.IsEmpty();
       if (!bEmpty) {
-        if (stroke)
+        if (stroke) {
           stroke->Stroke(pGS, path, matrix);
+        }
         path.Clear();
       }
       bStart = true;
@@ -359,8 +367,9 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
 
     bStart = !stroke->SameStyles(strokes[(i + 1) % 8], {});
     if (bStart) {
-      if (stroke)
+      if (stroke) {
         stroke->Stroke(pGS, path, matrix);
+      }
       path.Clear();
     }
   }
@@ -369,8 +378,9 @@ void CXFA_Rectangle::Stroke(const std::vector<CXFA_Stroke*>& strokes,
     if (bClose) {
       path.Close();
     }
-    if (strokes[7])
+    if (strokes[7]) {
       strokes[7]->Stroke(pGS, path, matrix);
+    }
   }
 }
 
@@ -487,10 +497,12 @@ void CXFA_Rectangle::GetPath(const std::vector<CXFA_Stroke*>& strokes,
     CXFA_Stroke* strokeBefore = strokes[(nIndex + 1 * 8 - 1) % 8];
     CXFA_Stroke* strokeAfter = strokes[nIndex + 1];
     if (stroke->IsInverted()) {
-      if (!stroke->SameStyles(strokeBefore, {}))
+      if (!stroke->SameStyles(strokeBefore, {})) {
         halfBefore = strokeBefore->GetThickness() / 2;
-      if (!stroke->SameStyles(strokeAfter, {}))
+      }
+      if (!stroke->SameStyles(strokeAfter, {})) {
         halfAfter = strokeAfter->GetThickness() / 2;
+      }
     }
   } else {
     CXFA_Stroke* strokeBefore = strokes[(nIndex + 8 - 2) % 8];
@@ -512,8 +524,9 @@ void CXFA_Rectangle::GetPath(const std::vector<CXFA_Stroke*>& strokes,
   CFX_PointF cpStart;
   CFX_PointF cp1;
   CFX_PointF cp2;
-  if (bRound)
+  if (bRound) {
     sy = FXSYS_PI / 2;
+  }
 
   switch (nIndex) {
     case 0:
@@ -622,17 +635,20 @@ void CXFA_Rectangle::GetPath(const std::vector<CXFA_Stroke*>& strokes,
     return;
   }
   if (bRound) {
-    if (fRadius1 < 0)
+    if (fRadius1 < 0) {
       sx -= FXSYS_PI;
-    if (bInverted)
+    }
+    if (bInverted) {
       sy *= -1;
+    }
 
     CFX_RectF rtRadius(cp1.x + offsetX * 2, cp1.y + offsetY * 2,
                        fRadius1 * 2 * vx - offsetX * 2,
                        fRadius1 * 2 * vy - offsetY * 2);
     rtRadius.Normalize();
-    if (bInverted)
+    if (bInverted) {
       rtRadius.Offset(-fRadius1 * vx, -fRadius1 * vy);
+    }
 
     path.ArcTo(rtRadius.TopLeft(), rtRadius.Size(), sx, sy);
   } else {

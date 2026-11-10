@@ -27,13 +27,19 @@
 
 #include "src/tint/lang/core/ir/transform/zero_init_workgroup_memory.h"
 
-#include <map>
-#include <utility>
-
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
+#include "src/tint/lang/core/ir/referenced_module_vars.h"
 #include "src/tint/lang/core/ir/validator.h"
 #include "src/tint/utils/containers/reverse.h"
+
+#if TINT_BUILD_IS_MSVC
+#if _MSC_VER > 1930 && _MSC_VER < 1939
+// MSVC raises an internal compiler error in Vector::Sort(), when optimizations are enabled.
+// Later versions are fixed.
+TINT_BEGIN_DISABLE_OPTIMIZATIONS();
+#endif
+#endif
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -53,17 +59,12 @@ struct State {
     /// The type manager.
     core::type::Manager& ty{ir.Types()};
 
-    /// VarSet is a hash set of workgroup variables.
-    using VarSet = Hashset<Var*, 8>;
-
-    /// A map from variable to an ID used for sorting.
-    Hashmap<Var*, uint32_t, 8> var_to_id{};
-
-    /// A map from blocks to their directly referenced workgroup variables.
-    Hashmap<Block*, VarSet, 64> block_to_direct_vars{};
-
-    /// A map from functions to their transitively referenced workgroup variables.
-    Hashmap<Function*, VarSet, 8> function_to_transitive_vars{};
+    /// The mapping from functions to their transitively referenced workgroup variables.
+    ReferencedModuleVars<Module> referenced_module_vars_{
+        ir, [](const Var* var) {
+            auto* view = var->Result()->Type()->As<type::MemoryView>();
+            return view && view->AddressSpace() == AddressSpace::kWorkgroup;
+        }};
 
     /// ArrayIndex represents a required array index for an access instruction.
     struct ArrayIndex {
@@ -96,22 +97,6 @@ struct State {
         if (ir.root_block->IsEmpty()) {
             return;
         }
-
-        // Loop over module-scope variables, looking for workgroup variables.
-        uint32_t next_id = 0;
-        for (auto inst : *ir.root_block) {
-            if (auto* var = inst->As<Var>()) {
-                auto* ptr = var->Result(0)->Type()->As<core::type::Pointer>();
-                if (ptr && ptr->AddressSpace() == core::AddressSpace::kWorkgroup) {
-                    // Record the usage of the variable for each block that references it.
-                    var->Result(0)->ForEachUse([&](const Usage& use) {
-                        block_to_direct_vars.GetOrZero(use.instruction->Block())->Add(var);
-                    });
-                    var_to_id.Add(var, next_id++);
-                }
-            }
-        }
-
         // Process each entry point function.
         for (auto& func : ir.functions) {
             if (func->Stage() == Function::PipelineStage::kCompute) {
@@ -124,21 +109,15 @@ struct State {
     /// @param func the entry point function
     void ProcessEntryPoint(Function* func) {
         // Get list of transitively referenced workgroup variables.
-        auto vars = GetReferencedVars(func);
+        const auto& vars = referenced_module_vars_.TransitiveReferences(func);
         if (vars.IsEmpty()) {
             return;
         }
 
-        // Sort the variables to get deterministic output in tests.
-        auto sorted_vars = vars.Vector();
-        sorted_vars.Sort([&](Var* first, Var* second) {
-            return *var_to_id.Get(first) < *var_to_id.Get(second);
-        });
-
         // Build list of store descriptors for all workgroup variables.
         StoreMap stores;
-        for (auto* var : sorted_vars) {
-            PrepareStores(var, var->Result(0)->Type()->UnwrapPtr(), 1, {}, stores);
+        for (auto* var : vars) {
+            PrepareStores(var, var->Result()->Type()->UnwrapPtr(), 1, {}, stores);
         }
 
         // Sort the iteration counts to get deterministic output in tests.
@@ -151,24 +130,28 @@ struct State {
 
         // Get the local invocation index and the linearized workgroup size.
         auto* local_index = GetLocalInvocationIndex(func);
-        auto wgsizes = func->WorkgroupSize().value();
-        auto wgsize = wgsizes[0] * wgsizes[1] * wgsizes[2];
+
+        auto wgsizes = func->WorkgroupSizeAsConst();
+        TINT_ASSERT(wgsizes);
+        auto wgsize = wgsizes.value()[0] * wgsizes.value()[1] * wgsizes.value()[2];
 
         // Insert instructions to zero-initialize every variable.
         b.InsertBefore(function_start, [&] {
             for (auto count : sorted_iteration_counts) {
                 auto element_stores = stores.Get(count);
-                if (count == 1u) {
-                    // Make the first invocation in the group perform all of the non-arrayed stores.
-                    auto* ifelse = b.If(b.Equal(ty.bool_(), local_index, 0_u));
+                TINT_ASSERT(count);
+                // No loop is required if we have at least as many invocations than counts.
+                if (count <= wgsize) {
+                    // Make the first |count| invocations in the group perform the arrayed stores.
+                    auto* ifelse = b.If(b.LessThan(ty.bool_(), local_index, u32(count)));
                     b.Append(ifelse->True(), [&] {
                         for (auto& store : *element_stores) {
-                            GenerateStore(store, count, b.Constant(0_u));
+                            GenerateStore(store, count, local_index);
                         }
                         b.ExitIf(ifelse);
                     });
                 } else {
-                    // Use a loop for arrayed stores.
+                    // Use a loop for arrayed stores that exceed the wgsize
                     b.LoopRange(ty, local_index, u32(count), u32(wgsize), [&](Value* index) {
                         for (auto& store : *element_stores) {
                             GenerateStore(store, count, index);
@@ -178,46 +161,6 @@ struct State {
             }
             b.Call(ty.void_(), core::BuiltinFn::kWorkgroupBarrier);
         });
-    }
-
-    /// Get the set of workgroup variables transitively referenced by @p func.
-    /// @param func the function
-    /// @returns the set of transitively referenced workgroup variables
-    VarSet GetReferencedVars(Function* func) {
-        return function_to_transitive_vars.GetOrCreate(func, [&] {
-            VarSet vars;
-            GetReferencedVars(func->Block(), vars);
-            return vars;
-        });
-    }
-
-    /// Get the set of workgroup variables transitively referenced by @p block.
-    /// @param block the block
-    /// @param vars the set of transitively referenced workgroup variables to populate
-    void GetReferencedVars(Block* block, VarSet& vars) {
-        // Add directly referenced vars.
-        if (auto itr = block_to_direct_vars.Find(block)) {
-            for (auto* var : *itr) {
-                vars.Add(var);
-            }
-        }
-
-        // Loop over instructions in the block.
-        for (auto* inst : *block) {
-            tint::Switch(
-                inst,
-                [&](UserCall* call) {
-                    // Get variables referenced by a function called from this block.
-                    auto callee_vars = GetReferencedVars(call->Target());
-                    for (auto* var : callee_vars) {
-                        vars.Add(var);
-                    }
-                },
-                [&](ControlInstruction* ctrl) {
-                    // Recurse into control instructions and gather their referenced vars.
-                    ctrl->ForeachBlock([&](Block* blk) { GetReferencedVars(blk, vars); });
-                });
-        }
     }
 
     /// Recursively generate store descriptors for a workgroup variable.
@@ -234,7 +177,7 @@ struct State {
                        StoreMap& stores) {
         // If this type can be trivially zeroed, store to the whole element.
         if (CanTriviallyZero(type)) {
-            stores.GetOrZero(iteration_count)->Push(Store{var, type, indices});
+            stores.GetOrAddZero(iteration_count).Push(Store{var, type, indices});
             return;
         }
 
@@ -253,7 +196,7 @@ struct State {
                 PrepareStores(var, arr->ElemType(), iteration_count * count, new_indices, stores);
             },
             [&](const type::Atomic*) {
-                stores.GetOrZero(iteration_count)->Push(Store{var, type, indices});
+                stores.GetOrAddZero(iteration_count).Push(Store{var, type, indices});
             },
             [&](const type::Struct* str) {
                 for (auto* member : str->Members()) {
@@ -275,28 +218,24 @@ struct State {
             if (auto* str = param->Type()->As<type::Struct>()) {
                 // Check each member for the local invocation index builtin attribute.
                 for (auto* member : str->Members()) {
-                    if (member->Attributes().builtin && member->Attributes().builtin.value() ==
-                                                            BuiltinValue::kLocalInvocationIndex) {
+                    if (member->Attributes().builtin == BuiltinValue::kLocalInvocationIndex) {
                         auto* access = b.Access(ty.u32(), param, u32(member->Index()));
                         access->InsertBefore(func->Block()->Front());
-                        return access->Result(0);
+                        return access->Result();
                     }
                 }
             } else {
                 // Check if the parameter is the local invocation index.
-                if (param->Builtin() &&
-                    param->Builtin().value() == BuiltinValue::kLocalInvocationIndex) {
+                if (param->Builtin() == BuiltinValue::kLocalInvocationIndex) {
                     return param;
                 }
             }
         }
 
         // No local invocation index was found, so add one to the parameter list and use that.
-        Vector<FunctionParam*, 4> params = func->Params();
         auto* param = b.FunctionParam("tint_local_index", ty.u32());
+        func->AppendParam(param);
         param->SetBuiltin(BuiltinValue::kLocalInvocationIndex);
-        params.Push(param);
-        func->SetParams(params);
         return param;
     }
 
@@ -305,7 +244,7 @@ struct State {
     /// @param total_count the total number of elements that will be zeroed
     /// @param linear_index the linear index of the single element that will be zeroed
     void GenerateStore(const Store& store, uint32_t total_count, Value* linear_index) {
-        auto* to = store.var->Result(0);
+        auto* to = store.var->Result();
         if (!store.indices.IsEmpty()) {
             // Build the access indices to get to the target element.
             // We walk backwards along the index list so that adjacent invocation store to
@@ -319,10 +258,10 @@ struct State {
                     auto array_index = std::get<ArrayIndex>(idx);
                     Value* index = linear_index;
                     if (count > 1) {
-                        index = b.Divide(ty.u32(), index, u32(count))->Result(0);
+                        index = b.Divide(ty.u32(), index, u32(count))->Result();
                     }
                     if (total_count > count * array_index.count) {
-                        index = b.Modulo(ty.u32(), index, u32(array_index.count))->Result(0);
+                        index = b.Modulo(ty.u32(), index, u32(array_index.count))->Result();
                     }
                     indices.Push(index);
                     count *= array_index.count;
@@ -332,7 +271,7 @@ struct State {
                 }
             }
             indices.Reverse();
-            to = b.Access(ty.ptr(workgroup, store.store_type), to, indices)->Result(0);
+            to = b.Access(ty.ptr(workgroup, store.store_type), to, indices)->Result();
         }
 
         // Generate the store instruction.
@@ -367,7 +306,8 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ZeroInitWorkgroupMemory(Module& ir) {
-    auto result = ValidateAndDumpIfNeeded(ir, "ZeroInitWorkgroupMemory transform");
+    auto result = ValidateAndDumpIfNeeded(ir, "core.ZeroInitWorkgroupMemory",
+                                          kZeroInitWorkgroupMemoryCapabilities);
     if (result != Success) {
         return result;
     }

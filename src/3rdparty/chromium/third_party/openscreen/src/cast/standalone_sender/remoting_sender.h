@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include "cast/streaming/constants.h"
-#include "cast/streaming/rpc_messenger.h"
+#include "cast/streaming/public/constants.h"
+#include "cast/streaming/public/rpc_messenger.h"
 
 namespace openscreen::cast {
 
@@ -50,7 +50,7 @@ class RemotingSender {
   void OnPlaybackRateMessage(const RpcMessage& message);
 
   // The messenger is the only caller of OnInitializeMessage, so there are no
-  // lifetime concerns. However, if this class outlives |messenger_|, it will
+  // lifetime concerns. However, if this class outlives `messenger_`, it will
   // no longer receive initialization messages.
   RpcMessenger& messenger_;
 

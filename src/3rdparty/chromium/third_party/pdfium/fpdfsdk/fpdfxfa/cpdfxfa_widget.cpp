@@ -6,9 +6,9 @@
 
 #include "fpdfsdk/fpdfxfa/cpdfxfa_widget.h"
 
+#include "core/fxcrt/check.h"
 #include "fpdfsdk/cpdfsdk_formfillenvironment.h"
 #include "fpdfsdk/cpdfsdk_pageview.h"
-#include "third_party/base/check.h"
 #include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fxfa/cxfa_ffdocview.h"
 #include "xfa/fxfa/cxfa_ffpageview.h"
@@ -16,9 +16,10 @@
 #include "xfa/fxfa/cxfa_ffwidgethandler.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
 
-#define CHECK_FWL_VKEY_ENUM____(name)                                   \
-  static_assert(static_cast<int>(name) == static_cast<int>(XFA_##name), \
-                "FWL_VKEYCODE enum mismatch")
+#define CHECK_FWL_VKEY_ENUM____(name)                                 \
+  static_assert(                                                      \
+      static_cast<int>(name) == static_cast<int>(pdfium::XFA_##name), \
+      "FWL_VKEYCODE enum mismatch")
 
 CHECK_FWL_VKEY_ENUM____(FWL_VKEY_Back);
 CHECK_FWL_VKEY_ENUM____(FWL_VKEY_Tab);
@@ -197,18 +198,24 @@ namespace {
 Mask<XFA_FWL_KeyFlag> GetKeyFlags(Mask<FWL_EVENTFLAG> input) {
   Mask<XFA_FWL_KeyFlag> results;
 
-  if (input & FWL_EVENTFLAG_ControlKey)
+  if (input & FWL_EVENTFLAG_ControlKey) {
     results |= XFA_FWL_KeyFlag::kCtrl;
-  if (input & FWL_EVENTFLAG_LeftButtonDown)
+  }
+  if (input & FWL_EVENTFLAG_LeftButtonDown) {
     results |= XFA_FWL_KeyFlag::kLButton;
-  if (input & FWL_EVENTFLAG_MiddleButtonDown)
+  }
+  if (input & FWL_EVENTFLAG_MiddleButtonDown) {
     results |= XFA_FWL_KeyFlag::kMButton;
-  if (input & FWL_EVENTFLAG_RightButtonDown)
+  }
+  if (input & FWL_EVENTFLAG_RightButtonDown) {
     results |= XFA_FWL_KeyFlag::kRButton;
-  if (input & FWL_EVENTFLAG_ShiftKey)
+  }
+  if (input & FWL_EVENTFLAG_ShiftKey) {
     results |= XFA_FWL_KeyFlag::kShift;
-  if (input & FWL_EVENTFLAG_AltKey)
+  }
+  if (input & FWL_EVENTFLAG_AltKey) {
     results |= XFA_FWL_KeyFlag::kAlt;
+  }
 
   return results;
 }
@@ -217,7 +224,7 @@ Mask<XFA_FWL_KeyFlag> GetKeyFlags(Mask<FWL_EVENTFLAG> input) {
 
 CPDFXFA_Widget::CPDFXFA_Widget(CXFA_FFWidget* pXFAFFWidget,
                                CPDFSDK_PageView* pPageView)
-    : CPDFSDK_Annot(pPageView), m_pXFAFFWidget(pXFAFFWidget) {}
+    : CPDFSDK_Annot(pPageView), xfa_ffwidget_(pXFAFFWidget) {}
 
 CPDFXFA_Widget::~CPDFXFA_Widget() = default;
 
@@ -241,8 +248,9 @@ void CPDFXFA_Widget::OnDraw(CFX_RenderDevice* pDevice,
                             const CFX_Matrix& mtUser2Device,
                             bool bDrawAnnots) {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (!widget_handler)
+  if (!widget_handler) {
     return;
+  }
 
   CFGAS_GEGraphics gs(pDevice);
   bool is_highlight = GetPageView()->GetFormFillEnv()->GetFocusAnnot() != this;
@@ -254,8 +262,9 @@ void CPDFXFA_Widget::OnDraw(CFX_RenderDevice* pDevice,
 
 bool CPDFXFA_Widget::DoHitTest(const CFX_PointF& point) {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (!widget_handler)
+  if (!widget_handler) {
     return false;
+  }
 
   return widget_handler->HitTest(GetXFAFFWidget(), point) !=
          FWL_WidgetHit::Unknown;
@@ -263,12 +272,14 @@ bool CPDFXFA_Widget::DoHitTest(const CFX_PointF& point) {
 
 bool CPDFXFA_Widget::OnChangedFocus() {
   CXFA_FFDocView* doc_view = GetDocView();
-  if (!doc_view)
+  if (!doc_view) {
     return false;
+  }
 
   CXFA_FFWidget* widget = GetXFAFFWidget();
-  if (doc_view->SetFocus(widget))
+  if (doc_view->SetFocus(widget)) {
     return false;
+  }
 
   return doc_view->GetFocusWidget() != widget;
 }
@@ -290,14 +301,16 @@ CFX_FloatRect CPDFXFA_Widget::GetViewBBox() {
 
 void CPDFXFA_Widget::OnMouseEnter(Mask<FWL_EVENTFLAG> nFlags) {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (widget_handler)
+  if (widget_handler) {
     widget_handler->OnMouseEnter(GetXFAFFWidget());
+  }
 }
 
 void CPDFXFA_Widget::OnMouseExit(Mask<FWL_EVENTFLAG> nFlags) {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (widget_handler)
+  if (widget_handler) {
     widget_handler->OnMouseExit(GetXFAFFWidget());
+  }
 }
 
 bool CPDFXFA_Widget::OnLButtonDown(Mask<FWL_EVENTFLAG> nFlags,
@@ -372,8 +385,9 @@ bool CPDFXFA_Widget::OnSetFocus(Mask<FWL_EVENTFLAG> nFlags) {
 
 bool CPDFXFA_Widget::OnKillFocus(Mask<FWL_EVENTFLAG> nFlags) {
   CXFA_FFDocView* doc_view = GetDocView();
-  if (doc_view)
+  if (doc_view) {
     doc_view->SetFocus(nullptr);
+  }
   return true;
 }
 
@@ -399,15 +413,17 @@ bool CPDFXFA_Widget::Redo() {
 
 WideString CPDFXFA_Widget::GetText() {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (!widget_handler)
+  if (!widget_handler) {
     return WideString();
+  }
   return widget_handler->GetText(GetXFAFFWidget());
 }
 
 WideString CPDFXFA_Widget::GetSelectedText() {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (!widget_handler)
+  if (!widget_handler) {
     return WideString();
+  }
   return widget_handler->GetSelectedText(GetXFAFFWidget());
 }
 
@@ -419,8 +435,9 @@ void CPDFXFA_Widget::ReplaceAndKeepSelection(const WideString& text) {
 
 void CPDFXFA_Widget::ReplaceSelection(const WideString& text) {
   CXFA_FFWidgetHandler* widget_handler = GetWidgetHandler();
-  if (widget_handler)
+  if (widget_handler) {
     widget_handler->PasteText(GetXFAFFWidget(), text);
+  }
 }
 
 bool CPDFXFA_Widget::SelectAllText() {

@@ -9,10 +9,11 @@
 #include <ostream>
 
 #include "core/fxcrt/cfx_datetime.h"
+#include "core/fxcrt/check_op.h"
+#include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/span.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "third_party/base/check_op.h"
-#include "third_party/base/containers/span.h"
 
 std::ostream& operator<<(std::ostream& os, const CFX_DateTime& dt) {
   os << dt.GetYear() << "-" << std::to_string(dt.GetMonth()) << "-"
@@ -28,8 +29,9 @@ std::vector<std::string> StringSplit(const std::string& str, char delimiter) {
   size_t pos = 0;
   while (true) {
     size_t found = str.find(delimiter, pos);
-    if (found == std::string::npos)
+    if (found == std::string::npos) {
       break;
+    }
 
     result.push_back(str.substr(pos, found - pos));
     pos = found + 1;
@@ -44,12 +46,14 @@ std::string GetPlatformString(FPDF_WIDESTRING wstr) {
 }
 
 std::wstring GetPlatformWString(FPDF_WIDESTRING wstr) {
-  if (!wstr)
+  if (!wstr) {
     return std::wstring();
+  }
 
   size_t characters = 0;
-  while (wstr[characters])
+  while (wstr[characters]) {
     ++characters;
+  }
 
   std::wstring platform_string;
   platform_string.reserve(characters);
@@ -63,8 +67,11 @@ std::wstring GetPlatformWString(FPDF_WIDESTRING wstr) {
 ScopedFPDFWideString GetFPDFWideString(const std::wstring& wstr) {
   size_t length = sizeof(uint16_t) * (wstr.size() + 1);
   ScopedFPDFWideString result(static_cast<FPDF_WCHAR*>(malloc(length)));
-  pdfium::span<uint8_t> result_span(reinterpret_cast<uint8_t*>(result.get()),
-                                    length);
+
+  // SAFETY: length was argument to malloc above.
+  pdfium::span<uint8_t> result_span = UNSAFE_BUFFERS(
+      pdfium::span(reinterpret_cast<uint8_t*>(result.get()), length));
+
   size_t i = 0;
   for (wchar_t w : wstr) {
     result_span[i++] = w & 0xff;

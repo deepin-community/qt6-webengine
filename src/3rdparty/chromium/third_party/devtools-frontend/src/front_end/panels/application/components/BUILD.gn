@@ -5,6 +5,7 @@
 import("../../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../../scripts/build/ninja/devtools_module.gni")
 import("../../../../scripts/build/ninja/generate_css.gni")
+import("../../../../scripts/build/typescript/typescript.gni")
 import("../../visibility.gni")
 
 generate_css("css_files") {
@@ -61,7 +62,6 @@ devtools_module("components") {
     "../../../ui/components/adorners:bundle",
     "../../../ui/components/buttons:bundle",
     "../../../ui/components/chrome_link:bundle",
-    "../../../ui/components/data_grid:bundle",
     "../../../ui/components/expandable_list:bundle",
     "../../../ui/components/icon_button:bundle",
     "../../../ui/components/legacy_wrapper:bundle",
@@ -69,6 +69,7 @@ devtools_module("components") {
     "../../../ui/components/text_prompt:bundle",
     "../../../ui/components/tree_outline:bundle",
     "../../../ui/legacy:bundle",
+    "../../../ui/legacy/components/data_grid:bundle",
     "../../../ui/legacy/components/source_frame:bundle",
     "../../../ui/legacy/components/utils:bundle",
   ]
@@ -85,9 +86,35 @@ devtools_entrypoint("bundle") {
   visibility = [
     ":*",
     "../:*",
-    "../../../../test/unittests/front_end/panels/application/components/*",
     "../../../ui/components/docs/*",
   ]
 
   visibility += devtools_panels_visibility
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "BackForwardCacheView.test.ts",
+    "BounceTrackingMitigationsView.test.ts",
+    "EndpointsGrid.test.ts",
+    "FrameDetailsView.test.ts",
+    "InterestGroupAccessGrid.test.ts",
+    "OriginTrialTreeView.test.ts",
+    "ProtocolHandlersView.test.ts",
+    "ReportsGrid.test.ts",
+    "ServiceWorkerRouterView.test.ts",
+    "SharedStorageAccessGrid.test.ts",
+    "SharedStorageMetadataView.test.ts",
+    "StackTrace.test.ts",
+    "StorageMetadataView.test.ts",
+    "TrustTokensView.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../../testing",
+    "../../../ui/components/render_coordinator:bundle",
+  ]
 }

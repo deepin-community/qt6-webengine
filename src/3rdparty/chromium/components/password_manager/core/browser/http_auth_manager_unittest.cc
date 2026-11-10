@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -11,14 +12,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/test/with_feature_override.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
 #include "components/password_manager/core/browser/http_auth_manager_impl.h"
 #include "components/password_manager/core/browser/password_form.h"
@@ -95,7 +93,7 @@ class MockHttpAuthObserver : public HttpAuthObserver {
 
   MOCK_METHOD0(OnLoginModelDestroying, void());
   MOCK_METHOD2(OnAutofillDataAvailable,
-               void(const std::u16string&, const std::u16string&));
+               void(std::u16string_view, std::u16string_view));
 };
 
 ACTION_P(InvokeEmptyConsumerWithForms, store) {
@@ -104,19 +102,18 @@ ACTION_P(InvokeEmptyConsumerWithForms, store) {
 }
 }  // namespace
 
+// The boolean param determines the presence of the "account" PasswordStore.
 class HttpAuthManagerTest : public testing::Test,
-                            public base::test::WithFeatureOverride {
+                            public testing::WithParamInterface<bool> {
  public:
-  HttpAuthManagerTest()
-      : base::test::WithFeatureOverride(
-            features::kEnablePasswordsAccountStorage) {}
+  HttpAuthManagerTest() = default;
   ~HttpAuthManagerTest() override = default;
 
  protected:
   void SetUp() override {
     store_ = new testing::StrictMock<MockPasswordStoreInterface>;
 
-    if (IsParamFeatureEnabled()) {
+    if (GetParam()) {
       account_store_ = new testing::NiceMock<MockPasswordStoreInterface>;
 
       // Most tests don't really need the account store, but it'll still get
@@ -154,7 +151,6 @@ class HttpAuthManagerTest : public testing::Test,
 
   HttpAuthManagerImpl* httpauth_manager() { return httpauth_manager_.get(); }
 
-  base::test::ScopedFeatureList feature_list_;
   base::test::TaskEnvironment task_environment_;
   scoped_refptr<MockPasswordStoreInterface> store_;
   scoped_refptr<MockPasswordStoreInterface> account_store_;
@@ -182,8 +178,8 @@ TEST_P(HttpAuthManagerTest, HttpAuthFilling) {
   EXPECT_CALL(*store_, GetLogins(_, _)).WillOnce(SaveArg<1>(&consumer));
   httpauth_manager()->SetObserverAndDeliverCredentials(&observer,
                                                        observed_form);
-  EXPECT_CALL(observer, OnAutofillDataAvailable(std::u16string(u"user"),
-                                                std::u16string(u"1234")));
+  EXPECT_CALL(observer, OnAutofillDataAvailable(std::u16string_view(u"user"),
+                                                std::u16string_view(u"1234")));
   ASSERT_TRUE(consumer);
   std::vector<PasswordForm> result;
   result.push_back(stored_form);
@@ -377,6 +373,6 @@ TEST_P(HttpAuthManagerTest, FillingDisabled) {
   httpauth_manager()->DetachObserver(&observer);
 }
 
-INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(HttpAuthManagerTest);
+INSTANTIATE_TEST_SUITE_P(, HttpAuthManagerTest, ::testing::Bool());
 
 }  // namespace password_manager

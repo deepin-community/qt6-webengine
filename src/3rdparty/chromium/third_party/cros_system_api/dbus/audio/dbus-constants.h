@@ -52,8 +52,13 @@ const char kSetNextHandsfreeProfile[] = "SetNextHandsfreeProfile";
 const char kSetFixA2dpPacketSize[] = "SetFixA2dpPacketSize";
 const char kResendBluetoothBattery[] = "ResendBluetoothBattery";
 const char kGetDeprioritizeBtWbsMic[] = "GetDeprioritizeBtWbsMic";
+const char kGetVoiceIsolationUIAppearance[] = "GetVoiceIsolationUIAppearance";
+const char kSetVoiceIsolationUIEnabled[] = "SetVoiceIsolationUIEnabled";
+const char kGetAudioEffectDlcs[] = "GetAudioEffectDlcs";
 const char kSetNoiseCancellationEnabled[] = "SetNoiseCancellationEnabled";
 const char kIsNoiseCancellationSupported[] = "IsNoiseCancellationSupported";
+const char kSetStyleTransferEnabled[] = "SetStyleTransferEnabled";
+const char kIsStyleTransferSupported[] = "IsStyleTransferSupported";
 const char kSetFlossEnabled[] = "SetFlossEnabled";
 const char kSetSpeakOnMuteDetection[] = "SetSpeakOnMuteDetection";
 const char kSpeakOnMuteDetectionEnabled[] = "SpeakOnMuteDetectionEnabled";
@@ -61,6 +66,9 @@ const char kSetForceRespectUiGains[] = "SetForceRespectUiGains";
 const char kGetNumStreamIgnoreUiGains[] = "GetNumStreamIgnoreUiGains";
 const char kSetHfpMicSrEnabled[] = "SetHfpMicSrEnabled";
 const char kIsHfpMicSrSupported[] = "IsHfpMicSrSupported";
+const char kGetNumberOfArcStreams[] = "GetNumberOfArcStreams";
+const char kSetSpatialAudio[] = "SetSpatialAudio";
+const char kIsSpatialAudioSupported[] = "IsSpatialAudioSupported";
 
 // Names of properties returned by GetNodes() and GetNodeInfos()
 const char kIsInputProperty[] = "IsInput";
@@ -82,8 +90,11 @@ const char kDeviceLastOpenResultProperty[] = "DeviceLastOpenResult";
 const char kNumberOfUnderrunsProperty[] = "NumberOfUnderruns";
 const char kNumberOfSevereUnderrunsProperty[] = "NumberOfSevereUnderruns";
 enum AudioEffectType {
+  EFFECT_TYPE_NONE = 0,
   EFFECT_TYPE_NOISE_CANCELLATION = 1 << 0,
   EFFECT_TYPE_HFP_MIC_SR = 1 << 1,
+  EFFECT_TYPE_STYLE_TRANSFER = 1 << 2,
+  EFFECT_TYPE_BEAMFORMING = 1 << 3,
 };
 // Screen Rotation in clock-wise degrees.
 // This enum corresponds to enum Rotation in chromium ui/display/display.h
@@ -122,6 +133,8 @@ const char kBluetoothBatteryChanged[] = "BluetoothBatteryChanged";
 const char kSurveyTrigger[] = "SurveyTrigger";
 const char kSpeakOnMuteDetected[] = "SpeakOnMuteDetected";
 const char kNumStreamIgnoreUiGainsChanged[] = "NumStreamIgnoreUiGainsChanged";
+const char kNumberOfArcStreamsChanged[] = "NumberOfArcStreamsChanged";
+const char kAudioEffectUIAppearanceChanged[] = "AudioEffectUIAppearanceChanged";
 }  // namespace cras
 
 #endif  // SYSTEM_API_DBUS_AUDIO_DBUS_CONSTANTS_H_

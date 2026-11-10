@@ -5,8 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_UTILS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_UTILS_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/core/layout/block_node.h"
+#include "third_party/blink/renderer/core/layout/grid/grid_item.h"
 
 namespace blink {
 
@@ -40,7 +42,7 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatus(
     const BlockBreakToken* break_token,
     const LayoutResult& cached_layout_result,
     const ConstraintSpace& new_space,
-    absl::optional<FragmentGeometry>* fragment_geometry);
+    std::optional<FragmentGeometry>* fragment_geometry);
 
 // Returns true if for a given |new_space|, the |cached_layout_result| won't be
 // affected by clearance, or floats, and therefore might be able to skip
@@ -49,16 +51,25 @@ LayoutCacheStatus CalculateSizeBasedLayoutCacheStatus(
 // |bfc_block_offset|, |block_offset_delta|, and |end_margin_strut| for the
 // layout result.
 //
-// |bfc_block_offset| may still be |absl::nullopt| if not previously set.
+// |bfc_block_offset| may still be |std::nullopt| if not previously set.
 //
 // If this function returns false, |bfc_block_offset|, |block_offset_delta|,
 // and |end_margin_strut| are in an undefined state and should not be used.
 bool MaySkipLayoutWithinBlockFormattingContext(
     const LayoutResult& cached_layout_result,
     const ConstraintSpace& new_space,
-    absl::optional<LayoutUnit>* bfc_block_offset,
+    std::optional<LayoutUnit>* bfc_block_offset,
     LayoutUnit* block_offset_delta,
     MarginStrut* end_margin_strut);
+
+// Returns the alignment offset for either the inline or block direction.
+LayoutUnit AlignmentOffset(LayoutUnit container_size,
+                           LayoutUnit size,
+                           LayoutUnit margin_start,
+                           LayoutUnit margin_end,
+                           LayoutUnit baseline_offset,
+                           AxisEdge axis_edge,
+                           bool is_overflow_safe);
 
 }  // namespace blink
 

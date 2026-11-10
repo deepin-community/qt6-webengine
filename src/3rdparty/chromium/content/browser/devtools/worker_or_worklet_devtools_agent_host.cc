@@ -6,11 +6,12 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/safety_checks.h"
 #include "content/browser/devtools/worker_devtools_manager.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/storage_partition_impl.h"
+#include "content/common/features.h"
 #include "content/public/browser/child_process_host.h"
-#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
@@ -29,11 +30,15 @@ WorkerOrWorkletDevToolsAgentHost::WorkerOrWorkletDevToolsAgentHost(
       name_(name),
       destroyed_callback_(std::move(destroyed_callback)) {
   DCHECK(!devtools_worker_token.is_empty());
-  // TODO(crbug.com/906991): Remove AddRef() and Release() once
-  // PlzDedicatedWorker is enabled and the code for non-PlzDedicatedWorker is
-  // deleted. Worker agent hosts will be retained by the Worker DevTools manager
-  // instead.
-  AddRef();  // Self keep-alive while the worker agent is alive.
+  if (auto* rph = RenderProcessHost::FromID(process_id)) {
+    process_observation_.Observe(rph);
+  }
+  if (base::FeatureList::IsEnabled(
+          features::kWorkerOrWorkletAgentDoubleReleaseFix)) {
+    self_keepalive_ = this;
+  } else {
+    AddRef();  // Self keep-alive while the worker agent is alive.
+  }
 }
 
 WorkerOrWorkletDevToolsAgentHost::~WorkerOrWorkletDevToolsAgentHost() = default;
@@ -57,19 +62,33 @@ void WorkerOrWorkletDevToolsAgentHost::ChildWorkerCreated(
     const GURL& url,
     const std::string& name,
     base::OnceCallback<void(DevToolsAgentHostImpl*)> callback) {
-  DCHECK(base::FeatureList::IsEnabled(blink::features::kPlzDedicatedWorker));
-
   url_ = url;
   name_ = name;
   destroyed_callback_ = std::move(callback);
 }
 
 void WorkerOrWorkletDevToolsAgentHost::Disconnected() {
+  // This function is known to be heap allocation heavy and performance
+  // critical. Extra memory safety checks can introduce regression
+  // (https://crbug.com/414710225) and these are disabled here.
+  base::ScopedSafetyChecksExclusion scoped_unsafe;
+
   auto retain_this = ForceDetachAllSessionsImpl();
   GetRendererChannel()->SetRenderer(mojo::NullRemote(), mojo::NullReceiver(),
                                     ChildProcessHost::kInvalidUniqueID);
-  std::move(destroyed_callback_).Run(this);
-  Release();  // Matches AddRef() in constructor.
+
+  if (base::FeatureList::IsEnabled(
+          features::kWorkerOrWorkletAgentDoubleReleaseFix)) {
+    if (destroyed_callback_) {
+      std::move(destroyed_callback_).Run(this);
+    }
+    process_observation_.Reset();
+    self_keepalive_.reset();
+  } else {
+    std::move(destroyed_callback_).Run(this);
+    process_observation_.Reset();
+    Release();
+  }
 }
 
 BrowserContext* WorkerOrWorkletDevToolsAgentHost::GetBrowserContext() {
@@ -101,6 +120,11 @@ void WorkerOrWorkletDevToolsAgentHost::Reload() {}
 
 bool WorkerOrWorkletDevToolsAgentHost::Close() {
   return false;
+}
+
+void WorkerOrWorkletDevToolsAgentHost::RenderProcessHostDestroyed(
+    RenderProcessHost* host) {
+  Disconnected();
 }
 
 }  // namespace content

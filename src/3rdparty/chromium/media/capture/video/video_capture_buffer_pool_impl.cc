@@ -55,7 +55,6 @@ VideoCaptureBufferPoolImpl::DuplicateAsUnsafeRegion(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return {};
   }
   return tracker->DuplicateAsUnsafeRegion();
 }
@@ -67,7 +66,6 @@ VideoCaptureBufferPoolImpl::GetHandleForInProcessAccess(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return nullptr;
   }
 
   return tracker->GetMemoryMappedAccess();
@@ -79,7 +77,6 @@ gfx::GpuMemoryBufferHandle VideoCaptureBufferPoolImpl::GetGpuMemoryBufferHandle(
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return gfx::GpuMemoryBufferHandle();
   }
 
   return tracker->GetGpuMemoryBufferHandle();
@@ -91,7 +88,7 @@ VideoCaptureBufferType VideoCaptureBufferPoolImpl::GetBufferType(
 
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
-    NOTREACHED_NORETURN() << "Unrecognized buffer id, buffer_id=" << buffer_id;
+    NOTREACHED() << "Unrecognized buffer id, buffer_id=" << buffer_id;
   }
 
   return tracker->GetBufferType();
@@ -116,7 +113,6 @@ void VideoCaptureBufferPoolImpl::RelinquishProducerReservation(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->SetHeldByProducer(false);
 }
@@ -195,7 +191,6 @@ void VideoCaptureBufferPoolImpl::HoldForConsumers(int buffer_id,
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->AddConsumerHolds(num_clients);
   // Note: The buffer will stay held by the producer until
@@ -209,7 +204,6 @@ void VideoCaptureBufferPoolImpl::RelinquishConsumerHold(int buffer_id,
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->RemoveConsumerHolds(num_clients);
 }

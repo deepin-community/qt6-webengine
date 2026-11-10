@@ -14,6 +14,7 @@ void ExclusionShapeData::Trace(Visitor* visitor) const {
 
 bool ExclusionArea::operator==(const ExclusionArea& other) const {
   return type == other.type && kind == other.kind && rect == other.rect &&
+         is_hidden_for_paint == other.is_hidden_for_paint &&
          shape_data == other.shape_data;
 }
 
@@ -25,7 +26,7 @@ struct PrintableEFloat {
 };
 
 std::ostream& operator<<(std::ostream& os, const PrintableEFloat& printable) {
-  const char* kStrings[] = {
+  std::array<const char*, 5> kStrings = {
       "kNone", "kLeft", "kRight", "kInlineStart", "kInlineEnd",
   };
   const unsigned index = static_cast<unsigned>(printable.value);
@@ -40,7 +41,7 @@ struct PrintableKind {
 };
 
 std::ostream& operator<<(std::ostream& os, const PrintableKind& printable) {
-  const char* kStrings[] = {
+  std::array<const char*, 2> kStrings = {
       "kFloat",
       "kInitialLetterBox",
   };

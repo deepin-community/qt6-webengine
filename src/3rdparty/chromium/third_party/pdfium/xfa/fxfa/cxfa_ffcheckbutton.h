@@ -27,13 +27,13 @@ class CXFA_FFCheckButton final : public CXFA_FFField {
                     HighlightOption highlight) override;
 
   bool LoadWidget() override;
-  bool PerformLayout() override;
-  bool UpdateFWLData() override;
+  void PerformLayout() override;
+  void UpdateFWLData() override;
   void UpdateWidgetProperty() override;
   bool OnLButtonUp(Mask<XFA_FWL_KeyFlag> dwFlags,
                    const CFX_PointF& point) override;
   void OnProcessMessage(CFWL_Message* pMessage) override;
-  void OnProcessEvent(CFWL_Event* pEvent) override;
+  void OnProcessEvent(pdfium::CFWL_Event* pEvent) override;
   void OnDrawWidget(CFGAS_GEGraphics* pGraphics,
                     const CFX_Matrix& matrix) override;
   FormFieldType GetFormFieldType() override;
@@ -49,9 +49,9 @@ class CXFA_FFCheckButton final : public CXFA_FFField {
   void AddUIMargin(XFA_AttributeValue iCapPlacement);
   XFA_CheckState FWLState2XFAState();
 
-  cppgc::Member<IFWL_WidgetDelegate> m_pOldDelegate;
+  cppgc::Member<IFWL_WidgetDelegate> old_delegate_;
   cppgc::Member<CXFA_CheckButton> const button_;
-  CFX_RectF m_CheckBoxRect;
+  CFX_RectF check_box_rect_;
 };
 
 #endif  // XFA_FXFA_CXFA_FFCHECKBUTTON_H_

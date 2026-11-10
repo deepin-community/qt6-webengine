@@ -108,6 +108,7 @@ class TOutputGLSLBase : public TIntermTraverser
 
     // name hashing.
     ShHashFunction64 mHashFunction;
+    char mUserVariablePrefix;
     NameMap &mNameMap;
 
     sh::GLenum mShaderType;
@@ -140,6 +141,9 @@ void WriteTessEvaluationShaderLayoutQualifiers(TInfoSinkBase &out,
                                                sh::TLayoutTessEvaluationType inputVertexSpacing,
                                                sh::TLayoutTessEvaluationType inputOrdering,
                                                sh::TLayoutTessEvaluationType inputPoint);
+
+void WriteFragmentShaderLayoutQualifiers(TInfoSinkBase &out,
+                                         const AdvancedBlendEquations &advancedBlendEquations);
 
 void EmitEarlyFragmentTestsGLSL(const TCompiler &, TInfoSinkBase &sink);
 void EmitWorkGroupSizeGLSL(const TCompiler &, TInfoSinkBase &sink);

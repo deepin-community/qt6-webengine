@@ -17,7 +17,6 @@
 #include "base/thread_annotations.h"
 #include "base/tuple.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "media/midi/midi_manager.h"
@@ -77,6 +76,10 @@ class CONTENT_EXPORT MidiHost : public midi::MidiManagerClient,
 
  protected:
   MidiHost(int renderer_process_id, midi::MidiService* midi_service);
+
+  void SetHasMidiPermissionForTesting(bool value) {
+    has_midi_permission_ = value;
+  }
 
  private:
   // Use this to call methods on |midi_client_|. It makes sure that midi_client_

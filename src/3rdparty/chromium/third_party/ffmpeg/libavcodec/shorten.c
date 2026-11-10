@@ -26,6 +26,7 @@
  */
 
 #include <limits.h>
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bswapdsp.h"
 #include "bytestream.h"
@@ -581,10 +582,9 @@ static int shorten_decode_frame(AVCodecContext *avctx, AVFrame *frame,
             return ret;
 
         if (avpkt->size) {
-            int max_framesize;
+            int max_framesize = s->blocksize * s->channels * 8;
             void *tmp_ptr;
 
-            max_framesize = FFMAX(s->max_framesize, s->blocksize * s->channels * 8);
             tmp_ptr = av_fast_realloc(s->bitstream, &s->allocated_bitstream_size,
                                       max_framesize + AV_INPUT_BUFFER_PADDING_SIZE);
             if (!tmp_ptr) {
@@ -592,7 +592,10 @@ static int shorten_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                 return AVERROR(ENOMEM);
             }
             s->bitstream = tmp_ptr;
-            s->max_framesize = max_framesize;
+            if (max_framesize > s->max_framesize)
+                memset(s->bitstream + s->max_framesize, 0, (max_framesize - s->max_framesize) +
+                                                            AV_INPUT_BUFFER_PADDING_SIZE);
+            s->max_framesize = FFMAX(s->max_framesize, max_framesize);
             *got_frame_ptr = 0;
             goto finish_frame;
         }
@@ -814,11 +817,6 @@ const FFCodec ff_shorten_decoder = {
     FF_CODEC_DECODE_CB(shorten_decode_frame),
     .p.capabilities = AV_CODEC_CAP_CHANNEL_CONF |
                       AV_CODEC_CAP_DELAY |
-#if FF_API_SUBFRAMES
-                      AV_CODEC_CAP_SUBFRAMES |
-#endif
                       AV_CODEC_CAP_DR1,
-    .p.sample_fmts  = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
-                                                      AV_SAMPLE_FMT_U8P,
-                                                      AV_SAMPLE_FMT_NONE },
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16P, AV_SAMPLE_FMT_U8P),
 };

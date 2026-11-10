@@ -1,5 +1,6 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "render_widget_host_view_qt_delegate_client.h"
 
@@ -10,10 +11,11 @@
 #include "web_contents_adapter_client.h"
 #include "web_event_factory.h"
 
+#include "components/input/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "ui/touch_selection/touch_selection_controller.h"
 
+#include <QDebug>
 #include <QEvent>
 #include <QInputMethodEvent>
 #include <QSet>
@@ -23,6 +25,8 @@
 
 #include <QtGui/private/qguiapplication_p.h>
 #include <QtGui/private/qinputcontrol_p.h>
+
+using namespace Qt::StringLiterals;
 
 namespace QtWebEngineCore {
 
@@ -76,12 +80,31 @@ public:
         , flags(flagsFromModifiers(modifiers))
         , index(index)
     {
+#if !defined(QT_NO_DEBUG) || defined(QT_FORCE_ASSERTS)
         // index is only valid for POINTER_DOWN and POINTER_UP and should correspond to the point
         // causing it see blink_event_util.cc:ToWebTouchPointState for details
-        Q_ASSERT_X((action != Action::POINTER_DOWN && action != Action::POINTER_UP && index == -1)
-                || (action == Action::POINTER_DOWN && index >= 0 && touchPoint(index).state() == QEventPoint::Pressed)
-                || (action == Action::POINTER_UP && index >= 0 && touchPoint(index).state() == QEventPoint::Released),
-                "MotionEventQt", qPrintable(QString("action: %1, index: %2, state: %3").arg(int(action)).arg(index).arg(touchPoint(index).state())));
+        if (action == Action::POINTER_DOWN || action == Action::POINTER_UP) {
+            const auto actionString = (action == Action::POINTER_DOWN ? "Action::POINTER_DOWN"_L1
+                                                                      : "Action::POINTER_UP"_L1);
+            Q_ASSERT_X(index >= 0 && index < touchPoints.size(), "MotionEventQt",
+                       qPrintable("Invalid index for "_L1 + actionString + ": "_L1
+                                  + QString::number(index)));
+
+            const QEventPoint::State state = touchPoint(index).state();
+            QString stateString;
+            QDebug(&stateString) << state;
+            Q_ASSERT_X(
+                    (action == Action::POINTER_DOWN && state == QEventPoint::Pressed)
+                            || (action == Action::POINTER_UP && state == QEventPoint::Released),
+                    "MotionEventQt",
+                    qPrintable("Unexpected state for "_L1 + actionString + ": "_L1 + stateString));
+        } else {
+            Q_ASSERT_X(index == -1, "MotionEventQt",
+                       qPrintable("Unexpected index for action "_L1
+                                  + QString::number(static_cast<int>(action)) + ": "_L1
+                                  + QString::number(index)));
+        }
+#endif
     }
 
     uint32_t GetUniqueEventId() const override { return eventId; }
@@ -192,18 +215,20 @@ void RenderWidgetHostViewQtDelegateClient::visualPropertiesChanged()
         return;
 
     QRect oldViewRect = m_viewRectInDips;
-    m_viewRectInDips = delegate->viewGeometry().toAlignedRect();
+    m_viewRectInDips = delegate->viewGeometry().toRect();
 
     QRect oldWindowRect = m_windowRectInDips;
     m_windowRectInDips = delegate->windowGeometry();
 
     bool screenInfoChanged = m_rwhv->updateScreenInfo();
 
-    if (m_viewRectInDips != oldViewRect || m_windowRectInDips != oldWindowRect)
+    if (m_viewRectInDips != oldViewRect || m_windowRectInDips != oldWindowRect) {
         m_rwhv->host()->SendScreenRects();
+        m_rwhv->synchronizeVisualProperties(std::nullopt);
+    }
 
     if (m_viewRectInDips.size() != oldViewRect.size() || screenInfoChanged)
-        m_rwhv->synchronizeVisualProperties(absl::nullopt);
+        m_rwhv->synchronizeVisualProperties(std::nullopt);
 }
 
 bool RenderWidgetHostViewQtDelegateClient::forwardEvent(QEvent *event)
@@ -331,7 +356,11 @@ QVariant RenderWidgetHostViewQtDelegateClient::inputMethodQuery(Qt::InputMethodQ
 {
     switch (query) {
     case Qt::ImEnabled:
-        return QVariant(m_rwhv->getTextInputType() != ui::TEXT_INPUT_TYPE_NONE);
+        if (const auto *state = m_rwhv->getTextInputState()) {
+            return QVariant(state->mode != ui::TEXT_INPUT_MODE_NONE
+                            && state->type != ui::TEXT_INPUT_TYPE_NONE);
+        }
+        return QVariant(false);
     case Qt::ImFont:
         // TODO: Implement this
         return QVariant();
@@ -363,8 +392,7 @@ QVariant RenderWidgetHostViewQtDelegateClient::inputMethodQuery(Qt::InputMethodQ
         // TODO: Implement this
         return QVariant(); // No limit.
     case Qt::ImHints:
-        return int(toQtInputMethodHints(m_rwhv->getTextInputType()) | Qt::ImhNoPredictiveText
-                   | Qt::ImhNoTextHandles | Qt::ImhNoEditMenu);
+        return static_cast<int>(m_rwhv->inputMethodHints());
     default:
         return QVariant();
     }
@@ -416,7 +444,7 @@ void RenderWidgetHostViewQtDelegateClient::handlePointerEvent(T *event)
     webEvent.movement_y = event->globalPosition().y() - m_previousMousePosition.y();
     webEvent.is_raw_movement_event = true;
 
-    if (m_rwhv->IsMouseLocked())
+    if (m_rwhv->IsPointerLocked())
         QCursor::setPos(m_previousMousePosition);
     else
         m_previousMousePosition = event->globalPosition().toPoint();
@@ -450,9 +478,9 @@ void RenderWidgetHostViewQtDelegateClient::handleMouseEvent(QMouseEvent *event)
 
 void RenderWidgetHostViewQtDelegateClient::handleKeyEvent(QKeyEvent *event)
 {
-    if (m_rwhv->IsMouseLocked() && event->key() == Qt::Key_Escape
+    if (m_rwhv->IsPointerLocked() && event->key() == Qt::Key_Escape
         && event->type() == QEvent::KeyRelease)
-        m_rwhv->UnlockMouse();
+        m_rwhv->UnlockPointer();
 
     if (m_receivedEmptyImeEvent) {
         // IME composition was not finished with a valid commit string.
@@ -484,10 +512,9 @@ void RenderWidgetHostViewQtDelegateClient::handleKeyEvent(QKeyEvent *event)
     if (!m_rwhv->GetFocusedWidget())
         return;
 
-    content::NativeWebKeyboardEvent webEvent = WebEventFactory::toWebKeyboardEvent(event);
+    input::NativeWebKeyboardEvent webEvent = WebEventFactory::toWebKeyboardEvent(event);
     if (webEvent.GetType() == blink::WebInputEvent::Type::kRawKeyDown && !m_editCommand.empty()) {
         ui::LatencyInfo latency;
-        latency.set_source_event_type(ui::SourceEventType::KEY_PRESS);
         std::vector<blink::mojom::EditCommandPtr> commands;
         commands.emplace_back(blink::mojom::EditCommand::New(m_editCommand, ""));
         m_editCommand.clear();
@@ -652,8 +679,10 @@ void RenderWidgetHostViewQtDelegateClient::handleTouchEvent(QTouchEvent *event)
         case QEvent::TouchUpdate:
             for (; lastPressIndex >= 0; --lastPressIndex) {
                 Q_ASSERT(touchPoints[lastPressIndex].second.state() == QEventPoint::Pressed);
-                MotionEventQt me(touchPoints.mid(lastPressIndex), eventTimestamp, ui::MotionEvent::Action::POINTER_DOWN, event->modifiers(), 0);
-                m_rwhv->processMotionEvent(me);
+                MotionEventQt updateMe(touchPoints.mid(lastPressIndex), eventTimestamp,
+                                       ui::MotionEvent::Action::POINTER_DOWN, event->modifiers(),
+                                       0);
+                m_rwhv->processMotionEvent(updateMe);
             }
 
             if (event->touchPointStates() & Qt::TouchPointMoved)
@@ -663,9 +692,13 @@ void RenderWidgetHostViewQtDelegateClient::handleTouchEvent(QTouchEvent *event)
 
         case QEvent::TouchEnd:
             while (!touchPoints.isEmpty() && touchPoints.back().second.state() == QEventPoint::Released) {
-                auto action = touchPoints.size() > 1 ? ui::MotionEvent::Action::POINTER_UP : ui::MotionEvent::Action::UP;
-                int index = action == ui::MotionEvent::Action::POINTER_UP ? touchPoints.size() - 1 : -1;
-                m_rwhv->processMotionEvent(MotionEventQt(touchPoints, eventTimestamp, action, event->modifiers(), index));
+                auto endAction = touchPoints.size() > 1 ? ui::MotionEvent::Action::POINTER_UP
+                                                        : ui::MotionEvent::Action::UP;
+                int index = endAction == ui::MotionEvent::Action::POINTER_UP
+                        ? touchPoints.size() - 1
+                        : -1;
+                m_rwhv->processMotionEvent(MotionEventQt(touchPoints, eventTimestamp, endAction,
+                                                         event->modifiers(), index));
                 touchPoints.pop_back();
             }
             break;
@@ -701,6 +734,13 @@ void RenderWidgetHostViewQtDelegateClient::handleGestureEvent(QNativeGestureEven
 
 void RenderWidgetHostViewQtDelegateClient::handleHoverEvent(QHoverEvent *event)
 {
+    // Don't forward hover events during an active touch sequence.
+    // Qt Quick delivers hover events for touch points, and these get converted
+    // to WebMouseEvent with no button pressed, which causes Chromium's compositor
+    // to cancel active scrollbar drags (QTBUG-136619).
+    if (m_touchMotionStarted)
+        return;
+
     auto *hostDelegate = m_rwhv->host()->delegate();
     if (hostDelegate && hostDelegate->GetInputEventRouter()) {
         auto webEvent = WebEventFactory::toWebMouseEvent(event);
@@ -736,8 +776,8 @@ void RenderWidgetHostViewQtDelegateClient::handleInputMethodEvent(QInputMethodEv
     if (!m_rwhv->host())
         return;
 
-    QString commitString = event->commitString();
-    QString preeditString = event->preeditString();
+    const QString commitString = event->commitString();
+    const QString preeditString = event->preeditString();
 
     int cursorPositionInPreeditString = -1;
     gfx::Range selectionRange = gfx::Range::InvalidRange();
@@ -851,7 +891,7 @@ void RenderWidgetHostViewQtDelegateClient::handleInputMethodEvent(QInputMethodEv
 
     m_receivedEmptyImeEvent = false;
 
-    // Finish compostion: insert or erase text.
+    // Finish composition: insert or erase text.
     if (!commitString.isEmpty() || replacementLength > 0) {
         m_rwhv->host()->ImeCommitText(toString16(commitString), underlines, replacementRange, 0);
         m_imeInProgress = false;
@@ -890,10 +930,12 @@ void RenderWidgetHostViewQtDelegateClient::clearPreviousTouchMotionState()
 void RenderWidgetHostViewQtDelegateClient::selectionChanged()
 {
     m_rwhv->resetInputManagerState();
-    ui::TextInputType type = m_rwhv->getTextInputType();
-    content::TextInputManager *text_input_manager = m_rwhv->GetTextInputManager();
 
-    // Handle text selection out of an input field
+    const content::TextInputManager *manager = m_rwhv->GetTextInputManager();
+    const ui::mojom::TextInputState *state = m_rwhv->getTextInputState();
+    ui::TextInputType type = state ? state->type : ui::TEXT_INPUT_TYPE_NONE;
+
+    // Handle text selection out of an editable field
     if (type == ui::TEXT_INPUT_TYPE_NONE) {
         if (m_rwhv->GetSelectedText().empty() && m_emptyPreviousSelection)
             return;
@@ -913,8 +955,8 @@ void RenderWidgetHostViewQtDelegateClient::selectionChanged()
         // RenderWidgetHostViewQt::OnUpdateTextInputStateCalled() does not update the cursor
         // position if the selection is cleared because TextInputState changes before the
         // TextSelection change.
-        Q_ASSERT(text_input_manager->GetTextInputState());
-        m_cursorPosition = text_input_manager->GetTextInputState()->selection.start();
+        Q_ASSERT(state);
+        m_cursorPosition = state->selection.start();
         m_rwhv->delegate()->inputMethodStateChanged(true /*editorVisible*/,
                                                     type == ui::TEXT_INPUT_TYPE_PASSWORD);
 
@@ -929,8 +971,7 @@ void RenderWidgetHostViewQtDelegateClient::selectionChanged()
         return;
     }
 
-    const content::TextInputManager::TextSelection *selection =
-            text_input_manager->GetTextSelection();
+    const content::TextInputManager::TextSelection *selection = manager->GetTextSelection();
     if (!selection)
         return;
 
@@ -940,7 +981,7 @@ void RenderWidgetHostViewQtDelegateClient::selectionChanged()
     int newAnchorPositionWithinSelection = 0;
     int newCursorPositionWithinSelection = 0;
 
-    if (text_input_manager->GetSelectionRegion()->anchor.type() == gfx::SelectionBound::RIGHT) {
+    if (manager->GetSelectionRegion()->anchor.type() == gfx::SelectionBound::RIGHT) {
         newAnchorPositionWithinSelection = selection->range().GetMax() - selection->offset();
         newCursorPositionWithinSelection = selection->range().GetMin() - selection->offset();
     } else {

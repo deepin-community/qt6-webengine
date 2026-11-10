@@ -44,7 +44,7 @@ enum class AppCreationFailureReason {
 
 class ContentPaymentRequestDelegate;
 class CSPChecker;
-class PaymentManifestWebDataService;
+class WebPaymentsWebDataService;
 class PaymentRequestSpec;
 
 // Base class for a factory that can create instances of payment apps.
@@ -78,8 +78,8 @@ class PaymentAppFactory {
         const = 0;
     virtual std::unique_ptr<webauthn::InternalAuthenticator>
     CreateInternalAuthenticator() const = 0;
-    virtual scoped_refptr<PaymentManifestWebDataService>
-    GetPaymentManifestWebDataService() const = 0;
+    virtual scoped_refptr<WebPaymentsWebDataService>
+    GetWebPaymentsWebDataService() const = 0;
     virtual bool IsOffTheRecord() const = 0;
 
     // Returns the merchant provided information, or null if the payment is
@@ -131,10 +131,10 @@ class PaymentAppFactory {
     // attach the payment dialog to it. This interface should only be used
     // in ChromeOS.
     // At the moment, this interface is only implemented in Lacros and for all
-    // other platforms this will return absl::nullopt. In addition to that, if
+    // other platforms this will return std::nullopt. In addition to that, if
     // for any reason, we failed to find the app instance, this method will
-    // also return absl::nullopt.
-    virtual absl::optional<base::UnguessableToken> GetChromeOSTWAInstanceId()
+    // also return std::nullopt.
+    virtual std::optional<base::UnguessableToken> GetChromeOSTWAInstanceId()
         const = 0;
   };
 

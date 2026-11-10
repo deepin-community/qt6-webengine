@@ -25,9 +25,8 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
-#include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/core/css/rule_set_diff.h"
-#include "third_party/blink/renderer/core/loader/resource/css_style_sheet_resource.h"
+#include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/render_blocking_behavior.h"
@@ -43,10 +42,13 @@
 namespace blink {
 
 class CSSStyleSheet;
+class CSSStyleSheetResource;
 class Document;
+class MediaQueryEvaluator;
 class Node;
 class StyleRuleBase;
 class StyleRuleFontFace;
+class RuleSet;
 class RuleSetDiff;
 class StyleRuleImport;
 class StyleRuleNamespace;
@@ -74,7 +76,10 @@ class CORE_EXPORT StyleSheetContents final
   const AtomicString& NamespaceURIFromPrefix(const AtomicString& prefix) const;
 
   void ParseAuthorStyleSheet(const CSSStyleSheetResource*);
-  ParseSheetResult ParseString(const String&, bool allow_import_rules = true);
+  ParseSheetResult ParseString(const String&,
+                               bool allow_import_rules = true,
+                               CSSDeferPropertyParsing defer_property_parsing =
+                                   CSSDeferPropertyParsing::kNo);
 
   bool IsCacheableForResource() const;
   bool IsCacheableForStyleElement() const;
@@ -93,13 +98,14 @@ class CORE_EXPORT StyleSheetContents final
   Document* SingleOwnerDocument() const;
   bool HasSingleOwnerDocument() const { return has_single_owner_document_; }
 
+  // Gets a client in the given TreeScope.
+  CSSStyleSheet* ClientInTreeScope(const TreeScope& tree_scope) const;
+
   // Gets the first owner document in the list of registered clients, or nullptr
   // if there are none.
   Document* AnyOwnerDocument() const;
 
-  const WTF::TextEncoding& Charset() const {
-    return parser_context_->Charset();
-  }
+  const TextEncoding& Charset() const { return parser_context_->Charset(); }
 
   bool LoadCompleted() const;
   bool HasFailedOrCanceledSubresources() const;
@@ -111,9 +117,6 @@ class CORE_EXPORT StyleSheetContents final
 
   void SetHasFontFaceRule() { has_font_face_rule_ = true; }
   bool HasFontFaceRule() const { return has_font_face_rule_; }
-
-  void SetHasViewportRule() { has_viewport_rule_ = true; }
-  bool HasViewportRule() const { return has_viewport_rule_; }
 
   void ParserAddNamespace(const AtomicString& prefix, const AtomicString& uri);
   void ParserAppendRule(StyleRuleBase*);
@@ -132,9 +135,9 @@ class CORE_EXPORT StyleSheetContents final
   // call on the same (new) rule. The position_hint is not capable of describing
   // rules nested within other rules; the result will still be correct, but the
   // search will be slow for such rules.
-  wtf_size_t ReplaceRuleIfExists(StyleRuleBase* old_rule,
-                                 StyleRuleBase* new_rule,
-                                 wtf_size_t position_hint);
+  wtf_size_t ReplaceChildRuleIfExists(StyleRuleBase* old_rule,
+                                      StyleRuleBase* new_rule,
+                                      wtf_size_t position_hint);
 
   // Notify the style sheet that a rule has changed externally, for diff
   // purposes (see RuleSetDiff). In particular, if a rule changes selector
@@ -214,9 +217,25 @@ class CORE_EXPORT StyleSheetContents final
   bool IsMutable() const { return is_mutable_; }
   void StartMutation();
 
+  // Set to true whenever this StyleSheetContents was returned as a cache hit
+  // from the text cache (StyleEngine::CreateSheet()). If this flag is true,
+  // is means that this StyleSheetContents may be shared between multiple
+  // CSSStyleSheets.
   bool IsUsedFromTextCache() const { return is_used_from_text_cache_; }
   void SetIsUsedFromTextCache() { is_used_from_text_cache_ = true; }
 
+  // Set to true whenever this StyleSheetContents was returned as a cache hit
+  // from the resource cache [1]. If this flag is true, is means that this
+  // StyleSheetContents may be shared between multiple CSSStyleSheets.
+  //
+  // [1] CSSStyleSheetResource::CreateParsedStyleSheetFromCache
+  bool IsUsedFromResourceCache() const { return is_used_from_resource_cache_; }
+  void SetIsUsedFromResourceCache() { is_used_from_resource_cache_ = true; }
+
+  // The CSSStyleSheetResource is set whenever this StyleSheetContents is
+  // the cached stylesheet of that CSSStyleSheetResource. We must not modify
+  // this StyleSheetContents while this is true, and any mutations must
+  // therefore perform a copy-on-write first.
   bool IsReferencedFromResource() const {
     return referenced_from_resource_ != nullptr;
   }
@@ -236,6 +255,10 @@ class CORE_EXPORT StyleSheetContents final
   bool HasRuleSet() { return rule_set_.Get(); }
   RuleSet& EnsureRuleSet(const MediaQueryEvaluator&);
   void ClearRuleSet();
+  // Create a RuleSet which is not associated (i.e. not owned)
+  // by this StyleSheetContents. This is useful for matching rules
+  // in  an "alternate reality", which is the case for InspectorGhostRules.
+  RuleSet* CreateUnconnectedRuleSet(const MediaQueryEvaluator&) const;
 
   String SourceMapURL() const { return source_map_url_; }
 
@@ -272,10 +295,10 @@ class CORE_EXPORT StyleSheetContents final
   bool did_load_error_occur_ : 1;
   bool is_mutable_ : 1;
   bool has_font_face_rule_ : 1;
-  bool has_viewport_rule_ : 1;
   bool has_media_queries_ : 1;
   bool has_single_owner_document_ : 1;
   bool is_used_from_text_cache_ : 1;
+  bool is_used_from_resource_cache_ : 1;
 
   Member<const CSSParserContext> parser_context_;
 

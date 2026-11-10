@@ -15,14 +15,13 @@
 #include "./centipede/rusage_stats.h"
 
 #include <cmath>
-#include <cstddef>
 #include <iosfwd>
 #include <numeric>
 #include <string>
-#include <thread>  // NOLINT
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "absl/base/nullability.h"
 #include "absl/flags/flag.h"
 #include "absl/log/log.h"
 #include "absl/synchronization/barrier.h"
@@ -30,7 +29,8 @@
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "./centipede/logging.h"  // IWYU pragma: keep
+#include "./centipede/thread_pool.h"
+#include "./common/logging.h"  // IWYU pragma: keep
 
 ABSL_FLAG(bool, verbose, false, "Print extra info for debugging");
 ABSL_FLAG(bool, enable_system_load_sensitive_tests, false,
@@ -38,7 +38,7 @@ ABSL_FLAG(bool, enable_system_load_sensitive_tests, false,
           "environment on the current machine, e.g. the wall time accuracy or "
           "average CPU load");
 
-namespace centipede::perf {
+namespace fuzztest::internal {
 namespace {
 
 class BigThing {
@@ -63,13 +63,13 @@ class BigThing {
 // subsides too much.
 class CpuHog {
  public:
-  CpuHog(                                   //
-      absl::Duration idle_time,             //
-      absl::Duration hog_time,              //
-      int num_hogs,                         //
-      absl::Notification* hogging_started,  //
-      absl::Notification* hogging_stopped)
-      : hog_barrier_{num_hogs}, hog_pool_{static_cast<size_t>(num_hogs)} {
+  CpuHog(                                                //
+      absl::Duration idle_time,                          //
+      absl::Duration hog_time,                           //
+      int num_hogs,                                      //
+      absl::Notification* absl_nonnull hogging_started,  //
+      absl::Notification* absl_nonnull hogging_stopped)
+      : hog_barrier_{num_hogs}, hog_pool_{num_hogs} {
     const auto hog_func = [=]() {
       const absl::Time start = absl::Now();
       double cpu_waster = 1.23;
@@ -110,15 +110,8 @@ class CpuHog {
     // Consume ~num_hogs cores at ~100% utilization for ~hog_time. The caller
     // gets notified when the hogging begins and ends, so they know when they
     // can sample the CPU utilization.
-    hog_pool_.resize(num_hogs);
-    for (auto& hog : hog_pool_) {
-      hog = std::thread{hog_func};
-    }
-  }
-
-  ~CpuHog() {
-    for (auto& hog : hog_pool_) {
-      hog.join();
+    for (int i = 0; i < num_hogs; ++i) {
+      hog_pool_.Schedule(hog_func);
     }
   }
 
@@ -127,7 +120,7 @@ class CpuHog {
   // hog_pool_ and thus must outlive hog_pool_.
   absl::Mutex mu_;
   absl::Barrier hog_barrier_;
-  std::vector<std::thread> hog_pool_;
+  ThreadPool hog_pool_;
 };
 
 // A simple histogram.
@@ -303,7 +296,11 @@ TEST(RUsageMemoryTest, Accuracy) {
 #if !defined(ADDRESS_SANITIZER) && !defined(THREAD_SANITIZER) && \
     !defined(MEMORY_SANITIZER)
   EXPECT_NEAR(mem_rss_histo.Average(), kBytes, kRssLeeway) << mem_rss_histo;
+#ifdef __APPLE__
+  // `data` is not supported.
+#else
   EXPECT_NEAR(mem_data_histo.Average(), kBytes, kDataLeeway) << mem_data_histo;
+#endif
 #else
   LOG(WARNING) << "Validation of test results omitted under *SAN: see code";
 #endif
@@ -324,30 +321,25 @@ TEST(RUsageMemoryTest, BadScope) {
 }
 
 TEST(RUsageTimingTest, ConstantsAndMath) {
-  const RUsageTiming timing = {
-      .wall_time = absl::Seconds(4),
-      .user_time = absl::Seconds(2),
-      .sys_time = absl::Seconds(1),
-      .cpu_utilization = .8,
-      .cpu_hyper_cores = .6,
-      .is_delta = false,
-  };
-  const RUsageTiming half_timing = {
-      .wall_time = timing.wall_time / 2,
-      .user_time = timing.user_time / 2,
-      .sys_time = timing.sys_time / 2,
-      .cpu_utilization = timing.cpu_utilization / 2,
-      .cpu_hyper_cores = timing.cpu_hyper_cores / 2,
-      .is_delta = false,
-  };
-  const RUsageTiming quarter_timing = {
-      .wall_time = timing.wall_time / 4,
-      .user_time = timing.user_time / 4,
-      .sys_time = timing.sys_time / 4,
-      .cpu_utilization = timing.cpu_utilization / 4,
-      .cpu_hyper_cores = timing.cpu_hyper_cores / 4,
-      .is_delta = false,
-  };
+  const RUsageTiming timing{/*wall_time=*/absl::Seconds(4),
+                            /*user_time=*/absl::Seconds(2),
+                            /*sys_time=*/absl::Seconds(1),
+                            /*cpu_utilization=*/.8,
+                            /*cpu_hyper_cores=*/.6,
+                            /*is_delta=*/false};
+  const RUsageTiming half_timing{/*wall_time=*/timing.wall_time / 2,
+                                 /*user_time=*/timing.user_time / 2,
+                                 /*sys_time=*/timing.sys_time / 2,
+                                 /*cpu_utilization=*/timing.cpu_utilization / 2,
+                                 /*cpu_hyper_cores=*/timing.cpu_hyper_cores / 2,
+                                 /*is_delta=*/false};
+  const RUsageTiming quarter_timing{
+      /*wall_time=*/timing.wall_time / 4,
+      /*user_time=*/timing.user_time / 4,
+      /*sys_time=*/timing.sys_time / 4,
+      /*cpu_utilization=*/timing.cpu_utilization / 4,
+      /*cpu_hyper_cores=*/timing.cpu_hyper_cores / 4,
+      /*is_delta=*/false};
 
   EXPECT_LT(RUsageTiming::Min(), RUsageTiming::Max());
   EXPECT_GT(timing, RUsageTiming::Min());
@@ -372,29 +364,23 @@ TEST(RUsageTimingTest, ConstantsAndMath) {
 }
 
 TEST(SysRecourcesTest, ConstantsAndMath) {
-  const RUsageMemory memory = {
-      .mem_vsize = 1000,
-      .mem_vpeak = 2000,
-      .mem_rss = 500,
-      .mem_data = 400,
-      .mem_shared = 20,
-  };
-  const RUsageMemory half_memory = {
-      .mem_vsize = memory.mem_vsize / 2,
-      .mem_vpeak = memory.mem_vpeak / 2,
-      .mem_rss = memory.mem_rss / 2,
-      .mem_data = memory.mem_data / 2,
-      .mem_shared = memory.mem_shared / 2,
-      .is_delta = false,
-  };
-  const RUsageMemory quarter_memory = {
-      .mem_vsize = memory.mem_vsize / 4,
-      .mem_vpeak = memory.mem_vpeak / 4,
-      .mem_rss = memory.mem_rss / 4,
-      .mem_data = memory.mem_data / 4,
-      .mem_shared = memory.mem_shared / 4,
-      .is_delta = false,
-  };
+  const RUsageMemory memory{/*mem_vsize=*/1000,
+                            /*mem_vpeak=*/2000,
+                            /*mem_rss=*/500,
+                            /*mem_data=*/400,
+                            /*mem_shared=*/20};
+  const RUsageMemory half_memory{/*mem_vsize=*/memory.mem_vsize / 2,
+                                 /*mem_vpeak=*/memory.mem_vpeak / 2,
+                                 /*mem_rss=*/memory.mem_rss / 2,
+                                 /*mem_data=*/memory.mem_data / 2,
+                                 /*mem_shared=*/memory.mem_shared / 2,
+                                 /*is_delta=*/false};
+  const RUsageMemory quarter_memory{/*mem_vsize=*/memory.mem_vsize / 4,
+                                    /*mem_vpeak=*/memory.mem_vpeak / 4,
+                                    /*mem_rss=*/memory.mem_rss / 4,
+                                    /*mem_data=*/memory.mem_data / 4,
+                                    /*mem_shared=*/memory.mem_shared / 4,
+                                    /*is_delta=*/false};
 
   EXPECT_LT(RUsageMemory::Min(), RUsageMemory::Max());
   EXPECT_GT(memory, RUsageMemory::Min());
@@ -423,89 +409,71 @@ TEST(RUsageTimingTest, HighLowWater) {
   constexpr absl::Duration kHighTime = absl::Seconds(3);
   constexpr CpuUtilization kLowCpu = 0.1;
   constexpr CpuUtilization kHighCpu = 0.9;
-  const RUsageTiming timing1 = {
-      .wall_time = kHighTime,
-      .user_time = kLowTime,
-      .sys_time = kLowTime,
-      .cpu_utilization = kHighCpu,
-      .cpu_hyper_cores = kLowCpu,
-  };
-  const RUsageTiming timing2 = {
-      .wall_time = kLowTime,
-      .user_time = kHighTime,
-      .sys_time = kHighTime,
-      .cpu_utilization = kLowCpu,
-      .cpu_hyper_cores = kHighCpu,
-  };
+  const RUsageTiming timing1{/*wall_time=*/kHighTime,
+                             /*user_time=*/kLowTime,
+                             /*sys_time=*/kLowTime,
+                             /*cpu_utilization=*/kHighCpu,
+                             /*cpu_hyper_cores=*/kLowCpu};
+  const RUsageTiming timing2{/*wall_time=*/kLowTime,
+                             /*user_time=*/kHighTime,
+                             /*sys_time=*/kHighTime,
+                             /*cpu_utilization=*/kLowCpu,
+                             /*cpu_hyper_cores=*/kHighCpu};
 
   const RUsageTiming low_water = RUsageTiming::LowWater(timing1, timing2);
-  const RUsageTiming kExpectedLowWater = {
-      .wall_time = kLowTime,
-      .user_time = kLowTime,
-      .sys_time = kLowTime,
-      .cpu_utilization = kLowCpu,
-      .cpu_hyper_cores = kLowCpu,
-  };
+  const RUsageTiming kExpectedLowWater{/*wall_time=*/kLowTime,
+                                       /*user_time=*/kLowTime,
+                                       /*sys_time=*/kLowTime,
+                                       /*cpu_utilization=*/kLowCpu,
+                                       /*cpu_hyper_cores=*/kLowCpu};
   EXPECT_EQ(low_water, kExpectedLowWater);
 
   const RUsageTiming high_water = RUsageTiming::HighWater(timing1, timing2);
-  const RUsageTiming kExpectedHighWater = {
-      .wall_time = kHighTime,
-      .user_time = kHighTime,
-      .sys_time = kHighTime,
-      .cpu_utilization = kHighCpu,
-      .cpu_hyper_cores = kHighCpu,
-  };
+  const RUsageTiming kExpectedHighWater{/*wall_time=*/kHighTime,
+                                        /*user_time=*/kHighTime,
+                                        /*sys_time=*/kHighTime,
+                                        /*cpu_utilization=*/kHighCpu,
+                                        /*cpu_hyper_cores=*/kHighCpu};
   EXPECT_EQ(high_water, kExpectedHighWater);
 }
 
 TEST(RUsageMemoryTest, HighLowWater) {
   constexpr MemSize kLowMem = 1000;
   constexpr MemSize kHighMem = 1000000;
-  const RUsageMemory memory1 = {
-      .mem_vsize = kLowMem,
-      .mem_vpeak = kHighMem,
-      .mem_rss = kLowMem,
-      .mem_data = kHighMem,
-      .mem_shared = kLowMem,
-  };
-  const RUsageMemory memory2 = {
-      .mem_vsize = kHighMem,
-      .mem_vpeak = kLowMem,
-      .mem_rss = kHighMem,
-      .mem_data = kLowMem,
-      .mem_shared = kHighMem,
-  };
+  const RUsageMemory memory1{/*mem_vsize=*/kLowMem,
+                             /*mem_vpeak=*/kHighMem,
+                             /*mem_rss=*/kLowMem,
+                             /*mem_data=*/kHighMem,
+                             /*mem_shared=*/kLowMem};
+  const RUsageMemory memory2{/*mem_vsize=*/kHighMem,
+                             /*mem_vpeak=*/kLowMem,
+                             /*mem_rss=*/kHighMem,
+                             /*mem_data=*/kLowMem,
+                             /*mem_shared=*/kHighMem};
   const RUsageMemory low_water = RUsageMemory::LowWater(memory1, memory2);
-  const RUsageMemory kExpectedLowWater = {
-      .mem_vsize = kLowMem,
-      .mem_vpeak = kLowMem,
-      .mem_rss = kLowMem,
-      .mem_data = kLowMem,
-      .mem_shared = kLowMem,
-  };
+  const RUsageMemory kExpectedLowWater{/*mem_vsize=*/kLowMem,
+                                       /*mem_vpeak=*/kLowMem,
+                                       /*mem_rss=*/kLowMem,
+                                       /*mem_data=*/kLowMem,
+                                       /*mem_shared=*/kLowMem};
   EXPECT_EQ(low_water, kExpectedLowWater);
 
   const RUsageMemory high_water = RUsageMemory::HighWater(memory1, memory2);
-  const RUsageMemory kExpectedHighWater = {
-      .mem_vsize = kHighMem,
-      .mem_vpeak = kHighMem,
-      .mem_rss = kHighMem,
-      .mem_data = kHighMem,
-      .mem_shared = kHighMem,
-  };
+  const RUsageMemory kExpectedHighWater{/*mem_vsize=*/kHighMem,
+                                        /*mem_vpeak=*/kHighMem,
+                                        /*mem_rss=*/kHighMem,
+                                        /*mem_data=*/kHighMem,
+                                        /*mem_shared=*/kHighMem};
   EXPECT_EQ(high_water, kExpectedHighWater);
 }
 
 TEST(RUsageTimingTest, Logging) {
-  RUsageTiming timing = {
-      .wall_time = absl::Seconds(303.3),
-      .user_time = absl::Microseconds(101.1),
-      .sys_time = absl::Milliseconds(202.2),
-      .cpu_utilization = 0.4,
-      .cpu_hyper_cores = 0.6,
-      .is_delta = false,
-  };
+  RUsageTiming timing{/*wall_time=*/absl::Seconds(303.3),
+                      /*user_time=*/absl::Microseconds(101.1),
+                      /*sys_time=*/absl::Milliseconds(202.2),
+                      /*cpu_utilization=*/0.4,
+                      /*cpu_hyper_cores=*/0.6,
+                      /*is_delta=*/false};
 
   std::stringstream ss;
   ss << timing;
@@ -542,14 +510,12 @@ TEST(RUsageTimingTest, Logging) {
 }
 
 TEST(RUsageMemoryTest, Logging) {
-  RUsageMemory memory = {
-      .mem_vsize = 1L * 1024 * 1024 * 1024,
-      .mem_vpeak = 2L * 1024 * 1024 * 1024,
-      .mem_rss = 500L * 1024 * 1024,
-      .mem_data = 750L * 1024 * 1024,
-      .mem_shared = 250L * 1024,
-      .is_delta = false,
-  };
+  RUsageMemory memory{/*mem_vsize=*/1L * 1024 * 1024 * 1024,
+                      /*mem_vpeak=*/2L * 1024 * 1024 * 1024,
+                      /*mem_rss=*/500L * 1024 * 1024,
+                      /*mem_data=*/750L * 1024 * 1024,
+                      /*mem_shared=*/250L * 1024,
+                      /*is_delta=*/false};
 
   std::stringstream ss;
   ss << memory;
@@ -585,4 +551,4 @@ TEST(RUsageMemoryTest, Logging) {
       "Data:      -375.00M | ShMem:      -125.0K");
 }
 
-}  // namespace centipede::perf
+}  // namespace fuzztest::internal

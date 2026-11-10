@@ -14,22 +14,16 @@ class FakeCommandBuffer : public CommandBuffer {
   FakeCommandBuffer() = default;
   ~FakeCommandBuffer() override { EXPECT_TRUE(active_ids_.empty()); }
   // Overridden from CommandBuffer:
-  State GetLastState() override {
-    NOTREACHED();
-    return State();
-  }
+  State GetLastState() override { NOTREACHED(); }
   void Flush(int32_t put_offset) override { NOTREACHED(); }
   void OrderingBarrier(int32_t put_offset) override { NOTREACHED(); }
   State WaitForTokenInRange(int32_t start, int32_t end) override {
     NOTREACHED();
-
-    return State();
   }
   State WaitForGetOffsetInRange(uint32_t set_get_buffer_count,
                                 int32_t start,
                                 int32_t end) override {
     NOTREACHED();
-    return State();
   }
   void SetGetBuffer(int32_t transfer_buffer_id) override { NOTREACHED(); }
   scoped_refptr<gpu::Buffer> CreateTransferBuffer(

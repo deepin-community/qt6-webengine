@@ -16,6 +16,7 @@
 #define THIRD_PARTY_CENTIPEDE_COMMAND_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,43 +24,75 @@
 #include "absl/status/status.h"
 #include "absl/time/time.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 class Command final {
  public:
-  // Move-constructible only.
+  struct Options {
+    // Arguments to pass to the executed command. The command is executed by the
+    // shell, so the arguments need to be shell-escaped.
+    // TODO(b/381910257): Escape the arguments for passing to the shell.
+    std::vector<std::string> args;
+    // Environment variables/values in the form "KEY=VALUE" to set in the
+    // subprocess executing the command. These are added to the environment
+    // variables inherited from the parent process.
+    std::vector<std::string> env_add;
+    // Environment variables to unset in the subprocess executing the command.
+    std::vector<std::string> env_remove;
+    // Redirect stdout to this file. If empty, use parent's STDOUT.
+    std::string stdout_file;
+    // Redirect stderr to this file. If empty, use parent's STDERR. If `out` ==
+    // `err` and both are non-empty, stdout/stderr are combined.
+    std::string stderr_file;
+    // "@@" in the command will be replaced with `temp_file_path`.
+    std::string temp_file_path;
+  };
+
+  // Constructs a command to run the binary at `path` with the given `options`.
+  // The path can contain "@@" which will be replaced with
+  // `options.temp_file_path`.
+  explicit Command(std::string_view path, Options options);
+
+  // Constructs a command to run the binary at `path` with default options.
+  explicit Command(std::string_view path);
+
+  // Not movable or copyable to simplify the resource management logic.
   Command(const Command& other) = delete;
   Command& operator=(const Command& other) = delete;
-  Command(Command&& other) noexcept;
+  Command(Command&& other) noexcept = delete;
   Command& operator=(Command&& other) noexcept = delete;
-
-  // Constructs a command:
-  // `path`: path to the binary.
-  // `args`: arguments.
-  // `env`: environment variables/values (in the form "KEY=VALUE").
-  // `out`: stdout redirect path (empty means use parent's STDOUT).
-  // `err`: stderr redirect path (empty means use parent's STDERR).
-  // `timeout`: terminate a fork server execution attempt after this duration.
-  // `temp_file_path`: "@@" in `path` will be replaced with `temp_file_path`.
-  // If `out` == `err` and both are non-empty, stdout/stderr are combined.
-  // TODO(ussuri): The number of parameters became untenable and error-prone.
-  //  Use the Options or Builder pattern instead.
-  explicit Command(std::string_view path, std::vector<std::string> args = {},
-                   std::vector<std::string> env = {}, std::string_view out = "",
-                   std::string_view err = "",
-                   absl::Duration timeout = absl::InfiniteDuration(),
-                   std::string_view temp_file_path = "");
 
   // Cleans up the fork server, if that was created.
   ~Command();
 
   // Returns a string representing the command, e.g. like this
-  // "ENV1=VAL1 path arg1 arg2 > out 2>& err"
+  // "env -u ENV1 ENV2=VAL2 path arg1 arg2 > out 2>& err"
   std::string ToString() const;
-  // Executes the command, returns the exit status.
-  // Can be called more than once.
-  // If interrupted, may call RequestEarlyExit().
-  int Execute();
+
+  // Execute the command asynchronously. Returns true if it starts a new
+  // execution, false otherwise. Must be called only when the command
+  // is not executing.
+  bool ExecuteAsync();
+
+  // Returns whether the command is currently executing.
+  bool is_executing() const { return is_executing_; }
+
+  // Waits for the command execution and returns the exit status if the
+  // execution finishes within `deadline`. Must be called only when the command
+  // is executing. execution or the execution times out. If interrupted, may
+  // call `RequestEarlyStop()` (see stop.h).
+  std::optional<int> Wait(absl::Time deadline);
+
+  // Requests the command execution to stop. Must be called only when the
+  // command is executing. Note that after calling this, `Wait()` is still
+  // needed to complete the execution.
+  void RequestStop();
+
+  // Convenient method to execute synchronously.
+  int Execute() {
+    if (!ExecuteAsync()) return EXIT_FAILURE;
+    return Wait(absl::InfiniteFuture()).value_or(EXIT_FAILURE);
+  }
 
   // Attempts to start a fork server, returns true on success.
   // Pipe files for the fork server are created in `temp_dir_path`
@@ -73,6 +106,9 @@ class Command final {
  private:
   struct ForkServerProps;
 
+  int pid_ = -1;
+  bool is_executing_ = false;
+
   // Returns the status of the fork server process. Expects that the server was
   // previously started using `StartForkServer()`.
   absl::Status VerifyForkServerIsHealthy();
@@ -85,25 +121,20 @@ class Command final {
   // placeholder text.
   std::string ReadRedirectedStderr() const;
   // Possibly logs information about a crash, starting with `message`, followed
-  // by the the command line, followed by the redirected stdout and stderr read
-  // from `out_` and `err_` files, if any.
+  // by the command line, followed by the redirected stdout and stderr read
+  // from `options_.out` and `options_.err` files, if any.
   void LogProblemInfo(std::string_view message) const;
   // Just as `LogCrashInfo()`, but logging occurs only when the VLOG level (set
   // via `--v` or its equivalents) is >= `min_vlog`.
   void VlogProblemInfo(std::string_view message, int vlog_level) const;
 
   const std::string path_;
-  const std::vector<std::string> args_;
-  const std::vector<std::string> env_;
-  const std::string out_;
-  const std::string err_;
-  const absl::Duration timeout_;
-  const std::string temp_file_path_;
+  const Options options_;
   const std::string command_line_ = ToString();
 
   std::unique_ptr<ForkServerProps> fork_server_;
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_COMMAND_H_

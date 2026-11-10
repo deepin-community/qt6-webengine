@@ -23,6 +23,7 @@ class AudioWorkletGlobalScope;
 class AudioWorkletProcessorDefinition;
 class MessagePort;
 class ExecutionContext;
+class V8BlinkAudioWorkletProcessCallback;
 
 // AudioWorkletProcessor class represents the active instance created from
 // AudioWorkletProcessorDefinition. AudioWorkletNodeHandler invokes `.process()`
@@ -139,6 +140,7 @@ class MODULES_EXPORT AudioWorkletProcessor : public ScriptWrappable {
 
   Member<AudioWorkletGlobalScope> global_scope_;
   Member<MessagePort> processor_port_;
+  Member<V8BlinkAudioWorkletProcessCallback> cached_process_callback_;
 
   const String name_;
 
@@ -151,6 +153,8 @@ class MODULES_EXPORT AudioWorkletProcessor : public ScriptWrappable {
 
   AudioWorkletProcessorErrorState error_state_ =
       AudioWorkletProcessorErrorState::kNoError;
+
+  const bool is_denormal_enabler_enabled_;
 };
 
 }  // namespace blink

@@ -91,10 +91,34 @@ bool UncompressData(const std::vector<uint8_t> &compressedData,
     {
         std::cerr << "Failure to decompressed binary data: " << zResult
                   << " msg=" << (stream.msg ? stream.msg : "nil") << "\n";
+        fprintf(stderr,
+                "next_in %p (input %p) avail_in %d total_in %lu next_out %p (output %p) avail_out "
+                "%d total_out %ld adler %lX crc %lX crc_simd %lX\n",
+                stream.next_in, compressedData.data(), stream.avail_in, stream.total_in,
+                stream.next_out, uncompressedData->data(), stream.avail_out, stream.total_out,
+                stream.adler, crc32(0, uncompressedData->data(), uncompressedSize),
+                crc32(0, uncompressedData->data(), 16 * (uncompressedSize / 16)));
         return false;
     }
 
     return true;
+}
+
+void SaveDebugFile(const std::string &outputDir,
+                   const char *baseFileName,
+                   const char *suffix,
+                   const std::vector<uint8_t> data)
+{
+    if (outputDir.empty())
+    {
+        return;
+    }
+
+    std::ostringstream path;
+    path << outputDir << "/" << baseFileName << suffix;
+    FILE *fp = fopen(path.str().c_str(), "wb");
+    fwrite(data.data(), 1, data.size(), fp);
+    fclose(fp);
 }
 }  // namespace
 
@@ -106,7 +130,7 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
         return false;
     }
 
-    if (!doc.IsObject() || !doc.HasMember("traces") || !doc["traces"].IsArray())
+    if (!doc.IsArray())
     {
         return false;
     }
@@ -114,7 +138,7 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
     // Read trace json into a list of trace names.
     std::vector<std::string> traces;
 
-    rapidjson::Document::Array traceArray = doc["traces"].GetArray();
+    rapidjson::Document::Array traceArray = doc.GetArray();
     for (rapidjson::SizeType arrayIndex = 0; arrayIndex < traceArray.Size(); ++arrayIndex)
     {
         const rapidjson::Document::ValueType &arrayElement = traceArray[arrayIndex];
@@ -124,9 +148,7 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
             return false;
         }
 
-        std::vector<std::string> traceAndVersion;
-        angle::SplitStringAlongWhitespace(arrayElement.GetString(), &traceAndVersion);
-        traces.push_back(traceAndVersion[0]);
+        traces.push_back(arrayElement.GetString());
     }
 
     *namesOut = std::move(traces);
@@ -151,33 +173,49 @@ bool LoadTraceInfoFromJSON(const std::string &traceName,
     const rapidjson::Document::Object &meta = doc["TraceMetadata"].GetObj();
 
     strncpy(traceInfoOut->name, traceName.c_str(), kTraceInfoMaxNameLen);
-    traceInfoOut->contextClientMajorVersion = meta["ContextClientMajorVersion"].GetInt();
-    traceInfoOut->contextClientMinorVersion = meta["ContextClientMinorVersion"].GetInt();
-    traceInfoOut->frameEnd                  = meta["FrameEnd"].GetInt();
-    traceInfoOut->frameStart                = meta["FrameStart"].GetInt();
-    traceInfoOut->drawSurfaceHeight         = meta["DrawSurfaceHeight"].GetInt();
-    traceInfoOut->drawSurfaceWidth          = meta["DrawSurfaceWidth"].GetInt();
-
-    angle::HexStringToUInt(meta["DrawSurfaceColorSpace"].GetString(),
-                           &traceInfoOut->drawSurfaceColorSpace);
-    angle::HexStringToUInt(meta["DisplayPlatformType"].GetString(),
-                           &traceInfoOut->displayPlatformType);
-    angle::HexStringToUInt(meta["DisplayDeviceType"].GetString(), &traceInfoOut->displayDeviceType);
-
-    traceInfoOut->configRedBits     = meta["ConfigRedBits"].GetInt();
-    traceInfoOut->configGreenBits   = meta["ConfigGreenBits"].GetInt();
-    traceInfoOut->configBlueBits    = meta["ConfigBlueBits"].GetInt();
-    traceInfoOut->configAlphaBits   = meta["ConfigAlphaBits"].GetInt();
-    traceInfoOut->configDepthBits   = meta["ConfigDepthBits"].GetInt();
-    traceInfoOut->configStencilBits = meta["ConfigStencilBits"].GetInt();
-
+    traceInfoOut->frameEnd               = meta["FrameEnd"].GetInt();
+    traceInfoOut->frameStart             = meta["FrameStart"].GetInt();
     traceInfoOut->isBinaryDataCompressed = meta["IsBinaryDataCompressed"].GetBool();
-    traceInfoOut->areClientArraysEnabled = meta["AreClientArraysEnabled"].GetBool();
-    traceInfoOut->isBindGeneratesResourcesEnabled =
-        meta["IsBindGeneratesResourcesEnabled"].GetBool();
-    traceInfoOut->isWebGLCompatibilityEnabled = meta["IsWebGLCompatibilityEnabled"].GetBool();
-    traceInfoOut->isRobustResourceInitEnabled = meta["IsRobustResourceInitEnabled"].GetBool();
-    traceInfoOut->windowSurfaceContextId      = doc["WindowSurfaceContextID"].GetInt();
+    traceInfoOut->isCL                   = meta.HasMember("IsOpenCL");
+
+    if (meta.HasMember("ContextClientMajorVersion"))
+    {
+        traceInfoOut->contextClientMajorVersion = meta["ContextClientMajorVersion"].GetInt();
+        traceInfoOut->contextClientMinorVersion = meta["ContextClientMinorVersion"].GetInt();
+        traceInfoOut->drawSurfaceHeight         = meta["DrawSurfaceHeight"].GetInt();
+        traceInfoOut->drawSurfaceWidth          = meta["DrawSurfaceWidth"].GetInt();
+
+        angle::HexStringToUInt(meta["DrawSurfaceColorSpace"].GetString(),
+                               &traceInfoOut->drawSurfaceColorSpace);
+        angle::HexStringToUInt(meta["DisplayPlatformType"].GetString(),
+                               &traceInfoOut->displayPlatformType);
+        angle::HexStringToUInt(meta["DisplayDeviceType"].GetString(),
+                               &traceInfoOut->displayDeviceType);
+
+        traceInfoOut->configRedBits          = meta["ConfigRedBits"].GetInt();
+        traceInfoOut->configGreenBits        = meta["ConfigGreenBits"].GetInt();
+        traceInfoOut->configBlueBits         = meta["ConfigBlueBits"].GetInt();
+        traceInfoOut->configAlphaBits        = meta["ConfigAlphaBits"].GetInt();
+        traceInfoOut->configDepthBits        = meta["ConfigDepthBits"].GetInt();
+        traceInfoOut->configStencilBits      = meta["ConfigStencilBits"].GetInt();
+        traceInfoOut->areClientArraysEnabled = meta["AreClientArraysEnabled"].GetBool();
+        traceInfoOut->isBindGeneratesResourcesEnabled =
+            meta["IsBindGeneratesResourcesEnabled"].GetBool();
+        traceInfoOut->isWebGLCompatibilityEnabled = meta["IsWebGLCompatibilityEnabled"].GetBool();
+        traceInfoOut->isRobustResourceInitEnabled = meta["IsRobustResourceInitEnabled"].GetBool();
+    }
+    else
+    {
+        traceInfoOut->contextClientMajorVersion = 1;
+        traceInfoOut->contextClientMinorVersion = 1;
+        traceInfoOut->drawSurfaceHeight         = 1;
+        traceInfoOut->drawSurfaceWidth          = 1;
+    }
+
+    if (doc.HasMember("WindowSurfaceContextID"))
+    {
+        traceInfoOut->windowSurfaceContextId = doc["WindowSurfaceContextID"].GetInt();
+    }
 
     if (doc.HasMember("RequiredExtensions"))
     {
@@ -207,6 +245,68 @@ bool LoadTraceInfoFromJSON(const std::string &traceName,
         }
     }
 
+    if (doc.HasMember("BinaryMetadata"))
+    {
+        const rapidjson::Document::Object &binaryData = doc["BinaryMetadata"].GetObj();
+        if (binaryData.HasMember("Version"))
+        {
+            traceInfoOut->binaryVersion = binaryData["Version"].GetInt();
+        }
+        else
+        {
+            traceInfoOut->binaryVersion = 0;
+        }
+
+        if (binaryData.HasMember("BlockCount"))
+        {
+            traceInfoOut->binaryBlockCount = binaryData["BlockCount"].GetInt();
+        }
+        else
+        {
+            traceInfoOut->binaryBlockCount = 0;
+        }
+
+        // The following three entries must be handled as strings as possible values may
+        // overflow internal rapidjson thresholds
+        if (binaryData.HasMember("BlockSize"))
+        {
+            std::string sizeString        = std::string(binaryData["BlockSize"].GetString());
+            traceInfoOut->binaryBlockSize = std::stoull(sizeString);
+        }
+        else
+        {
+            traceInfoOut->binaryBlockSize = 0;
+        }
+
+        if (binaryData.HasMember("ResidentSize"))
+        {
+            std::string sizeString           = std::string(binaryData["ResidentSize"].GetString());
+            traceInfoOut->binaryResidentSize = std::stoull(sizeString);
+        }
+        else
+        {
+            traceInfoOut->binaryResidentSize = kDefaultBinaryDataSize;
+        }
+
+        if (binaryData.HasMember("IndexOffset"))
+        {
+            std::string offsetString        = std::string(binaryData["IndexOffset"].GetString());
+            traceInfoOut->binaryIndexOffset = std::stoull(offsetString);
+        }
+        else
+        {
+            traceInfoOut->binaryIndexOffset = 0;
+        }
+    }
+    else
+    {
+        traceInfoOut->binaryVersion      = 0;
+        traceInfoOut->binaryBlockCount   = 0;
+        traceInfoOut->binaryBlockSize    = 0;
+        traceInfoOut->binaryResidentSize = 0;
+        traceInfoOut->binaryIndexOffset  = 0;
+    }
+
     const rapidjson::Document::Array &traceFiles = doc["TraceFiles"].GetArray();
     for (const rapidjson::Value &value : traceFiles)
     {
@@ -217,7 +317,9 @@ bool LoadTraceInfoFromJSON(const std::string &traceName,
     return true;
 }
 
-TraceLibrary::TraceLibrary(const std::string &traceName, const TraceInfo &traceInfo)
+TraceLibrary::TraceLibrary(const std::string &traceName,
+                           const TraceInfo &traceInfo,
+                           const std::string &baseDir)
 {
     std::stringstream libNameStr;
     SearchType searchType = SearchType::ModuleDir;
@@ -226,19 +328,15 @@ TraceLibrary::TraceLibrary(const std::string &traceName, const TraceInfo &traceI
     // This means we are using the binary build of traces on Android, which are
     // not bundled in the APK, but located in the app's home directory.
     searchType = SearchType::SystemDir;
-    libNameStr << "/data/user/0/com.android.angle.test/angle_traces/";
+    libNameStr << baseDir;
 #endif  // defined(ANGLE_TRACE_EXTERNAL_BINARIES)
 #if !defined(ANGLE_PLATFORM_WINDOWS)
     libNameStr << "lib";
 #endif  // !defined(ANGLE_PLATFORM_WINDOWS)
     libNameStr << traceName;
-#if defined(ANGLE_PLATFORM_ANDROID) && defined(COMPONENT_BUILD)
-    // Added to shared library names in Android component builds in
-    // https://chromium.googlesource.com/chromium/src/+/9bacc8c4868cc802f69e1e858eea6757217a508f/build/toolchain/toolchain.gni#56
-    libNameStr << ".cr";
-#endif  // defined(ANGLE_PLATFORM_ANDROID) && defined(COMPONENT_BUILD)
     std::string libName = libNameStr.str();
     std::string loadError;
+
     mTraceLibrary.reset(OpenSharedLibraryAndGetError(libName.c_str(), searchType, &loadError));
     if (mTraceLibrary->getNative() == nullptr)
     {
@@ -255,6 +353,7 @@ uint8_t *TraceLibrary::LoadBinaryData(const char *fileName)
 {
     std::ostringstream pathBuffer;
     pathBuffer << mBinaryDataDir << "/" << fileName;
+
     FILE *fp = fopen(pathBuffer.str().c_str(), "rb");
     if (fp == 0)
     {
@@ -264,6 +363,7 @@ uint8_t *TraceLibrary::LoadBinaryData(const char *fileName)
     fseek(fp, 0, SEEK_END);
     long size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+
     if (mTraceInfo.isBinaryDataCompressed)
     {
         if (!strstr(fileName, ".gz"))
@@ -283,8 +383,11 @@ uint8_t *TraceLibrary::LoadBinaryData(const char *fileName)
         if (!UncompressData(compressedData, &mBinaryData))
         {
             // Workaround for sporadic failures https://issuetracker.google.com/296921272
+            SaveDebugFile(mDebugOutputDir, fileName, ".gzdbg_input.gz", compressedData);
+            SaveDebugFile(mDebugOutputDir, fileName, ".gzdbg_attempt1", mBinaryData);
             std::vector<uint8_t> uncompressedData;
             bool secondResult = UncompressData(compressedData, &uncompressedData);
+            SaveDebugFile(mDebugOutputDir, fileName, ".gzdbg_attempt2", uncompressedData);
             if (!secondResult)
             {
                 std::cerr << "Uncompress retry failed\n";
@@ -309,4 +412,19 @@ uint8_t *TraceLibrary::LoadBinaryData(const char *fileName)
     return mBinaryData.data();
 }
 
+FrameCaptureBinaryData *TraceLibrary::ConfigureBinaryDataLoader(const char *fileName)
+{
+    std::ostringstream pathBuffer;
+    pathBuffer << mBinaryDataDir << "/" << fileName;
+
+    FrameCaptureBinaryData *binaryData = new FrameCaptureBinaryData;
+
+    binaryData->configureBinaryDataLoader(
+        mTraceInfo.isBinaryDataCompressed, mTraceInfo.binaryBlockCount,
+        static_cast<size_t>(mTraceInfo.binaryBlockSize),
+        static_cast<size_t>(mTraceInfo.binaryResidentSize),
+        static_cast<size_t>(mTraceInfo.binaryIndexOffset), pathBuffer.str());
+
+    return binaryData;
+}
 }  // namespace angle

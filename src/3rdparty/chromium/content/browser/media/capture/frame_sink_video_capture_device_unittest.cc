@@ -4,15 +4,16 @@
 
 #include "content/browser/media/capture/frame_sink_video_capture_device.h"
 
+#include <array>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/shared_memory_mapping.h"
-#include "build/chromeos_buildflags.h"
 #include "components/viz/common/surfaces/region_capture_bounds.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -30,10 +31,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_test_helper.h"
-#endif
 
 using testing::_;
 using testing::ByRef;
@@ -104,6 +101,8 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
   MOCK_METHOD1(SetFormat, void(media::VideoPixelFormat format));
   MOCK_METHOD1(SetMinCapturePeriod, void(base::TimeDelta min_period));
   MOCK_METHOD1(SetMinSizeChangePeriod, void(base::TimeDelta));
+  MOCK_METHOD2(SetAnimationFpsLockIn,
+               void(bool enabled, float majority_damaged_pixel_min_ratio));
   MOCK_METHOD3(SetResolutionConstraints,
                void(const gfx::Size& min_size,
                     const gfx::Size& max_size,
@@ -389,8 +388,8 @@ class FrameSinkVideoCaptureDeviceTest : public testing::Test {
         base::ReadOnlySharedMemoryRegion::Create(
             media::VideoFrame::AllocationSize(kFormat, kResolution));
     CHECK(region.IsValid());
-    memset(region.mapping.memory(), GetFrameFillValue(frame_number),
-           region.mapping.size());
+    UNSAFE_TODO(memset(region.mapping.memory(), GetFrameFillValue(frame_number),
+                       region.mapping.size()));
 
     mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
         callbacks_remote;
@@ -429,7 +428,8 @@ class FrameSinkVideoCaptureDeviceTest : public testing::Test {
     const size_t frame_allocation_size =
         media::VideoFrame::AllocationSize(kFormat, kResolution);
     CHECK_LE(frame_allocation_size, mapping.size());
-    const uint8_t* src = mapping.GetMemoryAs<const uint8_t>();
+    const base::span<const uint8_t> src =
+        mapping.GetMemoryAsSpan<const uint8_t>();
     const uint8_t expected_value = GetFrameFillValue(frame_number);
     for (size_t i = 0; i < frame_allocation_size; ++i) {
       if (src[i] != expected_value) {
@@ -442,12 +442,6 @@ class FrameSinkVideoCaptureDeviceTest : public testing::Test {
  protected:
   // See the threading notes at top of this file.
   BrowserTaskEnvironment task_environment_;
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // Instantiate LacrosService for WakeLock support.
-  chromeos::ScopedLacrosServiceTestHelper scoped_lacros_service_test_helper_;
-#endif
-
   NiceMock<MockFrameSinkVideoCapturer> capturer_;
   std::unique_ptr<FrameSinkVideoCaptureDevice> device_;
 };
@@ -472,9 +466,10 @@ TEST_F(FrameSinkVideoCaptureDeviceTest, CapturesAndDeliversFrames) {
   for (int in_flight_count = 1; in_flight_count <= kMaxSimultaneousFrames;
        ++in_flight_count) {
     for (int iteration = 0; iteration < kNumFramesToDeliver; ++iteration) {
-      int buffer_ids[kMaxSimultaneousFrames] = {-1};
-      MockFrameSinkVideoConsumerFrameCallbacks
-          callbackses[kMaxSimultaneousFrames];
+      std::array<int, kMaxSimultaneousFrames> buffer_ids = {-1, -1, -1};
+      std::array<MockFrameSinkVideoConsumerFrameCallbacks,
+                 kMaxSimultaneousFrames>
+          callbackses;
 
       // Simulate |in_flight_count| frame captures and expect the frames to be
       // delivered to the VideoFrameReceiver.
@@ -595,7 +590,7 @@ TEST_F(FrameSinkVideoCaptureDeviceTest, ShutsDownOnFatalError) {
   auto receiver_ptr = std::make_unique<MockVideoFrameReceiver>();
   auto* receiver = receiver_ptr.get();
   Sequence sequence;
-  EXPECT_CALL(*receiver, OnStarted()).InSequence(sequence);
+  EXPECT_CALL(*receiver, OnStarted()).Times(0);
   EXPECT_CALL(*receiver, OnLog(StrNe(""))).InSequence(sequence);
   EXPECT_CALL(*receiver, OnError(_)).InSequence(sequence);
 

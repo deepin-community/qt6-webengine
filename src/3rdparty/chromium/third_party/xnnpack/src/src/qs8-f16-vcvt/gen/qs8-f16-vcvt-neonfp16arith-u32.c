@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-f16-vcvt/neon.c.in
 //   Generator: tools/xngen
@@ -7,20 +8,22 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_qs8_f16_vcvt_ukernel__neonfp16arith_u32(
     size_t batch,
     const int8_t* input,
-    void* output,
-    const union xnn_qs8_f16_cvt_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    xnn_float16* output,
+    const struct xnn_qs8_f16_cvt_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
@@ -28,8 +31,12 @@ void xnn_qs8_f16_vcvt_ukernel__neonfp16arith_u32(
   assert(output != NULL);
 
   uint16_t* o = (uint16_t*) output;
-  const int16x8_t vminus_zero_point = vreinterpretq_s16_u16(vld1q_dup_u16((const void*) &params->neon.minus_zero_point));
-  const float16x8_t vscale = vld1q_dup_f16(&params->neon.scale);
+  const int16x8_t vminus_zero_point = vdupq_n_s16(-params->scalar.zero_point);
+#ifdef XNN_COMPILER_MSVC
+  const float16x8_t vscale = vreinterpretq_f16_u16(vdupq_n_u16(*(const uint16_t*) &params->scalar.scale));
+#else
+  const float16x8_t vscale = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.scale));
+#endif
   for (; batch >= 32 * sizeof(int8_t); batch -= 32 * sizeof(int8_t)) {
     const int8x8_t vx01234567 = vld1_s8(input); input += 8;
     const int8x8_t vx89ABCDEF = vld1_s8(input); input += 8;

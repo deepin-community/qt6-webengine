@@ -4,25 +4,33 @@
 
 #include "components/permissions/permission_util.h"
 
+#include <memory>
+
 #include "base/check.h"
+#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
+#include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permissions_client.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_result.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -51,11 +59,12 @@ enum class PermissionDelegationMode {
 
 PermissionDelegationMode GetPermissionDelegationMode(
     ContentSettingsType permission) {
-  // TODO(crbug.com/987654): Generalize this to other "background permissions",
-  // that is, permissions that can be used by a service worker. This includes
-  // durable storage, background sync, etc.
-  if (permission == ContentSettingsType::NOTIFICATIONS)
+  // TODO(crbug.com/40637582): Generalize this to other "background
+  // permissions", that is, permissions that can be used by a service worker.
+  // This includes durable storage, background sync, etc.
+  if (permission == ContentSettingsType::NOTIFICATIONS) {
     return PermissionDelegationMode::kUndelegated;
+  }
   if (permission == ContentSettingsType::STORAGE_ACCESS ||
       permission == ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS) {
     return PermissionDelegationMode::kDoubleKeyed;
@@ -67,6 +76,25 @@ PermissionDelegationMode GetPermissionDelegationMode(
 constexpr const char* kIsFileURLHistogram =
     "Permissions.GetLastCommittedOriginAsURL.IsFileURL";
 #endif
+
+RequestTypeForUma GetUmaValueForRequests(const RequestType first_request) {
+  if (
+#if !BUILDFLAG(IS_ANDROID)
+      first_request == RequestType::kCameraPanTiltZoom ||
+#endif
+      first_request == RequestType::kCameraStream ||
+      first_request == RequestType::kMicStream) {
+    return RequestTypeForUma::MULTIPLE_AUDIO_AND_VIDEO_CAPTURE;
+  }
+#if !BUILDFLAG(IS_ANDROID)
+  if (first_request == RequestType::kKeyboardLock ||
+      first_request == RequestType::kPointerLock) {
+    return RequestTypeForUma::MULTIPLE_KEYBOARD_AND_POINTER_LOCK;
+  }
+#endif
+  return RequestTypeForUma::UNKNOWN;
+}
+
 }  // namespace
 
 // The returned strings must match any Field Trial configs for the Permissions
@@ -80,12 +108,117 @@ std::string PermissionUtil::GetPermissionString(
   return blink::GetPermissionString(permission);
 }
 
+RequestTypeForUma PermissionUtil::GetUmaValueForRequests(
+    const std::vector<std::unique_ptr<PermissionRequest>>& requests) {
+  CHECK(!requests.empty());
+  const RequestType request_type = requests[0]->request_type();
+  if (requests.size() == 1) {
+    return GetUmaValueForRequestType(request_type);
+  }
+  return permissions::GetUmaValueForRequests(request_type);
+}
+
+RequestTypeForUma PermissionUtil::GetUmaValueForRequests(
+    const std::vector<base::WeakPtr<PermissionRequest>>& requests) {
+  CHECK(!requests.empty());
+  const RequestType request_type = requests[0]->request_type();
+  if (requests.size() == 1) {
+    return GetUmaValueForRequestType(request_type);
+  }
+  return permissions::GetUmaValueForRequests(request_type);
+}
+
+RequestTypeForUma PermissionUtil::GetUmaValueForRequestType(
+    RequestType request_type) {
+  switch (request_type) {
+    case RequestType::kArSession:
+      return RequestTypeForUma::PERMISSION_AR;
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kCameraPanTiltZoom:
+      return RequestTypeForUma::PERMISSION_CAMERA_PAN_TILT_ZOOM;
+#endif
+    case RequestType::kCameraStream:
+      return RequestTypeForUma::PERMISSION_MEDIASTREAM_CAMERA;
+    case RequestType::kClipboard:
+      return RequestTypeForUma::PERMISSION_CLIPBOARD_READ_WRITE;
+    case RequestType::kDiskQuota:
+      return RequestTypeForUma::QUOTA;
+#if !BUILDFLAG(IS_ANDROID)
+    // TODO(crbug.com/40214907): Enable on Android
+    case RequestType::kLocalFonts:
+      return RequestTypeForUma::PERMISSION_LOCAL_FONTS;
+#endif
+    case RequestType::kLocalNetworkAccess:
+      return RequestTypeForUma::PERMISSION_LOCAL_NETWORK_ACCESS;
+    case RequestType::kGeolocation:
+      return RequestTypeForUma::PERMISSION_GEOLOCATION;
+    case RequestType::kHandTracking:
+      return RequestTypeForUma::PERMISSION_HAND_TRACKING;
+    case RequestType::kIdleDetection:
+      return RequestTypeForUma::PERMISSION_IDLE_DETECTION;
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kKeyboardLock:
+      return RequestTypeForUma::PERMISSION_KEYBOARD_LOCK;
+#endif
+    case RequestType::kMicStream:
+      return RequestTypeForUma::PERMISSION_MEDIASTREAM_MIC;
+    case RequestType::kMidiSysex:
+      return RequestTypeForUma::PERMISSION_MIDI_SYSEX;
+    case RequestType::kMultipleDownloads:
+      return RequestTypeForUma::DOWNLOAD;
+#if BUILDFLAG(IS_ANDROID)
+    case RequestType::kNfcDevice:
+      return RequestTypeForUma::PERMISSION_NFC;
+#endif
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kPointerLock:
+      return RequestTypeForUma::PERMISSION_POINTER_LOCK;
+#endif
+    case RequestType::kNotifications:
+      return RequestTypeForUma::PERMISSION_NOTIFICATIONS;
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
+    case RequestType::kProtectedMediaIdentifier:
+      return RequestTypeForUma::PERMISSION_PROTECTED_MEDIA_IDENTIFIER;
+#endif
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kRegisterProtocolHandler:
+      return RequestTypeForUma::REGISTER_PROTOCOL_HANDLER;
+#endif
+#if BUILDFLAG(IS_CHROMEOS)
+    case RequestType::kSmartCard:
+      return RequestTypeForUma::PERMISSION_SMART_CARD;
+#endif
+    case RequestType::kStorageAccess:
+      return RequestTypeForUma::PERMISSION_STORAGE_ACCESS;
+    case RequestType::kVrSession:
+      return RequestTypeForUma::PERMISSION_VR;
+#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CUPS)
+    case RequestType::kWebPrinting:
+      return RequestTypeForUma::PERMISSION_WEB_PRINTING;
+#endif
+    case RequestType::kWindowManagement:
+      return RequestTypeForUma::PERMISSION_WINDOW_MANAGEMENT;
+    case RequestType::kTopLevelStorageAccess:
+      return RequestTypeForUma::PERMISSION_TOP_LEVEL_STORAGE_ACCESS;
+    case RequestType::kFileSystemAccess:
+      return RequestTypeForUma::PERMISSION_FILE_SYSTEM_ACCESS;
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kCapturedSurfaceControl:
+      return RequestTypeForUma::CAPTURED_SURFACE_CONTROL;
+    case RequestType::kWebAppInstallation:
+      return RequestTypeForUma::PERMISSION_WEB_APP_INSTALLATION;
+#endif
+    case RequestType::kIdentityProvider:
+      return RequestTypeForUma::PERMISSION_IDENTITY_PROVIDER;
+  }
+}
+
 PermissionRequestGestureType PermissionUtil::GetGestureType(bool user_gesture) {
   return user_gesture ? PermissionRequestGestureType::GESTURE
                       : PermissionRequestGestureType::NO_GESTURE;
 }
 
-absl::optional<blink::mojom::PermissionsPolicyFeature>
+std::optional<network::mojom::PermissionsPolicyFeature>
 PermissionUtil::GetPermissionsPolicyFeature(ContentSettingsType permission) {
   PermissionType permission_type;
   bool success =
@@ -93,13 +226,16 @@ PermissionUtil::GetPermissionsPolicyFeature(ContentSettingsType permission) {
   DCHECK(success);
   return success
              ? blink::PermissionTypeToPermissionsPolicyFeature(permission_type)
-             : absl::nullopt;
+             : std::nullopt;
 }
 
 bool PermissionUtil::GetPermissionType(ContentSettingsType type,
                                        PermissionType* out) {
   switch (type) {
     case ContentSettingsType::GEOLOCATION:
+      *out = PermissionType::GEOLOCATION;
+      break;
+    case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
       *out = PermissionType::GEOLOCATION;
       break;
     case ContentSettingsType::NOTIFICATIONS:
@@ -132,9 +268,6 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
     case ContentSettingsType::SENSORS:
       *out = PermissionType::SENSORS;
       break;
-    case ContentSettingsType::ACCESSIBILITY_EVENTS:
-      *out = PermissionType::ACCESSIBILITY_EVENTS;
-      break;
     case ContentSettingsType::CLIPBOARD_READ_WRITE:
       *out = PermissionType::CLIPBOARD_READ_WRITE;
       break;
@@ -164,6 +297,9 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
       break;
     case ContentSettingsType::AR:
       *out = PermissionType::AR;
+      break;
+    case ContentSettingsType::HAND_TRACKING:
+      *out = PermissionType::HAND_TRACKING;
       break;
     case ContentSettingsType::SMART_CARD_DATA:
       *out = PermissionType::SMART_CARD;
@@ -195,6 +331,24 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
     case ContentSettingsType::WEB_PRINTING:
       *out = PermissionType::WEB_PRINTING;
       break;
+    case ContentSettingsType::SPEAKER_SELECTION:
+      *out = PermissionType::SPEAKER_SELECTION;
+      break;
+    case ContentSettingsType::KEYBOARD_LOCK:
+      *out = PermissionType::KEYBOARD_LOCK;
+      break;
+    case ContentSettingsType::POINTER_LOCK:
+      *out = PermissionType::POINTER_LOCK;
+      break;
+    case ContentSettingsType::AUTOMATIC_FULLSCREEN:
+      *out = PermissionType::AUTOMATIC_FULLSCREEN;
+      break;
+    case ContentSettingsType::WEB_APP_INSTALLATION:
+      *out = PermissionType::WEB_APP_INSTALLATION;
+      break;
+    case ContentSettingsType::LOCAL_NETWORK_ACCESS:
+      *out = PermissionType::LOCAL_NETWORK_ACCESS;
+      break;
     default:
       return false;
   }
@@ -212,6 +366,26 @@ bool PermissionUtil::IsLowPriorityPermissionRequest(
          request->request_type() == RequestType::kGeolocation;
 }
 
+bool PermissionUtil::ShouldCurrentRequestUsePermissionElementSecondaryUI(
+    PermissionPrompt::Delegate* delegate) {
+  if (!base::FeatureList::IsEnabled(blink::features::kPermissionElement)) {
+    return false;
+  }
+
+  const std::vector<std::unique_ptr<PermissionRequest>>& requests =
+      delegate->Requests();
+  return std::ranges::all_of(
+      requests, [](const std::unique_ptr<PermissionRequest>& request) {
+        return (request->request_type() ==
+                    permissions::RequestType::kCameraStream ||
+                request->request_type() ==
+                    permissions::RequestType::kGeolocation ||
+                request->request_type() ==
+                    permissions::RequestType::kMicStream) &&
+               request->IsEmbeddedPermissionElementInitiated();
+      });
+}
+
 bool PermissionUtil::IsGuardContentSetting(ContentSettingsType type) {
   switch (type) {
     case ContentSettingsType::USB_GUARD:
@@ -227,28 +401,24 @@ bool PermissionUtil::IsGuardContentSetting(ContentSettingsType type) {
   }
 }
 
-bool PermissionUtil::CanPermissionBeAllowedOnce(ContentSettingsType type) {
-  switch (type) {
-    case ContentSettingsType::GEOLOCATION:
-    case ContentSettingsType::MEDIASTREAM_MIC:
-    case ContentSettingsType::MEDIASTREAM_CAMERA:
-    case ContentSettingsType::SMART_CARD_DATA:
-      return base::FeatureList::IsEnabled(
-          permissions::features::kOneTimePermission);
-    default:
-      return false;
-  }
+bool PermissionUtil::DoesSupportTemporaryGrants(ContentSettingsType type) {
+  return base::Contains(content_settings::GetTypesWithTemporaryGrants(), type);
+}
+
+bool PermissionUtil::DoesStoreTemporaryGrantsInHcsm(ContentSettingsType type) {
+  return base::Contains(content_settings::GetTypesWithTemporaryGrantsInHcsm(),
+                        type);
 }
 
 // Due to dependency issues, this method is duplicated in
 // content/browser/permissions/permission_util.cc.
 GURL PermissionUtil::GetLastCommittedOriginAsURL(
     content::RenderFrameHost* render_frame_host) {
-  DCHECK(render_frame_host);
+  CHECK(render_frame_host);
 
-#if BUILDFLAG(IS_ANDROID)
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(render_frame_host);
+#if BUILDFLAG(IS_ANDROID)
   // If `allow_universal_access_from_file_urls` flag is enabled, a file:/// can
   // change its url via history.pushState/replaceState to any other url,
   // including about:blank. To avoid user confusion we should always use a
@@ -263,10 +433,16 @@ GURL PermissionUtil::GetLastCommittedOriginAsURL(
   }
 #endif
 
-  return render_frame_host->GetLastCommittedOrigin().GetURL();
+  GURL origin = render_frame_host->GetLastCommittedOrigin().GetURL();
+  if (origin.is_empty() && render_frame_host->IsInPrimaryMainFrame()) {
+    if (!web_contents->GetVisibleURL().is_empty()) {
+      origin = web_contents->GetVisibleURL();
+    }
+  }
+  return origin;
 }
 
-ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
+ContentSettingsType PermissionUtil::PermissionTypeToContentSettingsTypeSafe(
     PermissionType permission) {
   switch (permission) {
     case PermissionType::MIDI:
@@ -276,7 +452,10 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
     case PermissionType::NOTIFICATIONS:
       return ContentSettingsType::NOTIFICATIONS;
     case PermissionType::GEOLOCATION:
-      return ContentSettingsType::GEOLOCATION;
+      return base::FeatureList::IsEnabled(
+                 content_settings::features::kApproximateGeolocationPermission)
+                 ? ContentSettingsType::GEOLOCATION_WITH_OPTIONS
+                 : ContentSettingsType::GEOLOCATION;
     case PermissionType::PROTECTED_MEDIA_IDENTIFIER:
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || \
     BUILDFLAG(IS_FUCHSIA)
@@ -294,8 +473,6 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
       return ContentSettingsType::BACKGROUND_SYNC;
     case PermissionType::SENSORS:
       return ContentSettingsType::SENSORS;
-    case PermissionType::ACCESSIBILITY_EVENTS:
-      return ContentSettingsType::ACCESSIBILITY_EVENTS;
     case PermissionType::CLIPBOARD_READ_WRITE:
       return ContentSettingsType::CLIPBOARD_READ_WRITE;
     case PermissionType::CLIPBOARD_SANITIZED_WRITE:
@@ -314,6 +491,8 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
       return ContentSettingsType::WAKE_LOCK_SYSTEM;
     case PermissionType::NFC:
       return ContentSettingsType::NFC;
+    case PermissionType::HAND_TRACKING:
+      return ContentSettingsType::HAND_TRACKING;
     case PermissionType::VR:
       return ContentSettingsType::VR;
     case PermissionType::AR:
@@ -336,6 +515,18 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
       return ContentSettingsType::CAPTURED_SURFACE_CONTROL;
     case PermissionType::WEB_PRINTING:
       return ContentSettingsType::WEB_PRINTING;
+    case PermissionType::SPEAKER_SELECTION:
+      return ContentSettingsType::SPEAKER_SELECTION;
+    case PermissionType::KEYBOARD_LOCK:
+      return ContentSettingsType::KEYBOARD_LOCK;
+    case PermissionType::POINTER_LOCK:
+      return ContentSettingsType::POINTER_LOCK;
+    case PermissionType::AUTOMATIC_FULLSCREEN:
+      return ContentSettingsType::AUTOMATIC_FULLSCREEN;
+    case PermissionType::WEB_APP_INSTALLATION:
+      return ContentSettingsType::WEB_APP_INSTALLATION;
+    case PermissionType::LOCAL_NETWORK_ACCESS:
+      return ContentSettingsType::LOCAL_NETWORK_ACCESS;
     case PermissionType::NUM:
       break;
   }
@@ -343,17 +534,17 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingTypeSafe(
   return ContentSettingsType::DEFAULT;
 }
 
-ContentSettingsType PermissionUtil::PermissionTypeToContentSettingType(
+ContentSettingsType PermissionUtil::PermissionTypeToContentSettingsType(
     PermissionType permission) {
   ContentSettingsType content_setting =
-      PermissionTypeToContentSettingTypeSafe(permission);
+      PermissionTypeToContentSettingsTypeSafe(permission);
   DCHECK_NE(content_setting, ContentSettingsType::DEFAULT)
       << "Unknown content setting for permission "
       << static_cast<int>(permission);
   return content_setting;
 }
 
-PermissionType PermissionUtil::ContentSettingTypeToPermissionType(
+PermissionType PermissionUtil::ContentSettingsTypeToPermissionType(
     ContentSettingsType permission) {
   PermissionType permission_type;
   bool success =
@@ -374,9 +565,34 @@ ContentSetting PermissionUtil::PermissionStatusToContentSetting(
     default:
       return CONTENT_SETTING_BLOCK;
   }
+}
 
-  NOTREACHED();
-  return CONTENT_SETTING_DEFAULT;
+blink::mojom::PermissionStatus
+PermissionUtil::PermissionDecisionToPermissionStatus(
+    PermissionDecision decision) {
+  content::PermissionStatus status = content::PermissionStatus::ASK;
+  switch (decision) {
+    case PermissionDecision::kAllow:
+    case PermissionDecision::kAllowThisTime:
+      return status = content::PermissionStatus::GRANTED;
+    case PermissionDecision::kDeny:
+      return content::PermissionStatus::DENIED;
+    case PermissionDecision::kNone:
+      return content::PermissionStatus::ASK;
+  }
+}
+
+ContentSetting PermissionUtil::PermissionDecisionToContentSetting(
+    PermissionDecision decision) {
+  switch (decision) {
+    case PermissionDecision::kAllow:
+    case PermissionDecision::kAllowThisTime:
+      return CONTENT_SETTING_ALLOW;
+    case PermissionDecision::kDeny:
+      return CONTENT_SETTING_BLOCK;
+    case PermissionDecision::kNone:
+      return CONTENT_SETTING_ASK;
+  }
 }
 
 blink::mojom::PermissionStatus PermissionUtil::ContentSettingToPermissionStatus(
@@ -389,14 +605,12 @@ blink::mojom::PermissionStatus PermissionUtil::ContentSettingToPermissionStatus(
     case CONTENT_SETTING_ASK:
       return blink::mojom::PermissionStatus::ASK;
     case CONTENT_SETTING_SESSION_ONLY:
-    case CONTENT_SETTING_DETECT_IMPORTANT_CONTENT:
     case CONTENT_SETTING_DEFAULT:
     case CONTENT_SETTING_NUM_SETTINGS:
       break;
   }
 
   NOTREACHED();
-  return blink::mojom::PermissionStatus::DENIED;
 }
 
 bool PermissionUtil::IsPermissionBlockedInPartition(
@@ -410,7 +624,7 @@ bool PermissionUtil::IsPermissionBlockedInPartition(
     case PermissionDelegationMode::kDoubleKeyed:
       return false;
     case PermissionDelegationMode::kUndelegated:
-      // TODO(crbug.com/1312218): This will create |requesting_origin|'s home
+      // TODO(crbug.com/40220503): This will create |requesting_origin|'s home
       // StoragePartition if it doesn't already exist. Given how
       // StoragePartitions are used today, this shouldn't actually be a
       // problem, but ideally we'd compare StoragePartitionConfigs.
@@ -425,11 +639,12 @@ bool PermissionUtil::IsPermissionBlockedInPartition(
 GURL PermissionUtil::GetCanonicalOrigin(ContentSettingsType permission,
                                         const GURL& requesting_origin,
                                         const GURL& embedding_origin) {
-  absl::optional<GURL> override_origin =
+  std::optional<GURL> override_origin =
       PermissionsClient::Get()->OverrideCanonicalOrigin(requesting_origin,
                                                         embedding_origin);
-  if (override_origin)
+  if (override_origin) {
     return override_origin.value();
+  }
 
   switch (GetPermissionDelegationMode(permission)) {
     case PermissionDelegationMode::kDelegated:
@@ -442,21 +657,18 @@ GURL PermissionUtil::GetCanonicalOrigin(ContentSettingsType permission,
 
 #if !BUILDFLAG(IS_QTWEBENGINE)
 bool PermissionUtil::HasUserGesture(PermissionPrompt::Delegate* delegate) {
-  const std::vector<
-      raw_ptr<permissions::PermissionRequest, VectorExperimental>>& requests =
+  const std::vector<std::unique_ptr<permissions::PermissionRequest>>& requests =
       delegate->Requests();
-  return std::any_of(
-      requests.begin(), requests.end(),
-      [](permissions::PermissionRequest* request) {
-        return request->GetGestureType() ==
-               permissions::PermissionRequestGestureType::GESTURE;
-      });
+  return std::any_of(requests.begin(), requests.end(), [](const auto& request) {
+    return request->GetGestureType() ==
+           permissions::PermissionRequestGestureType::GESTURE;
+  });
 }
 
 bool PermissionUtil::CanPermissionRequestIgnoreStatus(
-    const PermissionRequestData& request,
+    const std::unique_ptr<PermissionRequestData>& request,
     content::PermissionStatusSource source) {
-  if (!request.embedded_permission_element_initiated) {
+  if (!request->embedded_permission_element_initiated) {
     return false;
   }
 

@@ -4,15 +4,20 @@ depth ranges as well.
 `;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
-import { kDepthStencilFormats, kTextureFormatInfo } from '../../../format_info.js';
-import { GPUTest } from '../../../gpu_test.js';
+import {
+  canCopyFromAspectOfTextureFormat,
+  getBlockInfoForTextureFormat,
+  isStencilTextureFormat,
+  kDepthTextureFormats,
+} from '../../../format_info.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
 import {
   checkElementsBetween,
   checkElementsPassPredicate,
   CheckElementsSupplementalTableRows,
 } from '../../../util/check_contents.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('depth_clamp_and_clip')
   .desc(
@@ -35,23 +40,17 @@ have unexpected values then get drawn to the color buffer, which is later checke
   )
   .params(u =>
     u //
-      .combine('format', kDepthStencilFormats)
-      .filter(p => !!kTextureFormatInfo[p.format].depth)
+      .combine('format', kDepthTextureFormats)
       .combine('unclippedDepth', [undefined, false, true])
       .combine('writeDepth', [false, true])
       .combine('multisampled', [false, true])
   )
-  .beforeAllSubcases(t => {
-    const info = kTextureFormatInfo[t.params.format];
-
-    t.selectDeviceOrSkipTestCase([
-      t.params.unclippedDepth ? 'depth-clip-control' : undefined,
-      info.feature,
-    ]);
-  })
   .fn(async t => {
     const { format, unclippedDepth, writeDepth, multisampled } = t.params;
-    const info = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    if (unclippedDepth) {
+      t.skipIfDeviceDoesNotHaveFeature('depth-clip-control');
+    }
 
     /** Number of depth values to test for both vertex output and frag_depth output. */
     const kNumDepthValues = 8;
@@ -90,7 +89,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
 
       struct VFTest {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -127,7 +126,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
 
       struct VFCheck {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -140,9 +139,14 @@ have unexpected values then get drawn to the color buffer, which is later checke
       }
 
       struct FCheck {
-        @builtin(frag_depth) depth: f32,
         @location(0) color: f32,
       };
+
+      ${
+        multisampled
+          ? '@group(0) @binding(0) var depthTex: texture_multisampled_2d<f32>;'
+          : '@group(0) @binding(0) var depthTex: texture_2d<f32>;'
+      }
 
       @fragment
       fn fcheck(vf: VFCheck) -> FCheck {
@@ -160,9 +164,13 @@ have unexpected values then get drawn to the color buffer, which is later checke
           expectedDepthBufferValue = 0.5;
         }
 
+        let actualDepthBufferValue = textureLoad(depthTex, vec2u(vf.vertexIndex, 0), 0).r;
+        let actualVsExpectedDiff = abs(expectedDepthBufferValue - actualDepthBufferValue);
         var f: FCheck;
-        f.depth = expectedDepthBufferValue;
         f.color = 1.0; // Color written if the resulting depth is unexpected.
+        if (actualVsExpectedDiff < 1e-5) {
+          f.color = 0.0;
+        }
         return f;
       }
     `;
@@ -171,6 +179,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
     // Draw points at different vertex depths and fragment depths into the depth attachment,
     // with a viewport of [0.25,0.75].
     const testPipeline = t.device.createRenderPipeline({
+      label: 'testPipeline',
       layout: 'auto',
       vertex: { module, entryPoint: 'vtest' },
       primitive: {
@@ -186,26 +195,40 @@ have unexpected values then get drawn to the color buffer, which is later checke
       },
     });
 
-    // Use depth comparison to check that the depth attachment now has the expected values.
+    const checkBindGroupLayout = t.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: {
+            sampleType: 'unfilterable-float',
+            multisampled,
+          },
+        },
+      ],
+    });
+
+    const checkPipelineLayout = t.device.createPipelineLayout({
+      bindGroupLayouts: [checkBindGroupLayout],
+    });
+
+    // Read the depth values and output 0 if they match expected, 1 if they don't
     const checkPipeline = t.device.createRenderPipeline({
-      layout: 'auto',
+      label: 'checkPipeline',
+      layout: checkPipelineLayout,
       vertex: { module, entryPoint: 'vcheck' },
       primitive: { topology: 'point-list' },
-      depthStencil: {
-        format,
-        // NOTE: This check is probably very susceptible to floating point error. If it fails, maybe
-        // replace it with two checks (less + greater) with an epsilon applied in the check shader?
-        depthCompare: 'not-equal', // Expect every depth value to be exactly equal.
-        depthWriteEnabled: true, // If the check failed, overwrite with the expected result.
-      },
       multisample: multisampled ? { count: 4 } : undefined,
       fragment: { module, entryPoint: 'fcheck', targets: [{ format: 'r8unorm' }] },
     });
 
-    const dsTexture = t.device.createTexture({
+    const dsTexture = t.createTextureTracked({
       format,
       size: [kNumTestPoints],
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
       sampleCount: multisampled ? 4 : 1,
     });
     const dsTextureView = dsTexture.createView();
@@ -215,32 +238,33 @@ have unexpected values then get drawn to the color buffer, which is later checke
       size: [kNumTestPoints],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     };
-    const checkTexture = t.device.createTexture(checkTextureDesc);
+    const checkTexture = t.createTextureTracked(checkTextureDesc);
     const checkTextureView = checkTexture.createView();
     const checkTextureMSView = multisampled
-      ? t.device.createTexture({ ...checkTextureDesc, sampleCount: 4 }).createView()
+      ? t.createTextureTracked({ ...checkTextureDesc, sampleCount: 4 }).createView()
       : undefined;
 
+    const { bytesPerBlock } = getBlockInfoForTextureFormat(format);
     const dsActual =
-      !multisampled && info.bytesPerBlock
-        ? t.device.createBuffer({
-            size: kNumTestPoints * info.bytesPerBlock,
+      canCopyFromAspectOfTextureFormat(format, 'depth-only') && !multisampled && bytesPerBlock
+        ? t.createBufferTracked({
+            size: kNumTestPoints * bytesPerBlock,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
           })
         : undefined;
     const dsExpected =
-      !multisampled && info.bytesPerBlock
-        ? t.device.createBuffer({
-            size: kNumTestPoints * info.bytesPerBlock,
+      canCopyFromAspectOfTextureFormat(format, 'depth-only') && !multisampled && bytesPerBlock
+        ? t.createBufferTracked({
+            size: kNumTestPoints * bytesPerBlock,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
           })
         : undefined;
-    const checkBuffer = t.device.createBuffer({
+    const checkBuffer = t.createBufferTracked({
       size: kNumTestPoints,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
-    const fragInputZFailedBuffer = t.device.createBuffer({
+    const fragInputZFailedBuffer = t.createBufferTracked({
       size: 4 * kNumTestPoints,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
@@ -258,9 +282,11 @@ have unexpected values then get drawn to the color buffer, which is later checke
           depthClearValue: 0.5, // Will see this depth value if the fragment was clipped.
           depthLoadOp: 'clear',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(testPipeline);
@@ -270,10 +296,16 @@ have unexpected values then get drawn to the color buffer, which is later checke
       pass.end();
     }
     if (dsActual) {
-      enc.copyTextureToBuffer({ texture: dsTexture }, { buffer: dsActual }, [kNumTestPoints]);
+      enc.copyTextureToBuffer({ texture: dsTexture, aspect: 'depth-only' }, { buffer: dsActual }, [
+        kNumTestPoints,
+      ]);
     }
     {
-      const clearValue = [0, 0, 0, 0]; // Will see this color if the check passed.
+      const checkBindGroup = t.device.createBindGroup({
+        layout: checkBindGroupLayout,
+        entries: [{ binding: 0, resource: dsTexture.createView({ aspect: 'depth-only' }) }],
+      });
+      const clearValue = [0.5, 0.5, 0.5, 0.5]; // We should only see 0.0 or 1.0
       const pass = enc.beginRenderPass({
         colorAttachments: [
           checkTextureMSView
@@ -286,23 +318,20 @@ have unexpected values then get drawn to the color buffer, which is later checke
               }
             : { view: checkTextureView, clearValue, loadOp: 'clear', storeOp: 'store' },
         ],
-        depthStencilAttachment: {
-          view: dsTextureView,
-          depthLoadOp: 'load',
-          depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
-        },
       });
       pass.setPipeline(checkPipeline);
+      pass.setBindGroup(0, checkBindGroup);
       pass.setViewport(0, 0, kNumTestPoints, 1, 0.0, 1.0);
       pass.draw(kNumTestPoints);
       pass.end();
     }
     enc.copyTextureToBuffer({ texture: checkTexture }, { buffer: checkBuffer }, [kNumTestPoints]);
     if (dsExpected) {
-      enc.copyTextureToBuffer({ texture: dsTexture }, { buffer: dsExpected }, [kNumTestPoints]);
+      enc.copyTextureToBuffer(
+        { texture: dsTexture, aspect: 'depth-only' },
+        { buffer: dsExpected },
+        [kNumTestPoints]
+      );
     }
     t.device.queue.submit([enc.finish()]);
 
@@ -351,22 +380,16 @@ to be empty.`
   )
   .params(u =>
     u //
-      .combine('format', kDepthStencilFormats)
-      .filter(p => !!kTextureFormatInfo[p.format].depth)
+      .combine('format', kDepthTextureFormats)
       .combine('unclippedDepth', [false, true])
       .combine('multisampled', [false, true])
   )
-  .beforeAllSubcases(t => {
-    const info = kTextureFormatInfo[t.params.format];
-
-    t.selectDeviceOrSkipTestCase([
-      t.params.unclippedDepth ? 'depth-clip-control' : undefined,
-      info.feature,
-    ]);
-  })
   .fn(t => {
     const { format, unclippedDepth, multisampled } = t.params;
-    const info = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    if (unclippedDepth) {
+      t.skipIfDeviceDoesNotHaveFeature('depth-clip-control');
+    }
 
     const kNumDepthValues = 8;
     const kViewportMinDepth = 0.25;
@@ -387,7 +410,7 @@ to be empty.`
 
       struct VF {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -445,7 +468,7 @@ to be empty.`
       fragment: { module, entryPoint: 'ftest', targets: [{ format: 'r8unorm' }] },
     });
 
-    const dsTexture = t.device.createTexture({
+    const dsTexture = t.createTextureTracked({
       format,
       size: [kNumDepthValues],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -458,13 +481,13 @@ to be empty.`
       size: [kNumDepthValues],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     };
-    const testTexture = t.device.createTexture(testTextureDesc);
+    const testTexture = t.createTextureTracked(testTextureDesc);
     const testTextureView = testTexture.createView();
     const testTextureMSView = multisampled
-      ? t.device.createTexture({ ...testTextureDesc, sampleCount: 4 }).createView()
+      ? t.createTextureTracked({ ...testTextureDesc, sampleCount: 4 }).createView()
       : undefined;
 
-    const resultBuffer = t.device.createBuffer({
+    const resultBuffer = t.createBufferTracked({
       size: kNumDepthValues,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
@@ -478,9 +501,11 @@ to be empty.`
           depthClearValue: 1.0,
           depthLoadOp: 'clear',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(initPipeline);
@@ -505,9 +530,11 @@ to be empty.`
           view: dsTextureView,
           depthLoadOp: 'load',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(testPipeline);

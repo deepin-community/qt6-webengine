@@ -2,11 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import * as Host from '../../core/host/host.js';
+import * as Root from '../../core/root/root.js';
+
+import {DebugLoggingFormat} from './Debugging.js';
+import {knownContextValues} from './KnownContextValues.js';
+
 const LOGGING_ATTRIBUTE = 'jslog';
+
+interface TrackConfig {
+  click?: boolean;
+  dblclick?: boolean;
+  hover?: boolean;
+  drag?: boolean;
+  change?: boolean;
+  keydown?: boolean|string;
+  resize?: boolean;
+}
 
 export interface LoggingConfig {
   ve: number;
-  track?: Map<string, string|undefined>;
+  track?: TrackConfig;
   context?: string;
   parent?: string;
 }
@@ -19,50 +35,51 @@ export function getLoggingConfig(element: Element): LoggingConfig {
   return parseJsLog(element.getAttribute(LOGGING_ATTRIBUTE) || '');
 }
 
-enum VisualElements {
+export enum VisualElements {
+  /* eslint-disable @typescript-eslint/naming-convention -- Indexed access. */
   TreeItem = 1,
-  /* 2 used to be AriaAttributes, but free to grab now */
-  /* 3 used to be AccessibilityComputedProperties, but free to grab now */
-  /* 4 used to be AccessibilityPane, but free to grab now */
-  /* 5 used to be AccessibilitySourceOrder, but free to grab now */
+  Close = 2,
+  Counter = 3,
+  Drawer = 4,
+  Resizer = 5,
   Toggle = 6,
   Tree = 7,
   TextField = 8,
-  /* 9 used to be ShowAllStyleProperties, but free to grab now */
+  AnimationClip = 9,
   Section = 10,
-  StylePropertiesSectionSeparator = 11,
-  /* 12 used to be StylesPane, but free to grab now */
-  StylesSelector = 13,
-  TreeItemExpand = 14,
+  SectionHeader = 11,
+  Timeline = 12,
+  CSSRuleHeader = 13,
+  Expand = 14,
   ToggleSubpane = 15,
-  /* 16 used to be ElementClassesPane, but free to grab now */
-  /* 17 used to be AddElementClassPrompt, but free to grab now */
-  /* 18 used to be ElementStatesPan, but free to grab now */
-  /* 19 used to be CssLayersPane, but free to grab now */
+  ControlPoint = 16,
+  Toolbar = 17,
+  Popover = 18,
+  BreakpointMarker = 19,
   DropDown = 20,
-  /* 21 used to be StylesMetricsPane, but free to grab now */
-  /* 22 used to be JumpToSource, but free to grab now */
+  Adorner = 21,
+  Gutter = 22,
   MetricsBox = 23,
   MetricsBoxPart = 24,
-  /* 25 used to be DOMBreakpointsPane, but free to grab now */
+  Badge = 25,
   DOMBreakpoint = 26,
   /* 27 used to be ElementPropertiesPane, but free to grab now */
   /* 28 used to be EventListenersPane, but free to grab now */
   Action = 29,
   FilterDropdown = 30,
-  InfoBar = 31,
+  Dialog = 31,
   BezierCurveEditor = 32,
-  BezierEditor = 33,
+  /* 33 used to be BezierEditor, but free to grab now */
   BezierPresetCategory = 34,
   Preview = 35,
   Canvas = 36,
   ColorEyeDropper = 37,
-  ColorPicker = 38,
+  /* 38 used to be ColorPicker, but free to grab now */
   /* 39 used to be CopyColor, but free to grab now */
-  CssAngleEditor = 40,
-  CssFlexboxEditor = 41,
-  CssGridEditor = 42,
-  CssShadowEditor = 43,
+  /* 40 used to be CssAngleEditor, but free to grab now */
+  /* 41 used to be CssFlexboxEditor, but free to grab now */
+  /* 42 used to be CssGridEditor, but free to grab now */
+  /* 43 used to be CssShadowEditor, but free to grab now */
   Link = 44,
   /* 45 used to be Next, but free to grab now */
   Item = 46,
@@ -87,7 +104,7 @@ enum VisualElements {
   /* 65 used to be ToggleElementSearch, but free to grab now */
   PanelTabHeader = 66,
   Menu = 67,
-  /* 68 used to be DeveloperResourcesPanel, but free to grab now */
+  TableRow = 68,
   TableHeader = 69,
   TableCell = 70,
   /* 71 used to be StylesComputedPane, but free to grab now */
@@ -95,12 +112,28 @@ enum VisualElements {
   ResponsivePresets = 73,
   DeviceModeRuler = 74,
   MediaInspectorView = 75,
+  /* eslint-enable @typescript-eslint/naming-convention */
 }
 
 export type VisualElementName = keyof typeof VisualElements;
 
 function resolveVe(ve: string): number {
   return VisualElements[ve as VisualElementName] ?? 0;
+}
+
+const reportedUnknownVeContext = new Set<string>();
+
+function checkContextValue(context: string|number|undefined): void {
+  if (typeof context !== 'string' || !context.length || knownContextValues.has(context) ||
+      reportedUnknownVeContext.has(context)) {
+    return;
+  }
+  if (Root.Runtime.Runtime.queryParam('debugFrontend') || Host.InspectorFrontendHost.isUnderTest() ||
+      localStorage.getItem('veDebugLoggingEnabled') === DebugLoggingFormat.TEST) {
+    const stack = (new Error().stack || '').split('\n').slice(3).join('\n');
+    console.error(`Unknown VE context: ${context}${stack}`);
+  }
+  reportedUnknownVeContext.add(context);
 }
 
 export function parseJsLog(jslog: string): LoggingConfig {
@@ -113,7 +146,8 @@ export function parseJsLog(jslog: string): LoggingConfig {
   }
   const config: LoggingConfig = {ve};
   const context = getComponent('context:');
-  if (context) {
+  if (context?.trim().length) {
+    checkContextValue(context);
     config.context = context;
   }
 
@@ -124,25 +158,17 @@ export function parseJsLog(jslog: string): LoggingConfig {
 
   const trackString = getComponent('track:');
   if (trackString) {
-    config.track = new Map<string, string>(trackString.split(',').map(t => t.split(':') as [string, string]));
+    config.track = {};
+    for (const track of trackString.split(',')) {
+      if (track.startsWith('keydown:')) {
+        config.track.keydown = track.substr('keydown:'.length);
+      } else {
+        config.track[track as keyof TrackConfig] = true;
+      }
+    }
   }
 
   return config;
-}
-
-export function debugString(config: LoggingConfig): string {
-  const components = [VisualElements[config.ve]];
-  if (config.context) {
-    components.push(`context: ${config.context}`);
-  }
-  if (config.parent) {
-    components.push(`parent: ${config.parent}`);
-  }
-  if (config.track?.size) {
-    components.push(`track: ${
-            [...config.track?.entries()].map(([key, value]) => `${key}${value ? `: ${value}` : ''}`).join(', ')}`);
-  }
-  return components.join('; ');
 }
 
 export interface ConfigStringBuilder {
@@ -150,7 +176,7 @@ export interface ConfigStringBuilder {
    * Specifies an optional context for the visual element. For string contexts
    * the convention is to use kebap case (e.g. `foo-bar`).
    *
-   * @param value Optional context, which can be either a string or a number.
+   * @param value - Optional context, which can be either a string or a number.
    * @returns The builder itself.
    */
   context: (value: string|number|undefined) => ConfigStringBuilder;
@@ -158,7 +184,7 @@ export interface ConfigStringBuilder {
   /**
    * Speficies the name of a `ParentProvider` used to lookup the parent visual element.
    *
-   * @param value The name of a previously registered `ParentProvider`.
+   * @param value - The name of a previously registered `ParentProvider`.
    * @returns The builder itself.
    */
   parent: (value: string) => ConfigStringBuilder;
@@ -166,17 +192,10 @@ export interface ConfigStringBuilder {
   /**
    * Specifies which DOM events to track for this visual element.
    *
-   * @param options The set of DOM events to track.
+   * @param options - The set of DOM events to track.
    * @returns The builder itself.
    */
-  track: (options: {
-    click?: boolean,
-    dblclick?: boolean,
-    hover?: boolean,
-    drag?: boolean,
-    change?: boolean,
-    keydown?: boolean|string,
-  }) => ConfigStringBuilder;
+  track: (options: TrackConfig) => ConfigStringBuilder;
 
   /**
    * Serializes the configuration into a `jslog` string.
@@ -186,27 +205,25 @@ export interface ConfigStringBuilder {
   toString: () => string;
 }
 
-export function makeConfigStringBuilder(veName: VisualElementName): ConfigStringBuilder {
+export function makeConfigStringBuilder(veName: VisualElementName, context?: string): ConfigStringBuilder {
   const components: string[] = [veName];
+  if (typeof context === 'string' && context.trim().length) {
+    components.push(`context: ${context}`);
+    checkContextValue(context);
+  }
   return {
     context: function(value: string|number|undefined): ConfigStringBuilder {
-      if (typeof value !== 'undefined') {
+      if (typeof value === 'number' || typeof value === 'string' && value.length) {
         components.push(`context: ${value}`);
       }
+      checkContextValue(context);
       return this;
     },
     parent: function(value: string): ConfigStringBuilder {
       components.push(`parent: ${value}`);
       return this;
     },
-    track: function(options: {
-      click?: boolean,
-      dblclick?: boolean,
-      hover?: boolean,
-      drag?: boolean,
-      change?: boolean,
-      keydown?: boolean|string,
-    }): ConfigStringBuilder {
+    track: function(options: TrackConfig): ConfigStringBuilder {
       components.push(`track: ${
           Object.entries(options).map(([key, value]) => value !== true ? `${key}: ${value}` : key).join(', ')}`);
       return this;

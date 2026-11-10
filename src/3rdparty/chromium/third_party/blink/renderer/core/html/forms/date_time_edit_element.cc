@@ -25,7 +25,8 @@
 
 #include "third_party/blink/renderer/core/html/forms/date_time_edit_element.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
@@ -490,13 +491,15 @@ void DateTimeEditBuilder::VisitLiteral(const String& text) {
   auto* element =
       MakeGarbageCollected<HTMLDivElement>(EditElement().GetDocument());
   element->SetShadowPseudoId(text_pseudo_id);
+  element->SetInlineStyleProperty(CSSPropertyID::kUnicodeBidi,
+                                  CSSValueID::kNormal);
   if (parameters_.locale.IsRTL() && text.length()) {
-    WTF::unicode::CharDirection dir = WTF::unicode::Direction(text[0]);
-    if (dir == WTF::unicode::kSegmentSeparator ||
-        dir == WTF::unicode::kWhiteSpaceNeutral ||
-        dir == WTF::unicode::kOtherNeutral) {
-      element->AppendChild(Text::Create(
-          EditElement().GetDocument(), String(&kRightToLeftMarkCharacter, 1u)));
+    unicode::CharDirection dir = unicode::Direction(text[0]);
+    if (dir == unicode::kSegmentSeparator ||
+        dir == unicode::kWhiteSpaceNeutral || dir == unicode::kOtherNeutral) {
+      element->AppendChild(
+          Text::Create(EditElement().GetDocument(),
+                       String(base::span_from_ref(uchar::kRightToLeftMark))));
     }
   }
   element->AppendChild(Text::Create(EditElement().GetDocument(), text));
@@ -545,6 +548,7 @@ DateTimeEditElement::DateTimeEditElement(Document& document,
   SetHasCustomStyleCallbacks();
   SetShadowPseudoId(AtomicString("-webkit-datetime-edit"));
   setAttribute(html_names::kIdAttr, shadow_element_names::kIdDateTimeEdit);
+  SetInlineStyleProperty(CSSPropertyID::kUnicodeBidi, CSSValueID::kNormal);
 }
 
 DateTimeEditElement::~DateTimeEditElement() = default;
@@ -768,6 +772,8 @@ void DateTimeEditElement::GetLayout(const LayoutParameters& layout_parameters,
   if (!HasChildren()) {
     auto* element = MakeGarbageCollected<HTMLDivElement>(GetDocument());
     element->SetShadowPseudoId(fields_wrapper_pseudo_id);
+    element->SetInlineStyleProperty(CSSPropertyID::kUnicodeBidi,
+                                    CSSValueID::kNormal);
     AppendChild(element);
   }
   Element* fields_wrapper = FieldsWrapperElement();
@@ -865,7 +871,7 @@ void DateTimeEditElement::SetEmptyValue(
 }
 
 DateTimeFieldElement* DateTimeEditElement::GetField(DateTimeField type) const {
-  auto* it = base::ranges::find(fields_, type, &DateTimeFieldElement::Type);
+  auto it = std::ranges::find(fields_, type, &DateTimeFieldElement::Type);
   if (it == fields_.end())
     return nullptr;
   return it->Get();

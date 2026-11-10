@@ -15,7 +15,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "media/gpu/codec_picture.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #include "media/video/video_encode_accelerator.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -89,12 +89,13 @@ class MEDIA_GPU_EXPORT H264Picture : public CodecPicture {
   // memory management after finishing this picture.
   bool long_term_reference_flag;
   bool adaptive_ref_pic_marking_mode_flag;
-  H264DecRefPicMarking ref_pic_marking[H264SliceHeader::kRefListSize];
+  std::array<H264DecRefPicMarking, H264SliceHeader::kRefListSize>
+      ref_pic_marking;
 
   // Position in DPB (i.e. index in DPB).
   int dpb_position;
 
-  absl::optional<H264Metadata> metadata_for_encoding;
+  std::optional<H264Metadata> metadata_for_encoding;
 
  protected:
   ~H264Picture() override;

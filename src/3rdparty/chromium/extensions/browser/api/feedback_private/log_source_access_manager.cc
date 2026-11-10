@@ -10,12 +10,14 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/thread_pool.h"
 #include "base/time/default_tick_clock.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/feedback_private/feedback_private_delegate.h"
 #include "extensions/browser/api/feedback_private/log_source_resource.h"
+#include "extensions/common/extension_id.h"
 
 namespace extensions {
 
@@ -33,6 +35,14 @@ constexpr int kDefaultMaxNumBurstAccesses = 10;
 // extension.
 constexpr base::TimeDelta kDefaultRateLimitingTimeout =
     base::Milliseconds(1000);
+
+// Maximum length of a single log line. Longer lines will be truncated.
+constexpr int kMaxLogLineLength = 8100;
+
+// Maximum length of a single (multiline) fetch. Larger fetches will be dropped.
+// Hotrod polls the logs every 30 seconds, which results in logs up to a few
+// hundred kB on startup.
+constexpr int kMaxLogFetchLength = 2000000;
 
 // The maximum number of accesses on a single log source that can be allowed
 // before the next recharge increment. See access_rate_limiter.h for more info.
@@ -52,11 +62,29 @@ base::TimeDelta GetMinTimeBetweenReads() {
 // of strings, each string containing a single line.
 void GetLogLinesFromSystemLogsResponse(const SystemLogsResponse& response,
                                        std::vector<std::string>* log_lines) {
+  const int kTimestampPrefixLength = 27;  // yyyy-mm-ddTHH:MM:SS.uuuuuu_
   for (const std::pair<const std::string, std::string>& pair : response) {
-    std::vector<std::string> new_lines = base::SplitString(
+    if (pair.second.size() > kMaxLogFetchLength) {
+      const std::string error_message =
+          pair.second.substr(0, kTimestampPrefixLength) +
+          base::StringPrintf(
+              "WARNING extensions::LogSourceAccessManager::OnFetchComplete: "
+              "Dropped lines from log source %s totaling %d chars.",
+              pair.first.c_str(), pair.second.size());
+      log_lines->emplace_back(error_message);
+      continue;
+    }
+    std::vector<std::string_view> new_lines = base::SplitStringPiece(
         pair.second, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
     log_lines->reserve(log_lines->size() + new_lines.size());
-    log_lines->insert(log_lines->end(), new_lines.begin(), new_lines.end());
+    for (std::string_view& line : new_lines) {
+      if (line.size() < kMaxLogLineLength) {
+        log_lines->emplace_back(line);
+      } else {
+        log_lines->emplace_back(std::string(line.substr(0, kMaxLogLineLength)) +
+                                " (Truncated)");
+      }
+    }
   }
 }
 
@@ -99,7 +127,7 @@ void LogSourceAccessManager::SetRateLimitingTimeoutForTesting(
 }
 
 bool LogSourceAccessManager::FetchFromSource(const ReadLogSourceParams& params,
-                                             const std::string& extension_id,
+                                             const ExtensionId& extension_id,
                                              ReadLogSourceCallback callback) {
   int requested_resource_id =
       params.reader_id ? *params.reader_id : kInvalidResourceId;
@@ -143,7 +171,7 @@ bool LogSourceAccessManager::FetchFromSource(const ReadLogSourceParams& params,
 }
 
 void LogSourceAccessManager::OnFetchComplete(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     ResourceId resource_id,
     bool delete_resource,
     ReadLogSourceCallback callback,
@@ -186,12 +214,12 @@ void LogSourceAccessManager::RemoveHandle(ResourceId id) {
 
 LogSourceAccessManager::SourceAndExtension::SourceAndExtension(
     LogSource source,
-    const std::string& extension_id)
+    const ExtensionId& extension_id)
     : source(source), extension_id(extension_id) {}
 
 LogSourceAccessManager::ResourceId LogSourceAccessManager::CreateResource(
     LogSource source,
-    const std::string& extension_id) {
+    const ExtensionId& extension_id) {
   // Enforce the rules: Do not create too many SingleLogSource objects to read
   // from a source, even if they are from different extensions.
   if (GetNumActiveResourcesForSource(source) >= kMaxReadersPerSource)

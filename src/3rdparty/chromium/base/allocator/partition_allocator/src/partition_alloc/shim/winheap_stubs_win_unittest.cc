@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "partition_alloc/shim/winheap_stubs_win.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include <bit>
+#include "partition_alloc/shim/winheap_stubs_win.h"
 
 #include "partition_alloc/partition_alloc_base/bits.h"
 #include "partition_alloc/partition_alloc_check.h"
@@ -14,7 +17,7 @@ namespace allocator_shim {
 namespace {
 
 bool IsPtrAligned(void* ptr, size_t alignment) {
-  PA_CHECK(std::has_single_bit(alignment));
+  PA_CHECK(partition_alloc::internal::base::bits::HasSingleBit(alignment));
   uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
   return partition_alloc::internal::base::bits::AlignUp(address, alignment) ==
          address;

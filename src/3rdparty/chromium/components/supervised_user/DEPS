@@ -10,10 +10,12 @@ include_rules = [
   "+components/prefs",
   "+components/pref_registry",
   "+components/safe_search_api",
+  "+components/security_interstitials/core",
   "+components/strings/grit",
   "+components/signin",
   "+components/sync",
   "+components/sync_preferences",
+  "+components/url_formatter",
   "+components/url_matcher",
   "+components/user_manager",
   "+extensions/buildflags",
@@ -23,4 +25,5 @@ include_rules = [
   "+services/network/test",
   "+third_party/protobuf",
   "+ui/base",
+  "+base/android",
 ]

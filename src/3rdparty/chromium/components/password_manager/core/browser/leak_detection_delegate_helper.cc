@@ -4,11 +4,13 @@
 
 #include "components/password_manager/core/browser/leak_detection_delegate_helper.h"
 
+#include <algorithm>
+
 #include "base/barrier_closure.h"
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
 #include "components/password_manager/core/browser/leak_detection/encryption_utils.h"
+#include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/psl_matching_helper.h"
@@ -51,7 +53,7 @@ void LeakDetectionDelegateHelper::ProcessLeakedPassword(
 void LeakDetectionDelegateHelper::OnGetPasswordStoreResults(
     std::vector<std::unique_ptr<PasswordForm>> results) {
   // Store the results.
-  base::ranges::move(results, std::back_inserter(partial_results_));
+  std::ranges::move(results, std::back_inserter(partial_results_));
 
   barrier_closure_.Run();
 }
@@ -92,15 +94,23 @@ void LeakDetectionDelegateHelper::ProcessResults() {
 
   // Check if the password is reused on a different origin, or on the same
   // origin with a different username.
-  IsReused is_reused(base::ranges::any_of(
+  IsReused is_reused(std::ranges::any_of(
       partial_results_, [this, are_urls_equivalent](const auto& form) {
         return form->password_value == password_ &&
                (!are_urls_equivalent(form->url, url_) ||
                 form->username_value != username_);
       }));
 
-  std::move(callback_).Run(in_stores, is_reused, std::move(url_),
-                           std::move(username_),
+  IsSavedAsBackup is_saved_as_backup(std::ranges::any_of(
+      partial_results_, [this, are_urls_equivalent](const auto& form) {
+        return form->GetPasswordBackup() == password_ &&
+               form->username_value == username_ &&
+               are_urls_equivalent(form->url, url_);
+      }));
+
+  std::move(callback_).Run(in_stores, is_reused, is_saved_as_backup,
+                           std::move(url_), std::move(username_),
+                           std::move(password_),
                            std::move(all_urls_with_leaked_credentials));
 }
 

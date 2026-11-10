@@ -9,12 +9,8 @@ export interface SystemLog {
   statValue: string;
 }
 
-interface BrowserProxy {
+export interface BrowserProxy {
   requestSystemInfo(): Promise<SystemLog[]>;
-
-  isLacrosEnabled(): Promise<boolean>;
-
-  openLacrosSystemPage(): void;
 }
 
 export class BrowserProxyImpl implements BrowserProxy {
@@ -28,14 +24,6 @@ export class BrowserProxyImpl implements BrowserProxy {
 
   static setInstance(obj: BrowserProxy) {
     instance = obj;
-  }
-
-  isLacrosEnabled() {
-    return sendWithPromise('isLacrosEnabled');
-  }
-
-  openLacrosSystemPage() {
-    chrome.send('openLacrosSystemPage');
   }
 }
 

@@ -130,6 +130,10 @@ The pre-defined configurations are:
     disabling thread-safety and debugging, and use even more size-optimized data
     tables.
 
+To setup the build with these options use something like:
+```
+$ meson setup build -Dcpp_args=-DHB_MINI -Dc_args=-DHB_MINI
+```
 
 ## Tailoring configuration
 
@@ -147,12 +151,3 @@ configuration.
 Up until HarfBuzz 3.1.2, the configuration override header file's name was
 fixed and called `config-override.h`, and was activated by defining the macro
 `HAVE_CONFIG_OVERRIDE_H`.  That still works.
-
-
-## Notes
-
-Note that the config option `HB_NO_CFF`, which is enabled by `HB_LEAN` and
-`HB_TINY` does *not* mean that the resulting library won't work with CFF fonts.
-The library can shape valid CFF fonts just fine, with or without this option.
-This option disables (among other things) the code to calculate glyph extents
-for CFF fonts, which many clients might not need.

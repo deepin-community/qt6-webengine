@@ -27,7 +27,6 @@ int SinScreenAngle(uint16_t angle) {
       return -1;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -43,7 +42,6 @@ int CosScreenAngle(uint16_t angle) {
       return 0;
     default:
       NOTREACHED();
-      return 1;
   }
 }
 
@@ -72,7 +70,6 @@ double SinNegativeHalfScreenAngle(uint16_t angle) {
       return -kInverseSqrt2;  // sin -135
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -89,7 +86,6 @@ double CosNegativeHalfScreenAngle(uint16_t angle) {
       return -kInverseSqrt2;  // cos -135
     default:
       NOTREACHED();
-      return 1;
   }
 }
 
@@ -121,11 +117,8 @@ void SensorReadingRemapper::RemapToScreenCoords(
   DCHECK(reading);
   switch (type) {
     case SensorType::AMBIENT_LIGHT:
-    case SensorType::PROXIMITY:
-    case SensorType::PRESSURE:
       NOTREACHED() << "Remap must not be performed for the sensor type "
                    << type;
-      break;
     case SensorType::ACCELEROMETER:
     case SensorType::LINEAR_ACCELERATION:
     case SensorType::GRAVITY:
@@ -145,9 +138,6 @@ void SensorReadingRemapper::RemapToScreenCoords(
     case SensorType::RELATIVE_ORIENTATION_EULER_ANGLES:
       NOTREACHED() << "Remap is not yet implemented for the sensor type "
                    << type;
-      break;
-    default:
-      NOTREACHED() << "Unknown sensor type " << type;
   }
 }
 

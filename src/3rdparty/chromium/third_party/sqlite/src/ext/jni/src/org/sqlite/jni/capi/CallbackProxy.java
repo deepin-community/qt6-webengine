@@ -13,19 +13,20 @@
 */
 package org.sqlite.jni.capi;
 /**
-   This marker interface exists soley for use as a documentation and
+   This marker interface exists solely for use as a documentation and
    class-grouping tool. It should be applied to interfaces or
    classes which have a call() method implementing some specific
    callback interface on behalf of the C library.
 
-   <p>Unless very explicitely documented otherwise, callbacks must
+   <p>Unless very explicitly documented otherwise, callbacks must
    never throw. Any which do throw but should not might trigger debug
    output regarding the error, but the exception will not be
    propagated.  For callback interfaces which support returning error
    info to the core, the JNI binding will convert any exceptions to
    C-level error information. For callback interfaces which do not
-   support, all exceptions will necessarily be suppressed in order to
-   retain the C-style no-throw semantics.
+   support returning error information, all exceptions will
+   necessarily be suppressed in order to retain the C-style no-throw
+   semantics and avoid invoking undefined behavior in the C layer.
 
    <p>Callbacks of this style follow a common naming convention:
 
@@ -33,7 +34,7 @@ package org.sqlite.jni.capi;
    proxying for, minus the {@code sqlite3_} prefix, plus a {@code
    Callback} suffix. e.g. {@code sqlite3_busy_handler()}'s callback is
    named {@code BusyHandlerCallback}. Exceptions are made where that
-   would potentially be ambiguous, e.g. {@link ConfigSqllogCallback}
+   would potentially be ambiguous, e.g. {@link ConfigSqlLogCallback}
    instead of {@code ConfigCallback} because the {@code
    sqlite3_config()} interface may need to support more callback types
    in the future.

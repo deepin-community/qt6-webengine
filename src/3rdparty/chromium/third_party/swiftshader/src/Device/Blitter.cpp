@@ -268,7 +268,7 @@ bool Blitter::fastClear(const void *clearValue, vk::Format clearFormat, vk::Imag
 			area.extent.width = extent.width;
 			area.extent.height = extent.height;
 		}
-		if(dest->is3DSlice())
+		else if(dest->is3DSlice())
 		{
 			extent.depth = 1;  // The 3D image is instead interpreted as a 2D image with layers
 		}
@@ -1573,7 +1573,7 @@ Float4 Blitter::sample(Pointer<Byte> &source, Float &x, Float &y, Float &z,
 		if(state.filter3D)
 		{
 			Int Z1 = Z0 + 1;
-			Z1 = IfThenElse(Z1 >= sHeight, Z0, Z1);
+			Z1 = IfThenElse(Z1 >= sDepth, Z0, Z1);
 
 			Pointer<Byte> s000 = source + ComputeOffset(X0, Y0, Z0, sSliceB, sPitchB, srcBytes);
 			Pointer<Byte> s010 = source + ComputeOffset(X1, Y0, Z0, sSliceB, sPitchB, srcBytes);

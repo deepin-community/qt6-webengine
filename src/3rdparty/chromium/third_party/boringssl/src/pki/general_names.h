@@ -1,6 +1,16 @@
 // Copyright 2017 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_GENERAL_NAMES_H_
 #define BSSL_PKI_GENERAL_NAMES_H_
@@ -14,7 +24,7 @@
 
 #include "cert_error_id.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 class CertErrors;
 
@@ -63,13 +73,13 @@ struct OPENSSL_EXPORT GeneralNames {
   // |general_names_tlv|, so is only valid as long as |general_names_tlv| is.
   // Returns nullptr on failure, and may fill |errors| with
   // additional information. |errors| must be non-null.
-  static std::unique_ptr<GeneralNames> Create(
-      const der::Input &general_names_tlv, CertErrors *errors);
+  static std::unique_ptr<GeneralNames> Create(der::Input general_names_tlv,
+                                              CertErrors *errors);
 
   // As above, but takes the GeneralNames sequence value, without the tag and
   // length.
   static std::unique_ptr<GeneralNames> CreateFromValue(
-      const der::Input &general_names_value, CertErrors *errors);
+      der::Input general_names_value, CertErrors *errors);
 
   // DER-encoded OtherName values.
   std::vector<der::Input> other_names;
@@ -122,10 +132,10 @@ struct OPENSSL_EXPORT GeneralNames {
 // |errors| must be non-null.
 // TODO(mattm): should this be a method on GeneralNames?
 [[nodiscard]] OPENSSL_EXPORT bool ParseGeneralName(
-    const der::Input &input,
+    der::Input input,
     GeneralNames::ParseGeneralNameIPAddressType ip_address_type,
     GeneralNames *subtrees, CertErrors *errors);
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_GENERAL_NAMES_H_

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/ffmpeg_audio_decoder.h"
 
 #include <stdint.h>
@@ -183,12 +188,13 @@ void FFmpegAudioDecoder::DecodeBuffer(const DecoderBuffer& buffer,
 
 bool FFmpegAudioDecoder::FFmpegDecode(const DecoderBuffer& buffer) {
   AVPacket* packet = av_packet_alloc();
-  if (buffer.end_of_stream()) {
-    packet->data = NULL;
+  if (buffer.end_of_stream() || buffer.size() == 0) {
+    packet->data = nullptr;
     packet->size = 0;
   } else {
-    packet->data = const_cast<uint8_t*>(buffer.data());
-    packet->size = buffer.data_size();
+    auto buffer_span = base::span(buffer);
+    packet->data = const_cast<uint8_t*>(buffer_span.data());
+    packet->size = buffer_span.size();
     packet->pts =
         ConvertToTimeBase(codec_context_->time_base, buffer.timestamp());
 
@@ -231,8 +237,8 @@ bool FFmpegAudioDecoder::FFmpegDecode(const DecoderBuffer& buffer) {
   // Even if we didn't decode a frame this loop, we should still send the packet
   // to the discard helper for caching.
   if (!decoded_frame_this_loop && !buffer.end_of_stream()) {
-    const bool result =
-        discard_helper_->ProcessBuffers(buffer.time_info(), nullptr);
+    const bool result = discard_helper_->ProcessBuffers(
+        AudioDiscardHelper::TimeInfo::FromBuffer(buffer), nullptr);
     DCHECK(!result);
   }
 
@@ -304,7 +310,8 @@ bool FFmpegAudioDecoder::OnNewFrame(const DecoderBuffer& buffer,
     output->TrimEnd(unread_frames);
 
   *decoded_frame_this_loop = true;
-  if (discard_helper_->ProcessBuffers(buffer.time_info(), output.get())) {
+  if (discard_helper_->ProcessBuffers(
+          AudioDiscardHelper::TimeInfo::FromBuffer(buffer), output.get())) {
     if (is_config_change &&
         output->sample_rate() != config_.samples_per_second()) {
       // At the boundary of the config change, FFmpeg's AAC decoder gives the
@@ -332,22 +339,16 @@ bool FFmpegAudioDecoder::ConfigureDecoder(const AudioDecoderConfig& config) {
   ReleaseFFmpegResources();
 
   // Initialize AVCodecContext structure.
-  codec_context_.reset(avcodec_alloc_context3(NULL));
+  codec_context_.reset(avcodec_alloc_context3(nullptr));
   AudioDecoderConfigToAVCodecContext(config, codec_context_.get());
 
   codec_context_->opaque = this;
   codec_context_->get_buffer2 = GetAudioBufferImpl;
 
-  if (base::FeatureList::IsEnabled(kFFmpegAllowLists)) {
-    // Note: FFmpeg will try to free this string, so we must duplicate it.
-    codec_context_->codec_whitelist =
-        av_strdup(FFmpegGlue::GetAllowedAudioDecoders());
-  }
-
   if (!config.should_discard_decoder_delay())
     codec_context_->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
 
-  AVDictionary* codec_options = NULL;
+  AVDictionary* codec_options = nullptr;
   if (config.codec() == AudioCodec::kOpus) {
     codec_context_->request_sample_fmt = AV_SAMPLE_FMT_FLT;
 
@@ -360,16 +361,8 @@ bool FFmpegAudioDecoder::ConfigureDecoder(const AudioDecoderConfig& config) {
   }
 
 #if BUILDFLAG(IS_QTWEBENGINE) && BUILDFLAG(USE_SYSTEM_FFMPEG)
-  // Workaround http://crbug.com/41492567
-  // Chromium only supports the 'libopus' decoder.
-  // 'avcodec_find_decoder' finds the experimental 'opus' decoder first
-  // because the lookup is based on codec_id and both have the same id.
-  // Bundled ffmpeg only have libopus but the system usually have both.
-  const AVCodec* codec = [&config, this]() {
-    if (config.codec() == AudioCodec::kOpus)
-      return avcodec_find_decoder_by_name("libopus");
-    return avcodec_find_decoder(codec_context_->codec_id);
-  }();
+  AVCodecID id = AudioCodecToCodecID(config.codec(), config.sample_format());
+  const AVCodec* codec = FindDecoder(id, codec_context_->codec_whitelist);
 #else
   const AVCodec* codec = avcodec_find_decoder(codec_context_->codec_id);
 #endif
@@ -387,24 +380,6 @@ bool FFmpegAudioDecoder::ConfigureDecoder(const AudioDecoderConfig& config) {
 
   // Success!
   av_sample_format_ = codec_context_->sample_fmt;
-
-#if LIBAVCODEC_VERSION_MAJOR > 60
-  if (codec_context_->ch_layout.nb_channels != config.channels()) {
-#else
-  if (codec_context_->channels != config.channels()) {
-#endif
-    MEDIA_LOG(ERROR, media_log_)
-        << "Audio configuration specified " << config.channels()
-        << " channels, but FFmpeg thinks the file contains "
-#if LIBAVCODEC_VERSION_MAJOR > 60
-        << codec_context_->ch_layout.nb_channels << " channels";
-#else
-        << codec_context_->channels << " channels";
-#endif
-    ReleaseFFmpegResources();
-    state_ = DecoderState::kUninitialized;
-    return false;
-  }
 
   decoding_loop_ =
       std::make_unique<FFmpegDecodingLoop>(codec_context_.get(), true);
@@ -430,8 +405,7 @@ int FFmpegAudioDecoder::GetAudioBuffer(struct AVCodecContext* s,
 
   // Since this routine is called by FFmpeg when a buffer is required for
   // audio data, use the values supplied by FFmpeg (ignoring the current
-  // settings). FFmpegDecode() gets to determine if the buffer is useable or
-  // not.
+  // settings). FFmpegDecode() gets to determine if the buffer is usable or not.
   AVSampleFormat format = static_cast<AVSampleFormat>(frame->format);
   SampleFormat sample_format =
       AVSampleFormatToSampleFormat(format, s->codec_id);

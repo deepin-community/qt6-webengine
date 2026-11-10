@@ -1,4 +1,4 @@
-/* eslint no-console: "off" */
+/* eslint-disable no-console, n/no-restricted-import */
 
 import * as fs from 'fs';
 import * as http from 'http';
@@ -27,9 +27,13 @@ Options:
   --compat                  Run tests in compatibility mode.
   --coverage                Add coverage data to each result.
   --verbose                 Print result/log of every test as it runs.
+  --debug                   Include debug messages in logging.
   --gpu-provider            Path to node module that provides the GPU implementation.
   --gpu-provider-flag       Flag to set on the gpu-provider as <flag>=<value>
   --unroll-const-eval-loops Unrolls loops in constant-evaluation shader execution tests
+  --enforce-default-limits  Enforce the default limits (note: powerPreference tests may fail)
+  --force-fallback-adapter  Force a fallback adapter
+  --log-to-websocket        Log to a websocket
   --u                       Flag to set on the gpu-provider as <flag>=<value>
 
 Provides an HTTP server used for running tests via an HTTP RPC interface
@@ -48,6 +52,8 @@ interface RunResult {
   status: Status;
   // Any additional messages printed
   message: string;
+  // The time it took to execute the test
+  durationMS: number;
   // Code coverage data, if the server was started with `--coverage`
   // This data is opaque (implementation defined).
   coverageData?: string;
@@ -91,11 +97,21 @@ for (let i = 0; i < sys.args.length; ++i) {
       globalTestConfig.compatibility = true;
     } else if (a === '--coverage') {
       emitCoverage = true;
+    } else if (a === '--force-fallback-adapter') {
+      globalTestConfig.forceFallbackAdapter = true;
+    } else if (a === '--enforce-default-limits') {
+      globalTestConfig.enforceDefaultLimits = true;
+    } else if (a === '--block-all-features') {
+      globalTestConfig.blockAllFeatures = true;
+    } else if (a === '--log-to-websocket') {
+      globalTestConfig.logToWebSocket = true;
     } else if (a === '--gpu-provider') {
       const modulePath = sys.args[++i];
       gpuProviderModule = require(modulePath);
     } else if (a === '--gpu-provider-flag') {
       gpuProviderFlags.push(sys.args[++i]);
+    } else if (a === '--debug') {
+      globalTestConfig.enableDebugLogs = true;
     } else if (a === '--unroll-const-eval-loops') {
       globalTestConfig.unrollConstEvalLoops = true;
     } else if (a === '--help') {
@@ -110,9 +126,11 @@ for (let i = 0; i < sys.args.length; ++i) {
 
 let codeCoverage: CodeCoverageProvider | undefined = undefined;
 
-if (globalTestConfig.compatibility) {
-  // MAINTENANCE_TODO: remove the cast once compatibilityMode is officially added
-  setDefaultRequestAdapterOptions({ compatibilityMode: true } as GPURequestAdapterOptions);
+if (globalTestConfig.compatibility || globalTestConfig.forceFallbackAdapter) {
+  setDefaultRequestAdapterOptions({
+    featureLevel: globalTestConfig.compatibility ? 'compatibility' : 'core',
+    forceFallbackAdapter: globalTestConfig.forceFallbackAdapter,
+  });
 }
 
 if (gpuProviderModule) {
@@ -150,7 +168,6 @@ if (verbose) {
 
 // eslint-disable-next-line @typescript-eslint/require-await
 (async () => {
-  Logger.globalDebugMode = verbose;
   const log = new Logger();
   const testcases = new Map<string, TestTreeLeaf>();
 
@@ -197,14 +214,16 @@ if (verbose) {
             if (codeCoverage !== undefined) {
               codeCoverage.begin();
             }
+            const start = performance.now();
             const result = await runTestcase(testcase);
+            const durationMS = performance.now() - start;
             const coverageData = codeCoverage !== undefined ? codeCoverage.end() : undefined;
             let message = '';
             if (result.logs !== undefined) {
               message = result.logs.map(log => prettyPrintLog(log)).join('\n');
             }
             const status = result.status;
-            const res: RunResult = { status, message, coverageData };
+            const res: RunResult = { status, message, durationMS, coverageData };
             response.statusCode = 200;
             response.end(JSON.stringify(res));
           } else {

@@ -8,8 +8,10 @@
 #include <windows.h>
 
 #include <stddef.h>
+
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -21,11 +23,11 @@
 #include "base/scoped_observation.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/win_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/platform/ax_fragment_root_delegate_win.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/input_method_observer.h"
-#include "ui/base/ui_base_types.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/base/win/window_event_target.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/point.h"
@@ -37,6 +39,7 @@
 #include "ui/views/views_export.h"
 #include "ui/views/win/pen_event_processor.h"
 #include "ui/views/win/scoped_enable_unadjusted_mouse_events_win.h"
+#include "ui/views/win/user_resize_detector.h"
 
 namespace gfx {
 class ImageSkia;
@@ -91,8 +94,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // See WindowImpl for details on |debugging_id|.
   static std::unique_ptr<HWNDMessageHandler> Create(
       HWNDMessageHandlerDelegate* delegate,
-      const std::string& debugging_id,
-      bool headless_mode);
+      const std::string& debugging_id);
 
   HWNDMessageHandler(const HWNDMessageHandler&) = delete;
   HWNDMessageHandler& operator=(const HWNDMessageHandler&) = delete;
@@ -100,7 +102,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   ~HWNDMessageHandler() override;
 
   virtual void Init(HWND parent, const gfx::Rect& bounds);
-  virtual void InitModalType(ui::ModalType modal_type);
+  virtual void InitModalType(ui::mojom::ModalType modal_type);
 
   virtual void Close();
   virtual void CloseNow();
@@ -112,7 +114,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   virtual gfx::Rect GetClientAreaBounds() const;
 
   virtual void GetWindowPlacement(gfx::Rect* bounds,
-                                  ui::WindowShowState* show_state) const;
+                                  ui::mojom::WindowShowState* show_state) const;
 
   // Sets the bounds of the HWND to |bounds_in_pixels|. If the HWND size is not
   // changed, |force_size_changed| determines if we should pretend it is.
@@ -131,9 +133,12 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // owner of the HWND.
   virtual void SetParentOrOwner(HWND new_parent);
 
+  // Gets all descendant owned HWNDs of this handler's HWND.
+  std::vector<HWND> GetOwnedWindows();
+
   // Shows the window. If |show_state| is maximized, |pixel_restore_bounds| is
   // the bounds to restore the window to when going back to normal.
-  virtual void Show(ui::WindowShowState show_state,
+  virtual void Show(ui::mojom::WindowShowState show_state,
                     const gfx::Rect& pixel_restore_bounds);
   virtual void Hide();
 
@@ -157,6 +162,9 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   virtual bool RunMoveLoop(const gfx::Vector2d& drag_offset,
                            bool hide_on_escape);
   virtual void EndMoveLoop();
+
+  // Returns true if any HWndMessageHandler is in a native move/resize loop.
+  static bool IsInNativeMoveResizeLoop();
 
   // Tells the HWND its client area has changed.
   virtual void SendFrameChanged();
@@ -185,8 +193,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon);
 
-  virtual void set_use_system_default_icon(bool use_system_default_icon);
-
   // Set the fullscreen state. `target_display_id` indicates the display where
   // the window should be shown fullscreen; display::kInvalidDisplayId indicates
   // that no display was specified, so the current display may be used.
@@ -209,6 +215,12 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
 
   virtual void set_is_translucent(bool is_translucent);
   virtual bool is_translucent() const;
+
+  // Sets whether to use rounded corners. This uses DWMWCP_ROUND and is not
+  // effective on Windows 10.
+  void set_use_rounded_corner(bool use_rounded_corner) {
+    use_rounded_corner_ = use_rounded_corner;
+  }
 
   virtual std::unique_ptr<aura::ScopedEnableUnadjustedMouseEvents>
   RegisterUnadjustedMouseEvent();
@@ -244,6 +256,9 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
                                  HMONITOR* monitor,
                                  gfx::Rect* monitor_rect,
                                  gfx::Rect* work_area);
+
+  // Returns true if IsFrameSystemDrawn() and there's actually a frame to draw.
+  bool HasSystemFrame() const;
 
  private:
   friend class ::views::test::DesktopWindowTreeHostWinTestApi;
@@ -292,7 +307,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
                                  WPARAM w_param,
                                  LPARAM l_param,
                                  bool* handled) override;
-  void HandleParentChanged() override;
   void ApplyPinchZoomScale(float scale) override;
   void ApplyPinchZoomBegin() override;
   void ApplyPinchZoomEnd() override;
@@ -375,9 +389,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // Returns whether Windows should help with frame rendering (i.e. we're using
   // the glass frame).
   bool IsFrameSystemDrawn() const;
-
-  // Returns true if IsFrameSystemDrawn() and there's actually a frame to draw.
-  bool HasSystemFrame() const;
 
   // Adds or removes the frame extension into client area with
   // DwmExtendFrameIntoClientArea.
@@ -636,8 +647,17 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // refers to the edge of the window being sized.
   void SizeWindowToAspectRatio(UINT param, gfx::Rect* rect);
 
-  // Get the cursor position, which may be mocked if running a test
+  // Get the cursor position, which may be mocked if running a test.
   POINT GetCursorPos() const;
+
+  // Remove the current window's reference from `fullscreen_monitor_map_`.
+  void RemoveCurrentWindowFromFullscreenMonitorMap();
+
+  // Update `fullscreen_monitor_map_` to remove the invalid HMONITOR handle
+  // corresponding to the current window handle. This is called when the
+  // WM_DISPLAYCHANGE message is received (i.e., when the display configuration
+  // changes).
+  void UpdateFullscreenMonitorMap();
 
   raw_ptr<HWNDMessageHandlerDelegate> delegate_;
 
@@ -645,8 +665,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
 
   // Set to true in Close() and false is CloseNow().
   bool waiting_for_close_now_;
-
-  bool use_system_default_icon_;
 
   // Whether all ancestors have been enabled. This is only used if is_modal_ is
   // true.
@@ -656,14 +674,14 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   scoped_refptr<ui::WinCursor> current_cursor_;
 
   // The icon created from the bitmap image of the window icon.
-  base::win::ScopedHICON window_icon_;
+  base::win::ScopedGDIObject<HICON> window_icon_;
 
   // The icon created from the bitmap image of the app icon.
-  base::win::ScopedHICON app_icon_;
+  base::win::ScopedGDIObject<HICON> app_icon_;
 
   // The aspect ratio for the window. This is only used for sizing operations
   // for the non-client area.
-  absl::optional<float> aspect_ratio_;
+  std::optional<float> aspect_ratio_;
 
   // Size to exclude from aspect ratio calculation.
   gfx::Size excluded_margin_;
@@ -693,9 +711,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // area. We need this so we can correctly show the context menu on mouse-up.
   bool is_right_mouse_pressed_on_caption_;
 
-  // The set of touch devices currently down.
-  TouchIDs touch_ids_;
-
   // ScopedRedrawLock ----------------------------------------------------------
 
   // Represents the number of ScopedRedrawLocks active against this widget.
@@ -715,13 +730,14 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // The last-seen monitor containing us, and its rect and work area.  These are
   // used to catch updates to the rect and work area and react accordingly.
   HMONITOR last_monitor_;
-  gfx::Rect last_monitor_rect_, last_work_area_;
+  gfx::Rect last_monitor_rect_;
+  gfx::Rect last_work_area_;
 
   // True the first time nccalc is called on a sizable widget
   bool is_first_nccalc_;
 
   // Copy of custom window region specified via SetRegion(), if any.
-  base::win::ScopedRegion custom_window_region_;
+  base::win::ScopedGDIObject<HRGN> custom_window_region_;
 
   // If > 0 indicates a menu is running (we're showing a native menu).
   int menu_depth_;
@@ -730,6 +746,8 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   ui::SequentialIDGenerator id_generator_;
 
   PenEventProcessor pen_processor_;
+
+  UserResizeDetector user_resize_detector_;
 
   // Stores a pointer to the WindowEventTarget interface implemented by this
   // class. Allows callers to retrieve the interface pointer.
@@ -797,6 +815,11 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // cause re-entrancy during teardown. https://crbug.com/1087553
   bool did_return_uia_object_;
 
+  // Set to true immediately before disconnecting the fragment root's element
+  // provider. From that point onward, any request for UiaRootObjectId via
+  // WM_GET_OBJECT will be ignored.
+  bool disconnecting_fragment_root_ = false;
+
   // The location where the user clicked on the caption. We cache this when we
   // receive the WM_NCLBUTTONDOWN message. We use this in the subsequent
   // WM_NCMOUSEMOVE message to see if the mouse actually moved.
@@ -816,9 +839,9 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // partially or fully transparent.
   bool is_translucent_ = false;
 
-  // True if the window should process WM_POINTER for touch events and
-  // not WM_TOUCH events.
-  bool pointer_events_for_touch_;
+  // True if the window uses rounded corners. This uses DWMWCP_ROUND style on
+  // Windows 11. Not effective on Windows 10.
+  bool use_rounded_corner_ = false;
 
   // True if DWM frame should be cleared on next WM_ERASEBKGND message.  This is
   // necessary to avoid white flashing in the titlebar area around the
@@ -853,7 +876,8 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // This is a map of the HMONITOR to full screeen window instance. It is safe
   // to keep a raw pointer to the HWNDMessageHandler instance as we track the
   // window destruction and ensure that the map is cleaned up.
-  using FullscreenWindowMonitorMap = std::map<HMONITOR, HWNDMessageHandler*>;
+  using FullscreenWindowMonitorMap =
+      std::map<HMONITOR, raw_ptr<HWNDMessageHandler>>;
   static base::LazyInstance<FullscreenWindowMonitorMap>::DestructorAtExit
       fullscreen_monitor_map_;
 
@@ -863,7 +887,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   gfx::Size exposed_pixels_;
 
   // Populated if the cursor position is being mocked for testing purposes.
-  absl::optional<gfx::Point> mock_cursor_position_;
+  std::optional<gfx::Point> mock_cursor_position_;
 
   base::ScopedObservation<ui::InputMethod, ui::InputMethodObserver>
       observation_{this};

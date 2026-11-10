@@ -7,7 +7,9 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/containers/queue.h"
@@ -26,7 +28,6 @@
 #include "net/disk_cache/simple/simple_synchronous_entry.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class TaskRunner;
@@ -96,7 +97,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // CompletionOnceCallback.
   net::Error DoomEntry(CompletionOnceCallback callback);
 
-  const absl::optional<std::string>& key() const { return key_; }
+  const std::optional<std::string>& key() const { return key_; }
   uint64_t entry_hash() const { return entry_hash_; }
 
   // The key is not a constructor parameter to the SimpleEntryImpl, because
@@ -119,15 +120,14 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // GetLastUsed() should not be called in net::APP_CACHE mode since the times
   // are not updated.
   base::Time GetLastUsed() const override;
-  base::Time GetLastModified() const override;
-  int32_t GetDataSize(int index) const override;
+  int64_t GetDataSize(int index) const override;
   int ReadData(int stream_index,
-               int offset,
+               int64_t offset,
                net::IOBuffer* buf,
                int buf_len,
                CompletionOnceCallback callback) override;
   int WriteData(int stream_index,
-                int offset,
+                int64_t offset,
                 net::IOBuffer* buf,
                 int buf_len,
                 CompletionOnceCallback callback,
@@ -241,13 +241,13 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
 
   int ReadDataInternal(bool sync_possible,
                        int index,
-                       int offset,
+                       int64_t offset,
                        net::IOBuffer* buf,
                        int buf_len,
                        CompletionOnceCallback callback);
 
   void WriteDataInternal(int index,
-                         int offset,
+                         int64_t offset,
                          net::IOBuffer* buf,
                          int buf_len,
                          CompletionOnceCallback callback,
@@ -300,7 +300,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // Called after an asynchronous read. Updates |crc32s_| if possible.
   void ReadOperationComplete(
       int stream_index,
-      int offset,
+      int64_t offset,
       CompletionOnceCallback completion_callback,
       std::unique_ptr<SimpleEntryStat> entry_stat,
       std::unique_ptr<SimpleSynchronousEntry::ReadResult> read_result);
@@ -340,20 +340,21 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // operations.
   void UpdateDataFromEntryStat(const SimpleEntryStat& entry_stat);
 
-  int64_t GetDiskUsage() const;
+  uint64_t GetDiskUsage() const;
 
   // Completes a read from the stream data kept in memory, logging metrics
   // and updating metadata. This assumes the caller has already range-checked
   // offset and buf_len appropriately, and therefore always reads `buf_len`
   // bytes.
   void ReadFromBuffer(net::GrowableIOBuffer* in_buf,
-                      int offset,
+                      size_t offset,
                       int buf_len,
                       net::IOBuffer* out_buf);
 
-  // Copies data from |buf| to the internal in-memory buffer for stream 0. If
-  // |truncate| is set to true, the target buffer will be truncated at |offset|
-  // + |buf_len| before being written.
+  // Copies data from `buf` to the internal in-memory buffer for stream 0. If
+  // `truncate` is set to true, the target buffer will be truncated at `offset`
+  // + `buf_len` before being written.
+  // `offset` + `buf_len` must be smaller than int32_t max.
   void SetStream0Data(net::IOBuffer* buf,
                       int offset,
                       int buf_len,
@@ -376,15 +377,14 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   const base::FilePath path_;
   const uint64_t entry_hash_;
   const bool use_optimistic_operations_;
-  absl::optional<std::string> key_;
+  std::optional<std::string> key_;
 
-  // |last_used_|, |last_modified_| and |data_size_| are copied from the
+  // |last_used_|  and |data_size_| are copied from the
   // synchronous entry at the completion of each item of asynchronous IO.
   // TODO(clamy): Unify last_used_ with data in the index.
   base::Time last_used_;
-  base::Time last_modified_;
-  int32_t data_size_[kSimpleEntryStreamCount];
-  int32_t sparse_data_size_ = 0;
+  std::array<int64_t, kSimpleEntryStreamCount> data_size_;
+  uint64_t sparse_data_size_ = 0;
 
   // Number of times this object has been returned from Backend::OpenEntry() and
   // Backend::CreateEntry() without subsequent Entry::Close() calls. Used to
@@ -409,12 +409,12 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // a single entry reader that reads serially through the entire file.
   // Extending this to multiple readers is possible, but isn't currently worth
   // it; see http://crbug.com/488076#c3 for details.
-  int32_t crc32s_end_offset_[kSimpleEntryStreamCount];
-  uint32_t crc32s_[kSimpleEntryStreamCount];
+  std::array<int32_t, kSimpleEntryStreamCount> crc32s_end_offset_;
+  std::array<uint32_t, kSimpleEntryStreamCount> crc32s_;
 
   // If |have_written_[index]| is true, we have written to the file that
   // contains stream |index|.
-  bool have_written_[kSimpleEntryStreamCount];
+  std::array<bool, kSimpleEntryStreamCount> have_written_;
 
   // The |synchronous_entry_| is the worker thread object that performs IO on
   // entries. It's owned by this SimpleEntryImpl whenever |executing_operation_|

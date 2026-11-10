@@ -27,16 +27,21 @@
 
 #include "dawn/native/d3d12/PlatformFunctionsD3D12.h"
 
+#include <array>
+#include <sstream>
 #include <string>
+#include <utility>
 
 namespace dawn::native::d3d12 {
 
 PlatformFunctions::PlatformFunctions() = default;
 PlatformFunctions::~PlatformFunctions() = default;
 
-MaybeError PlatformFunctions::LoadFunctions() {
-    DAWN_TRY(Base::LoadFunctions());
+MaybeError PlatformFunctions::Initialize() {
+    DAWN_TRY(Base::Initialize());
+
     DAWN_TRY(LoadD3D12());
+    DAWN_TRY(LoadD3D11());
     LoadPIXRuntime();
     return {};
 }
@@ -51,7 +56,7 @@ MaybeError PlatformFunctions::LoadD3D12() {
     d3d12CreateVersionedRootSignatureDeserializer = &D3D12CreateVersionedRootSignatureDeserializer;
 #else
     std::string error;
-    if (!mD3D12Lib.Open("d3d12.dll", &error) ||
+    if (!mD3D12Lib.OpenSystemLibrary(L"d3d12.dll", &error) ||
         !mD3D12Lib.GetProc(&d3d12CreateDevice, "D3D12CreateDevice", &error) ||
         !mD3D12Lib.GetProc(&d3d12GetDebugInterface, "D3D12GetDebugInterface", &error) ||
         !mD3D12Lib.GetProc(&d3d12SerializeRootSignature, "D3D12SerializeRootSignature", &error) ||
@@ -61,6 +66,20 @@ MaybeError PlatformFunctions::LoadD3D12() {
                            "D3D12SerializeVersionedRootSignature", &error) ||
         !mD3D12Lib.GetProc(&d3d12CreateVersionedRootSignatureDeserializer,
                            "D3D12CreateVersionedRootSignatureDeserializer", &error)) {
+        return DAWN_INTERNAL_ERROR(error.c_str());
+    }
+#endif
+
+    return {};
+}
+
+MaybeError PlatformFunctions::LoadD3D11() {
+#if DAWN_PLATFORM_IS(WINUWP)
+    d3d11on12CreateDevice = &D3D11On12CreateDevice;
+#else
+    std::string error;
+    if (!mD3D11Lib.OpenSystemLibrary(L"d3d11.dll", &error) ||
+        !mD3D11Lib.GetProc(&d3d11on12CreateDevice, "D3D11On12CreateDevice", &error)) {
         return DAWN_INTERNAL_ERROR(error.c_str());
     }
 #endif
@@ -85,5 +104,41 @@ void PlatformFunctions::LoadPIXRuntime() {
         mPIXEventRuntimeLib.Close();
     }
 }
+
+#if DAWN_USE_BUILT_DXC
+MaybeError PlatformFunctions::EnsureDXCLibraries() {
+    // TODO(dawn:766)
+    // Statically linked with dxcompiler.lib in UWP
+    // currently linked with dxcompiler.lib making CoreApp unable to activate
+    // LoadDXIL and LoadDXCompiler will fail in UWP, but Initialize() can still be
+    // successfully executed.
+
+    if (mDXILLib.Valid()) {
+        // The libraries are already loaded, no need to load them again.
+        DAWN_CHECK(mDXCompilerLib.Valid());
+        return {};
+    }
+
+    DynamicLib dxilLib;
+    std::string error;
+    // DXIL must be loaded before DXC, otherwise shader signing is unavailable
+    if (!dxilLib.Open("dxil.dll", &error)) {
+        return DAWN_INTERNAL_ERROR(std::move(error));
+    }
+
+    DynamicLib dxCompilerLib;
+    if (!dxCompilerLib.Open("dxcompiler.dll", &error)) {
+        return DAWN_INTERNAL_ERROR(std::move(error));
+    }
+
+    if (!dxCompilerLib.GetProc(&dxcCreateInstance, "DxcCreateInstance", &error)) {
+        return DAWN_INTERNAL_ERROR(std::move(error));
+    }
+
+    mDXCompilerLib = std::move(dxCompilerLib);
+    mDXILLib = std::move(dxilLib);
+    return {};
+}
+#endif  // DAWN_USE_BUILT_DXC
 
 }  // namespace dawn::native::d3d12

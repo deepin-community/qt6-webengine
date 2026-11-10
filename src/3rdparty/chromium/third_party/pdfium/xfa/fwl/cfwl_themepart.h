@@ -15,6 +15,8 @@
 #include "core/fxcrt/unowned_ptr.h"
 #include "xfa/fwl/theme/cfwl_utils.h"
 
+namespace pdfium {
+
 class CFWL_Widget;
 
 enum class CFWL_PartState : uint16_t {
@@ -87,20 +89,26 @@ class CFWL_ThemePart {
   CFWL_ThemePart(Part iPart, CFWL_Widget* pWidget);
   ~CFWL_ThemePart();
 
-  Part GetPart() const { return m_iPart; }
-  CFWL_Widget* GetWidget() const { return m_pWidget; }
+  Part GetPart() const { return part_; }
+  CFWL_Widget* GetWidget() const { return widget_; }
   FWLTHEME_STATE GetThemeState() const;
 
-  CFX_Matrix m_matrix;
-  CFX_RectF m_PartRect;
-  UnownedPtr<const CFX_RectF> m_pRtData;
-  Mask<CFWL_PartState> m_dwStates = CFWL_PartState::kNormal;
-  bool m_bMaximize = false;
-  bool m_bStaticBackground = false;
+  CFX_Matrix matrix_;
+  CFX_RectF part_rect_;
+  UnownedPtr<const CFX_RectF> data_rect_;
+  Mask<CFWL_PartState> states_ = CFWL_PartState::kNormal;
+  bool maximize_ = false;
+  bool static_background_ = false;
 
  private:
-  const Part m_iPart;
-  UnownedPtr<CFWL_Widget> const m_pWidget;
+  const Part part_;
+  UnownedPtr<CFWL_Widget> const widget_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_PartState;
+using pdfium::CFWL_ThemePart;
 
 #endif  // XFA_FWL_CFWL_THEMEPART_H_

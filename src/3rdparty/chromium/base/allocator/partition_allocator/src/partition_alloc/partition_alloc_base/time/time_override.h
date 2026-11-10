@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_
 
 #include <atomic>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
 #include "partition_alloc/partition_alloc_base/time/time.h"
 
@@ -83,4 +88,4 @@ extern std::atomic<ThreadTicksNowFunction> g_thread_ticks_now_function;
 
 }  // namespace partition_alloc::internal::base
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_TIME_TIME_OVERRIDE_H_

@@ -15,7 +15,6 @@
 #include "base/test/test_discardable_memory_allocator.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_util.h"
 #include "ui/gfx/render_text.h"
@@ -94,7 +93,9 @@ enum class RenderTextAPI {
   kGetSubstringBounds,
   kGetCursorSpan,
   kSetTruncateLength,
-  kMaxValue = kSetTruncateLength
+  kSetFillStyle,
+  kSetStrokeWidth,
+  kMaxValue = kSetStrokeWidth
 };
 
 gfx::DirectionalityMode ConsumeDirectionalityMode(FuzzedDataProvider* fdp) {
@@ -147,7 +148,7 @@ gfx::TextStyle ConsumeStyle(FuzzedDataProvider* fdp) {
 }
 
 gfx::WordWrapBehavior ConsumeWordWrap(FuzzedDataProvider* fdp) {
-  // TODO(1150235): ELIDE_LONG_WORDS is not supported.
+  // TODO(crbug.com/40157791): ELIDE_LONG_WORDS is not supported.
   switch (fdp->ConsumeIntegralInRange(0, 3)) {
     case 0:
       return gfx::IGNORE_LONG_WORDS;
@@ -225,6 +226,17 @@ gfx::Range ConsumeRange(FuzzedDataProvider* fdp, size_t max) {
   size_t start = fdp->ConsumeIntegralInRange<size_t>(0, max);
   size_t end = fdp->ConsumeIntegralInRange<size_t>(start, max);
   return gfx::Range(start, end);
+}
+
+cc::PaintFlags::Style ConsumeFillStyle(FuzzedDataProvider* fdp) {
+  switch (fdp->ConsumeIntegralInRange(0, 2)) {
+    case 0:
+      return cc::PaintFlags::kFill_Style;
+    case 1:
+      return cc::PaintFlags::kStroke_Style;
+    default:
+      return cc::PaintFlags::kFill_Style;
+  }
 }
 
 // Eliding behaviors are not all fully supported by RenderText. Ignore
@@ -425,6 +437,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         break;
       case RenderTextAPI::kSetTruncateLength:
         render_text->set_truncate_length(fdp.ConsumeIntegral<uint32_t>());
+        break;
+      case RenderTextAPI::kSetFillStyle:
+        render_text->SetFillStyle(ConsumeFillStyle(&fdp));
+        break;
+      case RenderTextAPI::kSetStrokeWidth:
+        render_text->SetStrokeWidth(
+            fdp.ConsumeFloatingPointInRange(0.0f, 5.0f));
         break;
     }
   }

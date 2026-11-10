@@ -14,17 +14,17 @@
 
 #include "./fuzztest/internal/type_support.h"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <limits>
 #include <list>
 #include <map>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -41,11 +41,16 @@
 #include "absl/strings/strip.h"
 #include "absl/time/time.h"
 #include "./fuzztest/domain.h"
+#include "./fuzztest/internal/meta.h"
+#include "./fuzztest/internal/printer.h"
 #include "./fuzztest/internal/test_protobuf.pb.h"
+#include "google/protobuf/text_format.h"
 
 namespace fuzztest::internal {
 namespace {
 
+using ::fuzztest::domain_implementor::PrintMode;
+using ::fuzztest::domain_implementor::PrintValue;
 using ::testing::AllOf;
 using ::testing::Contains;
 using ::testing::Each;
@@ -96,7 +101,7 @@ using IntegralTypes = testing::Types<signed char, unsigned char,     //
                                      long long, unsigned long long,  //
                                      absl::int128, absl::uint128>;
 
-TYPED_TEST_SUITE(IntegralTest, IntegralTypes);
+TYPED_TEST_SUITE(IntegralTest, IntegralTypes, );
 
 TYPED_TEST(IntegralTest, Printer) {
   for (auto v : {TypeParam{0}, std::numeric_limits<TypeParam>::min(),
@@ -135,7 +140,7 @@ class FloatingTest : public testing::Test {};
 
 using FloatingTypes = testing::Types<float, double, long double>;
 
-TYPED_TEST_SUITE(FloatingTest, FloatingTypes);
+TYPED_TEST_SUITE(FloatingTest, FloatingTypes, );
 
 TYPED_TEST(FloatingTest, Printer) {
   absl::string_view suffix = std::is_same_v<float, TypeParam>    ? "f"
@@ -193,6 +198,23 @@ TEST(StringTest, Printer) {
                           R"("printf(\"Hello, world!\");")"));
 }
 
+TEST(ByteArrayTest, Printer) {
+  EXPECT_THAT(
+      TestPrintValue(std::vector<uint8_t>{'\0', 'a', 0223, 'b', '\"'}),
+      ElementsAre(R"("\000a\223b"")",
+                  R"(fuzztest::ToByteArray(std::string("\000a\223b\"", 5)))"));
+  EXPECT_EQ(std::string("\000a\223b\"", 5).size(), 5);
+}
+
+struct UserDefinedWithAbslStringify {
+  std::string foo;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const UserDefinedWithAbslStringify& v) {
+    absl::Format(&sink, "{foo=\"%s\"}", v.foo);
+  }
+};
+
 TEST(CompoundTest, Printer) {
   EXPECT_THAT(
       TestPrintValue(std::pair(1, 1.5), Arbitrary<std::pair<int, double>>()),
@@ -210,17 +232,25 @@ TEST(CompoundTest, Printer) {
                   std::tuple{2, -3.5, "Foo"},
                   StructOf<UserDefined>(Arbitrary<int>(), Arbitrary<double>(),
                                         Arbitrary<std::string>())),
-              Each("{2, -3.5, \"Foo\"}"));
+              Each("UserDefined{2, -3.5, \"Foo\"}"));
+  EXPECT_THAT(
+      TestPrintValue(std::tuple{"Foo"}, StructOf<UserDefinedWithAbslStringify>(
+                                            Arbitrary<std::string>())),
+      ElementsAre("{foo=\"Foo\"}", "UserDefinedWithAbslStringify{\"Foo\"}"));
 }
 
 TEST(ProtobufTest, Printer) {
   internal::TestProtobuf proto;
   proto.set_b(true);
   proto.add_rep_subproto()->set_subproto_i32(17);
-  EXPECT_THAT(TestPrintValue(proto),
-              ElementsAre(absl::StrCat("(", proto.ShortDebugString(), ")"),
-                          absl::StrCat("ParseTestProto(R\"pb(",
-                                       proto.ShortDebugString(), ")pb\")")));
+  std::string proto_text;
+  ASSERT_TRUE(google::protobuf::TextFormat::PrintToString(proto, &proto_text));
+  EXPECT_THAT(
+      TestPrintValue(proto),
+      ElementsAre(
+          MatchesRegex(absl::StrCat("\\(.*\n?", proto_text, "\\)")),
+          MatchesRegex(absl::StrCat(R"re(.*ParseTe[sx]tProto.*\(R"pb\(.*\n?)re",
+                                    proto_text, R"re(\)pb"\))re"))));
 }
 
 TEST(ProtobufEnumTest, Printer) {
@@ -241,6 +271,19 @@ TEST(ProtobufEnumTest, Printer) {
 
   auto bare_domain = Arbitrary<internal::BareEnum>();
   EXPECT_THAT(TestPrintValue(internal::BareEnum::LABEL_OTHER, bare_domain),
+              ElementsAre("fuzztest::internal::BareEnum::LABEL_OTHER (10)",
+                          "fuzztest::internal::BareEnum::LABEL_OTHER"));
+
+  auto element_domain = ElementOf(
+      {internal::TestProtobuf::Label3, internal::TestProtobuf::Label4});
+  using corpus_type = corpus_type_t<decltype(element_domain)>;
+  EXPECT_THAT(TestPrintValue(corpus_type(0), element_domain),
+              ElementsAre("fuzztest::internal::TestProtobuf::Label3 (2)",
+                          "fuzztest::internal::TestProtobuf::Label3"));
+
+  auto bare_element_domain = ElementOf({internal::BareEnum::LABEL_OTHER});
+  using corpus_type = corpus_type_t<decltype(bare_element_domain)>;
+  EXPECT_THAT(TestPrintValue(corpus_type(0), bare_element_domain),
               ElementsAre("fuzztest::internal::BareEnum::LABEL_OTHER (10)",
                           "fuzztest::internal::BareEnum::LABEL_OTHER"));
 }
@@ -279,7 +322,7 @@ TEST(DomainTest, Printer) {
   };
   EXPECT_THAT(print('a', Domain<char>(Arbitrary<char>())),
               ElementsAre("'a' (97)", "'a'"));
-  EXPECT_THAT(print(typename decltype(color_domain)::corpus_type{0},
+  EXPECT_THAT(print(corpus_type_t<decltype(color_domain)>{0},
                     Domain<Color>(color_domain)),
               ElementsAre("Color{1}", "static_cast<Color>(1)"));
 }
@@ -291,25 +334,27 @@ TEST(VariantTest, Printer) {
       Arbitrary<int>(), Arbitrary<double>(),
       ContainerOf<std::vector<std::string>>(Arbitrary<std::string>()));
   value = 1;
-  EXPECT_THAT(TestPrintValue(value, variant_domain),
-              ElementsAre("(index=0, value=1)", "1"));
+  EXPECT_THAT(TestPrintValue(value, variant_domain), Each("1"));
   value = 1.2;
-  EXPECT_THAT(TestPrintValue(value, variant_domain),
-              ElementsAre("(index=1, value=1.2)", "1.2"));
+  EXPECT_THAT(TestPrintValue(value, variant_domain), Each("1.2"));
   value = std::vector<std::string>{"variant", "print", "test"};
   EXPECT_THAT(TestPrintValue(value, variant_domain),
-              ElementsAre("(index=2, value={\"variant\", \"print\", \"test\"})",
-                          "{\"variant\", \"print\", \"test\"}"));
+              Each("{\"variant\", \"print\", \"test\"}"));
 }
 
 TEST(OptionalTest, Printer) {
   auto optional_int_domain = OptionalOf(Arbitrary<int>());
   EXPECT_THAT(TestPrintValue({}, optional_int_domain), Each("std::nullopt"));
-  EXPECT_THAT(TestPrintValue(1, optional_int_domain), ElementsAre("(1)", "1"));
+  EXPECT_THAT(
+      TestPrintValue(corpus_type_t<Domain<int>>(std::in_place_type<int>, 1),
+                     optional_int_domain),
+      ElementsAre("(1)", "1"));
 
   auto optional_string_domain = OptionalOf(Arbitrary<std::string>());
   EXPECT_THAT(TestPrintValue({}, optional_string_domain), Each("std::nullopt"));
-  EXPECT_THAT(TestPrintValue("ABC", optional_string_domain),
+  EXPECT_THAT(TestPrintValue(corpus_type_t<Domain<std::string>>(
+                                 std::in_place_type<std::string>, "ABC"),
+                             optional_string_domain),
               ElementsAre("(\"ABC\")", "\"ABC\""));
 }
 
@@ -317,11 +362,11 @@ TEST(SmartPointerTest, Printer) {
   EXPECT_THAT(TestPrintValue({}, Arbitrary<std::unique_ptr<int>>()),
               Each("nullptr"));
   EXPECT_THAT(
-      TestPrintValue(Domain<int>::corpus_type(std::in_place_type<int>, 7),
+      TestPrintValue(corpus_type_t<Domain<int>>(std::in_place_type<int>, 7),
                      Arbitrary<std::unique_ptr<int>>()),
       ElementsAre("(7)", "std::make_unique<int>(7)"));
   EXPECT_THAT(
-      TestPrintValue(Domain<std::string>::corpus_type(
+      TestPrintValue(corpus_type_t<Domain<std::string>>(
                          std::in_place_type<std::string>, "ABC"),
                      Arbitrary<std::shared_ptr<std::string>>()),
       ElementsAre(
@@ -361,41 +406,64 @@ TEST(MapTest, Printer) {
               Each("\"0x15\""));
 }
 
-auto ValueInRange(int a, int b) {
-  int min = std::min(a, b);
-  int max = std::max(a, b);
-  return InRange(min, max);
+}  // namespace
+}  // namespace fuzztest::internal
+
+auto DoubleValueOutsideNamespace(int n) { return 2 * n; }
+
+namespace fuzztest::internal {
+namespace {
+
+TEST(MapTest, PrintsMapperOutsideNamespace) {
+  auto domain = Map(DoubleValueOutsideNamespace, InRange(2, 5));
+  std::tuple<int> corpus_value(3);
+
+  EXPECT_THAT(
+      TestPrintValue(corpus_value, domain),
+      ElementsAre("6",
+                  // Takes into account that the function name may
+                  // contain ABI annotations after de-mangling.
+                  MatchesRegex(R"re(DoubleValueOutsideNamespace.*\(3\))re")));
 }
 
-TEST(FlatMapTest, PrinterWithNamedFunction) {
-  auto domain = FlatMap(ValueInRange, Arbitrary<int>(), Arbitrary<int>());
-  decltype(domain)::corpus_type corpus_value = {2, 3, 1};
-  EXPECT_THAT(TestPrintValue(corpus_value, domain),
-              ElementsAre("2", "ValueInRange(3, 1)"));
-}
+TEST(FlatMapTest, DelegatesToOutputDomainPrinter) {
+  auto optional_sized_strings = [](int size) {
+    return OptionalOf(String().WithSize(size));
+  };
+  auto input_domain = InRange(1, 3);
+  auto flat_map_domain = FlatMap(optional_sized_strings, input_domain);
 
-TEST(FlatMapTest, PrinterWithLambda) {
-  auto domain =
-      FlatMap([](int a) { return ValueInRange(a, a + 100); }, Arbitrary<int>());
-  decltype(domain)::corpus_type corpus_value = {42, 0};
-  EXPECT_THAT(TestPrintValue(corpus_value, domain), Each("42"));
-}
+  corpus_type_t<decltype(flat_map_domain)> abc_corpus_val = {
+      // String of size
+      GenericDomainCorpusType(std::in_place_type<std::string>, "ABC"),
+      // Size
+      3};
+  // Sanity checks that the components of `abc_corpus_val` are in the respective
+  // domains.
+  ASSERT_TRUE(
+      input_domain.ValidateCorpusValue(std::get<1>(abc_corpus_val)).ok());
+  ASSERT_TRUE(
+      optional_sized_strings(input_domain.GetValue(std::get<1>(abc_corpus_val)))
+          .ValidateCorpusValue(std::get<0>(abc_corpus_val))
+          .ok());
+  EXPECT_THAT(TestPrintValue(abc_corpus_val, flat_map_domain),
+              ElementsAre("(\"ABC\")", "\"ABC\""));
 
-auto VectorWithSize(int size) {
-  return VectorOf(Arbitrary<int>()).WithSize(size);
-}
-
-TEST(FlatMapTest, PrintVector) {
-  auto domain = FlatMap(VectorWithSize, InRange(2, 4));
-  decltype(domain)::corpus_type corpus_value = {{1, 2, 3}, 3};
-
-  EXPECT_THAT(TestPrintValue(corpus_value, domain),
-              ElementsAre("{1, 2, 3}", "VectorWithSize(3)"));
-
-  auto lambda = [](int size) { return VectorWithSize(size); };
-  auto lambda_domain = FlatMap(lambda, InRange(2, 4));
-  EXPECT_THAT(TestPrintValue(corpus_value, lambda_domain),
-              ElementsAre("{1, 2, 3}", "{1, 2, 3}"));
+  corpus_type_t<decltype(flat_map_domain)> nullopt_corpus_val = {
+      // Corpus value of nullopt
+      std::monostate{},
+      // Size (here irrelevant)
+      2};
+  // Sanity checks that the components of `nullopt_corpus_val` are in the
+  // respective domains.
+  ASSERT_TRUE(
+      input_domain.ValidateCorpusValue(std::get<1>(nullopt_corpus_val)).ok());
+  ASSERT_TRUE(optional_sized_strings(
+                  input_domain.GetValue(std::get<1>(nullopt_corpus_val)))
+                  .ValidateCorpusValue(std::get<0>(nullopt_corpus_val))
+                  .ok());
+  EXPECT_THAT(TestPrintValue(nullopt_corpus_val, flat_map_domain),
+              Each("std::nullopt"));
 }
 
 TEST(ConstructorOfTest, Printer) {
@@ -409,7 +477,7 @@ TEST(ConstructorOfTest, Printer) {
 
   struct UserDefined {};
   EXPECT_THAT(TestPrintValue({}, ConstructorOf<UserDefined>()),
-              ElementsAre("{}", "UserDefined()"));
+              ElementsAre("UserDefined{}", "UserDefined()"));
 }
 
 TEST(MonostateTest, Printer) {
@@ -417,7 +485,7 @@ TEST(MonostateTest, Printer) {
   EXPECT_THAT(TestPrintValue(std::monostate{}), Each("{}"));
   EXPECT_THAT(TestPrintValue(std::tuple{}), Each("{}"));
   EXPECT_THAT(TestPrintValue(std::array<int, 0>{}), Each("{}"));
-  EXPECT_THAT(TestPrintValue(UserDefinedEmpty{}), Each("{}"));
+  EXPECT_THAT(TestPrintValue(UserDefinedEmpty{}), Each("UserDefinedEmpty{}"));
 }
 
 struct AggregateStructWithNoAbslStringify {
@@ -444,9 +512,11 @@ TEST(AutodetectAggregateTest, Printer) {
   EXPECT_THAT(TestPrintValue(std::pair{123, 456}), Each("{123, 456}"));
   EXPECT_THAT(TestPrintValue(std::array{123, 456}), Each("{123, 456}"));
   EXPECT_THAT(TestPrintValue(AggregateStructWithNoAbslStringify{}),
-              Each(R"({1, {"Foo", "Bar"}})"));
-  EXPECT_THAT(TestPrintValue(AggregateStructWithAbslStringify{}),
-              ElementsAre("value={1, {Foo, Bar}}", R"({1, {"Foo", "Bar"}})"));
+              Each(R"(AggregateStructWithNoAbslStringify{1, {"Foo", "Bar"}})"));
+  EXPECT_THAT(
+      TestPrintValue(AggregateStructWithAbslStringify{}),
+      ElementsAre("value={1, {Foo, Bar}}",
+                  R"(AggregateStructWithAbslStringify{1, {"Foo", "Bar"}})"));
 }
 
 TEST(DurationTest, Printer) {

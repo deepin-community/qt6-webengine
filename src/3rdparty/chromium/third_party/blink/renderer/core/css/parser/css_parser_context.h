@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_PARSER_CONTEXT_H_
 
 #include "base/auto_reset.h"
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_resource_fetch_restriction.h"
@@ -14,7 +13,6 @@
 #include "third_party/blink/renderer/core/frame/web_feature_forward.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
@@ -24,7 +22,6 @@ namespace blink {
 class CSSStyleSheet;
 class Document;
 class ExecutionContext;
-class StyleRuleKeyframe;
 class StyleSheetContents;
 enum class SecureContextMode;
 
@@ -50,7 +47,7 @@ class CORE_EXPORT CSSParserContext final
                    const KURL& base_url_override,
                    bool origin_clean,
                    const Referrer& referrer,
-                   const WTF::TextEncoding& charset_override,
+                   const TextEncoding& charset_override,
                    const Document* use_counter_document);
   CSSParserContext(CSSParserMode,
                    SecureContextMode,
@@ -61,7 +58,7 @@ class CORE_EXPORT CSSParserContext final
                    const KURL& base_url_override,
                    bool origin_clean,
                    const Referrer& referrer,
-                   const WTF::TextEncoding& charset = WTF::TextEncoding(),
+                   const TextEncoding& charset = TextEncoding(),
                    ResourceFetchRestriction resource_fetch_restriction =
                        ResourceFetchRestriction::kNone);
 
@@ -70,12 +67,12 @@ class CORE_EXPORT CSSParserContext final
 
   CSSParserContext(const KURL& base_url,
                    bool origin_clean,
-                   const WTF::TextEncoding& charset,
+                   const TextEncoding& charset,
                    CSSParserMode,
                    const Referrer& referrer,
                    bool is_html_document,
                    SecureContextMode,
-                   scoped_refptr<const DOMWrapperWorld> world,
+                   const DOMWrapperWorld* world,
                    const Document* use_counter_document,
                    ResourceFetchRestriction resource_fetch_restriction);
 
@@ -86,7 +83,7 @@ class CORE_EXPORT CSSParserContext final
 
   CSSParserMode Mode() const { return mode_; }
   const KURL& BaseURL() const { return base_url_; }
-  const WTF::TextEncoding& Charset() const { return charset_; }
+  const TextEncoding& Charset() const { return charset_; }
   const Referrer& GetReferrer() const { return referrer_; }
   bool IsAdRelated() const { return is_ad_related_; }
   bool IsHTMLDocument() const { return is_html_document_; }
@@ -115,24 +112,23 @@ class CORE_EXPORT CSSParserContext final
   }
 
   void Count(WebFeature) const;
+  void Count(WebDXFeature) const;
   void Count(CSSParserMode, CSSPropertyID) const;
   void CountDeprecation(WebFeature) const;
   bool IsUseCounterRecordingEnabled() const { return document_ != nullptr; }
   bool IsDocumentHandleEqual(const Document* other) const;
   const Document* GetDocument() const;
-  const ExecutionContext* GetExecutionContext() const;
+  ExecutionContext* GetExecutionContext() const;
 
-  const scoped_refptr<const DOMWrapperWorld>& JavascriptWorld() const {
-    return world_;
-  }
-
-  // TODO(ekaramad): We currently only report @keyframes violations. We need to
-  // report CSS transitions as well (https://crbug.com/906147).
-  // TODO(ekaramad): We should provide a source location in the violation
-  // report (https://crbug.com/906150, ).
-  void ReportLayoutAnimationsViolationIfNeeded(const StyleRuleKeyframe&) const;
+  const DOMWrapperWorld* JavascriptWorld() const { return world_.Get(); }
 
   bool IsForMarkupSanitization() const;
+
+  // Returns true if we are in a parsing mode where the result will be used in
+  // an element context. This function is used to fail parsing of functions such
+  // as sibling-index() which do not make sense in @page or @font-face
+  // descriptors, for instance.
+  bool InElementContext() const;
 
   // Overrides |mode_| of a CSSParserContext within the scope, allowing us to
   // switching parsing mode while parsing different parts of a style sheet.
@@ -157,7 +153,7 @@ class CORE_EXPORT CSSParserContext final
 
   KURL base_url_;
 
-  scoped_refptr<const DOMWrapperWorld> world_;
+  const Member<const DOMWrapperWorld> world_;
 
   // If true, allows reading and modifying of the CSS rules.
   // https://drafts.csswg.org/cssom/#concept-css-style-sheet-origin-clean-flag
@@ -173,7 +169,7 @@ class CORE_EXPORT CSSParserContext final
   bool is_html_document_;
   SecureContextMode secure_context_mode_;
 
-  WTF::TextEncoding charset_;
+  TextEncoding charset_;
 
   WeakMember<const Document> document_;
 

@@ -27,6 +27,8 @@
 
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 
+#include <optional>
+
 #include "base/feature_list.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
@@ -54,11 +56,11 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
+#include "third_party/blink/renderer/core/keywords.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
-#include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/page/spatial_navigation_controller.h"
 #include "third_party/blink/renderer/core/timing/event_timing.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -98,9 +100,9 @@ void EventDispatcher::DispatchSimulatedClick(
   // before dispatchSimulatedClick() returns. This vector is here just to
   // prevent the code from running into an infinite recursion of
   // dispatchSimulatedClick().
-  DEFINE_STATIC_LOCAL(Persistent<HeapHashSet<Member<Node>>>,
+  DEFINE_STATIC_LOCAL(Persistent<GCedHeapHashSet<Member<Node>>>,
                       nodes_dispatching_simulated_clicks,
-                      (MakeGarbageCollected<HeapHashSet<Member<Node>>>()));
+                      (MakeGarbageCollected<GCedHeapHashSet<Member<Node>>>()));
 
   if (IsDisabledFormControl(&node))
     return;
@@ -189,7 +191,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
     // path.
     return DispatchEventResult::kNotCanceled;
   }
-  std::unique_ptr<EventTiming> eventTiming;
+  std::optional<EventTiming> eventTiming;
   auto& document = node_->GetDocument();
   LocalFrame* frame = document.GetFrame();
   LocalDOMWindow* window = nullptr;
@@ -198,7 +200,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
   }
 
   if (frame && window) {
-    eventTiming = EventTiming::Create(window, *event_);
+    eventTiming = EventTiming::TryCreate(window, *event_, event_->target());
   }
 
   if (event_->type() == event_type_names::kChange && event_->isTrusted() &&
@@ -210,37 +212,20 @@ DispatchEventResult EventDispatcher::Dispatch() {
   const bool is_click =
       event_->IsMouseEvent() && event_->type() == event_type_names::kClick;
 
-  Node* target_node = event_->target() ? event_->target()->ToNode() : nullptr;
-  const bool is_target_body_element =
-      target_node && target_node->IsHTMLElement() &&
-      DynamicTo<HTMLElement>(target_node)->IsHTMLBodyElement();
-  const bool is_unfocused_keyboard_event =
-      event_->IsKeyboardEvent() &&
-      (event_->type() == event_type_names::kKeydown ||
-       event_->type() == event_type_names::kKeypress ||
-       event_->type() == event_type_names::kKeyup) &&
-      is_target_body_element;
-
-  std::unique_ptr<SoftNavigationEventScope> soft_navigation_scope;
-  if ((is_click || is_unfocused_keyboard_event) && event_->isTrusted() &&
-      frame) {
-    if (window && frame->IsMainFrame() &&
-        base::FeatureList::IsEnabled(features::kSoftNavigationDetection)) {
-      bool is_new_interaction =
-          is_click || (event_->type() == event_type_names::kKeydown);
-      soft_navigation_scope = std::make_unique<SoftNavigationEventScope>(
-          SoftNavigationHeuristics::From(*window),
-          is_unfocused_keyboard_event
-              ? SoftNavigationHeuristics::EventScopeType::kKeyboard
-              : SoftNavigationHeuristics::EventScopeType::kClick,
-          is_new_interaction);
+  std::optional<SoftNavigationHeuristics::EventScope> soft_navigation_scope;
+  if (window) {
+    if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
+      soft_navigation_scope =
+          heuristics->MaybeCreateEventScopeForEvent(*event_);
     }
+  }
+
+  if (is_click && event_->isTrusted() && frame) {
     // A genuine mouse click cannot be triggered by script so we don't expect
     // there are any script in the stack.
-    DCHECK(!is_click || !frame->GetAdTracker() ||
-           !frame->GetAdTracker()->IsAdScriptInStack(
-               AdTracker::StackType::kBottomAndTop));
-    if (is_click && frame->IsAdFrame()) {
+    DCHECK(!frame->GetAdTracker() || !frame->GetAdTracker()->IsAdScriptInStack(
+                                         AdTracker::StackType::kBottomAndTop));
+    if (frame->IsAdFrame()) {
       UseCounter::Count(document, WebFeature::kAdClick);
     }
   }
@@ -447,14 +432,8 @@ inline void EventDispatcher::DispatchEventPostProcess(
 #endif  // BUILDFLAG(IS_MAC)
   }
 
-  auto* keyboard_event = DynamicTo<KeyboardEvent>(event_);
-  if (Page* page = node_->GetDocument().GetPage()) {
-    if (page->GetSettings().GetSpatialNavigationEnabled() &&
-        is_trusted_or_click && keyboard_event &&
-        keyboard_event->key() == "Enter" &&
-        event_->type() == event_type_names::kKeyup) {
-      page->GetSpatialNavigationController().ResetEnterKeyState();
-    }
+  if (event_->IsMouseEvent() && event_->type() == event_type_names::kMouseup) {
+    node_->GetDocument().SetCustomizableSelectMousedownLocation(std::nullopt);
   }
 
   // Track the usage of sending a mousedown event to a select element to force

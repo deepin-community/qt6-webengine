@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/device_event_log/device_event_log.h"
@@ -85,9 +86,7 @@ std::string BluetoothDeviceFloss::GetAddress() const {
 }
 
 AddressType BluetoothDeviceFloss::GetAddressType() const {
-  NOTIMPLEMENTED();
-
-  return AddressType::ADDR_TYPE_UNKNOWN;
+  return address_type_;
 }
 
 VendorIDSource BluetoothDeviceFloss::GetVendorIDSource() const {
@@ -110,9 +109,9 @@ uint16_t BluetoothDeviceFloss::GetAppearance() const {
   return appearance_;
 }
 
-absl::optional<std::string> BluetoothDeviceFloss::GetName() const {
+std::optional<std::string> BluetoothDeviceFloss::GetName() const {
   if (name_.length() == 0)
-    return absl::nullopt;
+    return std::nullopt;
 
   return name_;
 }
@@ -160,10 +159,10 @@ device::BluetoothDevice::UUIDSet BluetoothDeviceFloss::GetUUIDs() const {
   return device_uuids_.GetUUIDs();
 }
 
-absl::optional<int8_t> BluetoothDeviceFloss::GetInquiryTxPower() const {
+std::optional<int8_t> BluetoothDeviceFloss::GetInquiryTxPower() const {
   NOTIMPLEMENTED();
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 bool BluetoothDeviceFloss::ExpectingPinCode() const {
@@ -219,7 +218,6 @@ void BluetoothDeviceFloss::SetConnectionLatency(
       break;
     default:
       NOTREACHED();
-      break;
   }
 
   BLUETOOTH_LOG(EVENT) << "Setting LE connection parameters: min="
@@ -249,14 +247,7 @@ void BluetoothDeviceFloss::OnSetConnectionLatency(base::OnceClosure callback,
     auto& [pending_cb, pending_error_cb] =
         pending_set_connection_latency_.value();
     std::move(pending_error_cb).Run();
-    pending_set_connection_latency_ = absl::nullopt;
-  }
-
-  // If there is no active connection, UpdateConnectionParameters succeeds
-  // silently and won't generates any callbacks. Run callback right here.
-  if (!IsConnected()) {
-    std::move(callback).Run();
-    return;
+    pending_set_connection_latency_ = std::nullopt;
   }
 
   pending_set_connection_latency_ =
@@ -266,11 +257,19 @@ void BluetoothDeviceFloss::OnSetConnectionLatency(base::OnceClosure callback,
 void BluetoothDeviceFloss::Connect(
     device::BluetoothDevice::PairingDelegate* pairing_delegate,
     ConnectCallback callback) {
+  ConnectWithTransport(pairing_delegate, std::move(callback),
+                       FlossAdapterClient::BluetoothTransport::kAuto);
+}
+
+void BluetoothDeviceFloss::ConnectWithTransport(
+    device::BluetoothDevice::PairingDelegate* pairing_delegate,
+    ConnectCallback callback,
+    FlossAdapterClient::BluetoothTransport transport) {
   BLUETOOTH_LOG(EVENT) << "Connecting to " << address_;
 
   if ((connecting_state_ == ConnectingState::kACLConnecting) ||
       (connecting_state_ == ConnectingState::kProfilesConnecting) ||
-      (pending_callback_on_connect_profiles_ != absl::nullopt)) {
+      (pending_callback_on_connect_profiles_ != std::nullopt)) {
     std::move(callback).Run(
         BluetoothDevice::ConnectErrorCode::ERROR_INPROGRESS);
     return;
@@ -291,10 +290,22 @@ void BluetoothDeviceFloss::Connect(
     ConnectAllEnabledProfiles();
   } else {
     pairing_ = std::make_unique<BluetoothPairingFloss>(pairing_delegate);
-    FlossDBusManager::Get()->GetAdapterClient()->CreateBond(
-        base::BindOnce(&BluetoothDeviceFloss::OnCreateBond,
-                       weak_ptr_factory_.GetWeakPtr()),
-        AsFlossDeviceId(), FlossAdapterClient::BluetoothTransport::kAuto);
+    if (FlossDBusManager::Get()->GetFlossApiVersion() >=
+        base::Version("0.4.0")) {
+      FlossDBusManager::Get()->GetAdapterClient()->CreateBond(
+          base::BindOnce(static_cast<void (BluetoothDeviceFloss::*)(
+                             DBusResult<FlossDBusClient::BtifStatus>)>(
+                             &BluetoothDeviceFloss::OnCreateBond),
+                         weak_ptr_factory_.GetWeakPtr()),
+          AsFlossDeviceId(), transport);
+    } else {
+      FlossDBusManager::Get()->GetAdapterClient()->CreateBond(
+          base::BindOnce(
+              static_cast<void (BluetoothDeviceFloss::*)(DBusResult<bool>)>(
+                  &BluetoothDeviceFloss::OnCreateBond),
+              weak_ptr_factory_.GetWeakPtr()),
+          AsFlossDeviceId(), transport);
+    }
   }
 }
 
@@ -308,20 +319,35 @@ void BluetoothDeviceFloss::OnCreateBond(DBusResult<bool> ret) {
   }
 }
 
+void BluetoothDeviceFloss::OnCreateBond(
+    DBusResult<FlossDBusClient::BtifStatus> ret) {
+  if (!ret.has_value()) {
+    BLUETOOTH_LOG(ERROR) << "Failed to create bond, D-Bus error: "
+                         << ret.error();
+    TriggerConnectCallback(BluetoothDevice::ConnectErrorCode::ERROR_UNKNOWN);
+    return;
+  }
+
+  if (*ret != FlossDBusClient::BtifStatus::kSuccess) {
+    BLUETOOTH_LOG(ERROR) << "Failed to create bond, status: "
+                         << static_cast<uint32_t>(*ret);
+    TriggerConnectCallback(FlossDBusClient::BtifStatusToConnectErrorCode(*ret));
+    return;
+  }
+}
+
 void BluetoothDeviceFloss::ConnectionIncomplete() {
   UpdateConnectingState(
       ConnectingState::kIdle,
-      BluetoothDevice::ConnectErrorCode::ERROR_DEVICE_NOT_READY);
+      BluetoothDevice::ConnectErrorCode::ERROR_NON_AUTH_TIMEOUT);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
 void BluetoothDeviceFloss::ConnectClassic(
     device::BluetoothDevice::PairingDelegate* pairing_delegate,
     ConnectCallback callback) {
-  // TODO(b/215621933): Explicitly create a classic Bluetooth connection.
-  // Currently Floss doesn't have the BlueZ-equivalent of ConnectClassic() at
-  // the stack level, so just call the existing Connect().
-  Connect(pairing_delegate, std::move(callback));
+  ConnectWithTransport(pairing_delegate, std::move(callback),
+                       FlossAdapterClient::BluetoothTransport::kBrEdr);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -529,7 +555,7 @@ void BluetoothDeviceFloss::GattExecuteWrite(std::string address,
     std::move(pending_execute_write_->first).Run();
   }
 
-  pending_execute_write_ = absl::nullopt;
+  pending_execute_write_ = std::nullopt;
 }
 
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -544,7 +570,7 @@ void BluetoothDeviceFloss::SetName(const std::string& name) {
 
 void BluetoothDeviceFloss::SetBondState(
     FlossAdapterClient::BondState bond_state,
-    absl::optional<BluetoothDevice::ConnectErrorCode> error_code) {
+    std::optional<BluetoothDevice::ConnectErrorCode> error_code) {
   bond_state_ = bond_state;
 
   switch (bond_state_) {
@@ -552,7 +578,7 @@ void BluetoothDeviceFloss::SetBondState(
       UpdateConnectingState(ConnectingState::kIdle, error_code);
       break;
     case FlossAdapterClient::BondState::kBondingInProgress:
-      UpdateConnectingState(ConnectingState::kACLConnecting, absl::nullopt);
+      UpdateConnectingState(ConnectingState::kACLConnecting, std::nullopt);
       break;
     case FlossAdapterClient::BondState::kBonded:
       if (connecting_state_ == ConnectingState::kACLConnecting) {
@@ -561,7 +587,6 @@ void BluetoothDeviceFloss::SetBondState(
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -588,7 +613,7 @@ void BluetoothDeviceFloss::SetIsConnected(bool is_connected) {
         BluetoothDevice::ConnectErrorCode::ERROR_DEVICE_UNCONNECTED);
   } else if (is_connected &&
              connecting_state_ == ConnectingState::kProfilesConnecting) {
-    UpdateConnectingState(ConnectingState::kProfilesConnected, absl::nullopt);
+    UpdateConnectingState(ConnectingState::kProfilesConnected, std::nullopt);
   }
 }
 
@@ -597,17 +622,28 @@ void BluetoothDeviceFloss::SetConnectionState(uint32_t connection_state) {
 }
 
 void BluetoothDeviceFloss::ConnectAllEnabledProfiles() {
-  UpdateConnectingState(ConnectingState::kProfilesConnecting, absl::nullopt);
+  UpdateConnectingState(ConnectingState::kProfilesConnecting, std::nullopt);
 
   connection_incomplete_timer_.Start(
       FROM_HERE, kDefaultConnectTimeout,
       base::BindOnce(&BluetoothDeviceFloss::ConnectionIncomplete,
                      weak_ptr_factory_.GetWeakPtr()));
 
-  FlossDBusManager::Get()->GetAdapterClient()->ConnectAllEnabledProfiles(
-      base::BindOnce(&BluetoothDeviceFloss::OnConnectAllEnabledProfiles,
-                     weak_ptr_factory_.GetWeakPtr()),
-      AsFlossDeviceId());
+  if (FlossDBusManager::Get()->GetFlossApiVersion() >= base::Version("0.4.0")) {
+    FlossDBusManager::Get()->GetAdapterClient()->ConnectAllEnabledProfiles(
+        base::BindOnce(static_cast<void (BluetoothDeviceFloss::*)(
+                           DBusResult<FlossDBusClient::BtifStatus>)>(
+                           &BluetoothDeviceFloss::OnConnectAllEnabledProfiles),
+                       weak_ptr_factory_.GetWeakPtr()),
+        AsFlossDeviceId());
+  } else {
+    FlossDBusManager::Get()->GetAdapterClient()->ConnectAllEnabledProfiles(
+        base::BindOnce(
+            static_cast<void (BluetoothDeviceFloss::*)(DBusResult<Void>)>(
+                &BluetoothDeviceFloss::OnConnectAllEnabledProfiles),
+            weak_ptr_factory_.GetWeakPtr()),
+        AsFlossDeviceId());
+  }
 }
 
 void BluetoothDeviceFloss::ResetPairing() {
@@ -615,11 +651,13 @@ void BluetoothDeviceFloss::ResetPairing() {
 }
 
 void BluetoothDeviceFloss::CreateGattConnectionImpl(
-    absl::optional<device::BluetoothUUID> service_uuid) {
+    std::optional<device::BluetoothUUID> service_uuid) {
   // Generally, the first ever connection to a device should be direct and
   // subsequent connections to known devices should be invoked with is_direct =
   // false. Refer to |autoConnect| on BluetoothGatt.java.
-  bool is_direct = !IsBondedImpl();
+  bool is_direct =
+      gatt_connecting_state_ == GattConnectingState::kGattConnectionInit ||
+      !IsBondedImpl();
 
   UpdateGattConnectingState(GattConnectingState::kGattConnecting);
 
@@ -679,7 +717,9 @@ BluetoothDeviceFloss::BluetoothDeviceFloss(
 }
 
 BluetoothDeviceFloss::~BluetoothDeviceFloss() {
-  FlossDBusManager::Get()->GetGattManagerClient()->RemoveObserver(this);
+  if (floss::FlossDBusManager::IsInitialized()) {
+    FlossDBusManager::Get()->GetGattManagerClient()->RemoveObserver(this);
+  }
 }
 
 bool BluetoothDeviceFloss::IsBondedImpl() const {
@@ -750,11 +790,64 @@ void BluetoothDeviceFloss::OnGetRemoteVendorProductInfo(
     DBusResult<FlossAdapterClient::VendorProductInfo> ret) {
   if (ret.has_value()) {
     vpi_ = *ret;
+    if (vpi_.vendorIdSrc >
+        static_cast<uint8_t>(VendorIDSource::VENDOR_ID_MAX_VALUE)) {
+      vpi_.vendorIdSrc =
+          static_cast<uint8_t>(VendorIDSource::VENDOR_ID_UNKNOWN);
+    }
   } else {
     BLUETOOTH_LOG(ERROR) << "GetRemoteVendorProductInfo() failed: "
                          << ret.error();
   }
 
+  std::move(callback).Run();
+}
+
+void BluetoothDeviceFloss::OnGetRemoteAddressType(
+    base::OnceClosure callback,
+    DBusResult<FlossAdapterClient::BtAddressType> ret) {
+  if (ret.has_value()) {
+    switch (*ret) {
+      case FlossAdapterClient::BtAddressType::kPublic:
+      case FlossAdapterClient::BtAddressType::kPublicId:
+        address_type_ = AddressType::ADDR_TYPE_PUBLIC;
+        break;
+      case FlossAdapterClient::BtAddressType::kRandom:
+      case FlossAdapterClient::BtAddressType::kRandomId:
+        address_type_ = AddressType::ADDR_TYPE_RANDOM;
+        break;
+      default:
+        address_type_ = AddressType::ADDR_TYPE_UNKNOWN;
+        break;
+    }
+  } else {
+    BLUETOOTH_LOG(ERROR) << "GetRemoteAddressType() failed: " << ret.error();
+  }
+
+  std::move(callback).Run();
+}
+
+void BluetoothDeviceFloss::OnGetRemoteBondState(base::OnceClosure callback,
+                                                DBusResult<uint32_t> ret) {
+  if (!ret.has_value()) {
+    BLUETOOTH_LOG(ERROR) << "GetBondState() failed: " << ret.error();
+    return;
+  }
+  SetBondState(static_cast<FlossAdapterClient::BondState>(*ret), std::nullopt);
+  std::move(callback).Run();
+}
+
+void BluetoothDeviceFloss::OnGetRemoteConnectionState(
+    base::OnceClosure callback,
+    DBusResult<uint32_t> ret) {
+  if (!ret.has_value()) {
+    BLUETOOTH_LOG(ERROR) << "GetConnectionState() failed: " << ret.error();
+    return;
+  }
+  SetConnectionState(*ret);
+  if ((*ret >= 1) != IsConnected()) {
+    SetIsConnected(*ret >= 1);
+  }
   std::move(callback).Run();
 }
 
@@ -771,13 +864,54 @@ void BluetoothDeviceFloss::OnConnectAllEnabledProfiles(DBusResult<Void> ret) {
   // Floss does not send any notifications that profiles have successfully
   // connected if we are already ACL connected.
   if (is_acl_connected_) {
-    UpdateConnectingState(ConnectingState::kProfilesConnected, absl::nullopt);
+    UpdateConnectingState(ConnectingState::kProfilesConnected, std::nullopt);
   }
+}
+
+void BluetoothDeviceFloss::OnConnectAllEnabledProfiles(
+    DBusResult<FlossDBusClient::BtifStatus> ret) {
+  if (!ret.has_value()) {
+    BLUETOOTH_LOG(ERROR)
+        << "Failed to connect all enabled profiles, D-Bus error: "
+        << ret.error();
+    UpdateConnectingState(ConnectingState::kIdle,
+                          BluetoothDevice::ConnectErrorCode::ERROR_UNKNOWN);
+    return;
+  }
+
+  if (*ret != FlossDBusClient::BtifStatus::kSuccess) {
+    BLUETOOTH_LOG(ERROR) << "Failed to connect all enabled profiles, status: "
+                         << static_cast<uint32_t>(*ret);
+    UpdateConnectingState(ConnectingState::kIdle,
+                          FlossDBusClient::BtifStatusToConnectErrorCode(*ret));
+    return;
+  }
+
+  // Floss does not send any notifications that profiles have successfully
+  // connected if we are already ACL connected.
+  if (is_acl_connected_) {
+    UpdateConnectingState(ConnectingState::kProfilesConnected, std::nullopt);
+  }
+}
+
+void BluetoothDeviceFloss::OnDeviceConnectionFailed(
+    FlossDBusClient::BtifStatus status) {
+  if (status == FlossDBusClient::BtifStatus::kTimeout) {
+    // If the connection failed due to timeout, avoid updating the connecting
+    // state, as the upper layers might retry the connection. Instead, wait for
+    // the connection to succeed, in which case we will record the success, or
+    // fail again, in which case the `connection_incomplete_timer_` will fire
+    // and record the same timeout failure anyway.
+    return;
+  }
+
+  UpdateConnectingState(ConnectingState::kIdle,
+                        FlossDBusClient::BtifStatusToConnectErrorCode(status));
 }
 
 void BluetoothDeviceFloss::UpdateConnectingState(
     ConnectingState state,
-    absl::optional<BluetoothDevice::ConnectErrorCode> error) {
+    std::optional<BluetoothDevice::ConnectErrorCode> error) {
   if ((state == ConnectingState::kIdle) &&
       ((connecting_state_ == ConnectingState::kACLConnecting) ||
        (connecting_state_ == ConnectingState::kProfilesConnecting))) {
@@ -786,7 +920,7 @@ void BluetoothDeviceFloss::UpdateConnectingState(
   } else if ((state == ConnectingState::kProfilesConnected) &&
              (connecting_state_ == ConnectingState::kProfilesConnecting)) {
     // Successful profile connection
-    TriggerConnectCallback(absl::nullopt);
+    TriggerConnectCallback(std::nullopt);
   }
 
   if (connecting_state_ != state) {
@@ -804,7 +938,7 @@ void BluetoothDeviceFloss::UpdateGattConnectingState(
 }
 
 void BluetoothDeviceFloss::TriggerConnectCallback(
-    absl::optional<BluetoothDevice::ConnectErrorCode> error_code) {
+    std::optional<BluetoothDevice::ConnectErrorCode> error_code) {
   connection_incomplete_timer_.Stop();
 
   if (pending_callback_on_connect_profiles_) {
@@ -812,7 +946,7 @@ void BluetoothDeviceFloss::TriggerConnectCallback(
     // to nullopt before Run-ing the callback, because this may trigger arriving
     // at this same location.
     auto callback = std::move(*pending_callback_on_connect_profiles_);
-    pending_callback_on_connect_profiles_ = absl::nullopt;
+    pending_callback_on_connect_profiles_ = std::nullopt;
     std::move(callback).Run(error_code);
   }
 
@@ -892,6 +1026,28 @@ void BluetoothDeviceFloss::FetchRemoteVendorProductInfo(
       AsFlossDeviceId());
 }
 
+void BluetoothDeviceFloss::FetchRemoteAddressType(base::OnceClosure callback) {
+  FlossDBusManager::Get()->GetAdapterClient()->GetRemoteAddressType(
+      base::BindOnce(&BluetoothDeviceFloss::OnGetRemoteAddressType,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
+      AsFlossDeviceId());
+}
+
+void BluetoothDeviceFloss::FetchRemoteBondState(base::OnceClosure callback) {
+  FlossDBusManager::Get()->GetAdapterClient()->GetBondState(
+      base::BindOnce(&BluetoothDeviceFloss::OnGetRemoteBondState,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
+      AsFlossDeviceId());
+}
+
+void BluetoothDeviceFloss::FetchRemoteConnectionState(
+    base::OnceClosure callback) {
+  FlossDBusManager::Get()->GetAdapterClient()->GetConnectionState(
+      base::BindOnce(&BluetoothDeviceFloss::OnGetRemoteConnectionState,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
+      AsFlossDeviceId());
+}
+
 void BluetoothDeviceFloss::InitializeDeviceProperties(
     PropertiesState state,
     base::OnceClosure callback) {
@@ -905,7 +1061,7 @@ void BluetoothDeviceFloss::InitializeDeviceProperties(
   // This must be incremented when adding more properties below
   // and followed up with a TriggerInitDevicePropertiesCallback()
   // in the callback.
-  num_pending_properties_ += 5;
+  num_pending_properties_ += 8;
   FetchRemoteType(
       base::BindOnce(&BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -921,6 +1077,15 @@ void BluetoothDeviceFloss::InitializeDeviceProperties(
   FetchRemoteVendorProductInfo(
       base::BindOnce(&BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback,
                      weak_ptr_factory_.GetWeakPtr()));
+  FetchRemoteAddressType(
+      base::BindOnce(&BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
+  FetchRemoteBondState(
+      base::BindOnce(&BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
+  FetchRemoteConnectionState(
+      base::BindOnce(&BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback() {
@@ -929,7 +1094,7 @@ void BluetoothDeviceFloss::TriggerInitDevicePropertiesCallback() {
         property_reads_completed_ | property_reads_triggered_);
     property_reads_triggered_ = PropertiesState::kNotRead;
     std::move(*pending_callback_on_init_props_).Run();
-    pending_callback_on_init_props_ = absl::nullopt;
+    pending_callback_on_init_props_ = std::nullopt;
   }
 
   DCHECK(num_pending_properties_ >= 0);
@@ -943,7 +1108,7 @@ void BluetoothDeviceFloss::GattClientConnectionState(GattStatus status,
   if (address != address_)
     return;
 
-  absl::optional<ConnectErrorCode> err = absl::nullopt;
+  std::optional<ConnectErrorCode> err = std::nullopt;
 
   if (status != GattStatus::kSuccess) {
     // TODO(b/193686094) - Convert GattStatus to other connect error codes.
@@ -1029,7 +1194,7 @@ void BluetoothDeviceFloss::GattConnectionUpdated(std::string address,
       std::move(pending_error_cb).Run();
     }
 
-    pending_set_connection_latency_ = absl::nullopt;
+    pending_set_connection_latency_ = std::nullopt;
   }
 }
 
@@ -1045,14 +1210,6 @@ void BluetoothDeviceFloss::GattConfigureMtu(std::string address,
   // Discover services after configuring MTU
   // This can be done even if configuring MTU failed.
   if (search_uuid.has_value()) {
-    // TODO(b/318402207) - Fast Pair HID mitigation to perform SDP before we
-    // bond with the device in order to get the name before bonding completes.
-    // This can be removed once we get scan responses from a LE scan session.
-    if (!svc_resolved_ && search_uuid.value().value() == "fe2c") {
-      BLUETOOTH_LOG(EVENT) << __func__ << ": Fetching remote UUIDs";
-      FlossDBusManager::Get()->GetAdapterClient()->FetchRemoteUuids(
-          base::DoNothing(), AsFlossDeviceId());
-    }
     FlossDBusManager::Get()->GetGattManagerClient()->DiscoverServiceByUuid(
         base::DoNothing(), address_, search_uuid.value());
   } else if (!IsGattServicesDiscoveryComplete()) {
@@ -1060,7 +1217,7 @@ void BluetoothDeviceFloss::GattConfigureMtu(std::string address,
         base::DoNothing(), address_);
   }
 
-  DidConnectGatt(absl::nullopt);
+  DidConnectGatt(std::nullopt);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)

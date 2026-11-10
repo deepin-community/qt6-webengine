@@ -9,7 +9,7 @@ import("//third_party/harfbuzz-ng/harfbuzz.gni")
 import("//third_party/libjpeg.gni")
 
 assert(
-    use_blink || is_ios,
+    use_blink || is_ios || is_ohos,
     "This is not used on if blink is not enabled, don't drag it in unintentionally")
 
 if (use_system_libjpeg) {
@@ -19,7 +19,7 @@ if (use_system_libjpeg) {
     packages = [ "libjpeg" ]
   }
   shim_headers("libjpeg_shim") {
-    root_path = "libjpeg_turbo"
+    root_path = "libjpeg_turbo/src"
     headers = [
       "jpeglib.h"
     ]
@@ -36,7 +36,6 @@ if (use_system_libjpeg) {
     public_configs = [ qt_libjpeg_config, ":system_libjpeg_config"]
   }
 }
-
 
 config("system_libjpeg_config") {
   defines = [ "USE_SYSTEM_LIBJPEG" ]
@@ -58,7 +57,7 @@ group("jpeg") {
     public_deps = [ "//third_party/libjpeg_turbo:libjpeg" ]
     public_configs = [ ":libjpeg_turbo_config" ]
   } else {
-    public_deps = [ "//third_party/libjpeg:libjpeg" ]
+    public_deps = [ "//third_party/libjpeg" ]
   }
 }
 
@@ -82,23 +81,29 @@ group("jpeg_includes") {
 component("freetype_harfbuzz") {
   public_configs = []
   public_deps = []
-  if (use_system_freetype) {
-    public_configs += [ "//third_party/freetype:freetype_from_pkgconfig" ]
-  } else if (use_qt_freetype) {
-    public_configs += [ qt_freetype_config ]
-  } else {
-    public_deps += [ "//third_party/freetype:freetype_source" ]
+  if (enable_freetype) {
+    if (use_system_freetype) {
+      public_configs += [ "//third_party/freetype:freetype_from_pkgconfig" ]
+    } else if (use_qt_freetype) {
+      public_configs += [ qt_freetype_config ]
+    } else {
+      public_deps += [ "//build/config/freetype" ]
+    }
   }
   if (use_system_harfbuzz) {
     public_configs += [ "//third_party/harfbuzz-ng:harfbuzz_from_pkgconfig" ]
   } else if (use_qt_harfbuzz) {
     public_configs += [ qt_harfbuzz_config ]
   } else {
-    public_deps += [ "//third_party/harfbuzz-ng:harfbuzz_source" ]
+    public_deps += [ "//third_party/harfbuzz-ng" ]
   }
+  public_deps += [ ":freetype_buildflags" ]
 }
 
 buildflag_header("freetype_buildflags") {
   header = "freetype_buildflags.h"
-  flags = [ "USE_SYSTEM_FREETYPE=$use_system_freetype" ]
+  flags = [
+    "USE_SYSTEM_FREETYPE=$use_system_freetype",
+    "ENABLE_FREETYPE=$enable_freetype",
+  ]
 }

@@ -4,12 +4,15 @@
 
 #include "third_party/blink/public/common/notifications/notification_mojom_traits.h"
 
+#include <array>
+#include <optional>
+
+#include "base/compiler_specific.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/notifications/platform_notification_data.h"
 #include "third_party/blink/public/mojom/notifications/notification.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -40,9 +43,11 @@ TEST(NotificationStructTraitsTest, NotificationDataRoundtrip) {
   notification_data.icon = GURL("https://example.com/icon.png");
   notification_data.badge = GURL("https://example.com/badge.png");
 
-  const int vibration_pattern[] = {500, 100, 30};
+  const auto vibration_pattern = std::to_array<int>({500, 100, 30});
   notification_data.vibration_pattern.assign(
-      vibration_pattern, vibration_pattern + std::size(vibration_pattern));
+      vibration_pattern.data(), base::span<const int>(vibration_pattern)
+                                    .subspan(std::size(vibration_pattern))
+                                    .data());
 
   notification_data.timestamp =
       base::Time::FromMillisecondsSinceUnixEpoch(1513966159000.);
@@ -53,7 +58,7 @@ TEST(NotificationStructTraitsTest, NotificationDataRoundtrip) {
   notification_data.scenario = mojom::NotificationScenario::INCOMING_CALL;
 
   const char data[] = "mock binary notification data";
-  notification_data.data.assign(data, data + std::size(data));
+  notification_data.data.assign(data, UNSAFE_TODO(data + std::size(data)));
 
   notification_data.actions.resize(2);
   notification_data.actions[0] = blink::mojom::NotificationAction::New();
@@ -62,7 +67,7 @@ TEST(NotificationStructTraitsTest, NotificationDataRoundtrip) {
   notification_data.actions[0]->action = "buttonAction";
   notification_data.actions[0]->title = u"Button Title!";
   notification_data.actions[0]->icon = GURL("https://example.com/aButton.png");
-  notification_data.actions[0]->placeholder = absl::nullopt;
+  notification_data.actions[0]->placeholder = std::nullopt;
 
   notification_data.actions[1] = blink::mojom::NotificationAction::New();
   notification_data.actions[1]->type =

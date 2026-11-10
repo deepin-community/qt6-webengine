@@ -4,6 +4,7 @@
 
 #include "src/execution/local-isolate.h"
 
+#include "src/base/fpu.h"
 #include "src/bigint/bigint.h"
 #include "src/execution/isolate.h"
 #include "src/execution/thread-id.h"
@@ -24,6 +25,9 @@ LocalIsolate::LocalIsolate(Isolate* isolate, ThreadKind kind)
                        ? isolate->stack_guard()->real_climit()
                        : GetCurrentStackPosition() - v8_flags.stack_size * KB)
 {
+  // LocalIsolate owning threads need to make sure to match the isolate's FPU
+  // state.
+  DCHECK_EQ(base::FPU::GetFlushDenormals(), isolate->flush_denormals());
 #ifdef V8_RUNTIME_CALL_STATS
   if (kind == ThreadKind::kMain) {
     runtime_call_stats_ = isolate->counters()->runtime_call_stats();
@@ -64,8 +68,7 @@ bool StackLimitCheck::HasOverflowed(LocalIsolate* local_isolate) {
 #ifdef V8_INTL_SUPPORT
 // WARNING: This might be out-of-sync with the main-thread.
 const std::string& LocalIsolate::DefaultLocale() {
-  const std::string& res =
-      is_main_thread() ? isolate_->DefaultLocale() : default_locale_;
+  const std::string& res = isolate_->DefaultLocale();
   DCHECK(!res.empty());
   return res;
 }

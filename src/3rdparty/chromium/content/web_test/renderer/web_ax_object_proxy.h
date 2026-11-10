@@ -12,6 +12,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "gin/object_template_builder.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "gin/wrappable.h"
 #include "third_party/blink/public/web/web_ax_context.h"
 #include "third_party/blink/public/web/web_ax_object.h"
@@ -34,7 +35,10 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
     virtual blink::WebAXContext* GetAXContext() = 0;
   };
 
-  static gin::WrapperInfo kWrapperInfo;
+  static constexpr gin::WrapperInfo kWrapperInfo = {{gin::kEmbedderNativeGin},
+                                                    gin::kWebAXObjectProxy};
+
+  const gin::WrapperInfo* wrapper_info() const override;
 
   WebAXObjectProxy(const blink::WebAXObject& object, Factory* factory);
 
@@ -57,11 +61,11 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
       const std::vector<ui::AXEventIntent>& event_intents);
   void Reset();
 
- protected:
   const blink::WebAXObject& accessibility_object() const {
     return accessibility_object_;
   }
 
+ protected:
   Factory* factory() const { return factory_; }
 
   bool IsDetached() const { return !factory_ || !factory_->GetAXContext(); }
@@ -121,13 +125,11 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   bool IsSelectable();
   bool IsMultiLine();
   bool IsMultiSelectable();
-  bool IsSelectedOptionActive();
   bool IsExpanded();
   std::string Checked();
   bool IsVisible();
   // Exposes the visited state of a link.
   bool IsVisited();
-  bool IsOffScreen();
   bool IsCollapsed();
   bool IsValid();
   bool IsReadOnly();
@@ -248,17 +250,9 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   std::string Placeholder();
 
   blink::WebAXObject accessibility_object_;
-  raw_ptr<Factory, ExperimentalRenderer> factory_;
+  raw_ptr<Factory> factory_;
 
   v8::Global<v8::Function> notification_callback_;
-};
-
-class RootWebAXObjectProxy : public WebAXObjectProxy {
- public:
-  RootWebAXObjectProxy(const blink::WebAXObject&, Factory*);
-
-  v8::Local<v8::Object> GetChildAtIndex(unsigned index) override;
-  bool IsRoot() const override;
 };
 
 class WebAXObjectProxyList : public WebAXObjectProxy::Factory {
@@ -267,14 +261,15 @@ class WebAXObjectProxyList : public WebAXObjectProxy::Factory {
   ~WebAXObjectProxyList() override;
 
   void Clear();
+  void Remove(unsigned axid);
   v8::Local<v8::Object> GetOrCreate(const blink::WebAXObject&) override;
   blink::WebAXContext* GetAXContext() override;
 
  private:
-  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
+  raw_ptr<v8::Isolate, DanglingUntriaged> isolate_;
   // Maps from AxID to corresponding v8 wrapper object for an AX object..
   std::unordered_map<unsigned, v8::Global<v8::Object>> ax_objects_;
-  const raw_ptr<blink::WebAXContext, ExperimentalRenderer> ax_context_;
+  const raw_ptr<blink::WebAXContext, DanglingUntriaged> ax_context_;
 };
 
 }  // namespace content

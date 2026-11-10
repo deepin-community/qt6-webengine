@@ -4,7 +4,15 @@
 
 #include "components/variations/service/variations_service_client.h"
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
+#include <cstdio>
+#include <cstdlib>
 #include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/system/sys_info.h"
@@ -36,10 +44,11 @@ version_info::Channel VariationsServiceClient::GetChannelForVariations() {
 
   auto channel = GetChannel();
 #if BUILDFLAG(IS_ANDROID)
-  // TODO(crbug.com/1493502): Remove this if block after automotive beta ends.
-  if (channel == version_info::Channel::BETA &&
-      base::android::BuildInfo::GetInstance()->is_automotive()) {
-    return version_info::Channel::STABLE;
+  // TODO(crbug.com/389565104): Remove this if block when ready to move desktop
+  // to stable builds.
+  if (channel == version_info::Channel::STABLE &&
+      base::android::BuildInfo::GetInstance()->is_desktop()) {
+    return version_info::Channel::DEV;
   }
 #endif
   // Return the embedder-provided channel if no forced channel is specified.
@@ -74,10 +83,18 @@ Study::FormFactor VariationsServiceClient::GetCurrentFormFactor() {
       return Study::AUTOMOTIVE;
     case ui::DEVICE_FORM_FACTOR_FOLDABLE:
       return Study::FOLDABLE;
+    // TODO(crbug.com/435473340) Since XR study is not established yet for UMA.
+    // To prevent compilation failure temporarily using tablet as it closer to
+    // the tablet form factor. XR devices are not public yet.
+    case ui::DEVICE_FORM_FACTOR_XR:
+      return Study::TABLET;
   }
   NOTREACHED();
-  return Study::DESKTOP;
 #endif  // BUILDFLAG(PLATFORM_CFM)
+}
+
+base::FilePath VariationsServiceClient::GetVariationsSeedFileDir() {
+  return base::FilePath();
 }
 
 std::unique_ptr<SeedResponse>
@@ -85,11 +102,9 @@ VariationsServiceClient::TakeSeedFromNativeVariationsSeedStore() {
   return nullptr;
 }
 
-void VariationsServiceClient::RegisterLimitedEntropySyntheticTrial(
-    std::string_view group_name) {
-  // This trial should only be registered on platforms that support the limited
-  // entropy mode.
-  NOTREACHED();
+void VariationsServiceClient::ExitWithMessage(const std::string& message) {
+  puts(message.c_str());
+  exit(1);
 }
 
 }  // namespace variations

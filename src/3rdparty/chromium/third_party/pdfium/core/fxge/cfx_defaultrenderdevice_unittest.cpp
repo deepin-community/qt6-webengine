@@ -13,15 +13,14 @@
 #include "core/fxge/dib/fx_dib.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(CFX_DefaultRenderDeviceTest, GetClipBox_Default) {
+TEST(CFXDefaultRenderDeviceTest, GetClipBoxDefault) {
   CFX_DefaultRenderDevice device;
-  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kArgb,
-                            /*pBackdropBitmap=*/nullptr));
+  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kBgra));
 
   EXPECT_EQ(FX_RECT(0, 0, 16, 16), device.GetClipBox());
 }
 
-TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathFill) {
+TEST(CFXDefaultRenderDeviceTest, GetClipBoxPathFill) {
   // Matrix that transposes and translates by 1 unit on each axis.
   const CFX_Matrix object_to_device(0, 1, 1, 0, 1, -1);
 
@@ -30,8 +29,7 @@ TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathFill) {
       CFX_FillRenderOptions::FillType::kEvenOdd);
 
   CFX_DefaultRenderDevice device;
-  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kArgb,
-                            /*pBackdropBitmap=*/nullptr));
+  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kBgra));
 
   CFX_Path path;
   path.AppendRect(2, 4, 14, 12);
@@ -40,7 +38,7 @@ TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathFill) {
   EXPECT_EQ(FX_RECT(5, 1, 13, 13), device.GetClipBox());
 }
 
-TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathStroke) {
+TEST(CFXDefaultRenderDeviceTest, GetClipBoxPathStroke) {
   // Matrix that transposes and translates by 1 unit on each axis.
   const CFX_Matrix object_to_device(0, 1, 1, 0, 1, -1);
 
@@ -48,8 +46,7 @@ TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathStroke) {
   const CFX_GraphStateData graphics_state;
 
   CFX_DefaultRenderDevice device;
-  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kArgb,
-                            /*pBackdropBitmap=*/nullptr));
+  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kBgra));
 
   CFX_Path path;
   path.AppendRect(2, 4, 14, 12);
@@ -59,20 +56,18 @@ TEST(CFX_DefaultRenderDeviceTest, GetClipBox_PathStroke) {
   EXPECT_EQ(FX_RECT(4, 0, 14, 14), device.GetClipBox());
 }
 
-TEST(CFX_DefaultRenderDeviceTest, GetClipBox_Rect) {
+TEST(CFXDefaultRenderDeviceTest, GetClipBoxRect) {
   CFX_DefaultRenderDevice device;
-  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kArgb,
-                            /*pBackdropBitmap=*/nullptr));
+  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kBgra));
 
   EXPECT_TRUE(device.SetClip_Rect({2, 4, 14, 12}));
 
   EXPECT_EQ(FX_RECT(2, 4, 14, 12), device.GetClipBox());
 }
 
-TEST(CFX_DefaultRenderDeviceTest, GetClipBox_Empty) {
+TEST(CFXDefaultRenderDeviceTest, GetClipBoxEmpty) {
   CFX_DefaultRenderDevice device;
-  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kArgb,
-                            /*pBackdropBitmap=*/nullptr));
+  ASSERT_TRUE(device.Create(/*width=*/16, /*height=*/16, FXDIB_Format::kBgra));
 
   EXPECT_TRUE(device.SetClip_Rect({2, 8, 14, 8}));
 

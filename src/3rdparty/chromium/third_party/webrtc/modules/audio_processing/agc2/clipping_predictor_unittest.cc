@@ -12,8 +12,12 @@
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <tuple>
+#include <vector>
 
+#include "api/audio/audio_processing.h"
+#include "modules/audio_processing/include/audio_frame_view.h"
 #include "rtc_base/checks.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
@@ -105,7 +109,7 @@ void CheckChannelEstimatesWithoutValue(int num_channels,
     SCOPED_TRACE(i);
     EXPECT_EQ(predictor.EstimateClippedLevelStep(i, level, default_step,
                                                  min_mic_level, max_mic_level),
-              absl::nullopt);
+              std::nullopt);
   }
 }
 

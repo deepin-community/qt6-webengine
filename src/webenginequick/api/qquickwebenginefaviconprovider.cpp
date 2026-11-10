@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebenginefaviconprovider_p_p.h"
 
@@ -64,23 +65,8 @@ static QPixmap extractPixmap(const QIcon &icon, const QSize &requestedSize)
     return iconPixmap.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation).copy();
 }
 
-static bool isIconURL(const QUrl &url)
-{
-    QMimeType mimeType = QMimeDatabase().mimeTypeForFile(url.path(), QMimeDatabase::MatchExtension);
-
-    // Check file extension.
-    if (mimeType.name().startsWith(QLatin1String("image")))
-        return true;
-
-    // Check if it is an image data: URL.
-    if (url.scheme() == QLatin1String("data") && url.path().startsWith(QLatin1String("image")))
-        return true;
-
-    return false;
-}
-
-FaviconImageRequester::FaviconImageRequester(const QUrl &imageSource, const QSize &requestedSize)
-    : m_imageSource(imageSource), m_requestedSize(requestedSize)
+FaviconImageRequester::FaviconImageRequester(const QUrl &imageSource, const QSize &requestedSize, bool isIconUrl)
+    : m_imageSource(imageSource), m_requestedSize(requestedSize), m_isIconUrl(isIconUrl)
 {
 }
 
@@ -119,17 +105,20 @@ void FaviconImageRequester::requestFaviconFromDatabase(QPointer<QQuickWebEngineV
 {
     QtWebEngineCore::ProfileAdapter *profileAdapter = view->d_ptr->profileAdapter();
     bool touchIconsEnabled = view->profile()->settings()->touchIconsEnabled();
-    if (isIconURL(m_imageSource)) {
+    const int desiredSizeInPixel = m_requestedSize.isValid()
+        ? qMax(m_requestedSize.width(), m_requestedSize.height()) : 0;
+
+    if (m_isIconUrl) {
         profileAdapter->requestIconForIconURL(
-                m_imageSource, qMax(m_requestedSize.width(), m_requestedSize.height()),
-                touchIconsEnabled, [this](const QIcon &icon, const QUrl &) {
+                m_imageSource, desiredSizeInPixel, touchIconsEnabled,
+                [this](const QIcon &icon, const QUrl &) {
                     QMetaObject::invokeMethod(this, "iconRequestDone", Qt::QueuedConnection,
                                               Q_ARG(const QIcon &, icon));
                 });
     } else {
         profileAdapter->requestIconForPageURL(
-                m_imageSource, qMax(m_requestedSize.width(), m_requestedSize.height()),
-                touchIconsEnabled, [this](const QIcon &icon, const QUrl &, const QUrl &) {
+                m_imageSource, desiredSizeInPixel, touchIconsEnabled,
+                [this](const QIcon &icon, const QUrl &, const QUrl &) {
                     QMetaObject::invokeMethod(this, "iconRequestDone", Qt::QueuedConnection,
                                               Q_ARG(const QIcon &, icon));
                 });
@@ -188,7 +177,7 @@ void FaviconProviderHelper::handleImageRequest(QPointer<FaviconImageResponse> fa
         return;
     }
 
-    auto view = findViewByImageSource(faviconResponse->imageSource());
+    auto view = findViewByImageSource(faviconResponse->imageSource(), faviconResponse->isIconUrl());
     if (view) {
         QIcon icon = view->d_ptr->adapter->icon();
         if (!icon.isNull()) {
@@ -201,13 +190,13 @@ void FaviconProviderHelper::handleImageRequest(QPointer<FaviconImageResponse> fa
     startFaviconRequest(faviconResponse);
 }
 
-QPointer<QQuickWebEngineView> FaviconProviderHelper::findViewByImageSource(const QUrl &imageSource) const
+QPointer<QQuickWebEngineView> FaviconProviderHelper::findViewByImageSource(const QUrl &imageSource, bool isIconUrl) const
 {
     for (QPointer<QQuickWebEngineView> view : m_views) {
         if (view.isNull())
             continue;
 
-        if (isIconURL(imageSource)) {
+        if (isIconUrl) {
             if (view->icon() == QQuickWebEngineFaviconProvider::faviconProviderUrl(imageSource)) {
                 return view;
             }
@@ -222,7 +211,8 @@ QPointer<QQuickWebEngineView> FaviconProviderHelper::findViewByImageSource(const
 void FaviconProviderHelper::startFaviconRequest(QPointer<FaviconImageResponse> faviconResponse)
 {
     FaviconImageRequester *requester = new FaviconImageRequester(faviconResponse->imageSource(),
-                                                                 faviconResponse->requestedSize());
+                                                                 faviconResponse->requestedSize(),
+                                                                 faviconResponse->isIconUrl());
 
     connect(requester, &FaviconImageRequester::done, [requester, faviconResponse](QPixmap pixmap) {
         QMetaObject::invokeMethod(faviconResponse, "handleDone", Qt::QueuedConnection,
@@ -233,8 +223,8 @@ void FaviconProviderHelper::startFaviconRequest(QPointer<FaviconImageResponse> f
     requester->start();
 }
 
-FaviconImageResponse::FaviconImageResponse(const QUrl &imageSource, const QSize &requestedSize)
-    : m_imageSource(imageSource), m_requestedSize(requestedSize)
+FaviconImageResponse::FaviconImageResponse(const QUrl &imageSource, const QSize &requestedSize, bool isIconUrl)
+    : m_imageSource(imageSource), m_requestedSize(requestedSize), m_isIconUrl(isIconUrl)
 {
 }
 
@@ -254,14 +244,29 @@ QString QQuickWebEngineFaviconProvider::identifier()
     return QStringLiteral("favicon");
 }
 
+QString QQuickWebEngineFaviconDBProvider::identifier()
+{
+    return QStringLiteral("favicondb");
+}
+
 QUrl QQuickWebEngineFaviconProvider::faviconProviderUrl(const QUrl &url)
+{
+    return faviconProviderUrlBase(url, identifier());
+}
+
+QUrl QQuickWebEngineFaviconDBProvider::faviconProviderUrl(const QUrl &url)
+{
+    return faviconProviderUrlBase(url, identifier());
+}
+
+QUrl QQuickWebEngineFaviconProvider::faviconProviderUrlBase(const QUrl &url, const QString &identifier)
 {
     if (url.isEmpty())
         return url;
 
     QUrl providerUrl;
     providerUrl.setScheme(QStringLiteral("image"));
-    providerUrl.setHost(identifier());
+    providerUrl.setHost(identifier);
     providerUrl.setPath(
             QStringLiteral("/%1").arg(url.toString(QUrl::RemoveQuery | QUrl::RemoveFragment)));
     if (url.hasQuery())
@@ -281,7 +286,7 @@ QQuickWebEngineFaviconProvider::QQuickWebEngineFaviconProvider()
 QQuickImageResponse *
 QQuickWebEngineFaviconProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
 {
-    FaviconImageResponse *response = new FaviconImageResponse(QUrl(id), requestedSize);
+    FaviconImageResponse *response = new FaviconImageResponse(QUrl(id), requestedSize, isIconUrl());
     emit imageResponseRequested(response);
     return response;
 }

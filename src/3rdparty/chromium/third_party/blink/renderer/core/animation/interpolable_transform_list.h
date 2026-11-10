@@ -45,25 +45,22 @@ class CORE_EXPORT InterpolableTransformList final : public InterpolableValue {
                    const double progress,
                    InterpolableValue& result) const final;
   bool IsTransformList() const final { return true; }
-  bool Equals(const InterpolableValue& other) const final {
-    NOTREACHED();
-    return false;
-  }
+  bool Equals(const InterpolableValue& other) const final { NOTREACHED(); }
   void Scale(double scale) final { NOTREACHED(); }
   void Add(const InterpolableValue& other) final { NOTREACHED(); }
   void AssertCanInterpolateWith(const InterpolableValue& other) const final;
 
-  void Trace(Visitor* v) const override { InterpolableValue::Trace(v); }
+  void Trace(Visitor* v) const override {
+    InterpolableValue::Trace(v);
+    v->Trace(operations_);
+  }
 
  private:
   InterpolableTransformList* RawClone() const final {
     return MakeGarbageCollected<InterpolableTransformList>(
         TransformOperations(operations_), box_size_dependent_);
   }
-  InterpolableTransformList* RawCloneAndZero() const final {
-    NOTREACHED();
-    return nullptr;
-  }
+  InterpolableTransformList* RawCloneAndZero() const final { NOTREACHED(); }
 
   TransformOperations operations_;
   TransformOperations::BoxSizeDependentMatrixBlending box_size_dependent_;

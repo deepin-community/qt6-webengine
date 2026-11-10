@@ -69,24 +69,24 @@ class CPDF_FormField {
     kSign
   };
 
-  CPDF_FormField(CPDF_InteractiveForm* pForm, RetainPtr<CPDF_Dictionary> pDict);
+  CPDF_FormField(CPDF_InteractiveForm* pForm, RetainPtr<CPDF_Dictionary> dict);
   ~CPDF_FormField();
 
-  static absl::optional<FormFieldType> IntToFormFieldType(int value);
+  static std::optional<FormFieldType> IntToFormFieldType(int value);
   static WideString GetFullNameForDict(const CPDF_Dictionary* pFieldDict);
   static RetainPtr<const CPDF_Object> GetFieldAttrForDict(
       const CPDF_Dictionary* pFieldDict,
-      const ByteString& name);
+      ByteStringView name);
   static RetainPtr<CPDF_Object> GetMutableFieldAttrForDict(
       CPDF_Dictionary* pFieldDict,
-      const ByteString& name);
+      ByteStringView name);
 
   WideString GetFullName() const;
-  Type GetType() const { return m_Type; }
+  Type GetType() const { return type_; }
 
-  RetainPtr<const CPDF_Object> GetFieldAttr(const ByteString& name) const;
+  RetainPtr<const CPDF_Object> GetFieldAttr(ByteStringView name) const;
   RetainPtr<const CPDF_Dictionary> GetFieldDict() const;
-  bool ResetField();
+  void ResetField();
 
   int CountControls() const;
   CPDF_FormControl* GetControl(int index) const;
@@ -101,8 +101,8 @@ class CPDF_FormField {
   uint32_t GetFieldFlags() const;
   void SetFieldFlags(uint32_t dwFlags);
 
-  bool IsRequired() const { return m_bRequired; }
-  bool IsNoExport() const { return m_bNoExport; }
+  bool IsRequired() const { return required_; }
+  bool IsNoExport() const { return no_export_; }
 
   WideString GetValue() const;
   WideString GetDefaultValue() const;
@@ -114,15 +114,19 @@ class CPDF_FormField {
 
   bool ClearSelection(NotificationOption notify);
   bool IsItemSelected(int index) const;
-  bool SetItemSelection(int index, NotificationOption notify);
+  void SetItemSelection(int index, NotificationOption notify);
 
   int GetDefaultSelectedItem() const;
+
+  bool HasOptField() const;
+
+  // These can only be called if HasOptField() returns true.
   int CountOptions() const;
   WideString GetOptionLabel(int index) const;
   WideString GetOptionValue(int index) const;
   int FindOption(const WideString& csOptValue) const;
 
-  bool CheckControl(int iControlIndex,
+  void CheckControl(int iControlIndex,
                     bool bChecked,
                     NotificationOption notify);
 
@@ -154,8 +158,7 @@ class CPDF_FormField {
   bool NotifyListOrComboBoxBeforeChange(const WideString& value);
   void NotifyListOrComboBoxAfterChange();
 
-  RetainPtr<const CPDF_Object> GetFieldAttrInternal(
-      const ByteString& name) const;
+  RetainPtr<const CPDF_Object> GetFieldAttrInternal(ByteStringView name) const;
   const CPDF_Dictionary* GetFieldDictInternal() const;
   RetainPtr<const CPDF_Object> GetDefaultValueObject() const;
   RetainPtr<const CPDF_Object> GetValueObject() const;
@@ -169,14 +172,14 @@ class CPDF_FormField {
 
   const std::vector<UnownedPtr<CPDF_FormControl>>& GetControls() const;
 
-  CPDF_FormField::Type m_Type = kUnknown;
-  bool m_bRequired = false;
-  bool m_bNoExport = false;
-  bool m_bIsMultiSelectListBox = false;
-  bool m_bIsUnison = false;
-  bool m_bUseSelectedIndices = false;
-  UnownedPtr<CPDF_InteractiveForm> const m_pForm;
-  RetainPtr<CPDF_Dictionary> const m_pDict;
+  CPDF_FormField::Type type_ = kUnknown;
+  bool required_ = false;
+  bool no_export_ = false;
+  bool is_multi_select_list_box_ = false;
+  bool is_unison_ = false;
+  bool use_selected_indices_ = false;
+  UnownedPtr<CPDF_InteractiveForm> const form_;
+  RetainPtr<CPDF_Dictionary> const dict_;
 };
 
 #endif  // CORE_FPDFDOC_CPDF_FORMFIELD_H_

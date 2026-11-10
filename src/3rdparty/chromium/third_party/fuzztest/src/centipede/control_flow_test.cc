@@ -17,9 +17,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>  // NOLINT
+#include <sstream>
 #include <string>
 #include <string_view>
-#include <thread>  //NOLINT
 #include <vector>
 
 #include "gmock/gmock.h"
@@ -27,14 +27,14 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/strings/str_cat.h"
 #include "./centipede/binary_info.h"
-#include "./centipede/logging.h"
 #include "./centipede/pc_info.h"
 #include "./centipede/symbol_table.h"
-#include "./centipede/test_util.h"
+#include "./centipede/thread_pool.h"
+#include "./common/logging.h"
+#include "./common/test_util.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // Mock CFTable representing the following cfg:
 //    1
@@ -100,6 +100,13 @@ TEST(CFTable, MakeCfgFromCfTable) {
   CHECK_EQ(cfg.GetCyclomaticComplexity(1), 2);
 }
 
+TEST(CFTable, SerializesAndDeserializesCfTable) {
+  std::stringstream stream;
+  WriteCfTable(g_cf_table, stream);
+  const CFTable cf_table = ReadCfTable(stream);
+  EXPECT_EQ(cf_table, g_cf_table);
+}
+
 TEST(FunctionComplexity, ComputeFuncComplexity) {
   static const CFTable g_cf_table1 = {
       1, 2, 3, 0, 0,  // 1 goes to 2 and 3.
@@ -149,17 +156,17 @@ TEST(ControlFlowGraph, LazyReachability) {
   cfg.InitializeControlFlowGraph(g_cf_table, g_pc_table);
   EXPECT_NE(cfg.size(), 0);
 
-  auto rt = [&]() {
+  auto rt = [&cfg]() {
     for (int i = 0; i < 10; ++i) {
       cfg.LazyGetReachabilityForPc(1);
       cfg.LazyGetReachabilityForPc(2);
       cfg.LazyGetReachabilityForPc(3);
       cfg.LazyGetReachabilityForPc(4);
     }
-    auto reach1 = cfg.LazyGetReachabilityForPc(1);
-    auto reach2 = cfg.LazyGetReachabilityForPc(2);
-    auto reach3 = cfg.LazyGetReachabilityForPc(3);
-    auto reach4 = cfg.LazyGetReachabilityForPc(4);
+    const auto &reach1 = cfg.LazyGetReachabilityForPc(1);
+    const auto &reach2 = cfg.LazyGetReachabilityForPc(2);
+    const auto &reach3 = cfg.LazyGetReachabilityForPc(3);
+    const auto &reach4 = cfg.LazyGetReachabilityForPc(4);
 
     EXPECT_THAT(reach1, testing::UnorderedElementsAre(1, 2, 3, 4));
     EXPECT_THAT(reach2, testing::UnorderedElementsAre(2, 4));
@@ -167,16 +174,12 @@ TEST(ControlFlowGraph, LazyReachability) {
     EXPECT_THAT(reach4, testing::ElementsAre(4));
   };
 
-  std::thread t1(rt), t2(rt), t3(rt);
-  t1.join();
-  t2.join();
-  t3.join();
-}
-
-// Returns a path for i-th temporary file.
-static std::string GetTempFilePath(size_t i) {
-  return std::filesystem::path(GetTestTempDir())
-      .append(absl::StrCat("coverage_test", i, "-", getpid()));
+  {
+    ThreadPool threads{3};
+    threads.Schedule(rt);
+    threads.Schedule(rt);
+    threads.Schedule(rt);
+  }  // The threads join here.
 }
 
 // Returns path to test_fuzz_target.
@@ -193,13 +196,14 @@ static std::string GetTracePCTargetPath() {
 // Tests GetCfTableFromBinary() on test_fuzz_target.
 TEST(CFTable, GetCfTable) {
   auto target_path = GetTargetPath();
-  std::string tmp_path1 = GetTempFilePath(1);
-  std::string tmp_path2 = GetTempFilePath(2);
+  std::string tmp_path1 = GetTempFilePath(test_info_->name(), 1);
+  std::string tmp_path2 = GetTempFilePath(test_info_->name(), 2);
 
   // Load the cf table.
   BinaryInfo binary_info;
   binary_info.InitializeFromSanCovBinary(
-      target_path, GetObjDumpPath(), GetLLVMSymbolizerPath(), GetTestTempDir());
+      target_path, GetObjDumpPath(), GetLLVMSymbolizerPath(),
+      GetTestTempDir(test_info_->name()).string());
   const auto &cf_table = binary_info.cf_table;
   LOG(INFO) << VV(target_path) << VV(tmp_path1) << VV(cf_table.size());
   if (cf_table.empty()) {
@@ -273,10 +277,11 @@ TEST(CFTable, GetCfTable) {
   }
 }
 
-static void SymbolizeBinary(std::string_view target_path, bool use_trace_pc) {
+static void SymbolizeBinary(std::string_view test_dir,
+                            std::string_view target_path, bool use_trace_pc) {
   BinaryInfo binary_info;
-  binary_info.InitializeFromSanCovBinary(
-      target_path, GetObjDumpPath(), GetLLVMSymbolizerPath(), GetTestTempDir());
+  binary_info.InitializeFromSanCovBinary(target_path, GetObjDumpPath(),
+                                         GetLLVMSymbolizerPath(), test_dir);
   // Load the pc table.
   const auto &pc_table = binary_info.pc_table;
   // Check that it's not empty.
@@ -309,7 +314,7 @@ static void SymbolizeBinary(std::string_view target_path, bool use_trace_pc) {
       has_llvm_fuzzer_test_one_input = true;
       EXPECT_THAT(
           symbols.location(i),
-          testing::HasSubstr("centipede/testing/test_fuzz_target.cc:70"));
+          testing::HasSubstr("centipede/testing/test_fuzz_target.cc:71"));
     }
   }
   EXPECT_TRUE(has_llvm_fuzzer_test_one_input);
@@ -319,16 +324,18 @@ static void SymbolizeBinary(std::string_view target_path, bool use_trace_pc) {
 
 // Tests GetPcTableFromBinary() and SymbolTable on test_fuzz_target.
 TEST(PCTable, GetPcTableFromBinary_And_SymbolTable_PCTable) {
-  EXPECT_NO_FATAL_FAILURE(
-      SymbolizeBinary(GetTargetPath(), /*use_trace_pc=*/false));
+  EXPECT_NO_FATAL_FAILURE(SymbolizeBinary(
+      GetTestTempDir(test_info_->name()).string(), GetTargetPath(),
+      /*use_trace_pc=*/false));
 }
 
 // Tests GetPcTableFromBinary() and SymbolTable on test_fuzz_target_trace_pc.
 TEST(PCTable, GetPcTableFromBinary_And_SymbolTable_TracePC) {
-  EXPECT_NO_FATAL_FAILURE(
-      SymbolizeBinary(GetTracePCTargetPath(), /*use_trace_pc=*/true));
+  EXPECT_NO_FATAL_FAILURE(SymbolizeBinary(
+      GetTestTempDir(test_info_->name()).string(), GetTracePCTargetPath(),
+      /*use_trace_pc=*/true));
 }
 
 }  // namespace
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

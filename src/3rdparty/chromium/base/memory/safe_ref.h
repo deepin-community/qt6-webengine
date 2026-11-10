@@ -5,6 +5,7 @@
 #ifndef BASE_MEMORY_SAFE_REF_H_
 #define BASE_MEMORY_SAFE_REF_H_
 
+#include <compare>
 #include <concepts>
 #include <utility>
 
@@ -23,7 +24,7 @@ namespace base {
 // benign crash instead of as a Use-after-Free.
 //
 // SafeRef pointers cannot be null (as expressed by the "Ref" suffix instead of
-// "Ptr"). A SafeRef can be wrapped in an absl::optional if it should not always
+// "Ptr"). A SafeRef can be wrapped in an std::optional if it should not always
 // point to something valid. (A SafePtr sibling type can be introduced if this
 // is problematic, or if consuming moves are needed!)
 //
@@ -121,6 +122,12 @@ class SafeRef {
     return *this;
   }
 
+  // Ordered by the pointer, not the pointee.
+  template <typename U>
+  std::strong_ordering operator<=>(const SafeRef<U>& other) const {
+    return ptr_ <=> other.ptr_;
+  }
+
   // Provide access to the underlying T as a reference. Will CHECK() if the T
   // pointee is no longer alive.
   T& operator*() const {
@@ -145,7 +152,7 @@ class SafeRef {
 
   // Construction from a from a WeakPtr's internals. Will CHECK() if the WeakPtr
   // is already invalid.
-  explicit SafeRef(internal::WeakReference&& ref, T* ptr)
+  SafeRef(internal::WeakReference&& ref, T* ptr)
       : ref_(std::move(ref)), ptr_(ptr) {
     CHECK(ref_.IsValid());
   }

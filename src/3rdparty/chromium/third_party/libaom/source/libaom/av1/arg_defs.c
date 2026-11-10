@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2021, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -48,6 +48,8 @@ static const struct arg_enum_list tuning_enum[] = {
   { "vmaf_neg", AOM_TUNE_VMAF_NEG_MAX_GAIN },
   { "butteraugli", AOM_TUNE_BUTTERAUGLI },
   { "vmaf_saliency_map", AOM_TUNE_VMAF_SALIENCY_MAP },
+  { "iq", AOM_TUNE_IQ },
+  { "ssimulacra2", AOM_TUNE_SSIMULACRA2 },
   { NULL, 0 }
 };
 
@@ -79,7 +81,7 @@ static const struct arg_enum_list matrix_coefficients_enum[] = {
   { "fcc73", AOM_CICP_MC_FCC },
   { "bt470bg", AOM_CICP_MC_BT_470_B_G },
   { "bt601", AOM_CICP_MC_BT_601 },
-  { "smpte240", AOM_CICP_CP_SMPTE_240 },
+  { "smpte240", AOM_CICP_MC_SMPTE_240 },
   { "ycgco", AOM_CICP_MC_SMPTE_YCGCO },
   { "bt2020ncl", AOM_CICP_MC_BT_2020_NCL },
   { "bt2020cl", AOM_CICP_MC_BT_2020_CL },
@@ -87,6 +89,9 @@ static const struct arg_enum_list matrix_coefficients_enum[] = {
   { "chromncl", AOM_CICP_MC_CHROMAT_NCL },
   { "chromcl", AOM_CICP_MC_CHROMAT_CL },
   { "ictcp", AOM_CICP_MC_ICTCP },
+  { "ipt-c2", AOM_CICP_MC_IPT_C2 },
+  { "ycgco-re", AOM_CICP_MC_YCGCO_RE },
+  { "ycgco-ro", AOM_CICP_MC_YCGCO_RO },
   { NULL, 0 }
 };
 
@@ -105,7 +110,7 @@ static const struct arg_enum_list tune_content_enum[] = {
 };
 
 static const struct arg_enum_list transfer_characteristics_enum[] = {
-  { "unspecified", AOM_CICP_CP_UNSPECIFIED },
+  { "unspecified", AOM_CICP_TC_UNSPECIFIED },
   { "bt709", AOM_CICP_TC_BT_709 },
   { "bt470m", AOM_CICP_TC_BT_470_M },
   { "bt470bg", AOM_CICP_TC_BT_470_B_G },
@@ -189,7 +194,8 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
               "Display warnings, but do not prompt user to continue"),
   .bitdeptharg =
       ARG_DEF_ENUM("b", "bit-depth", 1, "Bit depth for codec", bitdepth_enum),
-  .inbitdeptharg = ARG_DEF(NULL, "input-bit-depth", 1, "Bit depth of input"),
+  .inbitdeptharg =
+      ARG_DEF(NULL, "input-bit-depth", 1, "Actual bit depth of input source"),
 
   .input_chroma_subsampling_x = ARG_DEF(NULL, "input-chroma-subsampling-x", 1,
                                         "Chroma subsampling x value"),
@@ -280,10 +286,14 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
   .save_as_annexb = ARG_DEF(NULL, "annexb", 1, "Save as Annex-B"),
   .noise_sens = ARG_DEF(NULL, "noise-sensitivity", 1,
                         "Noise sensitivity (frames to blur)"),
-  .sharpness = ARG_DEF(NULL, "sharpness", 1,
-                       "Bias towards block sharpness in rate-distortion "
-                       "optimization of transform coefficients "
-                       "(0..7), default is 0"),
+  .sharpness =
+      ARG_DEF(NULL, "sharpness", 1,
+              "Bias towards block sharpness in rate-distortion optimization of "
+              "transform coefficients and (in all intra mode only) reduce "
+              "block edge filtering for better sharpness (0..7), default is 0"),
+  .enable_adaptive_sharpness =
+      ARG_DEF(NULL, "enable-adaptive-sharpness", 1,
+              "Enable adaptive sharpness (0: disabled (default), 1: enabled)"),
   .static_thresh =
       ARG_DEF(NULL, "static-thresh", 1, "Motion detection threshold"),
   .auto_altref =
@@ -303,7 +313,7 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
       ARG_DEF(NULL, "max-intra-rate", 1, "Max I-frame bitrate (pct)"),
 #if CONFIG_AV1_ENCODER
   .cpu_used_av1 = ARG_DEF(NULL, "cpu-used", 1,
-                          "Speed setting (0..6 in good mode, 5..11 in realtime "
+                          "Speed setting (0..6 in good mode, 5..12 in realtime "
                           "mode, 0..9 in all intra mode)"),
   .rowmtarg =
       ARG_DEF(NULL, "row-mt", 1,
@@ -315,10 +325,12 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
       ARG_DEF(NULL, "tile-columns", 1, "Number of tile columns to use, log2"),
   .tile_rows =
       ARG_DEF(NULL, "tile-rows", 1, "Number of tile rows to use, log2"),
+  .auto_tiles = ARG_DEF(NULL, "auto-tiles", 1,
+                        "Enable auto tiles (0: false (default), 1: true)"),
   .enable_tpl_model = ARG_DEF(NULL, "enable-tpl-model", 1,
                               "RDO based on frame temporal dependency "
                               "(0: off, 1: backward source based); "
-                              "required for deltaq mode"),
+                              "required for --deltaq-mode=1"),
   .enable_keyframe_filtering = ARG_DEF(
       NULL, "enable-keyframe-filtering", 1,
       "Apply temporal filtering on key frame "
@@ -333,7 +345,8 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
   .enable_cdef = ARG_DEF(
       NULL, "enable-cdef", 1,
       "Enable the constrained directional enhancement filter (0: false, "
-      "1: true (default), 2: disable for non-reference frames)"),
+      "1: true (default), 2: disable for non-reference frames, 3: enable "
+      "adaptively based on frame qindex)"),
   .enable_restoration = ARG_DEF(NULL, "enable-restoration", 1,
                                 "Enable the loop restoration filter (0: false "
                                 "(default in realtime mode), "
@@ -457,10 +470,12 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
   .enable_qm =
       ARG_DEF(NULL, "enable-qm", 1,
               "Enable quantisation matrices (0: false (default), 1: true)"),
-  .qm_min = ARG_DEF(NULL, "qm-min", 1,
-                    "Min quant matrix flatness (0..15), default is 8"),
+  .qm_min = ARG_DEF(
+      NULL, "qm-min", 1,
+      "Min quant matrix flatness (0..15), default is 5 (4 for all intra mode)"),
   .qm_max = ARG_DEF(NULL, "qm-max", 1,
-                    "Max quant matrix flatness (0..15), default is 15"),
+                    "Max quant matrix flatness (0..15), default is 9 (10 for "
+                    "all intra mode)"),
   .reduced_tx_type_set = ARG_DEF(NULL, "reduced-tx-type-set", 1,
                                  "Use reduced set of transform types"),
   .use_intra_dct_only =
@@ -545,11 +560,11 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
       ARG_DEF(NULL, "deltaq-mode", 1,
               "Delta qindex mode (0: off, 1: deltaq objective (default), "
               "2: deltaq placeholder, 3: key frame visual quality, 4: user "
-              "rating based visual quality optimization); "
-              "requires --enable-tpl-model=1"),
+              "rating based visual quality optimization, 5: HDR video, 6: "
+              "Variance Boost); --deltaq-mode=1 requires --enable-tpl-model=1"),
   .deltaq_strength = ARG_DEF(NULL, "deltaq-strength", 1,
                              "Deltaq strength for"
-                             " --deltaq-mode=4 (%)"),
+                             " --deltaq-mode=4 and --deltaq-mode=6 (%)"),
   .deltalf_mode = ARG_DEF(NULL, "delta-lf-mode", 1,
                           "Enable delta-lf-mode (0: off (default), 1: on)"),
   .frame_periodic_boost =
@@ -630,11 +645,10 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
 
   .use_fixed_qp_offsets =
       ARG_DEF(NULL, "use-fixed-qp-offsets", 1,
-              "Enable fixed QP offsets for frames at different levels of the "
-              "pyramid. Selected automatically from --cq-level if "
-              "--fixed-qp-offsets is not provided. If this option is not "
-              "specified (default), offsets are adaptively chosen by the "
-              "encoder."),
+              "Controls how the encoder applies fixed QP offsets for frames at "
+              "different levels of the pyramid (0: adaptively-chosen offsets "
+              "from --cq-level if --fixed-qp-offsets is not provided "
+              "(default), 1: fixed QP offsets, 2: no QP offsets)"),
 
   .fixed_qp_offsets = ARG_DEF(
       NULL, "fixed-qp-offsets", 1,
@@ -667,10 +681,10 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
       "frames (default), 2: Disable loopfilter for non-reference frames, 3: "
       "Disable loopfilter for frames with low motion)"),
 
-  .auto_intra_tools_off = ARG_DEF(
-      NULL, "auto-intra-tools-off", 1,
-      "Automatically turn off several intra coding tools for allintra mode; "
-      "only in effect if --deltaq-mode=3"),
+  .auto_intra_tools_off =
+      ARG_DEF(NULL, "auto-intra-tools-off", 1,
+              "Automatically turn off several intra coding tools for all intra "
+              "mode; only in effect if --deltaq-mode=3"),
 
   .two_pass_input =
       ARG_DEF(NULL, "two-pass-input", 1,
@@ -698,5 +712,20 @@ const av1_codec_arg_definitions_t g_av1_codec_arg_defs = {
       ARG_DEF(NULL, "sb-qp-sweep", 1,
               "When set to 1, enable the superblock level qp sweep for a "
               "given lambda to minimize the rdcost."),
+  .enable_low_complexity_decode = ARG_DEF(
+      NULL, "enable-low-complexity-decode", 1,
+      "Enable low complexity decode (0: false (default), 1: true). This "
+      "supports good-quality encoding (speed 1 to 3) for vertical videos "
+      "(608p to 1080p) and horizontal videos (720p to 1080p)."),
+  .screen_detection_mode = ARG_DEF(
+      NULL, "screen-detection-mode", 1,
+      "Screen content detection mode (1: standard (default in good quality and "
+      "realtime modes), 2: anti-aliased text and graphics aware (default in "
+      "all intra mode))"),
+  .validate_hbd_input =
+      ARG_DEF(NULL, "validate-hbd-input", 1,
+              "Check that input samples are within the valid range "
+              "for the chosen bit depth with high bit depth encoding (0: "
+              "disabled, 1: enabled (default))"),
 #endif  // CONFIG_AV1_ENCODER
 };

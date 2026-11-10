@@ -673,7 +673,7 @@ enum vp8e_enc_control_id {
    */
   VP9E_SET_TPL,
 
-  /*!\brief Codec control function to enable postencode frame drop.
+  /*!\brief Codec control function to enable post encode frame drop.
    *
    * This will allow encoder to drop frame after it's encoded.
    *
@@ -769,15 +769,23 @@ enum vp8e_enc_control_id {
    */
   VP9E_SET_QUANTIZER_ONE_PASS,
 
-  /*!\brief Codec control to use external RC to control TPL.
+  /*!\brief Codec control function to enable key frame temporal filtering.
    *
-   * This will use external RC to control the QP and GOP structure for TPL.
-   * (rc_type & VPX_RC_QP) in vpx_rc_funcs_t must be non zero.
-   * get_encodeframe_decision callback in vpx_rc_funcs_t also needs to be set.
+   * Vp9 allows the encoder to run key frame temporal filtering and use it to
+   * improve the compression performance. To enable, set this parameter to be
+   * 1. The default value is set to be 0.
+   */
+  VP9E_SET_KEY_FRAME_FILTERING,
+
+  /*!\brief Codec control function to validate HBD input.
+   *
+   * VP9 allows the encoder to validate the high bitdepth (HBD) input and
+   * ensure that every pixel is within the valid range. To disable/enable,
+   * set this parameter to 0/1. The default value is set to be 1.
    *
    * Supported in codecs: VP9
    */
-  VP9E_ENABLE_EXTERNAL_RC_TPL,
+  VP9E_SET_VALIDATE_HBD_INPUT,
 };
 
 /*!\brief vpx 1-D scaling mode
@@ -804,8 +812,7 @@ typedef enum vp9e_temporal_layering_mode {
   VP9E_TEMPORAL_LAYERING_MODE_NOLAYERING = 0,
 
   /*!\brief Bypass mode.
-   * Used when application needs to control temporal layering.
-   * This will only work when the number of spatial layers equals 1.
+   * Used when application needs to control spatial and temporal layering.
    */
   VP9E_TEMPORAL_LAYERING_MODE_BYPASS = 1,
 
@@ -879,7 +886,7 @@ typedef enum {
   VP8_EIGHT_TOKENPARTITION = 3
 } vp8e_token_partitions;
 
-/*!brief VP9 encoder content type */
+/*!\brief VP9 encoder content type */
 typedef enum {
   VP9E_CONTENT_DEFAULT,
   VP9E_CONTENT_SCREEN,
@@ -1108,8 +1115,10 @@ VPX_CTRL_USE_TYPE(VP8E_SET_RTC_EXTERNAL_RATECTRL, int)
 #define VPX_CTRL_VP8E_SET_RTC_EXTERNAL_RATECTRL
 VPX_CTRL_USE_TYPE(VP9E_SET_QUANTIZER_ONE_PASS, int)
 #define VPX_CTRL_VP9E_SET_QUANTIZER_ONE_PASS
-VPX_CTRL_USE_TYPE(VP9E_ENABLE_EXTERNAL_RC_TPL, int)
-#define VPX_CTRL_VP9E_ENABLE_EXTERNAL_RC_TPL
+VPX_CTRL_USE_TYPE(VP9E_SET_KEY_FRAME_FILTERING, int)
+#define VPX_CTRL_VP9E_SET_KEY_FRAME_FILTERING
+VPX_CTRL_USE_TYPE(VP9E_SET_VALIDATE_HBD_INPUT, int)
+#define VPX_CTRL_VP9E_SET_VALIDATE_HBD_INPUT
 
 /*!\endcond */
 /*! @} - end defgroup vp8_encoder */

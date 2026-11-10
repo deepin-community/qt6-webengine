@@ -6,29 +6,35 @@
 
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
 #include "util/osp_logging.h"
+#include "util/string_parse.h"
+#include "util/string_util.h"
+#include "util/stringprintf.h"
 
 namespace openscreen {
 
 // static
 ErrorOr<SimpleFraction> SimpleFraction::FromString(std::string_view value) {
-  std::vector<std::string_view> fields = absl::StrSplit(value, '/');
+  if (value.size() > 0 && value.at(0) == '/') {
+    return Error::Code::kParameterInvalid;
+  }
+
+  std::vector<std::string_view> fields = string_util::Split(value, '/');
   if (fields.size() != 1 && fields.size() != 2) {
     return Error::Code::kParameterInvalid;
   }
 
   int numerator;
   int denominator = 1;
-  if (!absl::SimpleAtoi(fields[0], &numerator)) {
+  if (!string_parse::ParseAsciiNumber(fields[0], numerator)) {
     return Error::Code::kParameterInvalid;
   }
 
   if (fields.size() == 2) {
-    if (!absl::SimpleAtoi(fields[1], &denominator)) {
+    if (!string_parse::ParseAsciiNumber(fields[1], denominator)) {
       return Error::Code::kParameterInvalid;
     }
   }
@@ -40,7 +46,7 @@ std::string SimpleFraction::ToString() const {
   if (denominator_ == 1) {
     return std::to_string(numerator_);
   }
-  return absl::StrCat(numerator_, "/", denominator_);
+  return StringPrintf("%d/%d", numerator_, denominator_);
 }
 
 }  // namespace openscreen

@@ -41,26 +41,26 @@ NotRestoredReasons::NotRestoredReasons(const NotRestoredReasons& other)
       reasons_(other.reasons_),
       children_(other.children_) {}
 
-const absl::optional<HeapVector<Member<NotRestoredReasonDetails>>>
+const std::optional<HeapVector<Member<NotRestoredReasonDetails>>>
 NotRestoredReasons::reasons() const {
   if (!url_) {
     // If `url_` is null, this is for cross-origin and reasons should be masked.
-    return absl::nullopt;
+    return std::nullopt;
   }
   return reasons_;
 }
 
-const absl::optional<HeapVector<Member<NotRestoredReasons>>>
+const std::optional<HeapVector<Member<NotRestoredReasons>>>
 NotRestoredReasons::children() const {
   if (!url_) {
     // If `url_` is null, this is for cross-origin and children should be
     // masked.
-    return absl::nullopt;
+    return std::nullopt;
   }
   return children_;
 }
 
-ScriptValue NotRestoredReasons::toJSON(ScriptState* script_state) const {
+ScriptObject NotRestoredReasons::toJSON(ScriptState* script_state) const {
   V8ObjectBuilder builder(script_state);
 
   builder.AddStringOrNull("src", src());
@@ -71,7 +71,7 @@ ScriptValue NotRestoredReasons::toJSON(ScriptState* script_state) const {
     v8::LocalVector<v8::Value> reasons_result(script_state->GetIsolate());
     reasons_result.reserve(reasons_.size());
     for (Member<NotRestoredReasonDetails> reason : reasons_) {
-      reasons_result.push_back(reason->toJSON(script_state).V8Value());
+      reasons_result.push_back(reason->toJSON(script_state).V8Object());
     }
     builder.AddVector<IDLAny>("reasons", reasons_result);
   } else {
@@ -81,14 +81,14 @@ ScriptValue NotRestoredReasons::toJSON(ScriptState* script_state) const {
     v8::LocalVector<v8::Value> children_result(script_state->GetIsolate());
     children_result.reserve(children_.size());
     for (Member<NotRestoredReasons> child : children_) {
-      children_result.push_back(child->toJSON(script_state).V8Value());
+      children_result.push_back(child->toJSON(script_state).V8Object());
     }
     builder.AddVector<IDLAny>("children", children_result);
   } else {
     builder.AddNull("children");
   }
 
-  return builder.GetScriptValue();
+  return builder.ToScriptObject();
 }
 
 }  // namespace blink

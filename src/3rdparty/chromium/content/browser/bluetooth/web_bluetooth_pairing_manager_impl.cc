@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/bluetooth/web_bluetooth_pairing_manager_delegate.h"
@@ -28,7 +29,7 @@ void OnPairForReadCharacteristicCallback(
   if (error_code) {
     std::move(callback).Run(
         WebBluetoothServiceImpl::TranslateConnectErrorAndRecord(*error_code),
-        /*value=*/std::nullopt);
+        /*value=*/{});
     return;
   }
   pairing_manager_delegate->RemoteCharacteristicReadValue(
@@ -59,7 +60,7 @@ void OnPairForReadDescriptorCallback(
   if (error_code) {
     std::move(callback).Run(
         WebBluetoothServiceImpl::TranslateConnectErrorAndRecord(*error_code),
-        /*value=*/std::nullopt);
+        /*value=*/{});
     return;
   }
   pairing_manager_delegate->RemoteDescriptorReadValue(descriptor_instance_id,
@@ -102,10 +103,10 @@ void OnPairCharacteristicStartNotifications(
 
 constexpr int WebBluetoothPairingManagerImpl::kMaxPairAttempts;
 
-// TODO(960258): Ensure this delegate outlives any in-progress pairing operation
-// for which it is used. Additionally review use of WebBluetoothDeviceId vs.
-// BluetoothDevice as well as how to deal with simultaneous pairing requests
-// for the same device.
+// TODO(crbug.com/40626253): Ensure this delegate outlives any in-progress
+// pairing operation for which it is used. Additionally review use of
+// WebBluetoothDeviceId vs. BluetoothDevice as well as how to deal with
+// simultaneous pairing requests for the same device.
 WebBluetoothPairingManagerImpl::WebBluetoothPairingManagerImpl(
     WebBluetoothPairingManagerDelegate* pairing_manager_delegate)
     : pairing_manager_delegate_(pairing_manager_delegate) {
@@ -129,7 +130,7 @@ void WebBluetoothPairingManagerImpl::PairForCharacteristicReadValue(
     std::move(read_callback)
         .Run(WebBluetoothServiceImpl::TranslateConnectErrorAndRecord(
                  BluetoothDevice::ConnectErrorCode::ERROR_UNKNOWN),
-             /*value=*/std::nullopt);
+             /*value=*/{});
     return;
   }
 
@@ -171,7 +172,7 @@ void WebBluetoothPairingManagerImpl::PairForDescriptorReadValue(
     std::move(read_callback)
         .Run(WebBluetoothServiceImpl::TranslateConnectErrorAndRecord(
                  BluetoothDevice::ConnectErrorCode::ERROR_UNKNOWN),
-             /*value=*/std::nullopt);
+             /*value=*/{});
     return;
   }
 

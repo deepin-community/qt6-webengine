@@ -11,8 +11,10 @@
 #include "compiler/translator/StaticType.h"
 #include "compiler/translator/glsl/BuiltInFunctionEmulatorGLSL.h"
 #include "compiler/translator/glsl/OutputESSL.h"
+#include "compiler/translator/tree_ops/AddDefaultReturnStatements.h"
 #include "compiler/translator/tree_ops/DeclarePerVertexBlocks.h"
 #include "compiler/translator/tree_ops/RecordConstantPrecision.h"
+#include "compiler/translator/tree_ops/glsl/ExpandFragmentOutputsToVec4.h"
 #include "compiler/translator/tree_util/FindSymbolNode.h"
 #include "compiler/translator/tree_util/ReplaceClipCullDistanceVariable.h"
 #include "compiler/translator/tree_util/RunAtTheEndOfShader.h"
@@ -70,16 +72,28 @@ bool TranslatorESSL::translate(TIntermBlock *root,
     TInfoSinkBase &sink = getInfoSink().obj;
 
     int shaderVer = getShaderVersion();  // Frontend shader version.
-    if ((shaderVer > 100 &&
-         (getResources().EXT_clip_cull_distance || getResources().ANGLE_clip_cull_distance ||
-          getResources().NV_shader_noperspective_interpolation ||
-          getResources().OES_shader_multisample_interpolation)) ||
-        (hasPixelLocalStorageUniforms() &&
-         compileOptions.pls.type == ShPixelLocalStorageType::ImageLoadStore))
+    if (shaderVer == 300)
     {
-        // The backend translator emits interface blocks or shader image code.
-        // Use a minimum version of 310.
-        shaderVer = std::max(shaderVer, 310);
+        // Although ANGLE supports all these extensions with ESSL 3.00,
+        // some drivers may support the required functionality only
+        // with ESSL 3.10.
+        const bool hasExtensionsThatMayRequireES31 =
+            getResources().EXT_clip_cull_distance || getResources().ANGLE_clip_cull_distance ||
+            getResources().NV_shader_noperspective_interpolation ||
+            getResources().OES_shader_multisample_interpolation ||
+            getResources().ANGLE_texture_multisample ||
+            getResources().OES_texture_storage_multisample_2d_array;
+
+        // When PLS is implemented with shader images,
+        // ESSL 3.10 output is required.
+        const bool usesShaderImagesForPLS =
+            hasPixelLocalStorageUniforms() &&
+            compileOptions.pls.type == ShPixelLocalStorageType::ImageLoadStore;
+
+        if (hasExtensionsThatMayRequireES31 || usesShaderImagesForPLS)
+        {
+            shaderVer = 310;
+        }
     }
     if (shaderVer > 100)
     {
@@ -94,6 +108,18 @@ bool TranslatorESSL::translate(TIntermBlock *root,
     WritePragma(sink, compileOptions, getPragma());
 
     if (!RecordConstantPrecision(this, root, &getSymbolTable()))
+    {
+        return false;
+    }
+    if (compileOptions.expandFragmentOutputsToVec4)
+    {
+        if (!ExpandFragmentOutputsToVec4(this, root, &getSymbolTable()))
+        {
+            return false;
+        }
+    }
+
+    if (!sh::AddDefaultReturnStatements(this, root))
     {
         return false;
     }
@@ -157,10 +183,9 @@ bool TranslatorESSL::translate(TIntermBlock *root,
             if (!DeclarePerVertexBlocks(this, root, &getSymbolTable(), nullptr, nullptr))
                 return false;
         }
-        else if ((IsExtensionEnabled(getExtensionBehavior(), TExtension::EXT_clip_cull_distance) ||
-                  IsExtensionEnabled(getExtensionBehavior(),
-                                     TExtension::ANGLE_clip_cull_distance)) &&
-                 areClipDistanceOrCullDistanceRedeclared())
+        else if (areClipDistanceOrCullDistanceUsed() &&
+                 (IsExtensionEnabled(getExtensionBehavior(), TExtension::EXT_clip_cull_distance) ||
+                  IsExtensionEnabled(getExtensionBehavior(), TExtension::ANGLE_clip_cull_distance)))
         {
             // When clip distance state emulation is not needed,
             // the redeclared extension built-ins still should be moved to gl_PerVertex
@@ -180,6 +205,7 @@ bool TranslatorESSL::translate(TIntermBlock *root,
     if (getShaderType() == GL_FRAGMENT_SHADER)
     {
         EmitEarlyFragmentTestsGLSL(*this, sink);
+        WriteFragmentShaderLayoutQualifiers(sink, getAdvancedBlendEquations());
     }
 
     if (getShaderType() == GL_COMPUTE_SHADER)
@@ -281,9 +307,7 @@ void TranslatorESSL::writeExtensionBehavior(const ShCompileOptions &compileOptio
             {
                 sink << "#extension GL_EXT_clip_cull_distance : " << GetBehaviorString(iter->second)
                      << "\n";
-                if (areClipDistanceOrCullDistanceRedeclared() ||
-                    (mMetadataFlags[MetadataFlags::HasClipDistance] &&
-                     compileOptions.emulateClipDistanceState))
+                if (areClipDistanceOrCullDistanceUsed())
                 {
                     sink << "#extension GL_EXT_shader_io_blocks : "
                          << GetBehaviorString(iter->second) << "\n";
@@ -291,13 +315,7 @@ void TranslatorESSL::writeExtensionBehavior(const ShCompileOptions &compileOptio
             }
             else if (iter->first == TExtension::ANGLE_shader_pixel_local_storage)
             {
-                if (compileOptions.pls.type == ShPixelLocalStorageType::PixelLocalStorageEXT)
-                {
-                    // Just enable the extension. Appropriate warnings will be generated by the
-                    // frontend compiler for GL_ANGLE_shader_pixel_local_storage, if desired.
-                    sink << "#extension GL_EXT_shader_pixel_local_storage : enable\n";
-                }
-                else if (compileOptions.pls.type == ShPixelLocalStorageType::FramebufferFetch)
+                if (compileOptions.pls.type == ShPixelLocalStorageType::FramebufferFetch)
                 {
                     // Just enable the extension. Appropriate warnings will be generated by the
                     // frontend compiler for GL_ANGLE_shader_pixel_local_storage, if desired.
@@ -315,6 +333,11 @@ void TranslatorESSL::writeExtensionBehavior(const ShCompileOptions &compileOptio
             {
                 sink << "#extension GL_EXT_shader_framebuffer_fetch_non_coherent : "
                      << GetBehaviorString(iter->second) << "\n";
+                continue;
+            }
+            else if (iter->first == TExtension::ANGLE_texture_multisample)
+            {
+                // Don't emit anything. This functionality is core in ESSL 3.10.
                 continue;
             }
             else if (iter->first == TExtension::WEBGL_video_texture)

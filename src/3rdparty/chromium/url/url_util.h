@@ -170,26 +170,30 @@ inline bool FindAndCompareScheme(const std::u16string& str,
 
 // Returns true if the given scheme identified by |scheme| within |spec| is in
 // the list of known standard-format schemes (see AddStandardScheme).
+// TODO(crbug.com/351564777): Delete this after //third_party/openscreen
+// transition is complete.
 COMPONENT_EXPORT(URL)
 bool IsStandard(const char* spec, const Component& scheme);
 COMPONENT_EXPORT(URL)
-bool IsStandard(const char16_t* spec, const Component& scheme);
+bool IsStandard(std::optional<std::string_view> scheme);
+COMPONENT_EXPORT(URL)
+bool IsStandard(std::optional<std::u16string_view> scheme);
+
+bool IsStandardScheme(std::string_view scheme);
 
 // Returns true if the given scheme identified by |scheme| within |spec| is in
 // the list of allowed schemes for referrers (see AddReferrerScheme).
 COMPONENT_EXPORT(URL)
-bool IsReferrerScheme(const char* spec, const Component& scheme);
+bool IsReferrerScheme(std::optional<std::string_view> scheme);
 
 // Returns true and sets |type| to the SchemeType of the given scheme
 // identified by |scheme| within |spec| if the scheme is in the list of known
 // standard-format schemes (see AddStandardScheme).
 COMPONENT_EXPORT(URL)
-bool GetStandardSchemeType(const char* spec,
-                           const Component& scheme,
+bool GetStandardSchemeType(std::optional<std::string_view> scheme,
                            SchemeType* type);
 COMPONENT_EXPORT(URL)
-bool GetStandardSchemeType(const char16_t* spec,
-                           const Component& scheme,
+bool GetStandardSchemeType(std::optional<std::u16string_view> scheme,
                            SchemeType* type);
 
 // Hosts  ----------------------------------------------------------------------
@@ -310,7 +314,7 @@ void EncodeURIComponent(std::string_view input, CanonOutput* output);
 
 // Returns true if `c` is a character that does not require escaping in
 // encodeURIComponent.
-// TODO(crbug.com/1481056): Remove this when event-level reportEvent is removed
+// TODO(crbug.com/40281561): Remove this when event-level reportEvent is removed
 // (if it is still this function's only consumer).
 COMPONENT_EXPORT(URL)
 bool IsURIComponentChar(char c);
@@ -323,6 +327,8 @@ bool IsURIComponentChar(char c);
 COMPONENT_EXPORT(URL)
 bool HasInvalidURLEscapeSequences(std::string_view input);
 
+// Check if a scheme is affected by the Android WebView Hack.
+bool IsAndroidWebViewHackEnabledScheme(std::string_view scheme);
 }  // namespace url
 
 #endif  // URL_URL_UTIL_H_

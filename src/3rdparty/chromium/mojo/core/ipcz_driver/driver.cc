@@ -9,6 +9,7 @@
 #include <tuple>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/rand_util.h"
@@ -53,7 +54,7 @@ IpczResult IPCZ_API Serialize(IpczDriverHandle handle,
     return IPCZ_RESULT_ABORTED;
   }
 
-  // TODO(https://crbug.com/1451717): Propagate the volatile qualifier on
+  // TODO(crbug.com/40270656): Propagate the volatile qualifier on
   // `data`.
   const IpczResult result = transport->SerializeObject(
       *object, const_cast<void*>(data), num_bytes, handles, num_handles);
@@ -79,14 +80,14 @@ IpczResult IPCZ_API Deserialize(const volatile void* data,
     return IPCZ_RESULT_INVALID_ARGUMENT;
   }
 
-  // TODO(https://crbug.com/1451717): Propagate the volatile qualifier on
+  // TODO(crbug.com/40270656): Propagate the volatile qualifier on
   // `data`.
   scoped_refptr<ObjectBase> object;
   const IpczResult result = transport->DeserializeObject(
-      base::make_span(
-          static_cast<const uint8_t*>(const_cast<const void*>(data)),
-          num_bytes),
-      base::make_span(handles, num_handles), object);
+      UNSAFE_TODO(
+          base::span(static_cast<const uint8_t*>(const_cast<const void*>(data)),
+                     num_bytes)),
+      UNSAFE_TODO(base::span(handles, num_handles)), object);
   if (result != IPCZ_RESULT_OK) {
     return result;
   }
@@ -207,8 +208,8 @@ IpczResult IPCZ_API Transmit(IpczDriverHandle transport_handle,
   }
 
   transport->Transmit(
-      base::make_span(static_cast<const uint8_t*>(data), num_bytes),
-      base::make_span(handles, num_handles));
+      UNSAFE_TODO(base::span(static_cast<const uint8_t*>(data), num_bytes)),
+      UNSAFE_TODO(base::span(handles, num_handles)));
   return IPCZ_RESULT_OK;
 }
 
@@ -299,7 +300,10 @@ IpczResult IPCZ_API GenerateRandomBytes(size_t num_bytes,
   if (!buffer || !num_bytes) {
     return IPCZ_RESULT_INVALID_ARGUMENT;
   }
-  base::RandBytes(buffer, num_bytes);
+  base::RandBytes(
+      // SAFETY: This requires the caller to provide a valid pointer/size pair.
+      // The function API is a C API so can't use a span.
+      UNSAFE_BUFFERS(base::span(static_cast<uint8_t*>(buffer), num_bytes)));
   return IPCZ_RESULT_OK;
 }
 

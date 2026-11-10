@@ -64,8 +64,8 @@ def make_layering_check_features():
         feature(
             name = "layering_check",
             # This is currently disabled by default (although we aim to enable it by default)
-            # because our current skia_public build does not pass the fmodules-strict-decluse
-            # options with its current deps implementation (which was designed to pass these along).
+            # because a previous build didn't support passing a flag along.
+            # TODO(kjlubick): enable this by default.
             enabled = False,
             implies = ["use_module_maps"],
             flag_sets = [
@@ -119,8 +119,8 @@ def generate_system_module_map(ctx, module_file, folders):
 
     """
 
-    # https://github.com/bazelbuild/bazel/blob/8f5b626acea0086be8a314d5efbf6bc6d3473cd2/tools/cpp/generate_system_module_map.sh
-    script_path = ctx.path(Label("@bazel_tools//tools/cpp:generate_system_module_map.sh"))
+    # https://github.com/bazelbuild/rules_cc/blob/04dce0ee738e19a4f2117231a6213a54f6e6d23a/cc/private/toolchain/generate_system_module_map.sh
+    script_path = ctx.path(Label("@rules_cc//cc/private/toolchain:generate_system_module_map.sh"))
 
     # https://bazel.build/rules/lib/repository_ctx#execute
     res = ctx.execute([script_path] + folders)

@@ -1,17 +1,16 @@
-/* Copyright (c) 2024, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright 2024 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 // Generates a hash function from init/update/final-style FFI functions. Rust
 // doesn't accept function pointers as a generic arguments so this is the only
@@ -22,9 +21,10 @@
 // Safety: see the "Safety" sections within about the requirements for the
 // functions named in the macro parameters.
 macro_rules! unsafe_iuf_algo {
-    ($name:ident, $output_len:expr, $evp_md:ident, $one_shot:ident, $init:ident, $update:ident, $final_func:ident) => {
+    ($name:ident, $output_len:expr, $block_len:expr, $evp_md:ident, $one_shot:ident, $init:ident, $update:ident, $final_func:ident) => {
         impl Algorithm for $name {
             const OUTPUT_LEN: usize = $output_len as usize;
+            const BLOCK_LEN: usize = $block_len as usize;
 
             fn get_md(_: sealed::Sealed) -> &'static MdRef {
                 // Safety:
@@ -34,6 +34,21 @@ macro_rules! unsafe_iuf_algo {
 
             fn hash_to_vec(input: &[u8]) -> Vec<u8> {
                 Self::hash(input).as_slice().to_vec()
+            }
+
+            /// Create a new context for incremental hashing.
+            fn new() -> Self {
+                $name::new()
+            }
+
+            /// Hash the contents of `input`.
+            fn update(&mut self, input: &[u8]) {
+                self.update(input);
+            }
+
+            /// Finish the hashing and return the digest.
+            fn digest_to_vec(self) -> alloc::vec::Vec<u8> {
+                self.digest().to_vec()
             }
         }
 
@@ -90,7 +105,7 @@ macro_rules! unsafe_iuf_algo {
 
         impl From<$name> for alloc::vec::Vec<u8> {
             fn from(ctx: $name) -> alloc::vec::Vec<u8> {
-                ctx.digest().into()
+                ctx.digest_to_vec()
             }
         }
 

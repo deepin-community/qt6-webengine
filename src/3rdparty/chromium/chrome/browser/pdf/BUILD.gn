@@ -4,7 +4,6 @@
 
 import("//pdf/features.gni")
 import("//printing/buildflags/buildflags.gni")
-import("//extensions/buildflags/buildflags.gni")
 
 assert(enable_pdf)
 
@@ -14,8 +13,6 @@ source_set("pdf") {
     "chrome_pdf_stream_delegate.h",
     "pdf_extension_util.cc",
     "pdf_extension_util.h",
-    "pdf_frame_util.cc",
-    "pdf_frame_util.h",
     "pdf_viewer_stream_manager.cc",
     "pdf_viewer_stream_manager.h",
   ]
@@ -28,9 +25,10 @@ source_set("pdf") {
     "//chrome/browser/profiles:profile",
     "//chrome/browser/resources/pdf:resources",
     "//chrome/common",
+    "//components/pdf/browser",
     "//components/pdf/browser:interceptors",
+    "//components/pdf/common:util",
     "//components/prefs",
-    "//components/services/screen_ai/buildflags",
     "//components/zoom",
     "//content/public/browser",
     "//extensions/browser",
@@ -46,16 +44,12 @@ source_set("pdf") {
     "//url",
   ]
 
-  if (enable_print_preview) {
-    deps += [ "//chrome/common" ]
+  if (is_chromeos) {
+    deps += [ "//chromeos/ash/components/browser_context_helper" ]
   }
 
-  if (!enable_extensions) {
-    deps -= [
-      "//extensions/browser",
-      "//extensions/common:common_constants",
-      "//extensions/common/api",
-    ]
+  if (enable_print_preview) {
+    deps += [ "//chrome/common" ]
   }
 }
 
@@ -64,6 +58,24 @@ source_set("pdf_pref_names") {
     "pdf_pref_names.cc",
     "pdf_pref_names.h",
   ]
+}
+
+if (is_chromeos) {
+  source_set("pdf_service") {
+    sources = [
+      "pdf_service.cc",
+      "pdf_service.h",
+    ]
+    public_deps = [
+      "//chrome/services/pdf/public/mojom",
+      "//mojo/public/cpp/bindings",
+    ]
+    deps = [
+      "//base",
+      "//chrome/app:generated_resources",
+      "//content/public/browser",
+    ]
+  }
 }
 
 source_set("pdf_extension_test_utils") {
@@ -76,19 +88,14 @@ source_set("pdf_extension_test_utils") {
     "//base",
     "//base/test:test_support",
     "//chrome/browser/ui",
-    "//chrome/common",
+    "//chrome/browser/ui/tabs:tab_strip",
+    "//components/pdf/common:util",
     "//content/public/browser",
     "//content/test:test_support",
     "//extensions/browser",
     "//pdf:features",
     "//testing/gtest",
   ]
-
-  if (!enable_extensions) {
-    deps -= [
-      "//extensions/browser",
-    ]
-  }
 }
 
 source_set("pdf_test_utils") {
@@ -104,10 +111,4 @@ source_set("pdf_test_utils") {
     "//services/network/public/mojom:url_loader_base",
     "//url",
   ]
-
-  if (!enable_extensions) {
-    deps -= [
-      "//extensions/browser",
-    ]
-  }
 }

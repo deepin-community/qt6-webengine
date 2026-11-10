@@ -21,22 +21,26 @@ namespace content {
 class BrowserContext;
 enum class FedCmDisconnectStatus;
 enum class FedCmIdpSigninStatusMode;
-class FedCmMetrics;
+enum class FedCmRequesterFrameType;
 class FederatedIdentityApiPermissionContextDelegate;
 class FederatedIdentityPermissionContextDelegate;
 enum class IdpSigninStatus;
+class FederatedAuthRequestPageData;
+class RenderFrameHost;
 
 namespace webid {
 
-// Returns true if |origin| is same-origin with |render_frame_host| and
+// Returns true if `origin` is same site with `render_frame_host` and
 // all its ancestors. Also returns true if there are no ancestors or
-// if |render_frame_host| is null.
-bool IsSameOriginWithAncestors(const url::Origin& origin,
-                               RenderFrameHost* render_frame_host);
+// if `render_frame_host` is null.
+bool IsSameSiteWithAncestors(const url::Origin& origin,
+                             RenderFrameHost* render_frame_host);
 
 void SetIdpSigninStatus(BrowserContext* context,
-                        int frame_tree_node_id,
-                        const url::Origin& origin,
+                        network::mojom::RequestDestination destination,
+                        FrameTreeNodeId frame_tree_node_id,
+                        const std::optional<url::Origin>& initiator,
+                        const url::Origin& idp_origin,
                         blink::mojom::IdpSigninStatus status);
 
 // Computes string to display in developer tools console for a FedCM endpoint
@@ -51,10 +55,6 @@ std::optional<std::string> ComputeConsoleMessageForHttpResponseCode(
 // endpoint URL.
 bool IsEndpointSameOrigin(const GURL& identity_provider_config_url,
                           const GURL& endpoint_url);
-
-// Returns whether the two origins are considered same-site (same eTLD+1). Also
-// ensures that the scheme is the same.
-bool IsSameSite(const url::Origin& origin1, const url::Origin& origin2);
 
 // Returns whether FedCM should fail/skip the accounts endpoint request because
 // the user is not signed-in to the IdP.
@@ -74,8 +74,7 @@ void UpdateIdpSigninStatusForAccountsEndpointResponse(
     const GURL& identity_provider_config_url,
     IdpNetworkRequestManager::FetchStatus account_endpoint_fetch_status,
     bool does_idp_have_failing_idp_signin_status,
-    FederatedIdentityPermissionContextDelegate* permission_delegate,
-    FedCmMetrics* metrics);
+    FederatedIdentityPermissionContextDelegate* permission_delegate);
 
 // Returns a string to be used as the console error message from a
 // FederatedAuthRequestResult.
@@ -87,11 +86,8 @@ CONTENT_EXPORT std::string GetConsoleErrorMessageFromResult(
 CONTENT_EXPORT std::string GetDisconnectConsoleErrorMessage(
     FedCmDisconnectStatus disconnect_status_for_metrics);
 
-FedCmIdpSigninStatusMode GetIdpSigninStatusMode(RenderFrameHost& host,
-                                                const url::Origin& idp_origin);
-
 // Returns the eTLD+1 for a given url. For localhost, returns the host.
-std::string FormatUrlWithDomain(const GURL& url, bool for_display);
+std::string FormatUrlForDisplay(const GURL& url);
 
 // Returns true if the user has used FedCM to login to the RP via the IdP
 // account or if the IdP has third party cookies access. For the former, if
@@ -105,6 +101,17 @@ bool HasSharingPermissionOrIdpHasThirdPartyCookiesAccess(
     const std::optional<std::string>& account_id,
     FederatedIdentityPermissionContextDelegate* sharing_permission_delegate,
     FederatedIdentityApiPermissionContextDelegate* api_permission_delegate);
+
+FederatedAuthRequestPageData* GetPageData(Page& page);
+
+// Returns the frame type of the requester.
+FedCmRequesterFrameType ComputeRequesterFrameType(const RenderFrameHost& rfh,
+                                                  const url::Origin& requester,
+                                                  const url::Origin& embedder);
+
+void MaybeAddResponseCodeToConsole(RenderFrameHost& render_frame_host,
+                                   const char* fetch_description,
+                                   int response_code);
 
 }  // namespace webid
 

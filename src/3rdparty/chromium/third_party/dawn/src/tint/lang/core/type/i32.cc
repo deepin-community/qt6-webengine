@@ -34,11 +34,12 @@ TINT_INSTANTIATE_TYPEINFO(tint::core::type::I32);
 namespace tint::core::type {
 
 I32::I32()
-    : Base(static_cast<size_t>(tint::TypeInfo::Of<I32>().full_hashcode),
+    : Base(static_cast<size_t>(tint::TypeCode::Of<I32>().bits),
            core::type::Flags{
                Flag::kConstructable,
                Flag::kCreationFixedFootprint,
                Flag::kFixedFootprint,
+               Flag::kHostShareable,
            }) {}
 
 I32::~I32() = default;

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/scoped_file.h"
 #include "base/notreached.h"
@@ -19,6 +20,16 @@
 #include "base/process/process_handle.h"
 #include "build/build_config.h"
 
+// Macro for suppressing clang's warning about variable-length arrays.
+// For some reason the formatter gives very silly results here.
+// clang-format off
+#define ALLOW_VLA(line)                                 \
+  _Pragma("GCC diagnostic push")                        \
+  _Pragma("GCC diagnostic ignored \"-Wvla-extension\"") \
+  line                                                  \
+  _Pragma("GCC diagnostic pop")
+// clang-format on
+
 namespace sandbox {
 
 namespace syscall_broker {
@@ -27,8 +38,8 @@ ssize_t BrokerSimpleMessage::SendRecvMsgWithFlags(int fd,
                                                   int recvmsg_flags,
                                                   base::ScopedFD* result_fd,
                                                   BrokerSimpleMessage* reply) {
-  return SendRecvMsgWithFlagsMultipleFds(fd, recvmsg_flags, {}, {result_fd, 1u},
-                                         reply);
+  return SendRecvMsgWithFlagsMultipleFds(fd, recvmsg_flags, {},
+                                         UNSAFE_TODO({result_fd, 1u}), reply);
 }
 
 ssize_t BrokerSimpleMessage::SendRecvMsgWithFlagsMultipleFds(
@@ -47,13 +58,16 @@ ssize_t BrokerSimpleMessage::SendRecvMsgWithFlagsMultipleFds(
   if (!base::CreateSocketPair(&recv_sock, &send_sock))
     return -1;
 
-  int send_fds_with_reply_socket[base::UnixDomainSocket::kMaxFileDescriptors];
+  // The length of this array is actually hardcoded, but the compiler isn't
+  // smart enough to figure that out.
+  ALLOW_VLA(int send_fds_with_reply_socket
+                [base::UnixDomainSocket::kMaxFileDescriptors];)
   send_fds_with_reply_socket[0] = send_sock.get();
   for (size_t i = 0; i < send_fds.size(); i++) {
-    send_fds_with_reply_socket[i + 1] = send_fds[i];
+    UNSAFE_TODO(send_fds_with_reply_socket[i + 1]) = send_fds[i];
   }
-  if (!SendMsgMultipleFds(fd,
-                          {send_fds_with_reply_socket, send_fds.size() + 1})) {
+  if (!SendMsgMultipleFds(
+          fd, UNSAFE_TODO({send_fds_with_reply_socket, send_fds.size() + 1}))) {
     return -1;
   }
 
@@ -73,7 +87,8 @@ ssize_t BrokerSimpleMessage::SendRecvMsgWithFlagsMultipleFds(
 
 bool BrokerSimpleMessage::SendMsg(int fd, int send_fd) {
   return SendMsgMultipleFds(
-      fd, send_fd == -1 ? base::span<int>() : base::span<int>(&send_fd, 1u));
+      fd, send_fd == -1 ? base::span<int>()
+                        : UNSAFE_TODO(base::span<int>(&send_fd, 1u)));
 }
 
 bool BrokerSimpleMessage::SendMsgMultipleFds(int fd,
@@ -90,7 +105,9 @@ bool BrokerSimpleMessage::SendMsgMultipleFds(int fd,
   msg.msg_iovlen = 1;
 
   const unsigned control_len = CMSG_SPACE(send_fds.size() * sizeof(int));
-  char control_buffer[control_len];
+  // The RAW_CHECK above ensures that send_fds.size() is bounded by a constant,
+  // so the length of this array is bounded as well.
+  ALLOW_VLA(char control_buffer[control_len];)
   if (send_fds.size() >= 1) {
     struct cmsghdr* cmsg;
     msg.msg_control = control_buffer;
@@ -105,7 +122,8 @@ bool BrokerSimpleMessage::SendMsgMultipleFds(int fd,
         return false;
 
       // CMSG_DATA() not guaranteed to be aligned so this must use memcpy.
-      memcpy(CMSG_DATA(cmsg) + (sizeof(int) * i), &send_fds[i], sizeof(int));
+      UNSAFE_TODO(memcpy(CMSG_DATA(cmsg) + (sizeof(int) * i), &send_fds[i],
+                         sizeof(int)));
       len += sizeof(int);
     }
     cmsg->cmsg_len = CMSG_LEN(len);
@@ -125,7 +143,7 @@ ssize_t BrokerSimpleMessage::RecvMsgWithFlags(int fd,
                                               int flags,
                                               base::ScopedFD* return_fd) {
   ssize_t ret = RecvMsgWithFlagsMultipleFds(
-      fd, flags, base::span<base::ScopedFD>(return_fd, 1u));
+      fd, flags, UNSAFE_TODO(base::span<base::ScopedFD>(return_fd, 1u)));
   return ret;
 }
 
@@ -146,7 +164,9 @@ ssize_t BrokerSimpleMessage::RecvMsgWithFlagsMultipleFds(
       CMSG_SPACE(sizeof(fd) * base::UnixDomainSocket::kMaxFileDescriptors) +
       CMSG_SPACE(sizeof(struct ucred));
 
-  char control_buffer[kControlBufferSize];
+  // The length of this array is actually a constant, but the compiler isn't
+  // smart enough to figure that out.
+  ALLOW_VLA(char control_buffer[kControlBufferSize];)
   msg.msg_control = control_buffer;
   msg.msg_controllen = sizeof(control_buffer);
 
@@ -179,7 +199,7 @@ ssize_t BrokerSimpleMessage::RecvMsgWithFlagsMultipleFds(
 
   if (msg.msg_flags & MSG_TRUNC || msg.msg_flags & MSG_CTRUNC) {
     for (size_t i = 0; i < wire_fds_len; ++i) {
-      close(wire_fds[i]);
+      close(UNSAFE_TODO(wire_fds[i]));
     }
     errno = EMSGSIZE;
     return -1;
@@ -190,15 +210,14 @@ ssize_t BrokerSimpleMessage::RecvMsgWithFlagsMultipleFds(
       // The number of fds received is limited to return_fds.size(). If there
       // are more in the message than expected, close them and return an error.
       for (size_t i = 0; i < wire_fds_len; ++i) {
-        close(wire_fds[i]);
+        close(UNSAFE_TODO(wire_fds[i]));
       }
       errno = EMSGSIZE;
-      NOTREACHED();
       return -1;
     }
 
     for (size_t i = 0; i < wire_fds_len; ++i) {
-      return_fds[i] = base::ScopedFD(wire_fds[i]);
+      return_fds[i] = base::ScopedFD(UNSAFE_TODO(wire_fds[i]));
     }
   }
 
@@ -231,14 +250,14 @@ bool BrokerSimpleMessage::AddDataToMessage(const char* data, size_t length) {
   EntryType type = EntryType::DATA;
 
   // Write the type to the message
-  memcpy(write_next_, &type, sizeof(EntryType));
-  write_next_ += sizeof(EntryType);
+  UNSAFE_TODO(memcpy(write_next_, &type, sizeof(EntryType)));
+  UNSAFE_TODO(write_next_ += sizeof(EntryType));
   // Write the length of the buffer to the message
-  memcpy(write_next_, &length, sizeof(length));
-  write_next_ += sizeof(length);
+  UNSAFE_TODO(memcpy(write_next_, &length, sizeof(length)));
+  UNSAFE_TODO(write_next_ += sizeof(length));
   // Write the data in the buffer to the message
-  memcpy(write_next_, data, length);
-  write_next_ += length;
+  UNSAFE_TODO(memcpy(write_next_, data, length));
+  UNSAFE_TODO(write_next_ += length);
   length_ = write_next_ - message_;
 
   return true;
@@ -261,10 +280,10 @@ bool BrokerSimpleMessage::AddIntToMessage(int data) {
 
   EntryType type = EntryType::INT;
 
-  memcpy(write_next_, &type, sizeof(EntryType));
-  write_next_ += sizeof(EntryType);
-  memcpy(write_next_, &data, sizeof(data));
-  write_next_ += sizeof(data);
+  UNSAFE_TODO(memcpy(write_next_, &type, sizeof(EntryType)));
+  UNSAFE_TODO(write_next_ += sizeof(EntryType));
+  UNSAFE_TODO(memcpy(write_next_, &data, sizeof(data)));
+  UNSAFE_TODO(write_next_ += sizeof(data));
   length_ = write_next_ - message_;
 
   return true;
@@ -273,7 +292,7 @@ bool BrokerSimpleMessage::AddIntToMessage(int data) {
 bool BrokerSimpleMessage::ReadString(const char** data) {
   size_t str_len;
   bool result = ReadData(data, &str_len);
-  return result && (*data)[str_len - 1] == '\0';
+  return result && UNSAFE_TODO((*data)[str_len - 1]) == '\0';
 }
 
 bool BrokerSimpleMessage::ReadData(const char** data, size_t* length) {
@@ -281,7 +300,7 @@ bool BrokerSimpleMessage::ReadData(const char** data, size_t* length) {
     return false;
 
   read_only_ = true;  // Message should not be written to.
-  if (read_next_ > (message_ + length_)) {
+  if (read_next_ > (UNSAFE_TODO(message_ + length_))) {
     broken_ = true;
     return false;
   }
@@ -292,20 +311,21 @@ bool BrokerSimpleMessage::ReadData(const char** data, size_t* length) {
   }
 
   // Get the length of the data buffer from the message.
-  if ((read_next_ + sizeof(size_t)) > (message_ + length_)) {
+  if ((UNSAFE_TODO(read_next_ + sizeof(size_t))) >
+      (UNSAFE_TODO(message_ + length_))) {
     broken_ = true;
     return false;
   }
-  memcpy(length, read_next_, sizeof(size_t));
-  read_next_ = read_next_ + sizeof(size_t);
+  UNSAFE_TODO(memcpy(length, read_next_, sizeof(size_t)));
+  read_next_ = UNSAFE_TODO(read_next_ + sizeof(size_t));
 
   // Get the raw data buffer from the message.
-  if ((read_next_ + *length) > (message_ + length_)) {
+  if ((UNSAFE_TODO(read_next_ + *length)) > (UNSAFE_TODO(message_ + length_))) {
     broken_ = true;
     return false;
   }
   *data = reinterpret_cast<char*>(read_next_);
-  read_next_ = read_next_ + *length;
+  read_next_ = UNSAFE_TODO(read_next_ + *length);
   return true;
 }
 
@@ -314,7 +334,7 @@ bool BrokerSimpleMessage::ReadInt(int* result) {
     return false;
 
   read_only_ = true;  // Message should not be written to.
-  if (read_next_ > (message_ + length_)) {
+  if (read_next_ > (UNSAFE_TODO(message_ + length_))) {
     broken_ = true;
     return false;
   }
@@ -324,25 +344,28 @@ bool BrokerSimpleMessage::ReadInt(int* result) {
     return false;
   }
 
-  if ((read_next_ + sizeof(*result)) > (message_ + length_)) {
+  if ((UNSAFE_TODO(read_next_ + sizeof(*result))) >
+      (UNSAFE_TODO(message_ + length_))) {
     broken_ = true;
     return false;
   }
-  memcpy(result, read_next_, sizeof(*result));
-  read_next_ = read_next_ + sizeof(*result);
+  UNSAFE_TODO(memcpy(result, read_next_, sizeof(*result)));
+  read_next_ = UNSAFE_TODO(read_next_ + sizeof(*result));
   return true;
 }
 
 bool BrokerSimpleMessage::ValidateType(EntryType expected_type) {
-  if ((read_next_ + sizeof(EntryType)) > (message_ + length_))
+  if ((UNSAFE_TODO(read_next_ + sizeof(EntryType))) >
+      (UNSAFE_TODO(message_ + length_))) {
     return false;
+  }
 
   EntryType type;
-  memcpy(&type, read_next_, sizeof(EntryType));
+  UNSAFE_TODO(memcpy(&type, read_next_, sizeof(EntryType)));
   if (type != expected_type)
     return false;
 
-  read_next_ = read_next_ + sizeof(EntryType);
+  read_next_ = UNSAFE_TODO(read_next_ + sizeof(EntryType));
   return true;
 }
 

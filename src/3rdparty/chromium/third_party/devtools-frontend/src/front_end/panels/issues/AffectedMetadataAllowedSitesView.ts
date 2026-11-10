@@ -1,9 +1,11 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
+import * as UI from '../../ui/legacy/legacy.js';
 
 import {AffectedResourcesView} from './AffectedResourcesView.js';
 
@@ -16,7 +18,7 @@ const UIStrings = {
    *See https://developer.mozilla.org/en-US/docs/Glossary/eTLD.
    */
   nAllowedSites: '{n, plural, =1 {1 website allowed to access cookies} other {# websites allowed to access cookies}}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/issues/AffectedMetadataAllowedSitesView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -27,14 +29,33 @@ export class AffectedMetadataAllowedSitesView extends AffectedResourcesView {
 
   override update(): void {
     this.clear();
-    const allowedSites = this.issue.getMetadataAllowedSites();
+    const issues = this.issue.getCookieDeprecationMetadataIssues();
     let count = 0;
 
-    for (const site of allowedSites) {
+    for (const issueData of issues) {
       const row = document.createElement('tr');
       row.classList.add('affected-resource-directive');
 
-      this.appendIssueDetailCell(row, site);
+      const textContentElement = document.createElement('div');
+      const textElement = document.createElement('span');
+      textElement.textContent = issueData.details().allowedSites.join(', ');
+      textContentElement.appendChild(textElement);
+
+      if (!issueData.details().isOptOutTopLevel && issueData.details().optOutPercentage > 0) {
+        const optOutTextElement = document.createElement('span');
+        optOutTextElement.textContent = ' (opt-out: ' + issueData.details().optOutPercentage + '% - ';
+        textContentElement.appendChild(optOutTextElement);
+
+        const linkElement = UI.XLink.XLink.create(
+            'https://developers.google.com/privacy-sandbox/blog/grace-period-opt-out', 'learn more');
+        textContentElement.appendChild(linkElement);
+
+        const endTextElement = document.createElement('span');
+        endTextElement.textContent = ')';
+        textContentElement.appendChild(endTextElement);
+      }
+
+      this.appendIssueDetailCell(row, textContentElement);
       this.affectedResources.appendChild(row);
       count++;
     }

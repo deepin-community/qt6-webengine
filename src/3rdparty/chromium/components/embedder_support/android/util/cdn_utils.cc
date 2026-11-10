@@ -60,20 +60,20 @@ GURL GetPublisherURL(content::RenderFrameHost* rfh) {
   const network::mojom::URLResponseHead* response_head =
       rfh->GetLastResponseHead();
   if (!response_head || !response_head->headers) {
-    // TODO(https://crbug.com/829323): In some cases other than offline pages
+    // TODO(crbug.com/41381000): In some cases other than offline pages
     // we don't have headers.
     LOG(WARNING) << "No headers for navigation to "
                  << rfh->GetLastCommittedURL();
     return GURL();
   }
 
-  std::string publisher_url;
-  if (!response_head->headers->GetNormalizedHeader("x-amp-cache",
-                                                   &publisher_url)) {
+  std::optional<std::string> publisher_url =
+      response_head->headers->GetNormalizedHeader("x-amp-cache");
+  if (!publisher_url) {
     return GURL();
   }
 
-  return GURL(publisher_url);
+  return GURL(*publisher_url);
 }
 
 }  // namespace embedder_support

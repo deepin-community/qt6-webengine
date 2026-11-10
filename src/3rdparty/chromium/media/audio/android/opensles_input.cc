@@ -4,10 +4,13 @@
 
 #include "media/audio/android/opensles_input.h"
 
+#include <algorithm>
+
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "media/audio/android/audio_manager_android.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 
 #define LOG_ON_FAILURE_AND_RETURN(op, ...)      \
   do {                                          \
@@ -52,7 +55,7 @@ OpenSLESInputStream::OpenSLESInputStream(AudioManagerAndroid* audio_manager,
   hardware_delay_ = base::Seconds(params.frames_per_buffer() /
                                   static_cast<double>(params.sample_rate()));
 
-  memset(&audio_data_, 0, sizeof(audio_data_));
+  std::ranges::fill(audio_data_, nullptr);
 }
 
 OpenSLESInputStream::~OpenSLESInputStream() {

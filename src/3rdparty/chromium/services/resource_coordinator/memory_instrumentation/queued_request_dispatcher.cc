@@ -16,6 +16,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -68,7 +69,7 @@ uint32_t CalculatePrivateFootprintKb(const mojom::RawOSMemDump& os_dump,
   return base::saturated_cast<int32_t>(
       os_dump.platform_private_footprint->private_bytes / 1024);
 #else
-  // TODO(crbug.com/1506552): Implement for iOS.
+  // TODO(crbug.com/40947218): Implement for iOS.
   return 0;
 #endif
 }
@@ -86,6 +87,9 @@ memory_instrumentation::mojom::OSMemDumpPtr CreatePublicOSDump(
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   os_dump->private_footprint_swap_kb =
       internal_os_dump.platform_private_footprint->vm_swap_bytes / 1024;
+  os_dump->mappings_count = internal_os_dump.mappings_count;
+  os_dump->pss_kb = internal_os_dump.pss_kb;
+  os_dump->swap_pss_kb = internal_os_dump.swap_pss_kb;
 #endif
   return os_dump;
 }
@@ -221,9 +225,9 @@ void QueuedRequestDispatcher::SetUpAndDispatch(
 // so ask each process to do so Linux is special see below.
 #if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
     request->pending_responses.insert({client_info.pid, ResponseType::kOSDump});
-    client->RequestOSMemoryDump(request->memory_map_option(),
-                                {base::kNullProcessId},
-                                base::BindOnce(os_callback, client_info.pid));
+    client->RequestOSMemoryDump(
+        request->memory_map_option(), request->memory_dump_flags(),
+        {base::kNullProcessId}, base::BindOnce(os_callback, client_info.pid));
 #endif  // !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
 
     // If we are in the single pid case, then we've already found the only
@@ -256,7 +260,8 @@ void QueuedRequestDispatcher::SetUpAndDispatch(
     request->pending_responses.insert(
         {browser_client_pid, ResponseType::kOSDump});
     auto callback = base::BindOnce(os_callback, browser_client_pid);
-    browser_client->RequestOSMemoryDump(request->memory_map_option(), pids,
+    browser_client->RequestOSMemoryDump(request->memory_map_option(),
+                                        request->memory_dump_flags(), pids,
                                         std::move(callback));
   }
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -299,7 +304,7 @@ void QueuedRequestDispatcher::SetUpAndDispatchVmRegionRequest(
   request->pending_responses.insert(browser_client_pid);
   request->responses[browser_client_pid].process_id = browser_client_pid;
   auto callback = base::BindOnce(os_callback, browser_client_pid);
-  browser_client->RequestOSMemoryDump(mojom::MemoryMapOption::MODULES,
+  browser_client->RequestOSMemoryDump(mojom::MemoryMapOption::MODULES, {},
                                       desired_pids, std::move(callback));
 #else
   for (const auto& client_info : clients) {
@@ -309,7 +314,7 @@ void QueuedRequestDispatcher::SetUpAndDispatchVmRegionRequest(
       request->responses[client_info.pid].process_id = client_info.pid;
       request->responses[client_info.pid].service_name =
           client_info.service_name;
-      client->RequestOSMemoryDump(mojom::MemoryMapOption::MODULES,
+      client->RequestOSMemoryDump(mojom::MemoryMapOption::MODULES, {},
                                   {base::kNullProcessId},
                                   base::BindOnce(os_callback, client_info.pid));
     }
@@ -557,8 +562,12 @@ void QueuedRequestDispatcher::Finalize(QueuedRequest* request,
 
     global_dump->process_dumps.push_back(std::move(pmd));
   }
-  global_dump->aggregated_metrics =
-      ComputeGlobalNativeCodeResidentMemoryKb(pid_to_os_dump);
+  if (!request->args.memory_footprint_only) {
+    global_dump->aggregated_metrics =
+        ComputeGlobalNativeCodeResidentMemoryKb(pid_to_os_dump);
+  } else {
+    global_dump->aggregated_metrics = mojom::AggregatedMetrics::New();
+  }
 
   const bool global_success = request->failed_memory_dump_count == 0;
 
@@ -603,7 +612,7 @@ QueuedRequestDispatcher::ClientInfo::ClientInfo(
     mojom::ClientProcess* client,
     base::ProcessId pid,
     mojom::ProcessType process_type,
-    absl::optional<std::string> service_name)
+    std::optional<std::string> service_name)
     : client(client),
       pid(pid),
       process_type(process_type),

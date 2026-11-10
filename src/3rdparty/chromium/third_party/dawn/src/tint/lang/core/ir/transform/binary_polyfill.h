@@ -28,9 +28,9 @@
 #ifndef SRC_TINT_LANG_CORE_IR_TRANSFORM_BINARY_POLYFILL_H_
 #define SRC_TINT_LANG_CORE_IR_TRANSFORM_BINARY_POLYFILL_H_
 
-#include <string>
-
-#include "src/tint/utils/result/result.h"
+#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/utils/reflection.h"
+#include "src/tint/utils/result.h"
 
 // Forward declarations.
 namespace tint::core::ir {
@@ -39,12 +39,18 @@ class Module;
 
 namespace tint::core::ir::transform {
 
+/// The capabilities that the transform can support.
+const Capabilities kBinaryPolyfillCapabilities{Capability::kAllowDuplicateBindings};
+
 /// The set of polyfills that should be applied.
 struct BinaryPolyfillConfig {
     /// Should the RHS of a shift be masked to make it modulo the bit-width of the LHS?
     bool bitshift_modulo = false;
     /// Should integer divide and modulo be polyfilled to avoid DBZ and integer overflow?
     bool int_div_mod = false;
+
+    /// Reflection for this class
+    TINT_REFLECT(BinaryPolyfillConfig, bitshift_modulo, int_div_mod);
 };
 
 /// BinaryPolyfill is a transform that modifies binary instructions to prepare them for raising to

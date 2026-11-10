@@ -2,8 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+// IWYU pragma: private, include "base/memory/raw_ptr_cast.h"
+
+#ifndef PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_
+#define PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_
 
 #include <memory>
 #include <type_traits>
@@ -54,4 +61,4 @@ inline constexpr Dest unsafe_raw_ptr_bit_cast(const Source& source) noexcept {
 
 }  // namespace base
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_
+#endif  // PARTITION_ALLOC_POINTERS_RAW_PTR_CAST_H_

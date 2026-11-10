@@ -28,13 +28,15 @@
 #ifndef SRC_DAWN_NATIVE_D3D11_TEXTURED3D11_H_
 #define SRC_DAWN_NATIVE_D3D11_TEXTURED3D11_H_
 
+#include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "dawn/native/DawnNative.h"
 #include "dawn/native/Error.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/PassResourceUsage.h"
-#include "dawn/native/d3d/TextureD3D.h"
+#include "dawn/native/Texture.h"
 #include "dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native {
@@ -43,6 +45,7 @@ struct CopyTextureToTextureCmd;
 
 namespace dawn::native::d3d {
 class Fence;
+class KeyedMutex;
 }  // namespace dawn::native::d3d
 
 namespace dawn::native::d3d11 {
@@ -52,34 +55,24 @@ class TextureView;
 class ScopedCommandRecordingContext;
 class SharedTextureMemory;
 
-MaybeError ValidateTextureCanBeWrapped(ID3D11Resource* d3d11Resource,
-                                       const UnpackedPtr<TextureDescriptor>& descriptor);
-MaybeError ValidateVideoTextureCanBeShared(Device* device, DXGI_FORMAT textureFormat);
-
-class Texture final : public d3d::Texture {
+class Texture final : public TextureBase {
   public:
     static ResultOrError<Ref<Texture>> Create(Device* device,
                                               const UnpackedPtr<TextureDescriptor>& descriptor);
     static ResultOrError<Ref<Texture>> Create(Device* device,
                                               const UnpackedPtr<TextureDescriptor>& descriptor,
                                               ComPtr<ID3D11Resource> d3d11Texture);
-    static ResultOrError<Ref<Texture>> CreateExternalImage(
-        Device* device,
-        const UnpackedPtr<TextureDescriptor>& descriptor,
-        ComPtr<IUnknown> d3dTexture,
-        std::vector<FenceAndSignalValue> waitFences,
-        bool isSwapChainTexture,
-        bool isInitialized);
     static ResultOrError<Ref<Texture>> CreateFromSharedTextureMemory(
         SharedTextureMemory* memory,
         const UnpackedPtr<TextureDescriptor>& descriptor);
     ID3D11Resource* GetD3D11Resource() const;
 
-    ResultOrError<ComPtr<ID3D11RenderTargetView>> CreateD3D11RenderTargetView(
-        const Format& format,
+    ResultOrError<ComPtr<ID3D11RenderTargetView1>> CreateD3D11RenderTargetView(
+        wgpu::TextureFormat viewFormat,
         uint32_t mipLevel,
         uint32_t baseSlice,
-        uint32_t sliceCount) const;
+        uint32_t sliceCount,
+        uint32_t planeSlice);
     ResultOrError<ComPtr<ID3D11DepthStencilView>> CreateD3D11DepthStencilView(
         const SubresourceRange& singleLevelRange,
         bool depthReadOnly,
@@ -87,6 +80,8 @@ class Texture final : public d3d::Texture {
     MaybeError EnsureSubresourceContentInitialized(
         const ScopedCommandRecordingContext* commandContext,
         const SubresourceRange& range);
+
+    MaybeError SynchronizeTextureBeforeUse(const ScopedCommandRecordingContext* commandContext);
 
     MaybeError Write(const ScopedCommandRecordingContext* commandContext,
                      const SubresourceRange& subresources,
@@ -106,8 +101,6 @@ class Texture final : public d3d::Texture {
     static MaybeError Copy(const ScopedCommandRecordingContext* commandContext,
                            CopyTextureToTextureCmd* copy);
 
-    ResultOrError<ExecutionSerial> EndAccess() override;
-
     // As D3D11 SRV doesn't support 'Shader4ComponentMapping' for depth-stencil textures, we can't
     // sample the stencil component directly. As a workaround we create an internal R8Uint texture,
     // holding the copy of its stencil data, and use the internal texture's SRV instead.
@@ -115,8 +108,17 @@ class Texture final : public d3d::Texture {
         const ScopedCommandRecordingContext* commandContext,
         const TextureView* view);
 
+    ResultOrError<ComPtr<ID3D11ShaderResourceView1>> CreateD3D11ShaderResourceView(
+        wgpu::TextureViewDimension viewDimension,
+        wgpu::TextureFormat viewFormat,
+        Aspect aspects,
+        uint32_t mipLevel,
+        uint32_t levelCount,
+        uint32_t baseSlice,
+        uint32_t sliceCount);
+
   private:
-    using Base = d3d::Texture;
+    using Base = TextureBase;
 
     enum class Kind { Normal, Staging, Interim };
 
@@ -138,8 +140,7 @@ class Texture final : public d3d::Texture {
     MaybeError InitializeAsInternalTexture();
     MaybeError InitializeAsSwapChainTexture(ComPtr<ID3D11Resource> d3d11Texture);
     MaybeError InitializeAsExternalTexture(ComPtr<IUnknown> d3dTexture,
-                                           std::vector<FenceAndSignalValue> waitFences,
-                                           bool isSwapChainTexture);
+                                           Ref<d3d::KeyedMutex> keyedMutex);
     void SetLabelHelper(const char* prefix);
 
     // Dawn API
@@ -192,13 +193,16 @@ class Texture final : public d3d::Texture {
 
     const Kind mKind = Kind::Normal;
     ComPtr<ID3D11Resource> mD3d11Resource;
+    Ref<d3d::KeyedMutex> mKeyedMutex;
+
     // The internal 'R8Uint' texture for sampling stencil from depth-stencil textures.
     Ref<Texture> mTextureForStencilSampling;
 };
 
 class TextureView final : public TextureViewBase {
   public:
-    static Ref<TextureView> Create(TextureBase* texture, const TextureViewDescriptor* descriptor);
+    static Ref<TextureView> Create(TextureBase* texture,
+                                   const UnpackedPtr<TextureViewDescriptor>& descriptor);
 
     ResultOrError<ID3D11ShaderResourceView*> GetOrCreateD3D11ShaderResourceView();
     ResultOrError<ID3D11RenderTargetView*> GetOrCreateD3D11RenderTargetView(

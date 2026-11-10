@@ -39,7 +39,7 @@ class CXFA_Box : public CXFA_Node {
             bool forceRound);
 
  protected:
-  CXFA_Box(CXFA_Document* pDoc,
+  CXFA_Box(CXFA_Document* doc,
            XFA_PacketType ePacket,
            Mask<XFA_XDPPACKET> validPackets,
            XFA_ObjectType oType,
@@ -52,8 +52,8 @@ class CXFA_Box : public CXFA_Node {
 
  private:
   bool IsCircular();
-  absl::optional<int32_t> GetStartAngle();
-  absl::optional<int32_t> GetSweepAngle();
+  std::optional<int32_t> GetStartAngle();
+  std::optional<int32_t> GetSweepAngle();
 
   std::vector<CXFA_Stroke*> GetStrokesInternal(bool bNull);
   void DrawFill(const std::vector<CXFA_Stroke*>& strokes,

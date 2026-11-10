@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/c8-neoni8mm.c.in
 //   Generator: tools/xngen
@@ -7,13 +8,16 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/igemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
@@ -28,7 +32,7 @@ void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
     size_t cn_stride,
     size_t a_offset,
     const int8_t* zero,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 4);
@@ -57,25 +61,10 @@ void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
   }
 
   do {
-    #if XNN_ARCH_ARM64
-      const uint64x2x2_t vbias01x0123 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-      const uint64x2x2_t vbias01x4567 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-      const uint64x2x2_t vbias01x89AB = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-      const uint64x2x2_t vbias01xCDEF = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-    #else
-      uint64x2x2_t vbias01x0123;
-      vbias01x0123.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01x0123.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      uint64x2x2_t vbias01x4567;
-      vbias01x4567.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01x4567.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      uint64x2x2_t vbias01x89AB;
-      vbias01x89AB.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01x89AB.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      uint64x2x2_t vbias01xCDEF;
-      vbias01xCDEF.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01xCDEF.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-    #endif
+    const uint64x2x2_t vbias01x0123 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
+    const uint64x2x2_t vbias01x4567 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
+    const uint64x2x2_t vbias01x89AB = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
+    const uint64x2x2_t vbias01xCDEF = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
     int32x4_t vacc01x01 = vreinterpretq_s32_u64(vbias01x0123.val[0]);
     int32x4_t vacc01x23 = vreinterpretq_s32_u64(vbias01x0123.val[1]);
     int32x4_t vacc01x45 = vreinterpretq_s32_u64(vbias01x4567.val[0]);
@@ -125,21 +114,10 @@ void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
       // 2x partial unrolled loop to load 8 bytes at a time.
       while (k >= 16 * sizeof(int8_t)) {
         // Load a 4x16 block of activations.
-        #if XNN_ARCH_ARM64
-          va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
-          va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a2, va23x0123456789ABCDEF, 0); a2 += 16;
-          va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a1, va01x0123456789ABCDEF, 1); a1 += 16;
-          va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a3, va23x0123456789ABCDEF, 1); a3 += 16;
-        #else
-          va01x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[0], 0); a0 += 8;
-          va01x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[1], 0); a0 += 8;
-          va23x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a2, va23x0123456789ABCDEF.val[0], 0); a2 += 8;
-          va23x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a2, va23x0123456789ABCDEF.val[1], 0); a2 += 8;
-          va01x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a1, va01x0123456789ABCDEF.val[0], 1); a1 += 8;
-          va01x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a1, va01x0123456789ABCDEF.val[1], 1); a1 += 8;
-          va23x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a3, va23x0123456789ABCDEF.val[0], 1); a3 += 8;
-          va23x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a3, va23x0123456789ABCDEF.val[1], 1); a3 += 8;
-        #endif
+        va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
+        va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a2, va23x0123456789ABCDEF, 0); a2 += 16;
+        va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a1, va01x0123456789ABCDEF, 1); a1 += 16;
+        va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a3, va23x0123456789ABCDEF, 1); a3 += 16;
 
         // Load a 16x16 block of weights.
         const int8x16_t vb01x01234567 = vld1q_s8(w); w = (const int8_t*) w + 16;
@@ -307,7 +285,7 @@ void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
     vacc3x89AB = vcvtnq_s32_f32(vfpacc3x89AB);
     vacc3xCDEF = vcvtnq_s32_f32(vfpacc3xCDEF);
 
-    const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->fp32_neonv8.output_zero_point);
+    const int16x8_t voutput_zero_point = vdupq_n_s16(params->fp32_neonv8.output_zero_point);
     #if XNN_ARCH_ARM64
       const int16x8_t vacc0x01234567 = vqaddq_s16(vqmovn_high_s32(vqmovn_s32(vacc0x0123), vacc0x4567), voutput_zero_point);
       const int16x8_t vacc0x89ABCDEF = vqaddq_s16(vqmovn_high_s32(vqmovn_s32(vacc0x89AB), vacc0xCDEF), voutput_zero_point);
@@ -337,8 +315,8 @@ void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16c8__neoni8mm(
       int8x16_t vout2x0123456789ABCDEF = vcombine_s8(vqmovn_s16(vacc2x01234567), vqmovn_s16(vacc2x89ABCDEF));
       int8x16_t vout3x0123456789ABCDEF = vcombine_s8(vqmovn_s16(vacc3x01234567), vqmovn_s16(vacc3x89ABCDEF));
     #endif
-    const int8x16_t voutput_min = vld1q_dup_s8(&params->fp32_neonv8.output_min);
-    const int8x16_t voutput_max = vld1q_dup_s8(&params->fp32_neonv8.output_max);
+    const int8x16_t voutput_min = vdupq_n_s8(params->fp32_neonv8.output_min);
+    const int8x16_t voutput_max = vdupq_n_s8(params->fp32_neonv8.output_max);
 
     vout3x0123456789ABCDEF = vmaxq_s8(vout3x0123456789ABCDEF, voutput_min);
     vout2x0123456789ABCDEF = vmaxq_s8(vout2x0123456789ABCDEF, voutput_min);

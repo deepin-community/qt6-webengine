@@ -13,7 +13,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
+#include "ui/events/ash/event_rewriter_utils.h"
 #include "ui/events/ash/keyboard_capability.h"
 #include "ui/events/ash/mojom/extended_fkeys_modifier.mojom-shared.h"
 #include "ui/events/ash/mojom/modifier_key.mojom-shared.h"
@@ -59,16 +61,8 @@ class EventRewriterAsh : public EventRewriter {
           key(input_key),
           key_code(input_key_code) {}
 
-    friend bool operator==(const MutableKeyState& lhs,
-                           const MutableKeyState& rhs) {
-      return lhs.flags == rhs.flags && lhs.code == rhs.code &&
-             lhs.key == rhs.key && lhs.key_code == rhs.key_code;
-    }
-
-    friend bool operator!=(const MutableKeyState& lhs,
-                           const MutableKeyState& rhs) {
-      return !(lhs == rhs);
-    }
+    friend bool operator==(const MutableKeyState&,
+                           const MutableKeyState&) = default;
 
     int flags = 0;
     DomCode code = DomCode::NONE;
@@ -198,6 +192,18 @@ class EventRewriterAsh : public EventRewriter {
     // `device_id` weren't found) or if an invalid `key_code` was passed in.
     virtual std::optional<ui::mojom::ExtendedFkeysModifier>
     GetExtendedFkeySetting(int device_id, ui::KeyboardCode key_code) = 0;
+
+    // Used to send a notification when a income event is a shortcut with
+    // arrow key and search key but could not find a matched remapped event,
+    // and it's a split modifier keyboard.
+    virtual void NotifySixPackRewriteBlockedByFnKey(
+        ui::KeyboardCode key_code,
+        ui::mojom::SixPackShortcutModifier modifier) = 0;
+
+    // Used to send a notification when a income event is a shortcut with
+    // top row key and search key but could not find a matched remapped event,
+    // and it's a split modifier keyboard.
+    virtual void NotifyTopRowRewriteBlockedByFnKey() = 0;
   };
 
   // Does not take ownership of the |sticky_keys_controller|, which may also be
@@ -263,7 +269,7 @@ class EventRewriterAsh : public EventRewriter {
 
   // Returns true when the input |state| has key |DomKey::ALT_GRAPH_LATCH| and
   // is remapped.
-  // TODO(crbug.com/1440147): Remove this function.
+  // TODO(crbug.com/40265877): Remove this function.
   bool RewriteModifierKeys(const KeyEvent& event, MutableKeyState* state) {
     return RewriteModifierKeys(event, last_keyboard_device_id_, state);
   }
@@ -330,14 +336,25 @@ class EventRewriterAsh : public EventRewriter {
   // support supplying a custom layout via sysfs.
   bool RewriteTopRowKeysForCustomLayout(const ui::KeyEvent& key_event,
                                         int device_id,
-                                        bool search_is_pressed,
+                                        bool flip_remapping,
+                                        EventFlags flip_remapping_flag,
                                         MutableKeyState* state);
 
   // Handle Fn/Action key remapping for Wilco keyboard layout.
   bool RewriteTopRowKeysForLayoutWilco(
       const KeyEvent& key_event,
       int device_id,
-      bool search_is_pressed,
+      bool flip_remapping,
+      EventFlags flip_remapping_flag,
+      MutableKeyState* state,
+      KeyboardCapability::KeyboardTopRowLayout layout);
+
+  bool RewriteTopRowKeysForStandardLayouts(
+      const KeyEvent& key_event,
+      int device_id,
+      bool flip_remapping,
+      EventFlags flip_remapping_flag,
+      bool rewrite_modifier_is_pressed,
       MutableKeyState* state,
       KeyboardCapability::KeyboardTopRowLayout layout);
 
@@ -377,6 +394,8 @@ class EventRewriterAsh : public EventRewriter {
   int last_keyboard_device_id_;
 
   const raw_ptr<Delegate, DanglingUntriaged> delegate_;
+
+  base::flat_map<internal::PhysicalKey, MutableKeyState> pressed_physical_keys_;
 
   // For each pair, the first element is the rewritten key state and the second
   // one is the original key state. If no key event rewriting happens, the first

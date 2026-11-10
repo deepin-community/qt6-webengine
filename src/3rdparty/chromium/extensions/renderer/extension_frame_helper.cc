@@ -4,11 +4,13 @@
 
 #include "extensions/renderer/extension_frame_helper.h"
 
+#include <algorithm>
 #include <set>
 
+#include "base/auto_reset.h"
+#include "base/containers/map_util.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "content/public/renderer/render_frame.h"
@@ -16,7 +18,7 @@
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_features.h"
-#include "extensions/common/extension_messages.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/renderer/api/messaging/native_renderer_messaging_service.h"
 #include "extensions/renderer/console.h"
@@ -58,7 +60,7 @@ bool RenderFrameMatches(const ExtensionFrameHelper* frame_helper,
                         mojom::ViewType match_view_type,
                         int match_window_id,
                         int match_tab_id,
-                        const std::string& match_extension_id) {
+                        const ExtensionId& match_extension_id) {
   if (match_view_type != mojom::ViewType::kInvalid &&
       frame_helper->view_type() != match_view_type)
     return false;
@@ -157,7 +159,7 @@ ExtensionFrameHelper::~ExtensionFrameHelper() {
 
 // static
 std::vector<content::RenderFrame*> ExtensionFrameHelper::GetExtensionFrames(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     int browser_window_id,
     int tab_id,
     mojom::ViewType view_type) {
@@ -173,16 +175,17 @@ std::vector<content::RenderFrame*> ExtensionFrameHelper::GetExtensionFrames(
 // static
 v8::Local<v8::Array> ExtensionFrameHelper::GetV8MainFrames(
     v8::Local<v8::Context> context,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     int browser_window_id,
     int tab_id,
     mojom::ViewType view_type) {
   // WebFrame::ScriptCanAccess uses the isolate's current context. We need to
   // make sure that the current context is the one we're expecting.
-  DCHECK(context == context->GetIsolate()->GetCurrentContext());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  DCHECK(context == isolate->GetCurrentContext());
   std::vector<content::RenderFrame*> render_frames =
       GetExtensionFrames(extension_id, browser_window_id, tab_id, view_type);
-  v8::Local<v8::Array> v8_frames = v8::Array::New(context->GetIsolate());
+  v8::Local<v8::Array> v8_frames = v8::Array::New(isolate);
 
   int v8_index = 0;
   for (content::RenderFrame* frame : render_frames) {
@@ -190,7 +193,7 @@ v8::Local<v8::Array> ExtensionFrameHelper::GetV8MainFrames(
     if (!web_frame->IsOutermostMainFrame())
       continue;
 
-    if (!blink::WebFrame::ScriptCanAccess(context->GetIsolate(), web_frame)) {
+    if (!blink::WebFrame::ScriptCanAccess(isolate, web_frame)) {
       continue;
     }
 
@@ -209,14 +212,14 @@ v8::Local<v8::Array> ExtensionFrameHelper::GetV8MainFrames(
 
 // static
 content::RenderFrame* ExtensionFrameHelper::GetBackgroundPageFrame(
-    const std::string& extension_id) {
+    const ExtensionId& extension_id) {
   for (const ExtensionFrameHelper* helper : g_frame_helpers.Get()) {
     if (RenderFrameMatches(helper, mojom::ViewType::kExtensionBackgroundPage,
                            extension_misc::kUnknownWindowId,
                            extension_misc::kUnknownTabId, extension_id)) {
       blink::WebLocalFrame* web_frame = helper->render_frame()->GetWebFrame();
       // Check if this is the outermost main frame (do not return embedded
-      // main frames like portals or fenced frames).
+      // main frames like fenced frames).
       if (web_frame->IsOutermostMainFrame())
         return helper->render_frame();
     }
@@ -226,7 +229,7 @@ content::RenderFrame* ExtensionFrameHelper::GetBackgroundPageFrame(
 
 v8::Local<v8::Value> ExtensionFrameHelper::GetV8BackgroundPageMainFrame(
     v8::Isolate* isolate,
-    const std::string& extension_id) {
+    const ExtensionId& extension_id) {
   content::RenderFrame* main_frame = GetBackgroundPageFrame(extension_id);
   blink::WebLocalFrame* web_frame =
       main_frame ? main_frame->GetWebFrame() : nullptr;
@@ -286,6 +289,7 @@ void ExtensionFrameHelper::DidCreateDocumentElement() {
 
 void ExtensionFrameHelper::DidCreateNewDocument() {
   did_create_current_document_element_ = false;
+  active_user_script_worlds_.clear();
 }
 
 void ExtensionFrameHelper::RunScriptsAtDocumentStart() {
@@ -317,6 +321,18 @@ void ExtensionFrameHelper::ScheduleAtDocumentEnd(base::OnceClosure callback) {
 
 void ExtensionFrameHelper::ScheduleAtDocumentIdle(base::OnceClosure callback) {
   document_idle_callbacks_.push_back(std::move(callback));
+}
+
+const std::set<std::optional<std::string>>*
+ExtensionFrameHelper::GetActiveUserScriptWorlds(
+      const ExtensionId& extension_id) {
+  return base::FindOrNull(active_user_script_worlds_, extension_id);
+}
+
+void ExtensionFrameHelper::AddActiveUserScriptWorld(
+    const ExtensionId& extension_id,
+    const std::optional<std::string>& world_id) {
+  active_user_script_worlds_[extension_id].insert(world_id);
 }
 
 mojom::LocalFrameHost* ExtensionFrameHelper::GetLocalFrameHost() {
@@ -392,19 +408,6 @@ void ExtensionFrameHelper::ReadyToCommitNavigation(
   // TODO(devlin): Add constants for main world id, no extension group.
 }
 
-void ExtensionFrameHelper::DidCommitProvisionalLoad(
-    ui::PageTransition transition) {
-  if (base::FeatureList::IsEnabled(
-          extensions_features::kAvoidEarlyExtensionScriptContextCreation)) {
-    return;
-  }
-  // Grant cross browsing instance frame lookup if we are an extension. This
-  // should match the conditions in FindFrame.
-  content::RenderFrame* frame = render_frame();
-  if (GetExtensionFromFrame(frame))
-    frame->SetAllowsCrossBrowsingInstanceFrameLookup();
-}
-
 void ExtensionFrameHelper::DidCreateScriptContext(
     v8::Local<v8::Context> context,
     int32_t world_id) {
@@ -442,68 +445,6 @@ void ExtensionFrameHelper::WillReleaseScriptContext(
       render_frame()->GetWebFrame(), context, world_id);
 }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-bool ExtensionFrameHelper::OnMessageReceived(const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(ExtensionFrameHelper, message)
-    IPC_MESSAGE_HANDLER(ExtensionMsg_ValidateMessagePort,
-                        OnExtensionValidateMessagePort)
-    IPC_MESSAGE_HANDLER(ExtensionMsg_DispatchOnConnect,
-                        OnExtensionDispatchOnConnect)
-    IPC_MESSAGE_HANDLER(ExtensionMsg_DeliverMessage, OnExtensionDeliverMessage)
-    IPC_MESSAGE_HANDLER(ExtensionMsg_DispatchOnDisconnect,
-                        OnExtensionDispatchOnDisconnect)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-}
-
-void ExtensionFrameHelper::OnExtensionValidateMessagePort(int worker_thread_id,
-                                                          const PortId& id) {
-  DCHECK_EQ(kMainThreadId, worker_thread_id);
-  extension_dispatcher_->bindings_system()
-      ->messaging_service()
-      ->ValidateMessagePort(
-          extension_dispatcher_->script_context_set_iterator(), id,
-          render_frame());
-}
-
-void ExtensionFrameHelper::OnExtensionDispatchOnConnect(
-    int worker_thread_id,
-    const ExtensionMsg_OnConnectData& connect_data) {
-  DCHECK_EQ(kMainThreadId, worker_thread_id);
-  extension_dispatcher_->bindings_system()
-      ->messaging_service()
-      ->DispatchOnConnect(extension_dispatcher_->script_context_set_iterator(),
-                          connect_data.target_port_id,
-                          connect_data.channel_type, connect_data.channel_name,
-                          connect_data.tab_source,
-                          connect_data.external_connection_info, {}, {},
-                          render_frame(), base::DoNothing());
-}
-
-void ExtensionFrameHelper::OnExtensionDeliverMessage(int worker_thread_id,
-                                                     const PortId& target_id,
-                                                     const Message& message) {
-  DCHECK_EQ(kMainThreadId, worker_thread_id);
-  extension_dispatcher_->bindings_system()->messaging_service()->DeliverMessage(
-      extension_dispatcher_->script_context_set_iterator(), target_id, message,
-      render_frame());
-}
-
-void ExtensionFrameHelper::OnExtensionDispatchOnDisconnect(
-    int worker_thread_id,
-    const PortId& id,
-    const std::string& error_message) {
-  DCHECK_EQ(kMainThreadId, worker_thread_id);
-  extension_dispatcher_->bindings_system()
-      ->messaging_service()
-      ->DispatchOnDisconnect(
-          extension_dispatcher_->script_context_set_iterator(), id,
-          error_message, render_frame());
-}
-#endif
-
 void ExtensionFrameHelper::SetTabId(int32_t tab_id) {
   CHECK_EQ(tab_id_, -1);
   CHECK_GE(tab_id, 0);
@@ -516,7 +457,7 @@ void ExtensionFrameHelper::NotifyRenderViewType(mojom::ViewType type) {
   view_type_ = type;
 }
 
-void ExtensionFrameHelper::MessageInvoke(const std::string& extension_id,
+void ExtensionFrameHelper::MessageInvoke(const ExtensionId& extension_id,
                                          const std::string& module_name,
                                          const std::string& function_name,
                                          base::Value::List args) {
@@ -536,10 +477,10 @@ void ExtensionFrameHelper::ExecuteCode(mojom::ExecuteCodeParamsPtr param,
 
     if (param->injection->get_css()->operation ==
             mojom::CSSInjection::Operation::kRemove &&
-        !base::ranges::all_of(param->injection->get_css()->sources,
-                              [](const mojom::CSSSourcePtr& source) {
-                                return source->key.has_value();
-                              })) {
+        !std::ranges::all_of(param->injection->get_css()->sources,
+                             [](const mojom::CSSSourcePtr& source) {
+                               return source->key.has_value();
+                             })) {
       local_frame_receiver_.ReportBadMessage(
           "An injection key must be specified for CSS removal.");
       return;
@@ -587,10 +528,10 @@ void ExtensionFrameHelper::SetSpatialNavigationEnabled(bool enabled) {
 
 void ExtensionFrameHelper::ExecuteDeclarativeScript(
     int32_t tab_id,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const std::string& script_id,
     const GURL& url) {
-  // TODO(https://crbug.com/1186220): URL-checking isn't the best approach to
+  // TODO(crbug.com/40753624): URL-checking isn't the best approach to
   // avoid user data leak. Consider what we can do to mitigate this case.
   // Begin script injection workflow only if the current URL is identical to the
   // one that matched declarative conditions in the browser.
@@ -613,9 +554,6 @@ void ExtensionFrameHelper::DispatchOnConnect(
     mojo::PendingAssociatedReceiver<extensions::mojom::MessagePort> port,
     mojo::PendingAssociatedRemote<extensions::mojom::MessagePortHost> port_host,
     DispatchOnConnectCallback callback) {
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  CHECK(false);
-#else
   extension_dispatcher_->bindings_system()
       ->messaging_service()
       ->DispatchOnConnect(extension_dispatcher_->script_context_set_iterator(),
@@ -623,7 +561,6 @@ void ExtensionFrameHelper::DispatchOnConnect(
                           *external_connection_info, std::move(port),
                           std::move(port_host), render_frame(),
                           std::move(callback));
-#endif
 }
 
 void ExtensionFrameHelper::NotifyDidCreateScriptContext(int32_t world_id) {
@@ -632,23 +569,6 @@ void ExtensionFrameHelper::NotifyDidCreateScriptContext(int32_t world_id) {
 
 void ExtensionFrameHelper::OnDestruct() {
   delete this;
-}
-
-void ExtensionFrameHelper::DraggableRegionsChanged() {
-  if (!render_frame()->GetWebFrame()->IsOutermostMainFrame())
-    return;
-
-  blink::WebVector<blink::WebDraggableRegion> webregions =
-      render_frame()->GetWebFrame()->GetDocument().DraggableRegions();
-  std::vector<mojom::DraggableRegionPtr> regions;
-  regions.reserve(webregions.size());
-  for (blink::WebDraggableRegion& webregion : webregions) {
-    render_frame()->ConvertViewportToWindow(&webregion.bounds);
-
-    regions.push_back(
-        mojom::DraggableRegion::New(webregion.draggable, webregion.bounds));
-  }
-  GetLocalFrameHost()->UpdateDraggableRegions(std::move(regions));
 }
 
 void ExtensionFrameHelper::DidClearWindowObject() {
@@ -660,13 +580,12 @@ void ExtensionFrameHelper::DidClearWindowObject() {
   // Calling this multiple times in a page load is safe because
   // SetAllowsCrossBrowsingInstanceFrameLookup() just sets a bool to true on the
   // SecurityOrigin.
-  if (base::FeatureList::IsEnabled(
-          extensions_features::kAvoidEarlyExtensionScriptContextCreation)) {
-    // Grant cross browsing instance frame lookup if we are an extension. This
-    // should match the conditions in FindFrame.
-    content::RenderFrame* frame = render_frame();
-    if (GetExtensionFromFrame(frame))
-      frame->SetAllowsCrossBrowsingInstanceFrameLookup();
+
+  // Grant cross browsing instance frame lookup if we are an extension. This
+  // should match the conditions in FindFrame.
+  content::RenderFrame* frame = render_frame();
+  if (GetExtensionFromFrame(frame)) {
+    frame->SetAllowsCrossBrowsingInstanceFrameLookup();
   }
 }
 

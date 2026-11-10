@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -16,6 +17,7 @@
 #define WEB_CONTENTS_ADAPTER_CLIENT_H
 
 #include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
+#include <QtWebEngineCore/private/qwebenginepermission_p.h>
 #include <QtWebEngineCore/qwebenginepermission.h>
 
 #include "profile_adapter.h"
@@ -66,7 +68,7 @@ class WebEngineSettings;
 
 class Q_WEBENGINECORE_EXPORT WebContentsAdapterClient {
 public:
-    // This must match window_open_disposition_list.h.
+    // This must match window_open_disposition.h.
     enum WindowOpenDisposition {
         UnknownDisposition = 0,
         CurrentTabDisposition = 1,
@@ -78,6 +80,8 @@ public:
         SaveToDiskDisposition = 7,
         OffTheRecordDisposition = 8,
         IgnoreActionDisposition = 9,
+        SwitchToTabDisposition = 10,
+        NewPictureInPictureDisposition = 11,
     };
 
     // Must match the values in javascript_dialog_type.h.
@@ -173,19 +177,20 @@ public:
     virtual void windowCloseRejected() = 0;
     virtual void contextMenuRequested(QWebEngineContextMenuRequest *request) = 0;
     virtual void desktopMediaRequested(DesktopMediaController *) = 0;
-    virtual void navigationRequested(int navigationType, const QUrl &url, bool &accepted, bool isMainFrame, bool hasFormData) = 0;
+    virtual void navigationRequested(int navigationType, const QUrl &url, bool &accepted,
+                                     bool isMainFrame, bool hasFormData, bool userInitiated) = 0;
     virtual void requestFullScreenMode(const QUrl &origin, bool fullscreen) = 0;
     virtual bool isFullScreenMode() const = 0;
     virtual void javascriptDialog(QSharedPointer<JavaScriptDialogController>) = 0;
     virtual void runFileChooser(QSharedPointer<FilePickerController>) = 0;
     virtual void showColorDialog(QSharedPointer<ColorChooserController>) = 0;
     virtual void runJavaScript(const QString &script, quint32 worldId, quint64 frameId,
-                               const std::function<void(const QVariant &)> &callback) = 0;
+                               QtPrivate::SlotObjUniquePtr callback) = 0;
     virtual void didFetchDocumentMarkup(quint64 requestId, const QString& result) = 0;
     virtual void didFetchDocumentInnerText(quint64 requestId, const QString& result) = 0;
     virtual void printToPdf(const QString &filePath, const QPageLayout &layout,
                             const QPageRanges &ranges, quint64 frameId) = 0;
-    virtual void printToPdf(std::function<void(QSharedPointer<QByteArray>)> &&callback,
+    virtual void printToPdf(QtPrivate::SlotObjUniquePtr callback,
                             const QPageLayout &layout, const QPageRanges &ranges,
                             quint64 frameId) = 0;
     virtual void didPrintPageToPdf(const QString &filePath, bool success) = 0;
@@ -195,9 +200,8 @@ public:
     virtual QObject *accessibilityParentObject() = 0;
     virtual void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message, int lineNumber, const QString& sourceID) = 0;
     virtual void authenticationRequired(QSharedPointer<AuthenticationDialogController>) = 0;
-    virtual void runFeaturePermissionRequest(QWebEnginePermission::PermissionType, const QUrl &securityOrigin) = 0;
-    virtual void runMediaAccessPermissionRequest(const QUrl &securityOrigin, MediaRequestFlags requestFlags) = 0;
-    virtual void runMouseLockPermissionRequest(const QUrl &securityOrigin) = 0;
+    virtual void runFeaturePermissionRequest(QWebEnginePermission::PermissionType, const QUrl &securityOrigin,
+        int childId, const std::string &serializedToken) = 0;
     virtual void runRegisterProtocolHandlerRequest(QWebEngineRegisterProtocolHandlerRequest) = 0;
     virtual void runFileSystemAccessRequest(QWebEngineFileSystemAccessRequest) = 0;
     virtual QWebEngineSettings *webEngineSettings() const = 0;
@@ -229,7 +233,6 @@ public:
     virtual WebContentsAdapter* webContentsAdapter() = 0;
     virtual void releaseProfile() = 0;
     virtual void showWebAuthDialog(QWebEngineWebAuthUxRequest *request) = 0;
-    virtual QWebEnginePermission createFeaturePermissionObject(const QUrl &securityOrigin, QWebEnginePermission::PermissionType permissionType) = 0;
 };
 
 } // namespace QtWebEngineCore

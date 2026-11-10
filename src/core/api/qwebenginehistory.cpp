@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginehistory.h"
 #include "qwebenginehistory_p.h"
@@ -349,6 +350,12 @@ int QWebEngineHistory::count() const
     return d->adapter()->navigationEntryCount();
 }
 
+/*!
+    \property QWebEngineHistory::items
+    \brief A model containing all history items.
+
+    \sa backItems, forwardItems
+*/
 QWebEngineHistoryModel *QWebEngineHistory::itemsModel() const
 {
     Q_D(const QWebEngineHistory);
@@ -357,6 +364,12 @@ QWebEngineHistoryModel *QWebEngineHistory::itemsModel() const
     return d->navigationModel.data();
 }
 
+/*!
+    \property QWebEngineHistory::backItems
+    \brief A model containing the back history items.
+
+    \sa items, forwardItems
+*/
 QWebEngineHistoryModel *QWebEngineHistory::backItemsModel() const
 {
     Q_D(const QWebEngineHistory);
@@ -365,6 +378,12 @@ QWebEngineHistoryModel *QWebEngineHistory::backItemsModel() const
     return d->backNavigationModel.data();
 }
 
+/*!
+    \property QWebEngineHistory::forwardItems
+    \brief A model containing the forward history items.
+
+    \sa items, backItems
+*/
 QWebEngineHistoryModel *QWebEngineHistory::forwardItemsModel() const
 {
     Q_D(const QWebEngineHistory);

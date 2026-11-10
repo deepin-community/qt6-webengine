@@ -100,7 +100,6 @@ class GCCallbackTest : public testing::TestWithParam<CallbackType> {
         return false;
     }
     NOTREACHED();
-    return false;
   }
 
  private:

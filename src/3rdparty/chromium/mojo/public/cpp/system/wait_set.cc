@@ -11,7 +11,10 @@
 #include <vector>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
@@ -133,13 +136,13 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
 
   void Wait(base::WaitableEvent** ready_event,
             size_t* num_ready_handles,
-            Handle* ready_handles,
-            MojoResult* ready_results,
+            base::span<Handle> ready_handles,
+            base::span<MojoResult> ready_results,
             MojoHandleSignalsState* signals_states) {
     DCHECK(trap_handle_.is_valid());
     DCHECK(num_ready_handles);
-    DCHECK(ready_handles);
-    DCHECK(ready_results);
+    DCHECK(!ready_handles.empty());
+    DCHECK(!ready_results.empty());
     {
       base::AutoLock lock(lock_);
       if (ready_handles_.empty()) {
@@ -169,7 +172,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
           for (size_t i = 0; i < num_blocking_events; ++i) {
             const auto& event = blocking_events[i];
             auto it = contexts_.find(event.trigger_context);
-            DCHECK(it != contexts_.end());
+            CHECK(it != contexts_.end());
             ready_handles_[it->second->handle()] = {event.result,
                                                     event.signals_state};
           }
@@ -197,7 +200,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
 
     size_t dest_index = waitable_index_shift_++;
     events[dest_index] = &handle_event_;
-    for (auto* e : user_events_) {
+    for (base::WaitableEvent* e : user_events_) {
       dest_index = (dest_index + 1) % events.size();
       events[dest_index] = e;
     }
@@ -214,7 +217,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
       ready_handles[i] = it->first;
       ready_results[i] = it->second.result;
       if (signals_states)
-        signals_states[i] = it->second.signals_state;
+        UNSAFE_TODO(signals_states[i]) = it->second.signals_state;
       ready_handles_.erase(it);
     }
 
@@ -321,7 +324,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
   std::map<Handle, scoped_refptr<Context>> handle_to_context_;
   std::map<Handle, ReadyState> ready_handles_;
   std::vector<scoped_refptr<Context>> cancelled_contexts_;
-  std::set<base::WaitableEvent*> user_events_;
+  std::set<raw_ptr<base::WaitableEvent, SetExperimental>> user_events_;
 
   // Event signaled any time a handle notification is received.
   base::WaitableEvent handle_event_;
@@ -356,8 +359,8 @@ MojoResult WaitSet::RemoveHandle(Handle handle) {
 
 void WaitSet::Wait(base::WaitableEvent** ready_event,
                    size_t* num_ready_handles,
-                   Handle* ready_handles,
-                   MojoResult* ready_results,
+                   base::span<Handle> ready_handles,
+                   base::span<MojoResult> ready_results,
                    MojoHandleSignalsState* signals_states) {
   state_->Wait(ready_event, num_ready_handles, ready_handles, ready_results,
                signals_states);

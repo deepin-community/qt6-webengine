@@ -2,11 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {type Chrome} from '../../../extension-api/ExtensionAPI.js';
+import type {Chrome} from '../../../extension-api/ExtensionAPI.js';
 
-import {type ModuleConfigurations} from './ModuleConfiguration.js';
-
-import {serializeWasmValue, type WasmValue, type SerializedWasmType} from './WasmTypes.js';
+import type {ModuleConfigurations} from './ModuleConfiguration.js';
+import {type SerializedWasmType, serializeWasmValue, type WasmValue} from './WasmTypes.js';
 
 export interface WorkerInterface extends Chrome.DevTools.LanguageExtensionPlugin {
   hello(moduleConfigurations: ModuleConfigurations, logPluginApiCalls: boolean): void;
@@ -17,6 +16,8 @@ export interface AsyncHostInterface {
   getWasmLocal(local: number, stopId: unknown): Promise<WasmValue>;
   getWasmGlobal(global: number, stopId: unknown): Promise<WasmValue>;
   getWasmOp(op: number, stopId: unknown): Promise<WasmValue>;
+  reportResourceLoad(resourceUrl: string, status: {success: boolean, errorMessage?: string, size?: number}):
+      Promise<void>;
 }
 
 export interface HostInterface {
@@ -24,6 +25,8 @@ export interface HostInterface {
   getWasmLocal(local: number, stopId: unknown): WasmValue;
   getWasmGlobal(global: number, stopId: unknown): WasmValue;
   getWasmOp(op: number, stopId: unknown): WasmValue;
+  reportResourceLoad(resourceUrl: string, status: {success: boolean, errorMessage?: string, size?: number}):
+      Promise<void>;
 }
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -76,15 +79,13 @@ export class WorkerRPC<LocalInterface extends Record<string, any>, RemoteInterfa
   private nextRequestId = 0;
   private readonly channel: Channel<LocalInterface, RemoteInterface>;
   private readonly localHandler: LocalInterface;
-  private readonly requests: Map<number, {resolve: (params: unknown) => void, reject: (message: Error) => void}> =
-      new Map();
-  private readonly semaphore: Int32Array;
+  private readonly requests = new Map<number, {resolve: (params: unknown) => void, reject: (message: Error) => void}>();
+  private readonly semaphore = new Int32Array(new SharedArrayBuffer(4));
 
   constructor(channel: Channel<LocalInterface, RemoteInterface>, localHandler: LocalInterface) {
     this.channel = channel;
     this.channel.onmessage = this.onmessage.bind(this);
     this.localHandler = localHandler;
-    this.semaphore = new Int32Array(new SharedArrayBuffer(4));
   }
 
   sendMessage<Method extends keyof RemoteInterface>(method: Method, ...params: Parameters<RemoteInterface[Method]>):
@@ -110,6 +111,7 @@ export class WorkerRPC<LocalInterface extends Record<string, any>, RemoteInterfa
       },
     });
     while (Atomics.wait(this.semaphore, 0, 0) !== 'not-equal') {
+      // Await the semaphore to be equal
     }
     const [response] = this.semaphore;
 

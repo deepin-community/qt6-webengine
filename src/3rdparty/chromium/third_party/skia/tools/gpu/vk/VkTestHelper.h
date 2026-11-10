@@ -16,6 +16,8 @@
 #include "include/gpu/vk/VulkanBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 
+#include "tools/gpu/vk/VkTestUtils.h"
+
 class GrDirectContext;
 class SkSurface;
 struct SkISize;
@@ -25,6 +27,7 @@ namespace skiatest {
 }
 
 namespace skgpu::graphite {
+    class Context;
     class Recorder;
 };
 
@@ -43,6 +46,7 @@ public:
 
     virtual GrDirectContext* directContext() { return nullptr; }
     virtual skgpu::graphite::Recorder* recorder() { return nullptr; }
+    virtual skgpu::graphite::Context* context() { return nullptr; }
 
 protected:
     VkTestHelper(bool isProtected) : fIsProtected(isProtected) {}
@@ -72,10 +76,10 @@ protected:
     bool fIsProtected = false;
     VkDevice fDevice = VK_NULL_HANDLE;
 
-    skgpu::VulkanExtensions fExtensions;
-    VkPhysicalDeviceFeatures2 fFeatures = {};
-    VkDebugReportCallbackEXT fDebugCallback = VK_NULL_HANDLE;
-    PFN_vkDestroyDebugReportCallbackEXT fDestroyDebugCallback = nullptr;
+    skgpu::VulkanExtensions fExtensions = {};
+    sk_gpu_test::TestVkFeatures fFeatures = {};
+    VkDebugUtilsMessengerEXT fDebugMessenger = VK_NULL_HANDLE;
+    PFN_vkDestroyDebugUtilsMessengerEXT fDestroyDebugCallback = nullptr;
     skgpu::VulkanBackendContext fBackendContext;
 };
 

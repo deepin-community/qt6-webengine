@@ -133,6 +133,7 @@ int sqlite3_blob_open(
   char *zErr = 0;
   Table *pTab;
   Incrblob *pBlob = 0;
+  int iDb;
   Parse sParse;
 
 #ifdef SQLITE_ENABLE_API_ARMOR
@@ -167,13 +168,21 @@ int sqlite3_blob_open(
       pTab = 0;
       sqlite3ErrorMsg(&sParse, "cannot open table without rowid: %s", zTable);
     }
+    if( pTab && (pTab->tabFlags&TF_HasGenerated)!=0 ){
+      pTab = 0;
+      sqlite3ErrorMsg(&sParse, "cannot open table with generated columns: %s",
+                      zTable);
+    }
 #ifndef SQLITE_OMIT_VIEW
     if( pTab && IsView(pTab) ){
       pTab = 0;
       sqlite3ErrorMsg(&sParse, "cannot open view: %s", zTable);
     }
 #endif
-    if( !pTab ){
+    if( pTab==0
+     || ((iDb = sqlite3SchemaToIndex(db, pTab->pSchema))==1 &&
+         sqlite3OpenTempDatabase(&sParse))
+    ){
       if( sParse.zErrMsg ){
         sqlite3DbFree(db, zErr);
         zErr = sParse.zErrMsg;
@@ -184,15 +193,11 @@ int sqlite3_blob_open(
       goto blob_open_out;
     }
     pBlob->pTab = pTab;
-    pBlob->zDb = db->aDb[sqlite3SchemaToIndex(db, pTab->pSchema)].zDbSName;
+    pBlob->zDb = db->aDb[iDb].zDbSName;
 
     /* Now search pTab for the exact column. */
-    for(iCol=0; iCol<pTab->nCol; iCol++) {
-      if( sqlite3StrICmp(pTab->aCol[iCol].zCnName, zColumn)==0 ){
-        break;
-      }
-    }
-    if( iCol==pTab->nCol ){
+    iCol = sqlite3ColumnIndex(pTab, zColumn);
+    if( iCol<0 ){
       sqlite3DbFree(db, zErr);
       zErr = sqlite3MPrintf(db, "no such column: \"%s\"", zColumn);
       rc = SQLITE_ERROR;
@@ -272,7 +277,6 @@ int sqlite3_blob_open(
         {OP_Halt,           0, 0, 0},  /* 5  */
       };
       Vdbe *v = (Vdbe *)pBlob->pStmt;
-      int iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
       VdbeOp *aOp;
 
       sqlite3VdbeAddOp4Int(v, OP_Transaction, iDb, wrFlag, 

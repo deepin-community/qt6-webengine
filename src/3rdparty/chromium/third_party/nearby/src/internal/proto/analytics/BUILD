@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_cc//cc:defs.bzl", "cc_proto_library")
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@com_google_protobuf//bazel:java_lite_proto_library.bzl", "java_lite_proto_library")
+load("@com_google_protobuf//bazel:java_proto_library.bzl", "java_proto_library")
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 
 licenses(["notice"])
 
@@ -32,7 +35,6 @@ proto_library(
 proto_library(
     name = "fast_pair_log_proto",
     srcs = ["fast_pair_log.proto"],
-    compatible_with = ["//buildenv/target:non_prod"],
     deps = ["//proto:fast_pair_enums_proto"],
 )
 
@@ -50,6 +52,7 @@ cc_proto_library(
     name = "connections_log_cc_proto",
     visibility = [
         "//connections:__subpackages__",
+        "//internal/analytics:__pkg__",
         "//location/nearby/analytics/cpp:__subpackages__",
     ],
     deps = [":connections_log_proto"],

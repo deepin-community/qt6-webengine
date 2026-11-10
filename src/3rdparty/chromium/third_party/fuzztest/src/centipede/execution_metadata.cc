@@ -17,10 +17,10 @@
 #include <cstddef>
 #include <functional>
 
-#include "./centipede/defs.h"
 #include "./centipede/shared_memory_blob_sequence.h"
+#include "./common/defs.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 bool ExecutionMetadata::AppendCmpEntry(ByteSpan a, ByteSpan b) {
   if (a.size() != b.size()) return false;
@@ -55,4 +55,4 @@ bool ExecutionMetadata::ForEachCmpEntry(
   return true;
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

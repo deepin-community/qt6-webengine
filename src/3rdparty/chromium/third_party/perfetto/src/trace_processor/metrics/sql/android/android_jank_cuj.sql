@@ -17,10 +17,6 @@
 -- found in the trace.
 SELECT RUN_METRIC('android/jank/cujs.sql');
 
--- Creates tables that store constant parameters for each CUJ - e.g. parameter
--- that describes whether Choreographer callbacks run on a dedicated thread.
-SELECT RUN_METRIC('android/jank/params.sql');
-
 -- Create tables to store each CUJs main, render, HWC release,
 -- and GPU completion threads.
 -- Also stores the (not CUJ-specific) threads of SF: main, render engine,
@@ -74,13 +70,6 @@ SELECT RUN_METRIC('android/jank/query_functions.sql');
 -- frames, missed frames, longest frame duration, etc.
 -- The same numbers are also reported by FrameTracker to statsd.
 SELECT RUN_METRIC('android/jank/internal/counters.sql');
-
--- Creates derived events to visualize a few of the created tables.
--- Used only for debugging so by default not used and not displayed in the UI.
--- See https://perfetto.dev/docs/contributing/common-tasks#adding-new-derived-events
--- for instructions on how to add these events to the UI.
-SELECT RUN_METRIC('android/jank/internal/derived_events.sql');
-
 
 DROP VIEW IF EXISTS android_jank_cuj_output;
 CREATE PERFETTO VIEW android_jank_cuj_output AS

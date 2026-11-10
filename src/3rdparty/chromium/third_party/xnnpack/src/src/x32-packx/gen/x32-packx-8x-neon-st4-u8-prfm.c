@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x32-packx/neon.c.in
 //   Generator: tools/xngen
@@ -7,13 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/packx.h>
-#include <xnnpack/prefetch.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/packx.h"
+#include "src/xnnpack/prefetch.h"
 
 
 void xnn_x32_packx_ukernel_8x__neon_st4_x8_prfm(
@@ -93,10 +95,10 @@ void xnn_x32_packx_ukernel_8x__neon_st4_x8_prfm(
     const uint32x4x2_t vz4567x2 = vzipq_u32(vx4567x2, vx4567x6);
     const uint32x4x2_t vz4567x3 = vzipq_u32(vx4567x3, vx4567x7);
 
-    const uint32x4x4_t vy0123x0 = { vz0123x0.val[0], vz0123x1.val[0], vz0123x2.val[0], vz0123x3.val[0] };
-    const uint32x4x4_t vy0123x1 = { vz0123x0.val[1], vz0123x1.val[1], vz0123x2.val[1], vz0123x3.val[1] };
-    const uint32x4x4_t vy4567x0 = { vz4567x0.val[0], vz4567x1.val[0], vz4567x2.val[0], vz4567x3.val[0] };
-    const uint32x4x4_t vy4567x1 = { vz4567x0.val[1], vz4567x1.val[1], vz4567x2.val[1], vz4567x3.val[1] };
+    const uint32x4x4_t vy0123x0 = {{ vz0123x0.val[0], vz0123x1.val[0], vz0123x2.val[0], vz0123x3.val[0] }};
+    const uint32x4x4_t vy0123x1 = {{ vz0123x0.val[1], vz0123x1.val[1], vz0123x2.val[1], vz0123x3.val[1] }};
+    const uint32x4x4_t vy4567x0 = {{ vz4567x0.val[0], vz4567x1.val[0], vz4567x2.val[0], vz4567x3.val[0] }};
+    const uint32x4x4_t vy4567x1 = {{ vz4567x0.val[1], vz4567x1.val[1], vz4567x2.val[1], vz4567x3.val[1] }};
     vst4q_u32(y, vy0123x0); y += 16;
     vst4q_u32(y, vy0123x1); y += 16;
     vst4q_u32(y, vy4567x0); y += 16;

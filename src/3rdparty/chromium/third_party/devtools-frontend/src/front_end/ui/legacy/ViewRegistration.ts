@@ -3,13 +3,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 import * as i18n from '../../core/i18n/i18n.js';
-import * as Platform from '../../core/platform/platform.js';
+import type * as Platform from '../../core/platform/platform.js';
 import * as Root from '../../core/root/root.js';
 
-import {type ViewLocationResolver} from './View.js';
+import type {ViewLocationResolver} from './View.js';
 import {PreRegisteredView} from './ViewManager.js';
-
-import {type Widget} from './Widget.js';
+import type {Widget} from './Widget.js';
 
 const UIStrings = {
   /**
@@ -40,11 +39,11 @@ const UIStrings = {
    *@description Badge label for an entry in the Quick Open menu. Selecting the entry opens the 'Sources' panel.
    */
   sources: 'Sources',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/ViewRegistration.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
-const registeredViewExtensions: Array<PreRegisteredView> = [];
+const registeredViewExtensions: PreRegisteredView[] = [];
 
 export const enum ViewPersistence {
   CLOSEABLE = 'closeable',
@@ -72,12 +71,12 @@ export interface ViewRegistration {
    */
   experiment?: Root.Runtime.ExperimentName;
   /**
-   * A condition represented as a string the view's availability depends on. Conditions come
-   * from the queryParamsObject defined in Runtime and just as the experiment field, they determine the availability
-   * of the view. A condition can be negated by prepending a ‘!’ to the value of the condition
-   * property and in that case the behaviour of the view's availability will be inverted.
+   * A condition is a function that will make the view available if it
+   * returns true, and not available, otherwise. Make sure that objects you
+   * access from inside the condition function are ready at the time when the
+   * setting conditions are checked.
    */
-  condition?: Root.Runtime.ConditionName;
+  condition?: Root.Runtime.Condition;
   /**
    * The command added to the command menu used to show the view. It usually follows the shape Show <title> as it must
    * not be localized at declaration since it is localized internally when appending the commands to the command menu.
@@ -103,7 +102,7 @@ export interface ViewRegistration {
   /**
    * Unique identifier of the view.
    */
-  id: string;
+  id: Lowercase<string>;
   /**
    * An identifier for the location of the view. The location is resolved by
    * an extension of type '@UI.ViewLocationResolver'.
@@ -146,22 +145,38 @@ export interface ViewRegistration {
   /**
    * The names of the settings the registered view performs as UI for.
    */
-  settings?: Array<string>;
+  settings?: string[];
   /**
    * Words used to find the view in the Command Menu.
    */
   tags?: Array<() => Platform.UIString.LocalizedString>;
+  /**
+   * Icon to be used next to view's title.
+   */
+  iconName?: string;
+  /**
+   * Whether a view needs to be promoted. A new badge is shown next to the menu items then.
+   */
+  featurePromotionId?: string;
 }
 
 const viewIdSet = new Set<string>();
 export function registerViewExtension(registration: ViewRegistration): void {
   const viewId = registration.id;
-  Platform.DCHECK(() => !viewIdSet.has(viewId), `Duplicate view id '${viewId}'`);
+  if (viewIdSet.has(viewId)) {
+    throw new Error(`Duplicate view id '${viewId}'`);
+  }
   viewIdSet.add(viewId);
   registeredViewExtensions.push(new PreRegisteredView(registration));
 }
 
-export function getRegisteredViewExtensions(): Array<PreRegisteredView> {
+export function getRegisteredViewExtensionForID(id: string): PreRegisteredView|undefined {
+  return registeredViewExtensions.find(
+      view => view.viewId() === id &&
+          Root.Runtime.Runtime.isDescriptorEnabled({experiment: view.experiment(), condition: view.condition()}));
+}
+
+export function getRegisteredViewExtensions(): PreRegisteredView[] {
   return registeredViewExtensions.filter(
       view => Root.Runtime.Runtime.isDescriptorEnabled({experiment: view.experiment(), condition: view.condition()}));
 }
@@ -175,7 +190,7 @@ export function maybeRemoveViewExtension(viewId: string): boolean {
   return true;
 }
 
-const registeredLocationResolvers: Array<LocationResolverRegistration> = [];
+const registeredLocationResolvers: LocationResolverRegistration[] = [];
 
 const viewLocationNameSet = new Set<ViewLocationValues>();
 
@@ -188,7 +203,7 @@ export function registerLocationResolver(registration: LocationResolverRegistrat
   registeredLocationResolvers.push(registration);
 }
 
-export function getRegisteredLocationResolvers(): Array<LocationResolverRegistration> {
+export function getRegisteredLocationResolvers(): LocationResolverRegistration[] {
   return registeredLocationResolvers;
 }
 

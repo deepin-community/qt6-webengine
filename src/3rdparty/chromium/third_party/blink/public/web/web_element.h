@@ -34,9 +34,9 @@
 #include <vector>
 
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 #include "v8/include/v8-forward.h"
 
 namespace gfx {
@@ -48,6 +48,7 @@ namespace blink {
 
 class Element;
 class Image;
+class LayoutBox;
 class WebLabelElement;
 
 // Provides access to some properties of a DOM element node.
@@ -83,10 +84,11 @@ class BLINK_EXPORT WebElement : public WebNode {
   WebString TextContentAbridged(unsigned int max_length) const;
   WebString InnerHTML() const;
 
-  // Returns true if the element's contenteditable attribute is in the true
-  // state or in the plaintext-only state:
-  // https://html.spec.whatwg.org/multipage/interaction.html#attr-contenteditable
-  bool IsContentEditable() const;
+  void Focus();
+
+  // Returns true if the element's computed writing suggestions value is true.
+  // https://html.spec.whatwg.org/#writing-suggestions:computed-writing-suggestions-value
+  bool WritingSuggestions() const;
 
   // Returns true if the frame's selection is inside this editable element.
   bool ContainsFrameSelection() const;
@@ -94,6 +96,12 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns the selected text if this element contains the selection.
   // Otherwise returns the empty string.
   WebString SelectedText() const;
+
+  // Selects the text in this element.
+  // If `select_all`, then the entire contents of the element is selected.
+  // If `!select_all`, then selects only the empty range at the end of the
+  // element
+  void SelectText(bool select_all);
 
   // Simulates a paste of `text` event into `this` element.
   //
@@ -111,7 +119,7 @@ class BLINK_EXPORT WebElement : public WebNode {
   void PasteText(const WebString& text, bool replace_all);
 
   // Returns all <label> elements associated to this element.
-  WebVector<WebLabelElement> Labels() const;
+  std::vector<WebLabelElement> Labels() const;
 
   // Returns true if this is an autonomous custom element.
   bool IsAutonomousCustomElement() const;
@@ -127,10 +135,15 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns the open shadow root or the closed shadow root.
   WebNode OpenOrClosedShadowRoot();
 
-  // Returns the bounds of the element in Visual Viewport. The bounds
-  // have been adjusted to include any transformations, including page scale.
-  // This function will update the layout if required.
+  // Returns the bounds of the element relative to the RenderWidget (local root
+  // frame + viewport transform in the main frame). The bounds have been
+  // adjusted to include any transformations, including page scale. This
+  // function will update the layout if required.
   gfx::Rect BoundsInWidget() const;
+
+  // Same as above but this method will clip the bounds based on any of the
+  // element's ancestor overflow or frame boxes.
+  gfx::Rect VisibleBoundsInWidget() const;
 
   // Returns the image contents of this element or a null SkBitmap
   // if there isn't any.
@@ -152,6 +165,30 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns {scrollWidth, scrollHeight}.
   gfx::Size GetScrollSize() const;
 
+  // Returns {scrollLeft, scrollTop}.
+  gfx::Vector2dF GetScrollOffset() const;
+
+  // Sets {scrollLeft, scrollTop}, returns true if the scroll was completed (or
+  // will be completed via a smooth scroll animation), false if the element
+  // cannot scroll (e.g. it's not rendered, no scroll extent).
+  bool SetScrollOffset(const gfx::Vector2dF& offset);
+
+  // Returns true if this element has scroll-behavior: smooth style, meaning
+  // that programmatic scrolls will animate rather than instantly jumping to the
+  // specified scroll offset.
+  bool HasScrollBehaviorSmooth() const;
+
+  // Returns whether the element has scrollable overflow and can be scrolled by
+  // the user (i.e. true for `overflow: scroll|auto` with overflow but false for
+  // `overflow: hidden`).
+  bool IsUserScrollableX() const;
+  bool IsUserScrollableY() const;
+
+  // Returns the effective zoom factor for this element. This includes the zoom
+  // factor coming from device scale factor and browser zoom but also the
+  // cumulative effects of the CSS zoom property in ancestor elements.
+  float GetEffectiveZoom() const;
+
   // ComputedStyle property values. The following exposure is of CSS property
   // values are part of the ComputedStyle set which is usually exposed through
   // the Window object in WebIDL as window.getComputedStyle(element). Exposing
@@ -168,6 +205,7 @@ class BLINK_EXPORT WebElement : public WebNode {
 #endif
 
  private:
+  LayoutBox* GetScrollingBox() const;
   Image* GetImage();
 };
 

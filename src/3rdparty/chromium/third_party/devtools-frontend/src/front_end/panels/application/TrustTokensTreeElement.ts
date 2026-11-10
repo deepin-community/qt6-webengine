@@ -11,7 +11,7 @@ import * as UI from '../../ui/legacy/legacy.js';
 
 import {ApplicationPanelTreeElement} from './ApplicationPanelTreeElement.js';
 import * as ApplicationComponents from './components/components.js';
-import {type ResourcesPanel} from './ResourcesPanel.js';
+import type {ResourcesPanel} from './ResourcesPanel.js';
 
 const UIStrings = {
   /**
@@ -19,7 +19,7 @@ const UIStrings = {
    * Previously known as 'Trust Tokens'.
    */
   trustTokens: 'Private state tokens',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/application/TrustTokensTreeElement.ts', UIStrings);
 export const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -28,7 +28,7 @@ export class TrustTokensTreeElement extends ApplicationPanelTreeElement {
       .LegacyWrapper<UI.Widget.Widget, ApplicationComponents.TrustTokensView.TrustTokensView>;
 
   constructor(storagePanel: ResourcesPanel) {
-    super(storagePanel, i18nString(UIStrings.trustTokens), false);
+    super(storagePanel, i18nString(UIStrings.trustTokens), false, 'private-state-tokens');
     const icon = IconButton.Icon.create('database');
     this.setLeadingIcons([icon]);
   }
@@ -44,7 +44,7 @@ export class TrustTokensTreeElement extends ApplicationPanelTreeElement {
           UI.Widget.Widget, new ApplicationComponents.TrustTokensView.TrustTokensView(), 'trust-tokens');
     }
     this.showView(this.view);
-    Host.userMetrics.panelShown(Host.UserMetrics.PanelCodes[Host.UserMetrics.PanelCodes.trust_tokens]);
+    Host.userMetrics.panelShown('trust-tokens');
     return false;
   }
 }

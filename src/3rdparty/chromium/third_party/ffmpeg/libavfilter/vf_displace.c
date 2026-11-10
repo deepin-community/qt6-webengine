@@ -21,8 +21,8 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "framesync.h"
-#include "internal.h"
 #include "video.h"
 
 enum EdgeMode {
@@ -50,11 +50,11 @@ typedef struct DisplaceContext {
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption displace_options[] = {
-    { "edge", "set edge mode", OFFSET(edge), AV_OPT_TYPE_INT, {.i64=EDGE_SMEAR}, 0, EDGE_NB-1, FLAGS, "edge" },
-    {   "blank",   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_BLANK},  0, 0, FLAGS, "edge" },
-    {   "smear",   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_SMEAR},  0, 0, FLAGS, "edge" },
-    {   "wrap" ,   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_WRAP},   0, 0, FLAGS, "edge" },
-    {   "mirror" , "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_MIRROR}, 0, 0, FLAGS, "edge" },
+    { "edge", "set edge mode", OFFSET(edge), AV_OPT_TYPE_INT, {.i64=EDGE_SMEAR}, 0, EDGE_NB-1, FLAGS, .unit = "edge" },
+    {   "blank",   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_BLANK},  0, 0, FLAGS, .unit = "edge" },
+    {   "smear",   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_SMEAR},  0, 0, FLAGS, .unit = "edge" },
+    {   "wrap" ,   "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_WRAP},   0, 0, FLAGS, .unit = "edge" },
+    {   "mirror" , "", 0, AV_OPT_TYPE_CONST, {.i64=EDGE_MIRROR}, 0, 0, FLAGS, .unit = "edge" },
     { NULL }
 };
 
@@ -318,9 +318,11 @@ static int config_input(AVFilterLink *inlink)
 
 static int config_output(AVFilterLink *outlink)
 {
+    FilterLink     *outl = ff_filter_link(outlink);
     AVFilterContext *ctx = outlink->src;
     DisplaceContext *s = ctx->priv;
     AVFilterLink *srclink = ctx->inputs[0];
+    FilterLink        *sl = ff_filter_link(srclink);
     AVFilterLink *xlink = ctx->inputs[1];
     AVFilterLink *ylink = ctx->inputs[2];
     FFFrameSyncIn *in;
@@ -343,7 +345,7 @@ static int config_output(AVFilterLink *outlink)
     outlink->w = srclink->w;
     outlink->h = srclink->h;
     outlink->sample_aspect_ratio = srclink->sample_aspect_ratio;
-    outlink->frame_rate = srclink->frame_rate;
+    outl->frame_rate = sl->frame_rate;
 
     ret = ff_framesync_init(&s->fs, ctx, 3);
     if (ret < 0)
@@ -408,17 +410,17 @@ static const AVFilterPad displace_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_displace = {
-    .name          = "displace",
-    .description   = NULL_IF_CONFIG_SMALL("Displace pixels."),
+const FFFilter ff_vf_displace = {
+    .p.name        = "displace",
+    .p.description = NULL_IF_CONFIG_SMALL("Displace pixels."),
+    .p.priv_class  = &displace_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(DisplaceContext),
     .uninit        = uninit,
     .activate      = activate,
     FILTER_INPUTS(displace_inputs),
     FILTER_OUTPUTS(displace_outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .priv_class    = &displace_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
-                     AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,
 };

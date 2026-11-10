@@ -5,6 +5,7 @@
 #include "extensions/renderer/bindings/api_event_handler.h"
 
 #include <optional>
+
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
@@ -14,12 +15,16 @@
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 #include "extensions/renderer/bindings/api_binding_test.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
+#include "extensions/renderer/bindings/api_binding_util.h"
 #include "extensions/renderer/bindings/exception_handler.h"
 #include "extensions/renderer/bindings/test_js_runner.h"
 #include "gin/arguments.h"
 #include "gin/converter.h"
 #include "gin/public/context_holder.h"
+#include "gin/public/gin_embedders.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-primitive.h"
 
 namespace extensions {
 
@@ -45,6 +50,20 @@ void AddListener(v8::Local<v8::Context> context,
   v8::Local<v8::Function> add_listener =
       FunctionFromString(context, kAddListenerFunction);
   v8::Local<v8::Value> argv[] = {event, listener};
+  RunFunction(add_listener, context, std::size(argv), argv);
+}
+
+void AddFilteredListener(v8::Local<v8::Context> context,
+                         v8::Local<v8::Function> listener,
+                         v8::Local<v8::Object> event,
+                         v8::Local<v8::Object> filter) {
+  constexpr char kAddListenerFunction[] =
+      R"((function(event, listener, filter) {
+            event.addListener(listener, filter);
+         }))";
+  v8::Local<v8::Function> add_listener =
+      FunctionFromString(context, kAddListenerFunction);
+  v8::Local<v8::Value> argv[] = {event, listener, filter};
   RunFunction(add_listener, context, std::size(argv), argv);
 }
 
@@ -229,7 +248,7 @@ TEST_F(APIEventHandlerTest, FiringEvents) {
       return 0;
     int32_t count = 0;
     EXPECT_TRUE(
-        gin::Converter<int32_t>::FromV8(context->GetIsolate(), res, &count))
+        gin::Converter<int32_t>::FromV8(v8::Isolate::GetCurrent(), res, &count))
         << name;
     return count;
   };
@@ -709,6 +728,73 @@ TEST_F(APIEventHandlerTest, TestArgumentMassagers) {
       GetStringPropertyFromObject(context->Global(), context, "eventArgs"));
 }
 
+TEST_F(APIEventHandlerTest, TestFilteredEventWithMassager) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  context->Global()
+      ->Set(
+          context,
+          v8::String::NewFromUtf8(isolate(), "dispatchCount").ToLocalChecked(),
+          v8::Integer::New(isolate(), 0))
+      .Check();
+
+  const char kEventName[] = "alpha";
+  v8::Local<v8::Object> event = handler()->CreateEventInstance(
+      kEventName, true, true, binding::kNoListenerMax, true, context);
+  ASSERT_FALSE(event.IsEmpty());
+
+  const char kArgumentMassager[] = R"(
+    (function(originalArgs, dispatch) {
+        this.originalArgs = originalArgs;
+        dispatch(['primary', 'secondary']);
+    });
+    )";
+  v8::Local<v8::Function> massager =
+      FunctionFromString(context, kArgumentMassager);
+  handler()->RegisterArgumentMassager(context, kEventName, massager);
+
+  const char kListenerFunction[] = R"(
+        (function() {
+            this.eventArgs = Array.from(arguments);
+            dispatchCount++;
+        })
+        )";
+  v8::Local<v8::Function> listener_function =
+      FunctionFromString(context, kListenerFunction);
+  ASSERT_FALSE(listener_function.IsEmpty());
+  auto filter =
+      V8ValueFromScriptSource(context, "({url: [{hostSuffix: 'test.com'}]})")
+          .As<v8::Object>();
+
+  mojom::EventFilteringInfoPtr matched_filter_info =
+      mojom::EventFilteringInfo::New();
+  matched_filter_info->url = GURL("https://test.com");
+  mojom::EventFilteringInfoPtr unmatched_filter_info =
+      mojom::EventFilteringInfo::New();
+  unmatched_filter_info->url = GURL("https://testfoo.com");
+
+  AddFilteredListener(context, listener_function, event, filter);
+
+  const char kArgs[] = "['first','second']";
+  base::Value::List event_args = ListValueFromString(kArgs);
+
+  handler()->FireEventInContext(kEventName, context, event_args,
+                                std::move(matched_filter_info));
+  handler()->FireEventInContext(kEventName, context, event_args,
+                                std::move(unmatched_filter_info));
+
+  EXPECT_EQ(
+      "[\"first\",\"second\"]",
+      GetStringPropertyFromObject(context->Global(), context, "originalArgs"));
+  EXPECT_EQ(
+      "[\"primary\",\"secondary\"]",
+      GetStringPropertyFromObject(context->Global(), context, "eventArgs"));
+  EXPECT_EQ(1, GetBaseValuePropertyFromObject(context->Global(), context,
+                                              "dispatchCount")
+                   ->GetIfInt());
+}
+
 // Test registering an argument massager for a given event and dispatching
 // asynchronously.
 TEST_F(APIEventHandlerTest, TestArgumentMassagersAsyncDispatch) {
@@ -1124,10 +1210,10 @@ TEST_F(APIEventHandlerTest,
     v8::Local<v8::Function> remove_listener_function =
         FunctionFromString(context, kRemoveListenerFunction);
     {
-      v8::Local<v8::Value> argv[] = {event, listener1};
+      v8::Local<v8::Value> args[] = {event, listener1};
       // Note: Use JSRunner() so that script suspension is respected.
       JSRunner::Get(context)->RunJSFunction(remove_listener_function, context,
-                                            std::size(argv), argv);
+                                            args);
     }
 
     // Since script has been suspended, there should still be two listeners, and
@@ -1261,6 +1347,87 @@ TEST_F(APIEventHandlerTest,
       .Times(1);
   RemoveListener(context_beta1, listener_beta1, event_beta1);
   ::testing::Mock::VerifyAndClearExpectations(&change_handler);
+}
+
+// Tests the behavior of a context getting invalidated during event dispatch.
+// Regression test for https://crbug.com/536512612.
+TEST_F(APIEventHandlerTest, ContextInvalidationDuringEventDispatch) {
+  TestJSRunner::AllowErrors allow_errors;
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+  v8::Context::Scope context_scope(context);
+
+  const char kEventName[] = "alpha";
+  v8::Local<v8::Object> event = handler()->CreateEventInstance(
+      kEventName, /*supports_filters=*/false, /*supports_lazy_listeners=*/true,
+      binding::kNoListenerMax, /*notify_on_change=*/true, context);
+  ASSERT_FALSE(event.IsEmpty());
+
+  // Craft a JS function to invalidate the context directly and expose it on
+  // the global.
+  auto invalidate_context =
+      [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+        APIEventHandler* handler =
+            static_cast<APIEventHandler*>(info.Data().As<v8::External>()->Value(
+                gin::kExternalPointerTypeTagDefaultTag));
+        handler->InvalidateContext(context);
+        binding::InvalidateContext(context);
+      };
+  v8::Local<v8::Function> invalidate_func =
+      v8::Function::New(
+          context, invalidate_context,
+          v8::External::New(isolate(), handler(),
+                            gin::kExternalPointerTypeTagDefaultTag))
+          .ToLocalChecked();
+  context->Global()
+      ->Set(context, gin::StringToSymbol(isolate(), "invalidateContext"),
+            invalidate_func)
+      .Check();
+
+  // An attacker script that defines a sneaky getter on index '0' for all
+  // objects in an effort to inject itself into our bindings. It then
+  // invalidates the context.
+  const char kAttackerScript[] = R"(
+    (function() {
+      Object.defineProperty(Object.prototype, '0', {
+        get: function() {
+          globalThis.invalidateContext();
+          return 'foo';
+        },
+        configurable: true
+      });
+    })
+  )";
+  v8::Local<v8::Function> attacker_script =
+      FunctionFromString(context, kAttackerScript);
+  RunFunction(attacker_script, context, 0, nullptr);
+
+  // An unsuspecting argument massager that accidentally triggers the attacker
+  // getter.
+  const char kArgumentMassager[] = R"(
+    (function(originalArgs, dispatch) {
+        let args = [];
+        args.length = 1;
+        dispatch(args);
+    });
+    )";
+  v8::Local<v8::Function> massager =
+      FunctionFromString(context, kArgumentMassager);
+  handler()->RegisterArgumentMassager(context, kEventName, massager);
+
+  v8::Local<v8::Function> listener_function =
+      FunctionFromString(context, "(function() {})");
+  AddListener(context, listener_function, event);
+
+  const char kArguments[] = "[{}]";
+  base::ListValue event_args = ListValueFromString(kArguments);
+  // Dispatching the event will invoke the massager, which calls `dispatch()`.
+  // `dispatch` attempts to convert `args` via `FromV8()`, which triggers the
+  // getter on index '0'. The getter calls `invalidateContext()`, invalidating
+  // the context and clearing emitters.
+  handler()->FireEventInContext(kEventName, context, event_args, nullptr);
+  EXPECT_FALSE(binding::IsContextValid(context));
 }
 
 }  // namespace extensions

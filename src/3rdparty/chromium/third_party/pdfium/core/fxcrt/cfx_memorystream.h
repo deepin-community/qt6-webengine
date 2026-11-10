@@ -10,7 +10,7 @@
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_stream.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
 class CFX_MemoryStream final : public IFX_SeekableStream {
  public:
@@ -20,11 +20,9 @@ class CFX_MemoryStream final : public IFX_SeekableStream {
   FX_FILESIZE GetSize() override;
   FX_FILESIZE GetPosition() override;
   bool IsEOF() override;
-  size_t ReadBlock(pdfium::span<uint8_t> buffer) override;
   bool ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
                          FX_FILESIZE offset) override;
-  bool WriteBlockAtOffset(pdfium::span<const uint8_t> buffer,
-                          FX_FILESIZE offset) override;
+  bool WriteBlock(pdfium::span<const uint8_t> buffer) override;
   bool Flush() override;
 
   pdfium::span<const uint8_t> GetSpan() const;
@@ -33,9 +31,9 @@ class CFX_MemoryStream final : public IFX_SeekableStream {
   CFX_MemoryStream();
   ~CFX_MemoryStream() override;
 
-  DataVector<uint8_t> m_data;
-  size_t m_nCurSize = 0;
-  size_t m_nCurPos = 0;
+  DataVector<uint8_t> data_;
+  size_t cur_size_ = 0;
+  size_t cur_pos_ = 0;
 };
 
 #endif  // CORE_FXCRT_CFX_MEMORYSTREAM_H_

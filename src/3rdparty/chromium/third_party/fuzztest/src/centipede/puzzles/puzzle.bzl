@@ -25,6 +25,9 @@ def puzzle(name):
 
     centipede_fuzz_target(
         name = name,
+        deps = [
+            "@abseil-cpp//absl/base:nullability",
+        ],
     )
 
     # We test every puzzle with two different seeds so that the result is more

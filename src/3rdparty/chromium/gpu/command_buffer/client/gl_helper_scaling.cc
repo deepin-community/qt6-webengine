@@ -7,12 +7,14 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <optional>
+#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
+#include "base/containers/heap_array.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -168,10 +170,10 @@ class ScalerImpl : public GLHelper::ScalerInterface {
 
   void SetColorWeights(int plane, const GLfloat color_weights[4]) {
     DCHECK(plane >= 0 && plane < 3);
-    color_weights_[plane][0] = color_weights[0];
-    color_weights_[plane][1] = color_weights[1];
-    color_weights_[plane][2] = color_weights[2];
-    color_weights_[plane][3] = color_weights[3];
+    UNSAFE_TODO(color_weights_[plane])[0] = color_weights[0];
+    UNSAFE_TODO(color_weights_[plane])[1] = UNSAFE_TODO(color_weights[1]);
+    UNSAFE_TODO(color_weights_[plane])[2] = UNSAFE_TODO(color_weights[2]);
+    UNSAFE_TODO(color_weights_[plane])[3] = UNSAFE_TODO(color_weights[3]);
   }
 
   void ScaleToMultipleOutputs(GLuint src_texture,
@@ -180,7 +182,7 @@ class ScalerImpl : public GLHelper::ScalerInterface {
                               GLuint dest_texture_0,
                               GLuint dest_texture_1,
                               const gfx::Rect& output_rect) override {
-    // TODO(crbug.com/775740): Do not accept non-whole-numbered offsets
+    // TODO(crbug.com/41350322): Do not accept non-whole-numbered offsets
     // until the shader programs produce the correct output for them.
     DCHECK_EQ(src_offset.x(), std::floor(src_offset.x()));
     DCHECK_EQ(src_offset.y(), std::floor(src_offset.y()));
@@ -671,7 +673,6 @@ void GLHelperScaling::ConvertScalerOpsToScalerStages(
           switch (x_ops->size()) {
             case 0:
               NOTREACHED();
-              break;
             case 1:
               if (x_ops->front().scale_factor == 3) {
                 current_shader = SHADER_BILINEAR3;
@@ -1197,10 +1198,11 @@ GLuint CompileShaderFromSource(GLES2Interface* gl,
     GLint log_length = 0;
     gl->GetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
     if (log_length) {
-      std::unique_ptr<GLchar[]> log(new GLchar[log_length]);
+      auto log = base::HeapArray<GLchar>::Uninit(log_length);
       GLsizei returned_log_length = 0;
-      gl->GetShaderInfoLog(shader, log_length, &returned_log_length, log.get());
-      LOG(ERROR) << std::string(log.get(), returned_log_length);
+      gl->GetShaderInfoLog(shader, log_length, &returned_log_length,
+                           log.data());
+      LOG(ERROR) << std::string(log.begin(), log.begin() + returned_log_length);
     }
     gl->DeleteShader(shader);
     return 0;
@@ -1337,8 +1339,10 @@ void ShaderProgram::UseProgram(const gfx::Size& src_texture_size,
     gl_->Uniform4fv(rgb_to_plane0_location_, 1, &color_weights[0][0]);
     if (rgb_to_plane1_location_ != -1) {
       DCHECK_NE(rgb_to_plane2_location_, -1);
-      gl_->Uniform4fv(rgb_to_plane1_location_, 1, &color_weights[1][0]);
-      gl_->Uniform4fv(rgb_to_plane2_location_, 1, &color_weights[2][0]);
+      gl_->Uniform4fv(rgb_to_plane1_location_, 1,
+                      &UNSAFE_TODO(color_weights[1])[0]);
+      gl_->Uniform4fv(rgb_to_plane2_location_, 1,
+                      &UNSAFE_TODO(color_weights[2])[0]);
     }
   }
 }

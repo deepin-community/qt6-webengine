@@ -27,23 +27,35 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+/* eslint-disable rulesdir/no-imperative-dom-api */
+
+import '../../ui/components/cards/cards.js';
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
-import type * as Platform from '../../core/platform/platform.js';
 import * as Root from '../../core/root/root.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
+import type * as Cards from '../../ui/components/cards/cards.js';
 import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import {html, render} from '../../ui/lit/lit.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 import {PanelUtils} from '../utils/utils.js';
 
 import * as PanelComponents from './components/components.js';
-import {type KeybindsSettingsTab} from './KeybindsSettingsTab.js';
+import type {KeybindsSettingsTab} from './KeybindsSettingsTab.js';
 import settingsScreenStyles from './settingsScreen.css.js';
 
 const UIStrings = {
+
+  /**
+   *@description Card header in Experiments settings tab that list all available unstable experiments that can be turned on or off.
+   */
+  unstableExperiments: 'Unstable experiments',
   /**
    *@description Name of the Settings view
    */
@@ -53,38 +65,25 @@ const UIStrings = {
    */
   shortcuts: 'Shortcuts',
   /**
-   *@description Text in Settings Screen of the Settings
-   */
-  preferences: 'Preferences',
-  /**
    *@description Text of button in Settings Screen of the Settings
    */
   restoreDefaultsAndReload: 'Restore defaults and reload',
   /**
-   *@description Text in Settings Screen of the Settings
+   *@description Card header in Experiments settings tab that list all available stable experiments that can be turned on or off.
    */
   experiments: 'Experiments',
   /**
    *@description Message shown in the experiments panel to warn users about any possible unstable features.
    */
-  theseExperimentsCouldBeUnstable:
-      'These experiments could be unstable or unreliable and may require you to restart DevTools.',
+  theseExperimentsCouldBeUnstable: 'Warning: These experiments could be unstable or unreliable.',
   /**
    *@description Message text content in Settings Screen of the Settings
    */
-  theseExperimentsAreParticularly: 'These experiments are particularly unstable. Enable at your own risk.',
-  /**
-   *@description Warning text content in Settings Screen of the Settings
-   */
-  warning: 'WARNING:',
+  theseExperimentsAreParticularly: 'Warning: These experiments are particularly unstable. Enable at your own risk.',
   /**
    *@description Message to display if a setting change requires a reload of DevTools
    */
-  oneOrMoreSettingsHaveChanged: 'One or more settings have changed which requires a reload to take effect.',
-  /**
-   * @description Label for a filter text input that controls which experiments are shown.
-   */
-  filterExperimentsLabel: 'Filter',
+  oneOrMoreSettingsHaveChanged: 'One or more settings have changed which requires a reload to take effect',
   /**
    * @description Warning text shown when the user has entered text to filter the
    * list of experiments, but no experiments match the filter.
@@ -98,11 +97,22 @@ const UIStrings = {
    *@description Text that is usually a hyperlink to a feedback form
    */
   sendFeedback: 'Send feedback',
-};
+  /**
+   *@description Placeholder text in search bar
+   */
+  searchExperiments: 'Search experiments',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/settings/SettingsScreen.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
 let settingsScreenInstance: SettingsScreen;
+
+function createSettingsCard(heading: Common.UIString.LocalizedString, ...content: HTMLElement[]): Cards.Card.Card {
+  const card = document.createElement('devtools-card');
+  card.heading = heading;
+  card.append(...content);
+  return card;
+}
 
 export class SettingsScreen extends UI.Widget.VBox implements UI.View.ViewLocationResolver {
   private readonly tabbedLocation: UI.View.TabbedViewLocation;
@@ -110,18 +120,16 @@ export class SettingsScreen extends UI.Widget.VBox implements UI.View.ViewLocati
   private reportTabOnReveal: boolean;
 
   private constructor() {
-    super(true);
-
-    this.element.setAttribute('jslog', `${VisualLogging.panel().context('settings')}`);
+    super({useShadowDom: true});
+    this.registerRequiredCSS(settingsScreenStyles);
 
     this.contentElement.classList.add('settings-window-main');
     this.contentElement.classList.add('vbox');
 
     const settingsLabelElement = document.createElement('div');
+    settingsLabelElement.classList.add('settings-window-label-element');
     const settingsTitleElement =
-        UI.Utils
-            .createShadowRootWithCoreStyles(
-                settingsLabelElement, {cssFile: [settingsScreenStyles], delegatesFocus: undefined})
+        UI.UIUtils.createShadowRootWithCoreStyles(settingsLabelElement, {cssFile: settingsScreenStyles})
             .createChild('div', 'settings-window-title');
 
     UI.ARIAUtils.markAsHeading(settingsTitleElement, 1);
@@ -130,8 +138,8 @@ export class SettingsScreen extends UI.Widget.VBox implements UI.View.ViewLocati
     this.tabbedLocation = UI.ViewManager.ViewManager.instance().createTabbedLocation(
         () => SettingsScreen.revealSettingsScreen(), 'settings-view');
     const tabbedPane = this.tabbedLocation.tabbedPane();
-    tabbedPane.registerCSSFiles([settingsScreenStyles]);
-    tabbedPane.leftToolbar().appendToolbarItem(new UI.Toolbar.ToolbarItem(settingsLabelElement));
+    tabbedPane.registerRequiredCSS(settingsScreenStyles);
+    tabbedPane.headerElement().prepend(settingsLabelElement);
     tabbedPane.setShrinkableTabs(false);
     tabbedPane.makeVerticalTabLayout();
     const keyBindsView = UI.ViewManager.ViewManager.instance().view('keybinds');
@@ -162,20 +170,18 @@ export class SettingsScreen extends UI.Widget.VBox implements UI.View.ViewLocati
     }
 
     settingsScreen.reportTabOnReveal = true;
-    const dialog = new UI.Dialog.Dialog();
+    const dialog = new UI.Dialog.Dialog('settings');
+    dialog.contentElement.removeAttribute('aria-modal');
     dialog.contentElement.tabIndex = -1;
     dialog.addCloseButton();
     dialog.setOutsideClickCallback(() => {});
-    dialog.setPointerEventsBehavior(UI.GlassPane.PointerEventsBehavior.PierceGlassPane);
-    dialog.setOutsideTabIndexBehavior(UI.Dialog.OutsideTabIndexBehavior.PreserveMainViewTabIndex);
+    dialog.setPointerEventsBehavior(UI.GlassPane.PointerEventsBehavior.PIERCE_GLASS_PANE);
+    dialog.setOutsideTabIndexBehavior(UI.Dialog.OutsideTabIndexBehavior.PRESERVE_MAIN_VIEW_TAB_INDEX);
     settingsScreen.show(dialog.contentElement);
     dialog.setEscapeKeyCallback(settingsScreen.onEscapeKeyPressed.bind(settingsScreen));
-    dialog.setMarginBehavior(UI.GlassPane.MarginBehavior.NoMargin);
-    // UI.Dialog extends GlassPane and overrides the `show` method with a wider
-    // accepted type. However, TypeScript uses the supertype declaration to
-    // determine the full type, which requires a `!Document`.
-    // @ts-ignore
+    dialog.setMarginBehavior(UI.GlassPane.MarginBehavior.NO_MARGIN);
     dialog.show();
+    dialog.contentElement.focus();
 
     return settingsScreen;
   }
@@ -233,51 +239,29 @@ export class SettingsScreen extends UI.Widget.VBox implements UI.View.ViewLocati
       this.keybindsTab.onEscapeKeyPressed(event);
     }
   }
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([settingsScreenStyles]);
-  }
 }
 
-abstract class SettingsTab extends UI.Widget.VBox {
-  containerElement: HTMLElement;
-  constructor(name: string, id?: string) {
-    super();
-    this.element.classList.add('settings-tab-container');
-    if (id) {
-      this.element.id = id;
-    }
-    const header = this.element.createChild('header');
-    UI.UIUtils.createTextChild(header.createChild('h1'), name);
-    this.containerElement = this.element.createChild('div', 'settings-container-wrapper')
-                                .createChild('div', 'settings-tab settings-content settings-container');
-  }
-
-  protected appendSection(name?: string): HTMLElement {
-    const block = this.containerElement.createChild('div', 'settings-block');
-    if (name) {
-      UI.ARIAUtils.markAsGroup(block);
-      const title = block.createChild('div', 'settings-section-title');
-      title.textContent = name;
-      UI.ARIAUtils.markAsHeading(title, 2);
-      UI.ARIAUtils.setLabel(block, name);
-    }
-    return block;
-  }
-
-  abstract highlightObject(_object: Object): void;
+interface SettingsTab {
+  highlightObject(object: Object): void;
 }
 
-export class GenericSettingsTab extends SettingsTab {
-  private readonly syncSection: PanelComponents.SyncSection.SyncSection = new PanelComponents.SyncSection.SyncSection();
+export class GenericSettingsTab extends UI.Widget.VBox implements SettingsTab {
+  private readonly syncSection = new PanelComponents.SyncSection.SyncSection();
   private readonly settingToControl = new Map<Common.Settings.Setting<unknown>, HTMLElement>();
+  private readonly containerElement: HTMLElement;
+  #updateSyncSectionTimerId = -1;
 
   constructor() {
-    super(i18nString(UIStrings.preferences), 'preferences-tab-content');
+    super({jslog: `${VisualLogging.pane('preferences')}`});
+    this.element.classList.add('settings-tab-container');
+    this.element.id = 'preferences-tab-content';
+    this.containerElement =
+        this.contentElement.createChild('div', 'settings-card-container-wrapper').createChild('div');
 
-    this.element.setAttribute('jslog', `${VisualLogging.pane().context('preferences')}`);
+    this.containerElement.classList.add('settings-multicolumn-card-container');
 
-    // GRID, MOBILE, EMULATION, and RENDERING are intentionally excluded from this list.
+    // AI, GRID, MOBILE, EMULATION, and RENDERING are intentionally excluded from this list.
+    // AI settings are displayed in their own tab.
     const explicitSectionOrder: Common.Settings.SettingCategory[] = [
       Common.Settings.SettingCategory.NONE,
       Common.Settings.SettingCategory.APPEARANCE,
@@ -295,7 +279,7 @@ export class GenericSettingsTab extends SettingsTab {
     ];
 
     // Some settings define their initial ordering.
-    const preRegisteredSettings = Common.Settings.getRegisteredSettings().sort(
+    const preRegisteredSettings = Common.Settings.Settings.instance().getRegisteredSettings().sort(
         (firstSetting, secondSetting) => {
           if (firstSetting.order && secondSetting.order) {
             return (firstSetting.order - secondSetting.order);
@@ -319,7 +303,7 @@ export class GenericSettingsTab extends SettingsTab {
     const restoreAndReloadButton = UI.UIUtils.createTextButton(
         i18nString(UIStrings.restoreDefaultsAndReload), restoreAndReload,
         {jslogContext: 'settings.restore-defaults-and-reload'});
-    this.appendSection().appendChild(restoreAndReloadButton);
+    this.containerElement.appendChild(restoreAndReloadButton);
 
     function restoreAndReload(): void {
       Common.Settings.Settings.instance().clearAll();
@@ -328,10 +312,7 @@ export class GenericSettingsTab extends SettingsTab {
   }
 
   static isSettingVisible(setting: Common.Settings.SettingRegistration): boolean {
-    const titleMac = setting.titleMac && setting.titleMac();
-    const defaultTitle = setting.title && setting.title();
-    const title = titleMac || defaultTitle;
-    return Boolean(title && setting.category);
+    return Boolean(setting.title?.()) && Boolean(setting.category);
   }
 
   override wasShown(): void {
@@ -341,16 +322,27 @@ export class GenericSettingsTab extends SettingsTab {
   }
 
   override willHide(): void {
+    if (this.#updateSyncSectionTimerId > 0) {
+      window.clearTimeout(this.#updateSyncSectionTimerId);
+      this.#updateSyncSectionTimerId = -1;
+    }
     super.willHide();
     UI.Context.Context.instance().setFlavor(GenericSettingsTab, null);
   }
 
   private updateSyncSection(): void {
+    if (this.#updateSyncSectionTimerId > 0) {
+      window.clearTimeout(this.#updateSyncSectionTimerId);
+      this.#updateSyncSectionTimerId = -1;
+    }
     Host.InspectorFrontendHost.InspectorFrontendHostInstance.getSyncInformation(syncInfo => {
       this.syncSection.data = {
         syncInfo,
-        syncSetting: Common.Settings.moduleSetting('sync_preferences') as Common.Settings.Setting<boolean>,
+        syncSetting: Common.Settings.moduleSetting('sync-preferences') as Common.Settings.Setting<boolean>,
       };
+      if (!syncInfo.isSyncActive || !syncInfo.arePreferencesSynced) {
+        this.#updateSyncSectionTimerId = window.setTimeout(this.updateSyncSection.bind(this), 500);
+      }
     });
   }
 
@@ -359,8 +351,7 @@ export class GenericSettingsTab extends SettingsTab {
     const settingUI = Components.Linkifier.LinkHandlerSettingUI.instance() as UI.SettingsUI.SettingUI;
     const element = settingUI.settingElement();
     if (element) {
-      const sectionElement = this.createStandardSectionElement(sectionName, settings);
-      sectionElement.appendChild(element);
+      this.createStandardSectionElement(sectionName, settings, element);
     }
   }
 
@@ -370,16 +361,20 @@ export class GenericSettingsTab extends SettingsTab {
     if (category === Common.Settings.SettingCategory.EXTENSIONS) {
       this.createExtensionSection(settings);
     } else if (category === Common.Settings.SettingCategory.SYNC && settings.length > 0) {
-      this.containerElement.appendChild(this.syncSection);
+      const syncCard = createSettingsCard(
+          Common.SettingRegistration.getLocalizedSettingsCategory(Common.SettingRegistration.SettingCategory.SYNC),
+          this.syncSection);
+      this.containerElement.appendChild(syncCard);
     } else if (settings.length > 0) {
       this.createStandardSectionElement(category, settings);
     }
   }
 
   private createStandardSectionElement(
-      category: Common.Settings.SettingCategory, settings: Common.Settings.SettingRegistration[]): Element {
+      category: Common.Settings.SettingCategory, settings: Common.Settings.SettingRegistration[],
+      content?: Element): void {
     const uiSectionName = Common.Settings.getLocalizedSettingsCategory(category);
-    const sectionElement = this.appendSection(uiSectionName);
+    const sectionElement = document.createElement('div');
     for (const settingRegistration of settings) {
       const setting = Common.Settings.Settings.instance().moduleSetting(settingRegistration.settingName);
       const settingControl = UI.SettingsUI.createControlForSetting(setting);
@@ -388,7 +383,11 @@ export class GenericSettingsTab extends SettingsTab {
         sectionElement.appendChild(settingControl);
       }
     }
-    return sectionElement;
+    if (content) {
+      sectionElement.appendChild(content);
+    }
+    const card = createSettingsCard(uiSectionName, sectionElement);
+    this.containerElement.appendChild(card);
   }
 
   highlightObject(setting: Object): void {
@@ -401,29 +400,38 @@ export class GenericSettingsTab extends SettingsTab {
   }
 }
 
-export class ExperimentsSettingsTab extends SettingsTab {
-  #experimentsSection: HTMLElement|undefined;
-  #unstableExperimentsSection: HTMLElement|undefined;
-  #inputElement: HTMLInputElement;
+export class ExperimentsSettingsTab extends UI.Widget.VBox implements SettingsTab {
+  #experimentsSection: Cards.Card.Card|undefined;
+  #unstableExperimentsSection: Cards.Card.Card|undefined;
   private readonly experimentToControl = new Map<Root.Runtime.Experiment, HTMLElement>();
+  private readonly containerElement: HTMLElement;
 
   constructor() {
-    super(i18nString(UIStrings.experiments), 'experiments-tab-content');
-    const filterSection = this.appendSection();
+    super({jslog: `${VisualLogging.pane('experiments')}`});
+    this.element.classList.add('settings-tab-container');
+    this.element.id = 'experiments-tab-content';
+    this.containerElement =
+        this.contentElement.createChild('div', 'settings-card-container-wrapper').createChild('div');
+    this.containerElement.classList.add('settings-card-container');
+
+    const filterSection = this.containerElement.createChild('div');
     filterSection.classList.add('experiments-filter');
+    render(
+        html`
+        <devtools-toolbar>
+          <devtools-toolbar-input type="filter" placeholder=${
+            i18nString(UIStrings.searchExperiments)} style="flex-grow:1" @change=${
+            this.#onFilterChanged.bind(this)}></devtools-toolbar-input>
+        </devtools-toolbar>
+    `,
+        filterSection);
+    this.renderExperiments('');
+    const filter = filterSection.querySelector('devtools-toolbar-input') as HTMLElement;
+    this.setDefaultFocusedElement(filter);
+  }
 
-    this.element.setAttribute('jslog', `${VisualLogging.pane().context('experiments')}`);
-
-    const labelElement = filterSection.createChild('label');
-    labelElement.textContent = i18nString(UIStrings.filterExperimentsLabel);
-    this.#inputElement = UI.UIUtils.createInput('', 'text', 'experiments-filter');
-    UI.ARIAUtils.bindLabelToControl(labelElement, this.#inputElement);
-    filterSection.appendChild(this.#inputElement);
-    this.#inputElement.addEventListener(
-        'input', () => this.renderExperiments(this.#inputElement.value.toLowerCase()), false);
-    this.setDefaultFocusedElement(this.#inputElement);
-
-    this.setFilter('');
+  #onFilterChanged(e: CustomEvent<string>): void {
+    this.renderExperiments(e.detail.toLowerCase());
   }
 
   private renderExperiments(filterText: string): void {
@@ -438,50 +446,60 @@ export class ExperimentsSettingsTab extends SettingsTab {
     const unstableExperiments = experiments.filter(e => e.unstable && e.title.toLowerCase().includes(filterText));
     const stableExperiments = experiments.filter(e => !e.unstable && e.title.toLowerCase().includes(filterText));
     if (stableExperiments.length) {
-      this.#experimentsSection = this.appendSection();
+      const experimentsBlock = document.createElement('div');
+      experimentsBlock.classList.add('settings-experiments-block');
       const warningMessage = i18nString(UIStrings.theseExperimentsCouldBeUnstable);
-      this.#experimentsSection.appendChild(this.createExperimentsWarningSubsection(warningMessage));
+      const warningSection = this.createExperimentsWarningSubsection(warningMessage);
       for (const experiment of stableExperiments) {
-        this.#experimentsSection.appendChild(this.createExperimentCheckbox(experiment));
+        experimentsBlock.appendChild(this.createExperimentCheckbox(experiment));
       }
+      this.#experimentsSection =
+          createSettingsCard(i18nString(UIStrings.experiments), warningSection, experimentsBlock);
+      this.containerElement.appendChild(this.#experimentsSection);
     }
     if (unstableExperiments.length) {
-      this.#unstableExperimentsSection = this.appendSection();
+      const experimentsBlock = document.createElement('div');
+      experimentsBlock.classList.add('settings-experiments-block');
       const warningMessage = i18nString(UIStrings.theseExperimentsAreParticularly);
-      this.#unstableExperimentsSection.appendChild(this.createExperimentsWarningSubsection(warningMessage));
       for (const experiment of unstableExperiments) {
-        this.#unstableExperimentsSection.appendChild(this.createExperimentCheckbox(experiment));
+        experimentsBlock.appendChild(this.createExperimentCheckbox(experiment));
       }
+      this.#unstableExperimentsSection = createSettingsCard(
+          i18nString(UIStrings.unstableExperiments), this.createExperimentsWarningSubsection(warningMessage),
+          experimentsBlock);
+      this.containerElement.appendChild(this.#unstableExperimentsSection);
     }
     if (!stableExperiments.length && !unstableExperiments.length) {
-      this.#experimentsSection = this.appendSection();
-      const warning = this.#experimentsSection.createChild('span');
+      const warning = document.createElement('span');
       warning.textContent = i18nString(UIStrings.noResults);
+      UI.ARIAUtils.LiveAnnouncer.alert(warning.textContent);
+      this.#experimentsSection = createSettingsCard(i18nString(UIStrings.experiments), warning);
+      this.containerElement.appendChild(this.#experimentsSection);
     }
   }
 
-  private createExperimentsWarningSubsection(warningMessage: string): Element {
+  private createExperimentsWarningSubsection(warningMessage: string): HTMLElement {
     const subsection = document.createElement('div');
-    const warning = subsection.createChild('span', 'settings-experiments-warning-subsection-warning');
-    warning.textContent = i18nString(UIStrings.warning);
-    UI.UIUtils.createTextChild(subsection, ' ');
-    const message = subsection.createChild('span', 'settings-experiments-warning-subsection-message');
-    message.textContent = warningMessage;
+    subsection.classList.add('experiments-warning-subsection');
+    const warningIcon = IconButton.Icon.create('warning');
+    subsection.appendChild(warningIcon);
+    const warning = subsection.createChild('span');
+    warning.textContent = warningMessage;
     return subsection;
   }
 
   private createExperimentCheckbox(experiment: Root.Runtime.Experiment): HTMLParagraphElement {
-    const label = UI.UIUtils.CheckboxLabel.create(experiment.title, experiment.isEnabled(), undefined, experiment.name);
-    label.classList.add('experiment-label');
-    const input = label.checkboxElement;
-    input.name = experiment.name;
+    const checkbox =
+        UI.UIUtils.CheckboxLabel.createWithStringLiteral(experiment.title, experiment.isEnabled(), experiment.name);
+    checkbox.classList.add('experiment-label');
+    checkbox.name = experiment.name;
     function listener(): void {
-      experiment.setEnabled(input.checked);
+      experiment.setEnabled(checkbox.checked);
       Host.userMetrics.experimentChanged(experiment.name, experiment.isEnabled());
       UI.InspectorView.InspectorView.instance().displayReloadRequiredWarning(
           i18nString(UIStrings.oneOrMoreSettingsHaveChanged));
     }
-    input.addEventListener('click', listener, false);
+    checkbox.addEventListener('click', listener, false);
 
     const p = document.createElement('p');
     this.experimentToControl.set(experiment, p);
@@ -489,25 +507,27 @@ export class ExperimentsSettingsTab extends SettingsTab {
     if (experiment.unstable && !experiment.isEnabled()) {
       p.classList.add('settings-experiment-unstable');
     }
-    p.appendChild(label);
+    p.appendChild(checkbox);
 
-    if (experiment.docLink) {
-      const link = UI.XLink.XLink.create(
-          experiment.docLink, undefined, undefined, undefined, `${experiment.name}:documentation`);
-      link.textContent = '';
-      link.setAttribute('aria-label', i18nString(UIStrings.learnMore));
+    const experimentLink = experiment.docLink;
+    if (experimentLink) {
+      const linkButton = new Buttons.Button.Button();
+      linkButton.data = {
+        iconName: 'help',
+        variant: Buttons.Button.Variant.ICON,
+        size: Buttons.Button.Size.SMALL,
+        jslogContext: `${experiment.name}-documentation`,
+        title: i18nString(UIStrings.learnMore),
+      };
+      linkButton.addEventListener('click', () => UI.UIUtils.openInNewTab(experimentLink));
+      linkButton.classList.add('link-icon');
 
-      const linkIcon = new IconButton.Icon.Icon();
-      linkIcon.data = {iconName: 'help', color: 'var(--icon-default)', width: '16px', height: '16px'};
-      linkIcon.classList.add('link-icon');
-      link.prepend(linkIcon);
-
-      p.appendChild(link);
+      p.appendChild(linkButton);
     }
 
     if (experiment.feedbackLink) {
       const link = UI.XLink.XLink.create(
-          experiment.feedbackLink, undefined, undefined, undefined, `${experiment.name}:feedback`);
+          experiment.feedbackLink, undefined, undefined, undefined, `${experiment.name}-feedback`);
       link.textContent = i18nString(UIStrings.sendFeedback);
       link.classList.add('feedback-link');
 
@@ -526,11 +546,6 @@ export class ExperimentsSettingsTab extends SettingsTab {
     }
   }
 
-  setFilter(filterText: string): void {
-    this.#inputElement.value = filterText;
-    this.#inputElement.dispatchEvent(new Event('input', {'bubbles': true, 'cancelable': true}));
-  }
-
   override wasShown(): void {
     UI.Context.Context.instance().setFlavor(ExperimentsSettingsTab, this);
     super.wasShown();
@@ -543,14 +558,13 @@ export class ExperimentsSettingsTab extends SettingsTab {
 }
 
 export class ActionDelegate implements UI.ActionRegistration.ActionDelegate {
-  handleAction(context: UI.Context.Context, actionId: string): boolean {
+  handleAction(_context: UI.Context.Context, actionId: string): boolean {
     switch (actionId) {
       case 'settings.show':
         void SettingsScreen.showSettingsScreen({focusTabHeader: true} as ShowSettingsScreenOptions);
         return true;
       case 'settings.documentation':
-        Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(UI.UIUtils.addReferrerToURL(
-            'https://developer.chrome.com/docs/devtools/' as Platform.DevToolsPath.UrlString));
+        UI.UIUtils.openInNewTab('https://developer.chrome.com/docs/devtools/');
         return true;
       case 'settings.shortcuts':
         void SettingsScreen.showSettingsScreen({name: 'keybinds', focusTabHeader: true});
@@ -572,7 +586,7 @@ export class Revealer implements Common.Revealer.Revealer<Root.Runtime.Experimen
       return;
     }
 
-    for (const settingRegistration of Common.Settings.getRegisteredSettings()) {
+    for (const settingRegistration of Common.Settings.Settings.instance().getRegisteredSettings()) {
       if (!GenericSettingsTab.isSettingVisible(settingRegistration)) {
         continue;
       }
@@ -599,7 +613,7 @@ export class Revealer implements Common.Revealer.Revealer<Root.Runtime.Experimen
         Host.InspectorFrontendHost.InspectorFrontendHostInstance.bringToFront();
         await SettingsScreen.showSettingsScreen({name: id});
         const widget = await view.widget();
-        if (widget instanceof SettingsTab) {
+        if ('highlightObject' in widget && typeof widget.highlightObject === 'function') {
           widget.highlightObject(object);
         }
         return;

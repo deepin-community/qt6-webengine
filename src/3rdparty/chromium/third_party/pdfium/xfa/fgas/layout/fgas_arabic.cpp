@@ -6,6 +6,7 @@
 
 #include "xfa/fgas/layout/fgas_arabic.h"
 
+#include <array>
 #include <iterator>
 
 #include "core/fxcrt/fx_unicode.h"
@@ -25,7 +26,7 @@ struct FX_ARAALEF {
   uint16_t wIsolated;
 };
 
-constexpr FX_ARBFORMTABLE kFormTable[] = {
+constexpr auto kFormTable = std::to_array<const FX_ARBFORMTABLE>({
     {0xFE81, 0xFE82, 0xFE81, 0xFE82}, {0xFE83, 0xFE84, 0xFE83, 0xFE84},
     {0xFE85, 0xFE86, 0xFE85, 0xFE86}, {0xFE87, 0xFE88, 0xFE87, 0xFE88},
     {0xFE89, 0xFE8A, 0xFE8B, 0xFE8C}, {0xFE8D, 0xFE8E, 0xFE8D, 0xFE8E},
@@ -116,7 +117,7 @@ constexpr FX_ARBFORMTABLE kFormTable[] = {
     {0xFBE4, 0xFBE5, 0xFBE6, 0xFBE7}, {0x06D1, 0x06D1, 0x06D1, 0x06D1},
     {0xFBAE, 0xFBAF, 0xFBAE, 0xFBAF}, {0xFBB0, 0xFBB1, 0xFBB0, 0xFBB1},
     {0x06D4, 0x06D4, 0x06D4, 0x06D4}, {0x06D5, 0x06D5, 0x06D5, 0x06D5},
-};
+});
 constexpr uint16_t kFirstFormTableEntry = 0x0622;
 constexpr uint16_t kLastFormTableEntry =
     kFirstFormTableEntry + std::size(kFormTable) - 1;
@@ -128,14 +129,21 @@ constexpr FX_ARAALEF kAlefTable[] = {
     {0x0627, 0xFEFB},
 };
 
-constexpr uint16_t kShaddaTable[] = {0xFC5E, 0xFC5F, 0xFC60, 0xFC61, 0xFC62};
+constexpr auto kShaddaTable = std::to_array<const uint16_t>({
+    0xFC5E,
+    0xFC5F,
+    0xFC60,
+    0xFC61,
+    0xFC62,
+});
 constexpr uint16_t kFirstShaddaTableEntry = 0x064c;
 constexpr uint16_t kLastShaddaTableEntry =
     kFirstShaddaTableEntry + std::size(kShaddaTable) - 1;
 
 const FX_ARBFORMTABLE* GetArabicFormTable(wchar_t unicode) {
-  if (unicode < kFirstFormTableEntry || unicode > kLastFormTableEntry)
+  if (unicode < kFirstFormTableEntry || unicode > kLastFormTableEntry) {
     return nullptr;
+  }
 
   return &kFormTable[unicode - kFirstFormTableEntry];
 }
@@ -152,53 +160,58 @@ const FX_ARBFORMTABLE* ParseChar(const CFGAS_Char* pTC,
   *eType = pTC->GetCharType();
   *wChar = static_cast<wchar_t>(pTC->char_code());
   const FX_ARBFORMTABLE* pFT = GetArabicFormTable(*wChar);
-  if (!pFT || *eType >= FX_CHARTYPE::kArabicNormal)
+  if (!pFT || *eType >= FX_CHARTYPE::kArabicNormal) {
     *eType = FX_CHARTYPE::kUnknown;
+  }
 
   return pFT;
 }
 
 wchar_t GetArabicFromAlefTable(wchar_t alef) {
   for (const FX_ARAALEF& v : kAlefTable) {
-    if (v.wAlef == alef)
+    if (v.wAlef == alef) {
       return v.wIsolated;
+    }
   }
   return alef;
 }
 
 }  // namespace
 
-namespace pdfium::arabic {
+namespace pdfium {
 
-wchar_t GetFormChar(wchar_t wch, wchar_t prev, wchar_t next) {
+wchar_t GetArabicFormChar(wchar_t wch, wchar_t prev, wchar_t next) {
   CFGAS_Char c(wch);
   CFGAS_Char p(prev);
   CFGAS_Char n(next);
-  return GetFormChar(&c, &p, &n);
+  return GetArabicFormChar(&c, &p, &n);
 }
 
-wchar_t GetFormChar(const CFGAS_Char* cur,
-                    const CFGAS_Char* prev,
-                    const CFGAS_Char* next) {
+wchar_t GetArabicFormChar(const CFGAS_Char* cur,
+                          const CFGAS_Char* prev,
+                          const CFGAS_Char* next) {
   FX_CHARTYPE eCur;
   wchar_t wCur;
   const FX_ARBFORMTABLE* ft = ParseChar(cur, &wCur, &eCur);
-  if (eCur < FX_CHARTYPE::kArabicAlef || eCur >= FX_CHARTYPE::kArabicNormal)
+  if (eCur < FX_CHARTYPE::kArabicAlef || eCur >= FX_CHARTYPE::kArabicNormal) {
     return wCur;
+  }
 
   FX_CHARTYPE ePrev;
   wchar_t wPrev;
   ParseChar(prev, &wPrev, &ePrev);
-  if (wPrev == kArabicLetterLam && eCur == FX_CHARTYPE::kArabicAlef)
+  if (wPrev == kArabicLetterLam && eCur == FX_CHARTYPE::kArabicAlef) {
     return pdfium::unicode::kZeroWidthNoBreakSpace;
+  }
 
   FX_CHARTYPE eNext;
   wchar_t wNext;
   ParseChar(next, &wNext, &eNext);
   bool bAlef = (eNext == FX_CHARTYPE::kArabicAlef && wCur == kArabicLetterLam);
   if (ePrev < FX_CHARTYPE::kArabicAlef) {
-    if (bAlef)
+    if (bAlef) {
       return GetArabicFromAlefTable(wNext);
+    }
     return (eNext < FX_CHARTYPE::kArabicAlef) ? ft->wIsolated : ft->wInitial;
   }
 
@@ -207,16 +220,19 @@ wchar_t GetFormChar(const CFGAS_Char* cur,
     return (ePrev != FX_CHARTYPE::kArabicDistortion) ? wCur : ++wCur;
   }
 
-  if (ePrev == FX_CHARTYPE::kArabicAlef || ePrev == FX_CHARTYPE::kArabicSpecial)
+  if (ePrev == FX_CHARTYPE::kArabicAlef ||
+      ePrev == FX_CHARTYPE::kArabicSpecial) {
     return (eNext < FX_CHARTYPE::kArabicAlef) ? ft->wIsolated : ft->wInitial;
+  }
   return (eNext < FX_CHARTYPE::kArabicAlef) ? ft->wFinal : ft->wMedial;
 }
 
-absl::optional<wchar_t> GetArabicFromShaddaTable(wchar_t shadda) {
-  if (shadda < kFirstShaddaTableEntry || shadda > kLastShaddaTableEntry)
-    return absl::nullopt;
+std::optional<wchar_t> GetArabicFromShaddaTable(wchar_t shadda) {
+  if (shadda < kFirstShaddaTableEntry || shadda > kLastShaddaTableEntry) {
+    return std::nullopt;
+  }
 
   return kShaddaTable[shadda - kFirstShaddaTableEntry];
 }
 
-}  // namespace pdfium::arabic
+}  // namespace pdfium

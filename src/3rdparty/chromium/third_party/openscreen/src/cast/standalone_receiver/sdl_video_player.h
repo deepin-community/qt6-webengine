@@ -8,7 +8,7 @@
 #include <string>
 
 #include "cast/standalone_receiver/sdl_player_base.h"
-#include "cast/streaming/constants.h"
+#include "cast/streaming/public/constants.h"
 
 namespace openscreen::cast {
 
@@ -16,29 +16,29 @@ namespace openscreen::cast {
 // SDL_Renderer.
 class SDLVideoPlayer final : public SDLPlayerBase {
  public:
-  // |error_callback| is run only if a fatal error occurs, at which point the
-  // player has halted and set |error_status()|.
+  // `error_callback` is run only if a fatal error occurs, at which point the
+  // player has halted and set `error_status()`.
   SDLVideoPlayer(ClockNowFunctionPtr now_function,
                  TaskRunner& task_runner,
-                 Receiver* receiver,
+                 Receiver& receiver,
                  VideoCodec codec_name,
-                 SDL_Renderer* renderer,
+                 SDL_Renderer& renderer,
                  std::function<void()> error_callback);
 
   ~SDLVideoPlayer() final;
 
  private:
   // Renders the "blue splash" (if waiting) or "red splash" (on error), or
-  // otherwise re-renders |frame|; scheduling presentation at an "idle FPS"
+  // otherwise re-renders `frame`; scheduling presentation at an "idle FPS"
   // rate.
   bool RenderWhileIdle(const SDLPlayerBase::PresentableFrame* frame) final;
 
-  // Uploads the decoded picture in |frame| to a SDL texture and draws it using
-  // the SDL |renderer_|.
+  // Uploads the decoded picture in `frame` to a SDL texture and draws it using
+  // the SDL `renderer_`.
   ErrorOr<Clock::time_point> RenderNextFrame(
       const SDLPlayerBase::PresentableFrame& frame) final;
 
-  // Makes whatever is currently drawn to the SDL |renderer_| be presented
+  // Makes whatever is currently drawn to the SDL `renderer_` be presented
   // on-screen.
   void Present() final;
 
@@ -46,7 +46,7 @@ class SDLVideoPlayer final : public SDLPlayerBase {
   static uint32_t GetSDLPixelFormat(const AVFrame& picture);
 
   // The SDL renderer drawn to.
-  SDL_Renderer* const renderer_;
+  SDL_Renderer& renderer_;
 
   // The SDL texture to which the current frame's image is uploaded for
   // accelerated 2D rendering.

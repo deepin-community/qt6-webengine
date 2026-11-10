@@ -5,7 +5,8 @@
 #include "third_party/blink/renderer/modules/printing/web_printing_manager.h"
 
 #include "printing/buildflags/buildflags.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
@@ -29,7 +30,7 @@ bool CheckContextAndPermissions(ScriptState* script_state,
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   if (!execution_context->IsIsolatedContext() ||
       !execution_context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kCrossOriginIsolated)) {
+          network::mojom::PermissionsPolicyFeature::kCrossOriginIsolated)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
         "Frame is not sufficiently isolated to use Web Printing.");
@@ -37,7 +38,7 @@ bool CheckContextAndPermissions(ScriptState* script_state,
   }
 
   if (!execution_context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kWebPrinting)) {
+          network::mojom::PermissionsPolicyFeature::kWebPrinting)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
         "Permissions-Policy: web-printing is disabled.");
@@ -66,21 +67,23 @@ WebPrintingManager::WebPrintingManager(NavigatorBase& navigator)
     : Supplement<NavigatorBase>(navigator),
       printing_service_(navigator.GetExecutionContext()) {}
 
-ScriptPromise WebPrintingManager::getPrinters(ScriptState* script_state,
-                                              ExceptionState& exception_state) {
+ScriptPromise<IDLSequence<WebPrinter>> WebPrintingManager::getPrinters(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
   if (!CheckContextAndPermissions(script_state, exception_state)) {
-    return ScriptPromise();
+    return ScriptPromise<IDLSequence<WebPrinter>>();
   }
 
   auto* service = GetPrintingService();
   if (!service) {
     exception_state.ThrowSecurityError(
         "WebPrinting API is not accessible in this configuration.");
-    return ScriptPromise();
+    return ScriptPromise<IDLSequence<WebPrinter>>();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
-      script_state, exception_state.GetContext());
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<IDLSequence<WebPrinter>>>(
+          script_state, exception_state.GetContext());
   service->GetPrinters(resolver->WrapCallbackInScriptScope(WTF::BindOnce(
       &WebPrintingManager::OnPrintersRetrieved, WrapPersistent(this))));
   return resolver->Promise();
@@ -107,10 +110,20 @@ mojom::blink::WebPrintingService* WebPrintingManager::GetPrintingService() {
 }
 
 void WebPrintingManager::OnPrintersRetrieved(
-    ScriptPromiseResolver* resolver,
-    WTF::Vector<mojom::blink::WebPrinterInfoPtr> printer_infos) {
+    ScriptPromiseResolver<IDLSequence<WebPrinter>>* resolver,
+    mojom::blink::GetPrintersResultPtr result) {
+  if (result->is_error()) {
+    switch (result->get_error()) {
+      case mojom::blink::GetPrintersError::kUserPermissionDenied:
+        resolver->RejectWithDOMException(
+            DOMExceptionCode::kNotAllowedError,
+            "User denied access to Web Printing API.");
+        break;
+    }
+    return;
+  }
   HeapVector<Member<WebPrinter>> printers;
-  for (auto& printer_info : printer_infos) {
+  for (auto& printer_info : result->get_printers()) {
     printers.push_back(MakeGarbageCollected<WebPrinter>(
         GetSupplementable()->GetExecutionContext(), std::move(printer_info)));
   }

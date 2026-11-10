@@ -17,6 +17,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/trust_token_http_headers.h"
 #include "services/network/public/cpp/trust_token_parameterization.h"
+#include "services/network/public/mojom/network_context_client.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom-shared.h"
 #include "services/network/trust_tokens/boringssl_trust_token_issuance_cryptographer.h"
 #include "services/network/trust_tokens/boringssl_trust_token_redemption_cryptographer.h"
@@ -111,7 +112,7 @@ void TrustTokenRequestHelperFactory::CreateTrustTokenHelperForRequest(
     }
   }
 
-  absl::optional<SuitableTrustTokenOrigin> maybe_top_frame_origin =
+  std::optional<SuitableTrustTokenOrigin> maybe_top_frame_origin =
       SuitableTrustTokenOrigin::Create(top_frame_origin);
   if (!maybe_top_frame_origin) {
     LogOutcome(net_log, params.operation, Outcome::kUnsuitableTopFrameOrigin);
@@ -175,7 +176,7 @@ void TrustTokenRequestHelperFactory::ConstructHelperUsingStore(
 
       std::vector<SuitableTrustTokenOrigin> issuers;
       for (url::Origin& potentially_unsuitable_issuer : params->issuers) {
-        absl::optional<SuitableTrustTokenOrigin> maybe_issuer =
+        std::optional<SuitableTrustTokenOrigin> maybe_issuer =
             SuitableTrustTokenOrigin::Create(
                 std::move(potentially_unsuitable_issuer));
         if (!maybe_issuer) {

@@ -20,6 +20,7 @@
  */
 
 #include "libavutil/crc.h"
+#include "libavutil/mem.h"
 
 #define BITSTREAM_READER_LE
 #include "libavcodec/tak.h"
@@ -27,6 +28,7 @@
 #include "apetag.h"
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "rawdec.h"
 
@@ -94,9 +96,10 @@ static int tak_read_header(AVFormatContext *s)
             memset(buffer + size - 3, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
             ffio_init_checksum(pb, tak_check_crc, 0xCE04B7U);
-            if (avio_read(pb, buffer, size - 3) != size - 3) {
+            ret = ffio_read_size(pb, buffer, size - 3);
+            if (ret < 0) {
                 av_freep(&buffer);
-                return AVERROR(EIO);
+                return ret;
             }
             if (ffio_get_checksum(s->pb) != avio_rb24(pb)) {
                 av_log(s, AV_LOG_ERROR, "%d metadata block CRC error.\n", type);
@@ -114,7 +117,9 @@ static int tak_read_header(AVFormatContext *s)
             if (size != 19)
                 return AVERROR_INVALIDDATA;
             ffio_init_checksum(pb, tak_check_crc, 0xCE04B7U);
-            avio_read(pb, md5, 16);
+            ret = ffio_read_size(pb, md5, 16);
+            if (ret < 0)
+                return ret;
             if (ffio_get_checksum(s->pb) != avio_rb24(pb)) {
                 av_log(s, AV_LOG_ERROR, "MD5 metadata block CRC error.\n");
                 if (s->error_recognition & AV_EF_EXPLODE)
@@ -213,15 +218,15 @@ static int raw_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-const AVInputFormat ff_tak_demuxer = {
-    .name           = "tak",
-    .long_name      = NULL_IF_CONFIG_SMALL("raw TAK"),
+const FFInputFormat ff_tak_demuxer = {
+    .p.name         = "tak",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("raw TAK"),
+    .p.flags        = AVFMT_GENERIC_INDEX,
+    .p.extensions   = "tak",
+    .p.priv_class   = &ff_raw_demuxer_class,
     .priv_data_size = sizeof(TAKDemuxContext),
     .read_probe     = tak_probe,
     .read_header    = tak_read_header,
     .read_packet    = raw_read_packet,
-    .flags          = AVFMT_GENERIC_INDEX,
-    .extensions     = "tak",
     .raw_codec_id   = AV_CODEC_ID_TAK,
-    .priv_class     = &ff_raw_demuxer_class,
 };

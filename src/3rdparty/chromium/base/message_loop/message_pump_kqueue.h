@@ -63,7 +63,7 @@ class BASE_EXPORT MessagePumpKqueue : public MessagePump,
   // events.
   class MachPortWatcher {
    public:
-    virtual ~MachPortWatcher() {}
+    virtual ~MachPortWatcher() = default;
     virtual void OnMachMessageReceived(mach_port_t port) = 0;
   };
 
@@ -105,12 +105,11 @@ class BASE_EXPORT MessagePumpKqueue : public MessagePump,
 
   ~MessagePumpKqueue() override;
 
+  // Initializes features for this class. See `base::features::Init()`.
   static void InitializeFeatures();
 
   // MessagePump:
   void Run(Delegate* delegate) override;
-  // Simplified version of the loop used under experiment (crbug.com/1200141)
-  void RunSimplified(Delegate* delegate);
   void Quit() override;
   void ScheduleWork() override;
   void ScheduleDelayedWork(

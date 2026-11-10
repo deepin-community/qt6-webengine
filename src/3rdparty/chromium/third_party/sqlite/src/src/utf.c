@@ -106,6 +106,35 @@ static const unsigned char sqlite3Utf8Trans1[] = {
 }
 
 /*
+** Write a single UTF8 character whose value is v into the
+** buffer starting at zOut.  zOut must be sized to hold at
+** least four bytes.  Return the number of bytes needed
+** to encode the new character.
+*/
+int sqlite3AppendOneUtf8Character(char *zOut, u32 v){
+  if( v<0x00080 ){
+    zOut[0] = (u8)(v & 0xff);
+    return 1;
+  }
+  if( v<0x00800 ){
+    zOut[0] = 0xc0 + (u8)((v>>6) & 0x1f);
+    zOut[1] = 0x80 + (u8)(v & 0x3f);
+    return 2;
+  }
+  if( v<0x10000 ){
+    zOut[0] = 0xe0 + (u8)((v>>12) & 0x0f);
+    zOut[1] = 0x80 + (u8)((v>>6) & 0x3f);
+    zOut[2] = 0x80 + (u8)(v & 0x3f);
+    return 3;
+  }
+  zOut[0] = 0xf0 + (u8)((v>>18) & 0x07);
+  zOut[1] = 0x80 + (u8)((v>>12) & 0x3f);
+  zOut[2] = 0x80 + (u8)((v>>6) & 0x3f);
+  zOut[3] = 0x80 + (u8)(v & 0x3f);
+  return 4;
+}
+
+/*
 ** Translate a single UTF-8 character.  Return the unicode value.
 **
 ** During translation, assume that the byte that zTerm points
@@ -136,7 +165,7 @@ static const unsigned char sqlite3Utf8Trans1[] = {
   c = *(zIn++);                                            \
   if( c>=0xc0 ){                                           \
     c = sqlite3Utf8Trans1[c-0xc0];                         \
-    while( zIn!=zTerm && (*zIn & 0xc0)==0x80 ){            \
+    while( zIn<zTerm && (*zIn & 0xc0)==0x80 ){             \
       c = (c<<6) + (0x3f & *(zIn++));                      \
     }                                                      \
     if( c<0x80                                             \
@@ -164,7 +193,38 @@ u32 sqlite3Utf8Read(
   return c;
 }
 
-
+/*
+** Read a single UTF8 character out of buffer z[], but reading no
+** more than n characters from the buffer.  z[] is not zero-terminated.
+**
+** Return the number of bytes used to construct the character.
+**
+** Invalid UTF8 might generate a strange result.  No effort is made
+** to detect invalid UTF8.
+**
+** At most 4 bytes will be read out of z[].  The return value will always
+** be between 1 and 4.
+*/
+int sqlite3Utf8ReadLimited(
+  const u8 *z,
+  int n,
+  u32 *piOut
+){
+  u32 c;
+  int i = 1;
+  assert( n>0 );
+  c = z[0];
+  if( c>=0xc0 ){
+    c = sqlite3Utf8Trans1[c-0xc0];
+    if( n>4 ) n = 4;
+    while( i<n && (z[i] & 0xc0)==0x80 ){
+      c = (c<<6) + (0x3f & z[i]);
+      i++;
+    }
+  }
+  *piOut = c;
+  return i;
+}
 
 
 /*
@@ -483,20 +543,22 @@ char *sqlite3Utf16to8(sqlite3 *db, const void *z, int nByte, u8 enc){
 }
 
 /*
-** zIn is a UTF-16 encoded unicode string at least nChar characters long.
+** zIn is a UTF-16 encoded unicode string at least nByte bytes long.
 ** Return the number of bytes in the first nChar unicode characters
-** in pZ.  nChar must be non-negative.
+** in pZ.  nChar must be non-negative.  Surrogate pairs count as a single
+** character.
 */
-int sqlite3Utf16ByteLen(const void *zIn, int nChar){
+int sqlite3Utf16ByteLen(const void *zIn, int nByte, int nChar){
   int c;
   unsigned char const *z = zIn;
+  unsigned char const *zEnd = &z[nByte-1];
   int n = 0;
   
   if( SQLITE_UTF16NATIVE==SQLITE_UTF16LE ) z++;
-  while( n<nChar ){
+  while( n<nChar && z<=zEnd ){
     c = z[0];
     z += 2;
-    if( c>=0xd8 && c<0xdc && z[0]>=0xdc && z[0]<0xe0 ) z += 2;
+    if( c>=0xd8 && c<0xdc && z<=zEnd && z[0]>=0xdc && z[0]<0xe0 ) z += 2;
     n++;
   }
   return (int)(z-(unsigned char const *)zIn) 

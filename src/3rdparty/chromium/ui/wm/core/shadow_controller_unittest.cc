@@ -14,6 +14,7 @@
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_mixer.h"
 #include "ui/color/color_provider.h"
@@ -188,13 +189,16 @@ TEST_F(ShadowControllerTest, ShowState) {
   ASSERT_TRUE(shadow != NULL);
   EXPECT_EQ(kShadowElevationInactiveWindow, shadow->desired_elevation());
 
-  window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MAXIMIZED);
+  window->SetProperty(aura::client::kShowStateKey,
+                      ui::mojom::WindowShowState::kMaximized);
   EXPECT_FALSE(shadow->layer()->visible());
 
-  window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);
+  window->SetProperty(aura::client::kShowStateKey,
+                      ui::mojom::WindowShowState::kNormal);
   EXPECT_TRUE(shadow->layer()->visible());
 
-  window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_FULLSCREEN);
+  window->SetProperty(aura::client::kShowStateKey,
+                      ui::mojom::WindowShowState::kFullscreen);
   EXPECT_FALSE(shadow->layer()->visible());
 }
 
@@ -272,7 +276,7 @@ TEST_F(ShadowControllerTest, SetColorsMapToShadow) {
   const auto* default_details = shadow->details_for_testing();
   SkColor default_key_color = SkColorSetA(SK_ColorBLACK, 0x3d);
   SkColor default_ambient_color = SkColorSetA(SK_ColorBLACK, 0x1f);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   default_ambient_color = SkColorSetA(SK_ColorBLACK, 0x1a);
 #endif
   EXPECT_EQ(default_details->values[0].color(), default_key_color);
@@ -285,7 +289,6 @@ TEST_F(ShadowControllerTest, SetColorsMapToShadow) {
   mixer[ui::kColorShadowValueAmbientShadowElevationTwelve] = {SK_ColorRED};
   mixer[ui::kColorShadowValueKeyShadowElevationTwentyFour] = {SK_ColorGREEN};
   mixer[ui::kColorShadowValueAmbientShadowElevationTwentyFour] = {SK_ColorBLUE};
-  color_provider.GenerateColorMap();
 
   shadow->SetElevationToColorsMap(
       ShadowController::GenerateShadowColorsMap(&color_provider));
@@ -318,10 +321,6 @@ class TestShadowControllerDelegate : public wm::ShadowControllerDelegate {
     return window->parent();
   }
 
-  bool ShouldHaveRoundedShadowForWindow(const aura::Window* window) override {
-    return true;
-  }
-
   bool ShouldUpdateShadowOnWindowPropertyChange(const aura::Window* window,
                                                 const void* key,
                                                 intptr_t old) override {
@@ -329,6 +328,10 @@ class TestShadowControllerDelegate : public wm::ShadowControllerDelegate {
   }
 
   void ApplyColorThemeToWindowShadow(aura::Window* window) override {}
+
+  bool ShouldRoundShadowForWindow(const aura::Window* window) override {
+    return true;
+  }
 };
 
 }  // namespace

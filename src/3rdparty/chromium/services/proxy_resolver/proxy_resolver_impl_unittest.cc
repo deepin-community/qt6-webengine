@@ -4,6 +4,7 @@
 
 #include "services/proxy_resolver/proxy_resolver_impl.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,7 +12,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -199,7 +199,7 @@ void MockProxyResolverV8Tracing::GetProxyForURL(
 }
 
 void MockProxyResolverV8Tracing::WaitForCancel() {
-  while (base::ranges::any_of(pending_jobs_, &Job::cancelled)) {
+  while (std::ranges::any_of(pending_jobs_, &Job::cancelled)) {
     base::RunLoop run_loop;
     cancel_callback_ = run_loop.QuitClosure();
     run_loop.Run();
@@ -250,8 +250,6 @@ TEST_F(ProxyResolverImplTest, GetProxyForUrl) {
       net::ProxyServer::SCHEME_SOCKS5, "socks5.example.com", 3));
   proxy_list.AddProxyChain(net::ProxyChain::FromSchemeHostAndPort(
       net::ProxyServer::SCHEME_HTTPS, "https.example.com", 4));
-  proxy_list.AddProxyChain(net::ProxyChain::FromSchemeHostAndPort(
-      net::ProxyServer::SCHEME_QUIC, "quic.example.com", 65000));
   proxy_list.AddProxyChain(net::ProxyChain::Direct());
 
   job->results->UseProxyList(proxy_list);
@@ -261,14 +259,12 @@ TEST_F(ProxyResolverImplTest, GetProxyForUrl) {
   EXPECT_THAT(client.error(), IsOk());
   std::vector<net::ProxyChain> chains =
       client.results().proxy_list().AllChains();
-  ASSERT_EQ(6u, chains.size());
+  ASSERT_EQ(5u, chains.size());
   EXPECT_EQ("[proxy.example.com:1]", chains[0].ToDebugString());
   EXPECT_EQ("[socks4://socks4.example.com:2]", chains[1].ToDebugString());
   EXPECT_EQ("[socks5://socks5.example.com:3]", chains[2].ToDebugString());
   EXPECT_EQ("[https://https.example.com:4]", chains[3].ToDebugString());
-  EXPECT_EQ("[quic://quic.example.com:65000]", chains[4].ToDebugString());
-
-  EXPECT_EQ(net::ProxyChain::Direct(), chains[5]);
+  EXPECT_EQ(net::ProxyChain::Direct(), chains[4]);
 }
 
 TEST_F(ProxyResolverImplTest, GetProxyForUrlWithNetworkAnonymizationKey) {

@@ -5,9 +5,12 @@
 
 #include <assert.h>
 
+#include <stddef.h>
+#include <stdint.h>
 #include <xmmintrin.h>
 
-#include <xnnpack/packx.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/packx.h"
 
 
 void xnn_x32_packx_ukernel_4x__sse(

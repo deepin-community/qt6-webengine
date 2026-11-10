@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "components/performance_manager/public/execution_context/execution_context.h"
+#include "components/performance_manager/public/graph/graph.h"
 
 namespace performance_manager::execution_context_priority {
 
@@ -37,18 +38,31 @@ FrameCapturingMediaStreamVoter::FrameCapturingMediaStreamVoter() = default;
 
 FrameCapturingMediaStreamVoter::~FrameCapturingMediaStreamVoter() = default;
 
-void FrameCapturingMediaStreamVoter::SetVotingChannel(
+void FrameCapturingMediaStreamVoter::InitializeOnGraph(
+    Graph* graph,
     VotingChannel voting_channel) {
   voting_channel_ = std::move(voting_channel);
+
+  graph->AddFrameNodeObserver(this);
 }
 
-void FrameCapturingMediaStreamVoter::OnFrameNodeInitializing(
-    const FrameNode* frame_node) {
+void FrameCapturingMediaStreamVoter::TearDownOnGraph(Graph* graph) {
+  graph->RemoveFrameNodeObserver(this);
+
+  voting_channel_.Reset();
+}
+
+void FrameCapturingMediaStreamVoter::OnBeforeFrameNodeAdded(
+    const FrameNode* frame_node,
+    const FrameNode* pending_parent_frame_node,
+    const PageNode* pending_page_node,
+    const ProcessNode* pending_process_node,
+    const FrameNode* pending_parent_or_outer_document_or_embedder) {
   const Vote vote = GetVote_FCVSV(frame_node->IsCapturingMediaStream());
   voting_channel_.SubmitVote(GetExecutionContext_FCVSV(frame_node), vote);
 }
 
-void FrameCapturingMediaStreamVoter::OnFrameNodeTearingDown(
+void FrameCapturingMediaStreamVoter::OnBeforeFrameNodeRemoved(
     const FrameNode* frame_node) {
   voting_channel_.InvalidateVote(GetExecutionContext_FCVSV(frame_node));
 }

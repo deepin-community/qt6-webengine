@@ -32,7 +32,7 @@
 #include "./centipede/feature.h"
 #include "./centipede/pc_info.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 class SymbolTable;  // To avoid mutual inclusion with symbol_table.h.
 
@@ -47,8 +47,10 @@ class Coverage {
   Coverage(const PCTable &pc_table,
            const PCIndexVec &pci_vec);
 
-  // Prints in human-readable form to `out` using `symbols`.
-  void Print(const SymbolTable &symbols, std::ostream &out);
+  // Saves the by-function coverage in human-readable form to the `filepath`
+  // file, using `symbols` to translate PCs to function names.
+  void DumpReportToFile(const SymbolTable &symbols, std::string_view filepath,
+                        std::string_view description = "");
 
   // Returns true if the function is fully covered. pc_index is for a function
   // entry.
@@ -178,6 +180,6 @@ uint32_t ComputeFrontierWeight(const Coverage &coverage,
                                const ControlFlowGraph &cfg,
                                const std::vector<uintptr_t> &callees);
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_COVERAGE_H_

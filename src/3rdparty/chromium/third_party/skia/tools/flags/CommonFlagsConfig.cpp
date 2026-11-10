@@ -19,7 +19,6 @@
 #include <unordered_map>
 
 using namespace skia_private;
-using sk_gpu_test::GrContextFactory;
 
 #if defined(SK_BUILD_FOR_ANDROID) || defined(SK_BUILD_FOR_IOS)
 #define DEFAULT_GPU_CONFIG "gles"
@@ -75,8 +74,8 @@ static const struct {
     { "glremoteslug",          "gpu", "api=gl,remoteSlug=true" },
     { "gltestpersistentcache", "gpu", "api=gl,testPersistentCache=1" },
     { "gltestglslcache",       "gpu", "api=gl,testPersistentCache=2" },
-    { "gltestprecompile",      "gpu", "api=gl,testPrecompile=true" },
-    { "glestestprecompile",    "gpu", "api=gles,testPrecompile=true" },
+    { "gltestprecompile",      "gpu", "api=gl,testPrecompileGanesh=true" },
+    { "glestestprecompile",    "gpu", "api=gles,testPrecompileGanesh=true" },
     { "glddl",                 "gpu", "api=gl,useDDLSink=true" },
     { "glreducedshaders",      "gpu", "api=gl,reducedShaders=true" },
     { "glesreducedshaders",    "gpu", "api=gles,reducedShaders=true" },
@@ -123,7 +122,7 @@ static const struct {
     { "mtlmsaa4",              "gpu", "api=metal,samples=4" },
     { "mtlmsaa8",              "gpu", "api=metal,samples=8" },
     { "mtlddl",                "gpu", "api=metal,useDDLSink=true" },
-    { "mtltestprecompile",     "gpu", "api=metal,testPrecompile=true" },
+    { "mtltestprecompile",     "gpu", "api=metal,testPrecompileGanesh=true" },
     { "mtlreducedshaders",     "gpu", "api=metal,reducedShaders=true" },
 #endif
 #ifdef SK_DIRECT3D
@@ -134,26 +133,36 @@ static const struct {
 
 #if defined(SK_GRAPHITE)
 #ifdef SK_DIRECT3D
-    { "grd3d",                 "graphite", "api=direct3d" },
+    { "grd3d",                    "graphite", "api=direct3d" },
 #endif
 #ifdef SK_DAWN
-    { "grdawn_fakeWGPU",       "graphite", "api=dawn_mtl,fakeWGPU=true" },
-    { "grdawn_d3d11",          "graphite", "api=dawn_d3d11" },
-    { "grdawn_d3d12",          "graphite", "api=dawn_d3d12" },
-    { "grdawn_mtl",            "graphite", "api=dawn_mtl" },
-    { "grdawn_vk",             "graphite", "api=dawn_vk" },
-    { "grdawn_gl",             "graphite", "api=dawn_gl" },
-    { "grdawn_gles",           "graphite", "api=dawn_gles" },
+    { "grdawn_d3d11",             "graphite", "api=dawn_d3d11" },
+    { "grdawn_d3d12",             "graphite", "api=dawn_d3d12" },
+    { "grdawn_mtl",               "graphite", "api=dawn_mtl" },
+    { "grdawn_vk",                "graphite", "api=dawn_vk" },
+    { "grdawn_gl",                "graphite", "api=dawn_gl" },
+    { "grdawn_gles",              "graphite", "api=dawn_gles" },
+#if defined(SK_ENABLE_PRECOMPILE)
+    { "grdawn_mtltestprecompile", "graphite", "api=dawn_mtl,testPrecompileGraphite=true" },
+    { "grdawn_vktestprecompile",  "graphite", "api=dawn_vk, testPrecompileGraphite=true" },
+#endif
 #endif
 #ifdef SK_METAL
-    { "grmtl",                 "graphite", "api=metal" },
-    { "grmtlf16",              "graphite", "api=metal,color=f16" },
-    { "grmtlf16norm",          "graphite", "api=metal,color=f16norm" },
-    { "grmtlsrgba",            "graphite", "api=metal,color=srgba"},
-    { "grmtl1010102",          "graphite", "api=metal,color=1010102" },
+    { "grmtl",                    "graphite", "api=metal" },
+    { "grmtlf16",                 "graphite", "api=metal,color=f16" },
+    { "grmtlf16norm",             "graphite", "api=metal,color=f16norm" },
+    { "grmtlsrgba",               "graphite", "api=metal,color=srgba"},
+    { "grmtl1010102",             "graphite", "api=metal,color=1010102" },
+#if defined(SK_ENABLE_PRECOMPILE)
+    { "grmtltestprecompile",      "graphite", "api=metal,testPrecompileGraphite=true" },
+    { "grmtltestprecompilef16",   "graphite", "api=metal,testPrecompileGraphite=true,color=f16" },
+#endif
 #endif
 #ifdef SK_VULKAN
-    { "grvk",                  "graphite", "api=vulkan" },
+    { "grvk",                     "graphite", "api=vulkan" },
+#if defined(SK_ENABLE_PRECOMPILE)
+    { "grvktestprecompile",       "graphite", "api=vulkan,testPrecompileGraphite=true" },
+#endif
 #endif
 #endif
 
@@ -161,7 +170,7 @@ static const struct {
 // clang-format on
 
 static const char configHelp[] =
-        "Options: 565 4444 8888 rgba bgra rgbx 1010102 101010x bgra1010102 bgr101010x f16 f16norm "
+        "Options: 565 4444 8888 rgba bgra rgbx 1010102 101010x bgra1010102 bgr101010x f16 f16norm f16f16f16x "
         "f32 nonrendering null pdf pdfa pdf300 skp svg xps";
 
 static const char* config_help_fn() {
@@ -240,6 +249,9 @@ static const char* config_extended_help_fn() {
 }
 
 DEFINE_extended_string(config, defaultConfigs, config_help_fn(), config_extended_help_fn());
+
+DEFINE_int(internalSamples, -1,
+           "Number of samples for internal draws that use MSAA, or default value if negative.");
 
 SkCommandLineConfig::SkCommandLineConfig(const SkString& tag,
                                          const SkString& backend,
@@ -564,7 +576,7 @@ SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&         tag,
                                                SkAlphaType             alphaType,
                                                bool                    useStencilBuffers,
                                                int                     testPersistentCache,
-                                               bool                    testPrecompile,
+                                               bool                    testPrecompileGanesh,
                                                bool                    useDDLSink,
                                                bool                    slug,
                                                bool                    serializeSlug,
@@ -579,7 +591,7 @@ SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&         tag,
         , fColorType(colorType)
         , fAlphaType(alphaType)
         , fTestPersistentCache(testPersistentCache)
-        , fTestPrecompile(testPrecompile)
+        , fTestPrecompileGanesh(testPrecompileGanesh)
         , fUseDDLSink(useDDLSink)
         , fSlug(slug)
         , fSerializeSlug(serializeSlug)
@@ -609,7 +621,7 @@ SkCommandLineConfigGpu* parse_command_line_config_gpu(const SkString&         ta
     SkAlphaType                         alphaType           = kPremul_SkAlphaType;
     bool                                useStencils         = true;
     int                                 testPersistentCache = 0;
-    bool                                testPrecompile      = false;
+    bool                                testPrecompileGanesh= false;
     bool                                useDDLs             = false;
     bool                                slug                = false;
     bool                                serializeSlug       = false;
@@ -632,7 +644,7 @@ SkCommandLineConfigGpu* parse_command_line_config_gpu(const SkString&         ta
             extendedOptions.get_option_gpu_color("color", &colorType, &alphaType) &&
             extendedOptions.get_option_bool("stencils", &useStencils) &&
             extendedOptions.get_option_int("testPersistentCache", &testPersistentCache) &&
-            extendedOptions.get_option_bool("testPrecompile", &testPrecompile) &&
+            extendedOptions.get_option_bool("testPrecompileGanesh", &testPrecompileGanesh) &&
             extendedOptions.get_option_bool("useDDLSink", &useDDLs) &&
             extendedOptions.get_option_bool("slug", &slug) &&
             extendedOptions.get_option_bool("serializeSlug", &serializeSlug) &&
@@ -662,7 +674,7 @@ SkCommandLineConfigGpu* parse_command_line_config_gpu(const SkString&         ta
                                       alphaType,
                                       useStencils,
                                       testPersistentCache,
-                                      testPrecompile,
+                                      testPrecompileGanesh,
                                       useDDLs,
                                       slug,
                                       serializeSlug,
@@ -678,11 +690,10 @@ SkCommandLineConfigGraphite* parse_command_line_config_graphite(const SkString& 
                                                                 const SkString& options) {
     using ContextType = skgpu::ContextType;
 
-    ContextType contextType = skgpu::ContextType::kMetal;
-    SkColorType colorType = kRGBA_8888_SkColorType;
-    SkAlphaType alphaType = kPremul_SkAlphaType;
-
-    skiatest::graphite::TestOptions testOptions;
+    ContextType contextType            = skgpu::ContextType::kMetal;
+    SkColorType colorType              = kRGBA_8888_SkColorType;
+    SkAlphaType alphaType              = kPremul_SkAlphaType;
+    bool        testPrecompileGraphite = false;
 
     bool parseSucceeded = false;
     ExtendedOptions extendedOptions(options, &parseSucceeded);
@@ -690,27 +701,20 @@ SkCommandLineConfigGraphite* parse_command_line_config_graphite(const SkString& 
         return nullptr;
     }
 
-    bool fakeWGPU = false;
     bool validOptions = extendedOptions.get_option_graphite_api("api", &contextType) &&
                         extendedOptions.get_option_gpu_color("color", &colorType, &alphaType) &&
-                        extendedOptions.get_option_bool("fakeWGPU", &fakeWGPU);
+                        extendedOptions.get_option_bool("testPrecompileGraphite",
+                                                        &testPrecompileGraphite);
     if (!validOptions) {
         return nullptr;
-    }
-
-    auto surfaceType = SkCommandLineConfigGraphite::SurfaceType::kDefault;
-    if (fakeWGPU) {
-        testOptions.fNeverYieldToWebGPU = true;
-        surfaceType = SkCommandLineConfigGraphite::SurfaceType::kWrapTextureView;
     }
 
     return new SkCommandLineConfigGraphite(tag,
                                            vias,
                                            contextType,
-                                           surfaceType,
-                                           testOptions,
                                            colorType,
-                                           alphaType);
+                                           alphaType,
+                                           testPrecompileGraphite);
 }
 
 #endif

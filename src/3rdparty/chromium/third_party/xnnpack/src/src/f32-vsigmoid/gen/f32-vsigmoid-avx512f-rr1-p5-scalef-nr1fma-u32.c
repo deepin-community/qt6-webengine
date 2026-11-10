@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vsigmoid/avx512f-rr1-p5-scalef.c.in
 //   Generator: tools/xngen
@@ -8,34 +9,47 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f32_vsigmoid_ukernel__avx512f_rr1_p5_scalef_nr1fma_u32(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_sigmoid_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m512i vsign_mask = _mm512_set1_epi32((int) params->avx512_rr1_p5.sign_mask);
-  const __m512 vlog2e = _mm512_set1_ps(params->avx512_rr1_p5.log2e);
-  const __m512 vminus_ln2 = _mm512_set1_ps(params->avx512_rr1_p5.minus_ln2);
-  const __m512 vc5 = _mm512_set1_ps(params->avx512_rr1_p5.c5);
-  const __m512 vc4 = _mm512_set1_ps(params->avx512_rr1_p5.c4);
-  const __m512 vc3 = _mm512_set1_ps(params->avx512_rr1_p5.c3);
-  const __m512 vc2 = _mm512_set1_ps(params->avx512_rr1_p5.c2);
-  const __m512 vc1 = _mm512_set1_ps(params->avx512_rr1_p5.c1);
-  const __m512 vone = _mm512_set1_ps(params->avx512_rr1_p5.one);
+  const __m512i vsign_mask = _mm512_set1_epi32(UINT32_C(0x80000000));
+  const __m512 vlog2e = _mm512_set1_ps(0x1.715476p0f);
+  const __m512 vminus_ln2 = _mm512_set1_ps(-0x1.62E430p-1f);
+  const __m512 vc5 = _mm512_set1_ps(0x1.0F9F9Cp-7f);
+  const __m512 vc4 = _mm512_set1_ps(0x1.573A1Ap-5f);
+  const __m512 vc3 = _mm512_set1_ps(0x1.555A80p-3f);
+  const __m512 vc2 = _mm512_set1_ps(0x1.FFFDC6p-2f);
+  const __m512 vc1 = _mm512_set1_ps(0x1.FFFFF6p-1f);
+  const __m512 vone = _mm512_set1_ps(1.0f);
+
+  XNN_FORCE_REALIZATION(vsign_mask);
+  XNN_FORCE_REALIZATION(vlog2e);
+  XNN_FORCE_REALIZATION(vminus_ln2);
+  XNN_FORCE_REALIZATION(vc5);
+  XNN_FORCE_REALIZATION(vc4);
+  XNN_FORCE_REALIZATION(vc3);
+  XNN_FORCE_REALIZATION(vc2);
+  XNN_FORCE_REALIZATION(vc1);
+  XNN_FORCE_REALIZATION(vone);
 
   for (; batch >= 32 * sizeof(float); batch -= 32 * sizeof(float)) {
     const __m512 vx0 = _mm512_loadu_ps(input);
@@ -127,7 +141,7 @@ void xnn_f32_vsigmoid_ukernel__avx512f_rr1_p5_scalef_nr1fma_u32(
 
     // Prepare mask for valid 32-bit elements (depends on batch).
     batch >>= XNN_LOG2_SIZEOF_FLOAT;
-    const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << batch) - UINT32_C(1)));
+    const __mmask16 vmask = _cvtu32_mask16((uint32_t) ((UINT32_C(1) << batch) - UINT32_C(1)));
 
     const __m512 vx = _mm512_maskz_loadu_ps(vmask, input);
     const __m512 vz = _mm512_castsi512_ps(_mm512_or_epi32(_mm512_castps_si512(vx), vsign_mask));

@@ -113,7 +113,7 @@ class SpellCheckProvider : public content::RenderFrameObserver,
       const blink::WebString& text,
       size_t& offset,
       size_t& length,
-      blink::WebVector<blink::WebString>* optional_suggestions) override;
+      std::vector<blink::WebString>* optional_suggestions) override;
   void RequestCheckingOfText(
       const blink::WebString& text,
       std::unique_ptr<blink::WebTextCheckingCompletion> completion) override;
@@ -158,15 +158,14 @@ class SpellCheckProvider : public content::RenderFrameObserver,
   // The last text sent to the browser process for spellchecking, and its
   // spellcheck results and WebTextCheckCompletions identifier.
   std::u16string last_request_;
-  blink::WebVector<blink::WebTextCheckingResult> last_results_;
+  std::vector<blink::WebTextCheckingResult> last_results_;
   int last_identifier_;
 
   // Weak pointer to shared (per renderer) spellcheck data.
   raw_ptr<SpellCheck, DanglingUntriaged> spellcheck_;
 
   // Not owned. |embedder_provider_| should outlive SpellCheckProvider.
-  raw_ptr<service_manager::LocalInterfaceProvider, ExperimentalRenderer>
-      embedder_provider_;
+  raw_ptr<service_manager::LocalInterfaceProvider> embedder_provider_;
 
   // Interface to the SpellCheckHost.
   mojo::Remote<spellcheck::mojom::SpellCheckHost> spell_check_host_;

@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import * as Platform from '../../core/platform/platform.js';
+import * as Common from '../../core/common/common.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 import * as Bindings from '../bindings/bindings.js';
 import * as Formatter from '../formatter/formatter.js';
 import * as TextUtils from '../text_utils/text_utils.js';
-import type * as Workspace from '../workspace/workspace.js';
 
 import {scopeTreeForScript} from './ScopeTreeCache.js';
 
@@ -19,29 +18,21 @@ interface CachedScopeMap {
 
 const scopeToCachedIdentifiersMap = new WeakMap<Formatter.FormatterWorkerPool.ScopeTreeNode, CachedScopeMap>();
 const cachedMapByCallFrame = new WeakMap<SDK.DebuggerModel.CallFrame, Map<string, string|null>>();
-const cachedTextByDeferredContent = new WeakMap<TextUtils.ContentProvider.DeferredContent, TextUtils.Text.Text|null>();
 
-async function getTextFor(contentProvider: TextUtils.ContentProvider.ContentProvider):
+export async function getTextFor(contentProvider: TextUtils.ContentProvider.ContentProvider):
     Promise<TextUtils.Text.Text|null> {
-  // We intentionally cache based on the DeferredContent object rather
-  // than the ContentProvider object, which may appear as a more sensible
-  // choice, since the content of both Script and UISourceCode objects
-  // can change over time.
-  const deferredContent = await contentProvider.requestContent();
-  let text = cachedTextByDeferredContent.get(deferredContent);
-  if (text === undefined) {
-    const {content} = deferredContent;
-    text = content ? new TextUtils.Text.Text(content) : null;
-    cachedTextByDeferredContent.set(deferredContent, text);
+  const contentData = await contentProvider.requestContentData();
+  if (TextUtils.ContentData.ContentData.isError(contentData) || !contentData.isTextContent) {
+    return null;
   }
-  return text;
+  return contentData.textObj;
 }
 
 export class IdentifierPositions {
   name: string;
-  positions: {lineNumber: number, columnNumber: number}[];
+  positions: Array<{lineNumber: number, columnNumber: number}>;
 
-  constructor(name: string, positions: {lineNumber: number, columnNumber: number}[] = []) {
+  constructor(name: string, positions: Array<{lineNumber: number, columnNumber: number}> = []) {
     this.name = name;
     this.positions = positions;
   }
@@ -164,7 +155,7 @@ freeVariables:
   for (const variable of scope.variables) {
     // Skip the fixed-kind variable (i.e., 'this' or 'arguments') if we only found their "definition"
     // without any uses.
-    if (variable.kind === Formatter.FormatterWorkerPool.DefinitionKind.Fixed && variable.offsets.length <= 1) {
+    if (variable.kind === Formatter.FormatterWorkerPool.DefinitionKind.FIXED && variable.offsets.length <= 1) {
       continue;
     }
 
@@ -201,18 +192,21 @@ freeVariables:
 const identifierAndPunctuationRegExp = /^\s*([A-Za-z_$][A-Za-z_$0-9]*)\s*([.;,=]?)\s*$/;
 
 const enum Punctuation {
-  None = 'none',
-  Comma = 'comma',
-  Dot = 'dot',
-  Semicolon = 'semicolon',
-  Equals = 'equals',
+  NONE = 'none',
+  COMMA = 'comma',
+  DOT = 'dot',
+  SEMICOLON = 'semicolon',
+  EQUALS = 'equals',
 }
 
 const resolveDebuggerScope = async(scope: SDK.DebuggerModel.ScopeChainEntry):
     Promise<{variableMapping: Map<string, string>, thisMapping: string | null}> => {
+      if (!Common.Settings.Settings.instance().moduleSetting('js-source-maps-enabled').get()) {
+        return {variableMapping: new Map(), thisMapping: null};
+      }
       const script = scope.callFrame().script;
       const scopeChain = await findScopeChainForDebuggerScope(scope);
-      return resolveScope(script, scopeChain);
+      return await resolveScope(script, scopeChain);
     };
 
 const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.FormatterWorkerPool.ScopeTreeNode[]):
@@ -222,11 +216,11 @@ const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.Form
         return {variableMapping: new Map<string, string>(), thisMapping: null};
       }
       let cachedScopeMap = scopeToCachedIdentifiersMap.get(parsedScope);
-      const sourceMap = script.debuggerModel.sourceMapManager().sourceMapForClient(script);
+      const sourceMap = script.sourceMap();
 
       if (!cachedScopeMap || cachedScopeMap.sourceMap !== sourceMap) {
         const identifiersPromise =
-            (async(): Promise<{variableMapping: Map<string, string>, thisMapping: string | null}> => {
+            (async () => {
               const variableMapping = new Map<string, string>();
               let thisMapping = null;
 
@@ -235,13 +229,13 @@ const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.Form
               }
               // Extract as much as possible from SourceMap and resolve
               // missing identifier names from SourceMap ranges.
-              const promises: Promise<void>[] = [];
+              const promises: Array<Promise<void>> = [];
 
               const resolveEntry = (id: IdentifierPositions, handler: (sourceName: string) => void): void => {
                 // First see if we have a source map entry with a name for the identifier.
                 for (const position of id.positions) {
                   const entry = sourceMap.findEntry(position.lineNumber, position.columnNumber);
-                  if (entry && entry.name) {
+                  if (entry?.name) {
                     handler(entry.name);
                     return;
                   }
@@ -339,7 +333,7 @@ const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.Form
           return sourceName;
         }
         // Let us also allow semicolons into commas since that it is a common transformation.
-        if (compiledPunctuation === Punctuation.Comma && sourcePunctuation === Punctuation.Semicolon) {
+        if (compiledPunctuation === Punctuation.COMMA && sourcePunctuation === Punctuation.SEMICOLON) {
           return sourceName;
         }
 
@@ -355,19 +349,19 @@ const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.Form
           let punctuation: Punctuation|null = null;
           switch (match[2]) {
             case '.':
-              punctuation = Punctuation.Dot;
+              punctuation = Punctuation.DOT;
               break;
             case ',':
-              punctuation = Punctuation.Comma;
+              punctuation = Punctuation.COMMA;
               break;
             case ';':
-              punctuation = Punctuation.Semicolon;
+              punctuation = Punctuation.SEMICOLON;
               break;
             case '=':
-              punctuation = Punctuation.Equals;
+              punctuation = Punctuation.EQUALS;
               break;
             case '':
-              punctuation = Punctuation.None;
+              punctuation = Punctuation.NONE;
               break;
             default:
               console.error(`Name token parsing error: unexpected token "${match[2]}"`);
@@ -380,16 +374,23 @@ const resolveScope = async(script: SDK.Script.Script, scopeChain: Formatter.Form
     };
 
 export const resolveScopeChain =
-    async function(callFrame: SDK.DebuggerModel.CallFrame|null): Promise<SDK.DebuggerModel.ScopeChainEntry[]|null> {
-  if (!callFrame) {
-    return null;
-  }
+    async function(callFrame: SDK.DebuggerModel.CallFrame): Promise<SDK.DebuggerModel.ScopeChainEntry[]> {
   const {pluginManager} = Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance();
-  const scopeChain = await pluginManager.resolveScopeChain(callFrame);
+  let scopeChain: SDK.DebuggerModel.ScopeChainEntry[]|null|undefined = await pluginManager.resolveScopeChain(callFrame);
   if (scopeChain) {
     return scopeChain;
   }
-  return callFrame.scopeChain();
+
+  scopeChain = callFrame.script.sourceMap()?.resolveScopeChain(callFrame);
+  if (scopeChain) {
+    return scopeChain;
+  }
+
+  if (callFrame.script.isWasm()) {
+    return callFrame.scopeChain();
+  }
+  const thisObject = await resolveThisObject(callFrame);
+  return callFrame.scopeChain().map(scope => new ScopeWithSourceMappedVariables(scope, thisObject));
 };
 
 /**
@@ -398,6 +399,9 @@ export const resolveScopeChain =
  */
 export const allVariablesInCallFrame =
     async(callFrame: SDK.DebuggerModel.CallFrame): Promise<Map<string, string|null>> => {
+  if (!Common.Settings.Settings.instance().moduleSetting('js-source-maps-enabled').get()) {
+    return new Map<string, string|null>();
+  }
   const cachedMap = cachedMapByCallFrame.get(callFrame);
   if (cachedMap) {
     return cachedMap;
@@ -431,6 +435,9 @@ export const allVariablesInCallFrame =
 export const allVariablesAtPosition =
     async(location: SDK.DebuggerModel.Location): Promise<Map<string, string|null>> => {
   const reverseMapping = new Map<string, string|null>();
+  if (!Common.Settings.Settings.instance().moduleSetting('js-source-maps-enabled').get()) {
+    return reverseMapping;
+  }
   const script = location.script();
   if (!script) {
     return reverseMapping;
@@ -464,87 +471,8 @@ export const allVariablesAtPosition =
   return reverseMapping;
 };
 
-export const resolveExpression = async(
-    callFrame: SDK.DebuggerModel.CallFrame, originalText: string, uiSourceCode: Workspace.UISourceCode.UISourceCode,
-    lineNumber: number, startColumnNumber: number, endColumnNumber: number): Promise<string> => {
-  if (uiSourceCode.mimeType() === 'application/wasm') {
-    // For WebAssembly disassembly, lookup the different possiblities.
-    return `memories["${originalText}"] ?? locals["${originalText}"] ?? tables["${originalText}"] ?? functions["${
-        originalText}"] ?? globals["${originalText}"]`;
-  }
-  if (!uiSourceCode.contentType().isFromSourceMap()) {
-    return '';
-  }
-  const reverseMapping = await allVariablesInCallFrame(callFrame);
-  if (reverseMapping.has(originalText)) {
-    return reverseMapping.get(originalText) as string;
-  }
-  const rawLocations =
-      await Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance().uiLocationToRawLocations(
-          uiSourceCode, lineNumber, startColumnNumber);
-  const rawLocation = rawLocations.find(location => location.debuggerModel === callFrame.debuggerModel);
-  if (!rawLocation) {
-    return '';
-  }
-  const script = rawLocation.script();
-  if (!script) {
-    return '';
-  }
-  const sourceMap = script.debuggerModel.sourceMapManager().sourceMapForClient(script);
-  if (!sourceMap) {
-    return '';
-  }
-  const text = await getTextFor(script);
-  if (!text) {
-    return '';
-  }
-  const textRanges = sourceMap.reverseMapTextRanges(
-      uiSourceCode.url(),
-      new TextUtils.TextRange.TextRange(lineNumber, startColumnNumber, lineNumber, endColumnNumber));
-  if (textRanges.length !== 1) {
-    return '';
-  }
-  const [compiledRange] = textRanges;
-  const subjectText = text.extract(compiledRange);
-  if (!subjectText) {
-    return '';
-  }
-  // Map `subjectText` back to the authored code and check that the source map spits out
-  // `originalText` again modulo some whitespace/punctuation.
-  const authoredText = await getTextFor(uiSourceCode);
-  if (!authoredText) {
-    return '';
-  }
-
-  // Take the "start point" and the "end point - 1" of the compiled range and map them
-  // with the source map. Note that for "end point - 1" we need the line endings array to potentially
-  // move to the end of the previous line.
-  const startRange = sourceMap.findEntryRanges(compiledRange.startLine, compiledRange.startColumn);
-  const endLine = compiledRange.endColumn === 0 ? compiledRange.endLine - 1 : compiledRange.endLine;
-  const endColumn = compiledRange.endColumn === 0 ? text.lineEndings()[endLine] : compiledRange.endColumn - 1;
-  const endRange = sourceMap.findEntryRanges(endLine, endColumn);
-  if (!startRange || !endRange) {
-    return '';
-  }
-
-  // Merge `startRange` with `endRange`. This might not be 100% correct if there are interleaved ranges inbetween.
-  const mappedAuthoredText = authoredText.extract(new TextUtils.TextRange.TextRange(
-      startRange.sourceRange.startLine, startRange.sourceRange.startColumn, endRange.sourceRange.endLine,
-      endRange.sourceRange.endColumn));
-
-  // Check that what we found after applying the source map roughly matches `originalText`.
-  const originalTextRegex = new RegExp(`^[\\s,;]*${Platform.StringUtilities.escapeForRegExp(originalText)}`, 'g');
-  if (!originalTextRegex.test(mappedAuthoredText)) {
-    return '';
-  }
-  return await Formatter.FormatterWorkerPool.formatterWorkerPool().evaluatableJavaScriptSubstring(subjectText);
-};
-
 export const resolveThisObject =
-    async(callFrame: SDK.DebuggerModel.CallFrame|null): Promise<SDK.RemoteObject.RemoteObject|null> => {
-  if (!callFrame) {
-    return null;
-  }
+    async(callFrame: SDK.DebuggerModel.CallFrame): Promise<SDK.RemoteObject.RemoteObject|null> => {
   const scopeChain = callFrame.scopeChain();
   if (scopeChain.length === 0) {
     return callFrame.thisObject();
@@ -562,7 +490,7 @@ export const resolveThisObject =
     silent: true,
     returnByValue: false,
     generatePreview: true,
-  } as SDK.RuntimeModel.EvaluationOptions));
+  }));
   if ('exceptionDetails' in result) {
     return !result.exceptionDetails && result.object ? result.object : callFrame.thisObject();
   }
@@ -580,6 +508,65 @@ export const resolveScopeInObject = function(scope: SDK.DebuggerModel.ScopeChain
 
   return new RemoteObject(scope);
 };
+
+/**
+ * Wraps a debugger `Scope` but returns a scope object where variable names are
+ * mapped to their authored name.
+ *
+ * This implementation does not utilize source map "Scopes" information but obtains
+ * original variable names via parsing + mappings + names.
+ */
+class ScopeWithSourceMappedVariables implements SDK.DebuggerModel.ScopeChainEntry {
+  readonly #debuggerScope: SDK.DebuggerModel.ScopeChainEntry;
+  /** The resolved `this` of the current call frame */
+  readonly #thisObject: SDK.RemoteObject.RemoteObject|null;
+
+  constructor(scope: SDK.DebuggerModel.ScopeChainEntry, thisObject: SDK.RemoteObject.RemoteObject|null) {
+    this.#debuggerScope = scope;
+    this.#thisObject = thisObject;
+  }
+
+  callFrame(): SDK.DebuggerModel.CallFrame {
+    return this.#debuggerScope.callFrame();
+  }
+
+  type(): string {
+    return this.#debuggerScope.type();
+  }
+
+  typeName(): string {
+    return this.#debuggerScope.typeName();
+  }
+
+  name(): string|undefined {
+    return this.#debuggerScope.name();
+  }
+
+  range(): SDK.DebuggerModel.LocationRange|null {
+    return this.#debuggerScope.range();
+  }
+
+  object(): SDK.RemoteObject.RemoteObject {
+    return resolveScopeInObject(this.#debuggerScope);
+  }
+
+  description(): string {
+    return this.#debuggerScope.description();
+  }
+
+  icon(): string|undefined {
+    return this.#debuggerScope.icon();
+  }
+
+  extraProperties(): SDK.RemoteObject.RemoteObjectProperty[] {
+    const extraProperties = this.#debuggerScope.extraProperties();
+    if (this.#thisObject && this.type() === Protocol.Debugger.ScopeType.Local) {
+      extraProperties.unshift(new SDK.RemoteObject.RemoteObjectProperty(
+          'this', this.#thisObject, undefined, undefined, undefined, undefined, undefined, /* synthetic */ true));
+    }
+    return extraProperties;
+  }
+}
 
 export class RemoteObject extends SDK.RemoteObject.RemoteObject {
   private readonly scope: SDK.DebuggerModel.ScopeChainEntry;
@@ -606,9 +593,7 @@ export class RemoteObject extends SDK.RemoteObject.RemoteObject {
     return this.object.subtype;
   }
 
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override get value(): any {
+  override get value(): typeof this.object.value {
     return this.object.value;
   }
 
@@ -664,11 +649,11 @@ export class RemoteObject extends SDK.RemoteObject.RemoteObject {
         break;
       }
     }
-    return this.object.setPropertyValue(actualName, value);
+    return await this.object.setPropertyValue(actualName, value);
   }
 
   override async deleteProperty(name: Protocol.Runtime.CallArgument): Promise<string|undefined> {
-    return this.object.deleteProperty(name);
+    return await this.object.deleteProperty(name);
   }
 
   override callFunction<T, U>(
@@ -678,7 +663,7 @@ export class RemoteObject extends SDK.RemoteObject.RemoteObject {
   }
 
   override callFunctionJSON<T, U>(
-      functionDeclaration: (this: U, ...args: any[]) => T, args?: Protocol.Runtime.CallArgument[]): Promise<T> {
+      functionDeclaration: (this: U, ...args: any[]) => T, args?: Protocol.Runtime.CallArgument[]): Promise<T|null> {
     return this.object.callFunctionJSON(functionDeclaration, args);
   }
 
@@ -708,21 +693,19 @@ async function getFunctionNameFromScopeStart(
   // To reduce the overhead of resolving function names,
   // we check for source maps first and immediately leave
   // this function if the script doesn't have a sourcemap.
-  const sourceMap = script.debuggerModel.sourceMapManager().sourceMapForClient(script);
+  const sourceMap = script.sourceMap();
   if (!sourceMap) {
     return null;
+  }
+
+  const scopeName = sourceMap.findOriginalFunctionName({line: lineNumber, column: columnNumber});
+  if (scopeName !== null) {
+    return scopeName;
   }
 
   const mappingEntry = sourceMap.findEntry(lineNumber, columnNumber);
   if (!mappingEntry || !mappingEntry.sourceURL) {
     return null;
-  }
-
-  const scopeName =
-      sourceMap.findScopeEntry(mappingEntry.sourceURL, mappingEntry.sourceLineNumber, mappingEntry.sourceColumnNumber)
-          ?.scopeName();
-  if (scopeName) {
-    return scopeName;
   }
 
   const name = mappingEntry.name;
@@ -777,14 +760,12 @@ export async function resolveProfileFrameFunctionName(
   return await getFunctionNameFromScopeStart(script, lineNumber, columnNumber);
 }
 
-// TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-// eslint-disable-next-line @typescript-eslint/naming-convention
-let _scopeResolvedForTest: (...arg0: unknown[]) => void = function(): void {};
+let scopeResolvedForTest: (...arg0: unknown[]) => void = function(): void {};
 
 export const getScopeResolvedForTest = (): (...arg0: unknown[]) => void => {
-  return _scopeResolvedForTest;
+  return scopeResolvedForTest;
 };
 
 export const setScopeResolvedForTest = (scope: (...arg0: unknown[]) => void): void => {
-  _scopeResolvedForTest = scope;
+  scopeResolvedForTest = scope;
 };

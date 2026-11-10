@@ -33,6 +33,10 @@ bool HighlightStyleMapEquals(const CustomHighlightsStyleMap& a,
 bool StyleHighlightData::operator==(const StyleHighlightData& other) const {
   return base::ValuesEquivalent(selection_, other.selection_) &&
          base::ValuesEquivalent(target_text_, other.target_text_) &&
+         base::ValuesEquivalent(search_text_current_,
+                                other.search_text_current_) &&
+         base::ValuesEquivalent(search_text_not_current_,
+                                other.search_text_not_current_) &&
          base::ValuesEquivalent(spelling_error_, other.spelling_error_) &&
          base::ValuesEquivalent(grammar_error_, other.grammar_error_) &&
          HighlightStyleMapEquals(custom_highlights_, other.custom_highlights_);
@@ -45,6 +49,9 @@ const ComputedStyle* StyleHighlightData::Style(
   switch (pseudo_id) {
     case kPseudoIdSelection:
       return Selection();
+    case kPseudoIdSearchText:
+      // For ::search-text:current, call SearchTextCurrent() directly.
+      return SearchTextNotCurrent();
     case kPseudoIdTargetText:
       return TargetText();
     case kPseudoIdSpellingError:
@@ -55,12 +62,19 @@ const ComputedStyle* StyleHighlightData::Style(
       return CustomHighlight(pseudo_argument);
     default:
       NOTREACHED();
-      return nullptr;
   }
 }
 
 const ComputedStyle* StyleHighlightData::Selection() const {
   return selection_.Get();
+}
+
+const ComputedStyle* StyleHighlightData::SearchTextCurrent() const {
+  return search_text_current_.Get();
+}
+
+const ComputedStyle* StyleHighlightData::SearchTextNotCurrent() const {
+  return search_text_not_current_.Get();
 }
 
 const ComputedStyle* StyleHighlightData::TargetText() const {
@@ -91,6 +105,14 @@ void StyleHighlightData::SetSelection(const ComputedStyle* style) {
   selection_ = style;
 }
 
+void StyleHighlightData::SetSearchTextCurrent(const ComputedStyle* style) {
+  search_text_current_ = style;
+}
+
+void StyleHighlightData::SetSearchTextNotCurrent(const ComputedStyle* style) {
+  search_text_not_current_ = style;
+}
+
 void StyleHighlightData::SetTargetText(const ComputedStyle* style) {
   target_text_ = style;
 }
@@ -115,18 +137,18 @@ void StyleHighlightData::SetCustomHighlight(const AtomicString& highlight_name,
 
 bool StyleHighlightData::DependsOnSizeContainerQueries() const {
   if ((selection_ && (selection_->DependsOnSizeContainerQueries() ||
-                      selection_->HasContainerRelativeUnits())) ||
+                      selection_->HasContainerRelativeValue())) ||
       (target_text_ && (target_text_->DependsOnSizeContainerQueries() ||
-                        target_text_->HasContainerRelativeUnits())) ||
+                        target_text_->HasContainerRelativeValue())) ||
       (spelling_error_ && (spelling_error_->DependsOnSizeContainerQueries() ||
-                           spelling_error_->HasContainerRelativeUnits())) ||
+                           spelling_error_->HasContainerRelativeValue())) ||
       (grammar_error_ && (grammar_error_->DependsOnSizeContainerQueries() ||
-                          grammar_error_->HasContainerRelativeUnits()))) {
+                          grammar_error_->HasContainerRelativeValue()))) {
     return true;
   }
   for (auto style : custom_highlights_) {
     if (style.value->DependsOnSizeContainerQueries() ||
-        style.value->HasContainerRelativeUnits()) {
+        style.value->HasContainerRelativeValue()) {
       return true;
     }
   }
@@ -135,6 +157,8 @@ bool StyleHighlightData::DependsOnSizeContainerQueries() const {
 
 void StyleHighlightData::Trace(Visitor* visitor) const {
   visitor->Trace(selection_);
+  visitor->Trace(search_text_current_);
+  visitor->Trace(search_text_not_current_);
   visitor->Trace(target_text_);
   visitor->Trace(spelling_error_);
   visitor->Trace(grammar_error_);

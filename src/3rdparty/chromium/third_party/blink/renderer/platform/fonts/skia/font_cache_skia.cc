@@ -62,7 +62,7 @@
 namespace blink {
 
 AtomicString ToAtomicString(const SkString& str) {
-  return AtomicString::FromUTF8(str.c_str(), str.size());
+  return AtomicString::FromUTF8(std::string_view(str.begin(), str.end()));
 }
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -70,7 +70,7 @@ AtomicString ToAtomicString(const SkString& str) {
 // linux and the embedder has overriden the default fontManager with
 // WebFontRendering::setSkiaFontMgr.
 // static
-AtomicString FontCache::GetFamilyNameForCharacter(
+const FontPlatformData* FontCache::CreateFontPlatformDataForCharacter(
     SkFontMgr* fm,
     UChar32 c,
     const FontDescription& font_description,
@@ -81,20 +81,34 @@ AtomicString FontCache::GetFamilyNameForCharacter(
   Bcp47Vector locales =
       GetBcp47LocaleForRequest(font_description, fallback_priority);
   sk_sp<SkTypeface> typeface(fm->matchFamilyStyleCharacter(
-      family_name, SkFontStyle(), locales.data(), locales.size(), c));
-  if (!typeface)
-    return g_empty_atom;
+      family_name, font_description.SkiaFontStyle(), locales.data(),
+      locales.size(), c));
+  if (!typeface) {
+    return nullptr;
+  }
 
   SkString skia_family_name;
   typeface->getFamilyName(&skia_family_name);
-  return ToAtomicString(skia_family_name);
+
+  bool synthetic_bold = font_description.IsSyntheticBold() &&
+                        !typeface->isBold() &&
+                        font_description.SyntheticBoldAllowed();
+  bool synthetic_italic = font_description.IsSyntheticItalic() &&
+                          !typeface->isItalic() &&
+                          font_description.SyntheticItalicAllowed();
+
+  return MakeGarbageCollected<FontPlatformData>(
+      std::move(typeface), skia_family_name.c_str(),
+      font_description.EffectiveFontSize(), synthetic_bold, synthetic_italic,
+      font_description.TextRendering(), ResolvedFontFeatures(),
+      font_description.Orientation());
 }
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS)
 
 void FontCache::PlatformInit() {}
 
-scoped_refptr<SimpleFontData> FontCache::FallbackOnStandardFontStyle(
+const SimpleFontData* FontCache::FallbackOnStandardFontStyle(
     const FontDescription& font_description,
     UChar32 character) {
   FontDescription substitute_description(font_description);
@@ -103,27 +117,26 @@ scoped_refptr<SimpleFontData> FontCache::FallbackOnStandardFontStyle(
 
   FontFaceCreationParams creation_params(
       substitute_description.Family().FamilyName());
-  FontPlatformData* substitute_platform_data =
+  const FontPlatformData* substitute_platform_data =
       GetFontPlatformData(substitute_description, creation_params);
   if (substitute_platform_data &&
       substitute_platform_data->FontContainsCharacter(character)) {
-    FontPlatformData platform_data =
-        FontPlatformData(*substitute_platform_data);
-    platform_data.SetSyntheticBold(font_description.Weight() >=
-                                       kBoldThreshold &&
-                                   font_description.SyntheticBoldAllowed());
-    platform_data.SetSyntheticItalic(font_description.Style() ==
-                                         kItalicSlopeValue &&
-                                     font_description.SyntheticItalicAllowed());
-    return FontDataFromFontPlatformData(&platform_data, kDoNotRetain);
+    FontPlatformData* platform_data =
+        MakeGarbageCollected<FontPlatformData>(*substitute_platform_data);
+    platform_data->SetSyntheticBold(font_description.Weight() >=
+                                        kBoldThreshold &&
+                                    font_description.SyntheticBoldAllowed());
+    platform_data->SetSyntheticItalic(
+        font_description.Style() == kItalicSlopeValue &&
+        font_description.SyntheticItalicAllowed());
+    return FontDataFromFontPlatformData(platform_data);
   }
 
   return nullptr;
 }
 
-scoped_refptr<SimpleFontData> FontCache::GetLastResortFallbackFont(
-    const FontDescription& description,
-    ShouldRetain should_retain) {
+const SimpleFontData* FontCache::GetLastResortFallbackFont(
+    const FontDescription& description) {
   const FontFaceCreationParams fallback_creation_params(
       GetFallbackFontFamily(description));
   const FontPlatformData* font_platform_data = GetFontPlatformData(
@@ -196,7 +209,7 @@ scoped_refptr<SimpleFontData> FontCache::GetLastResortFallbackFont(
 #endif
 
   DCHECK(font_platform_data);
-  return FontDataFromFontPlatformData(font_platform_data, should_retain);
+  return FontDataFromFontPlatformData(font_platform_data);
 }
 
 sk_sp<SkTypeface> FontCache::CreateTypeface(
@@ -239,7 +252,7 @@ sk_sp<SkTypeface> FontCache::CreateTypeface(
 }
 
 #if !BUILDFLAG(IS_WIN)
-std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
+const FontPlatformData* FontCache::CreateFontPlatformData(
     const FontDescription& font_description,
     const FontFaceCreationParams& creation_params,
     float font_size,
@@ -288,17 +301,10 @@ std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
                           font_description.GetFontSynthesisStyle() ==
                               FontDescription::kAutoFontSynthesisStyle;
 
-  ResolvedFontFeatures resolved_font_features =
-      font_description.GetFontVariantAlternates()
-          ? font_description.GetFontVariantAlternates()
-                ->GetResolvedFontFeatures()
-          : ResolvedFontFeatures();
-
-  std::unique_ptr<FontPlatformData> font_platform_data =
-      std::make_unique<FontPlatformData>(
-          typeface, name, font_size, synthetic_bold, synthetic_italic,
-          font_description.TextRendering(), resolved_font_features,
-          font_description.Orientation());
+  FontPlatformData* font_platform_data = MakeGarbageCollected<FontPlatformData>(
+      typeface, name, font_size, synthetic_bold, synthetic_italic,
+      font_description.TextRendering(), font_description.ResolveFontFeatures(),
+      font_description.Orientation());
 
   font_platform_data->SetAvoidEmbeddedBitmaps(
       BitmapGlyphsBlockList::ShouldAvoidEmbeddedBitmapsForTypeface(*typeface));

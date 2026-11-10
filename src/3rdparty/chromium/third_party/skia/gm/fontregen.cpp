@@ -28,9 +28,9 @@
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrContextOptions.h"
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
 #include "include/private/base/SkTemplates.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -49,9 +49,9 @@ static sk_sp<SkTextBlob> make_blob(const SkString& text, const SkFont& font) {
     AutoTArray<SkScalar>  pos(len);
     AutoTArray<SkGlyphID> glyphs(len);
 
-    font.textToGlyphs(text.c_str(), len, SkTextEncoding::kUTF8, glyphs.get(), len);
-    font.getXPos(glyphs.get(), len, pos.get());
-    return SkTextBlob::MakeFromPosTextH(text.c_str(), len, pos.get(), 0, font);
+    font.textToGlyphs(text.c_str(), len, SkTextEncoding::kUTF8, glyphs);
+    font.getXPos(glyphs, pos);
+    return SkTextBlob::MakeFromPosTextH(text.c_str(), len, pos, 0, font);
 }
 
 class FontRegenGM : public skiagm::GM {
@@ -64,7 +64,7 @@ class FontRegenGM : public skiagm::GM {
 #if defined(SK_GRAPHITE)
     void modifyGraphiteContextOptions(skgpu::graphite::ContextOptions* options) const override {
         options->fGlyphCacheTextureMaximumBytes = 0;
-        options->fAllowMultipleGlyphCacheTextures = false;
+        options->fAllowMultipleAtlasTextures = false;
     }
 #endif
 

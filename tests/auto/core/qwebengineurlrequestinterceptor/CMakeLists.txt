@@ -19,6 +19,8 @@ set(tst_qwebengineurlrequestinterceptor_resource_files
     "resources/content.html"
     "resources/content2.html"
     "resources/content3.html"
+    "resources/cors.html"
+    "resources/cors.js"
     "resources/favicon.html"
     "resources/firstparty.html"
     "resources/fontawesome.woff"
@@ -38,7 +40,6 @@ set(tst_qwebengineurlrequestinterceptor_resource_files
     "resources/style.css"
     "resources/sw.html"
     "resources/sw.js"
-    "resources/postBodyFile.txt"
 )
 
 qt_internal_add_resource(tst_qwebengineurlrequestinterceptor "tst_qwebengineurlrequestinterceptor"

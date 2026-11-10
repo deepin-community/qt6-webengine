@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/gamepad/xbox_data_fetcher_mac.h"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -189,7 +194,7 @@ bool XboxDataFetcher::RegisterForNotifications() {
   if (listening_)
     return true;
   if (port_ == nullptr)
-    port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
+    port_.reset(IONotificationPortCreate(kIOMainPortDefault));
   if (!port_.is_valid())
     return false;
   source_ = IONotificationPortGetRunLoopSource(port_.get());
@@ -257,7 +262,7 @@ bool XboxDataFetcher::RegisterForInterestNotifications(
     io_service_t service,
     PendingController* pending) {
   if (port_ == nullptr)
-    port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
+    port_.reset(IONotificationPortCreate(kIOMainPortDefault));
   if (!port_.is_valid())
     return false;
 
@@ -315,7 +320,13 @@ void XboxDataFetcher::AddController(XboxControllerMac* controller) {
   state->axis_mask = 0;
   state->button_mask = 0;
 
-  state->data.vibration_actuator.type = GamepadHapticActuatorType::kDualRumble;
+  if (GamepadIdList::Get().HasTriggerRumbleSupport(controller->gamepad_id())) {
+    state->data.vibration_actuator.type =
+        GamepadHapticActuatorType::kTriggerRumble;
+  } else {
+    state->data.vibration_actuator.type =
+        GamepadHapticActuatorType::kDualRumble;
+  }
   state->data.vibration_actuator.not_null = controller->SupportsVibration();
 }
 

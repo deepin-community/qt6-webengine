@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/mediastream/transferred_media_stream_track.h"
 
+#include <cstdint>
 #include <memory>
 
 #include "base/functional/callback_helpers.h"
@@ -14,6 +15,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_double_range.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_long_range.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_track_state.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_capabilities.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_constraints.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
@@ -42,7 +44,6 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -118,11 +119,11 @@ void TransferredMediaStreamTrack::SetContentHint(const String& content_hint) {
   content_hint_list_.push_back(content_hint);
 }
 
-String TransferredMediaStreamTrack::readyState() const {
+V8MediaStreamTrackState TransferredMediaStreamTrack::readyState() const {
   if (track_) {
     return track_->readyState();
   }
-  return ReadyStateToString(data_.ready_state);
+  return ReadyStateToV8TrackState(data_.ready_state);
 }
 
 MediaStreamTrack* TransferredMediaStreamTrack::clone(
@@ -172,7 +173,8 @@ MediaTrackSettings* TransferredMediaStreamTrack::getSettings() const {
   return MediaTrackSettings::Create();
 }
 
-MediaStreamTrackVideoStats* TransferredMediaStreamTrack::stats() {
+V8UnionMediaStreamTrackAudioStatsOrMediaStreamTrackVideoStats*
+TransferredMediaStreamTrack::stats() {
   if (track_) {
     return track_->stats();
   }
@@ -188,20 +190,21 @@ CaptureHandle* TransferredMediaStreamTrack::getCaptureHandle() const {
   return CaptureHandle::Create();
 }
 
-ScriptPromise TransferredMediaStreamTrack::applyConstraints(
+ScriptPromise<IDLUndefined> TransferredMediaStreamTrack::applyConstraints(
     ScriptState* script_state,
     const MediaTrackConstraints* constraints) {
   if (track_) {
     return track_->applyConstraints(script_state, constraints);
   }
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  ScriptPromise promise = resolver->Promise();
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
+  auto promise = resolver->Promise();
   applyConstraints(resolver, constraints);
   return promise;
 }
 
 void TransferredMediaStreamTrack::applyConstraints(
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolver<IDLUndefined>* resolver,
     const MediaTrackConstraints* constraints) {
   setter_call_order_.push_back(APPLY_CONSTRAINTS);
   constraints_list_.push_back(
@@ -314,27 +317,14 @@ void TransferredMediaStreamTrack::UnregisterMediaStream(MediaStream* stream) {
   // initialized.
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-void TransferredMediaStreamTrack::SendWheel(
-    double relative_x,
-    double relative_y,
-    int wheel_delta_x,
-    int wheel_delta_y,
-    base::OnceCallback<void(bool, const String&)> callback) {
-  NOTREACHED_NORETURN();
+void TransferredMediaStreamTrack::RegisterSink(
+    SpeechRecognitionMediaStreamAudioSink* sink) {
+  if (track_) {
+    track_->RegisterSink(sink);
+  }
+  // TODO(https://crbug.com/1288839): Save and forward to track_ once it's
+  // initialized.
 }
-
-void TransferredMediaStreamTrack::GetZoomLevel(
-    base::OnceCallback<void(absl::optional<int>, const String&)> callback) {
-  NOTREACHED_NORETURN();
-}
-
-void TransferredMediaStreamTrack::SetZoomLevel(
-    int zoom_level,
-    base::OnceCallback<void(bool, const String&)> callback) {
-  std::move(callback).Run(false, "Unsupported.");
-}
-#endif
 
 // EventTarget
 const AtomicString& TransferredMediaStreamTrack::InterfaceName() const {
@@ -364,9 +354,12 @@ bool TransferredMediaStreamTrack::HasPendingActivity() const {
 }
 
 std::unique_ptr<AudioSourceProvider>
-TransferredMediaStreamTrack::CreateWebAudioSource(int context_sample_rate) {
+TransferredMediaStreamTrack::CreateWebAudioSource(
+    int context_sample_rate,
+    base::TimeDelta platform_buffer_duration) {
   if (track_) {
-    return track_->CreateWebAudioSource(context_sample_rate);
+    return track_->CreateWebAudioSource(context_sample_rate,
+                                        platform_buffer_duration);
   }
   // TODO(https://crbug.com/1288839): Create one based on transferred data?
   return nullptr;
@@ -380,13 +373,13 @@ ImageCapture* TransferredMediaStreamTrack::GetImageCapture() {
   return nullptr;
 }
 
-absl::optional<const MediaStreamDevice> TransferredMediaStreamTrack::device()
+std::optional<const MediaStreamDevice> TransferredMediaStreamTrack::device()
     const {
   if (track_) {
     return track_->device();
   }
   // TODO(https://crbug.com/1288839): Return transferred data
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void TransferredMediaStreamTrack::BeingTransferred(
@@ -451,7 +444,7 @@ void TransferredMediaStreamTrack::Trace(Visitor* visitor) const {
 }
 
 TransferredMediaStreamTrack::ConstraintsPair::ConstraintsPair(
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolver<IDLUndefined>* resolver,
     const MediaTrackConstraints* constraints)
     : resolver(resolver), constraints(constraints) {}
 

@@ -66,7 +66,7 @@ Builder& Builder::operator=(Builder&& rhs) {
 }
 
 bool Builder::IsValid() const {
-    return !diagnostics_.contains_errors();
+    return !diagnostics_.ContainsErrors();
 }
 
 void Builder::MarkAsMoved() {
@@ -75,7 +75,7 @@ void Builder::MarkAsMoved() {
 }
 
 void Builder::AssertNotMoved() const {
-    if (TINT_UNLIKELY(moved_)) {
+    if (DAWN_UNLIKELY(moved_)) {
         TINT_ICE() << "Attempting to use Builder after it has been moved";
     }
 }
@@ -99,7 +99,7 @@ const ast::Function* Builder::WrapInFunction(VectorRef<const ast::Statement*> st
     return Func("test_function", {}, ty.void_(), std::move(stmts),
                 Vector{
                     create<ast::StageAttribute>(ast::PipelineStage::kCompute),
-                    WorkgroupSize(1_i, 1_i, 1_i),
+                    WorkgroupSize(1_u, 1_u, 1_u),
                 });
 }
 

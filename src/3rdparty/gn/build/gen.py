@@ -101,7 +101,7 @@ class Platform(object):
     return self._platform == 'zos'
 
   def is_serenity(self):
-    return self_.platform == 'serenity'
+    return self._platform == 'serenity'
 
 class ArgumentsList:
   """Helper class to accumulate ArgumentParser argument definitions
@@ -204,6 +204,8 @@ def main(argv):
                     help='The path to cc compiler.')
   args_list.add('--cxx',
                     help='The path to cxx compiler.')
+  args_list.add('--cxx-wrapper',
+                    help='The path to cxx compiler wrapper (e.g. ccache).')
   args_list.add('--ld',
                     help='The path to ld.')
   args_list.add('--ar',
@@ -215,6 +217,11 @@ def main(argv):
   args_list.add('--osx-architectures',
                     help='delimited list of architectures for universal build',
                     type=str)
+  args_list.add('--osx-deployment-target',
+                    help='The minimum macOS version to build for.',
+                    type=str)
+  args_list.add('--gcc-legacy-support', action='store_true',
+                    help='Support gcc9 compilation')
 
   if sys.platform == 'zos':
     args_list.add('--zoslib-dir',
@@ -222,9 +229,14 @@ def main(argv):
                       default='../third_party/zoslib',
                       dest='zoslib_dir',
                       help=('Specify the path of ZOSLIB directory, to link ' +
-                            'with <ZOSLIB_DIR>/install/lib/libzoslib.a, and ' +
-                            'add -I<ZOSLIB_DIR>/install/include to the compile ' +
+                            'with <ZOSLIB_DIR>/lib/libzoslib.a, and ' +
+                            'add -I<ZOSLIB_DIR>/include to the compile ' +
                             'commands. See README.md for details.'))
+  args_list.add('--generate-compilation-database',
+                    action='store_true',
+                    help=('Generate compile_commands.json with ' +
+                          '`ninja -t compdb`.'))
+
   args_list.add_to_parser(parser)
   options = parser.parse_args(argv)
 
@@ -263,7 +275,7 @@ def GenerateLastCommitPosition(host, header):
   describe_output = subprocess.check_output(
       ['git', 'describe', 'HEAD', '--abbrev=12', '--match', ROOT_TAG],
       shell=host.is_windows(), cwd=REPO_ROOT)
-  mo = re.match(ROOT_TAG + '-(\\d+)-g([0-9a-f]+)', describe_output.decode())
+  mo = re.match(ROOT_TAG + r'-(\d+)-g([0-9a-f]+)', describe_output.decode())
   if not mo:
     raise ValueError(
         'Unexpected output from git describe when generating version header')
@@ -291,7 +303,7 @@ def GenerateLastCommitPosition(host, header):
 
 
 def WriteGenericNinja(path, static_libraries, executables,
-                      cxx, ar, ld, platform, host, options,
+                      cxx, cxx_wrapper, ar, ld, platform, host, options,
                       args_list, cflags=[], ldflags=[],
                       libflags=[], include_dirs=[], solibs=[]):
   args = args_list.gen_command_line_args(options)
@@ -299,7 +311,7 @@ def WriteGenericNinja(path, static_libraries, executables,
     args = " " + args
 
   ninja_header_lines = [
-    'cxx = ' + cxx,
+    'cxx = ' + cxx_wrapper + ' ' + cxx,
     'ar = ' + ar,
     'ld = ' + ld,
     '',
@@ -340,7 +352,12 @@ def WriteGenericNinja(path, static_libraries, executables,
 
   if platform.is_windows():
     executable_ext = '.exe'
-    library_ext = '.lib'
+
+    if platform.is_msvc():
+      library_ext = '.lib'
+    else:
+      library_ext = '.a'
+
     object_ext = '.obj'
   else:
     executable_ext = ''
@@ -401,12 +418,17 @@ def WriteGenericNinja(path, static_libraries, executables,
     f.write(ninja_template)
     f.write('\n'.join(ninja_lines))
 
+  build_dir = os.path.dirname(path)
   with open(path + '.d', 'w') as f:
     f.write('build.ninja: ' +
             os.path.relpath(os.path.join(SCRIPT_DIR, 'gen.py'),
-                            os.path.dirname(path)) + ' ' +
-            os.path.relpath(template_filename, os.path.dirname(path)) + '\n')
+                            build_dir) + ' ' +
+            os.path.relpath(template_filename, build_dir) + '\n')
 
+  if options.generate_compilation_database:
+    with open(os.path.join(REPO_ROOT, 'compile_commands.json'), 'w') as f:
+      subprocess.run(
+          ['ninja', '-C', build_dir, '-t', 'compdb'], stdout=f, check=True)
 
 def WriteGNNinja(path, platform, host, options, args_list):
   # QTBUG-64759
@@ -438,10 +460,11 @@ def WriteGNNinja(path, platform, host, options, args_list):
   ldflags = []
   libflags = []
 
-  cc = options.cc
-  cxx = options.cxx
-  ld = options.ld
-  ar = options.ar
+  cc = '"' + options.cc + '"'
+  cxx = '"' + options.cxx + '"'
+  cxx_wrapper = '"' + options.cxx_wrapper + '"' if options.cxx_wrapper else ''
+  ld = '"' + options.ld + '"'
+  ar = '"' + options.ar +'"'
 
   if not ar:
      if platform.is_msvc():
@@ -454,7 +477,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
       '.',
   ]
   if platform.is_zos():
-    include_dirs += [ options.zoslib_dir + '/install/include' ]
+    include_dirs += [ options.zoslib_dir + '/include' ]
 
   libs = []
 
@@ -477,8 +500,8 @@ def WriteGNNinja(path, platform, host, options, args_list):
         cflags.append('-g')
       ldflags.append('-O3')
       if platform.is_darwin() and options.isysroot:
-        cflags.append('-isysroot ' +  options.isysroot)
-        ldflags.append('-isysroot ' +  options.isysroot)
+        cflags.append('-isysroot "' +  options.isysroot + '"')
+        ldflags.append('-isysroot "' +  options.isysroot + '"')
 
       # Use -fdata-sections and -ffunction-sections to place each function
       # or data item into its own section so --gc-sections can eliminate any
@@ -513,6 +536,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
 
     if options.use_asan:
       cflags.append('-fsanitize=address')
+      cflags.append('-DASAN_ENABLED')
       ldflags.append('-fsanitize=address')
 
     if options.use_ubsan:
@@ -560,13 +584,20 @@ def WriteGNNinja(path, platform, host, options, args_list):
         '-Wno-implicit-fallthrough',
         '-Wno-redundant-move',
         '-Wno-unused-variable',
+        '-Wno-parentheses-equality',
         '-Wno-format',             # Use of %llx, which is supported by _UCRT, false positive
         '-Wno-strict-aliasing',    # Dereferencing punned pointer
         '-Wno-cast-function-type', # Casting FARPROC to RegDeleteKeyExPtr
-        '-std=gnu++20',
       ])
+
+      if options.gcc_legacy_support:
+        cflags.append('-std=gnu++2a')
+      else:
+        cflags.append('-std=gnu++20')
+
     elif platform.is_darwin():
-      min_mac_version_flag = '-mmacosx-version-min=10.9'
+      min_mac_version = options.osx_deployment_target or '10.9'
+      min_mac_version_flag = '-mmacosx-version-min=' + min_mac_version
       cflags.append(min_mac_version_flag)
       ldflags.append(min_mac_version_flag)
       if options.osx_architectures:
@@ -581,7 +612,10 @@ def WriteGNNinja(path, platform, host, options, args_list):
       cflags.append('-fPIC')
       cflags.extend(['-D_BSD_SOURCE'])
     elif platform.is_zos():
+      cflags.append('-m64')
+      ldflags.append('-m64')
       cflags.append('-fzos-le-char-mode=ascii')
+      cflags.append('-Wno-unknown-pragmas')
       cflags.append('-Wno-unused-function')
       cflags.append('-D_OPEN_SYS_FILE_EXT')
       cflags.append('-DPATH_MAX=1024')
@@ -742,6 +776,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
         'src/gn/function_get_path_info.cc',
         'src/gn/function_get_target_outputs.cc',
         'src/gn/function_label_matches.cc',
+        'src/gn/function_path_exists.cc',
         'src/gn/function_process_file_template.cc',
         'src/gn/function_read_file.cc',
         'src/gn/function_rebase_path.cc',
@@ -881,6 +916,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
         'src/gn/function_get_path_info_unittest.cc',
         'src/gn/function_get_target_outputs_unittest.cc',
         'src/gn/function_label_matches_unittest.cc',
+        'src/gn/function_path_exists_unittest.cc',
         'src/gn/function_process_file_template_unittest.cc',
         'src/gn/function_rebase_path_unittest.cc',
         'src/gn/function_template_unittest.cc',
@@ -965,7 +1001,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
     ])
 
   if platform.is_zos():
-    libs.extend([ options.zoslib_dir + '/install/lib/libzoslib.a' ])
+    libs.extend([ options.zoslib_dir + '/lib/libzoslib.a' ])
 
   if platform.is_windows():
     static_libraries['base']['sources'].extend([
@@ -1013,7 +1049,7 @@ def WriteGNNinja(path, platform, host, options, args_list):
   executables['gn']['libs'].extend(static_libraries.keys())
   executables['gn_unittests']['libs'].extend(static_libraries.keys())
 
-  WriteGenericNinja(path, static_libraries, executables, cxx, ar, ld,
+  WriteGenericNinja(path, static_libraries, executables, cxx, cxx_wrapper, ar, ld,
                     platform, host, options, args_list,
                     cflags, ldflags, libflags, include_dirs, libs)
 

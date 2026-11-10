@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-raddexpminusmax/avx512f-p5-scalef.c.in
 //   Generator: tools/xngen
@@ -8,11 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/raddexpminusmax.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/raddexpminusmax.h"
 
 
 void xnn_f32_raddexpminusmax_ukernel__avx512f_p5_scalef_u128(
@@ -196,7 +200,7 @@ void xnn_f32_raddexpminusmax_ukernel__avx512f_p5_scalef_u128(
   if (batch != 0) {
     // Prepare mask for valid 32-bit batch (depends on batch).
     batch >>= XNN_LOG2_SIZEOF_FLOAT;
-    const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << batch) - UINT32_C(1)));
+    const __mmask16 vmask = _cvtu32_mask16((uint32_t) ((UINT32_C(1) << batch) - UINT32_C(1)));
 
     // Load up to 15 inputs at a time.
     const __m512 vi = _mm512_maskz_loadu_ps(vmask, input);

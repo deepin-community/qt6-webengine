@@ -32,12 +32,12 @@
 
 #include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
+#include "third_party/blink/renderer/core/html/html_span_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -205,9 +205,14 @@ bool SmartClip::ShouldSkipBackgroundImage(Node* node) {
   // or a width. On the other hand, if we've got a legit background image,
   // it's very likely the height or the width will be set to auto.
   LayoutObject* layout_object = node->GetLayoutObject();
-  if (layout_object && (layout_object->StyleRef().LogicalHeight().IsAuto() ||
-                        layout_object->StyleRef().LogicalWidth().IsAuto()))
+  if (layout_object && (layout_object->StyleRef()
+                            .LogicalHeight()
+                            .HasAutoOrContentOrIntrinsic() ||
+                        layout_object->StyleRef()
+                            .LogicalWidth()
+                            .HasAutoOrContentOrIntrinsic())) {
     return true;
+  }
 
   return false;
 }

@@ -16,7 +16,10 @@
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "google_apis/gaia/gaia_auth_consumer.h"
+#include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "google_apis/gaia/oauth_multilogin_result.h"
+#include "net/http/http_request_headers.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -50,7 +53,8 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaSource {
     kChromeOS,
     kAccountReconcilorDice,
     kAccountReconcilorMirror,
-    kPrimaryAccountManager
+    kPrimaryAccountManager,
+    kChromeGlic,  // chrome/browser/glic
   };
 
   // Implicit conversion is necessary to avoid boilerplate code.
@@ -73,17 +77,6 @@ class SharedURLLoaderFactory;
 
 class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
  public:
-  struct COMPONENT_EXPORT(GOOGLE_APIS) MultiloginTokenIDPair {
-    std::string token_;
-    std::string gaia_id_;
-
-    MultiloginTokenIDPair(const std::string& gaia_id,
-                          const std::string& token) {
-      gaia_id_ = gaia_id;
-      token_ = token;
-    }
-  };
-
   // This will later be hidden behind an auth service which caches tokens.
   GaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
@@ -111,6 +104,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   // called on the consumer on the original thread.
   void StartAuthCodeForOAuth2TokenExchange(
       const std::string& auth_code,
+      const std::string& user_agent_full_version_list = std::string(),
       const std::string& binding_registration_token = std::string());
 
   // Start a request to exchange the authorization code for an OAuthLogin-scoped
@@ -126,12 +120,16 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   void StartAuthCodeForOAuth2TokenExchangeWithDeviceId(
       const std::string& auth_code,
       const std::string& device_id,
+      const std::string& user_agent_full_version_list = std::string(),
       const std::string& binding_registration_token = std::string());
 
   // Starts a request to get the cookie for list of accounts.
-  void StartOAuthMultilogin(gaia::MultiloginMode mode,
-                            const std::vector<MultiloginTokenIDPair>& accounts,
-                            const std::string& external_cc_result);
+  void StartOAuthMultilogin(
+      gaia::MultiloginMode mode,
+      const std::vector<gaia::MultiloginAccountAuthCredentials>& accounts,
+      const std::string& external_cc_result,
+      OAuthMultiloginResult::CookieDecryptor cookie_decryptor =
+          base::NullCallback());
 
   // Starts a request to list the accounts in the GAIA cookie.
   void StartListAccounts();
@@ -155,7 +153,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   // Virtual so it can be overridden by fake implementations.
   virtual void StartCreateReAuthProofTokenForParent(
       const std::string& child_oauth_access_token,
-      const std::string& parent_obfuscated_gaia_id,
+      const GaiaId& parent_obfuscated_gaia_id,
       const std::string& parent_credential);
 
   // Starts a request to get the list of URLs to check for connection info.
@@ -169,8 +167,8 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
  protected:
   // Creates and starts |url_loader_|, used to make all Gaia request.  |body| is
   // used as the body of the POST request sent to GAIA. |body_content_type| is
-  // the body content type to set, but only used if |body| is set.  Any strings
-  // listed in |headers| are added as extra HTTP headers in the request.
+  // the body content type to set, but only used if |body| is set.
+  // |request_headers| are added as extra HTTP headers in the request.
   //
   // |credentials_mode| are passed to directly to
   // network::SimpleURLLoader::Create() when creating the SimpleURLLoader.
@@ -180,7 +178,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   virtual void CreateAndStartGaiaFetcher(
       const std::string& body,
       const std::string& body_content_type,
-      const std::string& headers,
+      const net::HttpRequestHeaders& request_headers,
       const GURL& gaia_gurl,
       network::mojom::CredentialsMode credentials_mode,
       const net::NetworkTrafficAnnotationTag& traffic_annotation);
@@ -201,7 +199,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   // Needed to use XmlHTTPRequest for Multilogin requeston iOS even after
   // iOS11 because WKWebView cannot read response body if content-disposition
   // header is set.
-  // TODO(https://crbug.com/889471) Remove this once requests are done using
+  // TODO(crbug.com/40595504) Remove this once requests are done using
   // NSUrlSession in iOS.
   bool IsMultiloginUrl(const GURL& url);
 
@@ -210,23 +208,6 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   bool IsListAccountsUrl(const GURL& url);
 
  private:
-  // The format of the POST body to get OAuth2 token pair from auth code.
-  static const char kOAuth2CodeToTokenPairBodyFormat[];
-  // Additional params for the POST body to get OAuth2 token pair from auth
-  // code.
-  static const char kOAuth2CodeToTokenPairDeviceIdParam[];
-  static const char kOAuth2CodeToTokenPairBindingRegistrationTokenParam[];
-  // The format of the POST body to revoke an OAuth2 token.
-  static const char kOAuth2RevokeTokenBodyFormat[];
-
-  // Constants for parsing error responses.
-  static const char kErrorParam[];
-  static const char kErrorUrlParam[];
-
-  // Constants for request/response for OAuth2 requests.
-  static const char kOAuthHeaderFormat[];
-  static const char kOAuthMultiBearerHeaderFormat[];
-
   void OnURLLoadComplete(std::unique_ptr<std::string> response_body);
 
   void OnOAuth2TokenPairFetched(const std::string& data,
@@ -290,6 +271,9 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   std::unique_ptr<network::SimpleURLLoader> url_loader_;
   GURL original_url_;
   std::string request_body_;
+
+  // Only populated in Multilogin requests.
+  OAuthMultiloginResult::CookieDecryptor oauth_multilogin_cookie_decryptor_;
 
   bool fetch_pending_ = false;
 

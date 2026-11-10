@@ -27,10 +27,12 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_shape.h"
 
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/pointer_events_hit_rules.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_paint_server.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/transform_helper.h"
@@ -39,7 +41,8 @@
 #include "third_party/blink/renderer/core/paint/svg_shape_painter.h"
 #include "third_party/blink/renderer/core/svg/svg_geometry_element.h"
 #include "third_party/blink/renderer/core/svg/svg_length_functions.h"
-#include "third_party/blink/renderer/platform/graphics/stroke_data.h"
+#include "third_party/blink/renderer/platform/geometry/path_builder.h"
+#include "third_party/blink/renderer/platform/geometry/stroke_data.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "ui/gfx/geometry/point_f.h"
 
@@ -52,6 +55,12 @@ void ClampBoundsToFinite(gfx::RectF& bounds) {
   bounds.set_y(ClampTo<float>(bounds.y()));
   bounds.set_width(ClampTo<float>(bounds.width()));
   bounds.set_height(ClampTo<float>(bounds.height()));
+}
+
+// Returns true if the stroke style would make this object have relative
+// lengths i.e. lengths as percentage of the viewport.
+bool ComputeStrokeHasRelativeLengths(const ComputedStyle& style) {
+  return style.StrokeWidth().length().HasPercent();
 }
 
 }  // namespace
@@ -78,20 +87,25 @@ void LayoutSVGShape::StyleDidChange(StyleDifference diff,
   NOT_DESTROYED();
   LayoutSVGModelObject::StyleDidChange(diff, old_style);
 
+  if (diff.NeedsFullLayout()) {
+    SetNeedsBoundariesUpdate();
+  }
+
+  const ComputedStyle& style = StyleRef();
+
   TransformHelper::UpdateOffsetPath(*GetElement(), old_style);
-  transform_uses_reference_box_ =
-      TransformHelper::UpdateReferenceBoxDependency(*this);
-  SVGResources::UpdatePaints(*this, old_style, StyleRef());
+  transform_uses_reference_box_ = TransformHelper::DependsOnReferenceBox(style);
+  SVGResources::UpdatePaints(*this, old_style, style);
 
   if (old_style) {
-    const ComputedStyle& style = StyleRef();
     // Most of the stroke attributes (caps, joins, miters, width, etc.) will
     // cause a re-layout which will clear the stroke-path cache; however, there
     // are a couple of additional properties that *won't* cause a layout, but
     // are significant enough to require invalidating the cache.
     if (!diff.NeedsFullLayout() && stroke_path_cache_) {
       if (old_style->StrokeDashOffset() != style.StrokeDashOffset() ||
-          *old_style->StrokeDashArray() != *style.StrokeDashArray()) {
+          base::ValuesEquivalent(old_style->StrokeDashArray(),
+                                 style.StrokeDashArray())) {
         stroke_path_cache_.reset();
       }
     }
@@ -133,8 +147,9 @@ void LayoutSVGShape::CreatePath() {
 
 float LayoutSVGShape::DashScaleFactor() const {
   NOT_DESTROYED();
-  if (!StyleRef().HasDashArray())
+  if (!StyleRef().StrokeDashArray()) {
     return 1;
+  }
   return To<SVGGeometryElement>(*GetElement()).PathLengthScaleFactor();
 }
 
@@ -256,19 +271,23 @@ bool LayoutSVGShape::ShapeDependentStrokeContains(
     stroke_path_cache_ =
         std::make_unique<Path>(path->StrokePath(stroke_data, root_transform));
   }
-
   DCHECK(stroke_path_cache_);
-  auto point = location.TransformedPoint();
+
+  AffineTransform host_space_transform;
   if (HasNonScalingStroke())
-    point = NonScalingStrokeTransform().MapPoint(point);
-  return stroke_path_cache_->Contains(point);
+    host_space_transform = NonScalingStrokeTransform();
+  TransformedHitTestLocation host_space_location(
+      location, host_space_transform,
+      TransformedHitTestLocation::kDontComputeInverse);
+  DCHECK(host_space_location);
+  return host_space_location->Intersects(*stroke_path_cache_, RULE_NONZERO);
 }
 
 bool LayoutSVGShape::ShapeDependentFillContains(
     const HitTestLocation& location,
     const WindRule fill_rule) const {
   NOT_DESTROYED();
-  return GetPath().Contains(location.TransformedPoint(), fill_rule);
+  return location.Intersects(GetPath(), fill_rule);
 }
 
 static bool HasPaintServer(const LayoutObject& object, const SVGPaint& paint) {
@@ -287,8 +306,9 @@ bool LayoutSVGShape::FillContains(const HitTestLocation& location,
                                   bool requires_fill,
                                   const WindRule fill_rule) {
   NOT_DESTROYED();
-  if (!fill_bounding_box_.InclusiveContains(location.TransformedPoint()))
+  if (!location.Intersects(fill_bounding_box_)) {
     return false;
+  }
 
   if (requires_fill && !HasPaintServer(*this, StyleRef().FillPaint()))
     return false;
@@ -304,23 +324,28 @@ bool LayoutSVGShape::StrokeContains(const HitTestLocation& location,
     return false;
 
   if (requires_stroke) {
-    if (!DecoratedBoundingBox().InclusiveContains(
-            location.TransformedPoint())) {
+    if (!location.Intersects(DecoratedBoundingBox())) {
       return false;
     }
 
     if (!HasPaintServer(*this, StyleRef().StrokePaint()))
       return false;
-  } else if (!HitTestStrokeBoundingBox().InclusiveContains(
-                 location.TransformedPoint())) {
+  } else if (!location.Intersects(HitTestStrokeBoundingBox())) {
     return false;
   }
-
   return ShapeDependentStrokeContains(location);
 }
 
-void LayoutSVGShape::UpdateLayout() {
+SVGLayoutResult LayoutSVGShape::UpdateSVGLayout(
+    const SVGLayoutInfo& layout_info) {
   NOT_DESTROYED();
+  if (layout_info.viewport_changed) {
+    if (geometry_depends_on_viewport_) {
+      SetNeedsShapeUpdate();
+    } else if (ComputeStrokeHasRelativeLengths(StyleRef())) {
+      needs_boundaries_update_ = true;
+    }
+  }
 
   // The cached stroke may be affected by the ancestor transform, and so needs
   // to be cleared regardless of whether the shape or bounds have changed.
@@ -337,10 +362,7 @@ void LayoutSVGShape::UpdateLayout() {
     needs_boundaries_update_ = true;
   }
 
-  bool update_parent_boundaries = false;
-  if (UpdateAfterLayout(bbox_changed)) {
-    update_parent_boundaries = true;
-  }
+  bool bounds_changed = UpdateAfterSVGLayout(layout_info, bbox_changed);
 
   if (needs_boundaries_update_) {
     if (!IsShapeEmpty()) {
@@ -350,23 +372,27 @@ void LayoutSVGShape::UpdateLayout() {
       decorated_bounding_box_ = fill_bounding_box_;
     }
     needs_boundaries_update_ = false;
-    update_parent_boundaries = true;
+    bounds_changed = true;
   }
 
-  // If our bounds changed, notify the parents.
-  if (update_parent_boundaries) {
-    LayoutSVGModelObject::SetNeedsBoundariesUpdate();
-  }
+  const bool has_viewport_dependence =
+      geometry_depends_on_viewport_ ||
+      ComputeStrokeHasRelativeLengths(StyleRef()) ||
+      (transform_uses_reference_box_ &&
+       StyleRef().TransformBox() == ETransformBox::kViewBox);
 
   DCHECK(!needs_shape_update_);
   DCHECK(!needs_boundaries_update_);
   DCHECK(!needs_transform_update_);
   ClearNeedsLayout();
+  return SVGLayoutResult(bounds_changed, has_viewport_dependence);
 }
 
-bool LayoutSVGShape::UpdateAfterLayout(bool bbox_changed) {
+bool LayoutSVGShape::UpdateAfterSVGLayout(const SVGLayoutInfo& layout_info,
+                                          bool bbox_changed) {
+  bool needs_paint_invalidation = false;
   if (bbox_changed) {
-    SetShouldDoFullPaintInvalidation();
+    needs_paint_invalidation = true;
 
     // Invalidate all resources of this client if our reference box changed.
     if (EverHadLayout()) {
@@ -374,9 +400,20 @@ bool LayoutSVGShape::UpdateAfterLayout(bool bbox_changed) {
       resource_invalidator.InvalidateEffects();
       resource_invalidator.InvalidatePaints();
     }
+  } else if (layout_info.viewport_changed) {
+    if (geometry_depends_on_viewport_ ||
+        ComputeStrokeHasRelativeLengths(StyleRef())) {
+      needs_paint_invalidation = true;
+    }
   }
+
+  if (needs_paint_invalidation) {
+    SetShouldDoFullPaintInvalidation();
+  }
+
   if (!needs_transform_update_ && transform_uses_reference_box_) {
-    needs_transform_update_ = CheckForImplicitTransformChange(bbox_changed);
+    needs_transform_update_ =
+        CheckForImplicitTransformChange(layout_info, bbox_changed);
     if (needs_transform_update_)
       SetNeedsPaintPropertyUpdate();
   }
@@ -443,8 +480,11 @@ void LayoutSVGShape::UpdateNonScalingStrokeData() {
 
   // For non-scaling-stroke we need to have a Path representation, so
   // create one here if needed.
-  rare_data.non_scaling_stroke_path_ = EnsurePath();
-  rare_data.non_scaling_stroke_path_.Transform(transform);
+  const Path& path = EnsurePath();
+  rare_data.non_scaling_stroke_path_ =
+      transform.IsIdentity()
+          ? path
+          : PathBuilder(path).Transform(transform).Finalize();
 }
 
 void LayoutSVGShape::Paint(const PaintInfo& paint_info) const {
@@ -467,8 +507,10 @@ bool LayoutSVGShape::NodeAtPoint(HitTestResult& result,
   const PointerEventsHitRules hit_rules(
       PointerEventsHitRules::kSvgGeometryHitTesting, result.GetHitTestRequest(),
       style.UsedPointerEvents());
-  if (hit_rules.require_visible && style.Visibility() != EVisibility::kVisible)
+  if (hit_rules.require_visible &&
+      style.Visibility() != EVisibility::kVisible) {
     return false;
+  }
 
   TransformedHitTestLocation local_location(hit_test_location,
                                             LocalToSVGParentTransform());
@@ -493,9 +535,21 @@ bool LayoutSVGShape::HitTestShape(const HitTestRequest& request,
                                   const HitTestLocation& local_location,
                                   PointerEventsHitRules hit_rules) {
   NOT_DESTROYED();
-  if (hit_rules.can_hit_bounding_box &&
-      local_location.Intersects(ObjectBoundingBox()))
+  bool is_visual_overflow = request.IsHitTestVisualOverflow();
+
+  if (is_visual_overflow) [[unlikely]] {
+    gfx::RectF bounds =
+        SVGLayoutSupport::ApplyFiltersToRect(*this, DecoratedBoundingBox());
+    if (!local_location.Intersects(bounds)) {
+      return false;
+    }
     return true;
+  }
+
+  if (hit_rules.can_hit_bounding_box &&
+      local_location.Intersects(ObjectBoundingBox())) {
+    return true;
+  }
 
   // TODO(chrishtr): support rect-based intersections in the cases below.
   const ComputedStyle& style = StyleRef();

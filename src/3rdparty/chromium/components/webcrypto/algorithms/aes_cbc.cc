@@ -8,8 +8,8 @@
 #include <memory>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_math.h"
-#include "base/strings/string_piece.h"
 #include "components/webcrypto/algorithms/aes.h"
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/blink_key_handle.h"
@@ -81,7 +81,8 @@ Status AesCbcEncryptDecrypt(EncryptOrDecrypt cipher_operation,
     return Status::OperationError();
   }
   int final_output_chunk_len = 0;
-  if (!EVP_CipherFinal_ex(context.get(), buffer->data() + output_len,
+  if (!EVP_CipherFinal_ex(context.get(),
+                          UNSAFE_TODO(buffer->data() + output_len),
                           &final_output_chunk_len)) {
     return Status::OperationError();
   }

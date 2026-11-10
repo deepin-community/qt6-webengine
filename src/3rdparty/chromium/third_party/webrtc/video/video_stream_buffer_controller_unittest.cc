@@ -10,28 +10,32 @@
 
 #include "video/video_stream_buffer_controller.h"
 
-#include <stdint.h>
-
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "absl/types/optional.h"
-#include "absl/types/variant.h"
+#include "api/field_trials.h"
 #include "api/metronome/test/fake_metronome.h"
 #include "api/units/frequency.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
+#include "api/video/encoded_frame.h"
 #include "api/video/video_content_type.h"
 #include "api/video/video_timing.h"
+#include "modules/video_coding/timing/timing.h"
 #include "rtc_base/checks.h"
+#include "system_wrappers/include/clock.h"
+#include "test/create_test_field_trials.h"
 #include "test/fake_encoded_frame.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/time_controller/simulated_time_controller.h"
 #include "video/decode_synchronizer.h"
 #include "video/task_queue_frame_decode_scheduler.h"
@@ -135,7 +139,7 @@ class VideoStreamBufferControllerFixture
  public:
   VideoStreamBufferControllerFixture()
       : sync_decoding_(std::get<0>(GetParam())),
-        field_trials_(std::get<1>(GetParam())),
+        field_trials_(CreateTestFieldTrials(std::get<1>(GetParam()))),
         time_controller_(kClockStart),
         clock_(time_controller_.GetClock()),
         fake_metronome_(TimeDelta::Millis(16)),
@@ -181,9 +185,9 @@ class VideoStreamBufferControllerFixture
   }
 
   using WaitResult =
-      absl::variant<std::unique_ptr<EncodedFrame>, TimeDelta /*wait_time*/>;
+      std::variant<std::unique_ptr<EncodedFrame>, TimeDelta /*wait_time*/>;
 
-  absl::optional<WaitResult> WaitForFrameOrTimeout(TimeDelta wait) {
+  std::optional<WaitResult> WaitForFrameOrTimeout(TimeDelta wait) {
     if (wait_result_) {
       return std::move(wait_result_);
     }
@@ -193,7 +197,7 @@ class VideoStreamBufferControllerFixture
     }
 
     Timestamp now = clock_->CurrentTime();
-    // TODO(bugs.webrtc.org/13756): Remove this when rtc::Thread uses uses
+    // TODO(bugs.webrtc.org/13756): Remove this when Thread uses uses
     // Timestamp instead of an integer milliseconds. This extra wait is needed
     // for some tests that use the metronome. This is due to rounding
     // milliseconds, affecting the precision of simulated time controller uses
@@ -224,7 +228,7 @@ class VideoStreamBufferControllerFixture
 
  protected:
   const bool sync_decoding_;
-  test::ScopedKeyValueConfig field_trials_;
+  FieldTrials field_trials_;
   GlobalSimulatedTimeController time_controller_;
   Clock* const clock_;
   test::FakeMetronome fake_metronome_;
@@ -238,14 +242,14 @@ class VideoStreamBufferControllerFixture
  private:
   void SetWaitResult(WaitResult result) {
     RTC_DCHECK(!wait_result_);
-    if (absl::holds_alternative<std::unique_ptr<EncodedFrame>>(result)) {
-      RTC_DCHECK(absl::get<std::unique_ptr<EncodedFrame>>(result));
+    if (std::holds_alternative<std::unique_ptr<EncodedFrame>>(result)) {
+      RTC_DCHECK(std::get<std::unique_ptr<EncodedFrame>>(result));
     }
     wait_result_.emplace(std::move(result));
   }
 
   uint32_t dropped_frames_ = 0;
-  absl::optional<WaitResult> wait_result_;
+  std::optional<WaitResult> wait_result_;
 };
 
 class VideoStreamBufferControllerTest
@@ -260,7 +264,7 @@ TEST_P(VideoStreamBufferControllerTest,
 
   // No new timeout set since receiver has not started new decode.
   ResetLastResult();
-  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForKeyframe), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForKeyframe), Eq(std::nullopt));
 
   // Now that receiver has asked for new frame, a new timeout can occur.
   StartNextDecodeForceKeyframe();
@@ -362,7 +366,7 @@ TEST_P(VideoStreamBufferControllerTest,
   buffer_->Stop();
   // Wait for 2x max wait time. Since we stopped, this should cause no timeouts
   // or frame-ready callbacks.
-  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForFrame * 2), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForFrame * 2), Eq(std::nullopt));
 }
 
 TEST_P(VideoStreamBufferControllerTest, FramesWaitForDecoderToComplete) {
@@ -383,7 +387,7 @@ TEST_P(VideoStreamBufferControllerTest, FramesWaitForDecoderToComplete) {
 
   // Advancing time should not result in a frame since the scheduler has not
   // been signalled that we are ready.
-  EXPECT_THAT(WaitForFrameOrTimeout(kFps30Delay), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(kFps30Delay), Eq(std::nullopt));
   // Signal ready.
   StartNextDecode();
   EXPECT_THAT(WaitForFrameOrTimeout(kFps30Delay), Frame(test::WithId(1)));
@@ -566,7 +570,7 @@ TEST_P(VideoStreamBufferControllerTest,
                                                            .AsLast()
                                                            .Build()));
   StartNextDecode();
-  EXPECT_THAT(WaitForFrameOrTimeout(TimeDelta::Zero()), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(TimeDelta::Zero()), Eq(std::nullopt));
 
   // Scheduler is waiting to deliver Frame 1 now. Insert Frame 2. Frame 1 should
   // be delivered still.
@@ -747,7 +751,7 @@ TEST_P(VideoStreamBufferControllerTest, NextFrameWithOldTimestamp) {
   // Avoid timeout being set while waiting for the frame and before the receiver
   // is ready.
   ResetLastResult();
-  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForFrame), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(kMaxWaitForFrame), Eq(std::nullopt));
   time_controller_.AdvanceTime(kRolloverDelay - kMaxWaitForFrame);
   StartNextDecode();
   buffer_->InsertFrame(test::FakeFrameBuilder()
@@ -821,8 +825,7 @@ TEST_P(LowLatencyVideoStreamBufferControllerTest,
        FramesDecodedInstantlyWithLowLatencyRendering) {
   // Initial keyframe.
   StartNextDecodeForceKeyframe();
-  timing_.set_min_playout_delay(TimeDelta::Zero());
-  timing_.set_max_playout_delay(TimeDelta::Millis(10));
+  timing_.set_playout_delay({TimeDelta::Zero(), TimeDelta::Millis(10)});
   // Playout delay of 0 implies low-latency rendering.
   auto frame = test::FakeFrameBuilder()
                    .Id(0)
@@ -844,7 +847,7 @@ TEST_P(LowLatencyVideoStreamBufferControllerTest,
               .Build();
   buffer_->InsertFrame(std::move(frame));
   // Pacing is set to 16ms in the field trial so we should not decode yet.
-  EXPECT_THAT(WaitForFrameOrTimeout(TimeDelta::Zero()), Eq(absl::nullopt));
+  EXPECT_THAT(WaitForFrameOrTimeout(TimeDelta::Zero()), Eq(std::nullopt));
   time_controller_.AdvanceTime(TimeDelta::Millis(16));
   EXPECT_THAT(WaitForFrameOrTimeout(TimeDelta::Zero()), Frame(test::WithId(1)));
 }
@@ -852,8 +855,7 @@ TEST_P(LowLatencyVideoStreamBufferControllerTest,
 TEST_P(LowLatencyVideoStreamBufferControllerTest, ZeroPlayoutDelayFullQueue) {
   // Initial keyframe.
   StartNextDecodeForceKeyframe();
-  timing_.set_min_playout_delay(TimeDelta::Zero());
-  timing_.set_max_playout_delay(TimeDelta::Millis(10));
+  timing_.set_playout_delay({TimeDelta::Zero(), TimeDelta::Millis(10)});
   auto frame = test::FakeFrameBuilder()
                    .Id(0)
                    .Time(0)
@@ -885,8 +887,7 @@ TEST_P(LowLatencyVideoStreamBufferControllerTest,
        MinMaxDelayZeroLowLatencyMode) {
   // Initial keyframe.
   StartNextDecodeForceKeyframe();
-  timing_.set_min_playout_delay(TimeDelta::Zero());
-  timing_.set_max_playout_delay(TimeDelta::Zero());
+  timing_.set_playout_delay({TimeDelta::Zero(), TimeDelta::Zero()});
   // Playout delay of 0 implies low-latency rendering.
   auto frame = test::FakeFrameBuilder()
                    .Id(0)

@@ -19,33 +19,37 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "absl/random/bit_gen_ref.h"
 #include "absl/random/distributions.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "./fuzztest/internal/coverage.h"
+#include "absl/strings/str_format.h"
 #include "./fuzztest/internal/domains/domain_base.h"
+#include "./fuzztest/internal/domains/special_values.h"
 #include "./fuzztest/internal/domains/value_mutation_helpers.h"
 #include "./fuzztest/internal/logging.h"
-#include "./fuzztest/internal/serialization.h"
-#include "./fuzztest/internal/table_of_recent_compares.h"
+#include "./fuzztest/internal/printer.h"
 #include "./fuzztest/internal/type_support.h"
 
 namespace fuzztest::internal {
 
 template <typename T>
-class InRangeImpl : public DomainBase<InRangeImpl<T>> {
+class InRangeImpl : public domain_implementor::DomainBase<InRangeImpl<T>> {
  public:
   using typename InRangeImpl::DomainBase::value_type;
 
   constexpr static bool T_is_integer = std::numeric_limits<T>::is_integer;
   constexpr static bool T_is_signed = std::is_signed<T>::value;
-  constexpr static bool T_is_memory_dictionary_compatible =
+  constexpr static bool is_memory_dictionary_compatible_v =
       std::is_integral_v<T> &&
       (sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8);
   using IntegerDictionaryT =
-      std::conditional_t<T_is_memory_dictionary_compatible,
+      std::conditional_t<is_memory_dictionary_compatible_v,
                          IntegerDictionary<T>, bool>;
 
   explicit InRangeImpl(T min, T max) : min_(min), max_(max) {
@@ -85,14 +89,24 @@ class InRangeImpl : public DomainBase<InRangeImpl<T>> {
 
   value_type Init(absl::BitGenRef prng) {
     if (auto seed = this->MaybeGetRandomSeed(prng)) return *seed;
-    // TODO(sbenzaquen): Add more interesting points in the range.
-    const T special[] = {min_, max_};
+
+    const auto default_specials = SpecialValues<T>::Get();
+
+    std::vector<value_type> special = {min_, max_};
+    std::copy_if(std::begin(default_specials), std::end(default_specials),
+                 std::back_inserter(special), [&](const value_type& val) {
+                   // Strict inequality so we don't double-count the endpoints.
+                   return min_ < val && val < max_;
+                 });
+
     return ChooseOneOr(special, prng, [&] {
       return absl::Uniform(absl::IntervalClosedClosed, prng, min_, max_);
     });
   }
 
-  void Mutate(value_type& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(value_type& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
     if (min_ == max_) {
       val = min_;
       return;
@@ -132,9 +146,9 @@ class InRangeImpl : public DomainBase<InRangeImpl<T>> {
               val = absl::Uniform(absl::IntervalClosedClosed, prng, min_, max_);
             }
           } else {
-            RandomWalkOrUniformOrDict<5>(prng, val, min_, max_, temporary_dict_,
-                                         permanent_dict_,
-                                         permanent_dict_candidate_);
+            RandomWalkOrUniformOrDict<5>(
+                prng, val, min_, max_, metadata.cmp_tables, temporary_dict_,
+                permanent_dict_, permanent_dict_candidate_);
           }
         } else {
           if (absl::Bernoulli(prng, 0.25)) {
@@ -143,18 +157,20 @@ class InRangeImpl : public DomainBase<InRangeImpl<T>> {
               val = absl::Uniform(absl::IntervalClosedClosed, prng, min_, max_);
             }
           } else {
-            RandomWalkOrUniformOrDict<5>(prng, val, min_, max_, temporary_dict_,
-                                         permanent_dict_,
-                                         permanent_dict_candidate_);
+            RandomWalkOrUniformOrDict<5>(
+                prng, val, min_, max_, metadata.cmp_tables, temporary_dict_,
+                permanent_dict_, permanent_dict_candidate_);
           }
         }
       } else {
-        RandomWalkOrUniformOrDict<5>(prng, val, min_, max_, temporary_dict_,
-                                     permanent_dict_,
+        RandomWalkOrUniformOrDict<5>(prng, val, min_, max_, metadata.cmp_tables,
+                                     temporary_dict_, permanent_dict_,
                                      permanent_dict_candidate_);
       }
     } while (val == prev);  // Make sure Mutate really mutates.
   }
+
+  value_type GetRandomCorpusValue(absl::BitGenRef prng) { return Init(prng); }
 
   absl::Status ValidateCorpusValue(const value_type& corpus_value) const {
     if (min_ <= corpus_value && corpus_value <= max_) return absl::OkStatus();
@@ -162,11 +178,14 @@ class InRangeImpl : public DomainBase<InRangeImpl<T>> {
     // accept some types (like char).
     std::string error_message;
     absl::Format(&error_message, "The value ");
-    PrintValue(*this, corpus_value, &error_message, PrintMode::kSourceCode);
+    domain_implementor::PrintValue(*this, corpus_value, &error_message,
+                                   domain_implementor::PrintMode::kSourceCode);
     absl::Format(&error_message, " is not InRange(");
-    PrintValue(*this, min_, &error_message, PrintMode::kSourceCode);
+    domain_implementor::PrintValue(*this, min_, &error_message,
+                                   domain_implementor::PrintMode::kSourceCode);
     absl::Format(&error_message, ", ");
-    PrintValue(*this, max_, &error_message, PrintMode::kSourceCode);
+    domain_implementor::PrintValue(*this, max_, &error_message,
+                                   domain_implementor::PrintMode::kSourceCode);
     absl::Format(&error_message, ")");
     return absl::InvalidArgumentError(error_message);
   }
@@ -179,12 +198,12 @@ class InRangeImpl : public DomainBase<InRangeImpl<T>> {
     }
   }
 
-  void UpdateMemoryDictionary(const value_type& val) {
-    if constexpr (T_is_memory_dictionary_compatible) {
-      if (GetExecutionCoverage() != nullptr) {
-        temporary_dict_.MatchEntriesFromTableOfRecentCompares(
-            val, GetExecutionCoverage()->GetTablesOfRecentCompares(), min_,
-            max_);
+  void UpdateMemoryDictionary(
+      const value_type& val, domain_implementor::ConstCmpTablesPtr cmp_tables) {
+    if constexpr (is_memory_dictionary_compatible_v) {
+      if (cmp_tables != nullptr) {
+        temporary_dict_.MatchEntriesFromTableOfRecentCompares(val, *cmp_tables,
+                                                              min_, max_);
         if (permanent_dict_candidate_.has_value() &&
             permanent_dict_.Size() < kPermanentDictMaxSize) {
           permanent_dict_.AddEntry(std::move(*permanent_dict_candidate_));

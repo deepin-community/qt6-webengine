@@ -26,13 +26,13 @@
 #include "third_party/blink/renderer/platform/graphics/deferred_image_decoder.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/decoding_image_generator.h"
@@ -71,7 +71,8 @@ std::unique_ptr<DeferredImageDecoder> DeferredImageDecoder::Create(
     ColorBehavior color_behavior) {
   std::unique_ptr<ImageDecoder> metadata_decoder = ImageDecoder::Create(
       data, data_complete, alpha_option, ImageDecoder::kDefaultBitDepth,
-      color_behavior, Platform::GetMaxDecodedImageBytes());
+      color_behavior, cc::AuxImage::kDefault,
+      Platform::GetMaxDecodedImageBytes());
   if (!metadata_decoder)
     return nullptr;
 
@@ -100,8 +101,8 @@ DeferredImageDecoder::DeferredImageDecoder(
       can_yuv_decode_(false),
       has_hot_spot_(false),
       image_is_high_bit_depth_(false),
-      complete_frame_content_id_(PaintImage::GetNextContentId()) {
-}
+      has_c2pa_manifest_(false),
+      complete_frame_content_id_(PaintImage::GetNextContentId()) {}
 
 DeferredImageDecoder::~DeferredImageDecoder() {
 }
@@ -136,7 +137,7 @@ sk_sp<PaintImageGenerator> DeferredImageDecoder::CreateGenerator() {
   if (image_is_high_bit_depth_)
     info = info.makeColorType(kRGBA_F16_SkColorType);
 
-  WebVector<FrameMetadata> frames(frame_data_.size());
+  std::vector<FrameMetadata> frames(frame_data_.size());
   for (wtf_size_t i = 0; i < frame_data_.size(); ++i) {
     frames[i].complete = frame_data_[i].is_received_;
     frames[i].duration = FrameDurationAtIndex(i);
@@ -177,7 +178,7 @@ bool DeferredImageDecoder::CreateGainmapGenerator(
   if (!gainmap_) {
     return false;
   }
-  WebVector<FrameMetadata> frames;
+  std::vector<FrameMetadata> frames;
 
   SkImageInfo gainmap_image_info =
       SkImageInfo::Make(gainmap_->frame_generator->GetFullSize(),
@@ -257,6 +258,11 @@ wtf_size_t DeferredImageDecoder::FrameCount() {
                            : frame_data_.size();
 }
 
+bool DeferredImageDecoder::HasC2PAManifest() const {
+  return metadata_decoder_ ? metadata_decoder_->HasC2PAManifest()
+                           : has_c2pa_manifest_;
+}
+
 int DeferredImageDecoder::RepetitionCount() const {
   return metadata_decoder_ ? metadata_decoder_->RepetitionCount()
                            : repetition_count_;
@@ -331,6 +337,7 @@ void DeferredImageDecoder::ActivateLazyDecoding() {
 
   size_ = metadata_decoder_->Size();
   image_is_high_bit_depth_ = metadata_decoder_->ImageIsHighBitDepth();
+  has_c2pa_manifest_ = metadata_decoder_->HasC2PAManifest();
   has_hot_spot_ = metadata_decoder_->HotSpot(hot_spot_);
   filename_extension_ = metadata_decoder_->FilenameExtension();
   mime_type_ = metadata_decoder_->MimeType();
@@ -344,17 +351,10 @@ void DeferredImageDecoder::ActivateLazyDecoding() {
       gfx::SizeToSkISize(metadata_decoder_->DecodedSize());
   frame_generator_ = ImageFrameGenerator::Create(
       decoded_size, !is_single_frame, metadata_decoder_->GetColorBehavior(),
-      metadata_decoder_->GetSupportedDecodeSizes());
+      cc::AuxImage::kDefault, metadata_decoder_->GetSupportedDecodeSizes());
 }
 
 void DeferredImageDecoder::ActivateLazyGainmapDecoding() {
-  // Gate this behind a feature flag.
-  static bool feature_enabled =
-      base::FeatureList::IsEnabled(blink::features::kGainmapHdrImages);
-  if (!feature_enabled) {
-    return;
-  }
-
   // Early-out if we have excluded the possibility that this image has a
   // gainmap, or if we have already created the gainmap frame generator.
   if (!might_have_gainmap_ || gainmap_) {
@@ -379,7 +379,7 @@ void DeferredImageDecoder::ActivateLazyGainmapDecoding() {
   auto gainmap_metadata_decoder = ImageDecoder::Create(
       gainmap->data, all_data_received_, ImageDecoder::kAlphaNotPremultiplied,
       ImageDecoder::kDefaultBitDepth, ColorBehavior::kIgnore,
-      Platform::GetMaxDecodedImageBytes());
+      cc::AuxImage::kGainmap, Platform::GetMaxDecodedImageBytes());
   if (!gainmap_metadata_decoder) {
     DLOG(ERROR) << "Failed to create gainmap image decoder.";
     might_have_gainmap_ = false;
@@ -397,7 +397,7 @@ void DeferredImageDecoder::ActivateLazyGainmapDecoding() {
   // Create the result frame generator and metadata.
   gainmap->frame_generator = ImageFrameGenerator::Create(
       gfx::SizeToSkISize(gainmap_metadata_decoder->DecodedSize()),
-      kIsMultiFrame, ColorBehavior::kIgnore,
+      kIsMultiFrame, ColorBehavior::kIgnore, cc::AuxImage::kGainmap,
       gainmap_metadata_decoder->GetSupportedDecodeSizes());
 
   // Populate metadata and save to the `gainmap_` member.
@@ -476,14 +476,12 @@ bool DeferredImageDecoder::HotSpot(gfx::Point& hot_spot) const {
   return has_hot_spot_;
 }
 
-}  // namespace blink
-
-namespace WTF {
 template <>
-struct VectorTraits<blink::DeferredFrameData>
-    : public SimpleClassVectorTraits<blink::DeferredFrameData> {
+struct VectorTraits<DeferredFrameData>
+    : public SimpleClassVectorTraits<DeferredFrameData> {
   STATIC_ONLY(VectorTraits);
-  static const bool kCanInitializeWithMemset =
-      false;  // Not all DeferredFrameData members initialize to 0.
+  // Not all DeferredFrameData members initialize to 0.
+  static const bool kCanInitializeWithMemset = false;
 };
-}  // namespace WTF
+
+}  // namespace blink

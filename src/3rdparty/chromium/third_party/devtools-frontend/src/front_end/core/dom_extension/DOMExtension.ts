@@ -34,6 +34,7 @@
  * http://ejohn.org/files/jsdiff.js (released under the MIT license).
  */
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck This file is not checked by TypeScript Compiler as it has a lot of legacy code.
 
 import * as Platform from '../platform/platform.js';
@@ -43,7 +44,7 @@ Node.prototype.traverseNextTextNode = function(stayWithin?: Node): Node|null {
   if (!node) {
     return null;
   }
-  const nonTextTags = {'STYLE': 1, 'SCRIPT': 1, '#document-fragment': 1};
+  const nonTextTags = {STYLE: 1, SCRIPT: 1, '#document-fragment': 1};
   while (node && (node.nodeType !== Node.TEXT_NODE || nonTextTags[node.parentNode ? node.parentNode.nodeName : ''])) {
     node = node.traverseNextNode(stayWithin);
   }
@@ -175,16 +176,17 @@ self.createDocumentFragment = function(): DocumentFragment {
   return document.createDocumentFragment();
 };
 
-Element.prototype.createChild = function(elementName: string, className?: string, customElementType?: string): Element {
-  const element = document.createElement(elementName, {is: customElementType});
+DocumentFragment.prototype.createChild = Element.prototype.createChild = function(
+    elementName: string,
+    className?: string,
+    ): Element {
+  const element = document.createElement(elementName);
   if (className) {
     element.className = className;
   }
   this.appendChild(element);
   return element;
 };
-
-DocumentFragment.prototype.createChild = Element.prototype.createChild;
 
 self.AnchorBox = class {
   constructor(x?: number, y?: number, width?: number, height?: number) {
@@ -241,18 +243,15 @@ Event.prototype.consume = function(preventDefault?: boolean): void {
   this.handled = true;
 };
 
-Node.prototype.deepTextContent = function(): string {
-  return this.childTextNodes()
-      .map(function(node) {
-        return node.textContent;
-      })
-      .join('');
+Node.prototype.deepTextContent = function(normalizeWhitespace = false): string {
+  const text = this.childTextNodes().map(node => node.textContent).join('');
+  return normalizeWhitespace ? text.replace(/\s+/g, ' ') : text;
 };
 
 Node.prototype.childTextNodes = function(): Node[] {
   let node = this.traverseNextTextNode(this);
   const result = [];
-  const nonTextTags = {'STYLE': 1, 'SCRIPT': 1, '#document-fragment': 1};
+  const nonTextTags = {STYLE: 1, SCRIPT: 1, '#document-fragment': 1};
   while (node) {
     if (!nonTextTags[node.parentNode ? node.parentNode.nodeName : '']) {
       result.push(node);
@@ -260,6 +259,41 @@ Node.prototype.childTextNodes = function(): Node[] {
     node = node.traverseNextTextNode(this);
   }
   return result;
+};
+
+function innerTextDescendants(node: Node): Node[] {
+  if (![Node.ELEMENT_NODE, Node.TEXT_NODE].includes(node.nodeType) || ['SCRIPT', 'STYLE'].includes(node.nodeName)) {
+    return [];
+  }
+  if (!(node instanceof HTMLElement)) {
+    return [node];
+  }
+  if (node instanceof HTMLSlotElement) {
+    return [...node.assignedNodes()].flatMap(innerTextDescendants);
+  }
+  if (node.shadowRoot) {
+    return [...node.shadowRoot.childNodes].flatMap(innerTextDescendants);
+  }
+  const result: Node[] = [];
+  let expanded = false;
+  for (const child of node.childNodes) {
+    const childResult = innerTextDescendants(child);
+    if (childResult.length > 1 || childResult.length === 1 && childResult[0] !== child) {
+      expanded = true;
+    }
+    result.push(...childResult);
+  }
+  if (!expanded) {
+    return [node];
+  }
+  return result;
+}
+
+Node.prototype.deepInnerText = function(): string {
+  return innerTextDescendants(this)
+      .map(n => n instanceof HTMLElement ? n.innerText : n.textContent.trim())
+      .filter(Boolean)
+      .join('\n');
 };
 
 Node.prototype.isAncestor = function(node: Node|null): boolean {
@@ -289,7 +323,7 @@ Node.prototype.isSelfOrDescendant = function(node: Node|null): boolean {
   return Boolean(node) && (node === this || this.isDescendant(node));
 };
 
-Node.prototype.traverseNextNode = function(stayWithin?: Node, skipShadowRoot: boolean = false): Node|null {
+Node.prototype.traverseNextNode = function(stayWithin?: Node, skipShadowRoot = false): Node|null {
   if (!skipShadowRoot && this.shadowRoot) {
     return this.shadowRoot;
   }
@@ -339,7 +373,7 @@ Node.prototype.traversePreviousNode = function(stayWithin?: Node): Node|null {
     return null;
   }
   let node: ChildNode|(ChildNode | null) = this.previousSibling;
-  while (node && node.lastChild) {
+  while (node?.lastChild) {
     node = node.lastChild;
   }
   if (node) {
@@ -398,36 +432,3 @@ DOMTokenList.prototype['toggle'] = function(token: string, force: boolean|undefi
   return originalToggle.call(this, token, Boolean(force));
 };
 })();
-
-export const originalAppendChild = Element.prototype.appendChild;
-export const originalInsertBefore = Element.prototype.insertBefore;
-export const originalRemoveChild = Element.prototype.removeChild;
-export const originalRemoveChildren = Element.prototype.removeChildren;
-
-Element.prototype.appendChild = function(child: Node|null): Node {
-  if (child.__widget && child.parentElement !== this) {
-    throw new Error('Attempt to add widget via regular DOM operation.');
-  }
-  return originalAppendChild.call(this, child);
-};
-
-Element.prototype.insertBefore = function(child: Node|null, anchor: Node|null): Node {
-  if (child.__widget && child.parentElement !== this) {
-    throw new Error('Attempt to add widget via regular DOM operation.');
-  }
-  return originalInsertBefore.call(this, child, anchor);
-};
-
-Element.prototype.removeChild = function(child: Node|null): Node {
-  if (child.__widgetCounter || child.__widget) {
-    throw new Error('Attempt to remove element containing widget via regular DOM operation');
-  }
-  return originalRemoveChild.call(this, child);
-};
-
-Element.prototype.removeChildren = function(): void {
-  if (this.__widgetCounter) {
-    throw new Error('Attempt to remove element containing widget via regular DOM operation');
-  }
-  originalRemoveChildren.call(this);
-};

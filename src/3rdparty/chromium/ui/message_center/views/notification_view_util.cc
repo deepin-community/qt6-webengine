@@ -7,10 +7,9 @@
 #include "ui/events/event.h"
 #include "ui/views/view.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/constants/chromeos_features.h"
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ui/message_center/public/cpp/message_center_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace message_center::notification_view_util {
 
@@ -33,13 +32,12 @@ std::unique_ptr<ui::Event> ConvertToBoundedLocatedEvent(const ui::Event& event,
   return cloned_event;
 }
 
-absl::optional<size_t> GetLargeImageCornerRadius() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return chromeos::features::IsJellyEnabled() ? kJellyImageCornerRadius
-                                              : kImageCornerRadius;
+std::optional<size_t> GetLargeImageCornerRadius() {
+#if BUILDFLAG(IS_CHROMEOS)
+  return kJellyImageCornerRadius;
 #else
-  return absl::nullopt;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+  return std::nullopt;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 }  // namespace message_center::notification_view_util

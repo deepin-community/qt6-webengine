@@ -18,10 +18,10 @@
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_stream.h"
-#include "core/fxcrt/span_util.h"
-#include "third_party/base/check.h"
 
 // Indexed by 8-bit character code, contains either:
 //   'W' - for whitespace: NUL, TAB, CR, LF, FF, SPACE, 0x80, 0xff
@@ -75,18 +75,21 @@ const char kPDFCharTypes[256] = {
     'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R',
     'R', 'R', 'R', 'R', 'R', 'R', 'R', 'W'};
 
-absl::optional<FX_FILESIZE> GetHeaderOffset(
+std::optional<FX_FILESIZE> GetHeaderOffset(
     const RetainPtr<IFX_SeekableReadStream>& pFile) {
   static constexpr size_t kBufSize = 4;
   uint8_t buf[kBufSize];
   for (FX_FILESIZE offset = 0; offset <= 1024; ++offset) {
-    if (!pFile->ReadBlockAtOffset(buf, offset))
-      return absl::nullopt;
+    if (!pFile->ReadBlockAtOffset(buf, offset)) {
+      return std::nullopt;
+    }
 
-    if (memcmp(buf, "%PDF", 4) == 0)
+    // SAFETY: string literal and `buf` can accommodate 4 byte comparisons.
+    if (UNSAFE_BUFFERS(memcmp(buf, "%PDF", 4)) == 0) {
       return offset;
+    }
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 ByteString PDF_NameDecode(ByteStringView orig) {
@@ -111,12 +114,9 @@ ByteString PDF_NameDecode(ByteStringView orig) {
 }
 
 ByteString PDF_NameEncode(const ByteString& orig) {
-  const uint8_t* src_buf = reinterpret_cast<const uint8_t*>(orig.c_str());
-  int src_len = orig.GetLength();
-  int dest_len = 0;
-  int i;
-  for (i = 0; i < src_len; i++) {
-    uint8_t ch = src_buf[i];
+  pdfium::span<const uint8_t> src_span = orig.unsigned_span();
+  size_t dest_len = 0;
+  for (const auto ch : src_span) {
     if (ch >= 0x80 || PDFCharIsWhitespace(ch) || ch == '#' ||
         PDFCharIsDelimiter(ch)) {
       dest_len += 3;
@@ -124,20 +124,19 @@ ByteString PDF_NameEncode(const ByteString& orig) {
       dest_len++;
     }
   }
-  if (dest_len == src_len)
+  if (dest_len == src_span.size()) {
     return orig;
-
+  }
   ByteString res;
   {
     // Span's lifetime must end before ReleaseBuffer() below.
     pdfium::span<char> dest_buf = res.GetBuffer(dest_len);
     dest_len = 0;
-    for (i = 0; i < src_len; i++) {
-      uint8_t ch = src_buf[i];
+    for (const auto ch : src_span) {
       if (ch >= 0x80 || PDFCharIsWhitespace(ch) || ch == '#' ||
           PDFCharIsDelimiter(ch)) {
         dest_buf[dest_len++] = '#';
-        FXSYS_IntToTwoHexChars(ch, &dest_buf[dest_len]);
+        FXSYS_IntToTwoHexChars(ch, dest_buf.subspan(dest_len).first<2u>());
         dest_len += 2;
         continue;
       }
@@ -153,8 +152,9 @@ std::vector<float> ReadArrayElementsToVector(const CPDF_Array* pArray,
   DCHECK(pArray);
   DCHECK(pArray->size() >= nCount);
   std::vector<float> ret(nCount);
-  for (size_t i = 0; i < nCount; ++i)
+  for (size_t i = 0; i < nCount; ++i) {
     ret[i] = pArray->GetFloatAt(i);
+  }
   return ret;
 }
 
@@ -165,15 +165,17 @@ bool ValidateDictType(const CPDF_Dictionary* dict, ByteStringView type) {
 
 bool ValidateDictAllResourcesOfType(const CPDF_Dictionary* dict,
                                     ByteStringView type) {
-  if (!dict)
+  if (!dict) {
     return false;
+  }
 
   CPDF_DictionaryLocker locker(dict);
   for (const auto& it : locker) {
     RetainPtr<const CPDF_Dictionary> entry =
         ToDictionary(it.second->GetDirect());
-    if (!ValidateDictType(entry.Get(), type))
+    if (!ValidateDictType(entry.Get(), type)) {
       return false;
+    }
   }
   return true;
 }
@@ -248,7 +250,7 @@ std::ostream& operator<<(std::ostream& buf, const CPDF_Object* pObj) {
       buf << p->GetDict().Get() << "stream\r\n";
       auto pAcc = pdfium::MakeRetain<CPDF_StreamAcc>(std::move(p));
       pAcc->LoadAllDataRaw();
-      auto span = fxcrt::reinterpret_span<const char>(pAcc->GetSpan());
+      auto span = pdfium::as_chars(pAcc->GetSpan());
       buf.write(span.data(), span.size());
       buf << "\r\nendstream";
       break;

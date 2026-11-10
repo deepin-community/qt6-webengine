@@ -4,15 +4,17 @@
 
 const glob = require('glob');
 const path = require('path');
+const yargs = require('yargs');
+const {hideBin} = require('yargs/helpers');
 
+const {writeIfChanged} = require('../../../scripts/build/ninja/write-if-changed.js');
+const {bakePlaceholders} = require('../../../third_party/i18n/bake-ctc-to-lhl.js');
 const {collectAllStringsInDir, createPsuedoLocaleStrings, IGNORED_PATH_COMPONENTS} =
     require('../../../third_party/i18n/collect-strings.js');
-const {bakePlaceholders} = require('../../../third_party/i18n/bake-ctc-to-lhl.js');
-const {writeIfChanged} = require('../../../scripts/build/ninja/write-if-changed.js');
 
 /** @typedef {import('../../../third_party/i18n/bake-ctc-to-lhl.js').CtcMessage} CtcMessage */
 
-const yargsObject = require('yargs')
+const yargsObject = yargs(hideBin(process.argv))
                         .option('input-directories', {
                           type: 'array',
                           demandOption: true,
@@ -25,12 +27,12 @@ const yargsObject = require('yargs')
                           type: 'boolean',
                         })
                         .strict()
-                        .argv;
+                        .parseSync();
 
 /**
- * @param {string} outputDirectory
- * @param {string} locale
- * @param {Record<string, CtcMessage>} strings
+ * @param outputDirectory
+ * @param locale
+ * @param strings
  */
 function convertCtcToLhLAndSave(outputDirectory, locale, strings) {
   const outputPath = path.join(outputDirectory, `${locale}.json`);
@@ -51,7 +53,7 @@ if (inputDirectories.length === 0) {
   throw new Error('Provide at least one directory!');
 }
 
-/** @type {Record<string, CtcMessage} */
+/** @type {Record<string, CtcMessage>} */
 let collectedStrings = {};
 /** @type {string[]} */
 const files = [];

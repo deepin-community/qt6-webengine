@@ -6,17 +6,16 @@
 #define OSP_PUBLIC_SERVICE_PUBLISHER_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "osp/public/timestamp.h"
 #include "platform/base/error.h"
 #include "platform/base/interface_info.h"
-#include "platform/base/macros.h"
 
 namespace openscreen::osp {
 
-class ServicePublisher {
+class ServicePublisher final {
  public:
   enum class State {
     kStopped = 0,
@@ -26,27 +25,14 @@ class ServicePublisher {
     kSuspended,
   };
 
-  struct Metrics {
-    Metrics();
-    ~Metrics();
-
-    // The range of time over which the metrics were collected; end_timestamp >
-    // start_timestamp
-    timestamp_t start_timestamp = 0;
-    timestamp_t end_timestamp = 0;
-
-    // The number of packets and bytes sent since the service started.
-    uint64_t num_packets_sent = 0;
-    uint64_t num_bytes_sent = 0;
-
-    // The number of packets and bytes received since the service started.
-    uint64_t num_packets_received = 0;
-    uint64_t num_bytes_received = 0;
-  };
-
   class Observer {
    public:
-    virtual ~Observer() = default;
+    Observer();
+    Observer(const Observer&) = delete;
+    Observer& operator=(const Observer&) = delete;
+    Observer(Observer&&) noexcept = delete;
+    Observer& operator=(Observer&&) noexcept = delete;
+    virtual ~Observer();
 
     // Called when the state becomes kRunning.
     virtual void OnStarted() = 0;
@@ -56,29 +42,21 @@ class ServicePublisher {
     virtual void OnSuspended() = 0;
 
     // Reports an error.
-    virtual void OnError(Error) = 0;
-
-    // Reports metrics.
-    virtual void OnMetrics(Metrics) = 0;
+    virtual void OnError(const Error&) = 0;
   };
 
   struct Config {
-    Config();
-    ~Config();
-
-    // The human readable friendly name of the service being published in
-    // UTF-8.
-    std::string friendly_name;
-
-    // The DNS hostname (as a single label) that should be used to advertise the
-    // host's interface addresses.
-    std::string hostname;
-
     // The DNS domain name label that should be used to identify this service
     // within the openscreen service type.
-    // TODO(btolsch): This could be derived from |friendly_name| but we will
-    // leave it as an arbitrary name until the spec is finalized.
-    std::string service_instance_name;
+    std::string instance_name;
+
+    // The fingerprint of the server's certificate and it is included in DNS TXT
+    // records.
+    std::string fingerprint;
+
+    // An alphanumeric and unguessable token used for authentication and it is
+    // included in DNS TXT records.
+    std::string auth_token;
 
     // The port where openscreen connections are accepted.
     // Normally this should not be set, and must be identical to the port
@@ -95,49 +73,90 @@ class ServicePublisher {
     bool IsValid() const;
   };
 
-  virtual ~ServicePublisher();
+  class Delegate {
+   public:
+    Delegate();
+    Delegate(const Delegate&) = delete;
+    Delegate& operator=(const Delegate&) = delete;
+    Delegate(Delegate&&) noexcept = delete;
+    Delegate& operator=(Delegate&&) noexcept = delete;
+    virtual ~Delegate();
+
+    void SetPublisher(ServicePublisher* publisher);
+
+    virtual void StartPublisher(const ServicePublisher::Config& config) = 0;
+    virtual void StartAndSuspendPublisher(
+        const ServicePublisher::Config& config) = 0;
+    virtual void StopPublisher() = 0;
+    virtual void SuspendPublisher() = 0;
+    virtual void ResumePublisher(const ServicePublisher::Config& config) = 0;
+
+   protected:
+    void SetState(State state);
+
+    ServicePublisher* publisher_ = nullptr;
+  };
+
+  // `delegate` is required and is used to implement state transitions.
+  explicit ServicePublisher(std::unique_ptr<Delegate> delegate);
+  ServicePublisher(const ServicePublisher&) = delete;
+  ServicePublisher& operator=(const ServicePublisher&) = delete;
+  ServicePublisher(ServicePublisher&&) noexcept = delete;
+  ServicePublisher& operator=(ServicePublisher&&) noexcept = delete;
+  ~ServicePublisher();
 
   // Sets the service configuration for this publisher.
-  virtual void SetConfig(const Config& config);
+  void SetConfig(const Config& config);
 
   // Starts publishing this service using the config object.
   // Returns true if state() == kStopped and the service will be started, false
   // otherwise.
-  virtual bool Start() = 0;
+  bool Start();
 
   // Starts publishing this service, but then immediately suspends the
   // publisher. No announcements will be sent until Resume() is called. Returns
   // true if state() == kStopped and the service will be started, false
   // otherwise.
-  virtual bool StartAndSuspend() = 0;
+  bool StartAndSuspend();
 
   // Stops publishing this service.
   // Returns true if state() != (kStopped|kStopping).
-  virtual bool Stop() = 0;
+  bool Stop();
 
   // Suspends publishing, for example, if the service is in a power saving
   // mode. Returns true if state() == (kRunning|kStarting), meaning the
   // suspension will take effect.
-  virtual bool Suspend() = 0;
+  bool Suspend();
 
   // Resumes publishing.  Returns true if state() == kSuspended.
-  virtual bool Resume() = 0;
+  bool Resume();
+
+  void AddObserver(Observer& observer);
+  void RemoveObserver(Observer& observer);
+
+  // Called by `delegate_` to transition the state machine (except kStarting and
+  // kStopping which are done automatically).
+  void SetState(State state);
+
+  // Called by `delegate_` when an internal error occurs.
+  void OnError(const Error& error);
 
   // Returns the current state of the publisher.
   State state() const { return state_; }
 
   // Returns the last error reported by this publisher.
-  Error last_error() const { return last_error_; }
+  const Error& last_error() const { return last_error_; }
 
- protected:
-  explicit ServicePublisher(Observer* observer);
+ private:
+  // Notifies each observer in `observers_` if the transition to `state_` is one
+  // that is watched by the observer interface.
+  void MaybeNotifyObserver();
 
-  State state_;
+  State state_ = State::kStopped;
   Error last_error_;
-  Observer* observer_;
   Config config_;
-
-  OSP_DISALLOW_COPY_AND_ASSIGN(ServicePublisher);
+  std::unique_ptr<Delegate> delegate_;
+  std::vector<Observer*> observers_;
 };
 
 }  // namespace openscreen::osp

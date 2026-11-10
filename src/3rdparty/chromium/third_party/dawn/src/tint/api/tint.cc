@@ -31,8 +31,8 @@
 // The following includes are used by './tools/run gen' to add an implicit
 // dependency from 'tint/api' to the libraries used to make up the Tint API.
 ////////////////////////////////////////////////////////////////////////////////
+// IWYU pragma: begin_keep
 #include "src/tint/api/common/override_id.h"
-#include "src/tint/api/options/array_length_from_uniform.h"
 
 #if TINT_BUILD_GLSL_WRITER
 #include "src/tint/lang/glsl/writer/writer.h"  // nogncheck
@@ -55,12 +55,15 @@
 #endif
 
 #if TINT_BUILD_WGSL_READER
-#include "src/tint/lang/wgsl/reader/reader.h"  // nogncheck
+#include "src/tint/lang/wgsl/inspector/inspector.h"  // nogncheck
+#include "src/tint/lang/wgsl/reader/reader.h"        // nogncheck
 #endif
 
 #if TINT_BUILD_WGSL_WRITER
 #include "src/tint/lang/wgsl/writer/writer.h"  // nogncheck
 #endif
+
+// IWYU pragma: end_keep
 
 namespace tint {
 
@@ -71,7 +74,7 @@ void Initialize() {
     tint::Program::printer = [](const tint::Program& program) {
         auto result = wgsl::writer::Generate(program, {});
         if (result != Success) {
-            return result.Failure().reason.str();
+            return result.Failure().reason;
         }
         return result->wgsl;
     };
@@ -82,5 +85,24 @@ void Initialize() {
 void Shutdown() {
     // Currently no-op, but may release tint resources in the future.
 }
+
+#if TINT_BUILD_SPV_READER && TINT_BUILD_WGSL_WRITER
+Result<std::string> SpirvToWgsl(const std::vector<uint32_t>& spirv,
+                                const wgsl::writer::ProgramOptions& wgsl_options) {
+    // Convert the SPIR-V program to an IR module.
+    auto ir_from_spirv = tint::spirv::reader::ReadIR(spirv);
+    if (ir_from_spirv != Success) {
+        return ir_from_spirv.Failure();
+    }
+
+    // Convert the IR module to WGSL.
+    auto wgsl_from_ir = tint::wgsl::writer::WgslFromIR(ir_from_spirv.Get(), wgsl_options);
+    if (wgsl_from_ir != Success) {
+        return wgsl_from_ir.Failure();
+    }
+
+    return wgsl_from_ir->wgsl;
+}
+#endif  // TINT_BUILD_SPV_READER && TINT_BUILD_WGSL_WRITER
 
 }  // namespace tint

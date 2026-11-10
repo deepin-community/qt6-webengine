@@ -1,19 +1,21 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import '../../../ui/legacy/legacy.js';
+import '../../../ui/components/icon_button/icon_button.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
-import * as Buttons from '../../../ui/components/buttons/buttons.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
-
 import type * as PublicExtensions from '../../../models/extensions/extensions.js';
+import * as Buttons from '../../../ui/components/buttons/buttons.js';
+import * as Lit from '../../../ui/lit/lit.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 import * as Extensions from '../extensions/extensions.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
 
 import extensionViewStyles from './extensionView.css.js';
+
+const {html} = Lit;
 
 const UIStrings = {
   /**
@@ -24,7 +26,7 @@ const UIStrings = {
    * @description The label that indicates that the content shown is provided by a browser extension.
    */
   extension: 'Content provided by a browser extension',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings(
     'panels/recorder/components/ExtensionView.ts',
     UIStrings,
@@ -48,12 +50,16 @@ export class ClosedEvent extends Event {
 }
 
 export class ExtensionView extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-recorder-extension-view`;
   readonly #shadow = this.attachShadow({mode: 'open'});
   #descriptor?: PublicExtensions.RecorderPluginManager.ViewDescriptor;
 
+  constructor() {
+    super();
+
+    this.setAttribute('jslog', `${VisualLogging.section('extension-view')}`);
+  }
+
   connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [extensionViewStyles];
     this.#render();
   }
 
@@ -82,33 +88,35 @@ export class ExtensionView extends HTMLElement {
     }
     const iframe = Extensions.ExtensionManager.ExtensionManager.instance().getView(this.#descriptor.id).frame();
     // clang-format off
-    LitHtml.render(
-      LitHtml.html`
+    Lit.render(
+      html`
+        <style>${extensionViewStyles}</style>
         <div class="extension-view">
           <header>
             <div class="title">
-              <${IconButton.Icon.Icon.litTagName}
+              <devtools-icon
                 class="icon"
                 title=${i18nString(UIStrings.extension)}
                 name="extension">
-              </${IconButton.Icon.Icon.litTagName}>
+              </devtools-icon>
               ${this.#descriptor.title}
             </div>
-            <${Buttons.Button.Button.litTagName}
+            <devtools-button
               title=${i18nString(UIStrings.closeView)}
+              jslog=${VisualLogging.close().track({click: true})}
               .data=${
                 {
-                  variant: Buttons.Button.Variant.ROUND,
-                  size: Buttons.Button.Size.TINY,
+                  variant: Buttons.Button.Variant.ICON,
+                  size: Buttons.Button.Size.SMALL,
                   iconName: 'cross',
                 } as Buttons.Button.ButtonData
               }
               @click=${this.#closeView}
-            ></${Buttons.Button.Button.litTagName}>
+            ></devtools-button>
           </header>
           <main>
             ${iframe}
-          <main>
+          </main>
       </div>
     `,
       this.#shadow,
@@ -118,7 +126,7 @@ export class ExtensionView extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent(
+customElements.define(
     'devtools-recorder-extension-view',
     ExtensionView,
 );

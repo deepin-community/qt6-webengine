@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "desktop_media_controller.h"
 #include "qwebenginedesktopmediarequest.h"
@@ -28,11 +29,12 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QWebEngineDesktopMediaRequestPrivate)
 
     The data model's \e Qt::DisplayRole specifies the name of the source which is the title of a
     window or the number of the display.
-    The model is dynamically updates if the available list of sources has changed e.g a window is
-    opened/closed.
+    The model is dynamically updated if the available list of sources has changed;
+    e.g when a window is opened/closed.
 
-    The signal handler needs to then either call QWebEngineDesktopMediaRequest:selectScreen() or
-    QWebEngineDesktopMediaRequest::selectWindow() to accept the request and start screensharing.
+    The signal handler needs to then either call \l selectScreen() or \l selectWindow() to accept
+    the request and start screensharing.
+
     \sa QWebEnginePage::desktopMediaRequested().
 */
 
@@ -143,6 +145,7 @@ QWebEngineDesktopMediaRequest::QWebEngineDesktopMediaRequest(
 {
 }
 
+QWebEngineDesktopMediaRequest::QWebEngineDesktopMediaRequest() = default;
 QWebEngineDesktopMediaRequest::~QWebEngineDesktopMediaRequest() = default;
 
 QWebEngineDesktopMediaRequest::QWebEngineDesktopMediaRequest(
@@ -155,9 +158,10 @@ QWebEngineDesktopMediaRequest::QWebEngineDesktopMediaRequest(
         QWebEngineDesktopMediaRequest &&other) noexcept = default;
 
 /*!
-    Returns a QAbstractListModel for the available screens.
+    \property QWebEngineDesktopMediaRequest::screensModel
+    \brief A QAbstractListModel for the available screens.
 
-    \sa windowsModel()
+    \sa windowsModel
 */
 QAbstractListModel *QWebEngineDesktopMediaRequest::screensModel() const
 {
@@ -165,9 +169,10 @@ QAbstractListModel *QWebEngineDesktopMediaRequest::screensModel() const
 }
 
 /*!
-    Returns a QAbstractListModel for the available windows.
+    \property QWebEngineDesktopMediaRequest::windowsModel
+    \brief A QAbstractListModel for the available windows.
 
-    \sa screensModel()
+    \sa screensModel
 */
 QAbstractListModel *QWebEngineDesktopMediaRequest::windowsModel() const
 {
@@ -175,7 +180,7 @@ QAbstractListModel *QWebEngineDesktopMediaRequest::windowsModel() const
 }
 
 /*!
-    Selects the window on the \a index to be captured.
+    Selects the window at the \a index to be captured.
 
     \sa QWebEngineDesktopMediaRequest::selectScreen()
 */
@@ -185,7 +190,7 @@ void QWebEngineDesktopMediaRequest::selectWindow(const QModelIndex &index) const
 }
 
 /*!
-    Selects the screen on the \a index to be captured.
+    Selects the screen at the \a index to be captured.
 
     \sa QWebEngineDesktopMediaRequest::selectWindow()
 */

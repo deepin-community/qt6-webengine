@@ -4,12 +4,13 @@
 
 import("../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../scripts/build/ninja/devtools_module.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 
 devtools_module("sdk") {
   sources = [
     "AccessibilityModel.ts",
+    "AnimationModel.ts",
     "AutofillModel.ts",
-    "CPUProfileDataModel.ts",
     "CPUProfilerModel.ts",
     "CPUThrottlingManager.ts",
     "CSSContainerQuery.ts",
@@ -21,6 +22,7 @@ devtools_module("sdk") {
     "CSSModel.ts",
     "CSSProperty.ts",
     "CSSPropertyParser.ts",
+    "CSSPropertyParserMatchers.ts",
     "CSSQuery.ts",
     "CSSRule.ts",
     "CSSScope.ts",
@@ -33,7 +35,6 @@ devtools_module("sdk") {
     "Connections.ts",
     "ConsoleModel.ts",
     "ConsoleModelTypes.ts",
-    "ContentData.ts",
     "Cookie.ts",
     "CookieModel.ts",
     "CookieParser.ts",
@@ -41,6 +42,7 @@ devtools_module("sdk") {
     "DOMModel.ts",
     "DebuggerModel.ts",
     "EmulationModel.ts",
+    "EnhancedTracesParser.ts",
     "EventBreakpointsModel.ts",
     "FrameAssociated.ts",
     "FrameManager.ts",
@@ -51,7 +53,6 @@ devtools_module("sdk") {
     "IssuesModel.ts",
     "LayerTreeBase.ts",
     "LogModel.ts",
-    "MimeType.ts",
     "NetworkManager.ts",
     "NetworkRequest.ts",
     "OverlayColorGenerator.ts",
@@ -62,7 +63,8 @@ devtools_module("sdk") {
     "PaintProfiler.ts",
     "PerformanceMetricsModel.ts",
     "PreloadingModel.ts",
-    "ProfileTreeModel.ts",
+    "RehydratingConnection.ts",
+    "RehydratingObject.ts",
     "RemoteObject.ts",
     "Resource.ts",
     "ResourceTreeModel.ts",
@@ -71,16 +73,21 @@ devtools_module("sdk") {
     "ScreenCaptureModel.ts",
     "Script.ts",
     "SecurityOriginManager.ts",
+    "ServerSentEvents.ts",
     "ServerSentEventsProtocol.ts",
     "ServerTiming.ts",
     "ServiceWorkerCacheModel.ts",
     "ServiceWorkerManager.ts",
     "SourceMap.ts",
+    "SourceMapFunctionRanges.ts",
     "SourceMapManager.ts",
+    "SourceMapScopeChainEntry.ts",
+    "SourceMapScopesInfo.ts",
     "StorageBucketsModel.ts",
     "StorageKeyManager.ts",
     "Target.ts",
     "TargetManager.ts",
+    "TraceObject.ts",
     "WebAuthnModel.ts",
   ]
 
@@ -95,6 +102,7 @@ devtools_module("sdk") {
     "../../generated:protocol",
     "../../models/cpu_profile:bundle",
     "../../models/text_utils:bundle",
+    "../../third_party/source-map-scopes-codec:bundle",
   ]
 }
 
@@ -119,4 +127,74 @@ devtools_entrypoint("meta") {
   ]
 
   visibility = [ "../../entrypoints/*" ]
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "AccessibilityModel.test.ts",
+    "AnimationModel.test.ts",
+    "AutofillModel.test.ts",
+    "CPUThrottlingManager.test.ts",
+    "CSSContainerQuery.test.ts",
+    "CSSMatchedStyles.test.ts",
+    "CSSModel.test.ts",
+    "CSSProperty.test.ts",
+    "CSSPropertyParser.test.ts",
+    "CSSPropertyParserMatchers.test.ts",
+    "CSSStyleDeclaration.test.ts",
+    "CSSStyleSheetHeader.test.ts",
+    "ChildTargetManager.test.ts",
+    "ConsoleModel.test.ts",
+    "Cookie.test.ts",
+    "CookieModel.test.ts",
+    "CookieParser.test.ts",
+    "DOMModel.test.ts",
+    "DebuggerModel.test.ts",
+    "EmulationModel.test.ts",
+    "EnhancedTracesParser.test.ts",
+    "FrameManager.test.ts",
+    "NetworkManager.test.ts",
+    "NetworkRequest.test.ts",
+    "OverlayColorGenerator.test.ts",
+    "OverlayModel.test.ts",
+    "OverlayPersistentHighlighter.test.ts",
+    "PageResourceLoader.test.ts",
+    "PreloadingModel.test.ts",
+    "RehydratingConnection.test.ts",
+    "RemoteObject.test.ts",
+    "ResourceTreeModel.test.ts",
+    "RuntimeModel.test.ts",
+    "ScreenCaptureModel.test.ts",
+    "Script.test.ts",
+    "ServerSentEventsProtocol.test.ts",
+    "ServerTiming.test.ts",
+    "ServiceWorkerCacheModel.test.ts",
+    "ServiceWorkerManager.test.ts",
+    "SourceMap.test.ts",
+    "SourceMapFunctionRanges.test.ts",
+    "SourceMapManager.test.ts",
+    "SourceMapScopeChainEntry.test.ts",
+    "SourceMapScopesInfo.test.ts",
+    "StorageBucketsModel.test.ts",
+    "StorageKeyManager.test.ts",
+    "Target.test.ts",
+    "TargetManager.test.ts",
+    "TraceObject.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../generated:protocol",
+    "../../models/bindings:bundle",
+    "../../models/persistence:bundle",
+    "../../models/text_utils:bundle",
+    "../../models/trace:bundle",
+    "../../models/workspace:bundle",
+    "../../testing",
+    "../common:bundle",
+    "../protocol_client:bundle",
+    "../root:bundle",
+  ]
 }

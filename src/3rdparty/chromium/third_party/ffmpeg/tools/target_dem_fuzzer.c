@@ -19,16 +19,17 @@
 #include "config.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
+#include "libavutil/mem.h"
 
 #include "libavcodec/avcodec.h"
 #include "libavcodec/bytestream.h"
 #include "libavformat/avformat.h"
-
+#include "libavformat/demux.h"
 
 typedef struct IOContext {
     int64_t pos;
     int64_t filesize;
-    uint8_t *fuzz;
+    const uint8_t *fuzz;
     int fuzz_size;
 } IOContext;
 
@@ -97,10 +98,7 @@ static int64_t io_seek(void *opaque, int64_t offset, int whence)
 const uint32_t maxiteration = 8096;
 const int maxblocks= 50000;
 
-static const uint64_t FUZZ_TAG = 0x4741542D5A5A5546ULL;
-
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    const uint64_t fuzz_tag = FUZZ_TAG;
     uint32_t it = 0;
     AVFormatContext *avfmt = avformat_alloc_context();
     AVPacket *pkt;
@@ -113,12 +111,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static int c;
     int seekable = 0;
     int ret;
-    AVInputFormat *fmt = NULL;
+    const AVInputFormat *fmt = NULL;
 #ifdef FFMPEG_DEMUXER
 #define DEMUXER_SYMBOL0(DEMUXER) ff_##DEMUXER##_demuxer
 #define DEMUXER_SYMBOL(DEMUXER) DEMUXER_SYMBOL0(DEMUXER)
-    extern AVInputFormat DEMUXER_SYMBOL(FFMPEG_DEMUXER);
-    fmt = &DEMUXER_SYMBOL(FFMPEG_DEMUXER);
+    extern const FFInputFormat DEMUXER_SYMBOL(FFMPEG_DEMUXER);
+    fmt = &DEMUXER_SYMBOL(FFMPEG_DEMUXER).p;
 #endif
 
     if (!c) {

@@ -10,8 +10,6 @@
 #include "base/functional/callback.h"
 #include "base/notreached.h"
 #include "base/values.h"
-#include "components/pref_registry/pref_registry_syncable.h"
-#include "components/prefs/persistent_pref_store.h"
 
 namespace {
 const char kPreferenceMACs[] = "protection.macs";
@@ -22,13 +20,6 @@ DictionaryHashStoreContents::DictionaryHashStoreContents(
     base::Value::Dict& storage)
     : storage_(storage) {}
 
-// static
-void DictionaryHashStoreContents::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterDictionaryPref(kPreferenceMACs);
-  registry->RegisterStringPref(kSuperMACPref, std::string());
-}
-
 bool DictionaryHashStoreContents::IsCopyable() const {
   return false;
 }
@@ -36,7 +27,6 @@ bool DictionaryHashStoreContents::IsCopyable() const {
 std::unique_ptr<HashStoreContents> DictionaryHashStoreContents::MakeCopy()
     const {
   NOTREACHED() << "DictionaryHashStoreContents does not support MakeCopy";
-  return nullptr;
 }
 
 std::string_view DictionaryHashStoreContents::GetUMASuffix() const {
@@ -82,7 +72,6 @@ bool DictionaryHashStoreContents::GetSplitMacs(
     const std::string* mac_string = item.second.GetIfString();
     if (!mac_string) {
       NOTREACHED();
-      continue;
     }
     split_macs->insert(make_pair(item.first, *mac_string));
   }

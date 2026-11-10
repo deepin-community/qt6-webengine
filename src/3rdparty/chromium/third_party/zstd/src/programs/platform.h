@@ -11,12 +11,6 @@
 #ifndef PLATFORM_H_MODULE
 #define PLATFORM_H_MODULE
 
-#if defined (__cplusplus)
-extern "C" {
-#endif
-
-
-
 /* **************************************
 *  Compiler Options
 ****************************************/
@@ -38,7 +32,7 @@ extern "C" {
 #if defined __ia64 || defined _M_IA64                                                                               /* Intel Itanium */ \
   || defined __powerpc64__ || defined __ppc64__ || defined __PPC64__                                                /* POWER 64-bit */  \
   || (defined __sparc && (defined __sparcv9 || defined __sparc_v9__ || defined __arch64__)) || defined __sparc64__  /* SPARC 64-bit */  \
-  || defined __x86_64__s || defined _M_X64                                                                          /* x86 64-bit */    \
+  || defined __x86_64__ || defined _M_X64                                                                           /* x86 64-bit */    \
   || defined __arm64__ || defined __aarch64__ || defined __ARM64_ARCH_8__                                           /* ARM 64-bit */    \
   || (defined __mips  && (__mips == 64 || __mips == 4 || __mips == 3))                                              /* MIPS 64-bit */   \
   || defined _LP64 || defined __LP64__ /* NetBSD, OpenBSD */ || defined __64BIT__ /* AIX */ || defined _ADDR64 /* Cray */               \
@@ -74,8 +68,7 @@ extern "C" {
 ***************************************************************/
 #ifndef PLATFORM_POSIX_VERSION
 
-#  if (defined(__APPLE__) && defined(__MACH__)) || defined(__SVR4) || defined(_AIX) || defined(__hpux) /* POSIX.1-2001 (SUSv3) conformant */ \
-     || defined(__DragonFly__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)  /* BSD distros */
+#  if (defined(__APPLE__) && defined(__MACH__)) || defined(__SVR4) || defined(_AIX) || defined(__hpux) /* POSIX.1-2001 (SUSv3) conformant */
      /* exception rule : force posix version to 200112L,
       * note: it's better to use unistd.h's _POSIX_VERSION whenever possible */
 #    define PLATFORM_POSIX_VERSION 200112L
@@ -145,10 +138,20 @@ extern "C" {
 #  include <io.h>      /* _isatty */
 #  include <windows.h> /* DeviceIoControl, HANDLE, FSCTL_SET_SPARSE */
 #  include <stdio.h>   /* FILE */
+
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
 static __inline int IS_CONSOLE(FILE* stdStream) {
     DWORD dummy;
     return _isatty(_fileno(stdStream)) && GetConsoleMode((HANDLE)_get_osfhandle(_fileno(stdStream)), &dummy);
 }
+
+#if defined (__cplusplus)
+}
+#endif
+
 #else
 #  define IS_CONSOLE(stdStream) 0
 #endif
@@ -209,11 +212,6 @@ static __inline int IS_CONSOLE(FILE* stdStream) {
 #  else
 #     define ZSTD_NANOSLEEP_SUPPORT 0
 #  endif
-#endif
-
-
-#if defined (__cplusplus)
-}
 #endif
 
 #endif /* PLATFORM_H_MODULE */

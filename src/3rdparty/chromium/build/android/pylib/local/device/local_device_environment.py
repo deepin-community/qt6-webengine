@@ -86,8 +86,8 @@ def handle_shard_failures_with(on_failure):
   return decorator
 
 
-# TODO(1262303): After Telemetry is supported by python3 we can re-add
-# super without arguments in this script.
+# TODO(crbug.com/40799394): After Telemetry is supported by python3 we can
+# re-add super without arguments in this script.
 # pylint: disable=super-with-arguments
 class LocalDeviceEnvironment(environment.Environment):
 
@@ -108,7 +108,6 @@ class LocalDeviceEnvironment(environment.Environment):
     self._preferred_abis = None
     self._recover_devices = args.recover_devices
     self._skip_clear_data = args.skip_clear_data
-    self._tool_name = args.tool
     self._trace_output = None
     # Must check if arg exist because this class is used by
     # //third_party/catapult's browser_options.py
@@ -121,7 +120,6 @@ class LocalDeviceEnvironment(environment.Environment):
     if hasattr(args, 'force_main_user'):
       self._force_main_user = args.force_main_user
     self._use_persistent_shell = args.use_persistent_shell
-    self._disable_test_server = args.disable_test_server
 
     use_local_devil_tools = False
     if hasattr(args, 'use_local_devil_tools'):
@@ -256,16 +254,8 @@ class LocalDeviceEnvironment(environment.Environment):
     return self._skip_clear_data
 
   @property
-  def tool(self):
-    return self._tool_name
-
-  @property
   def trace_output(self):
     return self._trace_output
-
-  @property
-  def disable_test_server(self):
-    return self._disable_test_server
 
   @property
   def force_main_user(self):

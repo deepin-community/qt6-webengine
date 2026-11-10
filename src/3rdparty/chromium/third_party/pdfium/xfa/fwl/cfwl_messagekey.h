@@ -11,6 +11,8 @@
 #include "xfa/fwl/cfwl_message.h"
 #include "xfa/fwl/fwl_widgetdef.h"
 
+namespace pdfium {
+
 class CFWL_MessageKey final : public CFWL_Message {
  public:
   enum class KeyCommand : uint8_t { kKeyDown, kChar };
@@ -21,9 +23,14 @@ class CFWL_MessageKey final : public CFWL_Message {
                   uint32_t dwKeyCodeOrChar);
   ~CFWL_MessageKey() override;
 
-  const KeyCommand m_dwCmd;
-  const Mask<XFA_FWL_KeyFlag> m_dwFlags;
-  const uint32_t m_dwKeyCodeOrChar;
+  const KeyCommand cmd_;
+  const Mask<XFA_FWL_KeyFlag> flags_;
+  const uint32_t key_code_or_char_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_MessageKey;
 
 #endif  // XFA_FWL_CFWL_MESSAGEKEY_H_

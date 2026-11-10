@@ -1,5 +1,6 @@
+// clang-format off
 // Auto-generated file. Do not edit!
-//   Template: src/f32-rminmax/scalar.c.in
+//   Template: src/f16-rminmax/scalar.c.in
 //   Generator: tools/xngen
 //
 // Copyright 2023 Google LLC
@@ -8,17 +9,20 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/reduce.h>
-#include <fp16/fp16.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/reduce.h"
+
 
 void xnn_f16_rmax_ukernel__scalar_u4_acc2(
     size_t batch,
-    const void* input,
-    void* output,
-    const union xnn_f16_default_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const xnn_float16* input,
+    xnn_float16* output,
+    const struct xnn_f16_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
@@ -28,28 +32,28 @@ void xnn_f16_rmax_ukernel__scalar_u4_acc2(
   const uint16_t* i = (const uint16_t*) input;
   uint16_t* o = (uint16_t*) output;
 
-  float vmax0 = fp16_ieee_to_fp32_value(*i);
-  float vmax1 = vmax0;
+  int16_t vmax0 = math_signcomplement_f16(o[0]);
+  int16_t vmax1 = vmax0;
   for (; batch >= 4 * sizeof(uint16_t); batch -= 4 * sizeof(uint16_t)) {
-    const float vt0 = fp16_ieee_to_fp32_value(i[0]);
-    const float vt1 = fp16_ieee_to_fp32_value(i[1]);
-    const float vt2 = fp16_ieee_to_fp32_value(i[2]);
-    const float vt3 = fp16_ieee_to_fp32_value(i[3]);
+    const int16_t vt0 = math_signcomplement_f16(i[0]);
+    const int16_t vt1 = math_signcomplement_f16(i[1]);
+    const int16_t vt2 = math_signcomplement_f16(i[2]);
+    const int16_t vt3 = math_signcomplement_f16(i[3]);
     i += 4;
 
-    vmax0 = math_max_f32(vmax0, vt0);
-    vmax1 = math_max_f32(vmax1, vt1);
-    vmax0 = math_max_f32(vmax0, vt2);
-    vmax1 = math_max_f32(vmax1, vt3);
+    vmax0 = math_max_s16(vmax0, vt0);
+    vmax1 = math_max_s16(vmax1, vt1);
+    vmax0 = math_max_s16(vmax0, vt2);
+    vmax1 = math_max_s16(vmax1, vt3);
   }
-  vmax0 = math_max_f32(vmax0, vmax1);
+  vmax0 = math_max_s16(vmax0, vmax1);
 
   if XNN_UNLIKELY(batch != 0) {
     do {
-      const float vt = fp16_ieee_to_fp32_value(*i++);
-      vmax0 = math_max_f32(vmax0, vt);
+      int16_t vt = math_signcomplement_f16(*i++);
+      vmax0 = math_max_s16(vmax0, vt);
       batch -= sizeof(uint16_t);
     } while (batch != 0);
   }
-  o[0] = fp16_ieee_from_fp32_value(vmax0);
+  o[0] = (uint16_t) math_signcomplement_f16((uint16_t) vmax0);
 }

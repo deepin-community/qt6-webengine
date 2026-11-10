@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_COMPOSITOR_GPU_THREAD_H_
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_COMPOSITOR_GPU_THREAD_H_
 
+#include <cstddef>
 #include <memory>
 
 #include "base/memory/memory_pressure_listener.h"
@@ -20,6 +21,7 @@ class GLDisplay;
 }  // namespace gl
 
 namespace gpu {
+class DawnContextProvider;
 class GpuChannelManager;
 class VulkanImplementation;
 class VulkanDeviceQueue;
@@ -29,16 +31,23 @@ namespace viz {
 
 class VulkanContextProvider;
 
-class VIZ_SERVICE_EXPORT CompositorGpuThread
-    : public base::Thread,
-      public gpu::MemoryTracker::Observer {
+class VIZ_SERVICE_EXPORT CompositorGpuThread : public base::Thread {
  public:
+  struct CreateParams {
+    raw_ptr<gpu::GpuChannelManager> gpu_channel_manager = nullptr;
+    raw_ptr<gl::GLDisplay> display = nullptr;
+    bool enable_watchdog = true;
+#if BUILDFLAG(ENABLE_VULKAN)
+    raw_ptr<gpu::VulkanImplementation> vulkan_implementation = nullptr;
+    raw_ptr<gpu::VulkanDeviceQueue> device_queue = nullptr;
+#endif
+#if BUILDFLAG(SKIA_USE_DAWN)
+    raw_ptr<gpu::DawnContextProvider> dawn_context_provider = nullptr;
+#endif
+  };
+
   static std::unique_ptr<CompositorGpuThread> Create(
-      gpu::GpuChannelManager* gpu_channel_manager,
-      gpu::VulkanImplementation* vulkan_implementation,
-      gpu::VulkanDeviceQueue* device_queue,
-      gl::GLDisplay* display,
-      bool enable_watchdog);
+      const CreateParams& params);
 
   // Disallow copy and assign.
   CompositorGpuThread(const CompositorGpuThread&) = delete;
@@ -56,13 +65,6 @@ class VIZ_SERVICE_EXPORT CompositorGpuThread
   void Init() override;
   void CleanUp() override;
 
-  // gpu::MemoryTracker::Observer implementation.
-  void OnMemoryAllocatedChange(
-      gpu::CommandBufferId id,
-      uint64_t old_size,
-      uint64_t new_size,
-      gpu::GpuPeakMemoryAllocationSource source) override;
-
   // These methods are called when chrome application is backgrounded and
   // foregrounded.
   void OnBackgrounded();
@@ -76,7 +78,6 @@ class VIZ_SERVICE_EXPORT CompositorGpuThread
  private:
   CompositorGpuThread(
       gpu::GpuChannelManager* gpu_channel_manager,
-      scoped_refptr<VulkanContextProvider> vulkan_context_provider,
       gl::GLDisplay* display,
       bool enable_watchdog);
 

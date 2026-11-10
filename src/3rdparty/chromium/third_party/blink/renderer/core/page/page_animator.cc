@@ -45,7 +45,7 @@ DocumentsVector GetAllDocuments(Frame* main_frame) {
     if (auto* local_frame = DynamicTo<LocalFrame>(frame)) {
       Document* document = local_frame->GetDocument();
       bool can_throttle =
-          document->View() ? document->View()->CanThrottleRendering() : false;
+          document->View() && document->View()->CanThrottleRendering();
       documents.emplace_back(std::make_pair(document, can_throttle));
     }
   }
@@ -187,26 +187,25 @@ void PageAnimator::ServiceScriptedAnimations(
           // pagereveal is only fired on Documents.
           CHECK(window);
           CHECK(window->document());
+          CHECK(!window->HasBeenRevealed());
 
-          if (RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled()) {
-            if (auto* supplement = ViewTransitionSupplement::FromIfExists(
-                    *window->document())) {
-              DOMViewTransition* view_transition =
-                  supplement->ResolveCrossDocumentViewTransition();
-              page_reveal->SetViewTransition(view_transition);
-            }
+          if (auto* supplement =
+                  ViewTransitionSupplement::FromIfExists(*window->document())) {
+            DOMViewTransition* view_transition =
+                supplement->ResolveCrossDocumentViewTransition();
+            page_reveal->SetViewTransition(view_transition);
           }
 
           return true;
         });
 
     run_for_all_active_controllers_with_timing([&](wtf_size_t i) {
-      const LocalDOMWindow* window = active_controllers[i]->GetWindow();
+      LocalDOMWindow* window = active_controllers[i]->GetWindow();
       bool pagereveal_dispatched = active_controllers[i]->DispatchEvents(
           WTF::BindRepeating(page_reveal_event_filter, WrapPersistent(window)));
 
-      if (RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled() &&
-          pagereveal_dispatched) {
+      if (pagereveal_dispatched) {
+        window->SetHasBeenRevealed(true);
         if (ViewTransition* transition =
                 ViewTransitionUtils::GetTransition(*window->document());
             transition && transition->IsForNavigationOnNewDocument()) {
@@ -256,8 +255,8 @@ void PageAnimator::ServiceScriptedAnimations(
     auto scope = SyncScrollAttemptHeuristic::GetScrollHandlerScope();
     active_controllers[i]->DispatchEvents(WTF::BindRepeating([](Event* event) {
       return event->type() == event_type_names::kScroll ||
-             event->type() == event_type_names::kSnapchanged ||
-             event->type() == event_type_names::kSnapchanging ||
+             event->type() == event_type_names::kScrollsnapchange ||
+             event->type() == event_type_names::kScrollsnapchanging ||
              event->type() == event_type_names::kScrollend;
     }));
   });
@@ -394,12 +393,13 @@ void PageAnimator::UpdateAllLifecyclePhases(LocalFrame& root_frame,
   view->UpdateAllLifecyclePhases(reason);
 }
 
-void PageAnimator::UpdateLifecycleToPrePaintClean(LocalFrame& root_frame,
-                                                  DocumentUpdateReason reason) {
+void PageAnimator::UpdateAllLifecyclePhasesExceptPaint(
+    LocalFrame& root_frame,
+    DocumentUpdateReason reason) {
   LocalFrameView* view = root_frame.View();
   base::AutoReset<bool> servicing(&updating_layout_and_style_for_painting_,
                                   true);
-  view->UpdateLifecycleToPrePaintClean(reason);
+  view->UpdateAllLifecyclePhasesExceptPaint(reason);
 }
 
 void PageAnimator::UpdateLifecycleToLayoutClean(LocalFrame& root_frame,

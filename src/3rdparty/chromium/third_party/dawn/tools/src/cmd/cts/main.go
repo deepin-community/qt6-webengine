@@ -38,9 +38,13 @@ import (
 
 	"dawn.googlesource.com/dawn/tools/src/cmd/cts/common"
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
+	"dawn.googlesource.com/dawn/tools/src/resultsdb"
 	"dawn.googlesource.com/dawn/tools/src/subcmd"
 
 	// Register sub-commands
+	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/credentialscheck"
+	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/expectationcoverage"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/export"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/format"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/merge"
@@ -48,7 +52,8 @@ import (
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/roll"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/time"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/treemap"
-	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/update"
+	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/update/expectations"
+	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/update/testlist"
 	_ "dawn.googlesource.com/dawn/tools/src/cmd/cts/validate"
 )
 
@@ -56,6 +61,13 @@ func main() {
 	ctx := context.Background()
 
 	cfg, err := common.LoadConfig(filepath.Join(fileutils.ThisDir(), "config.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	cfg.OsWrapper = oswrapper.GetRealOSWrapper()
+	cfg.Querier, err = resultsdb.NewBigQueryClient(ctx, resultsdb.DefaultQueryProject)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

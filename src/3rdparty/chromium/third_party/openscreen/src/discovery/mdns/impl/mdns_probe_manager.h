@@ -34,14 +34,14 @@ class MdnsProbeManager {
   // mDNS Probe Manager.
   virtual bool IsDomainClaimed(const DomainName& domain) const = 0;
 
-  // |message| is a message received from another host which contains a query
+  // `message` is a message received from another host which contains a query
   // from some domain. It is a considered a probe query for a specific domain if
   // it contains a query for a specific domain which is answered by mDNS Records
-  // in the 'authority records' section of |message|. If a probe for the
+  // in the 'authority records' section of `message`. If a probe for the
   // provided domain name is ongoing, an MdnsMessage is sent to the provided
   // endpoint as described in RFC 6762 section 8.2 to allow for conflict
   // resolution. If the requested name has already been claimed, a message to
-  // specify this will be sent as described in RFC 6762 section 8.1. The |src|
+  // specify this will be sent as described in RFC 6762 section 8.1. The `src`
   // argument is the address from which the message was originally sent, so that
   // the response message may be sent as a unicast response.
   virtual void RespondToProbeQuery(const MdnsMessage& message,
@@ -56,11 +56,11 @@ class MdnsProbeManager {
 class MdnsProbeManagerImpl : public MdnsProbe::Observer,
                              public MdnsProbeManager {
  public:
-  // |sender|, |receiver|, |random_delay|, and |task_runner|, must all persist
+  // `sender`, `receiver`, `random_delay`, and `task_runner`, must all persist
   // for the duration of this object's lifetime.
-  MdnsProbeManagerImpl(MdnsSender* sender,
-                       MdnsReceiver* receiver,
-                       MdnsRandom* random_delay,
+  MdnsProbeManagerImpl(MdnsSender& sender,
+                       MdnsReceiver& receiver,
+                       MdnsRandom& random_delay,
                        TaskRunner& task_runner,
                        ClockNowFunctionPtr now_function);
   MdnsProbeManagerImpl(const MdnsProbeManager& other) = delete;  // NOLINT
@@ -71,10 +71,10 @@ class MdnsProbeManagerImpl : public MdnsProbe::Observer,
   MdnsProbeManagerImpl& operator=(MdnsProbeManagerImpl&& other) = delete;
 
   // Starts probing for a valid domain name based on the given one. This may
-  // only be called once per MdnsProbe instance. |observer| must persist until
+  // only be called once per MdnsProbe instance. `observer` must persist until
   // a valid domain is discovered and the observer's OnDomainFound method is
   // called.
-  // NOTE: |address| is used to generate a 'fake' address record to use for the
+  // NOTE: `address` is used to generate a 'fake' address record to use for the
   // probe query. See MdnsProbe::PerformProbeIteration() for further details.
   Error StartProbe(MdnsDomainConfirmedProvider* callback,
                    DomainName requested_name,
@@ -97,13 +97,13 @@ class MdnsProbeManagerImpl : public MdnsProbe::Observer,
   virtual std::unique_ptr<MdnsProbe> CreateProbe(DomainName name,
                                                  IPAddress address) {
     return std::make_unique<MdnsProbeImpl>(sender_, receiver_, random_delay_,
-                                           task_runner_, now_function_, this,
+                                           task_runner_, now_function_, *this,
                                            std::move(name), std::move(address));
   }
 
   // Owns an in-progress MdnsProbe. When the probe starts, an instance of this
   // struct is created. Upon successful completion of the probe, this instance
-  // is deleted and the owned |probe| instance is moved to |completed_probes|.
+  // is deleted and the owned `probe` instance is moved to `completed_probes`.
   // Upon failure, the instance is updated with a new MdnsProbe object and this
   // process is repeated.
   struct OngoingProbe {
@@ -129,9 +129,9 @@ class MdnsProbeManagerImpl : public MdnsProbe::Observer,
   std::vector<OngoingProbe>::iterator FindOngoingProbe(const DomainName& name);
   std::vector<OngoingProbe>::iterator FindOngoingProbe(MdnsProbe* probe);
 
-  MdnsSender* const sender_;
-  MdnsReceiver* const receiver_;
-  MdnsRandom* const random_delay_;
+  MdnsSender& sender_;
+  MdnsReceiver& receiver_;
+  MdnsRandom& random_delay_;
   TaskRunner& task_runner_;
   ClockNowFunctionPtr now_function_;
 

@@ -10,6 +10,7 @@
 
 #include <sstream>
 #include <utility>
+#include <variant>
 
 #include "constants/stream_dict_common.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -20,11 +21,12 @@
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcrt/cfx_memorystream.h"
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_stream.h"
+#include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/span_util.h"
-#include "third_party/base/containers/contains.h"
-#include "third_party/base/numerics/safe_conversions.h"
 
 namespace {
 
@@ -36,22 +38,40 @@ bool IsMetaDataStreamDictionary(const CPDF_Dictionary* dict) {
 
 }  // namespace
 
-CPDF_Stream::CPDF_Stream() = default;
+CPDF_Stream::CPDF_Stream(RetainPtr<CPDF_Dictionary> dict)
+    : CPDF_Stream(DataVector<uint8_t>(), std::move(dict)) {}
 
-CPDF_Stream::CPDF_Stream(RetainPtr<CPDF_Dictionary> pDict)
-    : CPDF_Stream(DataVector<uint8_t>(), std::move(pDict)) {}
+CPDF_Stream::CPDF_Stream(pdfium::span<const uint8_t> span)
+    : dict_(pdfium::MakeRetain<CPDF_Dictionary>()) {
+  SetData(span);
+}
 
-CPDF_Stream::CPDF_Stream(DataVector<uint8_t> pData,
-                         RetainPtr<CPDF_Dictionary> pDict)
-    : data_(std::move(pData)), dict_(std::move(pDict)) {
-  SetLengthInDict(pdfium::base::checked_cast<int>(
-      absl::get<DataVector<uint8_t>>(data_).size()));
+CPDF_Stream::CPDF_Stream(fxcrt::ostringstream* stream)
+    : dict_(pdfium::MakeRetain<CPDF_Dictionary>()) {
+  SetDataFromStringstream(stream);
+}
+
+CPDF_Stream::CPDF_Stream(RetainPtr<IFX_SeekableReadStream> file,
+                         RetainPtr<CPDF_Dictionary> dict)
+    : data_(std::move(file)), dict_(std::move(dict)) {
+  CHECK(dict_->IsInline());
+  SetLengthInDict(pdfium::checked_cast<int>(
+      std::get<RetainPtr<IFX_SeekableReadStream>>(data_)->GetSize()));
+}
+
+CPDF_Stream::CPDF_Stream(DataVector<uint8_t> data,
+                         RetainPtr<CPDF_Dictionary> dict)
+    : data_(std::move(data)), dict_(std::move(dict)) {
+  CHECK(dict_->IsInline());
+  SetLengthInDict(
+      pdfium::checked_cast<int>(std::get<DataVector<uint8_t>>(data_).size()));
 }
 
 CPDF_Stream::~CPDF_Stream() {
-  m_ObjNum = kInvalidObjNum;
-  if (dict_ && dict_->GetObjNum() == kInvalidObjNum)
+  obj_num_ = kInvalidObjNum;
+  if (dict_->GetObjNum() == kInvalidObjNum) {
     dict_.Leak();  // lowercase release, release ownership.
+  }
 }
 
 CPDF_Object::Type CPDF_Stream::GetType() const {
@@ -66,16 +86,11 @@ CPDF_Stream* CPDF_Stream::AsMutableStream() {
   return this;
 }
 
-void CPDF_Stream::InitStreamWithEmptyData(RetainPtr<CPDF_Dictionary> pDict) {
-  dict_ = std::move(pDict);
-  TakeData({});
-}
-
-void CPDF_Stream::InitStreamFromFile(RetainPtr<IFX_SeekableReadStream> pFile,
-                                     RetainPtr<CPDF_Dictionary> pDict) {
-  data_ = pFile;
-  dict_ = std::move(pDict);
-  SetLengthInDict(pdfium::base::checked_cast<int>(pFile->GetSize()));
+void CPDF_Stream::InitStreamFromFile(RetainPtr<IFX_SeekableReadStream> file) {
+  const int size = pdfium::checked_cast<int>(file->GetSize());
+  data_ = std::move(file);
+  dict_ = pdfium::MakeRetain<CPDF_Dictionary>();
+  SetLengthInDict(size);
 }
 
 RetainPtr<CPDF_Object> CPDF_Stream::Clone() const {
@@ -89,10 +104,10 @@ RetainPtr<CPDF_Object> CPDF_Stream::CloneNonCyclic(
   auto pAcc = pdfium::MakeRetain<CPDF_StreamAcc>(pdfium::WrapRetain(this));
   pAcc->LoadAllDataRaw();
 
-  RetainPtr<const CPDF_Dictionary> pDict = GetDict();
+  RetainPtr<const CPDF_Dictionary> dict = GetDict();
   RetainPtr<CPDF_Dictionary> pNewDict;
-  if (pDict && !pdfium::Contains(*pVisited, pDict.Get())) {
-    pNewDict = ToDictionary(static_cast<const CPDF_Object*>(pDict.Get())
+  if (!pdfium::Contains(*pVisited, dict.Get())) {
+    pNewDict = ToDictionary(static_cast<const CPDF_Object*>(dict.Get())
                                 ->CloneNonCyclic(bDirect, pVisited));
   }
   return pdfium::MakeRetain<CPDF_Stream>(pAcc->DetachData(),
@@ -111,10 +126,8 @@ void CPDF_Stream::SetDataFromStringstreamAndRemoveFilter(
     SetDataAndRemoveFilter({});
     return;
   }
-
-  SetDataAndRemoveFilter(
-      {reinterpret_cast<const uint8_t*>(stream->str().c_str()),
-       static_cast<size_t>(stream->tellp())});
+  SetDataAndRemoveFilter(pdfium::as_byte_span(stream->str())
+                             .first(static_cast<size_t>(stream->tellp())));
 }
 
 void CPDF_Stream::SetData(pdfium::span<const uint8_t> pData) {
@@ -123,9 +136,9 @@ void CPDF_Stream::SetData(pdfium::span<const uint8_t> pData) {
 }
 
 void CPDF_Stream::TakeData(DataVector<uint8_t> data) {
-  const size_t size = data.size();
+  const int size = pdfium::checked_cast<int>(data.size());
   data_ = std::move(data);
-  SetLengthInDict(pdfium::base::checked_cast<int>(size));
+  SetLengthInDict(size);
 }
 
 void CPDF_Stream::SetDataFromStringstream(fxcrt::ostringstream* stream) {
@@ -133,8 +146,8 @@ void CPDF_Stream::SetDataFromStringstream(fxcrt::ostringstream* stream) {
     SetData({});
     return;
   }
-  SetData({reinterpret_cast<const uint8_t*>(stream->str().c_str()),
-           static_cast<size_t>(stream->tellp())});
+  SetData(pdfium::as_byte_span(stream->str())
+              .first(static_cast<size_t>(stream->tellp())));
 }
 
 DataVector<uint8_t> CPDF_Stream::ReadAllRawData() const {
@@ -143,15 +156,16 @@ DataVector<uint8_t> CPDF_Stream::ReadAllRawData() const {
   DataVector<uint8_t> result(GetRawSize());
   DCHECK(!result.empty());
 
-  auto underlying_stream = absl::get<RetainPtr<IFX_SeekableReadStream>>(data_);
-  if (!underlying_stream->ReadBlockAtOffset(result, 0))
+  auto underlying_stream = std::get<RetainPtr<IFX_SeekableReadStream>>(data_);
+  if (!underlying_stream->ReadBlockAtOffset(result, 0)) {
     return DataVector<uint8_t>();
+  }
 
   return result;
 }
 
 bool CPDF_Stream::HasFilter() const {
-  return dict_ && dict_->KeyExist("Filter");
+  return dict_->KeyExist("Filter");
 }
 
 WideString CPDF_Stream::GetUnicodeText() const {
@@ -173,36 +187,34 @@ bool CPDF_Stream::WriteTo(IFX_ArchiveStream* archive,
   }
 
   encoder.UpdateLength(data.size());
-  if (!encoder.WriteDictTo(archive, encryptor))
+  if (!encoder.WriteDictTo(archive, encryptor)) {
     return false;
+  }
 
-  if (!archive->WriteString("stream\r\n"))
+  if (!archive->WriteString("stream\r\n")) {
     return false;
+  }
 
-  if (!archive->WriteBlock(data))
+  if (!archive->WriteBlock(data)) {
     return false;
+  }
 
   return archive->WriteString("\r\nendstream");
 }
 
 size_t CPDF_Stream::GetRawSize() const {
   if (IsFileBased()) {
-    return pdfium::base::checked_cast<size_t>(
-        absl::get<RetainPtr<IFX_SeekableReadStream>>(data_)->GetSize());
+    return pdfium::checked_cast<size_t>(
+        std::get<RetainPtr<IFX_SeekableReadStream>>(data_)->GetSize());
   }
-  if (IsMemoryBased())
-    return absl::get<DataVector<uint8_t>>(data_).size();
-  DCHECK(IsUninitialized());
-  return 0;
+  return std::get<DataVector<uint8_t>>(data_).size();
 }
 
 pdfium::span<const uint8_t> CPDF_Stream::GetInMemoryRawData() const {
   DCHECK(IsMemoryBased());
-  return absl::get<DataVector<uint8_t>>(data_);
+  return std::get<DataVector<uint8_t>>(data_);
 }
 
 void CPDF_Stream::SetLengthInDict(int length) {
-  if (!dict_)
-    dict_ = pdfium::MakeRetain<CPDF_Dictionary>();
   dict_->SetNewFor<CPDF_Number>("Length", length);
 }

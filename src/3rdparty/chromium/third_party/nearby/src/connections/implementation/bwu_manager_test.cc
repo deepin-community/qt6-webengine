@@ -20,16 +20,22 @@
 
 #include "gtest/gtest.h"
 #include "absl/strings/string_view.h"
+#include "connections/connection_options.h"
 #include "connections/implementation/client_proxy.h"
 #include "connections/implementation/endpoint_channel.h"
 #include "connections/implementation/endpoint_channel_manager.h"
 #include "connections/implementation/endpoint_manager.h"
 #include "connections/implementation/fake_bwu_handler.h"
 #include "connections/implementation/fake_endpoint_channel.h"
+#include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "connections/implementation/mediums/mediums.h"
 #include "connections/implementation/offline_frames.h"
 #include "connections/implementation/service_id_constants.h"
+#include "connections/listeners.h"
+#include "internal/flags/nearby_flags.h"
+#include "internal/platform/byte_array.h"
 #include "internal/platform/exception.h"
+#include "internal/platform/feature_flags.h"
 #include "internal/proto/analytics/connections_log.pb.h"
 #include "proto/connections_enums.pb.h"
 
@@ -40,7 +46,9 @@ using ::location::nearby::analytics::proto::ConnectionsLog;
 using ::location::nearby::connections::BandwidthUpgradeNegotiationFrame;
 using ::location::nearby::connections::
     BandwidthUpgradeNegotiationFrame_UpgradePathInfo;
+using ::location::nearby::connections::MediumRole;
 using ::location::nearby::connections::OfflineFrame;
+using ::location::nearby::connections::OsInfo;
 using ::location::nearby::connections::V1Frame;
 using ::location::nearby::proto::connections::DisconnectionReason;
 
@@ -89,9 +97,15 @@ class BwuManagerTest : public ::testing::Test {
 
   // Create the initial device-to-device connection, before bandwidth upgrade.
   // Typically |medium| will be Bluetooth.
-  FakeEndpointChannel* CreateInitialEndpoint(absl::string_view service_id,
+  FakeEndpointChannel* CreateInitialEndpoint(ClientProxy* client,
+                                             absl::string_view service_id,
                                              absl::string_view endpoint_id,
                                              Medium medium) {
+    client->OnConnectionInitiated(
+        std::string(endpoint_id),
+        {.remote_endpoint_info = ByteArray("remote endpoint")},
+        {.auto_upgrade_bandwidth = false}, {}, "");
+    client->OnConnectionAccepted(std::string(endpoint_id));
     auto channel =
         std::make_unique<FakeEndpointChannel>(medium, std::string(service_id));
     FakeEndpointChannel* channel_raw = channel.get();
@@ -224,6 +238,51 @@ TEST(BwuManagerBaseTest, AllowToUpgradeMedium) {
   bwu_manager->Shutdown();
 }
 
+TEST(BwuManagerBaseTest, InitiateBwu_NeedToSwitchRole_Success) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableDynamicRoleSwitch,
+      true);
+  ClientProxy client;
+  EndpointChannelManager ecm;
+  EndpointManager em(&ecm);
+  Mediums mediums;
+  BwuManager::Config config;
+  config.allow_upgrade_to.SetAll(false);
+  absl::flat_hash_map<Medium, std::unique_ptr<BwuHandler>> handlers;
+  auto bwu_manager = std::make_unique<BwuManager>(mediums, em, ecm,
+                                                  std::move(handlers), config);
+  client.SetLocalOsType(OsInfo::APPLE);
+  auto channel1 = std::make_unique<FakeEndpointChannel>(
+      Medium::BLUETOOTH, std::string(kServiceIdA));
+  MediumRole medium_role;
+  medium_role.set_support_wifi_hotspot_host(true);
+  client.OnConnectionInitiated(
+      std::string(kEndpointId1),
+      {.remote_endpoint_info = ByteArray("remote endpoint")},
+      {.auto_upgrade_bandwidth = false,
+       .connection_info =
+           {
+               .medium_role = {medium_role},
+           }},
+      {}, "");
+  client.OnConnectionAccepted(std::string(kEndpointId1));
+  ecm.RegisterChannelForEndpoint(&client, std::string(kEndpointId1),
+                                 std::move(channel1));
+  bwu_manager->InitiateBwuForEndpoint(&client, std::string(kEndpointId1),
+                                      Medium::WIFI_HOTSPOT);
+  EXPECT_FALSE(bwu_manager->IsUpgradeOngoing(std::string(kEndpointId1)));
+
+  ecm.UnregisterChannelForEndpoint(
+      std::string(kEndpointId1), DisconnectionReason::LOCAL_DISCONNECTION,
+      ConnectionsLog::EstablishedConnection::SAFE_DISCONNECTION);
+  bwu_manager->Shutdown();
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableDynamicRoleSwitch,
+      false);
+}
+
 class BwuManagerTestParam : public BwuManagerTest,
                             public ::testing::WithParamInterface<bool> {
  protected:
@@ -235,8 +294,8 @@ class BwuManagerTestParam : public BwuManagerTest,
 
 TEST_P(BwuManagerTestParam, InitiateBwu_Success) {
   // Create the initial device-to-device Bluetooth connection.
-  FakeEndpointChannel* initial_channel =
-      CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  FakeEndpointChannel* initial_channel = CreateInitialEndpoint(
+      &client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   // Initiate BWU, and send BANDWIDTH_UPGRADE_NEGOTIATION.UPGRADE_PATH_AVAILABLE
   // to the Responder over the initial Bluetooth channel.
@@ -298,7 +357,7 @@ TEST_P(BwuManagerTestParam, InitiateBwu_Success) {
 
 TEST_P(BwuManagerTestParam,
        InitiateBwu_Error_DontUpgradeIfAlreadyConenctedOverTheRequestedMedium) {
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   EXPECT_EQ(1u, fake_web_rtc_bwu_handler_->handle_initialize_calls().size());
@@ -312,7 +371,7 @@ TEST_P(BwuManagerTestParam,
 
 TEST_P(BwuManagerTestParam,
        InitiateBwu_Error_DontUpgradeFromWIFI_LANToWIFI_HOTSPOT) {
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::WIFI_LAN);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::WIFI_LAN);
 
   // Ignore request to upgrade to WebRTC if we're already connected.
   bwu_manager_->InitiateBwuForEndpoint(&client_, std::string(kEndpointId1),
@@ -336,7 +395,7 @@ TEST_P(BwuManagerTestParam, InitiateBwu_Error_NoInitialMedium) {
 }
 
 TEST_P(BwuManagerTestParam, InitiateBwu_Error_UpgradeAlreadyInProgress) {
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   bwu_manager_->InitiateBwuForEndpoint(&client_, std::string(kEndpointId1),
                                        Medium::WEB_RTC);
@@ -357,8 +416,8 @@ TEST_P(BwuManagerTestParam, InitiateBwu_Error_UpgradeAlreadyInProgress) {
 TEST_P(BwuManagerTestParam,
        InitiateBwu_Error_FailedToWriteUpgradePathAvailableFrame) {
   // Create the initial device-to-device Bluetooth connection.
-  FakeEndpointChannel* initial_channel =
-      CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  FakeEndpointChannel* initial_channel = CreateInitialEndpoint(
+      &client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   // Make the initial endpoint channel fail when writing the
   // UPGRADE_PATH_AVAILABLE frame.
@@ -391,8 +450,8 @@ TEST_F(BwuManagerTest,
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
 
   // Say we have two already upgraded WebRTC connections for the same service.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
@@ -441,8 +500,8 @@ TEST_F(BwuManagerTest,
       false;
 
   // Say we have two already upgraded WebRTC connections for the same service.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
@@ -497,8 +556,8 @@ TEST_F(BwuManagerTest,
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
 
   // Say we have two already upgraded WLAN connections for different services.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdB, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WIFI_LAN);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
@@ -552,8 +611,8 @@ TEST_F(BwuManagerTest,
       false;
 
   // Say we have two already upgraded WLAN connections for different services.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdB, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WIFI_LAN);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
@@ -611,11 +670,11 @@ TEST_F(
 
   // Say we have three upgraded connections for two different services and two
   // different mediums.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdB, kEndpointId4, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdB, kEndpointId5, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId4, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId5, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   FullyUpgradeEndpoint(kEndpointId4, /*initial_medium=*/Medium::BLUETOOTH,
@@ -759,15 +818,15 @@ TEST_F(BwuManagerTest, InitiateBwu_Revert_OnUpgradeFailure_FlagEnabled) {
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
 
   // Say we have two already upgraded WebRTC connections for service A.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
 
   // Service B has an initial Bluetooth connection that it tries to upgrade.
-  CreateInitialEndpoint(kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
   bwu_manager_->InitiateBwuForEndpoint(&client_, std::string(kEndpointId3),
                                        Medium::WEB_RTC);
   fake_web_rtc_bwu_handler_->NotifyBwuManagerOfIncomingConnection(
@@ -797,15 +856,15 @@ TEST_F(BwuManagerTest, InitiateBwu_Revert_OnUpgradeFailure_FlagDisabled) {
       false;
 
   // Say we have two already upgraded WebRTC connections for service A.
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
-  CreateInitialEndpoint(kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId2, Medium::BLUETOOTH);
   FullyUpgradeEndpoint(kEndpointId1, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
   FullyUpgradeEndpoint(kEndpointId2, /*initial_medium=*/Medium::BLUETOOTH,
                        /*upgrade_medium=*/Medium::WEB_RTC);
 
   // Service B has an initial Bluetooth connection that it tries to upgrade.
-  CreateInitialEndpoint(kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdB, kEndpointId3, Medium::BLUETOOTH);
   bwu_manager_->InitiateBwuForEndpoint(&client_, std::string(kEndpointId3),
                                        Medium::WEB_RTC);
   fake_web_rtc_bwu_handler_->NotifyBwuManagerOfIncomingConnection(
@@ -832,7 +891,7 @@ TEST_F(BwuManagerTest, InitiateBwu_Revert_OnUpgradeFailure_FlagDisabled) {
 TEST_F(BwuManagerTest, InitiateBwu_Revert_OnDisconnect_WifiDirect) {
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
   OfflineFrame frame;
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   ByteArray bytes = parser::ForBwuWifiDirectPathAvailable(
       /*ssid=*/"Direct-12345678", /*password=*/"87654321", /*port=*/2143,
@@ -865,7 +924,7 @@ TEST_F(BwuManagerTest, InitiateBwu_Revert_OnDisconnect_WifiDirect) {
 TEST_F(BwuManagerTest, InitiateBwu_Revert_OnDisconnect_Hotspot) {
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
 
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   ExceptionOr<OfflineFrame> hotspot_path_available_frame =
       parser::FromBytes(parser::ForBwuWifiHotspotPathAvailable(
@@ -895,7 +954,7 @@ TEST_F(BwuManagerTest, InitiateBwu_Revert_OnDisconnect_Hotspot) {
 TEST_F(BwuManagerTest, InitiateBwu_Revert_OnDisconnect_Wlan) {
   FeatureFlags::GetMutableFlagsForTesting().support_multiple_bwu_mediums = true;
 
-  CreateInitialEndpoint(kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
+  CreateInitialEndpoint(&client_, kServiceIdA, kEndpointId1, Medium::BLUETOOTH);
 
   ExceptionOr<OfflineFrame> wlan_path_available_frame = parser::FromBytes(
       parser::ForBwuWifiLanPathAvailable(/*ip_address=*/"ABCD",
@@ -926,6 +985,78 @@ TEST_F(BwuManagerTest, OnReceiveBwuEvent) {
 
 TEST_F(BwuManagerTest, OnProcessBwuEvent) {
   // TODO(b/235109434): Add more unit tests coverage for BWU module
+}
+
+TEST_F(BwuManagerTest, BlockBwuFrameBeforeAccept) {
+  auto channel = std::make_unique<FakeEndpointChannel>(
+      Medium::BLUETOOTH, std::string(kServiceIdA));
+  ecm_.RegisterChannelForEndpoint(&client_, std::string(kEndpointId2),
+                                  std::move(channel));
+
+  ExceptionOr<OfflineFrame> hotspot_path_available_frame2 =
+      parser::FromBytes(parser::ForBwuWifiHotspotPathAvailable(
+          /*ssid=*/"Direct-357a2d8c", /*password=*/"b592f7d3",
+          /*port=*/1234, /*frequency=*/2412, /*gateway=*/"123.234.23.1", true));
+  OfflineFrame frame2 = hotspot_path_available_frame2.result();
+  frame2.set_version(OfflineFrame::V1);
+  auto* v1_frame2 = frame2.mutable_v1();
+  auto* sub_frame2 = v1_frame2->mutable_bandwidth_upgrade_negotiation();
+  sub_frame2->set_event_type(
+      BandwidthUpgradeNegotiationFrame::UPGRADE_PATH_AVAILABLE);
+  auto* upgrade_path_info2 = sub_frame2->mutable_upgrade_path_info();
+
+  upgrade_path_info2->set_supports_client_introduction_ack(false);
+  upgrade_path_info2->set_supports_disabling_encryption(true);
+  bwu_manager_->OnIncomingFrame(frame2, std::string(kEndpointId2), &client_,
+                                Medium::BLUETOOTH, packet_meta_data_);
+  CountDownLatch latch2(1);
+  // The BWU frame should be drop, so the inProgressUpgrades should be empty.
+  ASSERT_EQ(bwu_manager_->IsUpgradeOngoing(std::string(kEndpointId2)), false);
+  UnRegisterChannelForEndpoint(kEndpointId2);
+}
+
+TEST_F(BwuManagerTest, BlockBwuFrameFromAdvertiser) {
+  ExceptionOr<OfflineFrame> hotspot_path_available_frame =
+      parser::FromBytes(parser::ForBwuWifiHotspotPathAvailable(
+          /*ssid=*/"Direct-357a2d8c", /*password=*/"b592f7d3",
+          /*port=*/1234, /*frequency=*/2412, /*gateway=*/"123.234.23.1", true));
+  OfflineFrame frame = hotspot_path_available_frame.result();
+  frame.set_version(OfflineFrame::V1);
+  auto* v1_frame = frame.mutable_v1();
+  auto* sub_frame = v1_frame->mutable_bandwidth_upgrade_negotiation();
+  sub_frame->set_event_type(
+      BandwidthUpgradeNegotiationFrame::UPGRADE_PATH_AVAILABLE);
+  auto* upgrade_path_info = sub_frame->mutable_upgrade_path_info();
+  upgrade_path_info->set_supports_client_introduction_ack(false);
+  upgrade_path_info->set_supports_disabling_encryption(true);
+
+  ConnectionResponseInfo response_info{
+      .remote_endpoint_info = ByteArray{"endpoint_name"},
+      .authentication_token = "auth_token",
+      .raw_authentication_token = ByteArray{"auth_token"},
+      .is_incoming_connection = true,
+  };
+  ConnectionOptions connection_options;
+
+  auto channel = std::make_unique<FakeEndpointChannel>(
+      Medium::BLUETOOTH, std::string(kServiceIdA));
+  ecm_.RegisterChannelForEndpoint(&client_, std::string(kEndpointId2),
+                                  std::move(channel));
+
+  client_.OnConnectionInitiated(std::string(kEndpointId2), response_info,
+                                connection_options, {}, "token");
+  client_.LocalEndpointAcceptedConnection(std::string(kEndpointId2), {});
+  client_.RemoteEndpointAcceptedConnection(std::string(kEndpointId2));
+  EXPECT_TRUE(client_.IsConnectionAccepted(std::string(kEndpointId2)));
+  client_.OnConnectionAccepted(std::string(kEndpointId2));
+  EXPECT_TRUE(client_.IsConnectedToEndpoint(std::string(kEndpointId2)));
+
+  bwu_manager_->OnIncomingFrame(frame, std::string(kEndpointId2), &client_,
+                                Medium::BLUETOOTH, packet_meta_data_);
+  CountDownLatch latch2(1);
+  // The BWU frame should be drop, so the IsUpgradeOngoing should be empty.
+  ASSERT_EQ(bwu_manager_->IsUpgradeOngoing(std::string(kEndpointId2)), false);
+  UnRegisterChannelForEndpoint(kEndpointId2);
 }
 
 INSTANTIATE_TEST_SUITE_P(BwuManagerTestParam, BwuManagerTestParam,

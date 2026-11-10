@@ -7,16 +7,26 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/metrics/histogram_functions.h"
 #include "services/device/geolocation/geolocation_context.h"
 #include "services/device/public/cpp/geolocation/geoposition.h"
 
 namespace device {
 
+namespace {
+void RecordUmaGeolocationImplClientId(mojom::GeolocationClientId client_id) {
+  base::UmaHistogramEnumeration("Geolocation.GeolocationImpl.ClientId",
+                                client_id);
+}
+}  // namespace
+
 GeolocationImpl::GeolocationImpl(mojo::PendingReceiver<Geolocation> receiver,
                                  const GURL& requesting_url,
+                                 mojom::GeolocationClientId client_id,
                                  GeolocationContext* context)
     : receiver_(this, std::move(receiver)),
       url_(requesting_url),
+      client_id_(client_id),
       context_(context),
       high_accuracy_(false) {
   DCHECK(context_);
@@ -58,7 +68,7 @@ void GeolocationImpl::StartListeningForUpdates() {
           high_accuracy_);
 }
 
-void GeolocationImpl::SetHighAccuracy(bool high_accuracy) {
+void GeolocationImpl::SetHighAccuracyHint(bool high_accuracy) {
   high_accuracy_ = high_accuracy;
 
   if (position_override_) {
@@ -81,6 +91,26 @@ void GeolocationImpl::QueryNextPosition(QueryNextPositionCallback callback) {
   if (current_result_) {
     ReportCurrentPosition();
   }
+  RecordUmaGeolocationImplClientId(client_id_);
+}
+
+void GeolocationImpl::QueryCachedPosition(
+    QueryCachedPositionCallback callback) {
+  if (position_override_) {
+    std::move(callback).Run(position_override_.Clone());
+    return;
+  }
+
+  mojom::GeopositionResultPtr result =
+      GeolocationProvider::GetInstance()->GetCachedPosition();
+  if (result) {
+    std::move(callback).Run(std::move(result));
+    return;
+  }
+
+  std::move(callback).Run(
+      mojom::GeopositionResult::NewError(mojom::GeopositionError::New(
+          mojom::GeopositionErrorCode::kPositionUnavailable, "", "")));
 }
 
 void GeolocationImpl::SetOverride(const mojom::GeopositionResult& result) {

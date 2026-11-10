@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {type PathCommands, type Position, type Quad} from './common.js';
-
+import type {PathCommands, Position, Quad} from './common.js';
 import {
+  type BoxStyle,
   buildPath,
   createPathForQuad,
   drawPathWithLineStyle,
   emptyBounds,
   fillPathWithBoxStyle,
   hatchFillPath,
-  type BoxStyle,
   type LineStyle,
 } from './highlight_common.js';
 
@@ -69,8 +68,8 @@ const FLEXIBILITY_ARROW_THICKNESS = 1;
 const FLEXIBILITY_ARROW_TIP_SIZE = 5;
 
 export function drawLayoutFlexItemHighlight(
-    highlight: FlexItemHighlight, itemPath: PathCommands, context: CanvasRenderingContext2D, deviceScaleFactor: number,
-    canvasWidth: number, canvasHeight: number, emulationScaleFactor: number) {
+    highlight: FlexItemHighlight, itemPath: PathCommands, context: CanvasRenderingContext2D,
+    emulationScaleFactor: number) {
   const {baseSize, isHorizontalFlow} = highlight;
 
   const itemQuad = rectPathToQuad(itemPath);
@@ -176,8 +175,10 @@ function drawFlexibilityArrow(
 }
 
 export function drawLayoutFlexContainerHighlight(
-    highlight: FlexContainerHighlight, context: CanvasRenderingContext2D, deviceScaleFactor: number,
-    canvasWidth: number, canvasHeight: number, emulationScaleFactor: number) {
+    highlight: FlexContainerHighlight,
+    context: CanvasRenderingContext2D,
+    emulationScaleFactor: number,
+) {
   const config = highlight.flexContainerHighlightConfig;
   const bounds = emptyBounds();
   const borderPath = buildPath(highlight.containerBorder, bounds, emulationScaleFactor);
@@ -185,7 +186,7 @@ export function drawLayoutFlexContainerHighlight(
   drawPathWithLineStyle(context, borderPath, config.containerBorder);
 
   // If there are no lines, bail out now.
-  if (!lines || !lines.length) {
+  if (!lines?.length) {
     return;
   }
 
@@ -209,7 +210,7 @@ function drawFlexLinesAndItems(
   const config = highlight.flexContainerHighlightConfig;
 
   const paths = lineQuads.map((line, lineIndex) => {
-    const nextLineQuad = lineQuads[lineIndex + 1] && lineQuads[lineIndex + 1].quad;
+    const nextLineQuad = lineQuads[lineIndex + 1]?.quad;
     return {
       path: isHorizontalFlow ? quadToHorizontalLinesPath(line.quad, nextLineQuad) :
                                quadToVerticalLinesPath(line.quad, nextLineQuad),
@@ -335,7 +336,7 @@ function drawFlexAlignmentForLine(
     itemQuads: Quad[], itemBaselines: number[]) {
   const {alignItemsStyle, isHorizontalFlow} = highlight;
   const {crossAlignment} = highlight.flexContainerHighlightConfig;
-  if (!crossAlignment || !crossAlignment.color) {
+  if (!crossAlignment?.color) {
     return;
   }
 
@@ -353,7 +354,7 @@ function drawFlexAlignmentForLine(
   // second      |        first
   // point       V        point
   //   o--------------------o
-  const linesToDraw: [Position, Position][] = [];
+  const linesToDraw: Array<[Position, Position]> = [];
 
   switch (alignItemsStyle) {
     case 'flex-start':
@@ -481,7 +482,7 @@ function drawAlignmentArrow(
     highlight: FlexContainerHighlight, context: CanvasRenderingContext2D, emulationScaleFactor: number,
     startPoint: Position, endPoint: Position) {
   const {crossAlignment} = highlight.flexContainerHighlightConfig;
-  if (!crossAlignment || !crossAlignment.color) {
+  if (!crossAlignment?.color) {
     return;
   }
 
@@ -643,10 +644,10 @@ export function getGapQuads(
  *
  * @param quad1
  * @param quad2
- * @param size The size of the gap between the 2 quads
- * @param vertically whether the 2 quads are stacked vertically (quad1 above quad2), or horizontally (quad1 left of
+ * @param size - The size of the gap between the 2 quads
+ * @param vertically - whether the 2 quads are stacked vertically (quad1 above quad2), or horizontally (quad1 left of
  * quad2)
- * @param isReverse whether the direction is reversed (quad1 below quad2 or quad1 right of quad2)
+ * @param isReverse - whether the direction is reversed (quad1 below quad2 or quad1 right of quad2)
  */
 export function getGapQuadBetweenQuads(
     quad1: Quad, quad2: Quad, size: number, vertically: boolean, isReverse?: boolean) {
@@ -734,7 +735,7 @@ function segmentToPath(segment: [Position, Position]): PathCommands {
 /**
  * Transform a path array (as returned by the backend) that corresponds to a rectangle into a quad.
  * @param commands
- * @return The quad object
+ * @returns The quad object
  */
 function rectPathToQuad(commands: PathCommands): Quad {
   return {
@@ -821,7 +822,7 @@ export function uniteQuads(quad1: Quad, quad2: Quad, isHorizontalFlow: boolean, 
  * flush aginst the outer one.
  * @param innerQuad
  * @param outerQuad
- * @param horizontally The direction to grow the inner quad along
+ * @param horizontally - The direction to grow the inner quad along
  */
 export function growQuadToEdgesOf(innerQuad: Quad, outerQuad: Quad, horizontally: boolean): Quad {
   return {
@@ -840,7 +841,7 @@ export function growQuadToEdgesOf(innerQuad: Quad, outerQuad: Quad, horizontally
  * Return the x/y intersection of the 2 segments
  * @param segment1
  * @param segment2
- * @return the point where the segments intersect
+ * @returns the point where the segments intersect
  */
 export function intersectSegments([p1, p2]: Position[], [p3, p4]: Position[]): Position {
   const x = (((p1.x * p2.y - p1.y * p2.x) * (p3.x - p4.x)) - ((p1.x - p2.x) * (p3.x * p4.y - p3.y * p4.x))) /

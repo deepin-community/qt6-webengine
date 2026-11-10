@@ -7,9 +7,11 @@
 #ifndef FXBARCODE_COMMON_REEDSOLOMON_BC_REEDSOLOMONGF256_H_
 #define FXBARCODE_COMMON_REEDSOLOMON_BC_REEDSOLOMONGF256_H_
 
-#include <memory>
+#include <stdint.h>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <array>
+#include <memory>
+#include <optional>
 
 class CBC_ReedSolomonGF256Poly;
 
@@ -18,22 +20,22 @@ class CBC_ReedSolomonGF256 {
   explicit CBC_ReedSolomonGF256(int32_t primitive);
   ~CBC_ReedSolomonGF256();
 
-  CBC_ReedSolomonGF256Poly* GetZero() const { return m_zero.get(); }
-  CBC_ReedSolomonGF256Poly* GetOne() const { return m_one.get(); }
+  CBC_ReedSolomonGF256Poly* GetZero() const { return zero_.get(); }
+  CBC_ReedSolomonGF256Poly* GetOne() const { return one_.get(); }
 
   std::unique_ptr<CBC_ReedSolomonGF256Poly> BuildMonomial(int32_t degree,
                                                           int32_t coefficient);
   static int32_t AddOrSubtract(int32_t a, int32_t b);
   int32_t Exp(int32_t a);
-  absl::optional<int32_t> Inverse(int32_t a);
+  std::optional<int32_t> Inverse(int32_t a);
   int32_t Multiply(int32_t a, int32_t b);
   void Init();
 
  private:
-  std::unique_ptr<CBC_ReedSolomonGF256Poly> m_zero;
-  std::unique_ptr<CBC_ReedSolomonGF256Poly> m_one;
-  int32_t m_expTable[256];
-  int32_t m_logTable[256];
+  std::unique_ptr<CBC_ReedSolomonGF256Poly> zero_;
+  std::unique_ptr<CBC_ReedSolomonGF256Poly> one_;
+  std::array<int32_t, 256> exp_table_;
+  std::array<int32_t, 256> log_table_;
 };
 
 #endif  // FXBARCODE_COMMON_REEDSOLOMON_BC_REEDSOLOMONGF256_H_

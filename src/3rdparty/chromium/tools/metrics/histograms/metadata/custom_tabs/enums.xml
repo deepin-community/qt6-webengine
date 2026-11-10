@@ -26,6 +26,21 @@ chromium-metrics-reviews@google.com.
 
 <enums>
 
+<!-- LINT.IfChange(ContextualCustomActionType) -->
+
+<enum name="ContextualCustomActionType">
+  <int value="0" label="Link"/>
+  <int value="1" label="Image"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/android/java/src/org/chromium/chrome/browser/contextmenu/ChromeContextMenuPopulator.java:ContextualCustomActionType) -->
+
+<enum name="CustomTabsAuthScheme">
+  <int value="0" label="Other/Custom"/>
+  <int value="1" label="HTTP"/>
+  <int value="2" label="HTTPS"/>
+</enum>
+
 <enum name="CustomTabsBrandingAppIdType">
   <summary>Used by CustomTabs.Branding.AppIdType</summary>
   <int value="0" label="INVALID"/>
@@ -33,26 +48,11 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="REFERRER"/>
 </enum>
 
-<enum name="CustomTabsBrandingDecision">
-  <summary>Used by CustomTabs.Branding.BrandingDecision</summary>
-  <int value="0" label="None">
-    Branding is not shown. Used when branding is already shown in the past set
-    cadence (e.g. one hour).
-  </int>
-  <int value="1" label="Shown on toolbar">
-    Branding is shown on the toolbar. Used when the client app launches CCT past
-    the set branding cadence.
-  </int>
-  <int value="2" label="Shown with Toast">
-    Branding is shown with a toast. Used when the client app launches CCT for
-    the first time.
-  </int>
-</enum>
-
 <enum name="CustomTabsCloseCause">
   <int value="0" label="User action in Chrome (back press, close button)"/>
   <int value="1" label="User action in Android (home)"/>
   <int value="2" label="Auto-closed"/>
+  <int value="3" label="AuthTab success"/>
 </enum>
 
 <enum name="CustomTabsConnection">
@@ -61,6 +61,8 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Connected to service w/o KeepAlive connection"/>
   <int value="3" label="Connected to service with KeepAlive connection"/>
 </enum>
+
+<!--LINT.IfChange(CustomTabsFeatureUsed) -->
 
 <enum name="CustomTabsFeatureUsed">
   <int value="0" label="Sessions - counter for all sessions"/>
@@ -106,7 +108,9 @@ chromium-metrics-reviews@google.com.
   <int value="40" label="TWA origins EXTRA_ADDITIONAL_TRUSTED_ORIGINS"/>
   <int value="41" label="Url bar hiding EXTRA_ENABLE_URLBAR_HIDING"/>
   <int value="42" label="Translate specified EXTRA_AUTO_TRANSLATE_LANGUAGE"/>
-  <int value="43" label="Experiment override EXTRA_AGA_EXPERIMENT_ENABLE"/>
+  <int value="43"
+      label="(Obsolete) Experiment override EXTRA_AGA_EXPERIMENT_ENABLE.
+             Removed 2025/07."/>
   <int value="44" label="Partial width custom tab CTF_PARTIAL_SIDE_SHEET"/>
   <int value="45" label="Break point EXTRA_ACTIVITY_SIDE_SHEET_BREAKPOINT_DP"/>
   <int value="46" label="Initial width EXTRA_INITIAL_ACTIVITY_WIDTH_PX"/>
@@ -129,7 +133,29 @@ chromium-metrics-reviews@google.com.
   <int value="54"
       label="Scroll content may resize tab
              EXTRA_ACTIVITY_SCROLL_CONTENT_RESIZE"/>
+  <int value="55" label="Ephemeral EXTRA_ENABLE_EPHEMERAL_BROWSING"/>
+  <int value="56"
+      label="Enable google bottom bar EXTRA_ENABLE_GOOGLE_BOTTOM_BAR"/>
+  <int value="57"
+      label="Google bottom bar buttons EXTRA_GOOGLE_BOTTOM_BAR_BUTTONS"/>
+  <int value="58" label="Support multi-network EXTRA_NETWORK"/>
+  <int value="59" label="Auth Tab EXTRA_LAUNCH_AUTH_TAB"/>
+  <int value="60"
+      label="Auth Tab custom redirect scheme EXTRA_REDIRECT_SCHEME"/>
+  <int value="61"
+      label="Auth Tab https redirect host EXTRA_HTTPS_REDIRECT_HOST"/>
+  <int value="62"
+      label="Auth Tab https redirect path EXTRA_HTTPS_REDIRECT_PATH"/>
+  <int value="63"
+      label="Open in Browser button in the toolbar state
+             EXTRA_OPEN_IN_BROWSER_STATE"/>
+  <int value="64" label="Launch Handler API usage EXTRA_LAUNCH_HANDLER"/>
+  <int value="65" label="File Handlers API usage EXTRA_FILE_HANDLERS"/>
+  <int value="66"
+      label="Custom context menu items EXTRA_CUSTOM_CONTENT_ACTIONS"/>
 </enum>
+
+<!--LINT.ThenChange(//chrome/android/java/src/org/chromium/chrome/browser/customtabs/CustomTabsFeatureUsage.java:CustomTabsFeature) -->
 
 <enum name="CustomTabsMinimizedEvents">
   <int value="0" label="Minimized into PiP"/>
@@ -139,12 +165,40 @@ chromium-metrics-reviews@google.com.
 
 <enum name="CustomTabsMinimizedFeatureAvailability">
   <int value="0" label="Available"/>
-  <int value="1" label="Unavailable: API level is too low"/>
+  <int value="1"
+      label="(Obsolete) Unavailable: API level is too low. Removed 2024/02."/>
   <int value="2" label="Unavailable: Low-end device"/>
   <int value="3" label="Unavailable: System doesn't have PiP feature"/>
   <int value="4" label="Unavailable: PiP permission isn't granted"/>
   <int value="5" label="Unavailable: Device is on manufacturer exclude list"/>
 </enum>
+
+<!--LINT.IfChange(CustomTabsMtbHiddenReason) -->
+
+<enum name="CustomTabsMtbHiddenReason">
+  <int value="0" label="Other reason"/>
+  <int value="1" label="Invalid variant"/>
+  <int value="2" label="Duplicated action"/>
+  <int value="3" label="In CPA-only mode"/>
+  <int value="4" label="No space for button"/>
+  <int value="5" label="Toolbar width limit"/>
+  <int value="6" label="Omnibox enabled"/>
+</enum>
+
+<!--LINT.ThenChange(//chrome/android/java/src/org/chromium/chrome/browser/customtabs/features/toolbar/CustomTabMtbHiddenReason.java:CustomTabMtbHiddenReason) -->
+
+<!--LINT.IfChange(CustomTabsNavigationEvent) -->
+
+<enum name="CustomTabsNavigationEvent">
+  <int value="1" label="Navigation Started"/>
+  <int value="2" label="Navigation Finished"/>
+  <int value="3" label="Navigation Failed"/>
+  <int value="4" label="Navigation Aborted"/>
+  <int value="5" label="Tab Shown"/>
+  <int value="6" label="Tab Hidden"/>
+</enum>
+
+<!--LINT.ThenChange(//chrome/android/java/src/org/chromium/chrome/browser/customtabs/CustomTabsConnection.java:CustomTabsNavigationEvent) -->
 
 <enum name="CustomTabsParallelRequestStatusOnStart">
   <int value="0" label="No Parallel Request was requested"/>
@@ -163,21 +217,6 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Partial Custom Tab is full-size"/>
 </enum>
 
-<enum name="CustomTabsResizeType">
-  <obsolete>
-    Obsolete as of November 2022.
-  </obsolete>
-  <int value="0" label="Partial Custom Tab is expanded"/>
-  <int value="1" label="Partial Custom Tab is minimized"/>
-</enum>
-
-<enum name="CustomTabsResizeType2">
-  <int value="0" label="Partial Custom Tab is manually expanded"/>
-  <int value="1" label="Partial Custom Tab is manually minimized"/>
-  <int value="2" label="Partial Custom Tab is automatically expanded"/>
-  <int value="3" label="Partial Custom Tab is automatically minimized"/>
-</enum>
-
 <enum name="CustomTabsSessionDisconnectStatus">
   <int value="0" label="Unknown"/>
   <int value="1" label="Custom Tab in Foreground"/>
@@ -194,12 +233,68 @@ chromium-metrics-reviews@google.com.
              memory"/>
 </enum>
 
+<enum name="EarlyNavFailureReason">
+  <int value="0" label="Success"/>
+  <int value="1" label="No session"/>
+  <int value="2" label="No speculation"/>
+  <int value="3" label="Wrong URL, valid session"/>
+  <int value="4" label="Wrong URL, invalid session"/>
+  <int value="5" label="Wrong referrer, valid session"/>
+  <int value="6" label="Wrong referrer, invalid session"/>
+</enum>
+
+<!-- LINT.IfChange(FinishReason) -->
+
+<enum name="FinishReason">
+  <int value="0" label="User Navigation"/>
+  <int value="1" label="Reparenting"/>
+  <int value="2" label="Other"/>
+  <int value="3" label="Open in Browser"/>
+  <int value="4" label="Handled by OS"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/android/java/src/org/chromium/chrome/browser/customtabs/content/CustomTabActivityNavigationController.java:FinishReason) -->
+
+<enum name="GoogleBottomBarButtonEvent">
+  <int value="0" label="Unknown button"/>
+  <int value="1" label="Chrome Page Insights button"/>
+  <int value="2" label="Embedder Page Insights button"/>
+  <int value="3" label="Disabled Save button"/>
+  <int value="4" label="Embedder Save button"/>
+  <int value="5" label="Chrome Share button"/>
+  <int value="6" label="Embedder Share button"/>
+  <int value="7" label="Embedder Custom button"/>
+  <int value="8" label="Embedder Search button"/>
+  <int value="9" label="Chrome Search button"/>
+  <int value="10" label="Embedder Home button"/>
+  <int value="11" label="Chrome Home button"/>
+  <int value="12" label="Searchbox Home button"/>
+  <int value="13" label="Searchbox Search entrypoint"/>
+  <int value="14" label="Searchbox Voice Search button"/>
+  <int value="15" label="Searchbox Lens button"/>
+</enum>
+
+<enum name="GoogleBottomBarCreatedEvent">
+  <int value="0" label="Even layout"/>
+  <int value="1" label="Spotlight layout"/>
+</enum>
+
+<enum name="GoogleBottomBarVariantCreatedEvent">
+  <int value="0" label="Unknown variant"/>
+  <int value="1" label="No variant"/>
+  <int value="2" label="Double decker"/>
+  <int value="3" label="Single decker"/>
+  <int value="4" label="Single decker with right buttons"/>
+</enum>
+
 <enum name="IncognitoCCTCallerId">
   <int value="0" label="Other Apps"/>
   <int value="1" label="Google Apps"/>
   <int value="2" label="Chrome - Other features"/>
   <int value="3" label="Chrome - Reader mode"/>
   <int value="4" label="Chrome - Read later"/>
+  <int value="5" label="Ephemeral Tab"/>
+  <int value="6" label="Chrome - Download Home"/>
 </enum>
 
 <enum name="MayLaunchUrlType">
@@ -234,24 +329,23 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="High-end and Pip"/>
 </enum>
 
-<enum name="ShareOptionLocation">
-  <int value="0" label="TOOLBAR"/>
-  <int value="1" label="MENU">Share option chosen to be shown in the menu.</int>
-  <int value="2" label="TOOLBAR_FULL_MENU_FALLBACK">
-    Share option shown in the menu because the toolbar is full.
-  </int>
-  <int value="3" label="NO_SPACE">
-    No share option shown despite share being enabled. This is due to the
-    existence of custom buttons and menu items, which take precedence.
-  </int>
-  <int value="4" label="SHARE_DISABLED"/>
+<enum name="TwaLaunchHandlerClientMode">
+  <int value="0" label="Initial intent (client mode is ignored)"/>
+  <int value="1" label="Client mode navigate_existing"/>
+  <int value="2" label="Client mode navigate_new"/>
+  <int value="3" label="Client mode focus_existing"/>
+  <int value="4" label="Client mode auto"/>
 </enum>
 
-<enum name="TrustedWebActivityDelegatedNotificationSmallIconFallback">
-  <int value="0" label="No fallback"/>
-  <int value="1" label="Fallback icon mot provided"/>
-  <int value="2" label="Fallback for Status Bar"/>
-  <int value="3" label="Fallback for Status Bar and content"/>
+<enum name="TwaLaunchHandlerFailureReason">
+  <int value="0" label="Target URL verification failed"/>
+  <int value="1" label="Current page URL verification failed"/>
+</enum>
+
+<enum name="TwaLaunchHandlerFileHandling">
+  <int value="0" label="No files"/>
+  <int value="1" label="Single file"/>
+  <int value="2" label="Multiple files"/>
 </enum>
 
 <enum name="VisibleTab">
@@ -268,16 +362,45 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Session, Warmup"/>
 </enum>
 
+<enum name="WebAppBackButtonEvent">
+  <int value="0"
+      label="Invalid back event due to tab switching, e.g. re-parenting."/>
+  <int value="1"
+      label="Back event triggered by click or touch without meta keys."/>
+  <int value="2"
+      label="Open a history navigation popup after long pressing button."/>
+</enum>
+
+<!-- LINT.IfChange(WebAppHeaderDisplayMode) -->
+
+<enum name="WebAppHeaderDisplayMode">
+  <int value="0" label="undefined"/>
+  <int value="1" label="browser"/>
+  <int value="2" label="minimalUI"/>
+  <int value="3" label="standalone"/>
+  <int value="4" label="fullscreen"/>
+  <int value="5" label="windowControlsOverlay"/>
+  <int value="6" label="tabbed"/>
+  <int value="7" label="borderless"/>
+  <int value="8" label="pictureInPicture"/>
+</enum>
+
+<!-- LINT.ThenChange(//third_party/blink/public/mojom/manifest/display_mode.mojom:DisplayMode)-->
+
+<enum name="WebAppReloadButtonEvent">
+  <int value="0"
+      label="Invalid reload type due to tab switching, e.g. re-parenting."/>
+  <int value="1" label="Stop reloading currently active tab."/>
+  <int value="2"
+      label="Reload currently active tab including checking the cache."/>
+  <int value="3" label="Reload currently active tab ignoring the cache."/>
+</enum>
+
 <enum name="WebContentsState">
   <int value="0" label="No WebContents"/>
   <int value="1" label="Prerendered WebContents"/>
   <int value="2" label="Spare WebContents"/>
   <int value="3" label="Transferred WebContents"/>
-</enum>
-
-<enum name="WebShareTargetMethod">
-  <int value="0" label="GET"/>
-  <int value="1" label="POST"/>
 </enum>
 
 </enums>

@@ -4,7 +4,8 @@
 
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config_mojom_traits.h"
 
-#include "third_party/blink/common/permissions_policy/permissions_policy_mojom_traits.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_mojom_traits.h"
 #include "third_party/blink/public/common/fenced_frame/fenced_frame_utils.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame_config.mojom.h"
@@ -20,7 +21,6 @@ EnumTraits<blink::mojom::Opaque, blink::FencedFrame::Opaque>::ToMojom(
       return blink::mojom::Opaque::kOpaque;
   }
   NOTREACHED();
-  return blink::mojom::Opaque::kOpaque;
 }
 
 // static
@@ -33,7 +33,6 @@ bool EnumTraits<blink::mojom::Opaque, blink::FencedFrame::Opaque>::FromMojom(
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -54,7 +53,6 @@ EnumTraits<blink::mojom::ReportingDestination,
       return blink::mojom::ReportingDestination::kDirectSeller;
   }
   NOTREACHED();
-  return blink::mojom::ReportingDestination::kBuyer;
 }
 
 // static
@@ -69,7 +67,6 @@ EnumTraits<blink::mojom::DeprecatedFencedFrameMode,
       return blink::mojom::DeprecatedFencedFrameMode::kOpaqueAds;
   }
   NOTREACHED();
-  return blink::mojom::DeprecatedFencedFrameMode::kDefault;
 }
 
 // static
@@ -86,7 +83,6 @@ bool EnumTraits<blink::mojom::DeprecatedFencedFrameMode,
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -112,7 +108,6 @@ bool EnumTraits<blink::mojom::ReportingDestination,
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -176,7 +171,7 @@ bool StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
 }
 
 // static
-const std::vector<blink::ParsedPermissionsPolicyDeclaration>&
+const std::vector<network::ParsedPermissionsPolicyDeclaration>&
 StructTraits<blink::mojom::ParentPermissionsInfoDataView,
              blink::FencedFrame::ParentPermissionsInfo>::
     parsed_permissions_policy(
@@ -222,7 +217,6 @@ bool UnionTraits<blink::mojom::PotentiallyOpaqueURLDataView, Prop<GURL>>::Read(
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -256,7 +250,6 @@ bool UnionTraits<blink::mojom::PotentiallyOpaqueSizeDataView, Prop<gfx::Size>>::
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -287,7 +280,6 @@ bool UnionTraits<blink::mojom::PotentiallyOpaqueBoolDataView, Prop<bool>>::Read(
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -323,7 +315,6 @@ bool UnionTraits<blink::mojom::PotentiallyOpaqueAdAuctionDataDataView,
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -363,7 +354,6 @@ bool UnionTraits<
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -408,7 +398,6 @@ bool UnionTraits<
     }
   }
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -513,15 +502,17 @@ bool StructTraits<blink::mojom::FencedFramePropertiesDataView,
                            nested_urn_config_pair->config);
       }
     } else {
-      out_properties->nested_urn_config_pairs_.emplace(absl::nullopt);
+      out_properties->nested_urn_config_pairs_.emplace(std::nullopt);
     }
   }
 
-  out_properties->has_fenced_frame_reporting_ =
-      data.has_fenced_frame_reporting();
-
   out_properties->can_disable_untrusted_network_ =
       data.can_disable_untrusted_network();
+
+  out_properties->is_cross_origin_content_ = data.is_cross_origin_content();
+
+  out_properties->allow_cross_origin_event_reporting_ =
+      data.allow_cross_origin_event_reporting();
   return true;
 }
 

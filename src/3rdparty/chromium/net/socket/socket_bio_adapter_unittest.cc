@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "net/socket/socket_bio_adapter.h"
 
 #include <string.h>
@@ -286,7 +291,7 @@ TEST_P(SocketBIOAdapterTest, ReadEOFSync) {
 
 #if BUILDFLAG(IS_ANDROID)
 // Test that asynchronous EOF is mapped to ERR_CONNECTION_CLOSED.
-// TODO(crbug.com/1480024): Test is flaky on Android.
+// TODO(crbug.com/40281159): Test is flaky on Android.
 #define MAYBE_ReadEOFAsync DISABLED_ReadEOFAsync
 #else
 #define MAYBE_ReadEOFAsync ReadEOFAsync

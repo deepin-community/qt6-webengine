@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/hid/hid_service.h"
+
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -9,16 +11,18 @@
 #include "base/barrier_closure.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/mock_callback.h"
 #include "base/test/test_future.h"
-#include "content/browser/hid/hid_service.h"
 #include "content/browser/hid/hid_test_utils.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/hid_delegate.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/navigation_simulator.h"
@@ -32,6 +36,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/test_support/fake_message_dispatch_context.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
+#include "services/device/public/cpp/device_features.h"
 #include "services/device/public/cpp/test/fake_hid_manager.h"
 #include "services/device/public/cpp/test/hid_test_util.h"
 #include "services/device/public/cpp/test/test_report_descriptors.h"
@@ -43,6 +48,7 @@ namespace content {
 
 namespace {
 
+using ::base::test::InvokeFuture;
 using ::base::test::RunClosure;
 using ::base::test::TestFuture;
 using ::testing::_;
@@ -60,6 +66,9 @@ enum HidServiceCreationType {
 const char kTestUrl[] = "https://www.google.com";
 const char kTestGuid[] = "test-guid";
 const char kCrossOriginTestUrl[] = "https://www.chromium.org";
+
+constexpr uint16_t kVendorGoogle = 0x18d1;
+constexpr uint16_t kProductTitan = 0x5026;
 
 std::string HidServiceCreationTypeToString(HidServiceCreationType type) {
   switch (type) {
@@ -192,6 +201,18 @@ class HidServiceTestHelper {
         device::TestReportDescriptors::FidoU2fHid());
   }
 
+  device::mojom::HidDeviceInfoPtr CreateTitanFidoDevice() {
+    return device::CreateDeviceFromReportDescriptor(
+        kVendorGoogle, kProductTitan,
+        device::TestReportDescriptors::FidoU2fHid());
+  }
+
+  device::mojom::HidDeviceInfoPtr CreateTitanSiblingDevice() {
+    return device::CreateDeviceFromReportDescriptor(
+        kVendorGoogle, kProductTitan,
+        device::TestReportDescriptors::VendorDefinedInputOutput());
+  }
+
   void FlushHidServicePipe(
       const mojo::Remote<blink::mojom::HidService>& hid_service) {
     // Run GetDevices to flush mojo request.
@@ -278,13 +299,14 @@ class HidServiceBaseTest : public testing::Test, public HidServiceTestHelper {
         break;
     }
     NOTREACHED();
-    return nullptr;
   }
 
   void CheckHidServiceConnectedState(HidServiceCreationType type,
                                      bool expected_state) {
     if (type == kCreateUsingRenderFrameHost) {
-      ASSERT_EQ(web_contents_->IsConnectedToHidDevice(), expected_state);
+      ASSERT_EQ(
+          web_contents_->IsCapabilityActive(WebContentsCapabilityType::kHID),
+          expected_state);
     } else if (type == kCreateUsingServiceWorkerContextCore) {
       ASSERT_EQ(worker_version_->GetExternalRequestCountForTest(),
                 expected_state ? 1u : 0u);
@@ -328,7 +350,17 @@ class HidServiceTest
 // Test fixture parameterized for fido allowed or not.
 class HidServiceFidoTest : public HidServiceBaseTest,
                            public testing::WithParamInterface<
-                               std::tuple<HidServiceCreationType, bool>> {};
+                               std::tuple<HidServiceCreationType, bool>> {
+ public:
+  void SetUp() override {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kSecurityKeyHidInterfacesAreFido},
+        /*disabled_features=*/{});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
 
 // Test fixture for service worker specific tests.
 class HidServiceServiceWorkerBrowserContextDestroyedTest
@@ -510,7 +542,7 @@ TEST_F(HidServiceRenderFrameHostTest, OpenAndNavigateCrossOrigin) {
   // The test assumes the previous page gets deleted after navigation,
   // disconnecting the device. Disable back/forward cache to ensure that it
   // doesn't get preserved in the cache.
-  // TODO(crbug.com/1346021): Integrate WebHID with bfcache and remove this.
+  // TODO(crbug.com/40232335): Integrate WebHID with bfcache and remove this.
   DisableBackForwardCacheForTesting(web_contents(),
                                     BackForwardCache::TEST_REQUIRES_NO_CACHING);
 
@@ -527,7 +559,7 @@ TEST_F(HidServiceRenderFrameHostTest, OpenAndNavigateCrossOrigin) {
   connection_client()->Bind(
       hid_connection_client.InitWithNewPipeAndPassReceiver());
 
-  EXPECT_FALSE(contents()->IsConnectedToHidDevice());
+  EXPECT_FALSE(contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
 
   base::RunLoop run_loop;
   mojo::Remote<device::mojom::HidConnection> connection;
@@ -548,7 +580,7 @@ TEST_F(HidServiceRenderFrameHostTest, OpenAndNavigateCrossOrigin) {
   run_loop.Run();
   EXPECT_TRUE(connection.is_connected());
 
-  EXPECT_TRUE(contents()->IsConnectedToHidDevice());
+  EXPECT_TRUE(contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
 
   EXPECT_CALL(hid_delegate(),
               DecrementConnectionCount(browser_context(),
@@ -559,7 +591,7 @@ TEST_F(HidServiceRenderFrameHostTest, OpenAndNavigateCrossOrigin) {
   connection.set_disconnect_handler(disconnect_loop.QuitClosure());
 
   disconnect_loop.Run();
-  EXPECT_FALSE(contents()->IsConnectedToHidDevice());
+  EXPECT_FALSE(contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
   EXPECT_FALSE(connection.is_connected());
 }
 
@@ -905,7 +937,8 @@ TEST_P(HidServiceTest, Forget) {
 
   EXPECT_CALL(hid_delegate(), HasDevicePermission).WillOnce(Return(false));
   EXPECT_CALL(hid_delegate(), RevokeDevicePermission)
-      .WillOnce([this](content::BrowserContext* browser_context,
+      .WillOnce([this](BrowserContext* browser_context,
+                       RenderFrameHost* render_frame_host,
                        const url::Origin& origin,
                        const device::mojom::HidDeviceInfo& device) {
         hid_delegate().OnPermissionRevoked(origin);
@@ -1246,6 +1279,102 @@ TEST_P(HidServiceFidoTest, FidoDeviceAllowedWithPrivilegedOrigin) {
                                        url::Origin::Create(GURL(kTestUrl))));
   DisconnectDevice(*updated_device_info);
   device_removed_loop.Run();
+}
+
+TEST_P(HidServiceFidoTest, TitanDeviceAllowedWithPrivilegedOrigin) {
+  const bool is_fido_allowed = std::get<1>(GetParam());
+  url::Origin origin = url::Origin::Create(GURL(kTestUrl));
+  ON_CALL(hid_delegate(), IsFidoAllowedForOrigin(_, origin))
+      .WillByDefault(Return(is_fido_allowed));
+  ON_CALL(hid_delegate(), IsKnownSecurityKey).WillByDefault(Return(true));
+  ON_CALL(hid_delegate(), HasDevicePermission).WillByDefault(Return(true));
+
+  auto service_creation_type = std::get<0>(GetParam());
+  const auto& service = GetService(service_creation_type);
+
+  // Wait for GetDevices to return to ensure the client has been set. HidService
+  // checks if the origin is allowed to access FIDO reports before returning the
+  // device information to the client.
+  TestFuture<std::vector<device::mojom::HidDeviceInfoPtr>> get_devices_future;
+  service->GetDevices(get_devices_future.GetCallback());
+  EXPECT_TRUE(get_devices_future.Get().empty());
+
+  // Create a Titan device and check that it has the expected FIDO reports and
+  // they are protected.
+  auto titan_info = CreateTitanFidoDevice();
+  ASSERT_EQ(titan_info->collections.size(), 1u);
+  ASSERT_TRUE(titan_info->collections[0]->usage);
+  EXPECT_EQ(titan_info->collections[0]->usage->usage_page,
+            device::mojom::kPageFido);
+  EXPECT_EQ(titan_info->collections[0]->usage->usage, 1u);
+  ASSERT_EQ(titan_info->collections[0]->input_reports.size(), 1u);
+  EXPECT_EQ(titan_info->collections[0]->input_reports[0]->report_id, 0u);
+  ASSERT_EQ(titan_info->collections[0]->output_reports.size(), 1u);
+  EXPECT_EQ(titan_info->collections[0]->output_reports[0]->report_id, 0u);
+  EXPECT_TRUE(titan_info->collections[0]->feature_reports.empty());
+  ASSERT_TRUE(titan_info->protected_input_report_ids);
+  EXPECT_THAT(*titan_info->protected_input_report_ids, ElementsAre(0));
+  ASSERT_TRUE(titan_info->protected_output_report_ids);
+  EXPECT_THAT(*titan_info->protected_output_report_ids, ElementsAre(0));
+  ASSERT_TRUE(titan_info->protected_output_report_ids);
+  EXPECT_TRUE(titan_info->protected_feature_report_ids->empty());
+
+  // Create a Titan non-FIDO device and check that its reports are protected.
+  auto sibling_info = CreateTitanSiblingDevice();
+  ASSERT_EQ(sibling_info->collections.size(), 1u);
+  ASSERT_TRUE(sibling_info->collections[0]->usage);
+  EXPECT_EQ(sibling_info->collections[0]->usage->usage_page,
+            device::mojom::kPageVendor);
+  EXPECT_EQ(sibling_info->collections[0]->usage->usage, 1u);
+  ASSERT_EQ(sibling_info->collections[0]->input_reports.size(), 1u);
+  EXPECT_EQ(sibling_info->collections[0]->input_reports[0]->report_id, 0u);
+  ASSERT_EQ(sibling_info->collections[0]->output_reports.size(), 1u);
+  EXPECT_EQ(sibling_info->collections[0]->output_reports[0]->report_id, 0u);
+  EXPECT_TRUE(sibling_info->collections[0]->feature_reports.empty());
+  ASSERT_TRUE(sibling_info->protected_input_report_ids);
+  EXPECT_THAT(*sibling_info->protected_input_report_ids, ElementsAre(0));
+  ASSERT_TRUE(sibling_info->protected_output_report_ids);
+  EXPECT_THAT(*sibling_info->protected_output_report_ids, ElementsAre(0));
+  ASSERT_TRUE(sibling_info->protected_output_report_ids);
+  EXPECT_TRUE(sibling_info->protected_feature_report_ids->empty());
+
+  // Add the devices to the HidManager. HidService checks if the origin is
+  // allowed to access FIDO reports before dispatching DeviceAdded to its
+  // clients. If the origin is allowed to access FIDO reports, the
+  // information about those reports should be included. If the origin is not
+  // allowed to access FIDO reports, the device is blocked and DeviceAdded is
+  // not called.
+  TestFuture<device::mojom::HidDeviceInfoPtr> titan_added_future;
+  EXPECT_CALL(hid_manager_client(), DeviceAdded).Times(0);
+  if (is_fido_allowed) {
+    EXPECT_CALL(hid_manager_client(), DeviceAdded)
+        .WillOnce(InvokeFuture(titan_added_future));
+  }
+  ConnectDevice(*titan_info);
+  if (is_fido_allowed) {
+    const auto& device_info = *titan_added_future.Get();
+    EXPECT_EQ(device_info.collections.size(), 1u);
+    if (!device_info.collections.empty()) {
+      EXPECT_EQ(device_info.collections[0]->input_reports.size(), 1u);
+      EXPECT_EQ(device_info.collections[0]->output_reports.size(), 1u);
+      EXPECT_EQ(device_info.collections[0]->feature_reports.size(), 0u);
+    }
+  }
+  TestFuture<device::mojom::HidDeviceInfoPtr> sibling_added_future;
+  if (is_fido_allowed) {
+    EXPECT_CALL(hid_manager_client(), DeviceAdded)
+        .WillOnce(InvokeFuture(sibling_added_future));
+  }
+  ConnectDevice(*sibling_info);
+  if (is_fido_allowed) {
+    const auto& device_info = *sibling_added_future.Get();
+    EXPECT_EQ(device_info.collections.size(), 1u);
+    if (!device_info.collections.empty()) {
+      EXPECT_EQ(device_info.collections[0]->input_reports.size(), 1u);
+      EXPECT_EQ(device_info.collections[0]->output_reports.size(), 1u);
+      EXPECT_EQ(device_info.collections[0]->feature_reports.size(), 0u);
+    }
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(

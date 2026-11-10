@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager_export.h"
 #include "ui/display/types/display_constants.h"
@@ -73,11 +72,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayMode {
   bool native_ = false;         // True if mode is native mode of the display.
   float device_scale_factor_ = 1.0f;  // The device scale factor of the mode.
 };
-
-inline bool operator!=(const ManagedDisplayMode& lhs,
-                       const ManagedDisplayMode& rhs) {
-  return !(lhs == rhs);
-}
 
 // ManagedDisplayInfo contains metadata for each display. This is used to create
 // |Display| as well as to maintain extra infomation to manage displays in ash
@@ -258,6 +252,10 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // TODO(oshima): Rename to |GetDeviceScaleFactor()|.
   float GetEffectiveDeviceScaleFactor() const;
 
+  // Updates the zoom factor so that the effective dpi matches to the
+  // recommended default dpi.
+  void UpdateZoomFactorToMatchTargetDPI();
+
   // Copy the display info except for fields that can be modified by a user
   // (|rotation_|). |rotation_| is copied when the |another_info| isn't native
   // one.
@@ -275,11 +273,9 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   void SetOverscanInsets(const gfx::Insets& insets_in_dip);
   gfx::Insets GetOverscanInsetsInPixel() const;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Snapshot ColorSpace is only valid for Ash Chrome.
   void SetSnapshotColorSpace(const gfx::ColorSpace& snapshot_color);
   gfx::ColorSpace GetSnapshotColorSpace() const;
-#endif
 
   // Sets/Gets the flag to clear overscan insets.
   bool clear_overscan_insets() const { return clear_overscan_insets_; }
@@ -353,10 +349,8 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
     variable_refresh_rate_state_ = variable_refresh_rate_state;
   }
 
-  const absl::optional<float>& vsync_rate_min() const {
-    return vsync_rate_min_;
-  }
-  void set_vsync_rate_min(const absl::optional<float>& vsync_rate_min) {
+  const std::optional<float>& vsync_rate_min() const { return vsync_rate_min_; }
+  void set_vsync_rate_min(const std::optional<float>& vsync_rate_min) {
     vsync_rate_min_ = vsync_rate_min;
   }
 
@@ -470,10 +464,8 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // Colorimetry information of the Display.
   gfx::DisplayColorSpaces display_color_spaces_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Color Space information as generated from the display EDID.
   gfx::ColorSpace snapshot_color_space_;
-#endif
 
   // Bit depth of every channel, extracted from its EDID, usually 8, but can be
   // 0 if EDID says so or if the EDID (retrieval) was faulty.
@@ -487,7 +479,7 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   DrmFormatsAndModifiers drm_formats_and_modifiers_;
 
   VariableRefreshRateState variable_refresh_rate_state_;
-  absl::optional<float> vsync_rate_min_;
+  std::optional<float> vsync_rate_min_;
 
   // If you add a new member, you need to update Copy().
 };
@@ -500,4 +492,4 @@ CreateDisplayInfo(int64_t id, const gfx::Rect& bounds = gfx::Rect());
 
 }  // namespace display
 
-#endif  //  UI_DISPLAY_MANAGER_MANAGED_DISPLAY_INFO_H_
+#endif  // UI_DISPLAY_MANAGER_MANAGED_DISPLAY_INFO_H_

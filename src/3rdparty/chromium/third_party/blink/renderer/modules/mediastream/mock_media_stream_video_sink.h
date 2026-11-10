@@ -5,12 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_MOCK_MEDIA_STREAM_VIDEO_SINK_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_MOCK_MEDIA_STREAM_VIDEO_SINK_H_
 
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_sink.h"
-
 #include "base/memory/weak_ptr.h"
 #include "media/base/video_frame.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/blink/public/common/media/video_capture.h"
+#include "third_party/blink/public/platform/media/video_capture.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_sink.h"
 
 namespace blink {
 
@@ -45,7 +44,7 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
       WebMediaStreamTrack::ContentHintType content_hint) override;
   MOCK_METHOD(void,
               OnVideoConstraintsChanged,
-              (absl::optional<double>, absl::optional<double>),
+              (std::optional<double>, std::optional<double>),
               (override));
 
   // Triggered when OnVideoFrame(scoped_refptr<media::VideoFrame> frame)
@@ -67,7 +66,7 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
 
   bool enabled() const { return enabled_; }
   WebMediaStreamSource::ReadyState state() const { return state_; }
-  absl::optional<WebMediaStreamTrack::ContentHintType> content_hint() const {
+  std::optional<WebMediaStreamTrack::ContentHintType> content_hint() const {
     return content_hint_;
   }
 
@@ -91,7 +90,7 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
   WebMediaStreamSource::ReadyState state_;
   gfx::Size frame_size_;
   scoped_refptr<media::VideoFrame> last_frame_;
-  absl::optional<WebMediaStreamTrack::ContentHintType> content_hint_;
+  std::optional<WebMediaStreamTrack::ContentHintType> content_hint_;
   base::WeakPtrFactory<MockMediaStreamVideoSink> weak_factory_{this};
 };
 

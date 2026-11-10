@@ -37,16 +37,20 @@
 #include "absl/container/flat_hash_map.h"
 #include "dawn/common/FutureUtils.h"
 #include "dawn/common/MutexProtected.h"
-#include "dawn/common/NonCopyable.h"
+#include "dawn/common/NonMovable.h"
 #include "dawn/common/Ref.h"
+#include "dawn/common/WeakRef.h"
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/SystemEvent.h"
+#include "dawn/native/WaitListEvent.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 
 struct InstanceDescriptor;
+class QueueBase;
 
 // Subcomponent of the Instance which tracks callback events for the Future-based callback
 // entrypoints. All events from this instance (regardless of whether from an adapter, device, queue,
@@ -57,11 +61,9 @@ struct InstanceDescriptor;
 // There are various ways to optimize ProcessEvents/WaitAny:
 // - TODO(crbug.com/dawn/2059) Spontaneously set events as "early-ready" in other places when we see
 //   serials advance, e.g. Submit, or when checking a later wait before an earlier wait.
-// - TODO(crbug.com/dawn/2049) For thread-driven events (async pipeline compilation and Metal queue
-//   events), defer tracking for ProcessEvents until the event is already completed.
 class EventManager final : NonMovable {
   public:
-    EventManager();
+    explicit EventManager(InstanceBase* instance);
     ~EventManager();
 
     MaybeError Initialize(const UnpackedPtr<InstanceDescriptor>& descriptor);
@@ -72,29 +74,44 @@ class EventManager final : NonMovable {
 
     class TrackedEvent;
     // Track a TrackedEvent and give it a FutureID.
-    [[nodiscard]] FutureID TrackEvent(wgpu::CallbackMode mode, Ref<TrackedEvent>&&);
-    void ProcessPollEvents();
+    FutureID TrackEvent(Ref<TrackedEvent>&&);
+    void SetFutureReady(TrackedEvent* event);
+
+    // Returns true if future ProcessEvents is needed.
+    bool ProcessPollEvents();
     [[nodiscard]] wgpu::WaitStatus WaitAny(size_t count,
                                            FutureWaitInfo* infos,
                                            Nanoseconds timeout);
 
   private:
+    bool IsShutDown() const;
+
+    // Raw pointer to the Instance to allow for logging. The Instance owns the EventManager, so a
+    // raw pointer here is always safe.
+    raw_ptr<const InstanceBase> mInstance;
+
     bool mTimedWaitAnyEnable = false;
     size_t mTimedWaitAnyMaxCount = kTimedWaitAnyMaxCountDefault;
     std::atomic<FutureID> mNextFutureID = 1;
 
-    // Only 1 thread is allowed to call ProcessEvents at a time. This lock ensures that.
-    std::mutex mProcessEventLock;
-
     // Freed once the user has dropped their last ref to the Instance, so can't call WaitAny or
     // ProcessEvents anymore. This breaks reference cycles.
     using EventMap = absl::flat_hash_map<FutureID, Ref<TrackedEvent>>;
-    std::optional<MutexProtected<EventMap>> mEvents;
+    MutexProtected<std::optional<EventMap>> mEvents;
+
+    // Records last process event id in order to properly return whether or not there are still
+    // events to process when we have re-entrant callbacks.
+    std::atomic<FutureID> mLastProcessEventID = 0;
 };
 
 struct QueueAndSerial {
-    Ref<QueueBase> queue;
-    ExecutionSerial completionSerial;
+    WeakRef<QueueBase> queue;
+    std::atomic<ExecutionSerial> completionSerial;
+
+    QueueAndSerial(QueueBase* q, ExecutionSerial serial);
+
+    // Returns the most recently completed serial on |queue|. Otherwise, returns |completionSerial|.
+    ExecutionSerial GetCompletedSerial() const;
 };
 
 // Base class for the objects that back WGPUFutures. TrackedEvent is responsible for the lifetime
@@ -107,7 +124,59 @@ struct QueueAndSerial {
 // to any TrackedEvents. Any which are not ref'd elsewhere (in order to be `Spontaneous`ly
 // completed) will be cleaned up at that time.
 class EventManager::TrackedEvent : public RefCounted {
+  public:
+    // Subclasses must implement this to complete the event (if not completed) with
+    // EventCompletionType::Shutdown.
+    ~TrackedEvent() override;
+
+    Future GetFuture() const;
+
+    bool IsProgressing() const { return mIsProgressing; }
+
+    bool IsReadyToComplete() const;
+
+    QueueAndSerial* GetIfQueueAndSerial() { return std::get_if<QueueAndSerial>(&mCompletionData); }
+    const QueueAndSerial* GetIfQueueAndSerial() const {
+        return std::get_if<QueueAndSerial>(&mCompletionData);
+    }
+
+    Ref<SystemEvent> GetIfSystemEvent() const {
+        if (auto* event = std::get_if<Ref<SystemEvent>>(&mCompletionData)) {
+            return *event;
+        }
+        return nullptr;
+    }
+
+    Ref<WaitListEvent> GetIfWaitListEvent() const {
+        if (auto* event = std::get_if<Ref<WaitListEvent>>(&mCompletionData)) {
+            return *event;
+        }
+        return nullptr;
+    }
+
+    // Events may be one of three types:
+    // - A queue and the ExecutionSerial after which the event will be completed.
+    //   Used for queue completion.
+    // - A SystemEvent which will be signaled usually by the OS / GPU driver. It stores a boolean
+    //   that we can check instead of polling with the OS, or it can be transformed lazily into a
+    //   SystemEventReceiver.
+    // - A WaitListEvent which will be signaled from our code, usually on a separate thread. It also
+    //   stores an atomic boolean that we can check instead of waiting synchronously, or it can be
+    //   transformed into a SystemEventReceiver for asynchronous waits.
+    // The queue ref creates a temporary ref cycle
+    // (Queue->Device->Instance->EventManager->TrackedEvent). This is OK because the instance will
+    // clear out the EventManager on shutdown.
+    // TODO(crbug.com/dawn/2067): This is a bit fragile. Is it possible to remove the ref cycle?
   protected:
+    friend class EventManager;
+
+    using CompletionData = std::variant<QueueAndSerial, Ref<SystemEvent>, Ref<WaitListEvent>>;
+
+    // Create an event from a WaitListEvent that can be signaled and waited-on in user-space only in
+    // the current process. Note that events like RequestAdapter and RequestDevice complete
+    // immediately in dawn native, and may use an already-completed event.
+    TrackedEvent(wgpu::CallbackMode callbackMode, Ref<WaitListEvent> completionEvent);
+
     // Create an event from a SystemEvent. Note that events like RequestAdapter and
     // RequestDevice complete immediately in dawn native, and may use an already-completed event.
     TrackedEvent(wgpu::CallbackMode callbackMode, Ref<SystemEvent> completionEvent);
@@ -117,81 +186,33 @@ class EventManager::TrackedEvent : public RefCounted {
                  QueueBase* queue,
                  ExecutionSerial completionSerial);
 
-    struct Completed {};
     // Create a TrackedEvent that is already completed.
+    struct Completed {};
     TrackedEvent(wgpu::CallbackMode callbackMode, Completed tag);
 
-  public:
-    // Subclasses must implement this to complete the event (if not completed) with
-    // EventCompletionType::Shutdown.
-    ~TrackedEvent() override;
+    // Some SystemEvents may be non-progressing, i.e. DeviceLost. We tag these events so that we can
+    // correctly return whether there is progressing work when users are polling.
+    struct NonProgressing {};
+    TrackedEvent(wgpu::CallbackMode callbackMode, NonProgressing tag);
 
-    class WaitRef;
-    // Events may be one of two types:
-    // - A queue and the ExecutionSerial after which the event will be completed.
-    //   Used for queue completion.
-    // - A SystemEvent which will be signaled from our code, usually on a separate thread.
-    //   It stores a boolean that we can check instead of polling with the OS, or it can be
-    //   transformed lazily into a SystemEventReceiver. Used for async pipeline creation, and Metal
-    //   queue completion.
-    // The queue ref creates a temporary ref cycle
-    // (Queue->Device->Instance->EventManager->TrackedEvent). This is OK because the instance will
-    // clear out the EventManager on shutdown.
-    // TODO(crbug.com/dawn/2067): This is a bit fragile. Is it possible to remove the ref cycle?
-    using CompletionData = std::variant<QueueAndSerial, Ref<SystemEvent>>;
+    void SetReadyToComplete();
 
-    const CompletionData& GetCompletionData() const;
-
-  protected:
     void EnsureComplete(EventCompletionType);
-    void CompleteIfSpontaneous();
-
     virtual void Complete(EventCompletionType) = 0;
 
     wgpu::CallbackMode mCallbackMode;
-
-#if DAWN_ENABLE_ASSERTS
-    std::atomic<bool> mCurrentlyBeingWaited;
-#endif
+    FutureID mFutureID = kNullFutureID;
 
   private:
-    friend class EventManager;
-
     CompletionData mCompletionData;
-    // Callback has been called.
-    std::atomic<bool> mCompleted = false;
-};
-
-// A Ref<TrackedEvent>, but ASSERTing that a future isn't used concurrently in multiple
-// WaitAny/ProcessEvents call (by checking that there's never more than one WaitRef for a
-// TrackedEvent). While concurrent calls on the same futures are not explicitly disallowed, they are
-// generally unintentional, and hence this can help to identify potential bugs. Note that for
-// WaitAny, this checks the embedder's behavior, but for ProcessEvents this is only an internal
-// DAWN_ASSERT (it's supposed to be synchronized so that this never happens).
-class EventManager::TrackedEvent::WaitRef : dawn::NonCopyable {
-  public:
-    WaitRef(WaitRef&& rhs) = default;
-    WaitRef& operator=(WaitRef&& rhs) = default;
-
-    explicit WaitRef(TrackedEvent* future);
-    ~WaitRef();
-
-    TrackedEvent* operator->();
-    const TrackedEvent* operator->() const;
-
-  private:
-    Ref<TrackedEvent> mRef;
-};
-
-// TrackedEvent::WaitRef plus a few extra fields needed for some implementations.
-// Sometimes they'll be unused, but that's OK; it simplifies code reuse.
-struct TrackedFutureWaitInfo {
-    FutureID futureID;
-    EventManager::TrackedEvent::WaitRef event;
-    // Used by EventManager::ProcessPollEvents
-    size_t indexInInfos;
-    // Used by EventManager::ProcessPollEvents and ::WaitAny
-    bool ready;
+    const bool mIsProgressing = true;
+    // Whether the callback has been called. Note that this is a MutexProtected<bool> because for
+    // spontaneous events, multiple threads may call |EnsureComplete| and that function should only
+    // return after the actual callback is completed. Without the lock, previous to this change we
+    // just had an std::atomic<bool>, two threads could race, and the thread that does not run the
+    // callback can make forward progress even though the callback hasn't completed on the other
+    // thread yet.
+    MutexProtected<bool> mCompleted;
 };
 
 }  // namespace dawn::native

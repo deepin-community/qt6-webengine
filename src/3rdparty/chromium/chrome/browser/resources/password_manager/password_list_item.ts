@@ -4,14 +4,13 @@
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_icons.css.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/cr_elements/cr_tooltip/cr_tooltip.js';
 import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/polymer/v3_0/paper-tooltip/paper-tooltip.js';
 import './site_favicon.js';
 import './searchable_label.js';
 import './shared_style.css.js';
 
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -50,34 +49,25 @@ export class PasswordListItemElement extends PasswordListItemElementBase {
 
       searchTerm: String,
 
-      elementClass_: {
-        type: String,
-        computed: 'computeElementClass_(first)',
-      },
-
       /**
        * The number of accounts in a group as a formatted string.
        */
       numberOfAccounts_: String,
 
-      enableButterOnDesktopFollowup_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('enableButterOnDesktopFollowup');
-        },
-      },
+      tooltipText_: String,
+      deviceOnlyCredentialsAccessibilityLabelText_: String,
     };
   }
 
-  item: chrome.passwordsPrivate.CredentialGroup;
-  isAccountStoreUser: boolean;
-  first: boolean;
-  searchTerm: string;
-  private numberOfAccounts_: string;
-  private tooltipText_: string;
-  private enableButterOnDesktopFollowup_: boolean;
+  declare item: chrome.passwordsPrivate.CredentialGroup;
+  declare isAccountStoreUser: boolean;
+  declare first: boolean;
+  declare searchTerm: string;
+  declare private numberOfAccounts_: string;
+  declare private tooltipText_: string;
+  declare private deviceOnlyCredentialsAccessibilityLabelText_: string;
 
-  private computeElementClass_(): string {
+  private getElementClass_(): string {
     return this.first ? 'flex-centered' : 'flex-centered hr';
   }
 
@@ -90,7 +80,7 @@ export class PasswordListItemElement extends PasswordListItemElementBase {
     this.$.seePasswordDetails.focus();
   }
 
-  private async onRowClick_() {
+  private onRowClick_() {
     const ids = this.item.entries.map(entry => entry.id);
     PasswordManagerImpl.getInstance()
         .requestCredentialsDetails(ids)
@@ -124,11 +114,16 @@ export class PasswordListItemElement extends PasswordListItemElementBase {
           await PluralStringProxyImpl.getInstance().getPluralString(
               'numberOfAccounts', this.item.entries.length);
     }
-    if (this.enableButterOnDesktopFollowup_) {
-      this.tooltipText_ =
-          await PluralStringProxyImpl.getInstance().getPluralString(
-              'deviceOnlyPasswordsIconTooltip',
-              this.getNumberOfCredentialsOnDevice_());
+    this.tooltipText_ =
+        await PluralStringProxyImpl.getInstance().getPluralString(
+            'deviceOnlyPasswordsIconTooltip',
+            this.getNumberOfCredentialsOnDevice_());
+    if (this.shouldShowDeviceOnlyCredentialsIcon_()) {
+      this.deviceOnlyCredentialsAccessibilityLabelText_ =
+          await PluralStringProxyImpl.getInstance()
+              .getPluralString(
+                  'deviceOnlyListItemAriaLabel', this.item.entries.length)
+              .then(label => label.replace('$1', this.item.name));
     }
   }
 
@@ -174,11 +169,14 @@ export class PasswordListItemElement extends PasswordListItemElementBase {
   }
 
   private shouldShowDeviceOnlyCredentialsIcon_(): boolean {
-    return this.enableButterOnDesktopFollowup_ && this.isAccountStoreUser &&
+    return this.isAccountStoreUser &&
         (this.getNumberOfCredentialsOnDevice_() > 0);
   }
 
   private getAriaLabel_(): string {
+    if (this.shouldShowDeviceOnlyCredentialsIcon_()) {
+      return this.deviceOnlyCredentialsAccessibilityLabelText_;
+    }
     return this.i18n('viewPasswordAriaDescription', this.item.name);
   }
 }

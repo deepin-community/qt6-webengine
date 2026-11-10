@@ -28,33 +28,35 @@
 #ifndef SRC_DAWN_NODE_BINDING_GPUADAPTER_H_
 #define SRC_DAWN_NODE_BINDING_GPUADAPTER_H_
 
-#include "dawn/native/DawnNative.h"
-#include "dawn/webgpu_cpp.h"
+#include <webgpu/webgpu_cpp.h>
+
+#include <memory>
+#include <string>
+
+#include "src/dawn/node/binding/AsyncRunner.h"
 #include "src/dawn/node/interop/NodeAPI.h"
 #include "src/dawn/node/interop/WebGPU.h"
 
 namespace wgpu::binding {
 class Flags;
 
-// GPUAdapter is an implementation of interop::GPUAdapter that wraps a dawn::native::Adapter.
+// GPUAdapter is an implementation of interop::GPUAdapter that wraps a wgpu::Adapter.
 class GPUAdapter final : public interop::GPUAdapter {
   public:
-    GPUAdapter(dawn::native::Adapter a, const Flags& flags);
+    GPUAdapter(wgpu::Adapter adapter, const Flags& flags, std::shared_ptr<AsyncRunner> async);
 
     // interop::GPUAdapter interface compliance
     interop::Promise<interop::Interface<interop::GPUDevice>> requestDevice(
         Napi::Env env,
         interop::GPUDeviceDescriptor descriptor) override;
-    interop::Promise<interop::Interface<interop::GPUAdapterInfo>> requestAdapterInfo(
-        Napi::Env) override;
     interop::Interface<interop::GPUSupportedFeatures> getFeatures(Napi::Env) override;
     interop::Interface<interop::GPUSupportedLimits> getLimits(Napi::Env) override;
-    bool getIsFallbackAdapter(Napi::Env) override;
-    bool getIsCompatibilityMode(Napi::Env) override;
+    interop::Interface<interop::GPUAdapterInfo> getInfo(Napi::Env) override;
 
   private:
-    dawn::native::Adapter adapter_;
+    wgpu::Adapter adapter_;
     const Flags& flags_;
+    std::shared_ptr<AsyncRunner> async_;
 
     // The adapter becomes invalid after the first successful requestDevice and all subsequent
     // requestDevice calls will return an already lost device.

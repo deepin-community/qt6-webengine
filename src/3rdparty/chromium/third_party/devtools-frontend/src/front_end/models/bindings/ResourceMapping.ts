@@ -28,11 +28,10 @@ function computeStyleSheetRange(header: SDK.CSSStyleSheetHeader.CSSStyleSheetHea
 
 export class ResourceMapping implements SDK.TargetManager.SDKModelObserver<SDK.ResourceTreeModel.ResourceTreeModel> {
   readonly workspace: Workspace.Workspace.WorkspaceImpl;
-  readonly #modelToInfo: Map<SDK.ResourceTreeModel.ResourceTreeModel, ModelInfo>;
+  readonly #modelToInfo = new Map<SDK.ResourceTreeModel.ResourceTreeModel, ModelInfo>();
 
   constructor(targetManager: SDK.TargetManager.TargetManager, workspace: Workspace.Workspace.WorkspaceImpl) {
     this.workspace = workspace;
-    this.#modelToInfo = new Map();
     targetManager.observeModels(SDK.ResourceTreeModel.ResourceTreeModel, this);
   }
 
@@ -248,7 +247,7 @@ export class ResourceMapping implements SDK.TargetManager.SDKModelObserver<SDK.R
 
 class ModelInfo {
   project: ContentProviderBasedProject;
-  readonly #bindings: Map<string, Binding>;
+  readonly #bindings = new Map<string, Binding>();
   readonly #cssModel: SDK.CSSModel.CSSModel;
   readonly #eventListeners: Common.EventTarget.EventDescriptor[];
   constructor(
@@ -258,8 +257,6 @@ class ModelInfo {
         workspace, 'resources:' + target.id(), Workspace.Workspace.projectTypes.Network, '',
         false /* isServiceProject */);
     NetworkProject.setTargetForProject(this.project, target);
-
-    this.#bindings = new Map();
 
     const cssModel = target.model(SDK.CSSModel.CSSModel);
     console.assert(Boolean(cssModel));
@@ -395,10 +392,10 @@ class Binding implements TextUtils.ContentProvider.ContentProvider {
   readonly resources: Set<SDK.Resource.Resource>;
   readonly #project: ContentProviderBasedProject;
   readonly #uiSourceCode: Workspace.UISourceCode.UISourceCode;
-  #edits: {
+  #edits: Array<{
     stylesheet: SDK.CSSStyleSheetHeader.CSSStyleSheetHeader,
     edit: SDK.CSSModel.Edit|null,
-  }[];
+  }> = [];
   constructor(project: ContentProviderBasedProject, resource: SDK.Resource.Resource) {
     this.resources = new Set([resource]);
     this.#project = project;
@@ -408,7 +405,6 @@ class Binding implements TextUtils.ContentProvider.ContentProvider {
       NetworkProject.setInitialFrameAttribution(this.#uiSourceCode, resource.frameId);
     }
     this.#project.addUISourceCodeWithProvider(this.#uiSourceCode, this, resourceMetadata(resource), resource.mimeType);
-    this.#edits = [];
 
     void Promise.all([
       ...this.inlineScripts().map(script => DebuggerWorkspaceBinding.instance().updateLocations(script)),
@@ -453,9 +449,9 @@ class Binding implements TextUtils.ContentProvider.ContentProvider {
       return;
     }  // There is already a styleSheetChanged loop running
 
-    const {content} = await this.#uiSourceCode.requestContent();
-    if (content !== null) {
-      await this.innerStyleSheetChanged(content);
+    const content = await this.#uiSourceCode.requestContentData();
+    if (!TextUtils.ContentData.ContentData.isError(content)) {
+      await this.innerStyleSheetChanged(content.text);
     }
     this.#edits = [];
   }
@@ -521,7 +517,7 @@ class Binding implements TextUtils.ContentProvider.ContentProvider {
 
   private firstResource(): SDK.Resource.Resource {
     console.assert(this.resources.size > 0);
-    return this.resources.values().next().value;
+    return this.resources.values().next().value as SDK.Resource.Resource;
   }
 
   contentURL(): Platform.DevToolsPath.UrlString {
@@ -532,8 +528,8 @@ class Binding implements TextUtils.ContentProvider.ContentProvider {
     return this.firstResource().contentType();
   }
 
-  requestContent(): Promise<TextUtils.ContentProvider.DeferredContent> {
-    return this.firstResource().requestContent();
+  requestContentData(): Promise<TextUtils.ContentData.ContentDataOrError> {
+    return this.firstResource().requestContentData();
   }
 
   searchInContent(query: string, caseSensitive: boolean, isRegex: boolean):

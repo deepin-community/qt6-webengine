@@ -9,13 +9,15 @@ build_webui("build") {
   static_files = [ "compose.html" ]
   web_component_files = [
     "app.ts",
+    "result_text.ts",
     "textarea.ts",
   ]
-  non_web_component_files = [
+  ts_files = [
     "animations/animator.ts",
     "animations/app_animator.ts",
     "animations/textarea_animator.ts",
     "compose_api_proxy.ts",
+    "word_streamer.ts",
   ]
   icons_html_files = [ "icons.html" ]
   ts_composite = true
@@ -28,6 +30,14 @@ build_webui("build") {
   ]
   ts_definitions = [ "//tools/typescript/definitions/metrics_private.d.ts" ]
 
-  mojo_files_deps = [ "//chrome/common/compose:mojo_bindings_ts__generator" ]
-  mojo_files = [ "$root_gen_dir/chrome/common/compose/compose.mojom-webui.ts" ]
+  mojo_files_deps = [
+    "//chrome/common/compose:mojo_bindings_ts__generator",
+    "//components/compose/core/browser:mojo_bindings_ts__generator",
+  ]
+  mojo_files = [
+    "$root_gen_dir/chrome/common/compose/compose.mojom-webui.ts",
+    "$root_gen_dir/components/compose/core/browser/compose_enums.mojom-webui.ts",
+  ]
+
+  webui_context_type = "untrusted"
 }

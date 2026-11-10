@@ -38,6 +38,8 @@
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
+#include "third_party/blink/renderer/core/timing/worker_global_scope_performance.h"
+#include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
@@ -231,6 +233,10 @@ bool Event::IsErrorEvent() const {
   return false;
 }
 
+bool Event::IsPatchEvent() const {
+  return false;
+}
+
 void Event::preventDefault() {
   if (handling_passive_ != PassiveMode::kNotPassive &&
       handling_passive_ != PassiveMode::kNotPassiveDefault) {
@@ -271,6 +277,15 @@ void Event::SetRelatedTargetIfExists(EventTarget* related_target) {
 
 void Event::ReceivedTarget() {}
 
+Element* Event::Retarget(const Element* element) const {
+  CHECK(RuntimeEnabledFeatures::ImprovedSourceRetargetingEnabled());
+  EventTarget* retarget_against = currentTarget() ? currentTarget() : target();
+  if (element && retarget_against && retarget_against->ToNode()) {
+    return &retarget_against->ToNode()->GetTreeScope().Retarget(*element);
+  }
+  return nullptr;
+}
+
 void Event::SetUnderlyingEvent(const Event* ue) {
   // Prohibit creation of a cycle -- just do nothing in that case.
   for (const Event* e = ue; e; e = e->UnderlyingEvent())
@@ -287,6 +302,17 @@ void Event::InitEventPath(Node& node) {
   } else {
     event_path_->InitializeWith(node, this);
   }
+}
+
+bool Event::IsFullyTrusted() const {
+  const Event* event = this;
+  while (event) {
+    if (!event->isTrusted()) {
+      return false;
+    }
+    event = event->UnderlyingEvent();
+  }
+  return true;
 }
 
 void Event::SetHandlingPassive(PassiveMode mode) {
@@ -309,17 +335,20 @@ HeapVector<Member<EventTarget>> Event::composedPath(
   if (Node* node = current_target_->ToNode()) {
     DCHECK(event_path_);
     for (auto& context : event_path_->NodeEventContexts()) {
-      if (node == context.GetNode())
-        return context.GetTreeScopeEventContext().EnsureEventPath(*event_path_);
+      if (node == context.GetNode()) {
+        return HeapVector<Member<EventTarget>>(
+            context.GetTreeScopeEventContext().EnsureEventPath(*event_path_));
+      }
     }
     NOTREACHED();
   }
 
   if (LocalDOMWindow* window = current_target_->ToLocalDOMWindow()) {
     if (event_path_ && !event_path_->IsEmpty()) {
-      return event_path_->TopNodeEventContext()
-          .GetTreeScopeEventContext()
-          .EnsureEventPath(*event_path_);
+      return HeapVector<Member<EventTarget>>(
+          event_path_->TopNodeEventContext()
+              .GetTreeScopeEventContext()
+              .EnsureEventPath(*event_path_));
     }
     return HeapVector<Member<EventTarget>>(1, window);
   }
@@ -339,15 +368,23 @@ EventTarget* Event::currentTarget() const {
 }
 
 double Event::timeStamp(ScriptState* script_state) const {
-  double time_stamp = 0;
-  if (script_state && LocalDOMWindow::From(script_state)) {
-    WindowPerformance* performance =
-        DOMWindowPerformance::performance(*LocalDOMWindow::From(script_state));
-    time_stamp =
-        performance->MonotonicTimeToDOMHighResTimeStamp(platform_time_stamp_);
+  if (!script_state) {
+    return 0;
   }
 
-  return time_stamp;
+  if (auto* window = LocalDOMWindow::From(script_state)) {
+    Performance* performance = DOMWindowPerformance::performance(*window);
+    return performance->MonotonicTimeToDOMHighResTimeStamp(
+        platform_time_stamp_);
+  } else if (auto* worker = DynamicTo<WorkerGlobalScope>(
+                 ExecutionContext::From(script_state))) {
+    Performance* performance =
+        WorkerGlobalScopePerformance::performance(*worker);
+    return performance->MonotonicTimeToDOMHighResTimeStamp(
+        platform_time_stamp_);
+  }
+
+  return 0;
 }
 
 void Event::setCancelBubble(ScriptState* script_state, bool cancel) {

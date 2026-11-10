@@ -4,17 +4,19 @@
 
 //! GN build file generation.
 
+use crate::condition::Condition;
 use crate::config::BuildConfig;
 use crate::crates::CrateFiles;
 use crate::crates::{Epoch, NormalizedName, VendoredCrate, Visibility};
 use crate::deps::{self, DepOfDep};
 use crate::group::Group;
 use crate::paths;
-use crate::platforms;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
+use itertools::Itertools;
 use serde::Serialize;
 
 /// Describes a BUILD.gn file for a single crate epoch. Each file may have
@@ -73,26 +75,31 @@ pub struct RuleDetail {
     pub cargo_pkg_authors: Option<String>,
     pub cargo_pkg_name: String,
     pub cargo_pkg_description: Option<String>,
+    pub cargo_pkg_repository: Option<String>,
     pub deps: Vec<DepGroup>,
     pub build_deps: Vec<DepGroup>,
-    pub aliased_deps: Vec<(String, String)>,
+    pub aliased_deps: Vec<(String, PackageId)>,
     pub features: Vec<String>,
     pub build_root: Option<String>,
     pub build_script_sources: Vec<String>,
     pub build_script_inputs: Vec<String>,
     pub build_script_outputs: Vec<String>,
+    pub native_libs: Vec<String>,
     /// Data passed unchanged from gnrt_config.toml to the build file template.
     pub extra_kv: HashMap<String, serde_json::Value>,
     /// Whether this rule depends on the main lib target in its group (e.g. a
     /// bin target alongside a lib inside a package).
     pub dep_on_lib: bool,
+    /// `if` condition for GN, or `None` for unconditional packages that can be
+    /// built on any Chromium platform.
+    pub cond: Option<String>,
 }
 
 /// Set of rule dependencies with a shared condition.
 #[derive(Clone, Debug, Serialize)]
 pub struct DepGroup {
     /// `if` condition for GN, or `None` for unconditional deps.
-    cond: Option<Condition>,
+    cond: Option<String>,
     /// Packages to depend on. The build file template determines the exact name
     /// based on the identified package and context.
     packages: Vec<PackageId>,
@@ -115,7 +122,7 @@ pub enum NameLibStyle {
     LibLiteral,
 }
 
-pub fn build_file_from_std_deps<'a, 'b, Iter, GetFiles>(
+pub fn build_file_from_deps<'a, 'b, Iter, GetFiles>(
     deps: Iter,
     paths: &'b paths::ChromiumPaths,
     extra_config: &'b BuildConfig,
@@ -129,7 +136,7 @@ where
     let mut b = BuildFile { rules: Vec::new() };
     for dep in deps {
         let crate_id = dep.crate_id();
-        b.rules.extend(build_rule_from_std_dep(
+        b.rules.extend(build_rule_from_dep(
             dep,
             paths,
             get_files(&crate_id),
@@ -140,7 +147,7 @@ where
     Ok(b)
 }
 
-pub fn build_rule_from_std_dep(
+pub fn build_rule_from_dep(
     dep: &deps::Package,
     paths: &paths::ChromiumPaths,
     details: &CrateFiles,
@@ -173,15 +180,35 @@ pub fn build_rule_from_std_dep(
         _ => dep.is_toplevel_dep,
     };
 
+    let cond = dep
+        .dependency_kinds
+        .values()
+        .map(|per_kind_info| per_kind_info.condition.clone())
+        .reduce(Condition::or)
+        .expect("Each package should have at least one item in `dependency_kinds`")
+        .to_handlebars_value()?;
     let mut detail_template = RuleDetail {
         edition: dep.edition.clone(),
         cargo_pkg_version: dep.version.to_string(),
         cargo_pkg_authors,
         cargo_pkg_name: dep.package_name.to_string(),
         cargo_pkg_description: dep.description.as_ref().map(|s| s.trim_end().to_string()),
+        cargo_pkg_repository: dep.repository.as_ref().map(|s| s.trim_end().to_string()),
 
+        cond,
         extra_kv,
         ..Default::default()
+    };
+
+    // Lambda for translating `DepOfDep` into a `PackageId`.
+    let create_package_id = |dep: &DepOfDep| {
+        let name = NormalizedName::from_crate_name(&dep.package_name).to_string();
+        let epoch = match name_lib_style {
+            // TODO(danakj): Separate this choice to another parameter option.
+            NameLibStyle::LibLiteral => Some(Epoch::from_version(&dep.version).to_string()),
+            NameLibStyle::PackageName => None,
+        };
+        PackageId { name, epoch }
     };
 
     // Add only normal and build dependencies: we don't run unit tests.
@@ -200,7 +227,7 @@ pub fn build_rule_from_std_dep(
         for dep in &normal_deps {
             let target_name = NormalizedName::from_crate_name(&dep.package_name).to_string();
             if target_name != dep.use_name {
-                aliases.push((dep.use_name.clone(), format!(":{target_name}__rlib")));
+                aliases.push((dep.use_name.clone(), create_package_id(dep)));
             }
         }
         aliases.sort_unstable();
@@ -213,23 +240,21 @@ pub fn build_rule_from_std_dep(
 
     // Group the dependencies by condition, where the unconditional deps come
     // first.
-    detail_template.deps = group_deps(&normal_deps, |d| PackageId {
-        name: NormalizedName::from_crate_name(&d.package_name).to_string(),
-        epoch: match name_lib_style {
-            // TODO(danakj): Separate this choice to another parameter option.
-            NameLibStyle::LibLiteral => Some(Epoch::from_version(&d.version).to_string()),
-            NameLibStyle::PackageName => None,
-        },
-    });
-    detail_template.build_deps = group_deps(&build_deps, |d| PackageId {
-        name: NormalizedName::from_crate_name(&d.package_name).to_string(),
-        epoch: match name_lib_style {
-            // TODO(danakj): Separate this choice to another parameter option.
-            NameLibStyle::LibLiteral => Some(Epoch::from_version(&d.version).to_string()),
-            NameLibStyle::PackageName => None,
-        },
-    });
+    detail_template.deps = group_deps(&normal_deps, create_package_id)
+        .with_context(|| format!("Error processing dependencies of {}", dep.package_name))?;
+    detail_template.build_deps = group_deps(&build_deps, create_package_id)
+        .with_context(|| format!("Error processing build dependencies of {}", dep.package_name))?;
     detail_template.aliased_deps = aliased_normal_deps;
+
+    detail_template.sources =
+        details.sources.iter().map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap())).collect();
+    detail_template.inputs =
+        details.inputs.iter().map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap())).collect();
+    detail_template.native_libs = details
+        .native_libs
+        .iter()
+        .map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap()))
+        .collect();
 
     let requested_features_for_normal = {
         let mut features = dep
@@ -252,6 +277,23 @@ pub fn build_rule_from_std_dep(
         features.dedup();
         features
     };
+
+    let unexpected_features: Vec<&str> = {
+        let banned_features =
+            extra_config.get_combined_set(&dep.package_name, |cfg| &cfg.ban_features);
+        let mut actual_features = HashSet::new();
+        actual_features.extend(requested_features_for_normal.iter().map(Deref::deref));
+        actual_features.extend(requested_features_for_build.iter().map(Deref::deref));
+        banned_features.intersection(&actual_features).copied().sorted_unstable().collect()
+    };
+    if !unexpected_features.is_empty() {
+        bail!(
+            "The following crate features are enabled in crate `{}` \
+             despite being listed in `ban_features`: {}",
+            &*dep.package_name,
+            unexpected_features.iter().map(|f| format!("`{f}`")).join(", "),
+        );
+    }
 
     if !per_crate_config.map(|config| config.remove_build_rs).unwrap_or(false) {
         let build_script_from_src =
@@ -291,16 +333,6 @@ pub fn build_rule_from_std_dep(
         let mut bin_detail = detail_template.clone();
         bin_detail.crate_type = "bin".to_string();
         bin_detail.crate_root = format!("//{bin_root_from_src}");
-        bin_detail.sources = details
-            .sources
-            .iter()
-            .map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap()))
-            .collect();
-        bin_detail.inputs = details
-            .inputs
-            .iter()
-            .map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap()))
-            .collect();
         // Bins are not part of a build script, so they don't need build-script
         // deps, only normal deps.
         bin_detail.features = requested_features_for_normal.clone();
@@ -328,7 +360,7 @@ pub fn build_rule_from_std_dep(
         // Generate the rules for each dependency kind. We use a stable
         // order instead of the hashmap iteration order.
         for dep_kind in [Normal, Build] {
-            if dep.dependency_kinds.get(&dep_kind).is_none() {
+            if !dep.dependency_kinds.contains_key(&dep_kind) {
                 continue;
             }
 
@@ -338,7 +370,6 @@ pub fn build_rule_from_std_dep(
                     NameLibStyle::LibLiteral => "lib".to_string(),
                 },
                 deps::DependencyKind::Build => "buildrs_support".to_string(),
-                _ => unreachable!(),
             };
             let (crate_name, epoch) = match name_lib_style {
                 NameLibStyle::PackageName => (None, None),
@@ -346,31 +377,16 @@ pub fn build_rule_from_std_dep(
                     (Some(normalized_crate_name.to_string()), Some(crate_epoch))
                 }
             };
-            let crate_type = {
-                // The stdlib is a "dylib" crate but we only want rlibs.
-                let t = lib_target.lib_type.to_string();
-                if t == "dylib" { "rlib".to_string() } else { t }
-            };
+            let crate_type = lib_target.lib_type.to_string();
 
             let mut lib_detail = detail_template.clone();
             lib_detail.crate_name = crate_name;
             lib_detail.epoch = epoch;
             lib_detail.crate_type = crate_type;
             lib_detail.crate_root = format!("//{lib_root_from_src}");
-            lib_detail.sources = details
-                .sources
-                .iter()
-                .map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap()))
-                .collect();
-            lib_detail.inputs = details
-                .inputs
-                .iter()
-                .map(|p| format!("//{}", paths.to_gn_abs_path(p).unwrap()))
-                .collect();
             lib_detail.features = match &dep_kind {
                 Normal => requested_features_for_normal.clone(),
                 Build => requested_features_for_build.clone(),
-                _ => unreachable!(), // The for loop here is over [Normal, Build].
             };
 
             // TODO(danakj): Crates in the 'sandbox' group should have their
@@ -395,14 +411,18 @@ pub fn build_rule_from_std_dep(
 /// If the returned list is non-empty, it will always have a group without a
 /// condition, even if that group is empty. If there are no dependencies, then
 /// the returned list is empty.
-fn group_deps<F: Fn(&DepOfDep) -> PackageId>(deps: &[&DepOfDep], target_name: F) -> Vec<DepGroup>
-where
-    F: Fn(&DepOfDep) -> PackageId,
-{
-    let mut groups = HashMap::<Option<Condition>, Vec<_>>::new();
+fn group_deps(
+    deps: &[&DepOfDep],
+    target_name: impl Fn(&DepOfDep) -> PackageId,
+) -> Result<Vec<DepGroup>> {
+    let mut groups = HashMap::<Option<String>, Vec<_>>::new();
     for dep in deps {
-        let cond = dep.platform.as_ref().map(platform_to_condition);
-
+        let cond = dep.condition.to_handlebars_value().with_context(|| {
+            format!(
+                "Error processing condition of the following dependency: `{}`",
+                dep.package_name
+            )
+        })?;
         groups.entry(cond).or_default().push(target_name(dep));
     }
 
@@ -411,187 +431,11 @@ where
     }
 
     let mut groups: Vec<DepGroup> =
-        groups.into_iter().map(|(cond, rules)| DepGroup { cond, packages: rules }).collect();
+        groups.into_iter().map(|(cond, packages)| DepGroup { cond, packages }).collect();
 
     for group in groups.iter_mut() {
         group.packages.sort_unstable();
     }
     groups.sort_unstable_by(|l, r| l.cond.cmp(&r.cond));
-    groups
-}
-
-/// Describes a condition for some GN declaration.
-#[derive(Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct Condition(pub String);
-
-impl Condition {
-    pub fn from_platform_set(platforms: platforms::PlatformSet) -> Option<Self> {
-        let platforms = match platforms {
-            platforms::PlatformSet::All => return None,
-            platforms::PlatformSet::Platforms(platforms) => platforms,
-        };
-
-        Some(Condition(
-            platforms
-                .iter()
-                .map(|p| format!("({})", platform_to_condition(p).0))
-                .collect::<Vec<_>>()
-                .join(" || "),
-        ))
-    }
-}
-
-/// Map a cargo `Platform` constraint to a GN conditional expression.
-pub fn platform_to_condition(platform: &platforms::Platform) -> Condition {
-    Condition(match platform {
-        platforms::Platform::Name(triple) => triple_to_condition(triple).to_string(),
-        platforms::Platform::Cfg(cfg_expr) => cfg_expr_to_condition(cfg_expr),
-    })
-}
-
-pub fn cfg_expr_to_condition(cfg_expr: &cargo_platform::CfgExpr) -> String {
-    match cfg_expr {
-        cargo_platform::CfgExpr::Not(expr) => {
-            format!("!({})", cfg_expr_to_condition(expr))
-        }
-        cargo_platform::CfgExpr::All(exprs) => {
-            let mut conds = exprs
-                .iter()
-                .map(|expr| format!("({})", cfg_expr_to_condition(expr)))
-                .collect::<Vec<String>>();
-            conds.sort();
-            conds.dedup();
-            conds.join(" && ")
-        }
-        cargo_platform::CfgExpr::Any(exprs) => {
-            let mut conds = exprs
-                .iter()
-                .map(|expr| format!("({})", cfg_expr_to_condition(expr)))
-                .collect::<Vec<String>>();
-            conds.sort();
-            conds.dedup();
-            conds.join(" || ")
-        }
-        cargo_platform::CfgExpr::Value(cfg) => cfg_to_condition(cfg),
-    }
-}
-
-pub fn cfg_to_condition(cfg: &cargo_platform::Cfg) -> String {
-    match cfg {
-        cargo_platform::Cfg::Name(name) => match name.as_str() {
-            // Note that while Fuchsia is not a unix, rustc sets the unix cfg
-            // anyway. We must be consistent with rustc. This may change with
-            // https://github.com/rust-lang/rust/issues/58590
-            "unix" => "!is_win",
-            "windows" => "is_win",
-            _ => unreachable!(),
-        },
-        cargo_platform::Cfg::KeyPair(key, value) => {
-            assert_eq!(key, "target_os");
-            target_os_to_condition(value)
-        }
-    }
-    .to_string()
-}
-
-fn triple_to_condition(triple: &str) -> &'static str {
-    for (t, c) in TRIPLE_TO_GN_CONDITION {
-        if *t == triple {
-            return c;
-        }
-    }
-
-    panic!("target triple {triple} not found")
-}
-
-fn target_os_to_condition(target_os: &str) -> &'static str {
-    for (t, c) in TARGET_OS_TO_GN_CONDITION {
-        if *t == target_os {
-            return c;
-        }
-    }
-
-    panic!("target os {target_os} not found")
-}
-
-static TRIPLE_TO_GN_CONDITION: &[(&str, &str)] = &[
-    ("i686-linux-android", "is_android && target_cpu == \"x86\""),
-    ("x86_64-linux-android", "is_android && target_cpu == \"x64\""),
-    ("armv7-linux-android", "is_android && target_cpu == \"arm\""),
-    ("aarch64-linux-android", "is_android && target_cpu == \"arm64\""),
-    ("aarch64-fuchsia", "is_fuchsia && target_cpu == \"arm64\""),
-    ("x86_64-fuchsia", "is_fuchsia && target_cpu == \"x64\""),
-    ("aarch64-apple-ios", "is_ios && target_cpu == \"arm64\""),
-    ("armv7-apple-ios", "is_ios && target_cpu == \"arm\""),
-    ("x86_64-apple-ios", "is_ios && target_cpu == \"x64\""),
-    ("i386-apple-ios", "is_ios && target_cpu == \"x86\""),
-    ("i686-pc-windows-msvc", "is_win && target_cpu == \"x86\""),
-    ("x86_64-pc-windows-msvc", "is_win && target_cpu == \"x64\""),
-    ("i686-unknown-linux-gnu", "(is_linux || is_chromeos) && target_cpu == \"x86\""),
-    ("x86_64-unknown-linux-gnu", "(is_linux || is_chromeos) && target_cpu == \"x64\""),
-    ("x86_64-apple-darwin", "is_mac && target_cpu == \"x64\""),
-    ("aarch64-apple-darwin", "is_mac && target_cpu == \"arm64\""),
-];
-
-static TARGET_OS_TO_GN_CONDITION: &[(&str, &str)] = &[
-    ("android", "is_android"),
-    ("darwin", "is_mac"),
-    ("fuchsia", "is_fuchsia"),
-    ("ios", "is_ios"),
-    ("linux", "is_linux || is_chromeos"),
-    ("windows", "is_win"),
-];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn platform_to_condition() {
-        use crate::platforms::{Platform, PlatformSet};
-        use cargo_platform::CfgExpr;
-        use std::str::FromStr;
-
-        // Try an unconditional filter.
-        assert_eq!(Condition::from_platform_set(PlatformSet::one(None)), None);
-
-        // Try a target triple.
-        assert_eq!(
-            Condition::from_platform_set(PlatformSet::one(Some(Platform::Name(
-                "x86_64-pc-windows-msvc".to_string()
-            ))))
-            .unwrap()
-            .0,
-            "(is_win && target_cpu == \"x64\")"
-        );
-
-        // Try a cfg expression.
-        assert_eq!(
-            Condition::from_platform_set(PlatformSet::one(Some(Platform::Cfg(
-                CfgExpr::from_str("any(windows, target_os = \"android\")").unwrap()
-            ))))
-            .unwrap()
-            .0,
-            "((is_android) || (is_win))"
-        );
-
-        // Redundant cfg expression.
-        assert_eq!(
-            Condition::from_platform_set(PlatformSet::one(Some(Platform::Cfg(
-                CfgExpr::from_str("any(windows, windows)").unwrap()
-            ))))
-            .unwrap()
-            .0,
-            "((is_win))"
-        );
-
-        // Try a PlatformSet with multiple filters.
-        let mut platform_set = PlatformSet::empty();
-        platform_set.add(Some(Platform::Name("armv7-linux-android".to_string())));
-        platform_set.add(Some(Platform::Cfg(CfgExpr::from_str("windows").unwrap())));
-        assert_eq!(
-            Condition::from_platform_set(platform_set).unwrap().0,
-            "(is_android && target_cpu == \"arm\") || (is_win)"
-        );
-    }
+    Ok(groups)
 }

@@ -19,14 +19,14 @@ enum class StorageAreaNamespace;
 using SettingsChangedCallback =
     base::RepeatingCallback<void(const std::string&,
                                  StorageAreaNamespace,
-                                 absl::optional<api::storage::AccessLevel>,
+                                 std::optional<api::storage::AccessLevel>,
                                  base::Value)>;
 
 using SequenceBoundSettingsChangedCallback =
     base::StrongAlias<class SequenceBoundSettingsChangedCallbackTag,
                       SettingsChangedCallback>;
 
-// Returns a callback that is guaranteed to run on |task_runner|. This should be
+// Returns a callback that is guaranteed to run on `task_runner`. This should be
 // used when the callback is invoked from other sequences.
 inline SequenceBoundSettingsChangedCallback
 GetSequenceBoundSettingsChangedCallback(

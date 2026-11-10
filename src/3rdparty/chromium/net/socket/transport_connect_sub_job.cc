@@ -147,7 +147,6 @@ LoadState TransportConnectSubJob::GetLoadState() const {
       return LOAD_STATE_IDLE;
   }
   NOTREACHED();
-  return LOAD_STATE_IDLE;
 }
 
 const IPEndPoint& TransportConnectSubJob::CurrentAddress() const {
@@ -182,8 +181,6 @@ int TransportConnectSubJob::DoLoop(int result) {
         break;
       default:
         NOTREACHED();
-        rv = ERR_FAILED;
-        break;
     }
   } while (rv != ERR_IO_PENDING && next_state_ != STATE_NONE &&
            next_state_ != STATE_DONE);

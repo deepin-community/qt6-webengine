@@ -31,7 +31,6 @@
 #include "base/mac/scoped_ioobject.h"
 #include "base/posix/sysctl.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -300,7 +299,7 @@ int ParseOSProductVersion(const std::string_view& version) {
   // When a Rapid Security Response is applied to a system, the UI will display
   // an additional letter (e.g. "13.4.1 (a)"). That extra letter should not be
   // present in `version_string`; in fact, the version string should not contain
-  // any spaces. However, take the first string-delimited "word" for parsing.
+  // any spaces. However, take the first space-delimited "word" for parsing.
   std::vector<std::string_view> words = base::SplitStringPiece(
       version, " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
   CHECK_GE(words.size(), 1u);
@@ -331,11 +330,12 @@ int ParseOSProductVersion(const std::string_view& version) {
     macos_version *= 100;
   }
 
-  // Checks that the value is within expected bounds corresponding to released
-  // OS version numbers. The most important bit is making sure that the "10.16"
-  // compatibility mode isn't engaged.
+  // Check that the value is within expected bounds corresponding to released
+  // OS version numbers. Specifically, ensure that neither the "macOS 10.16" nor
+  // the "macOS 16" compatibility modes are engaged.
   CHECK(macos_version >= 10'00'00);
   CHECK(macos_version < 10'16'00 || macos_version >= 11'00'00);
+  CHECK(macos_version < 16'00'00 || macos_version >= 26'00'00);
 
   return macos_version;
 }
@@ -387,7 +387,7 @@ std::string GetOSDisplayName() {
 
 std::string GetPlatformSerialNumber() {
   base::mac::ScopedIOObject<io_service_t> expert_device(
-      IOServiceGetMatchingService(kIOMasterPortDefault,
+      IOServiceGetMatchingService(kIOMainPortDefault,
                                   IOServiceMatching("IOPlatformExpertDevice")));
   if (!expert_device) {
     DLOG(ERROR) << "Error retrieving the machine serial number.";
@@ -408,20 +408,27 @@ std::string GetPlatformSerialNumber() {
   return base::SysCFStringRefToUTF8(serial_number_cfstring);
 }
 
-void OpenSystemSettingsPane(SystemSettingsPane pane) {
+void OpenSystemSettingsPane(SystemSettingsPane pane,
+                            const std::string& id_param) {
   NSString* url = nil;
   NSString* pane_file = nil;
   NSData* subpane_data = nil;
-  // Note: On macOS 13 and later, System Settings are implemented with app
-  // extensions found at /System/Library/ExtensionKit/Extensions/. URLs to open
-  // them are constructed with a scheme of "x-apple.systempreferences" and a
-  // body of the the bundle ID of the app extension. (In the Info.plist there is
-  // an EXAppExtensionAttributes dictionary with legacy identifiers, but given
-  // that those are explicitly named "legacy", this code prefers to use the
-  // bundle IDs for the URLs it uses.) It is not yet known how to definitively
-  // identify the query string used to open sub-panes; the ones used below were
+  // On macOS 13 and later, System Settings are implemented with app extensions
+  // found at /System/Library/ExtensionKit/Extensions/. URLs to open them are
+  // constructed with a scheme of "x-apple.systempreferences" and a body of the
+  // the bundle ID of the app extension. (In the Info.plist there is an
+  // EXAppExtensionAttributes dictionary with legacy identifiers, but given that
+  // those are explicitly named "legacy", this code prefers to use the bundle
+  // IDs for the URLs it uses.) It is not yet known how to definitively identify
+  // the query string used to open sub-panes; the ones used below were
   // determined from historical usage, disassembly of related code, and
-  // guessing. Clarity was requested from Apple in FB11753405.
+  // guessing. Clarity was requested from Apple in FB11753405. The current best
+  // guess is to analyze the method named -revealElementForKey:, but because
+  // the extensions are all written in Swift it's hard to confirm this is
+  // correct or to use this knowledge.
+  //
+  // For macOS 12 and earlier, to determine the `subpane_data`, find a method
+  // named -handleOpenParameter: which takes an AEDesc as a parameter.
   switch (pane) {
     case SystemSettingsPane::kAccessibility_Captions:
       if (MacOSMajorVersion() >= 13) {
@@ -449,12 +456,41 @@ void OpenSystemSettingsPane(SystemSettingsPane pane) {
         subpane_data = [@"Proxies" dataUsingEncoding:NSASCIIStringEncoding];
       }
       break;
+    case SystemSettingsPane::kNotifications:
+      if (MacOSMajorVersion() >= 13) {
+        url = @"x-apple.systempreferences:com.apple.Notifications-Settings."
+              @"extension";
+        if (!id_param.empty()) {
+          url = [url stringByAppendingFormat:@"?id=%s", id_param.c_str()];
+        }
+      } else {
+        pane_file = @"/System/Library/PreferencePanes/Notifications.prefPane";
+        NSDictionary* subpane_dict = @{
+          @"command" : @"show",
+          @"identifier" : SysUTF8ToNSString(id_param)
+        };
+        subpane_data = [NSPropertyListSerialization
+            dataWithPropertyList:subpane_dict
+                          format:NSPropertyListXMLFormat_v1_0
+                         options:0
+                           error:nil];
+      }
+      break;
     case SystemSettingsPane::kPrintersScanners:
       if (MacOSMajorVersion() >= 13) {
         url = @"x-apple.systempreferences:com.apple.Print-Scan-Settings."
               @"extension";
       } else {
         pane_file = @"/System/Library/PreferencePanes/PrintAndFax.prefPane";
+      }
+      break;
+    case SystemSettingsPane::kPrivacySecurity:
+      if (MacOSMajorVersion() >= 13) {
+        url = @"x-apple.systempreferences:com.apple.settings.PrivacySecurity."
+              @"extension?Privacy";
+      } else {
+        url = @"x-apple.systempreferences:com.apple.preference.security?"
+              @"Privacy";
       }
       break;
     case SystemSettingsPane::kPrivacySecurity_Accessibility:
@@ -538,6 +574,12 @@ void OpenSystemSettingsPane(SystemSettingsPane pane) {
       } else {
         pane_file = @"/System/Library/PreferencePanes/Trackpad.prefPane";
       }
+      break;
+    case SystemSettingsPane::kPrivacySecurity_Pasteboard:
+      // Pasteboard permissions were added in macOS 15.
+      DCHECK_GE(MacOSMajorVersion(), 15);
+      url = @"x-apple.systempreferences:com.apple.settings.PrivacySecurity."
+            @"extension?Privacy_Pasteboard";
       break;
   }
 

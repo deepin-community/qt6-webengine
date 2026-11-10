@@ -160,32 +160,6 @@ char *sqlite3_temp_directory = 0;
 char *sqlite3_data_directory = 0;
 
 /*
-** Determine whether or not high-precision (long double) floating point
-** math works correctly on CPU currently running.
-*/
-static SQLITE_NOINLINE int hasHighPrecisionDouble(int rc){
-  if( sizeof(LONGDOUBLE_TYPE)<=8 ){
-    /* If the size of "long double" is not more than 8, then
-    ** high-precision math is not possible. */
-    return 0;
-  }else{
-    /* Just because sizeof(long double)>8 does not mean that the underlying
-    ** hardware actually supports high-precision floating point.  For example,
-    ** clearing the 0x100 bit in the floating-point control word on Intel
-    ** processors will make long double work like double, even though long
-    ** double takes up more space.  The only way to determine if long double
-    ** actually works is to run an experiment. */
-    LONGDOUBLE_TYPE a, b, c;
-    rc++;
-    a = 1.0+rc*0.1;
-    b = 1.0e+18+rc*25.0;
-    c = a+b;
-    return b!=c;
-  }
-}
-
-
-/*
 ** Initialize SQLite. 
 **
 ** This routine must be called to initialize the memory allocation,
@@ -329,6 +303,14 @@ int sqlite3_initialize(void){
     if( rc==SQLITE_OK ){
       sqlite3PCacheBufferSetup( sqlite3GlobalConfig.pPage,
           sqlite3GlobalConfig.szPage, sqlite3GlobalConfig.nPage);
+#ifdef SQLITE_EXTRA_INIT_MUTEXED
+      {
+        int SQLITE_EXTRA_INIT_MUTEXED(const char*);
+        rc = SQLITE_EXTRA_INIT_MUTEXED(0);
+      }
+#endif
+    }
+    if( rc==SQLITE_OK ){
       sqlite3MemoryBarrier();
       sqlite3GlobalConfig.isInit = 1;
 #ifdef SQLITE_EXTRA_INIT
@@ -379,13 +361,6 @@ int sqlite3_initialize(void){
     rc = SQLITE_EXTRA_INIT(0);
   }
 #endif
-
-  /* Experimentally determine if high-precision floating point is
-  ** available. */
-#ifndef SQLITE_OMIT_WSD
-  sqlite3Config.bUseLongDouble = hasHighPrecisionDouble(rc);
-#endif
-
   return rc;
 }
 
@@ -765,6 +740,18 @@ int sqlite3_config(int op, ...){
     }
 #endif /* SQLITE_OMIT_DESERIALIZE */
 
+    case SQLITE_CONFIG_ROWID_IN_VIEW: {
+      int *pVal = va_arg(ap,int*);
+#ifdef SQLITE_ALLOW_ROWID_IN_VIEW
+      if( 0==*pVal ) sqlite3GlobalConfig.mNoVisibleRowid = TF_NoVisibleRowid;
+      if( 1==*pVal ) sqlite3GlobalConfig.mNoVisibleRowid = 0;
+      *pVal = (sqlite3GlobalConfig.mNoVisibleRowid==0);
+#else
+      *pVal = 0;
+#endif
+      break;
+    }
+
     default: {
       rc = SQLITE_ERROR;
       break;
@@ -780,17 +767,22 @@ int sqlite3_config(int op, ...){
 ** If lookaside is already active, return SQLITE_BUSY.
 **
 ** The sz parameter is the number of bytes in each lookaside slot.
-** The cnt parameter is the number of slots.  If pStart is NULL the
-** space for the lookaside memory is obtained from sqlite3_malloc().
-** If pStart is not NULL then it is sz*cnt bytes of memory to use for
-** the lookaside memory.
+** The cnt parameter is the number of slots.  If pBuf is NULL the
+** space for the lookaside memory is obtained from sqlite3_malloc()
+** or similar.  If pBuf is not NULL then it is sz*cnt bytes of memory
+** to use for the lookaside memory.
 */
-static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
+static int setupLookaside(
+  sqlite3 *db,    /* Database connection being configured */
+  void *pBuf,     /* Memory to use for lookaside.  May be NULL */
+  int sz,         /* Desired size of each lookaside memory slot */
+  int cnt         /* Number of slots to allocate */
+){
 #ifndef SQLITE_OMIT_LOOKASIDE
-  void *pStart;
-  sqlite3_int64 szAlloc = sz*(sqlite3_int64)cnt;
-  int nBig;   /* Number of full-size slots */
-  int nSm;    /* Number smaller LOOKASIDE_SMALL-byte slots */
+  void *pStart;          /* Start of the lookaside buffer */
+  sqlite3_int64 szAlloc; /* Total space set aside for lookaside memory */
+  int nBig;              /* Number of full-size slots */
+  int nSm;               /* Number smaller LOOKASIDE_SMALL-byte slots */
  
   if( sqlite3LookasideUsed(db,0)>0 ){
     return SQLITE_BUSY;
@@ -803,17 +795,22 @@ static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
     sqlite3_free(db->lookaside.pStart);
   }
   /* The size of a lookaside slot after ROUNDDOWN8 needs to be larger
-  ** than a pointer to be useful.
+  ** than a pointer and small enough to fit in a u16.
   */
-  sz = ROUNDDOWN8(sz);  /* IMP: R-33038-09382 */
+  sz = ROUNDDOWN8(sz);
   if( sz<=(int)sizeof(LookasideSlot*) ) sz = 0;
-  if( cnt<0 ) cnt = 0;
-  if( sz==0 || cnt==0 ){
+  if( sz>65528 ) sz = 65528;
+  /* Count must be at least 1 to be useful, but not so large as to use
+  ** more than 0x7fff0000 total bytes for lookaside. */
+  if( cnt<1 ) cnt = 0;
+  if( sz>0 && cnt>(0x7fff0000/sz) ) cnt = 0x7fff0000/sz;
+  szAlloc = (i64)sz*(i64)cnt;
+  if( szAlloc==0 ){
     sz = 0;
     pStart = 0;
   }else if( pBuf==0 ){
     sqlite3BeginBenignMalloc();
-    pStart = sqlite3Malloc( szAlloc );  /* IMP: R-61949-35727 */
+    pStart = sqlite3Malloc( szAlloc );
     sqlite3EndBenignMalloc();
     if( pStart ) szAlloc = sqlite3MallocSize(pStart);
   }else{
@@ -822,10 +819,10 @@ static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
 #ifndef SQLITE_OMIT_TWOSIZE_LOOKASIDE
   if( sz>=LOOKASIDE_SMALL*3 ){
     nBig = szAlloc/(3*LOOKASIDE_SMALL+sz);
-    nSm = (szAlloc - sz*nBig)/LOOKASIDE_SMALL;
+    nSm = (szAlloc - (i64)sz*(i64)nBig)/LOOKASIDE_SMALL;
   }else if( sz>=LOOKASIDE_SMALL*2 ){
     nBig = szAlloc/(LOOKASIDE_SMALL+sz);
-    nSm = (szAlloc - sz*nBig)/LOOKASIDE_SMALL;
+    nSm = (szAlloc - (i64)sz*(i64)nBig)/LOOKASIDE_SMALL;
   }else
 #endif /* SQLITE_OMIT_TWOSIZE_LOOKASIDE */
   if( sz>0 ){
@@ -980,7 +977,7 @@ int sqlite3_db_config(sqlite3 *db, int op, ...){
     default: {
       static const struct {
         int op;      /* The opcode */
-        u32 mask;    /* Mask of the bit in sqlite3.flags to set/clear */
+        u64 mask;    /* Mask of the bit in sqlite3.flags to set/clear */
       } aFlagOp[] = {
         { SQLITE_DBCONFIG_ENABLE_FKEY,           SQLITE_ForeignKeys    },
         { SQLITE_DBCONFIG_ENABLE_TRIGGER,        SQLITE_EnableTrigger  },
@@ -1001,6 +998,9 @@ int sqlite3_db_config(sqlite3 *db, int op, ...){
         { SQLITE_DBCONFIG_TRUSTED_SCHEMA,        SQLITE_TrustedSchema  },
         { SQLITE_DBCONFIG_STMT_SCANSTATUS,       SQLITE_StmtScanStatus },
         { SQLITE_DBCONFIG_REVERSE_SCANORDER,     SQLITE_ReverseOrder   },
+        { SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE,  SQLITE_AttachCreate   },
+        { SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE,   SQLITE_AttachWrite    },
+        { SQLITE_DBCONFIG_ENABLE_COMMENTS,       SQLITE_Comments       },
       };
       unsigned int i;
       rc = SQLITE_ERROR; /* IMP: R-42790-23372 */
@@ -1444,10 +1444,6 @@ void sqlite3LeaveMutexAndCloseZombie(sqlite3 *db){
   sqlite3Error(db, SQLITE_OK); /* Deallocates any cached error strings. */
   sqlite3ValueFree(db->pErr);
   sqlite3CloseExtensions(db);
-#if SQLITE_USER_AUTHENTICATION
-  sqlite3_free(db->auth.zAuthUser);
-  sqlite3_free(db->auth.zAuthPW);
-#endif
 
   db->eOpenState = SQLITE_STATE_ERROR;
 
@@ -1791,6 +1787,9 @@ int sqlite3_busy_handler(
   db->busyHandler.pBusyArg = pArg;
   db->busyHandler.nBusy = 0;
   db->busyTimeout = 0;
+#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
+  db->setlkTimeout = 0;
+#endif
   sqlite3_mutex_leave(db->mutex);
   return SQLITE_OK;
 }
@@ -1840,9 +1839,44 @@ int sqlite3_busy_timeout(sqlite3 *db, int ms){
     sqlite3_busy_handler(db, (int(*)(void*,int))sqliteDefaultBusyCallback,
                              (void*)db);
     db->busyTimeout = ms;
+#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
+    db->setlkTimeout = ms;
+#endif
   }else{
     sqlite3_busy_handler(db, 0, 0);
   }
+  return SQLITE_OK;
+}
+
+/*
+** Set the setlk timeout value.
+*/
+int sqlite3_setlk_timeout(sqlite3 *db, int ms, int flags){
+#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
+  int iDb;
+  int bBOC = ((flags & SQLITE_SETLK_BLOCK_ON_CONNECT) ? 1 : 0);
+#endif
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ) return SQLITE_MISUSE_BKPT;
+#endif
+  if( ms<-1 ) return SQLITE_RANGE;
+#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
+  db->setlkTimeout = ms;
+  db->setlkFlags = flags;
+  sqlite3BtreeEnterAll(db);
+  for(iDb=0; iDb<db->nDb; iDb++){
+    Btree *pBt = db->aDb[iDb].pBt;
+    if( pBt ){
+      sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(pBt));
+      sqlite3OsFileControlHint(fd, SQLITE_FCNTL_BLOCK_ON_CONNECT, (void*)&bBOC);
+    }
+  }
+  sqlite3BtreeLeaveAll(db);
+#endif
+#if !defined(SQLITE_ENABLE_API_ARMOR) && !defined(SQLITE_ENABLE_SETLK_TIMEOUT)
+  UNUSED_PARAMETER(db);
+  UNUSED_PARAMETER(flags);
+#endif
   return SQLITE_OK;
 }
 
@@ -1914,7 +1948,8 @@ int sqlite3CreateFunc(
   assert( SQLITE_FUNC_CONSTANT==SQLITE_DETERMINISTIC );
   assert( SQLITE_FUNC_DIRECT==SQLITE_DIRECTONLY );
   extraFlags = enc &  (SQLITE_DETERMINISTIC|SQLITE_DIRECTONLY|
-                       SQLITE_SUBTYPE|SQLITE_INNOCUOUS|SQLITE_RESULT_SUBTYPE);
+                       SQLITE_SUBTYPE|SQLITE_INNOCUOUS|
+                       SQLITE_RESULT_SUBTYPE|SQLITE_SELFORDER1);
   enc &= (SQLITE_FUNC_ENCMASK|SQLITE_ANY);
 
   /* The SQLITE_INNOCUOUS flag is the same bit as SQLITE_FUNC_UNSAFE.  But
@@ -2881,8 +2916,8 @@ static const int aHardLimit[] = {
 #if SQLITE_MAX_VDBE_OP<40
 # error SQLITE_MAX_VDBE_OP must be at least 40
 #endif
-#if SQLITE_MAX_FUNCTION_ARG<0 || SQLITE_MAX_FUNCTION_ARG>127
-# error SQLITE_MAX_FUNCTION_ARG must be between 0 and 127
+#if SQLITE_MAX_FUNCTION_ARG<0 || SQLITE_MAX_FUNCTION_ARG>32767
+# error SQLITE_MAX_FUNCTION_ARG must be between 0 and 32767
 #endif
 #if SQLITE_MAX_ATTACHED<0 || SQLITE_MAX_ATTACHED>125
 # error SQLITE_MAX_ATTACHED must be between 0 and 125
@@ -2949,8 +2984,8 @@ int sqlite3_limit(sqlite3 *db, int limitId, int newLimit){
   if( newLimit>=0 ){                   /* IMP: R-52476-28732 */
     if( newLimit>aHardLimit[limitId] ){
       newLimit = aHardLimit[limitId];  /* IMP: R-51463-25634 */
-    }else if( newLimit<1 && limitId==SQLITE_LIMIT_LENGTH ){
-      newLimit = 1;
+    }else if( newLimit<SQLITE_MIN_LENGTH && limitId==SQLITE_LIMIT_LENGTH ){
+      newLimit = SQLITE_MIN_LENGTH;
     }
     db->aLimit[limitId] = newLimit;
   }
@@ -3345,6 +3380,9 @@ static int openDatabase(
                  | SQLITE_EnableTrigger
                  | SQLITE_EnableView
                  | SQLITE_CacheSpill
+                 | SQLITE_AttachCreate
+                 | SQLITE_AttachWrite
+                 | SQLITE_Comments
 #if !defined(SQLITE_TRUSTED_SCHEMA) || SQLITE_TRUSTED_SCHEMA+0!=0
                  | SQLITE_TrustedSchema
 #endif
@@ -3469,6 +3507,7 @@ static int openDatabase(
   if( ((1<<(flags&7)) & 0x46)==0 ){
     rc = SQLITE_MISUSE_BKPT;  /* IMP: R-18321-05872 */
   }else{
+    if( zFilename==0 ) zFilename = ":memory:";
     rc = sqlite3ParseUri(zVfs, zFilename, &flags, &db->pVfs, &zOpen, &zErrMsg);
   }
   if( rc!=SQLITE_OK ){
@@ -3806,7 +3845,7 @@ int sqlite3_set_clientdata(
     return SQLITE_OK;
   }else{
     size_t n = strlen(zName);
-    p = sqlite3_malloc64( sizeof(DbClientData)+n+1 );
+    p = sqlite3_malloc64( SZ_DBCLIENTDATA(n+1) );
     if( p==0 ){
       if( xDestructor ) xDestructor(pData);
       sqlite3_mutex_leave(db->mutex);
@@ -3960,13 +3999,10 @@ int sqlite3_table_column_metadata(
   if( zColumnName==0 ){
     /* Query for existence of table only */
   }else{
-    for(iCol=0; iCol<pTab->nCol; iCol++){
+    iCol = sqlite3ColumnIndex(pTab, zColumnName);
+    if( iCol>=0 ){
       pCol = &pTab->aCol[iCol];
-      if( 0==sqlite3StrICmp(pCol->zCnName, zColumnName) ){
-        break;
-      }
-    }
-    if( iCol==pTab->nCol ){
+    }else{
       if( HasRowid(pTab) && sqlite3IsRowid(zColumnName) ){
         iCol = pTab->iPKey;
         pCol = iCol>=0 ? &pTab->aCol[iCol] : 0;
@@ -4175,8 +4211,8 @@ int sqlite3_test_control(int op, ...){
     /*  sqlite3_test_control(SQLITE_TESTCTRL_FK_NO_ACTION, sqlite3 *db, int b);
     **
     ** If b is true, then activate the SQLITE_FkNoAction setting.  If b is
-    ** false then clearn that setting.  If the SQLITE_FkNoAction setting is
-    ** abled, all foreign key ON DELETE and ON UPDATE actions behave as if
+    ** false then clear that setting.  If the SQLITE_FkNoAction setting is
+    ** enabled, all foreign key ON DELETE and ON UPDATE actions behave as if
     ** they were NO ACTION, regardless of how they are defined.
     **
     ** NB:  One must usually run "PRAGMA writable_schema=RESET" after
@@ -4294,7 +4330,6 @@ int sqlite3_test_control(int op, ...){
       ** issue "defined but not used" warnings. */
       if( x==9999 ){
         sqlite3ShowExpr(0);
-        sqlite3ShowExpr(0);
         sqlite3ShowExprList(0);
         sqlite3ShowIdList(0);
         sqlite3ShowSrcList(0);
@@ -4378,6 +4413,18 @@ int sqlite3_test_control(int op, ...){
     case SQLITE_TESTCTRL_OPTIMIZATIONS: {
       sqlite3 *db = va_arg(ap, sqlite3*);
       db->dbOptFlags = va_arg(ap, u32);
+      break;
+    }
+
+    /*  sqlite3_test_control(SQLITE_TESTCTRL_GETOPT, sqlite3 *db, int *N)
+    **
+    ** Write the current optimization settings into *N.  A zero bit means that
+    ** the optimization is on, and a 1 bit means that the optimization is off.
+    */
+    case SQLITE_TESTCTRL_GETOPT: {
+      sqlite3 *db = va_arg(ap, sqlite3*);
+      int *pN = va_arg(ap, int*);
+      *pN = db->dbOptFlags;
       break;
     }
 
@@ -4612,24 +4659,6 @@ int sqlite3_test_control(int op, ...){
       break;
     }
 
-#if !defined(SQLITE_OMIT_WSD)
-    /* sqlite3_test_control(SQLITE_TESTCTRL_USELONGDOUBLE, int X);
-    **
-    **   X<0     Make no changes to the bUseLongDouble.  Just report value.
-    **   X==0    Disable bUseLongDouble
-    **   X==1    Enable bUseLongDouble
-    **   X>=2    Set bUseLongDouble to its default value for this platform
-    */
-    case SQLITE_TESTCTRL_USELONGDOUBLE: {
-      int b = va_arg(ap, int);
-      if( b>=2 ) b = hasHighPrecisionDouble(b);
-      if( b>=0 ) sqlite3Config.bUseLongDouble = b>0;
-      rc = sqlite3Config.bUseLongDouble!=0;
-      break;
-    }
-#endif
-
-
 #if defined(SQLITE_DEBUG) && !defined(SQLITE_OMIT_WSD)
     /* sqlite3_test_control(SQLITE_TESTCTRL_TUNE, id, *piValue)
     **
@@ -4659,6 +4688,28 @@ int sqlite3_test_control(int op, ...){
       break;
     }
 #endif
+
+    /* sqlite3_test_control(SQLITE_TESTCTRL_JSON_SELFCHECK, &onOff);
+    **
+    ** Activate or deactivate validation of JSONB that is generated from
+    ** text.  Off by default, as the validation is slow.  Validation is
+    ** only available if compiled using SQLITE_DEBUG.
+    **
+    ** If onOff is initially 1, then turn it on.  If onOff is initially
+    ** off, turn it off.  If onOff is initially -1, then change onOff
+    ** to be the current setting.
+    */
+    case SQLITE_TESTCTRL_JSON_SELFCHECK: {
+#if defined(SQLITE_DEBUG) && !defined(SQLITE_OMIT_WSD)
+      int *pOnOff = va_arg(ap, int*);
+      if( *pOnOff<0 ){
+        *pOnOff = sqlite3Config.bJsonSelfcheck;
+      }else{
+        sqlite3Config.bJsonSelfcheck = (u8)((*pOnOff)&0xff);
+      }
+#endif
+      break;
+    }
   }
   va_end(ap);
 #endif /* SQLITE_UNTESTABLE */
@@ -4915,7 +4966,11 @@ int sqlite3_snapshot_get(
     if( iDb==0 || iDb>1 ){
       Btree *pBt = db->aDb[iDb].pBt;
       if( SQLITE_TXN_WRITE!=sqlite3BtreeTxnState(pBt) ){
+        Pager *pPager = sqlite3BtreePager(pBt);
+        i64 dummy = 0;
+        sqlite3PagerSnapshotOpen(pPager, (sqlite3_snapshot*)&dummy);
         rc = sqlite3BtreeBeginTrans(pBt, 0, 0);
+        sqlite3PagerSnapshotOpen(pPager, 0);
         if( rc==SQLITE_OK ){
           rc = sqlite3PagerSnapshotGet(sqlite3BtreePager(pBt), ppSnapshot);
         }

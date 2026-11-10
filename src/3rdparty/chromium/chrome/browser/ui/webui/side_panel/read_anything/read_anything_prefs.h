@@ -36,8 +36,11 @@ inline constexpr char kAccessibilityReadAnythingLineSpacing[] =
 inline constexpr char kAccessibilityReadAnythingLetterSpacing[] =
     "settings.a11y.read_anything.letter_spacing";
 
-// Map to represent the user's preferred voice per language for reading aloud.
-// TODO(crbug.com/1474951): Rename to kAccessibilityReadAnythingVoices
+// String to represent the user's preferred voice for reading aloud.
+// With auto voice switching on, it's a map to represent the user's preferred
+// voice per language for reading aloud.
+// TODO(crbug.com/40927698): Rename to kAccessibilityReadAnythingVoices when we
+// enable automatic voice switching.
 inline constexpr char kAccessibilityReadAnythingVoiceName[] =
     "settings.a11y.read_anything.voice_name";
 
@@ -55,11 +58,26 @@ inline constexpr char kAccessibilityReadAnythingHighlightGranularity[] =
 inline constexpr char kAccessibilityReadAnythingHighlightColor[] =
     "settings.a11y.read_anything.highlight_color";
 
-inline constexpr char kAccessibilityReadAnythingOmniboxIconLabelShownCount[] =
-    "settings.a11y.read_anything.omnibox_icon_label_shown_count";
-
 inline constexpr char kAccessibilityReadAnythingLinksEnabled[] =
     "settings.a11y.read_anything.links_enabled";
+
+inline constexpr char kAccessibilityReadAnythingImagesEnabled[] =
+    "settings.a11y.read_anything.images_enabled";
+
+// List of strings to represent the user's preferred
+// languages for the read anything UI.
+inline constexpr char kAccessibilityReadAnythingLanguagesEnabled[] =
+    "settings.a11y.read_anything.languages_enabled";
+
+// The date that Reading mode was last opened. This is used to uninstall
+// voices if reading mode has been unopened for a longer period of time.
+// One preference is used to keep track of when reading mode was last opened
+// and one preference is used to keep track of if there was a previous engine
+// reinstall in order to prevent unnecessary reinstalls.
+inline constexpr char kAccessibilityReadAnythingDateLastOpened[] =
+    "settings.a11y.read_anything.last_opened_date";
+inline constexpr char kAccessibilityReadAnythingTTSEngineReinstalled[] =
+    "settings.a11y.read_anything.tts_engine_reinstalled";
 
 }  // namespace prefs
 

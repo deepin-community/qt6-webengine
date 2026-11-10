@@ -13,44 +13,53 @@
 // limitations under the License.
 
 import {
-  MetricVisualisation,
-  Plugin,
-  PluginContext,
-  PluginDescriptor,
-} from '../../public';
+  BreakdownTrackAggType,
+  BreakdownTracks,
+} from '../../components/tracks/breakdown_tracks';
+import {PerfettoPlugin} from '../../public/plugin';
+import {Trace} from '../../public/trace';
 
-const SPEC = `
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "width": "container",
-  "height": 300,
-  "description": ".",
-  "data": {
-    "name": "metric"
-  },
-  "mark": "bar",
-  "encoding": {
-    "x": {"field": "client_process", "type": "nominal"},
-    "y": {"field": "client_dur", "aggregate": "max"}
+export default class implements PerfettoPlugin {
+  static readonly id = 'dev.perfetto.AndroidBinderVizPlugin';
+
+  async onTraceLoad(ctx: Trace): Promise<void> {
+    const binderCounterBreakdowns = new BreakdownTracks({
+      trace: ctx,
+      trackTitle: 'Binder Transaction Counts',
+      modules: ['android.binder', 'android.binder_breakdown'],
+      aggregationType: BreakdownTrackAggType.COUNT,
+      aggregation: {
+        columns: [
+          'server_process',
+          '(IFNULL(interface, "unknown"))',
+          '(IFNULL(method_name, "unknown"))',
+          '(client_process || ":" || client_upid)',
+          '(client_thread || ":" ||  client_utid)',
+        ],
+        tsCol: 'client_ts',
+        durCol: 'client_dur',
+        tableName: 'android_binder_txns',
+      },
+      slice: {
+        columns: ['aidl_name'],
+        tableName: 'android_binder_txns',
+        tsCol: 'client_ts',
+        durCol: 'client_dur',
+      },
+      pivots: {
+        columns: ['reason_type', 'reason'],
+        tableName: 'android_binder_client_server_breakdown',
+        tsCol: 'ts',
+        durCol: 'dur',
+        joins: [
+          {
+            joinTableName: 'android_binder_client_server_breakdown',
+            joinColumns: ['binder_txn_id'],
+          },
+        ],
+      },
+    });
+
+    ctx.workspace.addChildInOrder(await binderCounterBreakdowns.createTracks());
   }
 }
-`;
-
-class AndroidBinderVizPlugin implements Plugin {
-  onActivate(_: PluginContext): void {
-    //
-  }
-
-  metricVisualisations(): MetricVisualisation[] {
-    return [{
-      metric: 'android_binder',
-      spec: SPEC,
-      path: ['android_binder', 'unaggregated_txn_breakdown'],
-    }];
-  }
-}
-
-export const plugin: PluginDescriptor = {
-  pluginId: 'dev.perfetto.AndroidBinderVizPlugin',
-  plugin: AndroidBinderVizPlugin,
-};

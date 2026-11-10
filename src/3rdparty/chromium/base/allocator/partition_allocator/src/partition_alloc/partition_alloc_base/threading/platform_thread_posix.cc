@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/threading/platform_thread.h"
 
 #include <pthread.h>
@@ -13,23 +18,23 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "build/build_config.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "partition_alloc/partition_alloc_base/threading/platform_thread_internal_posix.h"
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)
 #include <sys/syscall.h>
 #include <atomic>
 #endif
 
-#if BUILDFLAG(IS_FUCHSIA)
+#if PA_BUILDFLAG(IS_FUCHSIA)
 #include <zircon/process.h>
 #endif
 
 namespace partition_alloc::internal::base {
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -72,15 +77,15 @@ void InvalidateTidCache() {
 
 }  // namespace internal
 
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif  // PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)
 
 // static
 PlatformThreadId PlatformThread::CurrentId() {
   // Pthreads doesn't have the concept of a thread ID, so we have to reach down
   // into the kernel.
-#if BUILDFLAG(IS_APPLE)
+#if PA_BUILDFLAG(IS_APPLE)
   return pthread_mach_thread_np(pthread_self());
-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#elif PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)
   static InitAtFork init_at_fork;
   if (g_thread_id == -1 ||
       (g_is_main_thread &&
@@ -95,7 +100,7 @@ PlatformThreadId PlatformThread::CurrentId() {
       g_is_main_thread = false;
     }
   } else {
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
     if (g_thread_id != syscall(__NR_gettid)) {
       PA_RAW_LOG(
           FATAL,
@@ -106,20 +111,22 @@ PlatformThreadId PlatformThread::CurrentId() {
 #endif
   }
   return g_thread_id;
-#elif BUILDFLAG(IS_ANDROID)
+#elif PA_BUILDFLAG(IS_ANDROID)
   // Note: do not cache the return value inside a thread_local variable on
   // Android (as above). The reasons are:
   // - thread_local is slow on Android (goes through emutls)
   // - gettid() is fast, since its return value is cached in pthread (in the
   //   thread control block of pthread). See gettid.c in bionic.
   return gettid();
-#elif BUILDFLAG(IS_FUCHSIA)
+#elif PA_BUILDFLAG(IS_FUCHSIA)
   return zx_thread_self();
-#elif BUILDFLAG(IS_SOLARIS) || BUILDFLAG(IS_QNX)
+#elif PA_BUILDFLAG(IS_ASMJS)
   return pthread_self();
-#elif BUILDFLAG(IS_POSIX) && BUILDFLAG(IS_AIX)
+#elif PA_BUILDFLAG(IS_SOLARIS) || PA_BUILDFLAG(IS_QNX)
   return pthread_self();
-#elif BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_AIX)
+#elif PA_BUILDFLAG(IS_POSIX) && PA_BUILDFLAG(IS_AIX)
+  return pthread_self();
+#elif PA_BUILDFLAG(IS_POSIX) && !PA_BUILDFLAG(IS_AIX)
   return reinterpret_cast<int64_t>(pthread_self());
 #endif
 }

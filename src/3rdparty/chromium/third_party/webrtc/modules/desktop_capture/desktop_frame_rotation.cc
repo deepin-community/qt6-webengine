@@ -10,7 +10,10 @@
 
 #include "modules/desktop_capture/desktop_frame_rotation.h"
 
+#include "modules/desktop_capture/desktop_frame.h"
+#include "modules/desktop_capture/desktop_geometry.h"
 #include "rtc_base/checks.h"
+#include "third_party/libyuv/include/libyuv/rotate.h"
 #include "third_party/libyuv/include/libyuv/rotate_argb.h"
 
 namespace webrtc {
@@ -96,11 +99,11 @@ void RotateDesktopFrame(const DesktopFrame& source,
                         const DesktopVector& target_offset,
                         DesktopFrame* target) {
   RTC_DCHECK(target);
-  RTC_DCHECK(DesktopRect::MakeSize(source.size()).ContainsRect(source_rect));
+  RTC_CHECK(DesktopRect::MakeSize(source.size()).ContainsRect(source_rect));
   // The rectangle in `target`.
   const DesktopRect target_rect =
       RotateAndOffsetRect(source_rect, source.size(), rotation, target_offset);
-  RTC_DCHECK(DesktopRect::MakeSize(target->size()).ContainsRect(target_rect));
+  RTC_CHECK(DesktopRect::MakeSize(target->size()).ContainsRect(target_rect));
 
   if (target_rect.is_empty()) {
     return;

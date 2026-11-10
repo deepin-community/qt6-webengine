@@ -864,6 +864,10 @@ static void set_rt_speed_feature_framesize_independent(
   // avoid entering rd pickmode. This causes issues, such as: b/310663186.
   if (cpi->oxcf.mode != cpi->deadline_mode_previous_frame)
     sf->nonrd_keyframe = 1;
+
+  // TODO(marpan): Force this feature off always, for the issue: 366146260
+  // Remove this disabling when underlying issue is resolved.
+  sf->svc_use_lowres_part = 0;
 }
 
 void vp9_set_speed_features_framesize_dependent(VP9_COMP *cpi, int speed) {
@@ -997,7 +1001,6 @@ void vp9_set_speed_features_framesize_independent(VP9_COMP *cpi, int speed) {
   // This setting only takes effect when partition_search_type is set
   // to FIXED_PARTITION.
   sf->always_this_block_size = BLOCK_16X16;
-  sf->search_type_check_frequency = 50;
   sf->encode_breakout_thresh = 0;
   // Recode loop tolerance %.
   sf->recode_tolerance_low = 12;

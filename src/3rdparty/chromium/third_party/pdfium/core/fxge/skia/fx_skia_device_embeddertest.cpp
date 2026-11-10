@@ -44,11 +44,11 @@ struct State {
   enum class Clip { kNo, kSame, kDifferentPath, kDifferentMatrix };
   enum class Graphic { kNone, kPath, kText };
 
-  Change m_change;
-  Save m_save;
-  Clip m_clip;
-  Graphic m_graphic;
-  uint32_t m_pixel;
+  Change change_;
+  Save save_;
+  Clip clip_;
+  Graphic graphic_;
+  uint32_t pixel_;
 };
 
 void EmptyTest(CFX_SkiaDeviceDriver* driver, const State&) {
@@ -59,9 +59,9 @@ void EmptyTest(CFX_SkiaDeviceDriver* driver, const State&) {
 
 void CommonTest(CFX_SkiaDeviceDriver* driver, const State& state) {
   TextCharPos charPos[1];
-  charPos[0].m_Origin = CFX_PointF(0, 1);
-  charPos[0].m_GlyphIndex = 0;
-  charPos[0].m_FontCharWidth = 4;
+  charPos[0].origin_ = CFX_PointF(0, 1);
+  charPos[0].glyph_index_ = 0;
+  charPos[0].font_char_width_ = 4;
 
   CFX_Font font;
   font.LoadSubst("Courier", /*bTrueType=*/true, /*flags=*/0,
@@ -86,44 +86,48 @@ void CommonTest(CFX_SkiaDeviceDriver* driver, const State& state) {
   // avoided.
   static constexpr CFX_TextRenderOptions kTextOptions(
       CFX_TextRenderOptions::kAliasing);
-  if (state.m_save == State::Save::kYes)
+  if (state.save_ == State::Save::kYes) {
     driver->SaveState();
-  if (state.m_clip != State::Clip::kNo)
+  }
+  if (state.clip_ != State::Clip::kNo) {
     driver->SetClip_PathFill(clipPath, &clipMatrix, CFX_FillRenderOptions());
-  if (state.m_graphic == State::Graphic::kPath) {
+  }
+  if (state.graphic_ == State::Graphic::kPath) {
     driver->DrawPath(path1, &matrix, &graphState, 0xFF112233, 0,
-                     CFX_FillRenderOptions::WindingOptions(),
-                     BlendMode::kNormal);
-  } else if (state.m_graphic == State::Graphic::kText) {
+                     CFX_FillRenderOptions::WindingOptions());
+  } else if (state.graphic_ == State::Graphic::kText) {
     driver->DrawDeviceText(charPos, &font, matrix, fontSize, 0xFF445566,
                            kTextOptions);
   }
-  if (state.m_save == State::Save::kYes)
+  if (state.save_ == State::Save::kYes) {
     driver->RestoreState(true);
+  }
   CFX_Path path2;
   path2.AppendRect(0, 0, 2, 2);
-  if (state.m_change == State::Change::kYes) {
-    if (state.m_graphic == State::Graphic::kPath)
-      graphState.m_LineCap = CFX_GraphStateData::LineCap::kRound;
-    else if (state.m_graphic == State::Graphic::kText)
+  if (state.change_ == State::Change::kYes) {
+    if (state.graphic_ == State::Graphic::kPath) {
+      graphState.set_line_cap(CFX_GraphStateData::LineCap::kRound);
+    } else if (state.graphic_ == State::Graphic::kText) {
       fontSize = 2;
+    }
   }
-  if (state.m_clip == State::Clip::kSame)
+  if (state.clip_ == State::Clip::kSame) {
     driver->SetClip_PathFill(clipPath, &clipMatrix, CFX_FillRenderOptions());
-  else if (state.m_clip == State::Clip::kDifferentPath)
+  } else if (state.clip_ == State::Clip::kDifferentPath) {
     driver->SetClip_PathFill(clipPath2, &clipMatrix, CFX_FillRenderOptions());
-  else if (state.m_clip == State::Clip::kDifferentMatrix)
+  } else if (state.clip_ == State::Clip::kDifferentMatrix) {
     driver->SetClip_PathFill(clipPath, &clipMatrix2, CFX_FillRenderOptions());
-  if (state.m_graphic == State::Graphic::kPath) {
+  }
+  if (state.graphic_ == State::Graphic::kPath) {
     driver->DrawPath(path2, &matrix2, &graphState, 0xFF112233, 0,
-                     CFX_FillRenderOptions::WindingOptions(),
-                     BlendMode::kNormal);
-  } else if (state.m_graphic == State::Graphic::kText) {
+                     CFX_FillRenderOptions::WindingOptions());
+  } else if (state.graphic_ == State::Graphic::kText) {
     driver->DrawDeviceText(charPos, &font, matrix2, fontSize, 0xFF445566,
                            kTextOptions);
   }
-  if (state.m_save == State::Save::kYes)
+  if (state.save_ == State::Save::kYes) {
     driver->RestoreState(false);
+  }
   driver->RestoreState(false);
 }
 
@@ -150,17 +154,18 @@ void OutOfSequenceClipTest(CFX_SkiaDeviceDriver* driver, const State&) {
 
 void Harness(void (*Test)(CFX_SkiaDeviceDriver*, const State&),
              const State& state) {
-  constexpr int kWidth = 4;
-  constexpr int kHeight = 1;
+  static constexpr int kWidth = 4;
+  static constexpr int kHeight = 1;
   ScopedFPDFBitmap bitmap(FPDFBitmap_Create(kWidth, kHeight, 1));
   ASSERT_TRUE(bitmap);
-  FPDFBitmap_FillRect(bitmap.get(), 0, 0, kWidth, kHeight, 0x00000000);
+  ASSERT_TRUE(
+      FPDFBitmap_FillRect(bitmap.get(), 0, 0, kWidth, kHeight, 0x00000000));
   RetainPtr<CFX_DIBitmap> pBitmap(CFXDIBitmapFromFPDFBitmap(bitmap.get()));
   auto driver = CFX_SkiaDeviceDriver::Create(pBitmap, false, nullptr, false);
   ASSERT_TRUE(driver);
   (*Test)(driver.get(), state);
   uint32_t pixel = pBitmap->GetPixelForTesting(0, 0);
-  EXPECT_EQ(state.m_pixel, pixel);
+  EXPECT_EQ(state.pixel_, pixel);
 }
 
 void RenderPageToSkCanvas(FPDF_PAGE page,
@@ -168,7 +173,7 @@ void RenderPageToSkCanvas(FPDF_PAGE page,
                           int start_y,
                           int size_x,
                           int size_y,
-                          SkCanvas* canvas) {
+                          SkCanvas& canvas) {
   CPDF_Page* cpdf_page = CPDFPageFromFPDFPage(page);
 
   auto context = std::make_unique<CPDF_PageRenderContext>();
@@ -178,8 +183,8 @@ void RenderPageToSkCanvas(FPDF_PAGE page,
   cpdf_page->SetRenderContext(std::move(context));
 
   auto default_device = std::make_unique<CFX_DefaultRenderDevice>();
-  default_device->AttachCanvas(canvas);
-  unowned_context->m_pDevice = std::move(default_device);
+  CHECK(default_device->AttachCanvas(canvas));
+  unowned_context->device_ = std::move(default_device);
 
   CPDFSDK_RenderPageWithContext(unowned_context, cpdf_page, start_x, start_y,
                                 size_x, size_y, /*rotate=*/0, /*flags=*/0,
@@ -264,7 +269,7 @@ TEST_F(FxgeSkiaEmbedderTest, RenderBigImageTwice) {
   }
 
   ASSERT_TRUE(OpenDocument("bug_2034.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
   std::set<int> image_ids;
@@ -282,14 +287,12 @@ TEST_F(FxgeSkiaEmbedderTest, RenderBigImageTwice) {
       }));
 
   // Render top half.
-  RenderPageToSkCanvas(page, /*start_x=*/0, /*start_y=*/0,
-                       /*size_x=*/kPageWidth, /*size_y=*/kPageHeight, &canvas);
+  RenderPageToSkCanvas(page.get(), /*start_x=*/0, /*start_y=*/0,
+                       /*size_x=*/kPageWidth, /*size_y=*/kPageHeight, canvas);
 
   // Render bottom half.
-  RenderPageToSkCanvas(page, /*start_x=*/0, /*start_y=*/-kPageHeight / 2,
-                       /*size_x=*/kPageWidth, /*size_y=*/kPageHeight, &canvas);
+  RenderPageToSkCanvas(page.get(), /*start_x=*/0, /*start_y=*/-kPageHeight / 2,
+                       /*size_x=*/kPageWidth, /*size_y=*/kPageHeight, canvas);
 
   EXPECT_THAT(image_ids, SizeIs(1));
-
-  UnloadPage(page);
 }

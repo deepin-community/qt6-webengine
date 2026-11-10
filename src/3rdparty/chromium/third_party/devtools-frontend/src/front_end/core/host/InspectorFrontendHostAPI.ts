@@ -3,8 +3,11 @@
 // found in the LICENSE file.
 
 import type * as Platform from '../../core/platform/platform.js';
+import type * as Common from '../common/common.js';
+import type * as Root from '../root/root.js';
 
 export enum Events {
+  /* eslint-disable @typescript-eslint/naming-convention -- Accessed from web_tests */
   AppendedToURL = 'appendedToURL',
   CanceledSaveURL = 'canceledSaveURL',
   ColorThemeChanged = 'colorThemeChanged',
@@ -26,7 +29,6 @@ export enum Events {
   IndexingWorked = 'indexingWorked',
   IndexingDone = 'indexingDone',
   KeyEventUnhandled = 'keyEventUnhandled',
-  ReattachRootTarget = 'reattachMainTarget',
   ReloadInspectedPage = 'reloadInspectedPage',
   RevealSourceLine = 'revealSourceLine',
   SavedURL = 'savedURL',
@@ -34,6 +36,7 @@ export enum Events {
   SetInspectedTabId = 'setInspectedTabId',
   SetUseSoftMenu = 'setUseSoftMenu',
   ShowPanel = 'showPanel',
+  /* eslint-enable @typescript-eslint/naming-convention */
 }
 
 export const EventDescriptors = [
@@ -58,7 +61,6 @@ export const EventDescriptors = [
   [Events.IndexingWorked, 'indexingWorked', ['requestId', 'fileSystemPath', 'worked']],
   [Events.IndexingDone, 'indexingDone', ['requestId', 'fileSystemPath']],
   [Events.KeyEventUnhandled, 'keyEventUnhandled', ['event']],
-  [Events.ReattachRootTarget, 'reattachMainTarget', []],
   [Events.ReloadInspectedPage, 'reloadInspectedPage', ['hard']],
   [Events.RevealSourceLine, 'revealSourceLine', ['url', 'lineNumber', 'columnNumber']],
   [Events.SavedURL, 'savedURL', ['url', 'fileSystemPath']],
@@ -66,7 +68,7 @@ export const EventDescriptors = [
   [Events.SetInspectedTabId, 'setInspectedTabId', ['tabId']],
   [Events.SetUseSoftMenu, 'setUseSoftMenu', ['useSoftMenu']],
   [Events.ShowPanel, 'showPanel', ['panelName']],
-];
+] as const;
 
 export interface DispatchMessageChunkEvent {
   messageChunk: string;
@@ -81,7 +83,7 @@ export interface EyeDropperPickedColorEvent {
 }
 
 export interface DevToolsFileSystem {
-  type: string;
+  type: ''|'automatic'|'snippets'|'overrides';
   fileSystemName: string;
   rootURL: string;
   fileSystemPath: Platform.DevToolsPath.RawPathString;
@@ -135,7 +137,24 @@ export interface SearchCompletedEvent {
 }
 
 export interface DoAidaConversationResult {
-  response: string;
+  statusCode?: number;
+  headers?: Record<string, string>;
+  netError?: number;
+  netErrorName?: string;
+  error?: string;
+  detail?: string;
+}
+
+export interface AidaClientResult {
+  response?: string;
+  error?: string;
+  detail?: string;
+}
+
+export interface AidaCodeCompleteResult {
+  response?: string;
+  error?: string;
+  detail?: string;
 }
 
 export interface VisualElementImpression {
@@ -143,15 +162,23 @@ export interface VisualElementImpression {
   type: number;
   parent?: number;
   context?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface ImpressionEvent {
   impressions: VisualElementImpression[];
 }
 
+export interface ResizeEvent {
+  veid: number;
+  width?: number;
+  height?: number;
+}
+
 export interface ClickEvent {
   veid: number;
-  mouseButton: number;
+  mouseButton?: number;
   context?: number;
   doubleClick: boolean;
 }
@@ -173,7 +200,20 @@ export interface ChangeEvent {
 }
 
 export interface KeyDownEvent {
-  veid: number;
+  veid?: number;
+  context?: number;
+}
+
+export interface SettingAccessEvent {
+  name: number;
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  numeric_value?: number;
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  string_value?: number;
+}
+
+export interface FunctionCallEvent {
+  name: number;
   context?: number;
 }
 
@@ -182,39 +222,49 @@ export interface KeyDownEvent {
 // `EventTypes` is not used at runtime.
 // Please note that the "dispatch" side can't be type-checked as the dispatch is
 // done dynamically.
-export type EventTypes = {
-  [Events.AppendedToURL]: Platform.DevToolsPath.RawPathString|Platform.DevToolsPath.UrlString,
-  [Events.CanceledSaveURL]: Platform.DevToolsPath.UrlString,
-  [Events.ColorThemeChanged]: void,
-  [Events.ContextMenuCleared]: void,
-  [Events.ContextMenuItemSelected]: number,
-  [Events.DeviceCountUpdated]: number,
-  [Events.DevicesDiscoveryConfigChanged]: Adb.Config,
-  [Events.DevicesPortForwardingStatusChanged]: void,
-  [Events.DevicesUpdated]: void,
-  [Events.DispatchMessage]: string,
-  [Events.DispatchMessageChunk]: DispatchMessageChunkEvent,
-  [Events.EnterInspectElementMode]: void,
-  [Events.EyeDropperPickedColor]: EyeDropperPickedColorEvent,
-  [Events.FileSystemsLoaded]: DevToolsFileSystem[],
-  [Events.FileSystemRemoved]: Platform.DevToolsPath.RawPathString,
-  [Events.FileSystemAdded]: FileSystemAddedEvent,
-  [Events.FileSystemFilesChangedAddedRemoved]: FilesChangedEvent,
-  [Events.IndexingTotalWorkCalculated]: IndexingTotalWorkCalculatedEvent,
-  [Events.IndexingWorked]: IndexingWorkedEvent,
-  [Events.IndexingDone]: IndexingEvent,
-  [Events.KeyEventUnhandled]: KeyEventUnhandledEvent,
-  [Events.ReattachRootTarget]: void,
-  [Events.ReloadInspectedPage]: boolean,
-  [Events.RevealSourceLine]: RevealSourceLineEvent,
-  [Events.SavedURL]: SavedURLEvent,
-  [Events.SearchCompleted]: SearchCompletedEvent,
-  [Events.SetInspectedTabId]: string,
-  [Events.SetUseSoftMenu]: boolean,
-  [Events.ShowPanel]: string,
-};
+export interface EventTypes {
+  [Events.AppendedToURL]: Platform.DevToolsPath.RawPathString|Platform.DevToolsPath.UrlString;
+  [Events.CanceledSaveURL]: Platform.DevToolsPath.UrlString;
+  [Events.ColorThemeChanged]: void;
+  [Events.ContextMenuCleared]: void;
+  [Events.ContextMenuItemSelected]: number;
+  [Events.DeviceCountUpdated]: number;
+  [Events.DevicesDiscoveryConfigChanged]: Adb.Config;
+  [Events.DevicesPortForwardingStatusChanged]: void;
+  [Events.DevicesUpdated]: void;
+  [Events.DispatchMessage]: string;
+  [Events.DispatchMessageChunk]: DispatchMessageChunkEvent;
+  [Events.EnterInspectElementMode]: void;
+  [Events.EyeDropperPickedColor]: EyeDropperPickedColorEvent;
+  [Events.FileSystemsLoaded]: DevToolsFileSystem[];
+  [Events.FileSystemRemoved]: Platform.DevToolsPath.RawPathString;
+  [Events.FileSystemAdded]: FileSystemAddedEvent;
+  [Events.FileSystemFilesChangedAddedRemoved]: FilesChangedEvent;
+  [Events.IndexingTotalWorkCalculated]: IndexingTotalWorkCalculatedEvent;
+  [Events.IndexingWorked]: IndexingWorkedEvent;
+  [Events.IndexingDone]: IndexingEvent;
+  [Events.KeyEventUnhandled]: KeyEventUnhandledEvent;
+  [Events.ReloadInspectedPage]: boolean;
+  [Events.RevealSourceLine]: RevealSourceLineEvent;
+  [Events.SavedURL]: SavedURLEvent;
+  [Events.SearchCompleted]: SearchCompletedEvent;
+  [Events.SetInspectedTabId]: string;
+  [Events.SetUseSoftMenu]: boolean;
+  [Events.ShowPanel]: string;
+}
 
 export interface InspectorFrontendHostAPI {
+  events: Common.EventTarget.EventTarget<EventTypes>;
+
+  connectAutomaticFileSystem(
+      fileSystemPath: Platform.DevToolsPath.RawPathString,
+      fileSystemUUID: string,
+      addIfMissing: boolean,
+      callback: (result: {success: boolean}) => void,
+      ): void;
+
+  disconnectAutomaticFileSystem(fileSystemPath: Platform.DevToolsPath.RawPathString): void;
+
   addFileSystem(type?: string): void;
 
   loadCompleted(): void;
@@ -241,13 +291,15 @@ export interface InspectorFrontendHostAPI {
 
   openInNewTab(url: Platform.DevToolsPath.UrlString): void;
 
+  openSearchResultsInNewTab(query: string): void;
+
   showItemInFolder(fileSystemPath: Platform.DevToolsPath.RawPathString): void;
 
   removeFileSystem(fileSystemPath: Platform.DevToolsPath.RawPathString): void;
 
   requestFileSystems(): void;
 
-  save(url: Platform.DevToolsPath.UrlString, content: string, forceSaveAs: boolean): void;
+  save(url: Platform.DevToolsPath.UrlString, content: string, forceSaveAs: boolean, isBase64: boolean): void;
 
   append(url: Platform.DevToolsPath.UrlString, content: string): void;
 
@@ -261,6 +313,10 @@ export interface InspectorFrontendHostAPI {
 
   closeWindow(): void;
 
+  /**
+   * Don't use directly - use {@link CopyToClipboard.copyTextToClipboard} instead.
+   * @deprecated Marked to restrict usage.
+   */
   copyText(text: string|null|undefined): void;
 
   inspectedURLChanged(url: Platform.DevToolsPath.UrlString): void;
@@ -272,9 +328,7 @@ export interface InspectorFrontendHostAPI {
 
   registerPreference(name: string, options: {synced?: boolean}): void;
 
-  getPreferences(callback: (arg0: {
-                   [x: string]: string,
-                 }) => void): void;
+  getPreferences(callback: (arg0: Record<string, string>) => void): void;
 
   getPreference(name: string, callback: (arg0: string) => void): void;
 
@@ -285,6 +339,8 @@ export interface InspectorFrontendHostAPI {
   clearPreferences(): void;
 
   getSyncInformation(callback: (arg0: SyncInformation) => void): void;
+
+  getHostConfig(callback: (arg0: Root.Runtime.HostConfig) => void): void;
 
   upgradeDraggedFileSystemPermissions(fileSystem: FileSystem): void;
 
@@ -299,13 +355,13 @@ export interface InspectorFrontendHostAPI {
 
   recordUserMetricsAction(umaName: string): void;
 
+  recordNewBadgeUsage(featureName: string): void;
+
   sendMessageToBackend(message: string): void;
 
   setDevicesDiscoveryConfig(config: Adb.Config): void;
 
   setDevicesUpdatesEnabled(enabled: boolean): void;
-
-  performActionOnRemotePage(pageId: string, action: string): void;
 
   openRemotePage(browserId: string, url: string): void;
 
@@ -343,7 +399,9 @@ export interface InspectorFrontendHostAPI {
 
   initialTargetId(): Promise<string|null>;
 
-  doAidaConversation: (request: string, cb: (result: DoAidaConversationResult) => void) => void;
+  doAidaConversation: (request: string, streamId: number, cb: (result: DoAidaConversationResult) => void) => void;
+  registerAidaClientEvent: (request: string, cb: (result: AidaClientResult) => void) => void;
+  aidaCodeComplete: (request: string, cb: (result: AidaCodeCompleteResult) => void) => void;
 
   recordImpression(event: ImpressionEvent): void;
   recordClick(event: ClickEvent): void;
@@ -351,22 +409,33 @@ export interface InspectorFrontendHostAPI {
   recordDrag(event: DragEvent): void;
   recordChange(event: ChangeEvent): void;
   recordKeyDown(event: KeyDownEvent): void;
+  recordSettingAccess(event: SettingAccessEvent): void;
+  recordFunctionCall(event: FunctionCallEvent): void;
+}
+
+export interface AcceleratorDescriptor {
+  keyCode: number;
+  modifiers: number;
 }
 
 export interface ContextMenuDescriptor {
   type: 'checkbox'|'item'|'separator'|'subMenu';
   id?: number;
   label?: string;
+  accelerator?: AcceleratorDescriptor;
+  isExperimentalFeature?: boolean;
   enabled?: boolean;
   checked?: boolean;
+  isDevToolsPerformanceMenuItem?: boolean;
   subItems?: ContextMenuDescriptor[];
+  shortcut?: string;
   jslogContext?: string;
+  /** Setting the featureName requests showing a new badge tied to that feature . */
+  featureName?: string;
 }
 export interface LoadNetworkResourceResult {
   statusCode: number;
-  headers?: {
-    [x: string]: string,
-  };
+  headers?: Record<string, string>;
   netError?: number;
   netErrorName?: string;
   urlValid?: boolean;
@@ -398,6 +467,10 @@ export interface SyncInformation {
   accountEmail?: string;
   /** The image of the account used for syncing. Its a base64 encoded PNG */
   accountImage?: string;
+  /** The full name of the account used for syncing */
+  accountFullName?: string;
+  /** Whether Chrome Sync is paused, equivalent to the user being logged out automatically */
+  isSyncPaused?: boolean;
 }
 
 /**
@@ -405,31 +478,24 @@ export interface SyncInformation {
  * Warning: There is another definition of this enum in the DevTools code
  * base, keep them in sync:
  * front_end/devtools_compatibility.js
- * @readonly
  */
 export const enum EnumeratedHistogram {
+  /* eslint-disable @typescript-eslint/naming-convention -- Shadows a legacy enum */
+  // LINT.IfChange(EnumeratedHistogram)
   ActionTaken = 'DevTools.ActionTaken',
-  BreakpointWithConditionAdded = 'DevTools.BreakpointWithConditionAdded',
-  BreakpointEditDialogRevealedFrom = 'DevTools.BreakpointEditDialogRevealedFrom',
-  PanelClosed = 'DevTools.PanelClosed',
   PanelShown = 'DevTools.PanelShown',
-  PanelShownInLocation = 'DevTools.PanelShownInLocation',
-  SidebarPaneShown = 'DevTools.SidebarPaneShown',
   KeyboardShortcutFired = 'DevTools.KeyboardShortcutFired',
   IssueCreated = 'DevTools.IssueCreated',
   IssuesPanelIssueExpanded = 'DevTools.IssuesPanelIssueExpanded',
   IssuesPanelOpenedFrom = 'DevTools.IssuesPanelOpenedFrom',
   IssuesPanelResourceOpened = 'DevTools.IssuesPanelResourceOpened',
   KeybindSetSettingChanged = 'DevTools.KeybindSetSettingChanged',
-  ElementsSidebarTabShown = 'DevTools.Elements.SidebarTabShown',
   ExperimentEnabledAtLaunch = 'DevTools.ExperimentEnabledAtLaunch',
   ExperimentDisabledAtLaunch = 'DevTools.ExperimentDisabledAtLaunch',
   ExperimentEnabled = 'DevTools.ExperimentEnabled',
   ExperimentDisabled = 'DevTools.ExperimentDisabled',
   DeveloperResourceLoaded = 'DevTools.DeveloperResourceLoaded',
   DeveloperResourceScheme = 'DevTools.DeveloperResourceScheme',
-  LinearMemoryInspectorRevealedFrom = 'DevTools.LinearMemoryInspector.RevealedFrom',
-  LinearMemoryInspectorTarget = 'DevTools.LinearMemoryInspector.Target',
   Language = 'DevTools.Language',
   SyncSetting = 'DevTools.SyncSetting',
   RecordingAssertion = 'DevTools.RecordingAssertion',
@@ -441,29 +507,14 @@ export const enum EnumeratedHistogram {
   RecordingReplaySpeed = 'DevTools.RecordingReplaySpeed',
   RecordingReplayStarted = 'DevTools.RecordingReplayStarted',
   RecordingToggled = 'DevTools.RecordingToggled',
-  SourcesSidebarTabShown = 'DevTools.Sources.SidebarTabShown',
   SourcesPanelFileDebugged = 'DevTools.SourcesPanelFileDebugged',
   SourcesPanelFileOpened = 'DevTools.SourcesPanelFileOpened',
   NetworkPanelResponsePreviewOpened = 'DevTools.NetworkPanelResponsePreviewOpened',
-  StyleTextCopied = 'DevTools.StyleTextCopied',
-  ManifestSectionSelected = 'DevTools.ManifestSectionSelected',
+  TimelineNavigationSettingState = 'DevTools.TimelineNavigationSettingState',
   CSSHintShown = 'DevTools.CSSHintShown',
   LighthouseModeRun = 'DevTools.LighthouseModeRun',
   LighthouseCategoryUsed = 'DevTools.LighthouseCategoryUsed',
-  ColorConvertedFrom = 'DevTools.ColorConvertedFrom',
-  ColorPickerOpenedFrom = 'DevTools.ColorPickerOpenedFrom',
-  CSSPropertyDocumentation = 'DevTools.CSSPropertyDocumentation',
-  InlineScriptParsed = 'DevTools.InlineScriptParsed',
-  VMInlineScriptTypeShown = 'DevTools.VMInlineScriptShown',
-  BreakpointsRestoredFromStorageCount = 'DevTools.BreakpointsRestoredFromStorageCount',
   SwatchActivated = 'DevTools.SwatchActivated',
-  BadgeActivated = 'DevTools.BadgeActivated',
   AnimationPlaybackRateChanged = 'DevTools.AnimationPlaybackRateChanged',
-  AnimationPointDragged = 'DevTools.AnimationPointDragged',
-  LegacyResourceTypeFilterNumberOfSelectedChanged = 'DevTools.LegacyResourceTypeFilterNumberOfSelectedChanged',
-  LegacyResourceTypeFilterItemSelected = 'DevTools.LegacyResourceTypeFilterItemSelected',
-  ResourceTypeFilterNumberOfSelectedChanged = 'DevTools.ResourceTypeFilterNumberOfSelectedChanged',
-  ResourceTypeFilterItemSelected = 'DevTools.ResourceTypeFilterItemSelected',
-  NetworkPanelMoreFiltersNumberOfSelectedChanged = 'DevTools.NetworkPanelMoreFiltersNumberOfSelectedChanged',
-  NetworkPanelMoreFiltersItemSelected = 'DevTools.NetworkPanelMoreFiltersItemSelected',
+  // LINT.ThenChange(/front_end/devtools_compatibility.js:EnumeratedHistogram)
 }

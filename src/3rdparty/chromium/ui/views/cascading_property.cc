@@ -13,6 +13,9 @@
 DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT,
                                        views::CascadingProperty<SkColor>*)
 
+DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT,
+                                       views::CascadingProperty<views::View*>*)
+
 namespace views {
 namespace {
 
@@ -30,11 +33,24 @@ class CascadingColorProviderColor final : public CascadingProperty<SkColor> {
   const ui::ColorId color_id_;
 };
 
+class CascadingRadioGroupView final : public CascadingProperty<View*> {
+ public:
+  explicit CascadingRadioGroupView(View* view) : group_view_(view) {}
+
+  // CascadingProperty<View*>:
+  View* GetValue(const View* view) const override { return group_view_.get(); }
+
+ private:
+  const raw_ptr<View> group_view_ = nullptr;
+};
+
 }  // namespace
 
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(CascadingProperty<SkColor>,
-                                   kCascadingBackgroundColor,
-                                   nullptr)
+                                   kCascadingBackgroundColor)
+
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(CascadingProperty<View*>,
+                                   kCascadingRadioGroupView)
 
 void SetCascadingColorProviderColor(
     views::View* view,
@@ -45,8 +61,15 @@ void SetCascadingColorProviderColor(
       std::make_unique<views::CascadingColorProviderColor>(color_id));
 }
 
+void SetCascadingRadioGroupView(
+    View* view,
+    const ui::ClassProperty<CascadingProperty<View*>*>* property_key) {
+  SetCascadingProperty(view, property_key,
+                       std::make_unique<views::CascadingRadioGroupView>(view));
+}
+
 SkColor GetCascadingBackgroundColor(View* view) {
-  const absl::optional<SkColor> color =
+  const std::optional<SkColor> color =
       GetCascadingProperty(view, kCascadingBackgroundColor);
   return color.value_or(
       view->GetColorProvider()->GetColor(ui::kColorWindowBackground));
@@ -56,14 +79,16 @@ SkColor GetCascadingAccentColor(View* view) {
   const SkColor default_color =
       view->GetColorProvider()->GetColor(ui::kColorFocusableBorderFocused);
   const SkColor background_color = GetCascadingBackgroundColor(view);
-  return features::IsChromeRefresh2023()
-             ? color_utils::BlendForMinContrast(
-                   default_color, background_color, absl::nullopt,
-                   color_utils::kMinimumVisibleContrastRatio)
-                   .color
-             : color_utils::PickGoogleColor(
-                   default_color, background_color,
-                   color_utils::kMinimumVisibleContrastRatio);
+  return color_utils::BlendForMinContrast(
+             default_color, background_color, std::nullopt,
+             color_utils::kMinimumVisibleContrastRatio)
+      .color;
+}
+
+View* GetCascadingRadioGroupView(View* view) {
+  std::optional<View*> parent_view =
+      GetCascadingProperty(view, kCascadingRadioGroupView);
+  return parent_view.value_or(nullptr);
 }
 
 }  // namespace views

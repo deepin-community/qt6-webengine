@@ -26,98 +26,24 @@
 #include "absl/time/time.h"
 #include "./centipede/feature.h"
 #include "./centipede/knobs.h"
+#include "./fuzztest/internal/configuration.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // Fuzzing environment controlling the behavior of
 // CentipedeMain(). Centipede binaries are creating Environment instances using
 // the flags defined in environment_flags.cc, while other users can use
 // CentipedeMain() as a library function without importing the flags.
 struct Environment {
-  // Global params. See environment_flags.cc for help on each parameter. -------
-
-  std::string binary;
-  std::string coverage_binary;
-  std::string clang_coverage_binary;
-  std::vector<std::string> extra_binaries;
-  std::string workdir;
-  std::string merge_from;
-  size_t num_runs = std::numeric_limits<size_t>::max();
-  size_t total_shards = 1;
-  size_t my_shard_index = 0;
-  size_t num_threads = 1;
-  size_t max_len = 4000;
-  size_t batch_size = 1000;
-  size_t mutate_batch_size = 2;
-  bool use_legacy_default_mutator = false;
-  size_t load_other_shard_frequency = 10;
-  bool serialize_shard_loads = false;
-  size_t seed = 0;
-  size_t prune_frequency = 100;
-  size_t address_space_limit_mb = 8192;
-  size_t rss_limit_mb = 4096;
-  size_t timeout_per_input = 60;
-  size_t timeout_per_batch = 0;
-  absl::Time stop_at = absl::InfiniteFuture();
-  bool fork_server = true;
-  bool full_sync = false;
-  bool use_corpus_weights = true;
-  bool use_coverage_frontier = false;
-  size_t max_corpus_size = 100000;
-  size_t crossover_level = 50;
-  bool use_pc_features = true;
-  size_t path_level = 0;
-  bool use_cmp_features = true;
-  size_t callstack_level = 0;
-  bool use_auto_dictionary = true;
-  bool use_dataflow_features = true;
-  bool use_counter_features = false;
-  bool use_pcpair_features = false;
-  uint64_t user_feature_domain_mask = ~0UL;
-  size_t feature_frequency_threshold = 100;
-  bool require_pc_table = true;
-  int telemetry_frequency = 0;
-  bool print_runner_log = false;
-  bool distill = false;
-  size_t log_features_shards = 0;
-  std::string knobs_file;
-  std::string corpus_to_files;
-  std::string corpus_from_files;
-  std::vector<std::string> corpus_dir;
-  std::string symbolizer_path = "llvm-symbolizer";
-  std::string objdump_path = "objdump";
-  std::string runner_dl_path_suffix;
-  std::string input_filter;
-  std::vector<std::string> dictionary;
-  std::string function_filter;
-  std::string for_each_blob;
-  std::string experiment;
-  bool analyze = false;
-  bool exit_on_crash = false;
-  size_t max_num_crash_reports = 5;
-  std::string minimize_crash_file_path;
-  size_t shmem_size_mb = 1024;
-  bool use_posix_shmem = false;
-  bool dry_run = false;
-  bool save_binary_info = false;
-  bool populate_binary_info = true;
-#ifdef CENTIPEDE_DISABLE_RIEGELI
-  bool riegeli = false;
-#else
-  bool riegeli = true;
-#endif  // CENTIPEDE_DISABLE_RIEGELI
-
-  // Internal settings without global flags ------------------------------------
-
-  // If set, treat the first entry of `corpus_dir` as output-only.
-  bool first_corpus_dir_output_only = false;
+#define CENTIPEDE_FLAG(TYPE, NAME, DEFAULT, _DESC) TYPE NAME = DEFAULT;
+#include "./centipede/centipede_flags.inc"
+#undef CENTIPEDE_FLAG
 
   // Command line-related fields -----------------------------------------------
 
   std::string exec_name;          // copied from argv[0]
   std::vector<std::string> args;  // copied from argv[1:].
   std::string binary_name;        // Name of `coverage_binary`, w/o directories.
-  std::string binary_hash;        // Hash of the `coverage_binary` file.
   bool has_input_wildcards = false;  // Set to true iff `binary` contains "@@".
 
   // Experiment-related settings -----------------------------------------------
@@ -138,6 +64,9 @@ struct Environment {
   std::string pcs_file_path;
 
   // APIs ----------------------------------------------------------------------
+
+  // Returns an instance of the environment with default values.
+  static const Environment& Default();
 
   // Should certain actions be performed ---------------------------------------
 
@@ -192,8 +121,20 @@ struct Environment {
 
   // Reads `knobs` from `knobs_file`. Does nothing if the `knobs_file` is empty.
   void ReadKnobsFileIfSpecified();
+  // Updates `this` with `config` obtained from the target binary. CHECK-fails
+  // if the fields are non-default and inconsistent with the corresponding
+  // values in `config`.
+  void UpdateWithTargetConfig(const fuzztest::internal::Configuration& config);
+  // If `timeout_per_batch` is `val`, computes it as a function of
+  // `timeout_per_input` and `batch_size` and updates it. Otherwise, leaves it
+  // unchanged.
+  void UpdateTimeoutPerBatchIfEqualTo(size_t val);
+  // If `binary_hash` is empty, updates it using the file in `coverage_binary`.
+  void UpdateBinaryHashIfEmpty();
+
+  std::vector<std::string> CreateFlags() const;
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_ENVIRONMENT_H_

@@ -5,11 +5,15 @@
 #ifndef EXTENSIONS_BROWSER_API_OFFSCREEN_OFFSCREEN_API_H_
 #define EXTENSIONS_BROWSER_API_OFFSCREEN_OFFSCREEN_API_H_
 
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_histogram_value.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_observer.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -38,12 +42,17 @@ class OffscreenCreateDocumentFunction : public ExtensionFunction,
   void OnExtensionHostDestroyed(ExtensionHost* host) override;
   void OnExtensionHostDidStopFirstLoad(const ExtensionHost* host) override;
 
+  // Called (asynchronously) if the page fails to load.
+  void NotifyPageFailedToLoad();
+
   // Sends a reply asynchronously to the extension.
   void SendResponseToExtension(ResponseValue response_value);
 
   // Observes the newly-created document to wait for it to be ready.
   base::ScopedObservation<ExtensionHost, ExtensionHostObserver> host_observer_{
       this};
+
+  base::WeakPtrFactory<OffscreenCreateDocumentFunction> weak_factory_{this};
 };
 
 class OffscreenCloseDocumentFunction : public ExtensionFunction,

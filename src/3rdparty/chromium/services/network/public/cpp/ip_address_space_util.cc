@@ -15,6 +15,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/transport_info.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/ip_address_space.mojom.h"
 #include "services/network/public/mojom/parsed_headers.mojom.h"
@@ -28,13 +29,13 @@ using net::IPAddress;
 using net::IPEndPoint;
 
 // Parses a string of the form "<URL-safe IP address>:<port>".
-absl::optional<IPEndPoint> ParseEndpoint(std::string_view str) {
+std::optional<IPEndPoint> ParseEndpoint(std::string_view str) {
   // Find the last colon character in `str`. We do not use
   // `base::SplitStringPiece()` because IPv6 address literals may contain colon
   // characters too.
   const auto pos = str.rfind(':');
   if (pos == str.npos) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::string_view address_str = str.substr(0, pos);
@@ -47,18 +48,18 @@ absl::optional<IPEndPoint> ParseEndpoint(std::string_view str) {
 
   IPAddress address;
   if (!net::ParseURLHostnameToAddress(address_str, &address)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Parse to a `unsigned int`, which is guaranteed to be at least 16 bits wide.
   // See https://en.cppreference.com/w/cpp/language/types.
   unsigned port_unsigned = 0;
   if (!base::StringToUint(port_str, &port_unsigned)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (!base::IsValueInRangeForNumericType<uint16_t>(port_unsigned)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Use `checked_cast()` for extra safety, though this should never `CHECK()`
@@ -67,20 +68,29 @@ absl::optional<IPEndPoint> ParseEndpoint(std::string_view str) {
   return IPEndPoint(address, port);
 }
 
-absl::optional<IPAddressSpace> ParseIPAddressSpace(std::string_view str) {
+std::optional<IPAddressSpace> ParseIPAddressSpace(std::string_view str) {
   if (str == "public") {
     return IPAddressSpace::kPublic;
   }
 
+  // Keep 'private' as an alias for 'local' until usages of 'private' are
+  // removed from Web Platform Test code base.
+  //
+  // TODO(crbug.com/418737577): remove private alias after Web Platform Test
+  // code base moves to using "local"
   if (str == "private") {
-    return IPAddressSpace::kPrivate;
+    return IPAddressSpace::kLocal;
   }
 
   if (str == "local") {
     return IPAddressSpace::kLocal;
   }
 
-  return absl::nullopt;
+  if (str == "loopback") {
+    return IPAddressSpace::kLoopback;
+  }
+
+  return std::nullopt;
 }
 
 // Represents a single command-line-specified endpoint override.
@@ -93,27 +103,27 @@ struct EndpointOverride {
 };
 
 // Parses an override from `str`, of the form "<endpoint>=<space>".
-absl::optional<EndpointOverride> ParseEndpointOverride(std::string_view str) {
+std::optional<EndpointOverride> ParseEndpointOverride(std::string_view str) {
   std::vector<std::string_view> tokens = base::SplitStringPiece(
       str, "=", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   // There should be 2 parts: the endpoint and the address space.
   if (tokens.size() != 2) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::string_view endpoint = tokens[0];
   std::string_view address_space = tokens[1];
 
-  absl::optional<IPEndPoint> parsed_endpoint = ParseEndpoint(endpoint);
+  std::optional<IPEndPoint> parsed_endpoint = ParseEndpoint(endpoint);
   if (!parsed_endpoint.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  absl::optional<IPAddressSpace> parsed_address_space =
+  std::optional<IPAddressSpace> parsed_address_space =
       ParseIPAddressSpace(address_space);
   if (!parsed_address_space.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   EndpointOverride result;
@@ -130,7 +140,7 @@ std::vector<EndpointOverride> ParseEndpointOverrideList(std::string_view list) {
 
   std::vector<EndpointOverride> endpoint_overrides;
   for (std::string_view token : tokens) {
-    absl::optional<EndpointOverride> parsed = ParseEndpointOverride(token);
+    std::optional<EndpointOverride> parsed = ParseEndpointOverride(token);
     if (parsed.has_value()) {
       endpoint_overrides.push_back(*std::move(parsed));
     }
@@ -141,12 +151,12 @@ std::vector<EndpointOverride> ParseEndpointOverrideList(std::string_view list) {
 
 // Applies overrides specified on the command-line to `endpoint`.
 // Returns nullopt if no override matches `endpoint`.
-absl::optional<IPAddressSpace> ApplyCommandLineOverrides(
+std::optional<IPAddressSpace> ApplyCommandLineOverrides(
     const IPEndPoint& endpoint) {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   if (!command_line.HasSwitch(switches::kIpAddressSpaceOverrides)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::string switch_str =
@@ -158,9 +168,13 @@ absl::optional<IPAddressSpace> ApplyCommandLineOverrides(
     if (endpoint_override.endpoint == endpoint) {
       return endpoint_override.space;
     }
+    if ((endpoint_override.endpoint.port() == 0) &&
+        (endpoint_override.endpoint.address() == endpoint.address())) {
+      return endpoint_override.space;
+    }
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // Represents a single entry of the form: subnet -> address space.
@@ -175,7 +189,7 @@ class AddressSpaceMapEntry {
 
   // Returns the assigned address space if `address` belongs to this instance's
   // subnet. Returns nullopt otherwise.
-  absl::optional<IPAddressSpace> Apply(const IPAddress& address) const;
+  std::optional<IPAddressSpace> Apply(const IPAddress& address) const;
 
  private:
   IPAddress prefix_;
@@ -183,13 +197,13 @@ class AddressSpaceMapEntry {
   IPAddressSpace space_ = IPAddressSpace::kUnknown;
 };
 
-absl::optional<IPAddressSpace> AddressSpaceMapEntry::Apply(
+std::optional<IPAddressSpace> AddressSpaceMapEntry::Apply(
     const IPAddress& address) const {
   if (net::IPAddressMatchesPrefix(address, prefix_, prefix_length_)) {
     return space_;
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // Maps IP addresses to IP address spaces.
@@ -201,15 +215,15 @@ class AddressSpaceMap {
   // Applies entries in this map to `address`, in sequential order.
   // Returns the address space of the first matching entry.
   // Returns nullopt if no match is found.
-  absl::optional<IPAddressSpace> Apply(const IPAddress& address) const;
+  std::optional<IPAddressSpace> Apply(const IPAddress& address) const;
 
  private:
   std::vector<AddressSpaceMapEntry> entries_;
 };
 
-absl::optional<IPAddressSpace> AddressSpaceMap::Apply(
+std::optional<IPAddressSpace> AddressSpaceMap::Apply(
     const IPAddress& address) const {
-  absl::optional<IPAddressSpace> space;
+  std::optional<IPAddressSpace> space;
 
   for (const AddressSpaceMapEntry& entry : entries_) {
     space = entry.Apply(address);
@@ -231,21 +245,34 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
   // well with initializer lists.
   static const base::NoDestructor<AddressSpaceMap> kMap(AddressSpaceMap({
       // IPv6 Loopback (RFC 4291): ::1/128
-      Entry(IPAddress::IPv6Localhost(), 128, IPAddressSpace::kLocal),
+      Entry(IPAddress::IPv6Localhost(), 128, IPAddressSpace::kLoopback),
       // IPv6 Unique-local (RFC 4193, RFC 8190): fc00::/7
       Entry(IPAddress(0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 7,
-            IPAddressSpace::kPrivate),
+            IPAddressSpace::kLocal),
       // IPv6 Link-local unicast (RFC 4291): fe80::/10
       Entry(IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
-            IPAddressSpace::kPrivate),
+            IPAddressSpace::kLocal),
       // IPv4 Loopback (RFC 1122): 127.0.0.0/8
-      Entry(IPAddress(127, 0, 0, 0), 8, IPAddressSpace::kLocal),
+      Entry(IPAddress(127, 0, 0, 0), 8, IPAddressSpace::kLoopback),
       // IPv4 Private use (RFC 1918): 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-      Entry(IPAddress(10, 0, 0, 0), 8, IPAddressSpace::kPrivate),
-      Entry(IPAddress(172, 16, 0, 0), 12, IPAddressSpace::kPrivate),
-      Entry(IPAddress(192, 168, 0, 0), 16, IPAddressSpace::kPrivate),
+      Entry(IPAddress(10, 0, 0, 0), 8, IPAddressSpace::kLocal),
+      Entry(IPAddress(172, 16, 0, 0), 12, IPAddressSpace::kLocal),
+      Entry(IPAddress(192, 168, 0, 0), 16, IPAddressSpace::kLocal),
       // IPv4 Link-local (RFC 3927): 169.254.0.0/16
-      Entry(IPAddress(169, 254, 0, 0), 16, IPAddressSpace::kPrivate),
+      Entry(IPAddress(169, 254, 0, 0), 16, IPAddressSpace::kLocal),
+      // IPv4 Null IP (RFC 5735): 0.0.0.0/32 is "this host on this network".
+      // Other addresses in 0.0.0.0/8 may refer to "specified hosts on this
+      // network". This is somewhat under-defined for the purposes of assigning
+      // local vs loopback address space but we assign 0.0.0.0/32 to "loopback"
+      // and the rest of the block to "local". Note that this mapping can be
+      // overridden by a killswitch feature flag in IPAddressToIPAddressSpace()
+      // since these addresses were previously treated as public. See
+      // https://crbug.com/40058874.
+      //
+      // TODO(https://crbug.com/40058874): decide if we should do the same for
+      // the all-zero IPv6 address.
+      Entry(IPAddress(0, 0, 0, 0), 32, IPAddressSpace::kLoopback),
+      Entry(IPAddress(0, 0, 0, 0), 8, IPAddressSpace::kLocal),
   }));
   return *kMap;
 }
@@ -253,6 +280,17 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
 }  // namespace
 
 IPAddressSpace IPAddressToIPAddressSpace(const IPAddress& address) {
+  // The null IP block (0.0.0.0/8) was previously treated as public, but this
+  // was a loophole in Private Network Access and thus these addresses are now
+  // mapped to the local/private address space instead. This feature is a
+  // killswitch for this behavior to revert these addresses to the public
+  // address space.
+  if (base::FeatureList::IsEnabled(
+          network::features::kTreatNullIPAsPublicAddressSpace) &&
+      address.IsIPv4() &&
+      IPAddressMatchesPrefix(address, IPAddress(0, 0, 0, 0), 8)) {
+    return IPAddressSpace::kPublic;
+  }
   return NonPublicAddressSpaceMap().Apply(address).value_or(
       IPAddressSpace::kPublic);
 }
@@ -264,7 +302,7 @@ IPAddressSpace IPEndPointToIPAddressSpace(const IPEndPoint& endpoint) {
     return IPAddressSpace::kUnknown;
   }
 
-  absl::optional<IPAddressSpace> space = ApplyCommandLineOverrides(endpoint);
+  std::optional<IPAddressSpace> space = ApplyCommandLineOverrides(endpoint);
   if (space.has_value()) {
     return *space;
   }
@@ -280,10 +318,10 @@ std::string_view IPAddressSpaceToStringPiece(IPAddressSpace space) {
       return "unknown";
     case IPAddressSpace::kPublic:
       return "public";
-    case IPAddressSpace::kPrivate:
-      return "private";
     case IPAddressSpace::kLocal:
       return "local";
+    case IPAddressSpace::kLoopback:
+      return "loopback";
   }
 }
 
@@ -308,6 +346,15 @@ IPAddressSpace CollapseUnknown(IPAddressSpace space) {
   return space;
 }
 
+// For comparison purposes, we treat kLocal and kLoopback as equivalent
+// (kLocal arbitrarily chosen over kLoopback).
+IPAddressSpace CollapseLocalAndLoopback(IPAddressSpace space) {
+  if (space == IPAddressSpace::kLoopback) {
+    return IPAddressSpace::kLocal;
+  }
+  return space;
+}
+
 }  // namespace
 
 bool IsLessPublicAddressSpace(IPAddressSpace lhs, IPAddressSpace rhs) {
@@ -317,12 +364,19 @@ bool IsLessPublicAddressSpace(IPAddressSpace lhs, IPAddressSpace rhs) {
   return CollapseUnknown(lhs) < CollapseUnknown(rhs);
 }
 
+bool IsLessPublicAddressSpaceLNA(IPAddressSpace lhs, IPAddressSpace rhs) {
+  // Similar to IsLessPublicAddressSpace but with additional collapsing of
+  // kLocal and kLoopback.
+  return CollapseLocalAndLoopback(CollapseUnknown(lhs)) <
+         CollapseLocalAndLoopback(CollapseUnknown(rhs));
+}
+
 CalculateClientAddressSpaceParams::~CalculateClientAddressSpaceParams() =
     default;
 
 mojom::IPAddressSpace CalculateClientAddressSpace(
     const GURL& url,
-    absl::optional<CalculateClientAddressSpaceParams> params) {
+    std::optional<CalculateClientAddressSpaceParams> params) {
   if (params.has_value() &&
       params->client_address_space_inherited_from_service_worker.has_value()) {
     return *params->client_address_space_inherited_from_service_worker;
@@ -330,7 +384,7 @@ mojom::IPAddressSpace CalculateClientAddressSpace(
 
   if (url.SchemeIsFile()) {
     // See: https://wicg.github.io/cors-rfc1918/#file-url.
-    return mojom::IPAddressSpace::kLocal;
+    return mojom::IPAddressSpace::kLoopback;
   }
 
   if (!params.has_value()) {
@@ -355,10 +409,27 @@ mojom::IPAddressSpace CalculateResourceAddressSpace(
     const net::IPEndPoint& endpoint) {
   if (url.SchemeIsFile()) {
     // See: https://wicg.github.io/cors-rfc1918/#file-url.
-    return mojom::IPAddressSpace::kLocal;
+    return mojom::IPAddressSpace::kLoopback;
   }
 
   return IPEndPointToIPAddressSpace(endpoint);
+}
+
+std::optional<net::IPAddress> ParsePrivateIpFromUrl(const GURL& url) {
+  net::IPAddress address;
+  if (!address.AssignFromIPLiteral(url.HostNoBracketsPiece())) {
+    return std::nullopt;
+  }
+
+  if (IPAddressToIPAddressSpace(address) != mojom::IPAddressSpace::kLocal) {
+    return std::nullopt;
+  }
+
+  return address;
+}
+
+bool IsRFC6762LocalDomain(const GURL& url) {
+  return url.DomainIs("local");
 }
 
 }  // namespace network

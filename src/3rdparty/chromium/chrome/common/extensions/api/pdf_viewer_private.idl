@@ -6,6 +6,63 @@
 // functionality that the PDF Viewer needs from outside the PDF plugin. This API
 // is exclusively for the PDF Viewer.
 namespace pdfViewerPrivate {
+  // Must match `SaveRequestType` in `pdf/mojom/pdf.mojom` and
+  // `tools/typescript/definitions/pdf_viewer_private.d.ts`.
+  enum SaveRequestType {
+    ANNOTATION,
+    ORIGINAL,
+    EDITED,
+    SEARCHIFIED
+  };
+
+  // Enumeration of save to drive error types. Must match `SaveToDriveErrorType`
+  // in tools/typescript/definitions/pdf_viewer_private.d.ts.
+  enum SaveToDriveErrorType {
+    NO_ERROR,
+    UNKNOWN_ERROR,
+    QUOTA_EXCEEDED,
+    OFFLINE,
+    OAUTH_ERROR,
+    ACCOUNT_CHOOSER_CANCELED,
+    PARENT_FOLDER_SELECTION_FAILED
+  };
+
+  // Enumeration of save to drive status. Must match `SaveToDriveStatus` in
+  // tools/typescript/definitions/pdf_viewer_private.d.ts.
+  enum SaveToDriveStatus {
+    NOT_STARTED,
+    INITIATED,
+    ACCOUNT_CHOOSER_SHOWN,
+    ACCOUNT_SELECTED,
+    ACCOUNT_ADD_SELECTED,
+    ACCOUNT_ADDED,
+    FETCH_OAUTH,
+    FETCH_PARENT_FOLDER,
+    UPLOAD_STARTED,
+    UPLOAD_IN_PROGRESS,
+    UPLOAD_COMPLETED,
+    UPLOAD_RETRIED,
+    UPLOAD_FAILED
+  };
+
+  // Progress of a save to drive request.
+  dictionary SaveToDriveProgress {
+    // The status of the upload.
+    SaveToDriveStatus status;
+
+    // The error type of the upload.
+    SaveToDriveErrorType errorType;
+
+    // The ID of the drive item that was uploaded.
+    DOMString? driveItemId;
+
+    // The total size of the file in bytes.
+    long? fileSizeBytes;
+
+    // The number of bytes that have been uploaded.
+    long? uploadedBytes;
+  };
+
   // Nearly identical to mimeHandlerPrivate.StreamInfo, but without a mime type
   // nor a response header field. Those fields are unused by the PDF viewer.
   dictionary StreamInfo {
@@ -38,48 +95,52 @@ namespace pdfViewerPrivate {
 
   callback GetStreamInfoCallback = void(StreamInfo streamInfo);
   callback IsAllowedLocalFileAccessCallback = void(boolean result);
-  callback IsPdfOcrAlwaysActiveCallback = void(boolean result);
-  callback OnPdfOcrPrefSetCallback = void(boolean result);
   callback VoidCallback = void();
 
   interface Functions {
     // Returns the StreamInfo for the stream for this context if there is one.
-    [supportsPromises] static void getStreamInfo(
+    static void getStreamInfo(
         GetStreamInfoCallback callback);
 
     // Determines if the given URL should be allowed to access local files from
     // the PDF Viewer. |callback|: Called with true if URL should be allowed to
     // access local files from the PDF Viewer, false otherwise.
-    [supportsPromises] static void isAllowedLocalFileAccess(
+    static void isAllowedLocalFileAccess(
         DOMString url,
         IsAllowedLocalFileAccessCallback callback);
 
-    // Determines if the preference for PDF OCR is set to run PDF OCR always.
-    // |callback|: Called with true if PDF OCR is set to be always active;
-    // false otherwise.
-    [supportsPromises] static void isPdfOcrAlwaysActive(
-        IsPdfOcrAlwaysActiveCallback callback);
+    // Sends a request to save the PDF to Google Drive.
+    static void saveToDrive(
+        SaveRequestType saveRequestType,
+        optional VoidCallback callback);
 
-    // Sets a pref value for PDF OCR.
-    // |value|: The new value of the pref.
-    // |callback|: The callback for whether the pref was set or not.
-    [supportsPromises] static void setPdfOcrPref(
-        boolean value, OnPdfOcrPrefSetCallback callback);
+    // Sets the current tab title to `title` for a full-page PDF.
+    static void setPdfDocumentTitle(
+        DOMString title,
+        optional VoidCallback callback);
 
     // Sets PDF plugin attributes in the stream for this context if there is
     // one.
-    [supportsPromises] static void setPdfPluginAttributes(
+    static void setPdfPluginAttributes(
         PdfPluginAttributes attributes,
         optional VoidCallback callback);
   };
 
   interface Events {
-    // Fired when a pref value for PDF OCR has changed.
-    // |value| The pref value that changed.
-    static void onPdfOcrPrefChanged(boolean value);
-
     // Fired when the browser wants the listener to perform a save.
     // `streamUrl`: Unique ID for the instance that should perform the save.
     static void onSave(DOMString streamUrl);
+
+    // Fired when the browser wants the listener to update the save to drive
+    // progress.
+    // `streamUrl`: Unique ID for the instance that should perform the save.
+    // `progress`: The progress of the save to drive.
+    static void onSaveToDriveProgress(DOMString streamUrl,
+                                      SaveToDriveProgress progress);
+
+    // Fired when the browser wants the listener to update the viewport based on
+    // a different PDF URL.
+    // `pdfUrl`: The string of the PDF URL that should update the viewport.
+    static void onShouldUpdateViewport(DOMString pdfUrl);
   };
 };

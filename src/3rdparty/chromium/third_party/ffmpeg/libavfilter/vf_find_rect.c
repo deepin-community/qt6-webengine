@@ -22,9 +22,10 @@
  * @todo switch to dualinput
  */
 
-#include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
-#include "internal.h"
+
+#include "filters.h"
 #include "video.h"
 
 #include "lavfutils.h"
@@ -172,6 +173,7 @@ static float search(FOCContext *foc, int pass, int maxpass, int xmin, int xmax, 
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
+    FilterLink *inl = ff_filter_link(inlink);
     AVFilterContext *ctx = inlink->dst;
     FOCContext *foc = ctx->priv;
     float best_score;
@@ -208,7 +210,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
 
     av_log(ctx, AV_LOG_INFO, "Found at n=%"PRId64" pts_time=%f x=%d y=%d with score=%f\n",
-           inlink->frame_count_out, TS2D(in->pts) * av_q2d(inlink->time_base),
+           inl->frame_count_out, TS2D(in->pts) * av_q2d(inlink->time_base),
            best_x, best_y, best_score);
     foc->last_x = best_x;
     foc->last_y = best_y;
@@ -282,15 +284,15 @@ static const AVFilterPad foc_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_find_rect = {
-    .name            = "find_rect",
-    .description     = NULL_IF_CONFIG_SMALL("Find a user specified object."),
+const FFFilter ff_vf_find_rect = {
+    .p.name          = "find_rect",
+    .p.description   = NULL_IF_CONFIG_SMALL("Find a user specified object."),
+    .p.flags         = AVFILTER_FLAG_METADATA_ONLY,
+    .p.priv_class    = &find_rect_class,
     .priv_size       = sizeof(FOCContext),
     .init            = init,
     .uninit          = uninit,
-    .flags           = AVFILTER_FLAG_METADATA_ONLY,
     FILTER_INPUTS(foc_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS(AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUVJ420P),
-    .priv_class      = &find_rect_class,
 };

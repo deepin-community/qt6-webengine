@@ -21,10 +21,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_FALLBACK_LIST_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_FALLBACK_LIST_H_
 
-#include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/platform/fonts/fallback_list_composite_key.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/font_features.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/ng_shape_cache.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_cache.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
+#include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 
 namespace blink {
 
@@ -50,7 +51,6 @@ class PLATFORM_EXPORT FontFallbackList
 
   FontFallbackList(const FontFallbackList&) = delete;
   FontFallbackList& operator=(const FontFallbackList&) = delete;
-  ~FontFallbackList();
 
   void Trace(Visitor*) const;
 
@@ -70,38 +70,52 @@ class PLATFORM_EXPORT FontFallbackList
   FontSelector* GetFontSelector() const { return font_selector_.Get(); }
   uint16_t Generation() const { return generation_; }
 
-  NGShapeCache& GetNGShapeCache(const FontDescription& font_description) {
-    if (!ng_shape_cache_) {
-      ng_shape_cache_.emplace();
-    }
-    return ng_shape_cache_.value();
-  }
-
   ShapeCache* GetShapeCache(const FontDescription& font_description) {
     if (!shape_cache_) {
       FallbackListCompositeKey key(font_description);
-      shape_cache_ = FontCache::Get().GetShapeCache(key)->GetWeakPtr();
+      shape_cache_ = FontCache::Get().GetShapeCache(key);
     }
-    DCHECK(shape_cache_);
     if (font_selector_) {
       shape_cache_->ClearIfVersionChanged(font_selector_->Version());
     }
-    return shape_cache_.get();
+    return shape_cache_.Get();
   }
 
-  const SimpleFontData* PrimarySimpleFontData(
+  const SimpleFontData* PrimarySimpleFontDataWithSpace(
       const FontDescription& font_description) {
     if (nullify_primary_font_data_for_test_) {
       return nullptr;
     }
-    if (!cached_primary_simple_font_data_) {
-      cached_primary_simple_font_data_ =
-          DeterminePrimarySimpleFontData(font_description);
-      DCHECK(cached_primary_simple_font_data_);
+    if (!cached_primary_simple_font_data_with_space_) {
+      cached_primary_simple_font_data_with_space_ =
+          DeterminePrimarySimpleFontData(font_description, uchar::kSpace);
+      DCHECK(cached_primary_simple_font_data_with_space_);
     }
-    return cached_primary_simple_font_data_;
+    return cached_primary_simple_font_data_with_space_;
   }
+  const SimpleFontData* PrimarySimpleFontDataWithDigitZero(
+      const FontDescription& font_description) {
+    if (!cached_primary_simple_font_data_with_digit_zero_) {
+      cached_primary_simple_font_data_with_digit_zero_ =
+          DeterminePrimarySimpleFontData(font_description, uchar::kDigitZero);
+      DCHECK(cached_primary_simple_font_data_with_digit_zero_);
+    }
+    return cached_primary_simple_font_data_with_digit_zero_;
+  }
+
+  const SimpleFontData* PrimarySimpleFontDataWithCjkWater(
+      const FontDescription& font_description) {
+    if (!cached_primary_simple_font_data_with_cjk_water_) {
+      cached_primary_simple_font_data_with_cjk_water_ =
+          DeterminePrimarySimpleFontData(font_description, uchar::kCjkWater);
+    }
+    return cached_primary_simple_font_data_with_cjk_water_;
+  }
+
   const FontData* FontDataAt(const FontDescription&, unsigned index);
+
+  base::span<const FontFeatureRange> GetFontFeatures(const FontDescription&);
+  bool HasNonInitialFontFeatures(const FontDescription&);
 
   bool CanShapeWordByWord(const FontDescription&);
 
@@ -119,29 +133,37 @@ class PLATFORM_EXPORT FontFallbackList
   bool HasCustomFont() const { return has_custom_font_; }
 
  private:
-  scoped_refptr<FontData> GetFontData(const FontDescription&);
+  const FontData* GetFontData(const FontDescription&);
 
-  const SimpleFontData* DeterminePrimarySimpleFontData(const FontDescription&);
+  const SimpleFontData* DeterminePrimarySimpleFontData(
+      const FontDescription&,
+      UChar32 lookup_character = uchar::kSpace);
   const SimpleFontData* DeterminePrimarySimpleFontDataCore(
-      const FontDescription&);
+      const FontDescription&,
+      UChar32 lookup_character = uchar::kSpace);
 
-  void ReleaseFontData();
+  void ComputeFontFeatures(const FontDescription&);
   bool ComputeCanShapeWordByWord(const FontDescription&);
 
-  Vector<scoped_refptr<FontData>, 1> font_list_;
-  const SimpleFontData* cached_primary_simple_font_data_ = nullptr;
+  HeapVector<Member<const FontData>, 1> font_list_;
+  Member<const SimpleFontData> cached_primary_simple_font_data_with_space_;
+  Member<const SimpleFontData> cached_primary_simple_font_data_with_digit_zero_;
+  Member<const SimpleFontData> cached_primary_simple_font_data_with_cjk_water_;
   const Member<FontSelector> font_selector_;
   int family_index_ = 0;
   const uint16_t generation_;
-  bool has_loading_fallback_ : 1;
-  bool has_custom_font_ : 1;
-  bool can_shape_word_by_word_ : 1;
-  bool can_shape_word_by_word_computed_ : 1;
-  bool is_invalid_ : 1;
-  bool nullify_primary_font_data_for_test_ : 1;
+  Vector<FontFeatureRange, FontFeatureRange::kInitialSize> font_features_;
 
-  absl::optional<NGShapeCache> ng_shape_cache_;
-  base::WeakPtr<ShapeCache> shape_cache_;
+  bool has_loading_fallback_ : 1 = false;
+  bool has_custom_font_ : 1 = false;
+  bool can_shape_word_by_word_ : 1 = false;
+  bool can_shape_word_by_word_computed_ : 1 = false;
+  bool is_invalid_ : 1 = false;
+  bool nullify_primary_font_data_for_test_ : 1 = false;
+  bool is_font_features_computed_ : 1 = false;
+  bool has_non_initial_font_features_ : 1 = false;
+
+  Member<ShapeCache> shape_cache_;
 };
 
 }  // namespace blink

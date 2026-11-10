@@ -4,8 +4,9 @@
 
 #include "chrome/browser/printing/pdf_to_emf_converter.h"
 
-#include <stdint.h>
 #include <windows.h>
+
+#include <stdint.h>
 
 #include <memory>
 #include <optional>
@@ -41,22 +42,6 @@ using content::BrowserThread;
 namespace printing {
 
 namespace {
-
-// Emf subclass that knows how to play back PostScript data embedded as EMF
-// comment records.
-class PostScriptMetaFile : public Emf {
- public:
-  PostScriptMetaFile() = default;
-
-  PostScriptMetaFile(const PostScriptMetaFile&) = delete;
-  PostScriptMetaFile& operator=(const PostScriptMetaFile&) = delete;
-
-  ~PostScriptMetaFile() override = default;
-
- private:
-  // Emf:
-  bool SafePlayback(HDC hdc) const override;
-};
 
 // Class for converting PDF to another format for printing (Emf, Postscript).
 // Class lives on the UI thread.
@@ -187,23 +172,6 @@ std::unique_ptr<MetafilePlayer> PdfConverterImpl::GetMetaFileFromMapping(
   return metafile;
 }
 
-bool PostScriptMetaFile::SafePlayback(HDC hdc) const {
-  Emf::Enumerator emf_enum(*this, nullptr, nullptr);
-  for (const Emf::Record& record : emf_enum) {
-    auto* emf_record = record.record();
-    if (emf_record->iType != EMR_GDICOMMENT)
-      continue;
-
-    const EMRGDICOMMENT* comment =
-        reinterpret_cast<const EMRGDICOMMENT*>(emf_record);
-    const char* data = reinterpret_cast<const char*>(comment->Data);
-    const uint16_t* ptr = reinterpret_cast<const uint16_t*>(data);
-    int ret = ExtEscape(hdc, PASSTHROUGH, 2 + *ptr, data, 0, nullptr);
-    DCHECK_EQ(*ptr, ret);
-  }
-  return true;
-}
-
 PdfConverterImpl::PdfConverterImpl(scoped_refptr<base::RefCountedMemory> data,
                                    const PdfRenderSettings& settings,
                                    const std::optional<bool>& use_skia,
@@ -239,7 +207,7 @@ void PdfConverterImpl::Initialize(scoped_refptr<base::RefCountedMemory> data) {
   }
 
   PRINTER_LOG(EVENT) << "PdfConverter created. Mode: " << settings_.mode;
-  memcpy(memory.mapping.memory(), data->front(), data->size());
+  memory.mapping.GetMemoryAsSpan<uint8_t>().copy_prefix_from(*data);
 
   GetPrintingService()->BindPdfToEmfConverterFactory(
       pdf_to_emf_converter_factory_.BindNewPipeAndPassReceiver());

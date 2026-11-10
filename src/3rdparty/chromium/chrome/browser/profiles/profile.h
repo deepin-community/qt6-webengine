@@ -53,7 +53,7 @@ class Profile : public content::BrowserContext {
 
   base::WeakPtr<Profile> GetWeakPtr();
 
- private:
+  private:
   base::WeakPtrFactory<Profile> weak_ptr_factory_{this};
 
 };

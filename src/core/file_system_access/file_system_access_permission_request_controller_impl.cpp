@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "file_system_access_permission_request_controller_impl.h"
 
@@ -23,7 +24,8 @@ FileSystemAccessPermissionRequestControllerImpl::FileSystemAccessPermissionReque
         const FileSystemAccessPermissionRequestManagerQt::RequestData &request,
         base::OnceCallback<void(permissions::PermissionAction result)> callback)
     : FileSystemAccessPermissionRequestController(
-            toQt(request.origin.GetURL()), QUrl::fromLocalFile(toQt(request.path.value())),
+            toQt(request.origin.GetURL()), QUrl::fromLocalFile(toQt(request.pathInfo.path.value())),
+            QString::fromStdString(request.pathInfo.display_name),
             (HandleType)request.handle_type, AccessFlags((int)request.access))
     , m_callback(std::move(callback))
 {

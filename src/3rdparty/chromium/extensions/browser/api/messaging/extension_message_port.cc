@@ -5,16 +5,17 @@
 #include "extensions/browser/api/messaging/extension_message_port.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <utility>
 
 #include "base/containers/contains.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/scoped_observation.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/types/optional_util.h"
 #include "base/types/pass_key.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
@@ -28,16 +29,17 @@
 #include "extensions/browser/api/messaging/channel_endpoint.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_web_contents_observer.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/message_tracker.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_observer.h"
 #include "extensions/browser/service_worker/service_worker_host.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/messaging_endpoint.h"
-#include "extensions/common/extension_messages.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/mojom/message_port.mojom-shared.h"
-#include "services/metrics/public/cpp/ukm_recorder.h"
-#include "services/metrics/public/cpp/ukm_source_id.h"
+#include "ipc/constants.mojom.h"
 
 namespace extensions {
 
@@ -56,21 +58,25 @@ const char kReceivingEndDoesntExistError[] =
 const char kClosedWhileResponsePendingError[] =
     "A listener indicated an asynchronous response by returning true, but the "
     "message channel closed before a response was received";
+const char kClosedWhenPageEntersBFCache[] =
+    "The page keeping the extension port is moved into back/forward cache, so "
+    "the message channel is closed.";
 
 }  // namespace
 
-// Helper class to detect when frames are destroyed.
-class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
-                                           public ProcessManagerObserver {
+// Helper class to detect when contexts (frames or workers) are destroyed.
+class ExtensionMessagePort::ContextTracker
+    : public content::WebContentsObserver,
+      public ProcessManagerObserver {
  public:
-  explicit FrameTracker(ExtensionMessagePort* port) : port_(port) {}
+  explicit ContextTracker(ExtensionMessagePort* port) : port_(port) {}
 
-  FrameTracker(const FrameTracker&) = delete;
-  FrameTracker& operator=(const FrameTracker&) = delete;
+  ContextTracker(const ContextTracker&) = delete;
+  ContextTracker& operator=(const ContextTracker&) = delete;
 
-  ~FrameTracker() override = default;
+  ~ContextTracker() override = default;
 
-  void TrackExtensionProcessFrames() {
+  void TrackExtensionContexts() {
     pm_observation_.Observe(ProcessManager::Get(port_->browser_context_));
   }
 
@@ -85,9 +91,7 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override {
-    if (base::FeatureList::IsEnabled(
-            features::kDisconnectExtensionMessagePortWhenPageEntersBFCache) &&
-        navigation_handle->HasCommitted()) {
+    if (navigation_handle->HasCommitted()) {
       // Close the channel and force all the ports from the channel to be
       // closed when the old RFH is going to be stored in BFCache. They will
       // not be able to receive any message sent through the port.
@@ -96,7 +100,8 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
       if (previous_rfh &&
           previous_rfh->GetLifecycleState() ==
               content::RenderFrameHost::LifecycleState::kInBackForwardCache) {
-        if (port_->UnregisterFramesUnderMainFrame(previous_rfh)) {
+        if (port_->UnregisterFramesUnderMainFrame(
+                previous_rfh, kClosedWhenPageEntersBFCache)) {
           // Since the channel and the port is already closed, we don't have to
           // run the following block to unregister the frames any more.
           return;
@@ -141,51 +146,44 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 
   // extensions::ProcessManagerObserver overrides:
   void OnExtensionFrameUnregistered(
-      const std::string& extension_id,
+      const ExtensionId& extension_id,
       content::RenderFrameHost* render_frame_host) override {
     if (extension_id == port_->extension_id_)
       port_->UnregisterFrame(render_frame_host);
   }
 
-  void OnServiceWorkerUnregistered(const WorkerId& worker_id) override {
+  void OnStoppedTrackingServiceWorkerInstance(
+      const WorkerId& worker_id) override {
     port_->UnregisterWorker(worker_id);
   }
 
   base::ScopedObservation<ProcessManager, ProcessManagerObserver>
       pm_observation_{this};
-  raw_ptr<ExtensionMessagePort> port_;  // Owns this FrameTracker.
+  raw_ptr<ExtensionMessagePort> port_;  // Owns this ContextTracker.
 };
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-// Represents target of an IPC (render frame, ServiceWorker or render process).
-struct ExtensionMessagePort::IPCTarget {
-  raw_ptr<content::RenderProcessHost> render_process_host;
-  raw_ptr<content::RenderFrameHost, DanglingUntriaged> render_frame_host;
-  int worker_thread_id;
-};
-#endif
-
-ExtensionMessagePort::ExtensionMessagePort(
+std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForTab(
     base::WeakPtr<ChannelDelegate> channel_delegate,
     const PortId& port_id,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     content::RenderFrameHost* render_frame_host,
-    bool include_child_frames)
-    : MessagePort(std::move(channel_delegate), port_id),
-      extension_id_(extension_id),
-      browser_context_(render_frame_host->GetProcess()->GetBrowserContext()),
-      frame_tracker_(new FrameTracker(this)) {
+    bool include_child_frames) {
+  auto port = std::make_unique<ExtensionMessagePort>(
+      channel_delegate, port_id, extension_id,
+      render_frame_host->GetBrowserContext(), PassKey());
+  port->context_tracker_ = std::make_unique<ContextTracker>(port.get());
+
   content::WebContents* tab =
       content::WebContents::FromRenderFrameHost(render_frame_host);
   CHECK(tab);
-  frame_tracker_->TrackTabFrames(tab);
+  port->context_tracker_->TrackTabFrames(tab);
   if (include_child_frames) {
-    // TODO(https://crbug.com/1227787) We don't yet support MParch for
+    // TODO(crbug.com/40189370) We don't yet support MParch for
     // prerender so make sure `include_child_frames` is only provided for
     // primary main frames.
     CHECK(render_frame_host->IsInPrimaryMainFrame());
     render_frame_host->ForEachRenderFrameHostWithAction(
-        [tab, this](content::RenderFrameHost* render_frame_host) {
+        [tab, &port](content::RenderFrameHost* render_frame_host) {
           // RegisterFrame should only be called for frames associated with
           // `tab` and not any inner WebContents.
           if (content::WebContents::FromRenderFrameHost(render_frame_host) !=
@@ -193,12 +191,14 @@ ExtensionMessagePort::ExtensionMessagePort(
             return content::RenderFrameHost::FrameIterationAction::
                 kSkipChildren;
           }
-          RegisterFrame(render_frame_host);
+          port->RegisterFrame(render_frame_host);
           return content::RenderFrameHost::FrameIterationAction::kContinue;
         });
   } else {
-    RegisterFrame(render_frame_host);
+    port->RegisterFrame(render_frame_host);
   }
+
+  return port;
 }
 
 // static
@@ -209,8 +209,8 @@ std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForExtension(
     content::BrowserContext* browser_context) {
   auto port = std::make_unique<ExtensionMessagePort>(
       channel_delegate, port_id, extension_id, browser_context, PassKey());
-  port->frame_tracker_ = std::make_unique<FrameTracker>(port.get());
-  port->frame_tracker_->TrackExtensionProcessFrames();
+  port->context_tracker_ = std::make_unique<ContextTracker>(port.get());
+  port->context_tracker_->TrackExtensionContexts();
 
   port->for_all_extension_contexts_ = true;
 
@@ -233,7 +233,7 @@ std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForExtension(
 std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForEndpoint(
     base::WeakPtr<ChannelDelegate> channel_delegate,
     const PortId& port_id,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const ChannelEndpoint& endpoint,
     mojo::PendingAssociatedRemote<extensions::mojom::MessagePort> message_port,
     mojo::PendingAssociatedReceiver<extensions::mojom::MessagePortHost>
@@ -241,41 +241,33 @@ std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForEndpoint(
   auto port = std::make_unique<ExtensionMessagePort>(
       channel_delegate, port_id, extension_id, endpoint.browser_context(),
       PassKey());
-  port->frame_tracker_ = std::make_unique<FrameTracker>(port.get());
+  port->context_tracker_ = std::make_unique<ContextTracker>(port.get());
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
   if (endpoint.is_for_render_frame()) {
     content::RenderFrameHost* render_frame_host = endpoint.GetRenderFrameHost();
     content::WebContents* tab =
         content::WebContents::FromRenderFrameHost(render_frame_host);
     CHECK(tab);
-    port->frame_tracker_->TrackTabFrames(tab);
-    port->frames_[render_frame_host->GetGlobalFrameToken()] = {};
-  } else {
-    port->frame_tracker_->TrackExtensionProcessFrames();
-    port->service_workers_[endpoint.GetWorkerId()] = {};
-  }
-#else
-  if (endpoint.is_for_render_frame()) {
-    content::RenderFrameHost* render_frame_host = endpoint.GetRenderFrameHost();
-    content::WebContents* tab =
-        content::WebContents::FromRenderFrameHost(render_frame_host);
-    CHECK(tab);
-    port->frame_tracker_->TrackTabFrames(tab);
+    port->context_tracker_->TrackTabFrames(tab);
     auto& receiver = port->frames_[render_frame_host->GetGlobalFrameToken()];
     receiver.Bind(std::move(message_port));
-    receiver.set_disconnect_handler(base::BindOnce(
-        &ExtensionMessagePort::Prune, base::Unretained(port.get())));
+    receiver.set_disconnect_handler(base::BindOnce(&ExtensionMessagePort::Prune,
+                                                   base::Unretained(port.get()),
+                                                   endpoint.port_context(),
+                                                   // Unused for endpoints.
+                                                   base::UnguessableToken()));
   } else {
-    port->frame_tracker_->TrackExtensionProcessFrames();
+    port->context_tracker_->TrackExtensionContexts();
     auto& receiver = port->service_workers_[endpoint.GetWorkerId()];
     receiver.Bind(std::move(message_port));
-    receiver.set_disconnect_handler(base::BindOnce(
-        &ExtensionMessagePort::Prune, base::Unretained(port.get())));
+    receiver.set_disconnect_handler(base::BindOnce(&ExtensionMessagePort::Prune,
+                                                   base::Unretained(port.get()),
+                                                   endpoint.port_context(),
+                                                   // Unused for endpoints.
+                                                   base::UnguessableToken()));
   }
   port->AddReceiver(std::move(message_port_host), endpoint.render_process_id(),
                     endpoint.port_context());
-#endif
   return port;
 }
 
@@ -289,11 +281,48 @@ ExtensionMessagePort::ExtensionMessagePort(
       extension_id_(extension_id),
       browser_context_(browser_context) {}
 
-ExtensionMessagePort::~ExtensionMessagePort() = default;
+ExtensionMessagePort::~ExtensionMessagePort() {
+  // We aren't interested in metrics when the browser is shutting down.
+  ExtensionsBrowserClient* browser_client = ExtensionsBrowserClient::Get();
+  if (!browser_client || !browser_client->IsValidContext(browser_context_)) {
+    return;
+  }
 
-#if !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-void ExtensionMessagePort::Prune() {
+  // Emit per connect dispatch IPC metric before class is destroyed.
+  auto* message_tracker = MessageTracker::Get(browser_context_);
+  for (const auto& tracking_id :
+       pending_open_channel_connect_dispatch_tracking_ids_) {
+    message_tracker->StopTrackingMessagingStage(
+        tracking_id, MessageTracker::OpenChannelMessagePipelineResult::
+                         kOpenChannelClosedBeforeResponse);
+  }
+
+  pending_open_channel_connect_dispatch_tracking_ids_.clear();
+}
+
+void ExtensionMessagePort::Prune(
+    const PortContext& port_context,
+    const base::UnguessableToken& connect_dispatch_tracking_id) {
   std::vector<content::GlobalRenderFrameHostToken> frames_to_unregister;
+
+  // Channel metrics tracking.
+  pending_contexts_to_respond_.erase(port_context);
+  // If we're on the last context we expect to see respond and the port
+  // was still not created then OnConnectResponse() didn't emit metrics. Let's
+  // catch this and report we weren't able to find any receivers.
+  if (pending_contexts_to_respond_.empty() && !port_was_created_) {
+    ReportOpenChannelResult(MessageTracker::OpenChannelMessagePipelineResult::
+                                kOpenChannelDispatchNoReceivers);
+  }
+
+  // Per channel open connect IPC dispatch metrics tracking.
+  if (!connect_dispatch_tracking_id.is_empty()) {
+    ReportOpenChannelConnectDispatchResult(
+        connect_dispatch_tracking_id,
+        MessageTracker::OpenChannelMessagePipelineResult::
+            kOpenChannelPortDisconnectedBeforeResponse);
+  }
+
   for (auto& frame : frames_) {
     if (!frame.second.is_connected()) {
       frames_to_unregister.push_back(frame.first);
@@ -317,7 +346,33 @@ void ExtensionMessagePort::Prune() {
     }
   }
 }
-#endif
+
+void ExtensionMessagePort::ReportOpenChannelResult(
+    MessageTracker::OpenChannelMessagePipelineResult emit_value) {
+  // TODO(crbug.com/371011217): Cache this as a member var to avoid fetching it
+  // in so many places.
+  auto* message_tracker = MessageTracker::Get(browser_context_);
+
+  // MessageTracker ensures the metrics can only emit once (e.g. if
+  // another method calls this method again after this).
+  for (const auto& tracking_id : pending_open_channel_tracking_ids_) {
+    message_tracker->StopTrackingMessagingStage(tracking_id, emit_value);
+  }
+
+  pending_open_channel_tracking_ids_.clear();
+}
+
+void ExtensionMessagePort::ReportOpenChannelConnectDispatchResult(
+    const base::UnguessableToken& tracking_id,
+    MessageTracker::OpenChannelMessagePipelineResult emit_value) {
+  auto* message_tracker = MessageTracker::Get(browser_context_);
+
+  // MessageTracker ensures the metrics can only emit once (e.g. if
+  // another method calls this method again after this).
+  message_tracker->StopTrackingMessagingStage(tracking_id, emit_value);
+
+  pending_open_channel_connect_dispatch_tracking_ids_.erase(tracking_id);
+}
 
 void ExtensionMessagePort::RemoveCommonFrames(const MessagePort& port) {
   // This should be called before OnConnect is called.
@@ -359,33 +414,15 @@ void ExtensionMessagePort::RevalidatePort() {
 
   // NOTE: There is only one opener target.
   if (!frames_.empty()) {
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-    SendToIPCTarget(
-        {nullptr,
-         content::RenderFrameHost::FromFrameToken(frames_.begin()->first),
-         kMainThreadId},
-        std::make_unique<ExtensionMsg_ValidateMessagePort>(
-            MSG_ROUTING_NONE, kMainThreadId, port_id_));
-#else
     if (!frames_.begin()->second.is_connected()) {
       UnregisterFrame(frames_.begin()->first);
     }
-#endif
     return;
   }
   if (!service_workers_.empty()) {
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-    const WorkerId& service_worker = service_workers_.begin()->first;
-    SendToIPCTarget(
-        {content::RenderProcessHost::FromID(service_worker.render_process_id),
-         nullptr, service_worker.thread_id},
-        std::make_unique<ExtensionMsg_ValidateMessagePort>(
-            MSG_ROUTING_NONE, service_worker.thread_id, port_id_));
-#else
     if (!service_workers_.begin()->second.is_connected()) {
       UnregisterWorker(service_workers_.begin()->first);
     }
-#endif
     return;
   }
 }
@@ -400,22 +437,8 @@ void ExtensionMessagePort::DispatchOnConnect(
     const MessagingEndpoint& source_endpoint,
     const std::string& target_extension_id,
     const GURL& source_url,
-    std::optional<url::Origin> source_origin) {
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  for (const auto& frame_token : pending_frames_) {
-    frames_[frame_token] = {};
-  }
-  for (const auto& worker : pending_service_workers_) {
-    service_workers_[worker] = {};
-  }
-  SendToPort(base::BindRepeating(
-      &ExtensionMessagePort::BuildDispatchOnConnectIPC,
-      // Called synchronously.
-      base::Unretained(this), channel_type, channel_name,
-      base::OptionalToPtr(source_tab), source_frame, guest_process_id,
-      guest_render_frame_routing_id, source_endpoint, target_extension_id,
-      source_url, source_origin));
-#else
+    std::optional<url::Origin> source_origin,
+    const std::set<base::UnguessableToken>& open_channel_tracking_ids) {
   mojom::TabConnectionInfoPtr source = mojom::TabConnectionInfo::New();
 
   // Source document ID should exist if and only if there is a source tab.
@@ -435,6 +458,21 @@ void ExtensionMessagePort::DispatchOnConnect(
   info->guest_process_id = guest_process_id;
   info->guest_render_frame_routing_id = guest_render_frame_routing_id;
 
+  pending_open_channel_tracking_ids_ = std::move(open_channel_tracking_ids);
+  // Open channel metrics for SW-based extensions dispatch.
+  if (!pending_service_workers_.empty()) {
+    base::UnguessableToken open_channel_dispatch_for_sw_tracking_id(
+        base::UnguessableToken::Create());
+    pending_open_channel_tracking_ids_.insert(
+        open_channel_dispatch_for_sw_tracking_id);
+    auto* message_tracker = MessageTracker::Get(browser_context_);
+    message_tracker->StartTrackingMessagingStage(
+        open_channel_dispatch_for_sw_tracking_id,
+        "Extensions.MessagePipeline."
+        "OpenChannelWorkerDispatchStatus",
+        channel_type);
+  }
+
   // `ShouldSkipFrameForBFCache` could mutate `pending_frames_` so we
   // take it before iterating on it.
   auto pending_frames = std::move(pending_frames_);
@@ -447,13 +485,28 @@ void ExtensionMessagePort::DispatchOnConnect(
     mojo::PendingAssociatedReceiver<mojom::MessagePort> message_port;
     mojo::PendingAssociatedRemote<mojom::MessagePortHost> message_port_host;
 
+    // Per channel open connect IPC dispatch metrics to frame.
+    base::UnguessableToken open_channel_dispatch_for_frame_tracking_id(
+        base::UnguessableToken::Create());
+    pending_open_channel_connect_dispatch_tracking_ids_.insert(
+        open_channel_dispatch_for_frame_tracking_id);
+    auto* message_tracker = MessageTracker::Get(browser_context_);
+    message_tracker->StartTrackingMessagingStage(
+        open_channel_dispatch_for_frame_tracking_id,
+        "Extensions.MessagePipeline.OpenChannelDispatchOnConnectStatus."
+        "ForFrame",
+        channel_type);
+
+    PortContext port_context = PortContext::ForFrame(frame->GetRoutingID());
     auto& receiver = frames_[frame_token];
     receiver.Bind(message_port.InitWithNewEndpointAndPassRemote());
-    receiver.set_disconnect_handler(
-        base::BindOnce(&ExtensionMessagePort::Prune, base::Unretained(this)));
+    receiver.set_disconnect_handler(base::BindOnce(
+        &ExtensionMessagePort::Prune, base::Unretained(this), port_context,
+        open_channel_dispatch_for_frame_tracking_id));
     AddReceiver(message_port_host.InitWithNewEndpointAndPassReceiver(),
-                frame->GetProcess()->GetID(),
-                PortContext::ForFrame(frame->GetRoutingID()));
+                frame->GetProcess()->GetDeprecatedID(), port_context);
+
+    pending_contexts_to_respond_.insert(port_context);
 
     ExtensionWebContentsObserver::GetForWebContents(
         content::WebContents::FromRenderFrameHost(frame))
@@ -462,7 +515,8 @@ void ExtensionMessagePort::DispatchOnConnect(
             port_id_, channel_type, channel_name, source.Clone(), info.Clone(),
             std::move(message_port), std::move(message_port_host),
             base::BindOnce(&ExtensionMessagePort::OnConnectResponse,
-                           weak_ptr_factory_.GetWeakPtr()));
+                           weak_ptr_factory_.GetWeakPtr(), port_context,
+                           open_channel_dispatch_for_frame_tracking_id));
   }
   for (const auto& worker : pending_service_workers_) {
     auto* host = ServiceWorkerHost::GetWorkerFor(worker);
@@ -474,49 +528,84 @@ void ExtensionMessagePort::DispatchOnConnect(
       mojo::PendingAssociatedReceiver<mojom::MessagePort> message_port;
       mojo::PendingAssociatedRemote<mojom::MessagePortHost> message_port_host;
 
+      // Per channel open connect IPC dispatch metrics to worker.
+      base::UnguessableToken open_channel_dispatch_for_worker_tracking_id(
+          base::UnguessableToken::Create());
+      pending_open_channel_connect_dispatch_tracking_ids_.insert(
+          open_channel_dispatch_for_worker_tracking_id);
+      auto* message_tracker = MessageTracker::Get(browser_context_);
+      message_tracker->StartTrackingMessagingStage(
+          open_channel_dispatch_for_worker_tracking_id,
+          "Extensions.MessagePipeline.OpenChannelDispatchOnConnectStatus."
+          "ForWorker",
+          channel_type);
+
+      PortContext port_context =
+          PortContext::ForWorker(worker.thread_id, worker.version_id,
+                                 worker.render_process_id, worker.extension_id);
       auto& receiver = service_workers_[worker];
       receiver.Bind(message_port.InitWithNewEndpointAndPassRemote());
-      receiver.set_disconnect_handler(
-          base::BindOnce(&ExtensionMessagePort::Prune, base::Unretained(this)));
+      receiver.set_disconnect_handler(base::BindOnce(
+          &ExtensionMessagePort::Prune, base::Unretained(this), port_context,
+          open_channel_dispatch_for_worker_tracking_id));
       AddReceiver(message_port_host.InitWithNewEndpointAndPassReceiver(),
-                  worker.render_process_id,
-                  PortContext::ForWorker(worker.thread_id, worker.version_id,
-                                         worker.extension_id));
+                  worker.render_process_id, port_context);
+
+      pending_contexts_to_respond_.insert(port_context);
+
       service_worker_remote->DispatchOnConnect(
           port_id_, channel_type, channel_name, source.Clone(), info.Clone(),
           std::move(message_port), std::move(message_port_host),
           base::BindOnce(&ExtensionMessagePort::OnConnectResponse,
-                         weak_ptr_factory_.GetWeakPtr()));
+                         weak_ptr_factory_.GetWeakPtr(), port_context,
+                         open_channel_dispatch_for_worker_tracking_id));
     }
   }
-#endif
   pending_frames_.clear();
   pending_service_workers_.clear();
 }
 
-#if !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-void ExtensionMessagePort::OnConnectResponse(bool success) {
+void ExtensionMessagePort::OnConnectResponse(
+    const PortContext& port_context,
+    const base::UnguessableToken& connect_dispatch_tracking_id,
+    bool success) {
   // For the unsuccessful case the port will be cleaned up in `Prune` when
   // the mojo channels are disconnected.
   if (success) {
     port_was_created_ = true;
   }
+
+  // Overall channel open metrics tracking
+  pending_contexts_to_respond_.erase(port_context);
+
+  // Channel is considered opened if one response indicated that the port was
+  // created or if we've exhausted all responders and none have indicated a port
+  // was created. If this is never called MessageTracker handles the metric
+  // emit.
+  if (port_was_created_ || pending_contexts_to_respond_.empty()) {
+    ReportOpenChannelResult(
+        port_was_created_
+            ? MessageTracker::OpenChannelMessagePipelineResult::kOpened
+            : MessageTracker::OpenChannelMessagePipelineResult::
+                  kOpenChannelDispatchNoReceivers);
+  }
+
+  // Per channel open connect IPC dispatch metrics tracking.
+  ReportOpenChannelConnectDispatchResult(
+      connect_dispatch_tracking_id,
+      MessageTracker::OpenChannelMessagePipelineResult::kOpenChannelAcked);
+
+  // We'll continue tracking the messaging pipeline in MessageService where
+  // we'll track each dispatched message for this (now open) channel.
 }
-#endif
 
 void ExtensionMessagePort::DispatchOnDisconnect(
     const std::string& error_message) {
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  SendToPort(
-      base::BindRepeating(&ExtensionMessagePort::BuildDispatchOnDisconnectIPC,
-                          base::Unretained(this), error_message));
-#else
   SendToPort(base::BindRepeating(
       [](const std::string& error_message, mojom::MessagePort* port) {
         port->DispatchDisconnect(error_message);
       },
       std::ref(error_message)));
-#endif
 }
 
 void ExtensionMessagePort::DispatchOnMessage(const Message& message) {
@@ -527,17 +616,11 @@ void ExtensionMessagePort::DispatchOnMessage(const Message& message) {
   // Since we are now receiving a message, we can mark any asynchronous reply
   // that may have been pending for this port as no longer pending.
   asynchronous_reply_pending_ = false;
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  SendToPort(base::BindRepeating(&ExtensionMessagePort::BuildDeliverMessageIPC,
-                                 // Called synchronously.
-                                 base::Unretained(this), message));
-#else
   SendToPort(base::BindRepeating(
       [](const Message& message, mojom::MessagePort* port) {
         port->DeliverMessage(message);
       },
       std::ref(message)));
-#endif
   DecrementLazyKeepaliveCount(Activity::MESSAGE);
 }
 
@@ -560,7 +643,7 @@ void ExtensionMessagePort::IncrementLazyKeepaliveCount(
 
   // Increment keepalive count for service workers of the extension managed by
   // this port.
-  // TODO(https://crbug.com/1514471): Add a check to only increment count if
+  // TODO(crbug.com/41487026): Add a check to only increment count if
   // the port is in lazy context.
   for (const auto& worker_id :
        pm->GetServiceWorkersForExtension(extension_id_)) {
@@ -590,7 +673,7 @@ void ExtensionMessagePort::DecrementLazyKeepaliveCount(
 
   // Decrement keepalive count for service workers of the extension managed by
   // this port.
-  // TODO(https://crbug.com/1514471): Add a check to only decrement count if
+  // TODO(crbug.com/41487026): Add a check to only decrement count if
   // the port is in lazy context.
   for (const auto& worker_id :
        pm->GetServiceWorkersForExtension(extension_id_)) {
@@ -617,7 +700,7 @@ void ExtensionMessagePort::NotifyResponsePending() {
 void ExtensionMessagePort::OpenPort(int process_id,
                                     const PortContext& port_context) {
   DCHECK((port_context.is_for_render_frame() &&
-          port_context.frame->routing_id != MSG_ROUTING_NONE) ||
+          port_context.frame->routing_id != IPC::mojom::kRoutingIdNone) ||
          (port_context.is_for_service_worker() &&
           port_context.worker->thread_id != kMainThreadId) ||
          for_all_extension_contexts_);
@@ -629,7 +712,7 @@ void ExtensionMessagePort::ClosePort(int process_id,
                                      int routing_id,
                                      int worker_thread_id) {
   const bool is_for_service_worker = worker_thread_id != kMainThreadId;
-  DCHECK(is_for_service_worker || routing_id != MSG_ROUTING_NONE);
+  DCHECK(is_for_service_worker || routing_id != IPC::mojom::kRoutingIdNone);
 
   if (is_for_service_worker) {
     UnregisterWorker(process_id, worker_thread_id);
@@ -639,15 +722,20 @@ void ExtensionMessagePort::ClosePort(int process_id,
   }
 }
 
-void ExtensionMessagePort::CloseChannel() {
-  std::string error_message;
-  if (!port_was_created_)
-    error_message = kReceivingEndDoesntExistError;
-  else if (asynchronous_reply_pending_)
-    error_message = kClosedWhileResponsePendingError;
+void ExtensionMessagePort::CloseChannel(
+    std::optional<std::string> error_message) {
+  std::string error;
+  if (error_message.has_value()) {
+    error = std::move(error_message).value();
+  } else if (!port_was_created_) {
+    error = kReceivingEndDoesntExistError;
+  } else if (asynchronous_reply_pending_) {
+    error = kClosedWhileResponsePendingError;
+  }
 
-  if (weak_channel_delegate_)
-    weak_channel_delegate_->CloseChannel(port_id_, error_message);
+  if (weak_channel_delegate_) {
+    weak_channel_delegate_->CloseChannel(port_id_, error);
+  }
 }
 
 void ExtensionMessagePort::RegisterFrame(
@@ -678,7 +766,8 @@ bool ExtensionMessagePort::UnregisterFrame(
 }
 
 bool ExtensionMessagePort::UnregisterFramesUnderMainFrame(
-    content::RenderFrameHost* main_frame) {
+    content::RenderFrameHost* main_frame,
+    std::optional<std::string> error_message) {
   CHECK(pending_frames_.empty());
   if (std::erase_if(frames_,
                     [&main_frame](const auto& item) {
@@ -688,7 +777,7 @@ bool ExtensionMessagePort::UnregisterFramesUnderMainFrame(
                              frame->GetOutermostMainFrame() == main_frame;
                     }) != 0 &&
       !IsValidPort()) {
-    CloseChannel();
+    CloseChannel(error_message);
     return true;
   }
 
@@ -735,105 +824,6 @@ void ExtensionMessagePort::UnregisterWorker(int render_process_id,
   }
 }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-void ExtensionMessagePort::SendToPort(IPCBuilderCallback ipc_builder) {
-  std::vector<IPCTarget> targets;
-  // Build the list of targets.
-  for (const auto& item : frames_) {
-    auto* frame = content::RenderFrameHost::FromFrameToken(item.first);
-    if (!frame || ShouldSkipFrameForBFCache(frame)) {
-      continue;
-    }
-    targets.push_back({nullptr, frame, kMainThreadId});
-  }
-
-  for (const auto& running_worker : service_workers_) {
-    targets.push_back({content::RenderProcessHost::FromID(
-                           running_worker.first.render_process_id),
-                       nullptr, running_worker.first.thread_id});
-  }
-
-  for (const IPCTarget& target : targets) {
-    std::unique_ptr<IPC::Message> ipc_message = ipc_builder.Run(target);
-    SendToIPCTarget(target, std::move(ipc_message));
-  }
-}
-
-void ExtensionMessagePort::SendToIPCTarget(const IPCTarget& target,
-                                           std::unique_ptr<IPC::Message> msg) {
-  if (target.render_frame_host) {
-    msg->set_routing_id(target.render_frame_host->GetRoutingID());
-    target.render_frame_host->Send(msg.release());
-    return;
-  }
-
-  if (target.render_process_host) {
-    msg->set_routing_id(MSG_ROUTING_CONTROL);
-    target.render_process_host->Send(msg.release());
-    return;
-  }
-
-  NOTREACHED();
-}
-
-std::unique_ptr<IPC::Message> ExtensionMessagePort::BuildDispatchOnConnectIPC(
-    mojom::ChannelType channel_type,
-    const std::string& channel_name,
-    const base::Value::Dict* source_tab,
-    const ExtensionApiFrameIdMap::FrameData& source_frame,
-    int guest_process_id,
-    int guest_render_frame_routing_id,
-    const MessagingEndpoint& source_endpoint,
-    const std::string& target_extension_id,
-    const GURL& source_url,
-    std::optional<url::Origin> source_origin,
-    const IPCTarget& target) {
-  ExtensionMsg_TabConnectionInfo source;
-
-  // Source document ID should exist if and only if there is a source tab.
-  DCHECK_EQ(!!source_tab, !!source_frame.document_id);
-  if (source_tab) {
-    source.tab = source_tab->Clone();
-    source.document_id = source_frame.document_id.ToString();
-    source.document_lifecycle = ToString(source_frame.document_lifecycle);
-  }
-  source.frame_id = source_frame.frame_id;
-
-  ExtensionMsg_ExternalConnectionInfo info;
-  info.target_id = target_extension_id;
-  info.source_endpoint = source_endpoint;
-  info.source_url = source_url;
-  info.source_origin = std::move(source_origin);
-  info.guest_process_id = guest_process_id;
-  info.guest_render_frame_routing_id = guest_render_frame_routing_id;
-
-  ExtensionMsg_OnConnectData connect_data;
-  connect_data.target_port_id = port_id_;
-  connect_data.channel_type = channel_type;
-  connect_data.channel_name = channel_name;
-  connect_data.tab_source = std::move(source);
-  connect_data.external_connection_info = std::move(info);
-
-  return std::make_unique<ExtensionMsg_DispatchOnConnect>(
-      MSG_ROUTING_NONE, target.worker_thread_id, connect_data);
-}
-
-std::unique_ptr<IPC::Message>
-ExtensionMessagePort::BuildDispatchOnDisconnectIPC(
-    const std::string& error_message,
-    const IPCTarget& target) {
-  return std::make_unique<ExtensionMsg_DispatchOnDisconnect>(
-      MSG_ROUTING_NONE, target.worker_thread_id, port_id_, error_message);
-}
-
-std::unique_ptr<IPC::Message> ExtensionMessagePort::BuildDeliverMessageIPC(
-    const Message& message,
-    const IPCTarget& target) {
-  return std::make_unique<ExtensionMsg_DeliverMessage>(
-      MSG_ROUTING_NONE, target.worker_thread_id, port_id_, message);
-}
-
-#else
 void ExtensionMessagePort::SendToPort(SendCallback send_callback) {
   // We should have called OnConnect before SentToPort.
   CHECK(pending_frames_.empty());
@@ -861,7 +851,6 @@ void ExtensionMessagePort::SendToPort(SendCallback send_callback) {
     send_callback.Run(running_worker.second.get());
   }
 }
-#endif
 
 bool ExtensionMessagePort::IsServiceWorkerActivity(
     Activity::Type activity_type) {
@@ -876,7 +865,6 @@ bool ExtensionMessagePort::IsServiceWorkerActivity(
     default:
       // Extension message port should not check for other activity types.
       NOTREACHED();
-      return false;
   }
 }
 
@@ -900,30 +888,14 @@ bool ExtensionMessagePort::ShouldSkipFrameForBFCache(
   // TODO (crbug.com/1382623): currently we only make use of the base URL,
   // it's also possible to get the full URL from extension ID so it could
   // provide more useful context.
-  if (render_frame_host &&
-      render_frame_host->IsInLifecycleState(
-          content::RenderFrameHost::LifecycleState::kInBackForwardCache)) {
-    // The ExtensionMessagePort should be disconnected when the page enters
-    // BFCache if `kDisconnectExtensionMessagePortWhenPageEntersBFCache` is
-    // enabled, so no message will be sent to the BFCached target. There could
-    // be some messages that were created before the ExtensionMessagePort is
-    // disconnected, and they should be discarded.
-    // TODO(crbug.com/1488379): clean up the flag.
-    if (!base::FeatureList::IsEnabled(
-            features::kDisconnectExtensionMessagePortWhenPageEntersBFCache)) {
-      content::BackForwardCache::DisableForRenderFrameHost(
-          render_frame_host,
-          back_forward_cache::DisabledReason(
-              back_forward_cache::DisabledReasonId::
-                  kExtensionSentMessageToCachedFrame,
-              /*context=*/extension_id_),
-          ukm::UkmRecorder::GetSourceIdForExtensionUrl(
-              base::PassKey<ExtensionMessagePort>(),
-              Extension::GetBaseURLFromExtensionId(extension_id_)));
-    }
-    return true;
-  }
-  return false;
+
+  // The ExtensionMessagePort should be disconnected when the page enters
+  // BFCache, so no message will be sent to the BFCached target. There could
+  // be some messages that were created before the ExtensionMessagePort is
+  // disconnected, and they should be discarded.
+  return render_frame_host &&
+         render_frame_host->IsInLifecycleState(
+             content::RenderFrameHost::LifecycleState::kInBackForwardCache);
 }
 
 }  // namespace extensions

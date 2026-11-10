@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+import signal
 import dataclasses as dc
 from urllib.parse import urlparse
-from typing import List, Optional
+from typing import List, Optional, Union
 
+from perfetto.common.exceptions import PerfettoException
+from perfetto.common.query_result_iterator import QueryResultIterator
 from perfetto.trace_processor.http import TraceProcessorHttp
 from perfetto.trace_processor.platform import PlatformDelegate
 from perfetto.trace_processor.protos import ProtoFactory
@@ -34,182 +39,75 @@ TraceReference = registry.TraceReference
 
 # Custom exception raised if any trace_processor functions return a
 # response with an error defined
-class TraceProcessorException(Exception):
-
-  def __init__(self, message):
-    super().__init__(message)
+TraceProcessorException = PerfettoException
 
 
 @dc.dataclass
 class TraceProcessorConfig:
-  bin_path: Optional[str]
-  unique_port: bool
-  verbose: bool
-  ingest_ftrace_in_raw: bool
-  enable_dev_features: bool
-  resolver_registry: Optional[ResolverRegistry]
+  # The path to the trace processor binary. If not specified, the trace
+  # processor will be automatically downloaded and run from the latest
+  # avaialble prebuilts.
+  bin_path: Optional[str] = None
 
-  def __init__(self,
-               bin_path: Optional[str] = None,
-               unique_port: bool = True,
-               verbose: bool = False,
-               ingest_ftrace_in_raw: bool = False,
-               enable_dev_features=False,
-               resolver_registry: Optional[ResolverRegistry] = None):
+  # If True, the trace processor will use a unique port for each instance.
+  unique_port: bool = True
+
+  # If True, the trace processor will print verbose output to stdout.
+  verbose: bool = False
+
+  # If True, the trace processor will ingest ftrace in the `ftrace_event`
+  # table.
+  ingest_ftrace_in_raw: bool = False
+
+  # If True, the trace processor will enable development features.
+  # Any feature gated behind this flag is not guaranteed to be stable
+  # and may change or be removed in future versions.
+  # This flag is intended for use by developers and testers.
+  enable_dev_features: bool = False
+
+  # A registry of custom URI resolvers to use when resolving trace URIs.
+  resolver_registry: Optional[ResolverRegistry] = None
+
+  # The timeout in seconds for the trace processor binary starting up. If the
+  # binary does not start within this time, an exception will be raised.
+  load_timeout: int = 2
+
+  # Any extra flags to pass to the trace processor binary.
+  # Warning: this is a low-level option and should be used with caution.
+  extra_flags: Optional[List[str]] = None
+
+  # Optional list of paths to additional PerfettoSQL package to load.
+  # All SQL modules inside these packages will be available to include using
+  # `INCLUDE PERFETTO MODULE` PerfettoSQL statements with the root package
+  # name being the dirname of the path.
+  add_sql_packages: Optional[List[str]] = None
+
+  def __init__(
+      self,
+      bin_path: Optional[str] = None,
+      unique_port: bool = True,
+      verbose: bool = False,
+      ingest_ftrace_in_raw: bool = False,
+      enable_dev_features=False,
+      resolver_registry: Optional[ResolverRegistry] = None,
+      load_timeout: int = 2,
+      extra_flags: Optional[List[str]] = None,
+      add_sql_packages: Optional[List[str]] = None,
+  ):
     self.bin_path = bin_path
     self.unique_port = unique_port
     self.verbose = verbose
     self.ingest_ftrace_in_raw = ingest_ftrace_in_raw
     self.enable_dev_features = enable_dev_features
     self.resolver_registry = resolver_registry
+    self.load_timeout = load_timeout
+    self.extra_flags = extra_flags
+    self.add_sql_packages = add_sql_packages
 
 
 class TraceProcessor:
-
-  # Values of these constants correspond to the QueryResponse message at
-  # protos/perfetto/trace_processor/trace_processor.proto
-  QUERY_CELL_INVALID_FIELD_ID = 0
-  QUERY_CELL_NULL_FIELD_ID = 1
-  QUERY_CELL_VARINT_FIELD_ID = 2
-  QUERY_CELL_FLOAT64_FIELD_ID = 3
-  QUERY_CELL_STRING_FIELD_ID = 4
-  QUERY_CELL_BLOB_FIELD_ID = 5
-
-  # This is the class returned to the user and contains one row of the
-  # resultant query. Each column name is stored as an attribute of this
-  # class, with the value corresponding to the column name and row in
-  # the query results table.
-  class Row(object):
-    # Required for pytype to correctly infer attributes from Row objects
-    _HAS_DYNAMIC_ATTRIBUTES = True
-
-    def __str__(self):
-      return str(self.__dict__)
-
-    def __repr__(self):
-      return self.__dict__
-
-  class QueryResultIterator:
-
-    def __init__(self, column_names, batches):
-      self.__column_names = list(column_names)
-      self.__column_count = 0
-      self.__count = 0
-      self.__cells = []
-      self.__data_lists = [[], [], [], [], [], []]
-      self.__data_lists_index = [0, 0, 0, 0, 0, 0]
-      self.__current_index = 0
-
-      # Iterate over all the batches and collect their
-      # contents into lists based on the type of the batch
-      batch_index = 0
-      while True:
-        # It's possible on some occasions that there are non UTF-8 characters
-        # in the string_cells field. If this is the case, string_cells is
-        # a bytestring which needs to be decoded (but passing ignore so that
-        # we don't fail in decoding).
-        strings_batch_str = batches[batch_index].string_cells
-        try:
-          strings_batch_str = strings_batch_str.decode('utf-8', 'ignore')
-        except AttributeError:
-          # AttributeError can occur when |strings_batch_str| is an str which
-          # happens when everything in it is UTF-8 (protobuf automatically
-          # does the conversion if it can).
-          pass
-
-        # Null-terminated strings in a batch are concatenated
-        # into a single large byte array, so we split on the
-        # null-terminator to get the individual strings
-        strings_batch = strings_batch_str.split('\0')[:-1]
-        self.__data_lists[TraceProcessor.QUERY_CELL_STRING_FIELD_ID].extend(
-            strings_batch)
-        self.__data_lists[TraceProcessor.QUERY_CELL_VARINT_FIELD_ID].extend(
-            batches[batch_index].varint_cells)
-        self.__data_lists[TraceProcessor.QUERY_CELL_FLOAT64_FIELD_ID].extend(
-            batches[batch_index].float64_cells)
-        self.__data_lists[TraceProcessor.QUERY_CELL_BLOB_FIELD_ID].extend(
-            batches[batch_index].blob_cells)
-        self.__cells.extend(batches[batch_index].cells)
-
-        if batches[batch_index].is_last_batch:
-          break
-        batch_index += 1
-
-      # If there are no rows in the query result, don't bother updating the
-      # counts to avoid dealing with / 0 errors.
-      if len(self.__cells) == 0:
-        return
-
-      # The count we collected so far was a count of all individual columns
-      # in the query result, so we divide by the number of columns in a row
-      # to get the number of rows
-      self.__column_count = len(self.__column_names)
-      self.__count = int(len(self.__cells) / self.__column_count)
-
-      # Data integrity check - see that we have the expected amount of cells
-      # for the number of rows that we need to return
-      if len(self.__cells) % self.__column_count != 0:
-        raise TraceProcessorException("Cell count " + str(len(self.__cells)) +
-                                      " is not a multiple of column count " +
-                                      str(len(self.__column_names)))
-
-    # To use the query result as a populated Pandas dataframe, this
-    # function must be called directly after calling query inside
-    # TraceProcesor.
-    def as_pandas_dataframe(self):
-      try:
-        import pandas as pd
-
-        # Populate the dataframe with the query results
-        rows = []
-        for i in range(0, self.__count):
-          row = []
-          base_cell_index = i * self.__column_count
-          for num in range(len(self.__column_names)):
-            col_type = self.__cells[base_cell_index + num]
-            if col_type == TraceProcessor.QUERY_CELL_INVALID_FIELD_ID:
-              raise TraceProcessorException('Invalid cell type')
-
-            if col_type == TraceProcessor.QUERY_CELL_NULL_FIELD_ID:
-              row.append(None)
-            else:
-              col_index = self.__data_lists_index[col_type]
-              self.__data_lists_index[col_type] += 1
-              row.append(self.__data_lists[col_type][col_index])
-          rows.append(row)
-
-        df = pd.DataFrame(rows, columns=self.__column_names)
-        return df.astype(object).where(df.notnull(),
-                                       None).reset_index(drop=True)
-
-      except ModuleNotFoundError:
-        raise TraceProcessorException(
-            'Python dependencies missing. Please pip3 install pandas numpy')
-
-    def __len__(self):
-      return self.__count
-
-    def __iter__(self):
-      return self
-
-    def __next__(self):
-      if self.__current_index == self.__count:
-        raise StopIteration
-      result = TraceProcessor.Row()
-      base_cell_index = self.__current_index * self.__column_count
-      for num, column_name in enumerate(self.__column_names):
-        col_type = self.__cells[base_cell_index + num]
-        if col_type == TraceProcessor.QUERY_CELL_INVALID_FIELD_ID:
-          raise TraceProcessorException('Invalid cell type')
-        if col_type != TraceProcessor.QUERY_CELL_NULL_FIELD_ID:
-          col_index = self.__data_lists_index[col_type]
-          self.__data_lists_index[col_type] += 1
-          setattr(result, column_name, self.__data_lists[col_type][col_index])
-        else:
-          setattr(result, column_name, None)
-
-      self.__current_index += 1
-      return result
+  QueryResultIterator = QueryResultIterator
+  Row = QueryResultIterator.Row
 
   def __init__(self,
                trace: Optional[TraceReference] = None,
@@ -286,23 +184,39 @@ class TraceProcessor:
     return TraceProcessor.QueryResultIterator(response.column_names,
                                               response.batch)
 
-  def metric(self, metrics: List[str]):
-    """Returns the metrics data corresponding to the passed in trace metric.
-    Raises TraceProcessorException if the response returns with an error.
+  def trace_summary(self,
+                    specs: List[Union[str, bytes]],
+                    metric_ids: Optional[List[str]] = None,
+                    metadata_query_id: Optional[str] = None):
+    """Computes a structuted summary of the trace.
+
+    This function allows you to create a structured summary of the trace
+    data output in as a structured protobuf message, allowing consumption by
+    other tools for charting or bulk analysis.
+
+    This function is the replacement for the `metric` function, which is now
+    deprecated (but without any plans to remove it).
+
+    Raises TraceProcessorException if there was an error computing the summary.
 
     Args:
-      metrics: A list of valid metrics as defined in TraceMetrics
+      specs: a list of `TraceSummarySpec` protos either as a textproto or in
+        binary format. Please see the definition of the `TraceSummarySpec`
+        proto for more details on how to construct these.
+      metric_ids: Optional list of metric IDs to compute in the summary.
+        If `None`, all metrics in the specs will be computed.
+      metadata_query_id: Optional query ID for metadata
 
     Returns:
-      The metrics data as a proto message
+      The trace summary data as a proto message
     """
-    response = self.http.compute_metric(metrics)
+    response = self.http.trace_summary(specs, metric_ids, metadata_query_id)
     if response.error:
       raise TraceProcessorException(response.error)
 
-    metrics = self.protos.TraceMetrics()
-    metrics.ParseFromString(response.metrics)
-    return metrics
+    summary = self.protos.TraceSummary()
+    summary.ParseFromString(response.proto_summary)
+    return summary
 
   def enable_metatrace(self):
     """Enable metatrace for the currently running trace_processor.
@@ -321,18 +235,45 @@ class TraceProcessor:
 
     return response.metatrace
 
+  def metric(self, metrics: List[str]):
+    """Returns the metrics data corresponding to the passed in trace metric.
+    Raises TraceProcessorException if the response returns with an error.
+
+    Note: this function is deprecated but there are no plans to remove it.
+    Consider using `trace_summary` instead, which is an indirect replacement,
+    providing much of the same functionality but in a more flexible way.
+
+    Args:
+      metrics: A list of valid metrics as defined in TraceMetrics
+
+    Returns:
+      The metrics data as a proto message
+    """
+    response = self.http.compute_metric(metrics)
+    if response.error:
+      raise TraceProcessorException(response.error)
+
+    metrics = self.protos.TraceMetrics()
+    metrics.ParseFromString(response.metrics)
+    return metrics
+
   def _create_tp_http(self, addr: str) -> TraceProcessorHttp:
     if addr:
       p = urlparse(addr)
       parsed = p.netloc if p.netloc else p.path
       return TraceProcessorHttp(parsed, protos=self.protos)
 
-    url, self.subprocess = load_shell(self.config.bin_path,
-                                      self.config.unique_port,
-                                      self.config.verbose,
-                                      self.config.ingest_ftrace_in_raw,
-                                      self.config.enable_dev_features,
-                                      self.platform_delegate)
+    url, self.subprocess = load_shell(
+        self.config.bin_path,
+        self.config.unique_port,
+        self.config.verbose,
+        self.config.ingest_ftrace_in_raw,
+        self.config.enable_dev_features,
+        self.platform_delegate,
+        self.config.load_timeout,
+        self.config.extra_flags,
+        self.config.add_sql_packages,
+    )
     return TraceProcessorHttp(url, protos=self.protos)
 
   def _parse_trace(self, trace: TraceReference):
@@ -364,9 +305,16 @@ class TraceProcessor:
     return False
 
   def close(self):
-    if hasattr(self, 'subprocess'):
-      self.subprocess.kill()
+    if hasattr(self, 'subprocess') and self.subprocess:
+      # On Windows, we need to send a break signal to terminate the whole process group.
+      # On other platforms, killing the parent process is sufficient.
+      if sys.platform == 'win32':
+        self.subprocess.send_signal(signal.CTRL_BREAK_EVENT)
+      else:
+        self.subprocess.kill()
       self.subprocess.wait()
+      # Set to None so __del__ doesn't call this again.
+      self.subprocess = None
 
     if hasattr(self, 'http'):
       self.http.conn.close()

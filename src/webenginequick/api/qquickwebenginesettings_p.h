@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QQUICKWEBENGINESETTINGS_P_H
 #define QQUICKWEBENGINESETTINGS_P_H
@@ -61,6 +62,12 @@ class Q_WEBENGINEQUICK_EXPORT QQuickWebEngineSettings : public QObject {
     Q_PROPERTY(bool forceDarkMode READ forceDarkMode WRITE setForceDarkMode NOTIFY forceDarkModeChanged REVISION(6,7) FINAL)
     Q_PROPERTY(bool scrollAnimatorEnabled READ scrollAnimatorEnabled WRITE setScrollAnimatorEnabled NOTIFY scrollAnimatorEnabledChanged REVISION(6,8) FINAL)
     Q_PROPERTY(ImageAnimationPolicy imageAnimationPolicy READ imageAnimationPolicy WRITE setImageAnimationPolicy NOTIFY imageAnimationPolicyChanged REVISION(6,8) FINAL)
+    Q_PROPERTY(bool printHeaderAndFooter READ printHeaderAndFooter WRITE setPrintHeaderAndFooter NOTIFY printHeaderAndFooterChanged REVISION(6,9) FINAL)
+    Q_PROPERTY(bool preferCSSMarginsForPrinting READ preferCSSMarginsForPrinting WRITE setPreferCSSMarginsForPrinting NOTIFY preferCSSMarginsForPrintingChanged REVISION(6,9) FINAL)
+    Q_PROPERTY(bool touchEventsApiEnabled READ touchEventsApiEnabled WRITE setTouchEventsApiEnabled NOTIFY touchEventsApiEnabledChanged REVISION(6,9) FINAL)
+    Q_PROPERTY(bool backForwardCacheEnabled READ backForwardCacheEnabled WRITE setBackForwardCacheEnabled NOTIFY backForwardCacheEnabledChanged REVISION(6,10) FINAL)
+    Q_PROPERTY(bool trimAccessibilityIdentifiers READ trimAccessibilityIdentifiers WRITE setTrimAccessibilityIdentifiers NOTIFY trimAccessibilityIdentifiersChanged REVISION(6,11) FINAL)
+
     QML_NAMED_ELEMENT(WebEngineSettings)
     QML_ADDED_IN_VERSION(1, 1)
     QML_EXTRA_VERSION(2, 0)
@@ -120,6 +127,11 @@ public:
     bool forceDarkMode() const;
     bool scrollAnimatorEnabled() const;
     ImageAnimationPolicy imageAnimationPolicy() const;
+    bool printHeaderAndFooter() const;
+    bool preferCSSMarginsForPrinting() const;
+    bool touchEventsApiEnabled() const;
+    bool backForwardCacheEnabled() const;
+    bool trimAccessibilityIdentifiers() const;
 
     void setAutoLoadImages(bool on);
     void setJavascriptEnabled(bool on);
@@ -157,6 +169,11 @@ public:
     void setForceDarkMode(bool on);
     void setScrollAnimatorEnabled(bool on);
     void setImageAnimationPolicy(ImageAnimationPolicy policy);
+    void setPrintHeaderAndFooter(bool on);
+    void setPreferCSSMarginsForPrinting(bool on);
+    void setTouchEventsApiEnabled(bool on);
+    void setBackForwardCacheEnabled(bool on);
+    void setTrimAccessibilityIdentifiers(bool on);
 
 signals:
     void autoLoadImagesChanged();
@@ -195,6 +212,11 @@ signals:
     Q_REVISION(6,7) void forceDarkModeChanged();
     Q_REVISION(6,8) void scrollAnimatorEnabledChanged();
     Q_REVISION(6,8) void imageAnimationPolicyChanged();
+    Q_REVISION(6,9) void printHeaderAndFooterChanged();
+    Q_REVISION(6,9) void preferCSSMarginsForPrintingChanged();
+    Q_REVISION(6,9) void touchEventsApiEnabledChanged();
+    Q_REVISION(6,10) void backForwardCacheEnabledChanged();
+    Q_REVISION(6,11) void trimAccessibilityIdentifiersChanged();
 
 private:
     explicit QQuickWebEngineSettings(QQuickWebEngineSettings *parentSettings = nullptr);

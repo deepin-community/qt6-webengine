@@ -20,6 +20,7 @@
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "components/image_fetcher/core/image_decoder.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_provider_logos/fixed_logo_api.h"
@@ -87,7 +88,7 @@ class ImageDecodedHandlerWithTimeout {
 void ObserverOnLogoAvailable(LogoObserver* observer,
                              bool from_cache,
                              LogoCallbackReason type,
-                             const absl::optional<Logo>& logo) {
+                             const std::optional<Logo>& logo) {
   switch (type) {
     case LogoCallbackReason::DISABLED:
     case LogoCallbackReason::CANCELED:
@@ -107,19 +108,19 @@ void ObserverOnLogoAvailable(LogoObserver* observer,
 void RunCallbacksWithDisabled(LogoCallbacks callbacks) {
   if (callbacks.on_cached_encoded_logo_available) {
     std::move(callbacks.on_cached_encoded_logo_available)
-        .Run(LogoCallbackReason::DISABLED, absl::nullopt);
+        .Run(LogoCallbackReason::DISABLED, std::nullopt);
   }
   if (callbacks.on_cached_decoded_logo_available) {
     std::move(callbacks.on_cached_decoded_logo_available)
-        .Run(LogoCallbackReason::DISABLED, absl::nullopt);
+        .Run(LogoCallbackReason::DISABLED, std::nullopt);
   }
   if (callbacks.on_fresh_encoded_logo_available) {
     std::move(callbacks.on_fresh_encoded_logo_available)
-        .Run(LogoCallbackReason::DISABLED, absl::nullopt);
+        .Run(LogoCallbackReason::DISABLED, std::nullopt);
   }
   if (callbacks.on_fresh_decoded_logo_available) {
     std::move(callbacks.on_fresh_decoded_logo_available)
-        .Run(LogoCallbackReason::DISABLED, absl::nullopt);
+        .Run(LogoCallbackReason::DISABLED, std::nullopt);
   }
 }
 
@@ -159,14 +160,14 @@ void NotifyAndClear(std::vector<EncodedLogoCallback>* encoded_callbacks,
                     const EncodedLogo* encoded_logo,
                     const Logo* decoded_logo) {
   auto opt_encoded_logo =
-      encoded_logo ? absl::optional<EncodedLogo>(*encoded_logo) : absl::nullopt;
+      encoded_logo ? std::optional<EncodedLogo>(*encoded_logo) : std::nullopt;
   for (EncodedLogoCallback& callback : *encoded_callbacks) {
     std::move(callback).Run(type, opt_encoded_logo);
   }
   encoded_callbacks->clear();
 
   auto opt_decoded_logo =
-      decoded_logo ? absl::optional<Logo>(*decoded_logo) : absl::nullopt;
+      decoded_logo ? std::optional<Logo>(*decoded_logo) : std::nullopt;
   for (LogoCallback& callback : *decoded_callbacks) {
     std::move(callback).Run(type, opt_decoded_logo);
   }
@@ -237,11 +238,14 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks, bool for_webui_ntp) {
     logo_url = GURL(
         command_line->GetSwitchValueASCII(switches::kSearchProviderLogoURL));
   } else {
+    // Non-Google DSE logos are only enabled on some platforms.
 #if BUILDFLAG(IS_ANDROID)
-    // Non-Google default search engine logos are currently enabled only on
-    // Android (https://crbug.com/737283).
     logo_url = template_url->logo_url();
-#endif
+#elif BUILDFLAG(IS_IOS)
+    if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdateV3)) {
+      logo_url = template_url->logo_url();
+    }
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
 
   GURL base_url;
@@ -249,7 +253,9 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks, bool for_webui_ntp) {
   const bool is_google = template_url->url_ref().HasGoogleBaseURLs(
       template_url_service_->search_terms_data());
   if (is_google) {
-    // TODO(treib): Put the Google doodle URL into prepopulated_engines.json.
+    // Note: Ideally the Google doodle URL would be specified in
+    // prepopulated_engines.json, but there is some custom logic in
+    // `GetGoogleDoodleURL()` that can't be represented in the static file.
     base_url =
         GURL(template_url_service_->search_terms_data().GoogleBaseURLValue());
     doodle_url = search_provider_logos::GetGoogleDoodleURL(base_url);
@@ -397,7 +403,7 @@ void LogoServiceImpl::OnCachedLogoRead(
     scoped_refptr<base::RefCountedString> encoded_image =
         cached_logo->encoded_image;
     image_decoder_->DecodeImage(
-        encoded_image->data(), gfx::Size(),  // No particular size desired.
+        encoded_image->as_string(), gfx::Size(),  // No particular size desired.
         /*data_decoder=*/nullptr,
         ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
             &LogoServiceImpl::OnLightCachedImageDecoded,
@@ -437,7 +443,8 @@ void LogoServiceImpl::OnLightCachedImageDecoded(
       cached_logo->dark_encoded_image;
 
   image_decoder_->DecodeImage(
-      dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      dark_encoded_image->as_string(),
+      gfx::Size(),  // No particular size desired.
       /*data_decoder=*/nullptr,
       ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
           &LogoServiceImpl::OnCachedLogoAvailable,
@@ -502,6 +509,7 @@ void LogoServiceImpl::FetchLogo() {
         })");
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = url;
+  request->site_for_cookies = net::SiteForCookies::FromUrl(url);
   loader_ =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
   loader_->DownloadToString(
@@ -532,7 +540,7 @@ void LogoServiceImpl::OnFreshLogoParsed(bool* parsing_failed,
     scoped_refptr<base::RefCountedString> encoded_image = logo->encoded_image;
 
     image_decoder_->DecodeImage(
-        encoded_image->data(), gfx::Size(),  // No particular size desired.
+        encoded_image->as_string(), gfx::Size(),  // No particular size desired.
         /*data_decoder=*/nullptr,
         ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
             &LogoServiceImpl::OnLightFreshImageDecoded,
@@ -560,7 +568,8 @@ void LogoServiceImpl::OnLightFreshImageDecoded(
       logo->dark_encoded_image;
 
   image_decoder_->DecodeImage(
-      dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      dark_encoded_image->as_string(),
+      gfx::Size(),  // No particular size desired.
       /*data_decoder=*/nullptr,
       ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
           &LogoServiceImpl::OnFreshLogoAvailable,
@@ -677,7 +686,6 @@ void LogoServiceImpl::OnFreshLogoAvailable(
 
     case DOWNLOAD_OUTCOME_COUNT:
       NOTREACHED();
-      return;
   }
 
   NotifyAndClear(&on_fresh_encoded_logo_, &on_fresh_decoded_logo_,
@@ -696,7 +704,7 @@ void LogoServiceImpl::OnFreshLogoAvailable(
 }
 
 void LogoServiceImpl::OnURLLoadComplete(const network::SimpleURLLoader* source,
-                                        std::unique_ptr<std::string> body) {
+                                        std::optional<std::string> body) {
   DCHECK(!is_idle_);
   std::unique_ptr<network::SimpleURLLoader> cleanup_loader(loader_.release());
 
@@ -716,18 +724,20 @@ void LogoServiceImpl::OnURLLoadComplete(const network::SimpleURLLoader* source,
   UMA_HISTOGRAM_TIMES("NewTabPage.LogoDownloadTime",
                       base::TimeTicks::Now() - logo_download_start_time_);
 
-  std::unique_ptr<std::string> response =
-      body ? std::move(body) : std::make_unique<std::string>();
   base::Time response_time = clock_->Now();
 
   bool from_http_cache = !source->ResponseInfo()->network_accessed;
+
+  if (!body.has_value()) {
+    body = std::string();
+  }
 
   bool* parsing_failed = new bool(false);
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(parse_logo_response_func_, std::move(response),
+      base::BindOnce(parse_logo_response_func_, std::move(body).value(),
                      response_time, parsing_failed),
       base::BindOnce(&LogoServiceImpl::OnFreshLogoParsed,
                      weak_ptr_factory_.GetWeakPtr(),

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x32-transposec/avx2.c.in
 //   Generator: tools/xngen
@@ -11,12 +12,14 @@
 #include <immintrin.h>
 
 #include <assert.h>
-
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
-#include <xnnpack/unaligned.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
+#include "src/xnnpack/unaligned.h"
 
 void xnn_x16_transposec_ukernel__16x16_reuse_mov_avx2(
     const uint16_t* input,
@@ -24,11 +27,12 @@ void xnn_x16_transposec_ukernel__16x16_reuse_mov_avx2(
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x16_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height) XNN_OOB_READS
 {
-  assert(output_stride >= block_height * sizeof(uint16_t));
-  assert(input_stride >= block_width * sizeof(uint16_t));
+  assert(block_width == 1 || output_stride >= block_height * sizeof(uint16_t));
+  assert(block_height == 1 || input_stride >= block_width * sizeof(uint16_t));
+
+  static const int32_t mask_table[15] = {-1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
   const size_t tile_height = 16;
   const size_t tile_width = 16;
@@ -46,7 +50,7 @@ void xnn_x16_transposec_ukernel__16x16_reuse_mov_avx2(
     const size_t oN_stride = rem * output_stride;
     const size_t oN_offset = oN_stride + tile_hbytes;
 
-    __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &params->avx2.mask_table[7 ^ (rem>>1)]));
+    __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &mask_table[7 ^ (rem>>1)]));
 
     size_t bh = block_height;
     for (; bh >= 16; bh -= 16) {

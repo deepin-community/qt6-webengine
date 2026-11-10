@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vbinary/vop-wasmsimd.c.in
 //   Generator: tools/xngen
@@ -11,8 +12,8 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_f32_vmax_ukernel__wasmsimd_arm_u8(
@@ -20,14 +21,13 @@ void xnn_f32_vmax_ukernel__wasmsimd_arm_u8(
     const float* input_a,
     const float* input_b,
     float* output,
-    const union xnn_f32_default_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input_a != NULL);
   assert(input_b != NULL);
   assert(output != NULL);
-
 
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     const v128_t va0 = wasm_v128_load(input_a);
@@ -40,7 +40,6 @@ void xnn_f32_vmax_ukernel__wasmsimd_arm_u8(
 
     v128_t vacc0 = wasm_f32x4_max(va0, vb0);
     v128_t vacc1 = wasm_f32x4_max(va1, vb1);
-
 
 
     wasm_v128_store(output, vacc0);
@@ -56,7 +55,6 @@ void xnn_f32_vmax_ukernel__wasmsimd_arm_u8(
 
     v128_t vacc = wasm_f32x4_max(va, vb);
 
-
     wasm_v128_store(output, vacc);
     output += 4;
   }
@@ -65,7 +63,6 @@ void xnn_f32_vmax_ukernel__wasmsimd_arm_u8(
     const v128_t vb = wasm_v128_load(input_b);
 
     v128_t vacc = wasm_f32x4_max(va, vb);
-
 
     if (batch & (2 * sizeof(float))) {
       wasm_v128_store64_lane(output, vacc, 0);

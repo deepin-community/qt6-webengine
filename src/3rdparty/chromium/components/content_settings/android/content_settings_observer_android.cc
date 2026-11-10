@@ -6,9 +6,11 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "components/content_settings/android/content_settings_jni_headers/ContentSettingsObserver_jni.h"
 #include "components/permissions/permissions_client.h"
 #include "content/public/browser/android/browser_context_handle.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/content_settings/android/content_settings_jni_headers/ContentSettingsObserver_jni.h"
 
 namespace content_settings {
 
@@ -17,7 +19,7 @@ using base::android::JavaParamRef;
 
 AndroidObserver::AndroidObserver(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& jbrowser_context_handle)
     : jobject_(obj) {
   content::BrowserContext* browser_context =
@@ -42,13 +44,13 @@ void AndroidObserver::OnContentSettingChanged(
       static_cast<int>(content_type_set.GetTypeOrDefault()));
 }
 
-void AndroidObserver::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+void AndroidObserver::Destroy(JNIEnv* env) {
   delete this;
 }
 
-static jlong JNI_ContentSettingsObserver_Init(
+jlong JNI_ContentSettingsObserver_Init(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& obj,
     const base::android::JavaParamRef<jobject>& jbrowser_context_handle) {
   return reinterpret_cast<intptr_t>(
       new AndroidObserver(env, obj, jbrowser_context_handle));

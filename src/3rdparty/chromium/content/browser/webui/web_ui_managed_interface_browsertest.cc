@@ -220,8 +220,6 @@ class WebUIManagedInterfaceBrowserTest : public ContentBrowserTest {
     test_content_browser_client_ = std::make_unique<TestContentBrowserClient>();
   }
 
-  void TearDownOnMainThread() override { test_content_browser_client_.reset(); }
-
   // Evaluate `statement` in frame (defaults to main frame), and returns its
   // result. For convenience, `script` should evaluate to a string, or a promise
   // that resolves to a string.
@@ -235,8 +233,8 @@ class WebUIManagedInterfaceBrowserTest : public ContentBrowserTest {
         EvalJs(eval_frame, statement, content::EXECUTE_SCRIPT_DEFAULT_OPTIONS,
                content::ISOLATED_WORLD_ID_GLOBAL);
 
-    EXPECT_TRUE(result.error.empty());
-    return result.value.GetString();
+    EXPECT_TRUE(result.is_ok());
+    return result.ExtractString();
   }
 
   void Reload(RenderFrameHost* frame = nullptr) {

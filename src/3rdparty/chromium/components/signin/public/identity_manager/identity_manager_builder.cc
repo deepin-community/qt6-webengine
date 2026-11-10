@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/image_fetcher/core/image_decoder.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/internal/identity_manager/account_capabilities_fetcher_factory.h"
@@ -61,11 +60,8 @@ std::unique_ptr<PrimaryAccountManager> BuildPrimaryAccountManager(
     SigninClient* client,
     AccountTrackerService* account_tracker_service,
     ProfileOAuth2TokenService* token_service) {
-  std::unique_ptr<PrimaryAccountManager> primary_account_manager;
-  primary_account_manager = std::make_unique<PrimaryAccountManager>(
-      client, token_service, account_tracker_service);
-  primary_account_manager->Initialize();
-  return primary_account_manager;
+  return std::make_unique<PrimaryAccountManager>(client, token_service,
+                                                 account_tracker_service);
 }
 
 std::unique_ptr<AccountsMutator> BuildAccountsMutator(
@@ -120,14 +116,9 @@ IdentityManager::InitParameters BuildIdentityManagerInitParameters(
 #if BUILDFLAG(IS_CHROMEOS)
         params->account_manager_facade, params->is_regular_profile,
 #endif  // BUILDFLAG(IS_CHROMEOS)
-#if BUILDFLAG(ENABLE_DICE_SUPPORT) || BUILDFLAG(IS_CHROMEOS_LACROS)
-        params->delete_signin_cookies_on_exit,
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT) ||  BUILDFLAG(IS_CHROMEOS_LACROS)
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-        params->token_web_data,
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+        params->delete_signin_cookies_on_exit, params->token_web_data,
         params->unexportable_key_service,
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 #if BUILDFLAG(IS_IOS)
         std::move(params->device_accounts_provider),
@@ -184,7 +175,7 @@ IdentityManager::InitParameters BuildIdentityManagerInitParameters(
   }
 #endif  // BULIDFLAG(IS_ANDROID)
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   init_params.account_fetcher_service = BuildAccountFetcherService(
       params->signin_client, token_service.get(), account_tracker_service.get(),
       std::move(params->image_decoder),
@@ -207,9 +198,8 @@ IdentityManager::InitParameters BuildIdentityManagerInitParameters(
 #if BUILDFLAG(IS_CHROMEOS)
   init_params.account_manager_facade = params->account_manager_facade;
 #endif
-#if BUILDFLAG(IS_IOS)
-  init_params.should_verify_scope_access = params->should_verify_scope_access;
-#endif
+  init_params.require_sync_consent_for_scope_verification =
+      params->require_sync_consent_for_scope_verification;
 
   return init_params;
 }

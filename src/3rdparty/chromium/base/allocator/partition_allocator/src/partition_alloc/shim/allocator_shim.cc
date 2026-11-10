@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "partition_alloc/shim/allocator_shim.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "build/build_config.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
+#include "partition_alloc/shim/allocator_shim.h"
 
 #include <unistd.h>
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
+
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 #include "partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc.h"
 #endif
 
@@ -31,7 +36,6 @@
 // noexcept needs to be routed to
 // allocator_shim::internal::PartitionMallocUnchecked through the shim layer.
 #include "partition_alloc/shim/allocator_shim_override_cpp_symbols.h"
-
 #include "partition_alloc/shim/allocator_shim_override_libc_symbols.h"
 
 // Some glibc versions (until commit 6c444ad6e953dbdf9c7be065308a0a777)
@@ -48,7 +52,7 @@
 // quite likely to keep working in the future. For instance, LLVM for LSAN uses
 // this mechanism.
 
-#if defined(LIBC_GLIBC) && BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(PA_LIBC_GLIBC) && PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 #include "partition_alloc/shim/allocator_shim_override_glibc_weak_symbols.h"
 #endif
 

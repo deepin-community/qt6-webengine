@@ -20,10 +20,11 @@
 #include "libavutil/eval.h"
 #include "libavutil/fifo.h"
 #include "libavutil/file.h"
+#include "libavutil/frame.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "formats.h"
-#include "internal.h"
 #include "filters.h"
 #include "video.h"
 #include "vulkan_filter.h"
@@ -48,6 +49,7 @@ static inline AVFrame *pl_get_mapped_avframe(const struct pl_frame *frame)
 typedef struct pl_options_t {
     // Backwards compatibility shim of this struct
     struct pl_render_params params;
+    struct pl_deinterlace_params deinterlace_params;
     struct pl_deband_params deband_params;
     struct pl_sigmoid_params sigmoid_params;
     struct pl_color_adjustment color_adjustment;
@@ -143,7 +145,6 @@ typedef struct LibplaceboInput {
     pl_queue queue;
     enum pl_queue_status qstatus;
     struct pl_frame_mix mix; ///< temporary storage
-    AVFilterLink *link;
     AVFifo *out_pts; ///< timestamps of wanted output frames
     int64_t status_pts;
     int status;
@@ -168,7 +169,7 @@ typedef struct LibplaceboContext {
     /* settings */
     char *out_format_string;
     enum AVPixelFormat out_format;
-    char *fillcolor;
+    uint8_t fillcolor[4];
     double var_values[VAR_VARS_NB];
     char *w_expr;
     char *h_expr;
@@ -185,6 +186,7 @@ typedef struct LibplaceboContext {
     float corner_rounding;
     int force_original_aspect_ratio;
     int force_divisible_by;
+    int reset_sar;
     int normalize_sar;
     int apply_filmgrain;
     int apply_dovi;
@@ -192,22 +194,33 @@ typedef struct LibplaceboContext {
     int color_range;
     int color_primaries;
     int color_trc;
+    int rotation;
     AVDictionary *extra_opts;
+
+#if PL_API_VER >= 351
+    pl_cache cache;
+    char *shader_cache;
+#endif
+
+    int have_hwdevice;
 
     /* pl_render_params */
     pl_options opts;
     char *upscaler;
     char *downscaler;
     char *frame_mixer;
-    int lut_entries;
     float antiringing;
     int sigmoid;
     int skip_aa;
-    float polar_cutoff;
     int disable_linear;
     int disable_builtin;
     int force_dither;
     int disable_fbos;
+
+    /* pl_deinterlace_params */
+    int deinterlace;
+    int skip_spatial_check;
+    int send_fields;
 
     /* pl_deband_params */
     int deband;
@@ -226,7 +239,6 @@ typedef struct LibplaceboContext {
     /* pl_peak_detect_params */
     int peakdetect;
     float smoothing;
-    float min_peak;
     float scene_low;
     float scene_high;
     float percentile;
@@ -239,20 +251,6 @@ typedef struct LibplaceboContext {
     int tonemapping_lut_size;
     float contrast_recovery;
     float contrast_smoothness;
-
-#if FF_API_LIBPLACEBO_OPTS
-    /* for backwards compatibility */
-    float desat_str;
-    float desat_exp;
-    int gamut_warning;
-    int gamut_clipping;
-    int force_icc_lut;
-    int intent;
-    int tonemapping_mode;
-    float crosstalk;
-    float overshoot;
-    float hybrid_mix;
-#endif
 
     /* pl_dither_params */
     int dithering;
@@ -380,35 +378,11 @@ static int update_settings(AVFilterContext *ctx)
     AVDictionaryEntry *e = NULL;
     pl_options opts = s->opts;
     int gamut_mode = s->gamut_mode;
-    uint8_t color_rgba[4];
 
-#if FF_API_LIBPLACEBO_OPTS
-    float hybrid_mix = s->hybrid_mix;
-    /* backwards compatibility with older API */
-    switch (s->tonemapping_mode) {
-    case 0: /*PL_TONE_MAP_AUTO*/
-        if (s->desat_str >= 0.0f)
-            hybrid_mix = s->desat_str;
-        break;
-    case 1: /*PL_TONE_MAP_RGB*/     hybrid_mix = 1.0f; break;
-    case 2: /*PL_TONE_MAP_HYBRID*/  hybrid_mix = 0.2f; break;
-    case 3: /*PL_TONE_MAP_LUMA*/    hybrid_mix = 0.0f; break;
-    case 4: /*PL_TONE_MAP_MAX*/     hybrid_mix = 0.0f; break;
-    }
-
-    switch (s->intent) {
-    case PL_INTENT_SATURATION:            gamut_mode = GAMUT_MAP_SATURATION; break;
-    case PL_INTENT_RELATIVE_COLORIMETRIC: gamut_mode = GAMUT_MAP_RELATIVE; break;
-    case PL_INTENT_ABSOLUTE_COLORIMETRIC: gamut_mode = GAMUT_MAP_ABSOLUTE; break;
-    }
-
-    if (s->gamut_warning)
-        gamut_mode = GAMUT_MAP_HIGHLIGHT;
-    if (s->gamut_clipping)
-        gamut_mode = GAMUT_MAP_DESATURATE;
-#endif
-
-    RET(av_parse_color(color_rgba, s->fillcolor, -1, s));
+    opts->deinterlace_params = *pl_deinterlace_params(
+        .algo = s->deinterlace,
+        .skip_spatial_check = s->skip_spatial_check,
+    );
 
     opts->deband_params = *pl_deband_params(
         .iterations = s->deband_iterations,
@@ -429,26 +403,14 @@ static int update_settings(AVFilterContext *ctx)
 
     opts->peak_detect_params = *pl_peak_detect_params(
         .smoothing_period = s->smoothing,
-        .minimum_peak = s->min_peak,
         .scene_threshold_low = s->scene_low,
         .scene_threshold_high = s->scene_high,
 #if PL_API_VER >= 263
         .percentile = s->percentile,
 #endif
-#if FF_API_LIBPLACEBO_OPTS && PL_API_VER < 256
-        .overshoot_margin = s->overshoot,
-#endif
     );
 
     opts->color_map_params = *pl_color_map_params(
-#if FF_API_LIBPLACEBO_OPTS
-# if PL_API_VER >= 269
-        .hybrid_mix = hybrid_mix,
-# else
-        .tone_mapping_mode = s->tonemapping_mode,
-        .tone_mapping_crosstalk = s->crosstalk,
-# endif
-#endif
         .tone_mapping_function = get_tonemapping_func(s->tonemapping),
         .tone_mapping_param = s->tonemapping_param,
         .inverse_tone_mapping = s->inverse_tonemapping,
@@ -473,18 +435,18 @@ static int update_settings(AVFilterContext *ctx)
     );
 
     opts->params = *pl_render_params(
-        .lut_entries = s->lut_entries,
         .antiringing_strength = s->antiringing,
-        .background_transparency = 1.0f - (float) color_rgba[3] / UINT8_MAX,
+        .background_transparency = 1.0f - (float) s->fillcolor[3] / UINT8_MAX,
         .background_color = {
-            (float) color_rgba[0] / UINT8_MAX,
-            (float) color_rgba[1] / UINT8_MAX,
-            (float) color_rgba[2] / UINT8_MAX,
+            (float) s->fillcolor[0] / UINT8_MAX,
+            (float) s->fillcolor[1] / UINT8_MAX,
+            (float) s->fillcolor[2] / UINT8_MAX,
         },
 #if PL_API_VER >= 277
         .corner_rounding = s->corner_rounding,
 #endif
 
+        .deinterlace_params = &opts->deinterlace_params,
         .deband_params = s->deband ? &opts->deband_params : NULL,
         .sigmoid_params = s->sigmoid ? &opts->sigmoid_params : NULL,
         .color_adjustment = &opts->color_adjustment,
@@ -497,7 +459,6 @@ static int update_settings(AVFilterContext *ctx)
         .num_hooks = s->num_hooks,
 
         .skip_anti_aliasing = s->skip_aa,
-        .polar_cutoff = s->polar_cutoff,
         .disable_linear_scaling = s->disable_linear,
         .disable_builtin_scalers = s->disable_builtin,
         .force_dither = s->force_dither,
@@ -544,11 +505,13 @@ static int parse_shader(AVFilterContext *avctx, const void *shader, size_t len)
 
 static void libplacebo_uninit(AVFilterContext *avctx);
 static int libplacebo_config_input(AVFilterLink *inlink);
+static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwctx);
 
 static int libplacebo_init(AVFilterContext *avctx)
 {
     int err = 0;
     LibplaceboContext *s = avctx->priv;
+    const AVVulkanDeviceContext *vkhwctx = NULL;
 
     /* Create libplacebo log context */
     s->log = pl_log_create(PL_API_VER, pl_log_params(
@@ -565,6 +528,21 @@ static int libplacebo_init(AVFilterContext *avctx)
         libplacebo_uninit(avctx);
         return AVERROR(ENOMEM);
     }
+
+#if PL_API_VER >= 351
+    if (s->shader_cache && s->shader_cache[0]) {
+        s->cache = pl_cache_create(pl_cache_params(
+            .log  = s->log,
+            .get  = pl_cache_get_file,
+            .set  = pl_cache_set_file,
+            .priv = s->shader_cache,
+        ));
+        if (!s->cache) {
+            libplacebo_uninit(avctx);
+            return AVERROR(ENOMEM);
+        }
+    }
+#endif
 
     if (s->out_format_string) {
         s->out_format = av_get_pix_fmt(s->out_format_string);
@@ -610,7 +588,14 @@ static int libplacebo_init(AVFilterContext *avctx)
     if (strcmp(s->fps_string, "none") != 0)
         RET(av_parse_video_rate(&s->fps, s->fps_string));
 
-    /* Note: s->vulkan etc. are initialized later, when hwctx is available */
+    if (avctx->hw_device_ctx) {
+        const AVHWDeviceContext *avhwctx = (void *) avctx->hw_device_ctx->data;
+        if (avhwctx->type == AV_HWDEVICE_TYPE_VULKAN)
+            vkhwctx = avhwctx->hwctx;
+    }
+
+    RET(init_vulkan(avctx, vkhwctx));
+
     return 0;
 
 fail:
@@ -633,8 +618,7 @@ static void unlock_queue(void *priv, uint32_t qf, uint32_t qidx)
 }
 #endif
 
-static int input_init(AVFilterContext *avctx, AVFilterLink *link,
-                      LibplaceboInput *input, int idx)
+static int input_init(AVFilterContext *avctx, LibplaceboInput *input, int idx)
 {
     LibplaceboContext *s = avctx->priv;
 
@@ -643,7 +627,6 @@ static int input_init(AVFilterContext *avctx, AVFilterLink *link,
         return AVERROR(ENOMEM);
     input->queue = pl_queue_create(s->gpu);
     input->renderer = pl_renderer_create(s->log, s->gpu);
-    input->link = link;
     input->idx = idx;
 
     return 0;
@@ -665,8 +648,7 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
 
     if (hwctx) {
 #if PL_API_VER >= 278
-        /* Import libavfilter vulkan context into libplacebo */
-        s->vulkan = pl_vulkan_import(s->log, pl_vulkan_import_params(
+        struct pl_vulkan_import_params import_params = {
             .instance       = hwctx->inst,
             .get_proc_addr  = hwctx->get_proc_addr,
             .phys_device    = hwctx->phys_dev,
@@ -678,20 +660,39 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
             .unlock_queue   = unlock_queue,
             .queue_ctx      = avctx->hw_device_ctx->data,
             .queue_graphics = {
-                .index = hwctx->queue_family_index,
-                .count = hwctx->nb_graphics_queues,
+                .index = VK_QUEUE_FAMILY_IGNORED,
+                .count = 0,
             },
             .queue_compute = {
-                .index = hwctx->queue_family_comp_index,
-                .count = hwctx->nb_comp_queues,
+                .index = VK_QUEUE_FAMILY_IGNORED,
+                .count = 0,
             },
             .queue_transfer = {
-                .index = hwctx->queue_family_tx_index,
-                .count = hwctx->nb_tx_queues,
+                .index = VK_QUEUE_FAMILY_IGNORED,
+                .count = 0,
             },
             /* This is the highest version created by hwcontext_vulkan.c */
             .max_api_version = VK_API_VERSION_1_3,
-        ));
+        };
+        for (int i = 0; i < hwctx->nb_qf; i++) {
+            const AVVulkanDeviceQueueFamily *qf = &hwctx->qf[i];
+
+            if (qf->flags & VK_QUEUE_GRAPHICS_BIT) {
+                import_params.queue_graphics.index = qf->idx;
+                import_params.queue_graphics.count = qf->num;
+            }
+            if (qf->flags & VK_QUEUE_COMPUTE_BIT) {
+                import_params.queue_compute.index = qf->idx;
+                import_params.queue_compute.count = qf->num;
+            }
+            if (qf->flags & VK_QUEUE_TRANSFER_BIT) {
+                import_params.queue_transfer.index = qf->idx;
+                import_params.queue_transfer.count = qf->num;
+            }
+        }
+
+        /* Import libavfilter vulkan context into libplacebo */
+        s->vulkan = pl_vulkan_import(s->log, &import_params);
 #else
         av_log(s, AV_LOG_ERROR, "libplacebo version %s too old to import "
                "Vulkan device, remove it or upgrade libplacebo to >= 5.278\n",
@@ -699,6 +700,8 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
         err = AVERROR_EXTERNAL;
         goto fail;
 #endif
+
+        s->have_hwdevice = 1;
     } else {
         s->vulkan = pl_vulkan_create(s->log, pl_vulkan_params(
             .queue_count = 0, /* enable all queues for parallelization */
@@ -713,6 +716,9 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
     }
 
     s->gpu = s->vulkan->gpu;
+#if PL_API_VER >= 351
+    pl_gpu_set_cache(s->gpu, s->cache);
+#endif
 
     /* Parse the user shaders, if requested */
     if (s->shader_bin_len)
@@ -728,7 +734,7 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
     if (!s->inputs)
         return AVERROR(ENOMEM);
     for (int i = 0; i < s->nb_inputs; i++)
-        RET(input_init(avctx, avctx->inputs[i], &s->inputs[i], i));
+        RET(input_init(avctx, &s->inputs[i], i));
 
     /* fall through */
 fail:
@@ -751,6 +757,9 @@ static void libplacebo_uninit(AVFilterContext *avctx)
         av_freep(&s->inputs);
     }
 
+#if PL_API_VER >= 351
+    pl_cache_destroy(&s->cache);
+#endif
     pl_options_free(&s->opts);
     pl_vulkan_destroy(&s->vulkan);
     pl_log_destroy(&s->log);
@@ -792,7 +801,9 @@ static const AVFrame *ref_frame(const struct pl_frame_mix *mix)
 static void update_crops(AVFilterContext *ctx, LibplaceboInput *in,
                          struct pl_frame *target, double target_pts)
 {
+    FilterLink     *outl = ff_filter_link(ctx->outputs[0]);
     LibplaceboContext *s = ctx->priv;
+    const AVFilterLink *inlink = ctx->inputs[in->idx];
     const AVFrame *ref = ref_frame(&in->mix);
 
     for (int i = 0; i < in->mix.num_frames; i++) {
@@ -800,18 +811,18 @@ static void update_crops(AVFilterContext *ctx, LibplaceboInput *in,
         // own the entire pl_queue, and hence, the pointed-at frames.
         struct pl_frame *image = (struct pl_frame *) in->mix.frames[i];
         const AVFrame *src = pl_get_mapped_avframe(image);
-        double image_pts = src->pts * av_q2d(in->link->time_base);
+        double image_pts = src->pts * av_q2d(inlink->time_base);
 
         /* Update dynamic variables */
         s->var_values[VAR_IN_IDX] = s->var_values[VAR_IDX] = in->idx;
-        s->var_values[VAR_IN_W]   = s->var_values[VAR_IW] = in->link->w;
-        s->var_values[VAR_IN_H]   = s->var_values[VAR_IH] = in->link->h;
-        s->var_values[VAR_A]      = (double) in->link->w / in->link->h;
-        s->var_values[VAR_SAR]    = in->link->sample_aspect_ratio.num ?
-            av_q2d(in->link->sample_aspect_ratio) : 1.0;
+        s->var_values[VAR_IN_W]   = s->var_values[VAR_IW] = inlink->w;
+        s->var_values[VAR_IN_H]   = s->var_values[VAR_IH] = inlink->h;
+        s->var_values[VAR_A]      = (double) inlink->w / inlink->h;
+        s->var_values[VAR_SAR]    = inlink->sample_aspect_ratio.num ?
+            av_q2d(inlink->sample_aspect_ratio) : 1.0;
         s->var_values[VAR_IN_T]   = s->var_values[VAR_T]  = image_pts;
         s->var_values[VAR_OUT_T]  = s->var_values[VAR_OT] = target_pts;
-        s->var_values[VAR_N]      = ctx->outputs[0]->frame_count_out;
+        s->var_values[VAR_N]      = outl->frame_count_out;
 
         /* Clear these explicitly to avoid leaking previous frames' state */
         s->var_values[VAR_CROP_W] = s->var_values[VAR_CW] = NAN;
@@ -837,6 +848,13 @@ static void update_crops(AVFilterContext *ctx, LibplaceboInput *in,
         image->crop.y0 = av_expr_eval(s->crop_y_pexpr, s->var_values, NULL);
         image->crop.x1 = image->crop.x0 + s->var_values[VAR_CROP_W];
         image->crop.y1 = image->crop.y0 + s->var_values[VAR_CROP_H];
+        image->rotation = s->rotation;
+        if (s->rotation % PL_ROTATION_180 == PL_ROTATION_90) {
+            /* Libplacebo expects the input crop relative to the actual frame
+             * dimensions, so un-transpose them here */
+            FFSWAP(float, image->crop.x0, image->crop.y0);
+            FFSWAP(float, image->crop.x1, image->crop.y1);
+        }
 
         if (src == ref) {
             /* Only update the target crop once, for the 'reference' frame */
@@ -846,7 +864,7 @@ static void update_crops(AVFilterContext *ctx, LibplaceboInput *in,
             target->crop.y1 = target->crop.y0 + s->var_values[VAR_POS_H];
             if (s->normalize_sar) {
                 float aspect = pl_rect2df_aspect(&image->crop);
-                aspect *= av_q2d(in->link->sample_aspect_ratio);
+                aspect *= av_q2d(inlink->sample_aspect_ratio);
                 pl_rect2df_aspect_set(&target->crop, aspect, s->pad_crop_ratio);
             }
         }
@@ -856,7 +874,7 @@ static void update_crops(AVFilterContext *ctx, LibplaceboInput *in,
 /* Construct and emit an output frame for a given timestamp */
 static int output_frame(AVFilterContext *ctx, int64_t pts)
 {
-    int err = 0, ok, changed_csp;
+    int err = 0, ok, changed = 0;
     LibplaceboContext *s = ctx->priv;
     pl_options opts = s->opts;
     AVFilterLink *outlink = ctx->outputs[0];
@@ -882,50 +900,44 @@ static int output_frame(AVFilterContext *ctx, int64_t pts)
     out->pts = pts;
     out->width = outlink->w;
     out->height = outlink->h;
+    out->colorspace = outlink->colorspace;
+    out->color_range = outlink->color_range;
     if (s->fps.num)
         out->duration = 1;
+    if (s->deinterlace)
+        out->flags &= ~(AV_FRAME_FLAG_INTERLACED | AV_FRAME_FLAG_TOP_FIELD_FIRST);
 
     if (s->apply_dovi && av_frame_get_side_data(ref, AV_FRAME_DATA_DOVI_METADATA)) {
         /* Output of dovi reshaping is always BT.2020+PQ, so infer the correct
          * output colorspace defaults */
-        out->colorspace = AVCOL_SPC_BT2020_NCL;
         out->color_primaries = AVCOL_PRI_BT2020;
         out->color_trc = AVCOL_TRC_SMPTE2084;
+        changed |= AV_SIDE_DATA_PROP_COLOR_DEPENDENT;
     }
 
-    if (s->colorspace >= 0)
-        out->colorspace = s->colorspace;
-    if (s->color_range >= 0)
-        out->color_range = s->color_range;
     if (s->color_trc >= 0)
         out->color_trc = s->color_trc;
     if (s->color_primaries >= 0)
         out->color_primaries = s->color_primaries;
 
-    /* Sanity colorspace overrides */
-    if (outdesc->flags & AV_PIX_FMT_FLAG_RGB) {
-        out->colorspace = AVCOL_SPC_RGB;
-    } else if (out->colorspace == AVCOL_SPC_RGB) {
-        out->colorspace = AVCOL_SPC_UNSPECIFIED;
-    }
-
-    changed_csp = ref->colorspace      != out->colorspace     ||
-                  ref->color_range     != out->color_range    ||
-                  ref->color_trc       != out->color_trc      ||
-                  ref->color_primaries != out->color_primaries;
-
     /* Strip side data if no longer relevant */
-    if (changed_csp) {
-        av_frame_remove_side_data(out, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-        av_frame_remove_side_data(out, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
-        av_frame_remove_side_data(out, AV_FRAME_DATA_ICC_PROFILE);
-    }
-    if (s->apply_dovi || changed_csp) {
-        av_frame_remove_side_data(out, AV_FRAME_DATA_DOVI_RPU_BUFFER);
-        av_frame_remove_side_data(out, AV_FRAME_DATA_DOVI_METADATA);
-    }
+    if (out->width != ref->width || out->height != ref->height)
+        changed |= AV_SIDE_DATA_PROP_SIZE_DEPENDENT;
+    if (ref->color_trc != out->color_trc || ref->color_primaries != out->color_primaries)
+        changed |= AV_SIDE_DATA_PROP_COLOR_DEPENDENT;
+    av_frame_side_data_remove_by_props(&out->side_data, &out->nb_side_data, changed);
+
     if (s->apply_filmgrain)
         av_frame_remove_side_data(out, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
+
+    if (s->reset_sar) {
+        out->sample_aspect_ratio = ref->sample_aspect_ratio;
+    } else {
+        const AVRational ar_ref  = { ref->width, ref->height };
+        const AVRational ar_out  = { out->width, out->height };
+        const AVRational stretch = av_div_q(ar_ref, ar_out);
+        out->sample_aspect_ratio = av_mul_q(ref->sample_aspect_ratio, stretch);
+    }
 
     /* Map, render and unmap output frame */
     if (outdesc->flags & AV_PIX_FMT_FLAG_HWACCEL) {
@@ -942,18 +954,31 @@ static int output_frame(AVFilterContext *ctx, int64_t pts)
     }
 
     /* Draw first frame opaque, others with blending */
-    opts->params.skip_target_clearing = false;
     opts->params.blend_params = NULL;
+#if PL_API_VER >= 346
+    opts->params.background = opts->params.border = PL_CLEAR_COLOR;
+#else
+    opts->params.skip_target_clearing = false;
+#endif
     for (int i = 0; i < s->nb_inputs; i++) {
         LibplaceboInput *in = &s->inputs[i];
-        int high_fps = av_cmp_q(in->link->frame_rate, outlink->frame_rate) >= 0;
+        FilterLink *il = ff_filter_link(ctx->inputs[in->idx]);
+        FilterLink *ol = ff_filter_link(outlink);
+        int high_fps = av_cmp_q(il->frame_rate, ol->frame_rate) >= 0;
         if (in->qstatus != PL_QUEUE_OK)
             continue;
         opts->params.skip_caching_single_frame = high_fps;
         update_crops(ctx, in, &target, out->pts * av_q2d(outlink->time_base));
         pl_render_image_mix(in->renderer, &in->mix, &target, &opts->params);
-        opts->params.skip_target_clearing = true;
+
+        /* Force straight output and set correct blend mode */
+        target.repr.alpha = PL_ALPHA_INDEPENDENT;
         opts->params.blend_params = &pl_alpha_overlay;
+#if PL_API_VER >= 346
+        opts->params.background = opts->params.border = PL_CLEAR_SKIP;
+#else
+        opts->params.skip_target_clearing = true;
+#endif
     }
 
     if (outdesc->flags & AV_PIX_FMT_FLAG_HWACCEL) {
@@ -1005,33 +1030,42 @@ static int handle_input(AVFilterContext *ctx, LibplaceboInput *input)
     int ret, status;
     LibplaceboContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
+    AVFilterLink *inlink = ctx->inputs[input->idx];
     AVFrame *in;
     int64_t pts;
 
-    while ((ret = ff_inlink_consume_frame(input->link, &in)) > 0) {
-        in->opaque = s;
-        pl_queue_push(input->queue, &(struct pl_source_frame) {
-            .pts         = in->pts * av_q2d(input->link->time_base),
-            .duration    = in->duration * av_q2d(input->link->time_base),
-            .first_field = pl_field_from_avframe(in),
+    while ((ret = ff_inlink_consume_frame(inlink, &in)) > 0) {
+        struct pl_source_frame src = {
+            .pts         = in->pts * av_q2d(inlink->time_base),
+            .duration    = in->duration * av_q2d(inlink->time_base),
+            .first_field = s->deinterlace ? pl_field_from_avframe(in) : PL_FIELD_NONE,
             .frame_data  = in,
             .map         = map_frame,
             .unmap       = unmap_frame,
             .discard     = discard_frame,
-        });
+        };
+
+        in->opaque = s;
+        pl_queue_push(input->queue, &src);
 
         if (!s->fps.num) {
             /* Internally queue an output frame for the same PTS */
-            pts = av_rescale_q(in->pts, input->link->time_base, outlink->time_base);
+            pts = av_rescale_q(in->pts, inlink->time_base, outlink->time_base);
             av_fifo_write(input->out_pts, &pts, 1);
+
+            if (s->send_fields && src.first_field != PL_FIELD_NONE) {
+                /* Queue the second field for interlaced content */
+                pts += av_rescale_q(in->duration, inlink->time_base, outlink->time_base) / 2;
+                av_fifo_write(input->out_pts, &pts, 1);
+            }
         }
     }
 
     if (ret < 0)
         return ret;
 
-    if (!input->status && ff_inlink_acknowledge_status(input->link, &status, &pts)) {
-        pts = av_rescale_q_rnd(pts, input->link->time_base, outlink->time_base,
+    if (!input->status && ff_inlink_acknowledge_status(inlink, &status, &pts)) {
+        pts = av_rescale_q_rnd(pts, inlink->time_base, outlink->time_base,
                                AV_ROUND_UP);
         pl_queue_push(input->queue, NULL); /* Signal EOF to pl_queue */
         input->status = status;
@@ -1058,6 +1092,7 @@ static int libplacebo_activate(AVFilterContext *ctx)
     int ret, ok = 0, retry = 0;
     LibplaceboContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
+    FilterLink *outl      = ff_filter_link(outlink);
     int64_t pts, out_pts;
 
     FF_FILTER_FORWARD_STATUS_BACK_ALL(outlink, ctx);
@@ -1070,7 +1105,7 @@ static int libplacebo_activate(AVFilterContext *ctx)
 
     if (ff_outlink_frame_wanted(outlink)) {
         if (s->fps.num) {
-            out_pts = outlink->frame_count_out;
+            out_pts = outl->frame_count_out;
         } else {
             /* Determine the PTS of the next frame from any active input */
             out_pts = INT64_MAX;
@@ -1079,7 +1114,7 @@ static int libplacebo_activate(AVFilterContext *ctx)
                 if (av_fifo_peek(in->out_pts, &pts, 1, 0) >= 0) {
                     out_pts = FFMIN(out_pts, pts);
                 } else if (!in->status) {
-                    ff_inlink_request_frame(in->link);
+                    ff_inlink_request_frame(ctx->inputs[in->idx]);
                     retry = true;
                 }
             }
@@ -1091,6 +1126,7 @@ static int libplacebo_activate(AVFilterContext *ctx)
         /* Update all input queues to the chosen out_pts */
         for (int i = 0; i < s->nb_inputs; i++) {
             LibplaceboInput *in = &s->inputs[i];
+            FilterLink *l = ff_filter_link(outlink);
             if (in->status && out_pts >= in->status_pts) {
                 in->qstatus = PL_QUEUE_EOF;
                 continue;
@@ -1099,12 +1135,12 @@ static int libplacebo_activate(AVFilterContext *ctx)
             in->qstatus = pl_queue_update(in->queue, &in->mix, pl_queue_params(
                 .pts            = out_pts * av_q2d(outlink->time_base),
                 .radius         = pl_frame_mix_radius(&s->opts->params),
-                .vsync_duration = av_q2d(av_inv_q(outlink->frame_rate)),
+                .vsync_duration = l->frame_rate.num ? av_q2d(av_inv_q(l->frame_rate)) : 0,
             ));
 
             switch (in->qstatus) {
             case PL_QUEUE_MORE:
-                ff_inlink_request_frame(in->link);
+                ff_inlink_request_frame(ctx->inputs[in->idx]);
                 retry = true;
                 break;
             case PL_QUEUE_OK:
@@ -1133,24 +1169,26 @@ static int libplacebo_activate(AVFilterContext *ctx)
     return FFERROR_NOT_READY;
 }
 
-static int libplacebo_query_format(AVFilterContext *ctx)
+static int libplacebo_query_format(const AVFilterContext *ctx,
+                                   AVFilterFormatsConfig **cfg_in,
+                                   AVFilterFormatsConfig **cfg_out)
 {
     int err;
-    LibplaceboContext *s = ctx->priv;
-    const AVVulkanDeviceContext *vkhwctx = NULL;
+    const LibplaceboContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = NULL;
     AVFilterFormats *infmts = NULL, *outfmts = NULL;
 
-    if (ctx->hw_device_ctx) {
-        const AVHWDeviceContext *avhwctx = (void *) ctx->hw_device_ctx->data;
-        if (avhwctx->type == AV_HWDEVICE_TYPE_VULKAN)
-            vkhwctx = avhwctx->hwctx;
+    /* List AV_PIX_FMT_VULKAN first to prefer it when possible */
+    if (s->have_hwdevice) {
+        RET(ff_add_format(&infmts, AV_PIX_FMT_VULKAN));
+        if (s->out_format == AV_PIX_FMT_NONE || av_vkfmt_from_pixfmt(s->out_format))
+            RET(ff_add_format(&outfmts, AV_PIX_FMT_VULKAN));
     }
-
-    RET(init_vulkan(ctx, vkhwctx));
 
     while ((desc = av_pix_fmt_desc_next(desc))) {
         enum AVPixelFormat pixfmt = av_pix_fmt_desc_get_id(desc);
+        if (pixfmt == AV_PIX_FMT_VULKAN)
+            continue; /* Handled above */
 
 #if PL_API_VER < 232
         // Older libplacebo can't handle >64-bit pixel formats, so safe-guard
@@ -1158,11 +1196,6 @@ static int libplacebo_query_format(AVFilterContext *ctx)
         if (av_get_bits_per_pixel(desc) > 64)
             continue;
 #endif
-
-        if (pixfmt == AV_PIX_FMT_VULKAN) {
-            if (!vkhwctx || vkhwctx->act_dev != s->vulkan->device)
-                continue;
-        }
 
         if (!pl_test_pixfmt(s->gpu, pixfmt))
             continue;
@@ -1174,15 +1207,8 @@ static int libplacebo_query_format(AVFilterContext *ctx)
             continue; /* BE formats are not supported by pl_download_avframe */
 
         /* Mask based on user specified format */
-        if (s->out_format != AV_PIX_FMT_NONE) {
-            if (pixfmt == AV_PIX_FMT_VULKAN && av_vkfmt_from_pixfmt(s->out_format)) {
-                /* OK */
-            } else if (pixfmt == s->out_format) {
-                /* OK */
-            } else {
-                continue; /* Not OK */
-            }
-        }
+        if (pixfmt != s->out_format && s->out_format != AV_PIX_FMT_NONE)
+            continue;
 
 #if PL_API_VER >= 293
         if (!pl_test_pixfmt_caps(s->gpu, pixfmt, PL_FMT_CAP_RENDERABLE))
@@ -1193,17 +1219,31 @@ static int libplacebo_query_format(AVFilterContext *ctx)
     }
 
     if (!infmts || !outfmts) {
-        if (s->out_format) {
-            av_log(s, AV_LOG_ERROR, "Invalid output format '%s'!\n",
-                   av_get_pix_fmt_name(s->out_format));
-        }
         err = AVERROR(EINVAL);
         goto fail;
     }
 
-    for (int i = 0; i < s->nb_inputs; i++)
-        RET(ff_formats_ref(infmts, &ctx->inputs[i]->outcfg.formats));
-    RET(ff_formats_ref(outfmts, &ctx->outputs[0]->incfg.formats));
+    for (int i = 0; i < s->nb_inputs; i++) {
+        if (i > 0) {
+            /* Duplicate the format list for each subsequent input */
+            infmts = NULL;
+            for (int n = 0; n < cfg_in[0]->formats->nb_formats; n++)
+                RET(ff_add_format(&infmts, cfg_in[0]->formats->formats[n]));
+        }
+        RET(ff_formats_ref(infmts, &cfg_in[i]->formats));
+        RET(ff_formats_ref(ff_all_color_spaces(), &cfg_in[i]->color_spaces));
+        RET(ff_formats_ref(ff_all_color_ranges(), &cfg_in[i]->color_ranges));
+    }
+
+    RET(ff_formats_ref(outfmts, &cfg_out[0]->formats));
+
+    outfmts = s->colorspace > 0 ? ff_make_formats_list_singleton(s->colorspace)
+                                : ff_all_color_spaces();
+    RET(ff_formats_ref(outfmts, &cfg_out[0]->color_spaces));
+
+    outfmts = s->color_range > 0 ? ff_make_formats_list_singleton(s->color_range)
+                                 : ff_all_color_ranges();
+    RET(ff_formats_ref(outfmts, &cfg_out[0]->color_ranges));
     return 0;
 
 fail:
@@ -1218,6 +1258,14 @@ static int libplacebo_config_input(AVFilterLink *inlink)
 {
     AVFilterContext *avctx = inlink->dst;
     LibplaceboContext *s   = avctx->priv;
+
+    if (s->rotation % PL_ROTATION_180 == PL_ROTATION_90) {
+        /* Swap width and height for 90 degree rotations to make the size and
+         * scaling calculations work out correctly */
+        FFSWAP(int, inlink->w, inlink->h);
+        if (inlink->sample_aspect_ratio.num)
+            inlink->sample_aspect_ratio = av_inv_q(inlink->sample_aspect_ratio);
+    }
 
     if (inlink->format == AV_PIX_FMT_VULKAN)
         return ff_vk_filter_config_input(inlink);
@@ -1236,9 +1284,11 @@ static inline AVRational max_q(AVRational a, AVRational b)
 static int libplacebo_config_output(AVFilterLink *outlink)
 {
     int err;
+    FilterLink          *l = ff_filter_link(outlink);
     AVFilterContext *avctx = outlink->src;
     LibplaceboContext *s   = avctx->priv;
     AVFilterLink *inlink   = outlink->src->inputs[0];
+    FilterLink       *ol   = ff_filter_link(outlink);
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
     const AVPixFmtDescriptor *out_desc = av_pix_fmt_desc_get(outlink->format);
     AVHWFramesContext *hwfc;
@@ -1248,34 +1298,51 @@ static int libplacebo_config_output(AVFilterLink *outlink)
     RET(ff_scale_eval_dimensions(s, s->w_expr, s->h_expr, inlink, outlink,
                                  &outlink->w, &outlink->h));
 
+    s->reset_sar |= s->normalize_sar || s->nb_inputs > 1;
+    double sar_in = inlink->sample_aspect_ratio.num ?
+                    av_q2d(inlink->sample_aspect_ratio) : 1.0;
+
     ff_scale_adjust_dimensions(inlink, &outlink->w, &outlink->h,
                                s->force_original_aspect_ratio,
-                               s->force_divisible_by);
+                               s->force_divisible_by,
+                               s->reset_sar ? sar_in : 1.0);
 
-    if (s->normalize_sar || s->nb_inputs > 1) {
+    if (s->reset_sar) {
         /* SAR is normalized, or we have multiple inputs, set out to 1:1 */
         outlink->sample_aspect_ratio = (AVRational){ 1, 1 };
-    } else {
+    } else if (inlink->sample_aspect_ratio.num) {
         /* This is consistent with other scale_* filters, which only
          * set the outlink SAR to be equal to the scale SAR iff the input SAR
          * was set to something nonzero */
-        if (inlink->sample_aspect_ratio.num)
-            outlink->sample_aspect_ratio = inlink->sample_aspect_ratio;
+        const AVRational ar_in   = { inlink->w,  inlink->h };
+        const AVRational ar_out  = { outlink->w, outlink->h };
+        const AVRational stretch = av_div_q(ar_in, ar_out);
+        outlink->sample_aspect_ratio = av_mul_q(inlink->sample_aspect_ratio, stretch);
+    } else {
+        outlink->sample_aspect_ratio = inlink->sample_aspect_ratio;
     }
 
     /* Frame rate */
     if (s->fps.num) {
-        outlink->frame_rate = s->fps;
+        ol->frame_rate = s->fps;
         outlink->time_base = av_inv_q(s->fps);
     } else {
-        outlink->frame_rate = avctx->inputs[0]->frame_rate;
+        FilterLink *il = ff_filter_link(avctx->inputs[0]);
+        ol->frame_rate = il->frame_rate;
         outlink->time_base = avctx->inputs[0]->time_base;
         for (int i = 1; i < s->nb_inputs; i++) {
-            outlink->frame_rate = max_q(outlink->frame_rate,
-                                        avctx->inputs[i]->frame_rate);
+            il = ff_filter_link(avctx->inputs[i]);
+            ol->frame_rate = max_q(ol->frame_rate, il->frame_rate);
             outlink->time_base = av_gcd_q(outlink->time_base,
                                           avctx->inputs[i]->time_base,
                                           AV_TIME_BASE / 2, AV_TIME_BASE_Q);
+        }
+
+        if (s->deinterlace && s->send_fields) {
+            const AVRational q2 = { 2, 1 };
+            ol->frame_rate = av_mul_q(ol->frame_rate, q2);
+            /* Ensure output frame timestamps are divisible by two */
+            outlink->time_base = av_div_q(outlink->time_base, q2);
         }
     }
 
@@ -1301,7 +1368,7 @@ static int libplacebo_config_output(AVFilterLink *outlink)
         s->vkctx.output_format = s->out_format;
     }
     RET(ff_vk_filter_config_output(outlink));
-    hwfc = (AVHWFramesContext *) outlink->hw_frames_ctx->data;
+    hwfc = (AVHWFramesContext *)l->hw_frames_ctx->data;
     vkfc = hwfc->hwctx;
     vkfc->usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
@@ -1329,82 +1396,99 @@ static const AVOption libplacebo_options[] = {
     { "pos_w", "Output video placement w", OFFSET(pos_w_expr), AV_OPT_TYPE_STRING, {.str = "ow"}, .flags = DYNAMIC },
     { "pos_h", "Output video placement h", OFFSET(pos_h_expr), AV_OPT_TYPE_STRING, {.str = "oh"}, .flags = DYNAMIC },
     { "format", "Output video format", OFFSET(out_format_string), AV_OPT_TYPE_STRING, .flags = STATIC },
-    { "force_original_aspect_ratio", "decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 2, STATIC, "force_oar" },
-        { "disable",  NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 0 }, 0, 0, STATIC, "force_oar" },
-        { "decrease", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 1 }, 0, 0, STATIC, "force_oar" },
-        { "increase", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 2 }, 0, 0, STATIC, "force_oar" },
+    { "force_original_aspect_ratio", "decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 2, STATIC, .unit = "force_oar" },
+        { "disable",  NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 0 }, 0, 0, STATIC, .unit = "force_oar" },
+        { "decrease", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 1 }, 0, 0, STATIC, .unit = "force_oar" },
+        { "increase", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 2 }, 0, 0, STATIC, .unit = "force_oar" },
     { "force_divisible_by", "enforce that the output resolution is divisible by a defined integer when force_original_aspect_ratio is used", OFFSET(force_divisible_by), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 256, STATIC },
-    { "normalize_sar", "force SAR normalization to 1:1 by adjusting pos_x/y/w/h", OFFSET(normalize_sar), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, STATIC },
+    { "reset_sar", "force SAR normalization to 1:1 by adjusting pos_x/y/w/h", OFFSET(reset_sar), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, STATIC },
+    { "normalize_sar", "like reset_sar, but pad/crop instead of stretching the video", OFFSET(normalize_sar), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, STATIC },
     { "pad_crop_ratio", "ratio between padding and cropping when normalizing SAR (0=pad, 1=crop)", OFFSET(pad_crop_ratio), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, 1.0, DYNAMIC },
-    { "fillcolor", "Background fill color", OFFSET(fillcolor), AV_OPT_TYPE_STRING, {.str = "black"}, .flags = DYNAMIC },
+    { "fillcolor", "Background fill color", OFFSET(fillcolor), AV_OPT_TYPE_COLOR, {.str = "black@0"}, .flags = DYNAMIC },
     { "corner_rounding", "Corner rounding radius", OFFSET(corner_rounding), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 1.0, .flags = DYNAMIC },
     { "extra_opts", "Pass extra libplacebo-specific options using a :-separated list of key=value pairs", OFFSET(extra_opts), AV_OPT_TYPE_DICT, .flags = DYNAMIC },
+#if PL_API_VER >= 351
+    { "shader_cache",  "Set shader cache path", OFFSET(shader_cache), AV_OPT_TYPE_STRING, {.str = NULL}, .flags = STATIC },
+#endif
 
-    {"colorspace", "select colorspace", OFFSET(colorspace), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_SPC_NB-1, DYNAMIC, "colorspace"},
-    {"auto", "keep the same colorspace",  0, AV_OPT_TYPE_CONST, {.i64=-1},                          INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"gbr",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_RGB},               INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"bt709",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT709},             INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"unknown",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_UNSPECIFIED},       INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"bt470bg",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT470BG},           INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"smpte170m",                  NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_SMPTE170M},         INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"smpte240m",                  NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_SMPTE240M},         INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"ycgco",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_YCGCO},             INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"bt2020nc",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT2020_NCL},        INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"bt2020c",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT2020_CL},         INT_MIN, INT_MAX, STATIC, "colorspace"},
-    {"ictcp",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_ICTCP},             INT_MIN, INT_MAX, STATIC, "colorspace"},
+    {"colorspace", "select colorspace", OFFSET(colorspace), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_SPC_NB-1, DYNAMIC, .unit = "colorspace"},
+    {"auto", "keep the same colorspace",  0, AV_OPT_TYPE_CONST, {.i64=-1},                          INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"gbr",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_RGB},               INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"bt709",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT709},             INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"unknown",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_UNSPECIFIED},       INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"bt470bg",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT470BG},           INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"smpte170m",                  NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_SMPTE170M},         INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"smpte240m",                  NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_SMPTE240M},         INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"ycgco",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_YCGCO},             INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"bt2020nc",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT2020_NCL},        INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"bt2020c",                    NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_BT2020_CL},         INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
+    {"ictcp",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_SPC_ICTCP},             INT_MIN, INT_MAX, STATIC, .unit = "colorspace"},
 
-    {"range", "select color range", OFFSET(color_range), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_RANGE_NB-1, DYNAMIC, "range"},
-    {"auto",  "keep the same color range",   0, AV_OPT_TYPE_CONST, {.i64=-1},                       0, 0, STATIC, "range"},
-    {"unspecified",                  NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_UNSPECIFIED},  0, 0, STATIC, "range"},
-    {"unknown",                      NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_UNSPECIFIED},  0, 0, STATIC, "range"},
-    {"limited",                      NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, "range"},
-    {"tv",                           NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, "range"},
-    {"mpeg",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, "range"},
-    {"full",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, "range"},
-    {"pc",                           NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, "range"},
-    {"jpeg",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, "range"},
+    {"range", "select color range", OFFSET(color_range), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_RANGE_NB-1, DYNAMIC, .unit = "range"},
+    {"auto",  "keep the same color range",   0, AV_OPT_TYPE_CONST, {.i64=-1},                       0, 0, STATIC, .unit = "range"},
+    {"unspecified",                  NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_UNSPECIFIED},  0, 0, STATIC, .unit = "range"},
+    {"unknown",                      NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_UNSPECIFIED},  0, 0, STATIC, .unit = "range"},
+    {"limited",                      NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, .unit = "range"},
+    {"tv",                           NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, .unit = "range"},
+    {"mpeg",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_MPEG},         0, 0, STATIC, .unit = "range"},
+    {"full",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, .unit = "range"},
+    {"pc",                           NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, .unit = "range"},
+    {"jpeg",                         NULL,   0, AV_OPT_TYPE_CONST, {.i64=AVCOL_RANGE_JPEG},         0, 0, STATIC, .unit = "range"},
 
-    {"color_primaries", "select color primaries", OFFSET(color_primaries), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_PRI_NB-1, DYNAMIC, "color_primaries"},
-    {"auto", "keep the same color primaries",  0, AV_OPT_TYPE_CONST, {.i64=-1},                     INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"bt709",                           NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT709},        INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"unknown",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_UNSPECIFIED},  INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"bt470m",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT470M},       INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"bt470bg",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT470BG},      INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"smpte170m",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE170M},    INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"smpte240m",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE240M},    INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"film",                            NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_FILM},         INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"bt2020",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT2020},       INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"smpte428",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE428},     INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"smpte431",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE431},     INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"smpte432",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE432},     INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"jedec-p22",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_JEDEC_P22},    INT_MIN, INT_MAX, STATIC, "color_primaries"},
-    {"ebu3213",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_EBU3213},      INT_MIN, INT_MAX, STATIC, "color_primaries"},
+    {"color_primaries", "select color primaries", OFFSET(color_primaries), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_PRI_NB-1, DYNAMIC, .unit = "color_primaries"},
+    {"auto", "keep the same color primaries",  0, AV_OPT_TYPE_CONST, {.i64=-1},                     INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"bt709",                           NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT709},        INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"unknown",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_UNSPECIFIED},  INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"bt470m",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT470M},       INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"bt470bg",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT470BG},      INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"smpte170m",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE170M},    INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"smpte240m",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE240M},    INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"film",                            NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_FILM},         INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"bt2020",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_BT2020},       INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"smpte428",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE428},     INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"smpte431",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE431},     INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"smpte432",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE432},     INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"jedec-p22",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_JEDEC_P22},    INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
+    {"ebu3213",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_EBU3213},      INT_MIN, INT_MAX, STATIC, .unit = "color_primaries"},
 
-    {"color_trc", "select color transfer", OFFSET(color_trc), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_TRC_NB-1, DYNAMIC, "color_trc"},
-    {"auto", "keep the same color transfer",  0, AV_OPT_TYPE_CONST, {.i64=-1},                     INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt709",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT709},        INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"unknown",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_UNSPECIFIED},  INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt470m",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_GAMMA22},      INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt470bg",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_GAMMA28},      INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"smpte170m",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE170M},    INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"smpte240m",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE240M},    INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"linear",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_LINEAR},       INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"iec61966-2-4",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_IEC61966_2_4}, INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt1361e",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT1361_ECG},   INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"iec61966-2-1",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_IEC61966_2_1}, INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt2020-10",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT2020_10},    INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"bt2020-12",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT2020_12},    INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"smpte2084",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE2084},    INT_MIN, INT_MAX, STATIC, "color_trc"},
-    {"arib-std-b67",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_ARIB_STD_B67}, INT_MIN, INT_MAX, STATIC, "color_trc"},
+    {"color_trc", "select color transfer", OFFSET(color_trc), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_TRC_NB-1, DYNAMIC, .unit = "color_trc"},
+    {"auto", "keep the same color transfer",  0, AV_OPT_TYPE_CONST, {.i64=-1},                     INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt709",                          NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT709},        INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"unknown",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_UNSPECIFIED},  INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt470m",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_GAMMA22},      INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt470bg",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_GAMMA28},      INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"smpte170m",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE170M},    INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"smpte240m",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE240M},    INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"linear",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_LINEAR},       INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"iec61966-2-4",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_IEC61966_2_4}, INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt1361e",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT1361_ECG},   INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"iec61966-2-1",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_IEC61966_2_1}, INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt2020-10",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT2020_10},    INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"bt2020-12",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_BT2020_12},    INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"smpte2084",                      NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_SMPTE2084},    INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+    {"arib-std-b67",                   NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_TRC_ARIB_STD_B67}, INT_MIN, INT_MAX, STATIC, .unit = "color_trc"},
+
+    {"rotate", "rotate the input clockwise", OFFSET(rotation), AV_OPT_TYPE_INT, {.i64=PL_ROTATION_0}, PL_ROTATION_0, PL_ROTATION_360, DYNAMIC, .unit = "rotation"},
+    {"0",                              NULL,  0, AV_OPT_TYPE_CONST, {.i64=PL_ROTATION_0},   .flags = STATIC, .unit = "rotation"},
+    {"90",                             NULL,  0, AV_OPT_TYPE_CONST, {.i64=PL_ROTATION_90},  .flags = STATIC, .unit = "rotation"},
+    {"180",                            NULL,  0, AV_OPT_TYPE_CONST, {.i64=PL_ROTATION_180}, .flags = STATIC, .unit = "rotation"},
+    {"270",                            NULL,  0, AV_OPT_TYPE_CONST, {.i64=PL_ROTATION_270}, .flags = STATIC, .unit = "rotation"},
+    {"360",                            NULL,  0, AV_OPT_TYPE_CONST, {.i64=PL_ROTATION_360}, .flags = STATIC, .unit = "rotation"},
 
     { "upscaler", "Upscaler function", OFFSET(upscaler), AV_OPT_TYPE_STRING, {.str = "spline36"}, .flags = DYNAMIC },
     { "downscaler", "Downscaler function", OFFSET(downscaler), AV_OPT_TYPE_STRING, {.str = "mitchell"}, .flags = DYNAMIC },
     { "frame_mixer", "Frame mixing function", OFFSET(frame_mixer), AV_OPT_TYPE_STRING, {.str = "none"}, .flags = DYNAMIC },
-    { "lut_entries", "Number of scaler LUT entries", OFFSET(lut_entries), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 256, DYNAMIC },
     { "antiringing", "Antiringing strength (for non-EWA filters)", OFFSET(antiringing), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 1.0, DYNAMIC },
     { "sigmoid", "Enable sigmoid upscaling", OFFSET(sigmoid), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, DYNAMIC },
     { "apply_filmgrain", "Apply film grain metadata", OFFSET(apply_filmgrain), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, DYNAMIC },
     { "apply_dolbyvision", "Apply Dolby Vision metadata", OFFSET(apply_dovi), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, DYNAMIC },
+
+    { "deinterlace", "Deinterlacing mode", OFFSET(deinterlace), AV_OPT_TYPE_INT, {.i64 = PL_DEINTERLACE_WEAVE}, 0, PL_DEINTERLACE_ALGORITHM_COUNT - 1, DYNAMIC, .unit = "deinterlace" },
+        { "weave", "Weave fields together (no-op)",    0, AV_OPT_TYPE_CONST, {.i64 = PL_DEINTERLACE_WEAVE}, 0, 0, STATIC, .unit = "deinterlace" },
+        { "bob",   "Naive bob deinterlacing",          0, AV_OPT_TYPE_CONST, {.i64 = PL_DEINTERLACE_BOB},   0, 0, STATIC, .unit = "deinterlace" },
+        { "yadif", "Yet another deinterlacing filter", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DEINTERLACE_YADIF}, 0, 0, STATIC, .unit = "deinterlace" },
+    { "skip_spatial_check", "Skip yadif spatial check", OFFSET(skip_spatial_check), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
+    { "send_fields", "Output a frame for each field", OFFSET(send_fields), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
 
     { "deband", "Enable debanding", OFFSET(deband), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { "deband_iterations", "Deband iterations", OFFSET(deband_iterations), AV_OPT_TYPE_INT, {.i64 = 1}, 0, 16, DYNAMIC },
@@ -1420,77 +1504,54 @@ static const AVOption libplacebo_options[] = {
 
     { "peak_detect", "Enable dynamic peak detection for HDR tone-mapping", OFFSET(peakdetect), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, DYNAMIC },
     { "smoothing_period", "Peak detection smoothing period", OFFSET(smoothing), AV_OPT_TYPE_FLOAT, {.dbl = 100.0}, 0.0, 1000.0, DYNAMIC },
-    { "minimum_peak", "Peak detection minimum peak", OFFSET(min_peak), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 100.0, DYNAMIC },
     { "scene_threshold_low", "Scene change low threshold", OFFSET(scene_low), AV_OPT_TYPE_FLOAT, {.dbl = 5.5}, -1.0, 100.0, DYNAMIC },
     { "scene_threshold_high", "Scene change high threshold", OFFSET(scene_high), AV_OPT_TYPE_FLOAT, {.dbl = 10.0}, -1.0, 100.0, DYNAMIC },
     { "percentile", "Peak detection percentile", OFFSET(percentile), AV_OPT_TYPE_FLOAT, {.dbl = 99.995}, 0.0, 100.0, DYNAMIC },
 
-    { "gamut_mode", "Gamut-mapping mode", OFFSET(gamut_mode), AV_OPT_TYPE_INT, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, GAMUT_MAP_COUNT - 1, DYNAMIC, "gamut_mode" },
-        { "clip", "Hard-clip (RGB per-channel)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_CLIP}, 0, 0, STATIC, "gamut_mode" },
-        { "perceptual", "Colorimetric soft clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, 0, STATIC, "gamut_mode" },
-        { "relative", "Relative colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_RELATIVE}, 0, 0, STATIC, "gamut_mode" },
-        { "saturation", "Saturation mapping (RGB -> RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_SATURATION}, 0, 0, STATIC, "gamut_mode" },
-        { "absolute", "Absolute colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_ABSOLUTE}, 0, 0, STATIC, "gamut_mode" },
-        { "desaturate", "Colorimetrically desaturate colors towards white", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DESATURATE}, 0, 0, STATIC, "gamut_mode" },
-        { "darken", "Colorimetric clip with bias towards darkening image to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DARKEN}, 0, 0, STATIC, "gamut_mode" },
-        { "warn", "Highlight out-of-gamut colors", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_HIGHLIGHT}, 0, 0, STATIC, "gamut_mode" },
-        { "linear", "Linearly reduce chromaticity to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_LINEAR}, 0, 0, STATIC, "gamut_mode" },
-    { "tonemapping", "Tone-mapping algorithm", OFFSET(tonemapping), AV_OPT_TYPE_INT, {.i64 = TONE_MAP_AUTO}, 0, TONE_MAP_COUNT - 1, DYNAMIC, "tonemap" },
-        { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_AUTO}, 0, 0, STATIC, "tonemap" },
-        { "clip", "No tone mapping (clip", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_CLIP}, 0, 0, STATIC, "tonemap" },
+    { "gamut_mode", "Gamut-mapping mode", OFFSET(gamut_mode), AV_OPT_TYPE_INT, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, GAMUT_MAP_COUNT - 1, DYNAMIC, .unit = "gamut_mode" },
+        { "clip", "Hard-clip (RGB per-channel)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_CLIP}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "perceptual", "Colorimetric soft clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "relative", "Relative colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_RELATIVE}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "saturation", "Saturation mapping (RGB -> RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_SATURATION}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "absolute", "Absolute colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_ABSOLUTE}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "desaturate", "Colorimetrically desaturate colors towards white", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DESATURATE}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "darken", "Colorimetric clip with bias towards darkening image to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DARKEN}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "warn", "Highlight out-of-gamut colors", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_HIGHLIGHT}, 0, 0, STATIC, .unit = "gamut_mode" },
+        { "linear", "Linearly reduce chromaticity to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_LINEAR}, 0, 0, STATIC, .unit = "gamut_mode" },
+    { "tonemapping", "Tone-mapping algorithm", OFFSET(tonemapping), AV_OPT_TYPE_INT, {.i64 = TONE_MAP_AUTO}, 0, TONE_MAP_COUNT - 1, DYNAMIC, .unit = "tonemap" },
+        { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_AUTO}, 0, 0, STATIC, .unit = "tonemap" },
+        { "clip", "No tone mapping (clip", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_CLIP}, 0, 0, STATIC, .unit = "tonemap" },
 #if PL_API_VER >= 246
-        { "st2094-40", "SMPTE ST 2094-40", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_ST2094_40}, 0, 0, STATIC, "tonemap" },
-        { "st2094-10", "SMPTE ST 2094-10", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_ST2094_10}, 0, 0, STATIC, "tonemap" },
+        { "st2094-40", "SMPTE ST 2094-40", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_ST2094_40}, 0, 0, STATIC, .unit = "tonemap" },
+        { "st2094-10", "SMPTE ST 2094-10", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_ST2094_10}, 0, 0, STATIC, .unit = "tonemap" },
 #endif
-        { "bt.2390", "ITU-R BT.2390 EETF", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_BT2390}, 0, 0, STATIC, "tonemap" },
-        { "bt.2446a", "ITU-R BT.2446 Method A", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_BT2446A}, 0, 0, STATIC, "tonemap" },
-        { "spline", "Single-pivot polynomial spline", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_SPLINE}, 0, 0, STATIC, "tonemap" },
-        { "reinhard", "Reinhard", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_REINHARD}, 0, 0, STATIC, "tonemap" },
-        { "mobius", "Mobius", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_MOBIUS}, 0, 0, STATIC, "tonemap" },
-        { "hable", "Filmic tone-mapping (Hable)", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_HABLE}, 0, 0, STATIC, "tonemap" },
-        { "gamma", "Gamma function with knee", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_GAMMA}, 0, 0, STATIC, "tonemap" },
-        { "linear", "Perceptually linear stretch", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_LINEAR}, 0, 0, STATIC, "tonemap" },
+        { "bt.2390", "ITU-R BT.2390 EETF", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_BT2390}, 0, 0, STATIC, .unit = "tonemap" },
+        { "bt.2446a", "ITU-R BT.2446 Method A", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_BT2446A}, 0, 0, STATIC, .unit = "tonemap" },
+        { "spline", "Single-pivot polynomial spline", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_SPLINE}, 0, 0, STATIC, .unit = "tonemap" },
+        { "reinhard", "Reinhard", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_REINHARD}, 0, 0, STATIC, .unit = "tonemap" },
+        { "mobius", "Mobius", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_MOBIUS}, 0, 0, STATIC, .unit = "tonemap" },
+        { "hable", "Filmic tone-mapping (Hable)", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_HABLE}, 0, 0, STATIC, .unit = "tonemap" },
+        { "gamma", "Gamma function with knee", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_GAMMA}, 0, 0, STATIC, .unit = "tonemap" },
+        { "linear", "Perceptually linear stretch", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_LINEAR}, 0, 0, STATIC, .unit = "tonemap" },
     { "tonemapping_param", "Tunable parameter for some tone-mapping functions", OFFSET(tonemapping_param), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 100.0, .flags = DYNAMIC },
     { "inverse_tonemapping", "Inverse tone mapping (range expansion)", OFFSET(inverse_tonemapping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { "tonemapping_lut_size", "Tone-mapping LUT size", OFFSET(tonemapping_lut_size), AV_OPT_TYPE_INT, {.i64 = 256}, 2, 1024, DYNAMIC },
     { "contrast_recovery", "HDR contrast recovery strength", OFFSET(contrast_recovery), AV_OPT_TYPE_FLOAT, {.dbl = 0.30}, 0.0, 3.0, DYNAMIC },
     { "contrast_smoothness", "HDR contrast recovery smoothness", OFFSET(contrast_smoothness), AV_OPT_TYPE_FLOAT, {.dbl = 3.50}, 1.0, 32.0, DYNAMIC },
 
-#if FF_API_LIBPLACEBO_OPTS
-    /* deprecated options for backwards compatibility, defaulting to -1 to not override the new defaults */
-    { "desaturation_strength", "Desaturation strength", OFFSET(desat_str), AV_OPT_TYPE_FLOAT, {.dbl = -1.0}, -1.0, 1.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "desaturation_exponent", "Desaturation exponent", OFFSET(desat_exp), AV_OPT_TYPE_FLOAT, {.dbl = -1.0}, -1.0, 10.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "gamut_warning", "Highlight out-of-gamut colors", OFFSET(gamut_warning), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "gamut_clipping", "Enable desaturating colorimetric gamut clipping", OFFSET(gamut_clipping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "intent", "Rendering intent", OFFSET(intent), AV_OPT_TYPE_INT, {.i64 = PL_INTENT_PERCEPTUAL}, 0, 3, DYNAMIC | AV_OPT_FLAG_DEPRECATED, "intent" },
-        { "perceptual", "Perceptual", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_PERCEPTUAL}, 0, 0, STATIC, "intent" },
-        { "relative", "Relative colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_RELATIVE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
-        { "absolute", "Absolute colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_ABSOLUTE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
-        { "saturation", "Saturation mapping", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_SATURATION}, 0, 0, STATIC, "intent" },
-    { "tonemapping_mode", "Tone-mapping mode", OFFSET(tonemapping_mode), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 4, DYNAMIC | AV_OPT_FLAG_DEPRECATED, "tonemap_mode" },
-        { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = 0}, 0, 0, STATIC, "tonemap_mode" },
-        { "rgb", "Per-channel (RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = 1}, 0, 0, STATIC, "tonemap_mode" },
-        { "max", "Maximum component", 0, AV_OPT_TYPE_CONST, {.i64 = 2}, 0, 0, STATIC, "tonemap_mode" },
-        { "hybrid", "Hybrid of Luma/RGB", 0, AV_OPT_TYPE_CONST, {.i64 = 3}, 0, 0, STATIC, "tonemap_mode" },
-        { "luma", "Luminance", 0, AV_OPT_TYPE_CONST, {.i64 = 4}, 0, 0, STATIC, "tonemap_mode" },
-    { "tonemapping_crosstalk", "Crosstalk factor for tone-mapping", OFFSET(crosstalk), AV_OPT_TYPE_FLOAT, {.dbl = 0.04}, 0.0, 0.30, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "overshoot", "Tone-mapping overshoot margin", OFFSET(overshoot), AV_OPT_TYPE_FLOAT, {.dbl = 0.05}, 0.0, 1.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "hybrid_mix", "Tone-mapping hybrid LMS mixing coefficient", OFFSET(hybrid_mix), AV_OPT_TYPE_FLOAT, {.dbl = 0.20}, 0.0, 1.00, DYNAMIC },
-#endif
-
-    { "dithering", "Dither method to use", OFFSET(dithering), AV_OPT_TYPE_INT, {.i64 = PL_DITHER_BLUE_NOISE}, -1, PL_DITHER_METHOD_COUNT - 1, DYNAMIC, "dither" },
-        { "none", "Disable dithering", 0, AV_OPT_TYPE_CONST, {.i64 = -1}, 0, 0, STATIC, "dither" },
-        { "blue", "Blue noise", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_BLUE_NOISE}, 0, 0, STATIC, "dither" },
-        { "ordered", "Ordered LUT", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_ORDERED_LUT}, 0, 0, STATIC, "dither" },
-        { "ordered_fixed", "Fixed function ordered", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_ORDERED_FIXED}, 0, 0, STATIC, "dither" },
-        { "white", "White noise", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_WHITE_NOISE}, 0, 0, STATIC, "dither" },
+    { "dithering", "Dither method to use", OFFSET(dithering), AV_OPT_TYPE_INT, {.i64 = PL_DITHER_BLUE_NOISE}, -1, PL_DITHER_METHOD_COUNT - 1, DYNAMIC, .unit = "dither" },
+        { "none", "Disable dithering", 0, AV_OPT_TYPE_CONST, {.i64 = -1}, 0, 0, STATIC, .unit = "dither" },
+        { "blue", "Blue noise", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_BLUE_NOISE}, 0, 0, STATIC, .unit = "dither" },
+        { "ordered", "Ordered LUT", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_ORDERED_LUT}, 0, 0, STATIC, .unit = "dither" },
+        { "ordered_fixed", "Fixed function ordered", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_ORDERED_FIXED}, 0, 0, STATIC, .unit = "dither" },
+        { "white", "White noise", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_WHITE_NOISE}, 0, 0, STATIC, .unit = "dither" },
     { "dither_lut_size", "Dithering LUT size", OFFSET(dither_lut_size), AV_OPT_TYPE_INT, {.i64 = 6}, 1, 8, STATIC },
     { "dither_temporal", "Enable temporal dithering", OFFSET(dither_temporal), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
 
-    { "cones", "Colorblindness adaptation model", OFFSET(cones), AV_OPT_TYPE_FLAGS, {.i64 = 0}, 0, PL_CONE_LMS, DYNAMIC, "cone" },
-        { "l", "L cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_L}, 0, 0, STATIC, "cone" },
-        { "m", "M cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_M}, 0, 0, STATIC, "cone" },
-        { "s", "S cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_S}, 0, 0, STATIC, "cone" },
+    { "cones", "Colorblindness adaptation model", OFFSET(cones), AV_OPT_TYPE_FLAGS, {.i64 = 0}, 0, PL_CONE_LMS, DYNAMIC, .unit = "cone" },
+        { "l", "L cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_L}, 0, 0, STATIC, .unit = "cone" },
+        { "m", "M cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_M}, 0, 0, STATIC, .unit = "cone" },
+        { "s", "S cone", 0, AV_OPT_TYPE_CONST, {.i64 = PL_CONE_S}, 0, 0, STATIC, .unit = "cone" },
     { "cone-strength", "Colorblindness adaptation strength", OFFSET(cone_str), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 10.0, DYNAMIC },
 
     { "custom_shader_path", "Path to custom user shader (mpv .hook format)", OFFSET(shader_path), AV_OPT_TYPE_STRING, .flags = STATIC },
@@ -1498,12 +1559,8 @@ static const AVOption libplacebo_options[] = {
 
     /* Performance/quality tradeoff options */
     { "skip_aa", "Skip anti-aliasing", OFFSET(skip_aa), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
-    { "polar_cutoff", "Polar LUT cutoff", OFFSET(polar_cutoff), AV_OPT_TYPE_FLOAT, {.dbl = 0}, 0.0, 1.0, DYNAMIC },
     { "disable_linear", "Disable linear scaling", OFFSET(disable_linear), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { "disable_builtin", "Disable built-in scalers", OFFSET(disable_builtin), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
-#if FF_API_LIBPLACEBO_OPTS
-    { "force_icc_lut", "Deprecated, does nothing", OFFSET(force_icc_lut), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-#endif
     { "force_dither", "Force dithering", OFFSET(force_dither), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { "disable_fbos", "Force-disable FBOs", OFFSET(disable_fbos), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { NULL },
@@ -1519,17 +1576,17 @@ static const AVFilterPad libplacebo_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_libplacebo = {
-    .name           = "libplacebo",
-    .description    = NULL_IF_CONFIG_SMALL("Apply various GPU filters from libplacebo"),
+const FFFilter ff_vf_libplacebo = {
+    .p.name         = "libplacebo",
+    .p.description  = NULL_IF_CONFIG_SMALL("Apply various GPU filters from libplacebo"),
+    .p.priv_class   = &libplacebo_class,
+    .p.flags        = AVFILTER_FLAG_HWDEVICE | AVFILTER_FLAG_DYNAMIC_INPUTS,
     .priv_size      = sizeof(LibplaceboContext),
     .init           = &libplacebo_init,
     .uninit         = &libplacebo_uninit,
     .activate       = &libplacebo_activate,
     .process_command = &libplacebo_process_command,
     FILTER_OUTPUTS(libplacebo_outputs),
-    FILTER_QUERY_FUNC(libplacebo_query_format),
-    .priv_class     = &libplacebo_class,
+    FILTER_QUERY_FUNC2(libplacebo_query_format),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-    .flags          = AVFILTER_FLAG_HWDEVICE | AVFILTER_FLAG_DYNAMIC_INPUTS,
 };

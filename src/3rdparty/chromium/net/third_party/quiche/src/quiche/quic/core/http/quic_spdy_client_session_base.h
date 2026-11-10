@@ -11,7 +11,7 @@
 #include "quiche/quic/core/http/quic_spdy_session.h"
 #include "quiche/quic/core/quic_crypto_client_stream.h"
 #include "quiche/quic/platform/api/quic_export.h"
-#include "quiche/spdy/core/http2_header_block.h"
+#include "quiche/common/http/http_header_block.h"
 
 namespace quic {
 
@@ -21,10 +21,11 @@ class QUICHE_EXPORT QuicSpdyClientSessionBase
       public QuicCryptoClientStream::ProofHandler {
  public:
   // Takes ownership of |connection|.
-  QuicSpdyClientSessionBase(QuicConnection* connection,
-                            QuicSession::Visitor* visitor,
-                            const QuicConfig& config,
-                            const ParsedQuicVersionVector& supported_versions);
+  QuicSpdyClientSessionBase(
+      QuicConnection* connection, QuicSession::Visitor* visitor,
+      const QuicConfig& config,
+      const ParsedQuicVersionVector& supported_versions,
+      QuicPriorityType priority_type = QuicPriorityType::kHttp);
   QuicSpdyClientSessionBase(const QuicSpdyClientSessionBase&) = delete;
   QuicSpdyClientSessionBase& operator=(const QuicSpdyClientSessionBase&) =
       delete;

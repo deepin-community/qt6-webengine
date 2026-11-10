@@ -7,9 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <list>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -115,7 +117,7 @@ TEST_F(MemoryChunkTest, Basic) {
   uint8_t* pointer_char = static_cast<uint8_t*>(chunk_->Alloc(kSize));
   ASSERT_TRUE(pointer_char);
   EXPECT_LE(buffer_memory(), pointer_char);
-  EXPECT_GE(buffer_memory() + kBufferSize, pointer_char + kSize);
+  UNSAFE_TODO(EXPECT_GE(buffer_memory() + kBufferSize, pointer_char + kSize));
   EXPECT_EQ(kBufferSize - kSize, chunk_->GetLargestFreeSizeWithoutWaiting());
   EXPECT_EQ(kBufferSize - kSize, chunk_->GetLargestFreeSizeWithWaiting());
   chunk_->Free(pointer_char);
@@ -196,7 +198,7 @@ TEST_F(MappedMemoryManagerTest, FreePendingToken) {
   CHECK(kAllocCount * kSize == kBufferSize * 2);
 
   // Allocate several buffers across multiple chunks.
-  void *pointers[kAllocCount];
+  std::array<void*, kAllocCount> pointers;
   for (unsigned int i = 0; i < kAllocCount; ++i) {
     int32_t id = -1;
     unsigned int offset = 0xFFFFFFFFu;

@@ -28,6 +28,7 @@
 #include "dawn/native/SwapChain.h"
 
 #include <utility>
+#include <vector>
 
 #include "dawn/common/Constants.h"
 #include "dawn/native/Device.h"
@@ -39,76 +40,14 @@
 
 namespace dawn::native {
 
-namespace {
-
-class ErrorSwapChain final : public SwapChainBase {
-  public:
-    explicit ErrorSwapChain(DeviceBase* device, const SwapChainDescriptor* desc)
-        : SwapChainBase(device, desc, ObjectBase::kError) {}
-
-  private:
-    ResultOrError<Ref<TextureBase>> GetCurrentTextureImpl() override { DAWN_UNREACHABLE(); }
-    MaybeError PresentImpl() override { DAWN_UNREACHABLE(); }
-    void DetachFromSurfaceImpl() override { DAWN_UNREACHABLE(); }
-};
-
-}  // anonymous namespace
-
-MaybeError ValidateSwapChainDescriptor(const DeviceBase* device,
-                                       const Surface* surface,
-                                       const SwapChainDescriptor* descriptor) {
-    DAWN_INVALID_IF(surface->IsError(), "[Surface] is invalid.");
-
-    DAWN_TRY(ValidatePresentMode(descriptor->presentMode));
-
-// TODO(crbug.com/dawn/160): Lift this restriction once wgpu::Instance::GetPreferredSurfaceFormat is
-// implemented.
-// TODO(dawn:286):
-#if DAWN_PLATFORM_IS(ANDROID)
-    constexpr wgpu::TextureFormat kRequireSwapChainFormat = wgpu::TextureFormat::RGBA8Unorm;
-#else
-    constexpr wgpu::TextureFormat kRequireSwapChainFormat = wgpu::TextureFormat::BGRA8Unorm;
-#endif  // !DAWN_PLATFORM_IS(ANDROID)
-    DAWN_INVALID_IF(descriptor->format != kRequireSwapChainFormat,
-                    "Format (%s) is not %s, which is (currently) the only accepted format.",
-                    descriptor->format, kRequireSwapChainFormat);
-
-    if (device->HasFeature(Feature::SurfaceCapabilities)) {
-        wgpu::TextureUsage validUsage;
-        DAWN_TRY_ASSIGN(validUsage, device->GetSupportedSurfaceUsage(surface));
-        DAWN_INVALID_IF(
-            (descriptor->usage | validUsage) != validUsage,
-            "Usage (%s) is not supported, %s are (currently) the only accepted usage flags.",
-            descriptor->usage, validUsage);
-    } else {
-        DAWN_INVALID_IF(descriptor->usage != wgpu::TextureUsage::RenderAttachment,
-                        "Usage (%s) is not %s, which is (currently) the only accepted usage. Other "
-                        "usage flags require enabling %s",
-                        descriptor->usage, wgpu::TextureUsage::RenderAttachment,
-                        wgpu::FeatureName::SurfaceCapabilities);
-    }
-
-    DAWN_INVALID_IF(descriptor->width == 0 || descriptor->height == 0,
-                    "Swap Chain size (width: %u, height: %u) is empty.", descriptor->width,
-                    descriptor->height);
-
-    DAWN_INVALID_IF(
-        descriptor->width > device->GetLimits().v1.maxTextureDimension2D ||
-            descriptor->height > device->GetLimits().v1.maxTextureDimension2D,
-        "Swap Chain size (width: %u, height: %u) is greater than the maximum 2D texture "
-        "size (width: %u, height: %u).",
-        descriptor->width, descriptor->height, device->GetLimits().v1.maxTextureDimension2D,
-        device->GetLimits().v1.maxTextureDimension2D);
-
-    return {};
-}
-
 TextureDescriptor GetSwapChainBaseTextureDescriptor(SwapChainBase* swapChain) {
     TextureDescriptor desc;
     desc.usage = swapChain->GetUsage();
     desc.dimension = wgpu::TextureDimension::e2D;
     desc.size = {swapChain->GetWidth(), swapChain->GetHeight(), 1};
     desc.format = swapChain->GetFormat();
+    desc.viewFormatCount = swapChain->GetViewFormats().size();
+    desc.viewFormats = swapChain->GetViewFormats().data();
     desc.mipLevelCount = 1;
     desc.sampleCount = 1;
 
@@ -117,44 +56,38 @@ TextureDescriptor GetSwapChainBaseTextureDescriptor(SwapChainBase* swapChain) {
 
 SwapChainBase::SwapChainBase(DeviceBase* device,
                              Surface* surface,
-                             const SwapChainDescriptor* descriptor)
-    : ApiObjectBase(device, kLabelNotImplemented),
-      mWidth(descriptor->width),
-      mHeight(descriptor->height),
-      mFormat(descriptor->format),
-      mUsage(descriptor->usage),
-      mPresentMode(descriptor->presentMode),
+                             const SurfaceConfiguration* config)
+    : mDevice(device),
+      mWidth(config->width),
+      mHeight(config->height),
+      mFormat(config->format),
+      mUsage(config->usage),
+      mPresentMode(config->presentMode),
+      mAlphaMode(config->alphaMode),
       mSurface(surface) {
-    GetObjectTrackingList()->Track(this);
+    for (uint32_t i = 0; i < config->viewFormatCount; ++i) {
+        if (config->viewFormats[i] == config->format) {
+            // Skip our own format, like texture creations does.
+            continue;
+        }
+        mViewFormats.push_back(config->viewFormats[i]);
+    }
+}
+
+FormatSet SwapChainBase::ComputeViewFormatSet() const {
+    FormatSet viewFormatSet;
+    for (wgpu::TextureFormat format : mViewFormats) {
+        viewFormatSet[GetDevice()->GetValidInternalFormat(format)] = true;
+    }
+    return viewFormatSet;
 }
 
 SwapChainBase::~SwapChainBase() {
-    if (mCurrentTexture != nullptr) {
-        DAWN_ASSERT(mCurrentTexture->IsDestroyed());
+    if (mCurrentTextureInfo.texture != nullptr) {
+        DAWN_ASSERT(mCurrentTextureInfo.texture->IsDestroyed());
     }
 
     DAWN_ASSERT(!mAttached);
-}
-
-SwapChainBase::SwapChainBase(DeviceBase* device,
-                             const SwapChainDescriptor* descriptor,
-                             ObjectBase::ErrorTag tag)
-    : ApiObjectBase(device, tag),
-      mWidth(descriptor->width),
-      mHeight(descriptor->height),
-      mFormat(descriptor->format),
-      mUsage(descriptor->usage),
-      mPresentMode(descriptor->presentMode) {}
-
-// static
-Ref<SwapChainBase> SwapChainBase::MakeError(DeviceBase* device, const SwapChainDescriptor* desc) {
-    return AcquireRef(new ErrorSwapChain(device, desc));
-}
-
-void SwapChainBase::DestroyImpl() {}
-
-ObjectType SwapChainBase::GetType() const {
-    return ObjectType::SwapChain;
 }
 
 void SwapChainBase::DetachFromSurface() {
@@ -169,77 +102,50 @@ void SwapChainBase::SetIsAttached() {
     mAttached = true;
 }
 
-void SwapChainBase::APIConfigure(wgpu::TextureFormat format,
-                                 wgpu::TextureUsage allowedUsage,
-                                 uint32_t width,
-                                 uint32_t height) {
-    GetDevice()->HandleError(
-        DAWN_VALIDATION_ERROR("Configure is invalid for surface-based swapchains."));
-}
-
-TextureBase* SwapChainBase::APIGetCurrentTexture() {
-    Ref<TextureBase> result;
-    if (GetDevice()->ConsumedError(GetCurrentTexture(), &result, "calling %s.GetCurrentTexture()",
-                                   this)) {
-        TextureDescriptor desc = GetSwapChainBaseTextureDescriptor(this);
-        result = TextureBase::MakeError(GetDevice(), &desc);
-        SetChildLabel(result.Get());
-    }
-    return ReturnToAPI(std::move(result));
-}
-
-TextureViewBase* SwapChainBase::APIGetCurrentTextureView() {
-    Ref<TextureViewBase> result;
-    if (GetDevice()->ConsumedError(GetCurrentTextureView(), &result,
-                                   "calling %s.GetCurrentTextureView()", this)) {
-        result = TextureViewBase::MakeError(GetDevice());
-        SetChildLabel(result.Get());
-    }
-    return ReturnToAPI(std::move(result));
-}
-
-ResultOrError<Ref<TextureBase>> SwapChainBase::GetCurrentTexture() {
-    DAWN_TRY(ValidateGetCurrentTexture());
-
-    if (mCurrentTexture != nullptr) {
-        // Calling GetCurrentTexture always returns a new reference.
-        return mCurrentTexture;
+ResultOrError<SurfaceTexture> SwapChainBase::GetCurrentTexture() {
+    if (mCurrentTextureInfo.texture == nullptr) {
+        DAWN_TRY_ASSIGN(mCurrentTextureInfo, GetCurrentTextureImpl());
     }
 
-    DAWN_TRY_ASSIGN(mCurrentTexture, GetCurrentTextureImpl());
-    SetChildLabel(mCurrentTexture.Get());
+    SurfaceTexture surfaceTexture;
+    surfaceTexture.texture = nullptr;
+    surfaceTexture.status = mCurrentTextureInfo.status;
+
+    // Handle cases where the backend swapchain goes bad and can't return a texture.
+    if (mCurrentTextureInfo.texture == nullptr) {
+        return surfaceTexture;
+    }
+
+    SetChildLabel(mCurrentTextureInfo.texture.Get());
 
     // Check that the return texture matches exactly what was given for this descriptor.
-    DAWN_ASSERT(mCurrentTexture->GetFormat().format == mFormat);
-    DAWN_ASSERT(IsSubset(mUsage, mCurrentTexture->GetUsage()));
-    DAWN_ASSERT(mCurrentTexture->GetDimension() == wgpu::TextureDimension::e2D);
-    DAWN_ASSERT(mCurrentTexture->GetWidth(Aspect::Color) == mWidth);
-    DAWN_ASSERT(mCurrentTexture->GetHeight(Aspect::Color) == mHeight);
-    DAWN_ASSERT(mCurrentTexture->GetNumMipLevels() == 1);
-    DAWN_ASSERT(mCurrentTexture->GetArrayLayers() == 1);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetFormat().format == mFormat);
+    DAWN_ASSERT(IsSubset(mUsage, mCurrentTextureInfo.texture->GetUsage()));
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetDimension() == wgpu::TextureDimension::e2D);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetWidth(Aspect::Color) == mWidth);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetHeight(Aspect::Color) == mHeight);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetNumMipLevels() == 1);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetArrayLayers() == 1);
+    DAWN_ASSERT(mCurrentTextureInfo.texture->GetViewFormats() == ComputeViewFormatSet());
 
-    return mCurrentTexture;
+    // Calling GetCurrentTexture always returns a new reference.
+    auto texture = mCurrentTextureInfo.texture;
+    surfaceTexture.texture = ReturnToAPI(std::move(texture));
+    return surfaceTexture;
 }
 
-ResultOrError<Ref<TextureViewBase>> SwapChainBase::GetCurrentTextureView() {
-    Ref<TextureBase> currentTexture;
-    DAWN_TRY_ASSIGN(currentTexture, GetCurrentTexture());
-    return currentTexture->CreateView();
+MaybeError SwapChainBase::Present() {
+    DAWN_TRY(ValidatePresent());
+    DAWN_TRY(PresentImpl());
+
+    DAWN_ASSERT(mCurrentTextureInfo.texture->IsDestroyed());
+    mCurrentTextureInfo.texture = nullptr;
+    return {};
 }
 
-void SwapChainBase::APIPresent() {
-    if (GetDevice()->ConsumedError(ValidatePresent())) {
-        return;
-    }
-
-    if (GetDevice()->ConsumedError(PresentImpl())) {
-        return;
-    }
-
-    DAWN_ASSERT(mCurrentTexture->IsDestroyed());
-    mCurrentTexture = nullptr;
+DeviceBase* SwapChainBase::GetDevice() const {
+    return mDevice.Get();
 }
-
 uint32_t SwapChainBase::GetWidth() const {
     return mWidth;
 }
@@ -252,12 +158,20 @@ wgpu::TextureFormat SwapChainBase::GetFormat() const {
     return mFormat;
 }
 
+const std::vector<wgpu::TextureFormat>& SwapChainBase::GetViewFormats() const {
+    return mViewFormats;
+}
+
 wgpu::TextureUsage SwapChainBase::GetUsage() const {
     return mUsage;
 }
 
 wgpu::PresentMode SwapChainBase::GetPresentMode() const {
     return mPresentMode;
+}
+
+wgpu::CompositeAlphaMode SwapChainBase::GetAlphaMode() const {
+    return mAlphaMode;
 }
 
 Surface* SwapChainBase::GetSurface() const {
@@ -274,28 +188,24 @@ wgpu::BackendType SwapChainBase::GetBackendType() const {
 
 MaybeError SwapChainBase::ValidatePresent() const {
     DAWN_TRY(GetDevice()->ValidateIsAlive());
-    DAWN_TRY(GetDevice()->ValidateObject(this));
+    DAWN_ASSERT(mAttached);
 
-    DAWN_INVALID_IF(!mAttached, "Cannot call Present called on detached %s.", this);
-
-    DAWN_INVALID_IF(mCurrentTexture == nullptr,
+    DAWN_INVALID_IF(mCurrentTextureInfo.texture == nullptr,
                     "GetCurrentTexture was not called on %s this frame prior to calling Present.",
-                    this);
+                    this->GetSurface());
 
     return {};
 }
 
 MaybeError SwapChainBase::ValidateGetCurrentTexture() const {
     DAWN_TRY(GetDevice()->ValidateIsAlive());
-    DAWN_TRY(GetDevice()->ValidateObject(this));
-
-    DAWN_INVALID_IF(!mAttached, "Cannot call GetCurrentTexture on detached %s.", this);
+    DAWN_ASSERT(mAttached);
 
     return {};
 }
 
 void SwapChainBase::SetChildLabel(ApiObjectBase* child) const {
-    child->SetLabel(absl::StrFormat("of %s", this));
+    child->SetLabel(absl::StrFormat("of %s", this->GetSurface()));
 }
 
 }  // namespace dawn::native

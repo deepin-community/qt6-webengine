@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebengineurlschemehandler.h"
 
@@ -27,12 +28,12 @@ QT_BEGIN_NAMESPACE
     over a custom scheme may be given access to local resources, be set to
     ignore Content-Security-Policy rules, or conversely, be denied access to any
     other content entirely. If it is to be accessed by normal content, ensure cross-origin
-    access is enabled, and if accessed from HTTPS that it is marked as secure.
+    access is enabled, and if accessed from HTTPS, that it is marked as secure.
 
     \note Make sure that you create and register the scheme object \e before the QGuiApplication
     or QApplication object is instantiated.
 
-    Then you must create a class derived from QWebEngineUrlSchemeHandler,
+    Then, you must create a class derived from QWebEngineUrlSchemeHandler,
     and reimplement the requestStarted() method.
 
     Finally, install the scheme handler object via QWebEngineProfile::installUrlSchemeHandler()
@@ -50,7 +51,7 @@ QT_BEGIN_NAMESPACE
             const QUrl url = job->requestUrl();
 
             if (isValidUrl(url)) {
-                if (method == QByteArrayLiteral("GET")) {
+                if (method == QByteArrayLiteral("GET"))
                     job->reply(QByteArrayLiteral("text/html"), makeReply(url));
                 else // Unsupported method
                     job->fail(QWebEngineUrlRequestJob::RequestDenied);

@@ -8,10 +8,11 @@
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "skia/ext/font_utils.h"
+#include "third_party/freetype_buildflags.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/font_format_check.h"
-#include "third_party/skia/include/core/SkStream.h"
 #include "third_party/skia/include/core/SkTypeface.h"
+#include "third_party/skia/include/ports/SkTypeface_fontations.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "third_party/blink/renderer/platform/fonts/win/dwrite_font_format_support.h"
@@ -21,83 +22,61 @@
 #include "third_party/skia/include/ports/SkFontMgr_empty.h"
 #endif
 
-#if BUILDFLAG(USE_FONTATIONS_BACKEND)
-#include "third_party/skia/include/ports/SkTypeface_fontations.h"
-#endif
-
 #include <functional>
 
 namespace blink {
 
 namespace {
 
-sk_sp<SkTypeface> MakeTypefaceDefaultFontMgr(sk_sp<SkData> data) {
-#if BUILDFLAG(USE_FONTATIONS_BACKEND) && \
-    !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE))
-  if (RuntimeEnabledFeatures::FontationsFontBackendEnabled()) {
-    std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(data));
-    return SkTypeface_Make_Fontations(std::move(stream), SkFontArguments());
-  }
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+bool IsWin() {
+#if BUILDFLAG(IS_WIN)
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool IsFreeTypeSystemRasterizer() {
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_APPLE)
+  return true;
+#else
+  return false;
+#endif
+}
 #endif
 
-  sk_sp<SkFontMgr> font_manager;
+sk_sp<SkTypeface> MakeTypefaceDefaultFontMgr(sk_sp<SkData> data) {
 #if BUILDFLAG(IS_WIN)
-  font_manager = FontCache::Get().FontManager();
-#else
-  font_manager = skia::DefaultFontMgr();
+  return FontCache::Get().FontManager()->makeFromData(data, 0);
 #endif
-  return font_manager->makeFromData(data, 0);
+
+#if BUILDFLAG(IS_APPLE) || !BUILDFLAG(SKIA_USE_FONTATIONS)
+  return skia::DefaultFontMgr()->makeFromData(data, 0);
+#endif
+
+#if !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)) && BUILDFLAG(SKIA_USE_FONTATIONS)
+  return SkTypeface_Make_Fontations(data, SkFontArguments());
+#endif
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
 sk_sp<SkTypeface> MakeTypefaceFallback(sk_sp<SkData> data) {
-#if BUILDFLAG(USE_FONTATIONS_BACKEND) && \
-    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE))
-  if (RuntimeEnabledFeatures::FontationsFontBackendEnabled()) {
-    std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(data));
-    return SkTypeface_Make_Fontations(std::move(stream), SkFontArguments());
-  }
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+   return SkTypeface_Make_Fontations(data, SkFontArguments());
+#else
+   return SkFontMgr_New_Custom_Empty()->makeFromData(data, 0);
 #endif
-  return SkFontMgr_New_Custom_Empty()->makeFromData(data, 0);
+}
+#endif
+
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+sk_sp<SkTypeface> MakeTypefaceFontations(sk_sp<SkData> data) {
+  return SkTypeface_Make_Fontations(data, SkFontArguments());
 }
 #endif
 
 sk_sp<SkTypeface> MakeVariationsTypeface(
-    sk_sp<SkData> data,
-    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
-#if BUILDFLAG(IS_WIN)
-  if (!DWriteVersionSupportsVariations()) {
-    return instantiator.make_fallback(data);
-  }
-#endif
-  return instantiator.make_system(data);
-}
-
-sk_sp<SkTypeface> MakeSbixTypeface(
-    sk_sp<SkData> data,
-    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
-#if BUILDFLAG(IS_WIN)
-  return instantiator.make_fallback(data);
-#else
-  // On Mac, CoreText can handle creating SBIX fonts, on Linux-like OSes,
-  // FreeType is the default manager and handles SBIX.
-  return instantiator.make_system(data);
-#endif
-}
-
-sk_sp<SkTypeface> MakeColrV0Typeface(
-    sk_sp<SkData> data,
-    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
-#if BUILDFLAG(IS_APPLE)
-  return instantiator.make_fallback(data);
-#else
-  // On Windows, Skia's DirectWrite backend handles COLRv0, on Linux-like OSes,
-  // FreeType is the default font manager and handles COLRv0.
-  return instantiator.make_system(data);
-#endif
-}
-
-sk_sp<SkTypeface> MakeColrV0VariationsTypeface(
     sk_sp<SkData> data,
     const WebFontTypefaceFactory::FontInstantiator& instantiator) {
 #if BUILDFLAG(IS_WIN)
@@ -106,20 +85,77 @@ sk_sp<SkTypeface> MakeColrV0VariationsTypeface(
   } else {
     return instantiator.make_fallback(data);
   }
-#elif BUILDFLAG(IS_APPLE)
-  return instantiator.make_fallback(data);
 #else
   return instantiator.make_system(data);
 #endif
 }
 
+sk_sp<SkTypeface> MakeSbixTypeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+  // If we're on a OS with FreeType as backend, or on Windows, where we used to
+  // use FreeType for SBIX, switch to Fontations for SBIX.
+  if (IsFreeTypeSystemRasterizer() || IsWin()) {
+    return instantiator.make_fontations(data);
+  }
+#endif
+
+  // Remaining case, on Mac, CoreText can handle creating SBIX fonts.
+  return instantiator.make_system(data);
+}
+
+sk_sp<SkTypeface> MakeColrV0Typeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+  if (IsWin()) {
+    // On Windows Skia's DirectWrite
+    // backend handles COLRv0.
+    return instantiator.make_system(data);
+  }
+  return instantiator.make_fontations(data);
+#else
+  // Remaining cases, Fontations is off, then on Windows Skia's DirectWrite
+  // backend handles COLRv0, on FreeType systems, FT handles COLRv0.
+  return instantiator.make_system(data);
+#endif
+}
+
+sk_sp<SkTypeface> MakeColrV0VariationsTypeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+#if BUILDFLAG(IS_WIN)
+  if (DWriteVersionSupportsVariations()) {
+    return instantiator.make_system(data);
+  }
+#endif
+  return instantiator.make_fontations(data);
+#else
+  return instantiator.make_system(data);
+#endif
+}
+
+#if !BUILDFLAG(SKIA_USE_FONTATIONS)
 sk_sp<SkTypeface> MakeUseFallbackIfNeeded(
     sk_sp<SkData> data,
     const WebFontTypefaceFactory::FontInstantiator& instantiator) {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
-  return instantiator.make_fallback(data);
+   return instantiator.make_fallback(data);
 #else
-  return instantiator.make_system(data);
+   return instantiator.make_system(data);
+#endif
+}
+#endif
+
+sk_sp<SkTypeface> MakeFontationsFallbackPreferred(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+  return instantiator.make_fontations(data);
+#else
+  return MakeUseFallbackIfNeeded(data, instantiator);
 #endif
 }
 
@@ -129,9 +165,12 @@ bool WebFontTypefaceFactory::CreateTypeface(sk_sp<SkData> data,
                                             sk_sp<SkTypeface>& typeface) {
   const FontFormatCheck format_check(data);
   const FontInstantiator instantiator = {
-    MakeTypefaceDefaultFontMgr,
+      MakeTypefaceDefaultFontMgr,
+#if BUILDFLAG(SKIA_USE_FONTATIONS)
+      MakeTypefaceFontations,
+#endif
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
-    MakeTypefaceFallback
+      MakeTypefaceFallback,
 #endif
   };
 
@@ -168,28 +207,29 @@ bool WebFontTypefaceFactory::CreateTypeface(
   struct {
     CheckFunction check_function;
     InstantionFunctionWithInstantiator instantiation_function;
-    absl::optional<InstantiationResult> reportSuccess;
-    absl::optional<InstantiationResult> reportFailure;
+    std::optional<InstantiationResult> reportSuccess;
+    std::optional<InstantiationResult> reportFailure;
   } instantiation_rules[] = {
       // We don't expect variable CBDT/CBLC or Sbix variable fonts for now.
-      {&FontFormatCheck::IsCbdtCblcColorFont, &MakeUseFallbackIfNeeded,
-       InstantiationResult::kSuccessCbdtCblcColorFont, absl::nullopt},
-      {&FontFormatCheck::IsColrCpalColorFontV1, &MakeUseFallbackIfNeeded,
-       InstantiationResult::kSuccessColrV1Font, absl::nullopt},
+      {&FontFormatCheck::IsCbdtCblcColorFont, &MakeFontationsFallbackPreferred,
+       InstantiationResult::kSuccessCbdtCblcColorFont, std::nullopt},
+      {&FontFormatCheck::IsColrCpalColorFontV1,
+       &MakeFontationsFallbackPreferred,
+       InstantiationResult::kSuccessColrV1Font, std::nullopt},
       {&FontFormatCheck::IsSbixColorFont, &MakeSbixTypeface,
-       InstantiationResult::kSuccessSbixFont, absl::nullopt},
-      {&FontFormatCheck::IsCff2OutlineFont, &MakeUseFallbackIfNeeded,
-       InstantiationResult::kSuccessCff2Font, absl::nullopt},
+       InstantiationResult::kSuccessSbixFont, std::nullopt},
+      {&FontFormatCheck::IsCff2OutlineFont, &MakeFontationsFallbackPreferred,
+       InstantiationResult::kSuccessCff2Font, std::nullopt},
       // We need to special case variable COLRv0 for backend instantiation as
       // certain Mac and Windows versions supported COLRv0 only without
       // variations.
       {&FontFormatCheck::IsVariableColrV0Font, &MakeColrV0VariationsTypeface,
-       InstantiationResult::kSuccessColrCpalFont, absl::nullopt},
+       InstantiationResult::kSuccessColrCpalFont, std::nullopt},
       {&FontFormatCheck::IsVariableFont, &MakeVariationsTypeface,
        InstantiationResult::kSuccessVariableWebFont,
        InstantiationResult::kErrorInstantiatingVariableFont},
       {&FontFormatCheck::IsColrCpalColorFontV0, &MakeColrV0Typeface,
-       InstantiationResult::kSuccessColrCpalFont, absl::nullopt}};
+       InstantiationResult::kSuccessColrCpalFont, std::nullopt}};
 
   for (auto& rule : instantiation_rules) {
     if (std::invoke(rule.check_function, format_check)) {

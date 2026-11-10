@@ -5,11 +5,11 @@
 #include "third_party/blink/renderer/core/layout/base_layout_algorithm_test.h"
 
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/layout/block_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/forms/fieldset_layout_algorithm.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
-#include "third_party/blink/renderer/core/layout/block_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/length_utils.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment.h"
@@ -75,8 +75,23 @@ const PhysicalBoxFragment* BaseLayoutAlgorithmTest::GetBoxFragmentByElementId(
 }
 
 const PhysicalBoxFragment* BaseLayoutAlgorithmTest::CurrentFragmentFor(
-    const LayoutNGBlockFlow* block_flow) {
+    const LayoutBlockFlow* block_flow) {
   return block_flow->GetPhysicalFragment(0);
+}
+
+void BaseLayoutAlgorithmTest::VerifyGapIntersections(
+    const Vector<GapIntersectionList>& expected_intersections,
+    const Vector<GapIntersectionList>& intersections) {
+  EXPECT_EQ(intersections.size(), expected_intersections.size());
+  for (size_t i = 0; i < intersections.size(); ++i) {
+    const auto& expected = expected_intersections[i];
+    const auto& actual = intersections[i];
+    EXPECT_EQ(actual.size(), expected.size());
+    for (size_t j = 0; j < actual.size(); ++j) {
+      EXPECT_EQ(actual[j].inline_offset, expected[j].inline_offset);
+      EXPECT_EQ(actual[j].block_offset, expected[j].block_offset);
+    }
+  }
 }
 
 const PhysicalBoxFragment* FragmentChildIterator::NextChild(

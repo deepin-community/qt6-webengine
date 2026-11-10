@@ -5,6 +5,8 @@
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
 
 #include <memory>
+
+#include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -132,7 +134,8 @@ TEST_F(HTMLFormControlElementTest, DoNotUpdateLayoutDuringDOMMutation) {
   // ShowValidationMessage(). So calling it during DOM mutation is
   // dangerous. This test ensures ShowValidationMessage() is NOT called in
   // appendChild(). crbug.com/756408
-  GetDocument().documentElement()->setInnerHTML("<select></select>");
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<select></select>");
   auto* const select = To<HTMLFormControlElement>(
       GetDocument().QuerySelector(AtomicString("select")));
   auto* const optgroup =
@@ -148,17 +151,6 @@ TEST_F(HTMLFormControlElementTest, DoNotUpdateLayoutDuringDOMMutation) {
   select->appendChild(optgroup);
   EXPECT_EQ(start_operation_count, validation_client->OperationCount())
       << "DOM mutation should not handle validation message UI in it.";
-}
-
-TEST_F(HTMLFormControlElementTest, UniqueRendererFormControlId) {
-  SetHtmlInnerHTML("<body><input id=input1><input id=input2></body>");
-  auto* form_control1 = To<HTMLFormControlElement>(GetElementById("input1"));
-  uint64_t first_id = form_control1->UniqueRendererFormControlId();
-  auto* form_control2 = To<HTMLFormControlElement>(GetElementById("input2"));
-  EXPECT_EQ(first_id + 1, form_control2->UniqueRendererFormControlId());
-  SetHtmlInnerHTML("<body><select id=select1></body>");
-  auto* form_control3 = To<HTMLFormControlElement>(GetElementById("select1"));
-  EXPECT_EQ(first_id + 2, form_control3->UniqueRendererFormControlId());
 }
 
 class HTMLFormControlElementFormControlTypeTest
@@ -178,7 +170,8 @@ TEST_P(HTMLFormControlElementFormControlTypeTest, FormControlType) {
     html += base::StringPrintf("</%s>", tag_name());
   }
   SCOPED_TRACE(testing::Message() << html);
-  GetDocument().documentElement()->setInnerHTML(html.c_str());
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      html.c_str());
   auto* form_control = To<HTMLFormControlElement>(
       GetDocument().getElementById(AtomicString("x")));
   EXPECT_EQ(form_control->FormControlType(), expected_type())
@@ -197,9 +190,6 @@ INSTANTIATE_TEST_SUITE_P(
                         "type=submit",
                         FormControlType::kButtonSubmit),
         std::make_tuple("button", "type=reset", FormControlType::kButtonReset),
-        std::make_tuple("button",
-                        "type=selectlist",
-                        FormControlType::kButtonSelectList),
         std::make_tuple("fieldset", "", FormControlType::kFieldset),
         std::make_tuple("input", "", FormControlType::kInputText),
         std::make_tuple("input", "type=button", FormControlType::kInputButton),
@@ -236,7 +226,6 @@ INSTANTIATE_TEST_SUITE_P(
         std::make_tuple("output", "", FormControlType::kOutput),
         std::make_tuple("select", "", FormControlType::kSelectOne),
         std::make_tuple("select", "multiple", FormControlType::kSelectMultiple),
-        std::make_tuple("selectlist", "", FormControlType::kSelectList),
         std::make_tuple("textarea", "", FormControlType::kTextArea)));
 
 }  // namespace blink

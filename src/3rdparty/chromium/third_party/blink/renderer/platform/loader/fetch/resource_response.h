@@ -28,6 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_RESOURCE_RESPONSE_H_
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/memory/scoped_refptr.h"
@@ -37,11 +38,10 @@
 #include "net/http/alternate_protocol_usage.h"
 #include "net/ssl/ssl_info.h"
 #include "services/network/public/cpp/cors/cors_error_status.h"
-#include "services/network/public/cpp/trigger_verification.h"
 #include "services/network/public/mojom/cross_origin_embedder_policy.mojom-forward.h"
+#include "services/network/public/mojom/device_bound_sessions.mojom-shared.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "services/network/public/mojom/ip_address_space.mojom-shared.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
@@ -51,12 +51,18 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+
+namespace network {
+struct IntegrityMetadata;
+}
 
 namespace blink {
 
 class ResourceLoadTiming;
 class ServiceWorkerRouterInfo;
+class UseCounter;
 
 // A ResourceResponse is a "response" object used in blink. Conceptually
 // it is https://fetch.spec.whatwg.org/#concept-response, but it contains
@@ -157,6 +163,7 @@ class PLATFORM_EXPORT ResourceResponse final {
   bool IsAttachment() const;
 
   AtomicString HttpContentType() const;
+  AtomicString GetFilteredHttpContentEncoding() const;
 
   // These functions return parsed values of the corresponding response headers.
   // NaN means that the header was not present or had invalid value.
@@ -164,11 +171,11 @@ class PLATFORM_EXPORT ResourceResponse final {
   bool CacheControlContainsNoStore() const;
   bool CacheControlContainsMustRevalidate() const;
   bool HasCacheValidatorFields() const;
-  absl::optional<base::TimeDelta> CacheControlMaxAge() const;
-  absl::optional<base::Time> Date() const;
-  absl::optional<base::TimeDelta> Age() const;
-  absl::optional<base::Time> Expires() const;
-  absl::optional<base::Time> LastModified() const;
+  std::optional<base::TimeDelta> CacheControlMaxAge() const;
+  std::optional<base::Time> Date(UseCounter&) const;
+  std::optional<base::TimeDelta> Age() const;
+  std::optional<base::Time> Expires(UseCounter&) const;
+  std::optional<base::Time> LastModified(UseCounter&) const;
   // Will always return values >= 0.
   base::TimeDelta CacheControlStaleWhileRevalidate() const;
 
@@ -208,7 +215,7 @@ class PLATFORM_EXPORT ResourceResponse final {
     security_style_ = security_style;
   }
 
-  const absl::optional<net::SSLInfo>& GetSSLInfo() const { return ssl_info_; }
+  const std::optional<net::SSLInfo>& GetSSLInfo() const { return ssl_info_; }
   void SetSSLInfo(const net::SSLInfo& ssl_info);
 
   bool EmittedExtraInfo() const { return emitted_extra_info_; }
@@ -225,6 +232,11 @@ class PLATFORM_EXPORT ResourceResponse final {
   }
   void SetWasFetchedViaServiceWorker(bool value) {
     was_fetched_via_service_worker_ = value;
+  }
+
+  bool FromSyntheticResponse() const { return from_synthetic_response_; }
+  void SetFromSyntheticResponse(bool value) {
+    from_synthetic_response_ = value;
   }
 
   network::mojom::FetchResponseSource GetServiceWorkerResponseSource() const {
@@ -293,20 +305,16 @@ class PLATFORM_EXPORT ResourceResponse final {
     response_time_ = response_time;
   }
 
+  base::Time OriginalResponseTime() const { return original_response_time_; }
+  void SetOriginalResponseTime(base::Time original_response_time) {
+    original_response_time_ = original_response_time;
+  }
+
   const net::IPEndPoint& RemoteIPEndpoint() const {
     return remote_ip_endpoint_;
   }
   void SetRemoteIPEndpoint(const net::IPEndPoint& value) {
     remote_ip_endpoint_ = value;
-  }
-
-  const WTF::Vector<network::TriggerVerification>& GetTriggerVerifications()
-      const {
-    return trigger_verifications_;
-  }
-  void SetTriggerVerifications(
-      WTF::Vector<network::TriggerVerification> value) {
-    trigger_verifications_ = std::move(value);
   }
 
   network::mojom::IPAddressSpace AddressSpace() const { return address_space_; }
@@ -375,11 +383,11 @@ class PLATFORM_EXPORT ResourceResponse final {
   int64_t DecodedBodyLength() const { return decoded_body_length_; }
   void SetDecodedBodyLength(int64_t value);
 
-  const absl::optional<base::UnguessableToken>& RecursivePrefetchToken() const {
+  const std::optional<base::UnguessableToken>& RecursivePrefetchToken() const {
     return recursive_prefetch_token_;
   }
   void SetRecursivePrefetchToken(
-      const absl::optional<base::UnguessableToken>& token) {
+      const std::optional<base::UnguessableToken>& token) {
     recursive_prefetch_token_ = token;
   }
 
@@ -448,11 +456,11 @@ class PLATFORM_EXPORT ResourceResponse final {
   network::mojom::CrossOriginEmbedderPolicyValue GetCrossOriginEmbedderPolicy()
       const;
 
-  const absl::optional<net::AuthChallengeInfo>& AuthChallengeInfo() const {
+  const std::optional<net::AuthChallengeInfo>& AuthChallengeInfo() const {
     return auth_challenge_info_;
   }
   void SetAuthChallengeInfo(
-      const absl::optional<net::AuthChallengeInfo>& value) {
+      const std::optional<net::AuthChallengeInfo>& value) {
     auth_challenge_info_ = value;
   }
 
@@ -477,6 +485,24 @@ class PLATFORM_EXPORT ResourceResponse final {
     should_use_source_hash_for_js_code_cache_ =
         should_use_source_hash_for_js_code_cache;
   }
+
+  void SetDeviceBoundSessionUsage(
+      network::mojom::DeviceBoundSessionUsage usage) {
+    device_bound_session_usage_ = usage;
+  }
+  network::mojom::DeviceBoundSessionUsage DeviceBoundSessionUsage() const {
+    return device_bound_session_usage_;
+  }
+
+  // Returns true if the request was routed through an IP Protection proxy.
+  bool IsIpProtectionUsed() const { return is_ip_protection_used_; }
+  // Sets the flag indicating IP Protection usage.
+  void SetIsIpProtectionUsed(bool is_ip_protection_used) {
+    is_ip_protection_used_ = is_ip_protection_used;
+  }
+
+  const Vector<network::IntegrityMetadata>& GetUnencodedDigests() const;
+  void SetUnencodedDigests(Vector<network::IntegrityMetadata> digests);
 
  private:
   void UpdateHeaderParsedState(const AtomicString& name);
@@ -510,6 +536,9 @@ class PLATFORM_EXPORT ResourceResponse final {
       private_network_access_preflight_result_ =
           network::mojom::PrivateNetworkAccessPreflightResult::kNone;
 
+  network::mojom::DeviceBoundSessionUsage device_bound_session_usage_ =
+      network::mojom::DeviceBoundSessionUsage::kUnknown;
+
   bool was_cached_ : 1;
   bool connection_reused_ : 1;
   bool is_null_ : 1;
@@ -535,6 +564,9 @@ class PLATFORM_EXPORT ResourceResponse final {
 
   // Was the resource fetched over a ServiceWorker.
   bool was_fetched_via_service_worker_ : 1;
+
+  // True if the response is created with the synthetic response.
+  bool from_synthetic_response_ : 1;
 
   // True if service worker navigation preload was performed due to
   // the request for this resource.
@@ -626,16 +658,16 @@ class PLATFORM_EXPORT ResourceResponse final {
   SecurityStyle security_style_ = SecurityStyle::kUnknown;
 
   // Security details of this request's connection.
-  absl::optional<net::SSLInfo> ssl_info_;
+  std::optional<net::SSLInfo> ssl_info_;
 
   scoped_refptr<ResourceLoadTiming> resource_load_timing_;
 
   mutable CacheControlHeader cache_control_header_;
 
-  mutable absl::optional<base::TimeDelta> age_;
-  mutable absl::optional<base::Time> date_;
-  mutable absl::optional<base::Time> expires_;
-  mutable absl::optional<base::Time> last_modified_;
+  mutable std::optional<base::TimeDelta> age_;
+  mutable std::optional<base::Time> date_;
+  mutable std::optional<base::Time> expires_;
+  mutable std::optional<base::Time> last_modified_;
 
   // The URL list of the response which was fetched by the ServiceWorker.
   // This is empty if the response was created inside the ServiceWorker.
@@ -652,6 +684,9 @@ class PLATFORM_EXPORT ResourceResponse final {
   // The time at which the response headers were received.  For cached
   // responses, this time could be "far" in the past.
   base::Time response_time_;
+
+  // Like response_time, but ignoring revalidations.
+  base::Time original_response_time_;
 
   // ALPN negotiated protocol of the socket which fetched this resource.
   AtomicString alpn_negotiated_protocol_;
@@ -677,18 +712,26 @@ class PLATFORM_EXPORT ResourceResponse final {
   // This is propagated from the browser process's PrefetchURLLoader on
   // cross-origin prefetch responses. It is used to pass the token along to
   // preload header requests from these responses.
-  absl::optional<base::UnguessableToken> recursive_prefetch_token_;
+  std::optional<base::UnguessableToken> recursive_prefetch_token_;
 
   // Any DNS aliases for the requested URL, as read from CNAME records.
   // Includes all known aliases, e.g. from A, AAAA, or HTTPS, not just from the
   // address used for the connection, in no particular order.
   Vector<String> dns_aliases_;
 
-  absl::optional<net::AuthChallengeInfo> auth_challenge_info_;
+  std::optional<net::AuthChallengeInfo> auth_challenge_info_;
 
   bool emitted_extra_info_ = false;
 
-  WTF::Vector<network::TriggerVerification> trigger_verifications_;
+  // Flag indicating if the request used IP Protection proxies.
+  // This differs from the `is_for_ip_protection` used in the network proxy
+  // chain, but uses `is_for_ip_protection`, along with whether the response was
+  // cached, to determine if the request was actively sent through an IP
+  // Protection proxy. This value is currently only set if
+  // kIpPrivacyEnableIppInDevTools is enabled.
+  bool is_ip_protection_used_ = false;
+
+  Vector<network::IntegrityMetadata> unencoded_digests_;
 };
 
 }  // namespace blink

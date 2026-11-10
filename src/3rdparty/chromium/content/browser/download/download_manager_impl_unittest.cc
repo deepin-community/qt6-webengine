@@ -22,6 +22,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/gmock_callback_support.h"
@@ -78,6 +79,8 @@ class MockDownloadManagerDelegate : public DownloadManagerDelegate {
   ~MockDownloadManagerDelegate() override;
 
   MOCK_METHOD0(Shutdown, void());
+  MOCK_METHOD1(OnDownloadCanceledAtShutdown,
+               void(download::DownloadItem* item));
   void GetNextId(DownloadIdCallback cb) override { GetNextId_(cb); }
   MOCK_METHOD1(GetNextId_, void(DownloadIdCallback&));
   MOCK_METHOD2(DetermineDownloadTarget,
@@ -174,6 +177,7 @@ class MockDownloadItemFactory final : public download::DownloadItemFactory {
       download::DownloadItemImplDelegate* delegate,
       uint32_t download_id,
       const base::FilePath& path,
+      const base::FilePath& display_name,
       const GURL& url,
       const std::string& mime_type,
       download::DownloadJob::CancelRequestCallback cancel_request_callback)
@@ -188,7 +192,8 @@ class MockDownloadItemFactory final : public download::DownloadItemFactory {
   }
 
  private:
-  std::map<uint32_t, download::MockDownloadItemImpl*> items_;
+  std::map<uint32_t, raw_ptr<download::MockDownloadItemImpl, CtnExperimental>>
+      items_;
   download::DownloadItemImplDelegate item_delegate_;
   bool is_download_persistent_;
   base::WeakPtrFactory<MockDownloadItemFactory> weak_ptr_factory_{this};
@@ -329,6 +334,7 @@ download::DownloadItemImpl* MockDownloadItemFactory::CreateSavePageItem(
     download::DownloadItemImplDelegate* delegate,
     uint32_t download_id,
     const base::FilePath& path,
+    const base::FilePath& display_name,
     const GURL& url,
     const std::string& mime_type,
     download::DownloadJob::CancelRequestCallback cancel_request_callback) {
@@ -343,9 +349,7 @@ download::DownloadItemImpl* MockDownloadItemFactory::CreateSavePageItem(
   return result;
 }
 
-class MockDownloadFileFactory
-    : public download::DownloadFileFactory,
-      public base::SupportsWeakPtr<MockDownloadFileFactory> {
+class MockDownloadFileFactory final : public download::DownloadFileFactory {
  public:
   MockDownloadFileFactory() {}
   ~MockDownloadFileFactory() override {}
@@ -360,9 +364,17 @@ class MockDownloadFileFactory
       const base::FilePath& default_download_directory,
       std::unique_ptr<download::InputStream> stream,
       uint32_t download_id,
+      const base::FilePath& duplicate_download_file_path,
       base::WeakPtr<download::DownloadDestinationObserver> observer) override {
     return MockCreateFile(*save_info, stream.get());
   }
+
+  base::WeakPtr<MockDownloadFileFactory> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
+  base::WeakPtrFactory<MockDownloadFileFactory> weak_ptr_factory_{this};
 };
 
 class MockDownloadManagerObserver : public DownloadManager::Observer {
@@ -962,6 +974,40 @@ TEST_F(DownloadManagerWithExpirationTest, DeleteExpiredDownload) {
                                      download::DownloadItem::COMPLETE);
   EXPECT_TRUE(download_item)
       << "Expired complete download will not be deleted.";
+}
+
+class DownloadManagerShutdownTest : public DownloadManagerTest {
+ public:
+  void TearDown() override { download_manager_.reset(); }
+
+ protected:
+  void RunOnDownloadCanceledAtShutdownCalledTest(
+      download::DownloadItem::DownloadState state,
+      int expected_canceled_call_times) {
+    download::MockDownloadItemImpl& item(AddItemToManager());
+
+    EXPECT_CALL(item, GetState()).WillRepeatedly(Return(state));
+    EXPECT_CALL(item, Cancel(false)).Times(expected_canceled_call_times);
+    EXPECT_CALL(GetMockDownloadManagerDelegate(),
+                OnDownloadCanceledAtShutdown(&item))
+        .Times(expected_canceled_call_times);
+    EXPECT_CALL(GetMockObserver(), ManagerGoingDown(download_manager_.get()))
+        .WillOnce(Return());
+    download_manager_->Shutdown();
+    base::RunLoop().RunUntilIdle();
+  }
+};
+
+TEST_F(DownloadManagerShutdownTest,
+       OnDownloadCanceledAtShutdownCalledForInProgressDownload) {
+  RunOnDownloadCanceledAtShutdownCalledTest(download::DownloadItem::IN_PROGRESS,
+                                            /*expected_canceled_call_times=*/1);
+}
+
+TEST_F(DownloadManagerShutdownTest,
+       OnDownloadCanceledAtShutdownNotCalledForCompleteDownload) {
+  RunOnDownloadCanceledAtShutdownCalledTest(download::DownloadItem::COMPLETE,
+                                            /*expected_canceled_call_times=*/0);
 }
 
 }  // namespace content

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp2t/ts_section_pes.h"
 
 #include <memory>
@@ -52,8 +57,7 @@ TsSectionPes::~TsSectionPes() {
 }
 
 bool TsSectionPes::Parse(bool payload_unit_start_indicator,
-                         const uint8_t* buf,
-                         int size) {
+                         base::span<const uint8_t> buf) {
   // Ignore partial PES.
   if (wait_for_pusi_ && !payload_unit_start_indicator)
     return true;
@@ -63,11 +67,9 @@ bool TsSectionPes::Parse(bool payload_unit_start_indicator,
     // Try emitting a packet since we might have a pending PES packet
     // with an undefined size.
     // In this case, a unit is emitted when the next unit is coming.
-    int raw_pes_size;
-    const uint8_t* raw_pes;
-    pes_byte_queue_.Peek(&raw_pes, &raw_pes_size);
-    if (raw_pes_size > 0)
+    if (pes_byte_queue_.Data().size() > 0) {
       parse_result = Emit(true);
+    }
 
     // Reset the state.
     ResetPesState();
@@ -77,8 +79,8 @@ bool TsSectionPes::Parse(bool payload_unit_start_indicator,
   }
 
   // Add the data to the parser state.
-  if (size > 0) {
-    RCHECK(pes_byte_queue_.Push(buf, size));  // Can fail if allocation fails.
+  if (!buf.empty()) {
+    RCHECK(pes_byte_queue_.Push(buf));
   }
 
   // Try emitting the current PES packet.
@@ -100,9 +102,8 @@ void TsSectionPes::Reset() {
 }
 
 bool TsSectionPes::Emit(bool emit_for_unknown_size) {
-  int raw_pes_size;
-  const uint8_t* raw_pes;
-  pes_byte_queue_.Peek(&raw_pes, &raw_pes_size);
+  int raw_pes_size = pes_byte_queue_.Data().size();
+  const uint8_t* raw_pes = pes_byte_queue_.Data().data();
 
   // A PES should be at least 6 bytes.
   // Wait for more data to come if not enough bytes.
@@ -138,7 +139,7 @@ bool TsSectionPes::ParseInternal(const uint8_t* raw_pes, int raw_pes_size) {
   // Read up to the pes_packet_length (6 bytes).
   int packet_start_code_prefix;
   int stream_id;
-  int pes_packet_length;
+  size_t pes_packet_length;
   RCHECK(bit_reader.ReadBits(24, &packet_start_code_prefix));
   RCHECK(bit_reader.ReadBits(8, &stream_id));
   RCHECK(bit_reader.ReadBits(16, &pes_packet_length));
@@ -192,7 +193,7 @@ bool TsSectionPes::ParseInternal(const uint8_t* raw_pes, int raw_pes_size) {
   RCHECK(bit_reader.ReadBits(1, &pes_crc_flag));
   RCHECK(bit_reader.ReadBits(1, &pes_extension_flag));
   RCHECK(bit_reader.ReadBits(8, &pes_header_data_length));
-  int pes_header_start_size = bit_reader.bits_available() / 8;
+  const size_t pes_header_start_size = bit_reader.bits_available() / 8;
 
   // Compute the size and the offset of the ES payload.
   // "6" for the 6 bytes read before and including |pes_packet_length|.
@@ -240,7 +241,7 @@ bool TsSectionPes::ParseInternal(const uint8_t* raw_pes, int raw_pes_size) {
 
   // Discard the rest of the PES packet header.
   // TODO(damienv): check if some info of the PES packet header are useful.
-  DCHECK_EQ(bit_reader.bits_available() % 8, 0);
+  DCHECK_EQ(bit_reader.bits_available() % 8, 0u);
   int pes_header_remaining_size = pes_header_data_length -
       (pes_header_start_size - bit_reader.bits_available() / 8);
   RCHECK(pes_header_remaining_size >= 0);

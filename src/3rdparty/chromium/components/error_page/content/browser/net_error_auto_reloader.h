@@ -7,24 +7,25 @@
 
 #include <stddef.h>
 
+#include <map>
 #include <memory>
-#include <set>
+#include <optional>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "base/types/strong_alias.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "net/base/net_errors.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/network/public/mojom/network_change_manager.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace content {
 class NavigationHandle;
-class NavigationThrottle;
+class NavigationThrottleRegistry;
 class WebContents;
 }  // namespace content
 
@@ -35,8 +36,8 @@ namespace error_page {
 // excludes errors that aren't connectivity related since a reload doesn't
 // generally fix them (e.g. SSL errors or when the client blocked the request).
 // To use this behavior as a Content embedder, simply call the static
-// `MaybeCreateNavigationThrottle()` method from within your implementation of
-// ContentBrowserClient::CreateThrottlesForNavigation.
+// `MaybeCreateAndAddNavigationThrottle()` method from within your
+// implementation of ContentBrowserClient::CreateThrottlesForNavigation.
 class NetErrorAutoReloader
     : public content::WebContentsObserver,
       public content::WebContentsUserData<NetErrorAutoReloader>,
@@ -46,13 +47,13 @@ class NetErrorAutoReloader
   NetErrorAutoReloader& operator=(const NetErrorAutoReloader&) = delete;
   ~NetErrorAutoReloader() override;
 
-  // Maybe installs a throttle for the given navigation, lazily initializing the
+  // Maybe install a throttle for the given navigation, lazily initializing the
   // appropriate WebContents' NetErrorAutoReloader instance if necessary. For
   // embedders wanting to use NetErrorAutoReload's behavior, it's sufficient to
   // call this from ContentBrowserClient::CreateThrottlesForNavigation for each
   // navigation processed.
-  static std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(
-      content::NavigationHandle* handle);
+  static void MaybeCreateAndAddNavigationThrottle(
+      content::NavigationThrottleRegistry& registry);
 
   // content::WebContentsObserver:
   void DidStartNavigation(content::NavigationHandle* handle) override;
@@ -73,7 +74,7 @@ class NetErrorAutoReloader
 
   // Returns the timer used internally to schedule the next auto-reload task,
   // or null if no auto-reload task is currently scheduled.
-  absl::optional<base::OneShotTimer>& next_reload_timer_for_testing() {
+  std::optional<base::OneShotTimer>& next_reload_timer_for_testing() {
     return next_reload_timer_;
   }
 
@@ -89,8 +90,8 @@ class NetErrorAutoReloader
   void ResumeAutoReloadIfPaused();
   void ScheduleNextAutoReload();
   void ReloadMainFrame();
-  std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottle(
-      content::NavigationHandle* handle);
+  void MaybeCreateAndAdd(
+      content::NavigationThrottleRegistry& registry);
   bool ShouldSuppressErrorPage(content::NavigationHandle* handle);
 
   struct ErrorPageInfo {
@@ -101,11 +102,18 @@ class NetErrorAutoReloader
     net::Error error;
   };
 
+  // True if a NavigationHandle corresponds to a load that was suppressed due to
+  // being a redundant error page load.
+  using IsSuppressedErrorPage =
+      base::StrongAlias<struct IsSuppressedErrorPageTag, bool>;
+
   raw_ptr<network::NetworkConnectionTracker> connection_tracker_;
   bool is_online_ = true;
-  std::set<content::NavigationHandle*> pending_navigations_;
-  absl::optional<base::OneShotTimer> next_reload_timer_;
-  absl::optional<ErrorPageInfo> current_reloadable_error_page_info_;
+  std::map<raw_ptr<content::NavigationHandle, SetExperimental>,
+           IsSuppressedErrorPage>
+      pending_navigations_;
+  std::optional<base::OneShotTimer> next_reload_timer_;
+  std::optional<ErrorPageInfo> current_reloadable_error_page_info_;
   size_t num_reloads_for_current_error_ = 0;
   bool is_auto_reload_in_progress_ = false;
   base::WeakPtrFactory<NetErrorAutoReloader> weak_ptr_factory_{this};

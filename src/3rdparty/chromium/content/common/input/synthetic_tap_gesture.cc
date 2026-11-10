@@ -122,10 +122,8 @@ void SyntheticTapGesture::ForwardTouchOrMouseInputEvents(
       break;
     case SETUP:
       NOTREACHED() << "State SETUP invalid for synthetic tap gesture.";
-      break;
     case DONE:
       NOTREACHED() << "State DONE invalid for synthetic tap gesture.";
-      break;
   }
 }
 

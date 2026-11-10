@@ -3,42 +3,27 @@
 # found in the LICENSE file.
 """Definitions of builders in the tryserver.chromium.mac builder group."""
 
-load("//lib/builders.star", "os", "reclient")
-load("//lib/try.star", "try_")
-load("//lib/consoles.star", "consoles")
-load("//lib/gn_args.star", "gn_args")
+load("@chromium-luci//builders.star", "cpu", "os")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//try.star", "try_")
+load("//lib/siso.star", "siso")
+load("//lib/try_constants.star", "try_constants")
 
 try_.defaults.set(
-    executable = try_.DEFAULT_EXECUTABLE,
+    executable = try_constants.DEFAULT_EXECUTABLE,
     builder_group = "tryserver.chromium.cft",
-    pool = try_.DEFAULT_POOL,
+    pool = try_constants.DEFAULT_POOL,
     builderless = True,
     cores = 8,
-    execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
-    reclient_instance = reclient.instance.DEFAULT_UNTRUSTED,
-    reclient_jobs = reclient.jobs.LOW_JOBS_FOR_CQ,
-    service_account = try_.DEFAULT_SERVICE_ACCOUNT,
+    execution_timeout = try_constants.DEFAULT_EXECUTION_TIMEOUT,
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
+    siso_project = siso.project.DEFAULT_UNTRUSTED,
+    siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
 consoles.list_view(
     name = "tryserver.chromium.cft",
-)
-
-try_.builder(
-    name = "linux-arm64-rel-cft",
-    mirrors = [
-        "ci/linux-arm64-rel-cft",
-    ],
-    gn_args = gn_args.config(
-        configs = [
-            "release_try_builder",
-            "reclient",
-            "no_symbols",
-            "chrome_for_testing",
-            "arm64",
-        ],
-    ),
-    os = os.LINUX_DEFAULT,
 )
 
 try_.builder(
@@ -49,10 +34,12 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "devtools_do_typecheck",
             "chrome_for_testing",
+            "linux",
+            "x64",
         ],
     ),
     os = os.LINUX_DEFAULT,
@@ -66,13 +53,16 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "chrome_for_testing",
+            "mac",
+            "x64",
         ],
     ),
     cores = None,
     os = os.MAC_DEFAULT,
+    cpu = cpu.ARM64,
 )
 
 try_.builder(
@@ -83,12 +73,14 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
-            # TODO(crbug.com/1004523) Delete this once coverage mode is enabled
+            "remoteexec",
+            # TODO(crbug.com/40099061) Delete this once coverage mode is enabled
             # on the standard Windows trybot and the dedicated coverage trybot
             # is no longer needed.
             "no_resource_allowlisting",
             "chrome_for_testing",
+            "win",
+            "x64",
         ],
     ),
     os = os.WINDOWS_DEFAULT,

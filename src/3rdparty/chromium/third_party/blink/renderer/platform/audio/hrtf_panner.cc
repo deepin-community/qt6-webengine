@@ -25,6 +25,8 @@
 
 #include "third_party/blink/renderer/platform/audio/hrtf_panner.h"
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
@@ -178,13 +180,13 @@ void HRTFPanner::Pan(double desired_azimuth,
                              : nullptr;
 
   // Get source and destination pointers.
-  const float* source_l = input_channel_l->Data();
-  const float* source_r =
-      num_input_channels > 1 ? input_channel_r->Data() : source_l;
-  float* destination_l =
-      output_bus->ChannelByType(AudioBus::kChannelLeft)->MutableData();
-  float* destination_r =
-      output_bus->ChannelByType(AudioBus::kChannelRight)->MutableData();
+  base::span<const float> source_l = input_channel_l->Span();
+  base::span<const float> source_r =
+      num_input_channels > 1 ? input_channel_r->Span() : source_l;
+  base::span<float> destination_l =
+      output_bus->ChannelByType(AudioBus::kChannelLeft)->MutableSpan();
+  base::span<float> destination_r =
+      output_bus->ChannelByType(AudioBus::kChannelRight)->MutableSpan();
 
   double azimuth_blend;
   const int desired_azimuth_index =
@@ -266,10 +268,10 @@ void HRTFPanner::Pan(double desired_azimuth,
 
     // Calculate the source and destination pointers for the current segment.
     const unsigned offset = segment * kFramesPerSegment;
-    const float* segment_source_l = source_l + offset;
-    const float* segment_source_r = source_r + offset;
-    float* segment_destination_l = destination_l + offset;
-    float* segment_destination_r = destination_r + offset;
+    base::span<const float> segment_source_l = source_l.subspan(offset);
+    base::span<const float> segment_source_r = source_r.subspan(offset);
+    base::span<float> segment_destination_l = destination_l.subspan(offset);
+    base::span<float> segment_destination_r = destination_r.subspan(offset);
 
     // First run through delay lines for inter-aural time difference.
     delay_line_l_.SetDelayFrames(frame_delay_l);
@@ -283,31 +285,35 @@ void HRTFPanner::Pan(double desired_azimuth,
 
     // Have the convolvers render directly to the final destination if we're not
     // cross-fading.
-    float* convolution_destination_l1 =
-        needs_crossfading ? temp_l1_.Data() : segment_destination_l;
-    float* convolution_destination_r1 =
-        needs_crossfading ? temp_r1_.Data() : segment_destination_r;
-    float* convolution_destination_l2 =
-        needs_crossfading ? temp_l2_.Data() : segment_destination_l;
-    float* convolution_destination_r2 =
-        needs_crossfading ? temp_r2_.Data() : segment_destination_r;
+    base::span<float> convolution_destination_l1 =
+        needs_crossfading ? temp_l1_.as_span() : segment_destination_l;
+    base::span<float> convolution_destination_r1 =
+        needs_crossfading ? temp_r1_.as_span() : segment_destination_r;
+    base::span<float> convolution_destination_l2 =
+        needs_crossfading ? temp_l2_.as_span() : segment_destination_l;
+    base::span<float> convolution_destination_r2 =
+        needs_crossfading ? temp_r2_.as_span() : segment_destination_r;
 
     // Now do the convolutions.
     // Note that we avoid doing convolutions on both sets of convolvers if we're
     // not currently cross-fading.
 
     if (crossfade_selection_ == kCrossfadeSelection1 || needs_crossfading) {
-      convolver_l1_.Process(kernel_l1->FftFrame(), segment_destination_l,
-                            convolution_destination_l1, kFramesPerSegment);
-      convolver_r1_.Process(kernel_r1->FftFrame(), segment_destination_r,
-                            convolution_destination_r1, kFramesPerSegment);
+      convolver_l1_.Process(kernel_l1->FftFrame(), segment_destination_l.data(),
+                            convolution_destination_l1.data(),
+                            kFramesPerSegment);
+      convolver_r1_.Process(kernel_r1->FftFrame(), segment_destination_r.data(),
+                            convolution_destination_r1.data(),
+                            kFramesPerSegment);
     }
 
     if (crossfade_selection_ == kCrossfadeSelection2 || needs_crossfading) {
-      convolver_l2_.Process(kernel_l2->FftFrame(), segment_destination_l,
-                            convolution_destination_l2, kFramesPerSegment);
-      convolver_r2_.Process(kernel_r2->FftFrame(), segment_destination_r,
-                            convolution_destination_r2, kFramesPerSegment);
+      convolver_l2_.Process(kernel_l2->FftFrame(), segment_destination_l.data(),
+                            convolution_destination_l2.data(),
+                            kFramesPerSegment);
+      convolver_r2_.Process(kernel_r2->FftFrame(), segment_destination_r.data(),
+                            convolution_destination_r2.data(),
+                            kFramesPerSegment);
     }
 
     if (needs_crossfading) {
@@ -315,10 +321,12 @@ void HRTFPanner::Pan(double desired_azimuth,
       float x = crossfade_x_;
       const float incr = crossfade_incr_;
       for (unsigned i = 0; i < kFramesPerSegment; ++i) {
-        segment_destination_l[i] = (1 - x) * convolution_destination_l1[i] +
-                                   x * convolution_destination_l2[i];
-        segment_destination_r[i] = (1 - x) * convolution_destination_r1[i] +
-                                   x * convolution_destination_r2[i];
+        UNSAFE_TODO(segment_destination_l[i]) =
+            (1 - x) * UNSAFE_TODO(convolution_destination_l1[i]) +
+            x * UNSAFE_TODO(convolution_destination_l2[i]);
+        UNSAFE_TODO(segment_destination_r[i]) =
+            (1 - x) * UNSAFE_TODO(convolution_destination_r1[i]) +
+            x * UNSAFE_TODO(convolution_destination_r2[i]);
         x += incr;
       }
       // Update cross-fade value from local.
@@ -340,8 +348,8 @@ void HRTFPanner::Pan(double desired_azimuth,
 }
 
 void HRTFPanner::PanWithSampleAccurateValues(
-    double* desired_azimuth,
-    double* elevation,
+    base::span<double> desired_azimuth,
+    base::span<double> elevation,
     const AudioBus* input_bus,
     AudioBus* output_bus,
     uint32_t frames_to_process,

@@ -31,6 +31,7 @@
 #include "dawn/common/SerialQueue.h"
 #include "dawn/common/vulkan_platform.h"
 #include "dawn/native/IntegerTypes.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native::vulkan {
 
@@ -44,6 +45,7 @@ class FencedDeleter {
     void DeleteWhenUnused(VkBuffer buffer);
     void DeleteWhenUnused(VkDescriptorPool pool);
     void DeleteWhenUnused(VkDeviceMemory memory);
+    void DeleteWhenUnused(VkFence fence);
     void DeleteWhenUnused(VkFramebuffer framebuffer);
     void DeleteWhenUnused(VkImage image);
     void DeleteWhenUnused(VkImageView view);
@@ -51,19 +53,26 @@ class FencedDeleter {
     void DeleteWhenUnused(VkRenderPass renderPass);
     void DeleteWhenUnused(VkPipeline pipeline);
     void DeleteWhenUnused(VkQueryPool querypool);
+    void DeleteWhenUnused(VkSamplerYcbcrConversion samplerYcbcrConversion);
     void DeleteWhenUnused(VkSampler sampler);
     void DeleteWhenUnused(VkSemaphore semaphore);
-    void DeleteWhenUnused(VkShaderModule module);
     void DeleteWhenUnused(VkSurfaceKHR surface);
     void DeleteWhenUnused(VkSwapchainKHR swapChain);
+
+    // Returns the last serial that an object is pending deletion after or
+    // kBeginningOfGPUTime if no objects are pending deletion.
+    ExecutionSerial GetLastPendingDeletionSerial();
+    // Returns the serial used for deleting the resources.
+    ExecutionSerial GetCurrentDeletionSerial();
 
     void Tick(ExecutionSerial completedSerial);
 
   private:
-    Device* mDevice = nullptr;
+    raw_ptr<Device> mDevice = nullptr;
     SerialQueue<ExecutionSerial, VkBuffer> mBuffersToDelete;
     SerialQueue<ExecutionSerial, VkDescriptorPool> mDescriptorPoolsToDelete;
     SerialQueue<ExecutionSerial, VkDeviceMemory> mMemoriesToDelete;
+    SerialQueue<ExecutionSerial, VkFence> mFencesToDelete;
     SerialQueue<ExecutionSerial, VkFramebuffer> mFramebuffersToDelete;
     SerialQueue<ExecutionSerial, VkImage> mImagesToDelete;
     SerialQueue<ExecutionSerial, VkImageView> mImageViewsToDelete;
@@ -71,9 +80,9 @@ class FencedDeleter {
     SerialQueue<ExecutionSerial, VkPipelineLayout> mPipelineLayoutsToDelete;
     SerialQueue<ExecutionSerial, VkQueryPool> mQueryPoolsToDelete;
     SerialQueue<ExecutionSerial, VkRenderPass> mRenderPassesToDelete;
+    SerialQueue<ExecutionSerial, VkSamplerYcbcrConversion> mSamplerYcbcrConversionsToDelete;
     SerialQueue<ExecutionSerial, VkSampler> mSamplersToDelete;
     SerialQueue<ExecutionSerial, VkSemaphore> mSemaphoresToDelete;
-    SerialQueue<ExecutionSerial, VkShaderModule> mShaderModulesToDelete;
     SerialQueue<ExecutionSerial, VkSurfaceKHR> mSurfacesToDelete;
     SerialQueue<ExecutionSerial, VkSwapchainKHR> mSwapChainsToDelete;
 };

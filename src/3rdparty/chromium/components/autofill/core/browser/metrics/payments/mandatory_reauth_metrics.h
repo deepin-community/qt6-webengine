@@ -5,8 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PAYMENTS_MANDATORY_REAUTH_METRICS_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PAYMENTS_MANDATORY_REAUTH_METRICS_H_
 
-#include "components/autofill/core/browser/autofill_client.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 
 namespace autofill {
@@ -14,6 +14,8 @@ namespace autofill {
 namespace payments {
 enum class MandatoryReauthAuthenticationMethod;
 }
+
+enum class NonInteractivePaymentMethodType;
 
 namespace autofill_metrics {
 
@@ -117,7 +119,11 @@ enum class MandatoryReauthOptInOrOutSource {
   // The OptIn is triggered after using a green-pathed masked server card during
   // checkout.
   kCheckoutMaskedServerCard = 5,
-  kMaxValue = kCheckoutMaskedServerCard,
+  // The OptIn is triggered after using a local IBAN during checkout.
+  kCheckoutLocalIban = 6,
+  // The OptIn is triggered after using a server IBAN during checkout.
+  kCheckoutServerIban = 7,
+  kMaxValue = kCheckoutServerIban,
 };
 
 void LogMandatoryReauthOfferOptInDecision(
@@ -162,10 +168,10 @@ void LogMandatoryReauthSettingsPageDeleteCardEvent(
     MandatoryReauthAuthenticationFlowEvent event);
 
 // Logs the status of a mandatory reauth occurrence during checkout flow, such
-// as flow started/succeeded/failed, break down by `card_type` and
-// `authentication_method`.
+// as flow started/succeeded/failed, broken down by
+// `non_interactive_payment_method_type` and `authentication_method`.
 void LogMandatoryReauthCheckoutFlowUsageEvent(
-    CreditCard::RecordType card_type,
+    NonInteractivePaymentMethodType non_interactive_payment_method_type,
     payments::MandatoryReauthAuthenticationMethod authentication_method,
     MandatoryReauthAuthenticationFlowEvent event);
 

@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 
 #include "content/web_test/renderer/web_frame_test_proxy.h"
-#include "base/memory/raw_ptr.h"
 
+#include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "components/plugins/renderer/plugin_placeholder.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/web_test/common/web_test_string_util.h"
@@ -71,10 +73,6 @@ std::string URLSuitableForTestResult(const std::string& url) {
   return filename;
 }
 
-void BlockRequest(blink::WebURLRequest& request) {
-  request.SetUrl(GURL("255.255.255.255"));
-}
-
 bool IsLocalHost(const std::string& host) {
   return host == "127.0.0.1" || host == "localhost" || host == "[::1]";
 }
@@ -123,7 +121,7 @@ void PrintFrameUserGestureStatus(WebFrameTestProxy* frame_proxy,
   bool is_user_gesture = frame->HasTransientUserActivation();
   frame_proxy->GetWebTestControlHostRemote()->PrintMessage(
       std::string("Frame with user gesture \"") +
-      (is_user_gesture ? "true" : "false") + "\"" + msg);
+      base::ToString(is_user_gesture) + "\"" + msg);
 }
 
 class TestRenderFrameObserver : public RenderFrameObserver {
@@ -232,7 +230,7 @@ class TestRenderFrameObserver : public RenderFrameObserver {
     render_frame()->GetWebFrame()->PrintEnd();
   }
 
-  const raw_ptr<TestRunner, ExperimentalRenderer> test_runner_;
+  const raw_ptr<TestRunner> test_runner_;
 };
 
 }  // namespace
@@ -273,10 +271,13 @@ void WebFrameTestProxy::Initialize(blink::WebFrame* parent) {
   GetWebTestControlHostRemote();
 }
 
-void WebFrameTestProxy::Reset() {
-  // TODO(crbug.com/936696): The RenderDocument project will cause us to replace
-  // the main frame on each navigation, including to about:blank and then to the
-  // next test. So resetting the frame or RenderWidget won't be meaningful then.
+void WebFrameTestProxy::ResetRendererAfterWebTest() {
+  // TODO(crbug.com/40615943): Some of this work is no longer needed if the
+  // RenderDocument project causes us to replace the main frame on each
+  // navigation. But some of it will continue to be necessary since it modifies
+  // process-global state, e.g. ResetMockOverlayScrollbars in internals.cc.
+  // The content::TestRunner object also persists for the life of the renderer.
+  // So the steps in this method need to be audited piecemeal for redundancy.
   CHECK(IsMainFrame());
 
   if (IsMainFrame()) {
@@ -300,6 +301,7 @@ void WebFrameTestProxy::Reset() {
 
   accessibility_controller_.Reset();
   spell_check_->Reset();
+  test_runner_->Reset();
 }
 
 std::string WebFrameTestProxy::GetFrameNameForWebTests() {
@@ -441,12 +443,40 @@ void WebFrameTestProxy::DidDispatchPingLoader(const blink::WebURL& url) {
   RenderFrameImpl::DidDispatchPingLoader(url);
 }
 
-void WebFrameTestProxy::WillSendRequest(blink::WebURLRequest& request,
-                                        ForRedirect for_redirect) {
-  RenderFrameImpl::WillSendRequest(request, for_redirect);
-
+std::optional<blink::WebURL> WebFrameTestProxy::WillSendRequest(
+    const blink::WebURL& target,
+    const blink::WebSecurityOrigin& security_origin,
+    const net::SiteForCookies& site_for_cookies,
+    ForRedirect for_redirect,
+    const blink::WebURL& upstream_url) {
+  std::optional<blink::WebURL> adjusted_url = RenderFrameImpl::WillSendRequest(
+      target, security_origin, site_for_cookies, for_redirect, upstream_url);
   // Need to use GURL for host() and SchemeIs()
-  GURL url = request.Url();
+  GURL url = adjusted_url.has_value() ? *adjusted_url : target;
+
+  std::string host = url.host();
+  if (!host.empty() &&
+      (url.SchemeIs(url::kHttpScheme) || url.SchemeIs(url::kHttpsScheme))) {
+    if (!IsLocalHost(host) && !IsTestHost(host) &&
+        !HostIsUsedBySomeTestsToGenerateError(host) &&
+        ((site_for_cookies.scheme() != url::kHttpScheme &&
+          site_for_cookies.scheme() != url::kHttpsScheme) ||
+         IsLocalHost(site_for_cookies.registrable_domain())) &&
+        !test_runner_->TestConfig().allow_external_pages) {
+      GetWebTestControlHostRemote()->PrintMessage(
+          std::string("Blocked access to external URL ") +
+          url.possibly_invalid_spec() + "\n");
+      return GURL("255.255.255.255");
+    }
+  }
+
+  // Set the new substituted URL.
+  return RewriteWebTestsURL(url.spec(),
+                            test_runner()->IsWebPlatformTestsMode());
+}
+
+void WebFrameTestProxy::FinalizeRequest(blink::WebURLRequest& request) {
+  RenderFrameImpl::FinalizeRequest(request);
 
   // Warning: this may be null in some cross-site cases.
   net::SiteForCookies site_for_cookies = request.SiteForCookies();
@@ -463,27 +493,6 @@ void WebFrameTestProxy::WillSendRequest(blink::WebURLRequest& request,
     request.SetReferrerPolicy(blink::ReferrerUtils::NetToMojoReferrerPolicy(
         blink::ReferrerUtils::GetDefaultNetReferrerPolicy()));
   }
-
-  std::string host = url.host();
-  if (!host.empty() &&
-      (url.SchemeIs(url::kHttpScheme) || url.SchemeIs(url::kHttpsScheme))) {
-    if (!IsLocalHost(host) && !IsTestHost(host) &&
-        !HostIsUsedBySomeTestsToGenerateError(host) &&
-        ((site_for_cookies.scheme() != url::kHttpScheme &&
-          site_for_cookies.scheme() != url::kHttpsScheme) ||
-         IsLocalHost(site_for_cookies.registrable_domain())) &&
-        !test_runner_->TestConfig().allow_external_pages) {
-      GetWebTestControlHostRemote()->PrintMessage(
-          std::string("Blocked access to external URL ") +
-          url.possibly_invalid_spec() + "\n");
-      BlockRequest(request);
-      return;
-    }
-  }
-
-  // Set the new substituted URL.
-  request.SetUrl(RewriteWebTestsURL(request.Url().GetString().Utf8(),
-                                    test_runner()->IsWebPlatformTestsMode()));
 }
 
 void WebFrameTestProxy::BeginNavigation(
@@ -561,6 +570,10 @@ void WebFrameTestProxy::PostAccessibilityEvent(const ui::AXEvent& event) {
   RenderFrameImpl::PostAccessibilityEvent(event);
 }
 
+void WebFrameTestProxy::HandleAXObjectDetachedForTest(unsigned axid) {
+  accessibility_controller_.Remove(axid);
+}
+
 void WebFrameTestProxy::HandleWebAccessibilityEventForTest(
     const blink::WebAXObject& object,
     const char* event_name,
@@ -603,7 +616,7 @@ void WebFrameTestProxy::HandleWebAccessibilityEventForTest(
       event_name = "ActiveDescendantChanged";
       break;
     case ax::mojom::Event::kAriaAttributeChangedDeprecated:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case ax::mojom::Event::kBlur:
       event_name = "Blur";
       break;
@@ -642,9 +655,6 @@ void WebFrameTestProxy::HandleWebAccessibilityEventForTest(
       break;
     case ax::mojom::Event::kLocationChanged:
       event_name = "LocationChanged";
-      break;
-    case ax::mojom::Event::kMenuListValueChanged:
-      event_name = "MenuListValueChanged";
       break;
     case ax::mojom::Event::kRowCollapsed:
       event_name = "RowCollapsed";
@@ -691,6 +701,7 @@ void WebFrameTestProxy::HandleWebAccessibilityEventForTest(
     case ax::mojom::Event::kMediaStartedPlaying:
     case ax::mojom::Event::kMediaStoppedPlaying:
     case ax::mojom::Event::kMenuEnd:
+    case ax::mojom::Event::kMenuListValueChangedDeprecated:
     case ax::mojom::Event::kMenuPopupEnd:
     case ax::mojom::Event::kMenuPopupStart:
     case ax::mojom::Event::kMenuStart:
@@ -721,19 +732,17 @@ void WebFrameTestProxy::HandleWebAccessibilityEventForTest(
                                      event.event_intents);
 }
 
-void WebFrameTestProxy::CheckIfAudioSinkExistsAndIsAuthorized(
-    const blink::WebString& sink_id,
-    blink::WebSetSinkIdCompleteCallback completion_callback) {
+std::optional<media::OutputDeviceStatus>
+WebFrameTestProxy::CheckIfAudioSinkExistsAndIsAuthorized(
+    const blink::WebString& sink_id) {
   std::string device_id = sink_id.Utf8();
-  if (device_id == "valid" || device_id.empty())
-    std::move(completion_callback).Run(/*error =*/std::nullopt);
-  else if (device_id == "unauthorized")
-    std::move(completion_callback)
-        .Run(blink::WebSetSinkIdError::kNotAuthorized);
-  else
-    std::move(completion_callback).Run(blink::WebSetSinkIdError::kNotFound);
-
-  // Intentionally does not call RenderFrameImpl.
+  if (device_id == "valid" || device_id.empty()) {
+    return media::OutputDeviceStatus::OUTPUT_DEVICE_STATUS_OK;
+  } else if (device_id == "unauthorized") {
+    return media::OutputDeviceStatus::OUTPUT_DEVICE_STATUS_ERROR_NOT_AUTHORIZED;
+  } else {
+    return media::OutputDeviceStatus::OUTPUT_DEVICE_STATUS_ERROR_NOT_FOUND;
+  }
 }
 
 void WebFrameTestProxy::DidClearWindowObject() {
@@ -757,7 +766,7 @@ void WebFrameTestProxy::DidClearWindowObject() {
 void WebFrameTestProxy::DidCommitNavigation(
     blink::WebHistoryCommitType commit_type,
     bool should_reset_browser_interface_broker,
-    const blink::ParsedPermissionsPolicy& permissions_policy_header,
+    const network::ParsedPermissionsPolicy& permissions_policy_header,
     const blink::DocumentPolicyFeatureState& document_policy_header) {
   if (should_block_parsing_in_next_commit_) {
     should_block_parsing_in_next_commit_ = false;
@@ -783,14 +792,24 @@ void WebFrameTestProxy::BlockTestUntilStart() {
 void WebFrameTestProxy::StartTest() {
   CHECK(!should_block_parsing_in_next_commit_);
   GetWebFrame()->FlushInputForTesting(base::BindOnce(
-      [](base::WeakPtr<RenderFrameImpl> render_frame) {
-        if (!render_frame || !render_frame->GetWebFrame()) {
+      [](base::WeakPtr<RenderFrameImpl> render_frame,
+         const TestRunner* test_runner) {
+        if (!render_frame) {
           return;
         }
 
-        render_frame->GetWebFrame()->ResumeParserForTesting();
+        auto* web_frame = render_frame->GetWebFrame();
+        if (!web_frame) {
+          return;
+        }
+
+        web_frame->ResumeParserForTesting();
+
+        if (test_runner->IsPrinting()) {
+          web_frame->WillPrintSoon();
+        }
       },
-      GetWeakPtr()));
+      GetWeakPtr(), this->test_runner_));
 }
 
 blink::FrameWidgetTestHelper*
@@ -873,10 +892,6 @@ void WebFrameTestProxy::ReplicateWebTestRuntimeFlagsChanges(
     base::Value::Dict changed_layout_test_runtime_flags) {
   test_runner_->ReplicateWebTestRuntimeFlagsChanges(
       std::move(changed_layout_test_runtime_flags));
-}
-
-void WebFrameTestProxy::ResetRendererAfterWebTest() {
-  test_runner_->ResetRendererAfterWebTest();
 }
 
 }  // namespace content

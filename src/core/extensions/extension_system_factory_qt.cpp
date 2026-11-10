@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -36,15 +37,16 @@ ExtensionSystemFactoryQt::ExtensionSystemFactoryQt()
     DCHECK(ExtensionsBrowserClient::Get()) << "ExtensionSystemFactory must be initialized after BrowserProcess";
     DependsOn(ExtensionPrefsFactory::GetInstance());
     DependsOn(ExtensionRegistryFactory::GetInstance());
+    DependsOn(ProcessManagerFactory::GetInstance());
 }
 
 ExtensionSystemFactoryQt::~ExtensionSystemFactoryQt()
 {
 }
 
-KeyedService *ExtensionSystemFactoryQt::BuildServiceInstanceFor(content::BrowserContext *context) const
+std::unique_ptr<KeyedService> ExtensionSystemFactoryQt::BuildServiceInstanceForBrowserContext(content::BrowserContext *context) const
 {
-    return new ExtensionSystemQt(context);
+    return std::make_unique<ExtensionSystemQt>(context);
 }
 
 content::BrowserContext *ExtensionSystemFactoryQt::GetBrowserContextToUse(content::BrowserContext *context) const

@@ -2,19 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/safe_browsing/content/renderer/phishing_classifier/phishing_classifier.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
-#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_discardable_memory_allocator.h"
+#include "base/test/test_future.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/test/base/chrome_render_view_test.h"
@@ -23,6 +30,7 @@
 #include "components/safe_browsing/content/renderer/phishing_classifier/murmurhash3_util.h"
 #include "components/safe_browsing/content/renderer/phishing_classifier/scorer.h"
 #include "components/safe_browsing/core/common/fbs/client_model_generated.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/proto/client_model.pb.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "content/public/renderer/render_frame.h"
@@ -41,12 +49,26 @@ namespace safe_browsing {
 
 class TestChromeContentRendererClient : public ChromeContentRendererClient {
  public:
-  TestChromeContentRendererClient() {}
-  ~TestChromeContentRendererClient() override {}
+  TestChromeContentRendererClient() = default;
+  ~TestChromeContentRendererClient() override = default;
   // Since visited_link_reader_ in ChromeContentRenderClient never get
-  // initiated, overrides VisitedLinkedHash() function to prevent crashing.
+  // initiated, overrides visited link functions to prevent crashing.
   uint64_t VisitedLinkHash(std::string_view canonical_url) override {
     return 0;
+  }
+
+  uint64_t PartitionedVisitedLinkFingerprint(
+      std::string_view canonical_link_url,
+      const net::SchemefulSite& top_level_site,
+      const url::Origin& frame_origin) override {
+    return 0;
+  }
+
+  bool IsLinkVisited(uint64_t link_hash) override { return false; }
+
+  void AddOrUpdateVisitedLinkSalt(const url::Origin& origin,
+                                  uint64_t salt) override {
+    return;
   }
 };
 
@@ -59,7 +81,8 @@ class PhishingClassifierTest
         page_link_domain_phishing_(features::kPageLinkDomain +
                                    std::string("phishing.com")),
         page_term_login_(features::kPageTerm + std::string("login")),
-        page_text_(u"login") {}
+        page_text_(
+            base::MakeRefCounted<const base::RefCountedString16>(u"login")) {}
 
   void SetUp() override {
     ChromeRenderViewTest::SetUp();
@@ -88,7 +111,7 @@ class PhishingClassifierTest
     std::vector<int> indices_map_from_original;
     for (const auto& original_hash : original_hashes_vector) {
       indices_map_from_original.push_back(
-          base::ranges::find(hashes_vector, original_hash) -
+          std::ranges::find(hashes_vector, original_hash) -
           hashes_vector.begin());
     }
     for (std::string& feature : hashes_vector) {
@@ -209,26 +232,19 @@ class PhishingClassifierTest
   }
 
   // Helper method to start phishing classification.
-  void RunPhishingClassifier(const std::u16string* page_text) {
+  void RunPhishingClassifier(
+      scoped_refptr<const base::RefCountedString16> page_text) {
     feature_map_.Clear();
 
-    classifier_->BeginClassification(
-        page_text,
-        base::BindOnce(&PhishingClassifierTest::ClassificationFinished,
-                       base::Unretained(this)));
-    run_loop_.Run();
-  }
-
-  // Completion callback for classification.
-  void ClassificationFinished(
-      const ClientPhishingRequest& verdict,
-      PhishingClassifier::Result phishing_classifier_result) {
-    verdict_ = verdict;
-    for (int i = 0; i < verdict.feature_map_size(); ++i) {
-      feature_map_.AddRealFeature(verdict.feature_map(i).name(),
-                                  verdict.feature_map(i).value());
+    base::test::TestFuture<const ClientPhishingRequest&,
+                           PhishingClassifier::Result>
+        test_future;
+    classifier_->BeginClassification(page_text, test_future.GetCallback());
+    verdict_ = test_future.Get<0>();
+    for (int i = 0; i < verdict_.feature_map_size(); ++i) {
+      feature_map_.AddRealFeature(verdict_.feature_map(i).name(),
+                                  verdict_.feature_map(i).value());
     }
-    run_loop_.Quit();
   }
 
   void LoadHtml(const GURL& url, const std::string& content) {
@@ -243,14 +259,13 @@ class PhishingClassifierTest
 
   std::string response_content_;
   std::unique_ptr<PhishingClassifier> classifier_;
-  base::RunLoop run_loop_;
   base::MappedReadOnlyRegion mapped_region_;
 
   // Features that are in the model.
   const std::string url_tld_token_net_;
   const std::string page_link_domain_phishing_;
   const std::string page_term_login_;
-  std::u16string page_text_;
+  scoped_refptr<const base::RefCountedString16> page_text_;
 
   // Outputs of phishing classifier.
   ClientPhishingRequest verdict_;
@@ -261,10 +276,13 @@ class PhishingClassifierTest
 };
 
 TEST_F(PhishingClassifierTest, TestClassificationOfPhishingDotComHttp) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   LoadHtml(
       GURL("http://host.net"),
       "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   // Note: features.features() might contain other features that simply aren't
   // in the model.
@@ -276,12 +294,31 @@ TEST_F(PhishingClassifierTest, TestClassificationOfPhishingDotComHttp) {
   EXPECT_TRUE(verdict_.is_phishing());
 }
 
+TEST_F(PhishingClassifierTest,
+       TestClassificationOfPhishingDotComHttpWithOnlyVisualExtraction) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  LoadHtml(
+      GURL("http://host.net"),
+      "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // Empty because the DOM features were never extracted and scored.
+  EXPECT_TRUE(feature_map_.features().empty());
+  EXPECT_FLOAT_EQ(0.0, verdict_.client_score());
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
 TEST_F(PhishingClassifierTest, TestClassificationOfPhishingDotComHttps) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   // Host the target page on HTTPS.
   LoadHtml(
       GURL("https://host.net"),
       "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   // Note: features.features() might contain other features that simply aren't
   // in the model.
@@ -293,11 +330,31 @@ TEST_F(PhishingClassifierTest, TestClassificationOfPhishingDotComHttps) {
   EXPECT_TRUE(verdict_.is_phishing());
 }
 
+TEST_F(PhishingClassifierTest,
+       TestClassificationOfPhishingDotComHttpsWithOnlyVisualExtractions) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  // Host the target page on HTTPS.
+  LoadHtml(
+      GURL("https://host.net"),
+      "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // Empty because the DOM features were never extracted and scored.
+  EXPECT_TRUE(feature_map_.features().empty());
+  EXPECT_FLOAT_EQ(0.0, verdict_.client_score());
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
 TEST_F(PhishingClassifierTest, TestClassificationOfSafeDotComHttp) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   // Change the link domain to something non-phishy.
   LoadHtml(GURL("http://host.net"),
            "<html><body><a href=\"http://safe.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_THAT(feature_map_.features(),
               AllOf(Contains(Pair(url_tld_token_net_, 1.0)),
@@ -306,15 +363,34 @@ TEST_F(PhishingClassifierTest, TestClassificationOfSafeDotComHttp) {
               Not(Contains(Pair(page_link_domain_phishing_, 1.0))));
   EXPECT_GE(verdict_.client_score(), 0.0);
   EXPECT_LT(verdict_.client_score(), 0.5);
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
+TEST_F(PhishingClassifierTest,
+       TestClassificationOfSafeDotComHttpWithOnlyVisualExtractions) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  // Change the link domain to something non-phishy.
+  LoadHtml(GURL("http://host.net"),
+           "<html><body><a href=\"http://safe.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // Empty because the DOM features were never extracted and scored.
+  EXPECT_EQ(0U, feature_map_.features().size());
+  EXPECT_FLOAT_EQ(0.0, verdict_.client_score());
   EXPECT_FALSE(verdict_.is_phishing());
 }
 
 TEST_F(PhishingClassifierTest, TestClassificationOfSafeDotComHttps) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   // Host target page in HTTPS and change the link domain to something
   // non-phishy.
   LoadHtml(GURL("https://host.net"),
            "<html><body><a href=\"http://safe.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_THAT(feature_map_.features(),
               AllOf(Contains(Pair(url_tld_token_net_, 1.0)),
@@ -326,10 +402,30 @@ TEST_F(PhishingClassifierTest, TestClassificationOfSafeDotComHttps) {
   EXPECT_FALSE(verdict_.is_phishing());
 }
 
+TEST_F(PhishingClassifierTest,
+       TestClassificationOfSafeDotComHttpsWithOnlyVisualExtractions) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  // Host target page in HTTPS and change the link domain to something
+  // non-phishy.
+  LoadHtml(GURL("https://host.net"),
+           "<html><body><a href=\"http://safe.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // Empty because the DOM features were never extracted and scored.
+  EXPECT_EQ(0U, feature_map_.features().size());
+  EXPECT_FLOAT_EQ(0.0, verdict_.client_score());
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
 TEST_F(PhishingClassifierTest, TestClassificationWhenNoTld) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   // Extraction should fail for this case since there is no TLD.
   LoadHtml(GURL("http://localhost"), "<html><body>content</body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_EQ(0U, feature_map_.features().size());
   EXPECT_EQ(PhishingClassifier::kClassifierFailed,
@@ -337,11 +433,26 @@ TEST_F(PhishingClassifierTest, TestClassificationWhenNoTld) {
   EXPECT_FALSE(verdict_.is_phishing());
 }
 
+TEST_F(PhishingClassifierTest,
+       TestClassificationWhenNoTldWithOnlyVisualExtractions) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  // Extraction should fail for this case since there is no TLD.
+  LoadHtml(GURL("http://localhost"), "<html><body>content</body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // It can't fail if it never does anything.
+  EXPECT_EQ(0U, feature_map_.features().size());
+  EXPECT_EQ(0, static_cast<int>(verdict_.client_score()));
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
 TEST_F(PhishingClassifierTest, TestClassificationWhenSchemeNotSupported) {
   // Extraction should also fail for this case because the URL is not http or
   // https.
   LoadHtml(GURL("file://host.net"), "<html><body>content</body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_EQ(0U, feature_map_.features().size());
   EXPECT_EQ(PhishingClassifier::kClassifierFailed,
@@ -357,20 +468,40 @@ TEST_F(PhishingClassifierTest, DisableDetection) {
 }
 
 TEST_F(PhishingClassifierTest, TestPhishingPagesAreDomMatches) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   LoadHtml(
       GURL("http://host.net"),
       "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_NE(PhishingClassifier::kClassifierFailed, verdict_.client_score());
   EXPECT_TRUE(verdict_.is_phishing());
   EXPECT_TRUE(verdict_.is_dom_match());
 }
 
+TEST_F(PhishingClassifierTest,
+       TestPhishingPagesAreNotDomMatchesBecauseOnlyVisualExtractions) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  LoadHtml(
+      GURL("http://host.net"),
+      "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  // It can't fail if it never does anything.
+  EXPECT_EQ(0U, feature_map_.features().size());
+  EXPECT_EQ(0, static_cast<int>(verdict_.client_score()));
+  EXPECT_FALSE(verdict_.is_dom_match());
+  EXPECT_FALSE(verdict_.is_phishing());
+}
+
 TEST_F(PhishingClassifierTest, TestSafePagesAreNotDomMatches) {
   LoadHtml(GURL("http://host.net"),
            "<html><body><a href=\"http://safe.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_NE(PhishingClassifier::kClassifierFailed, verdict_.client_score());
   EXPECT_FALSE(verdict_.is_phishing());
@@ -378,12 +509,28 @@ TEST_F(PhishingClassifierTest, TestSafePagesAreNotDomMatches) {
 }
 
 TEST_F(PhishingClassifierTest, TestDomModelVersionPopulated) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {}, {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures});
   LoadHtml(
       GURL("http://host.net"),
       "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
-  RunPhishingClassifier(&page_text_);
+  RunPhishingClassifier(page_text_);
 
   EXPECT_EQ(verdict_.dom_model_version(), 123);
+}
+
+TEST_F(PhishingClassifierTest,
+       TestDomModelVersionNotPopulatedBecauseOnlyVisualExtraction) {
+  auto scoped_list = std::make_unique<base::test::ScopedFeatureList>();
+  scoped_list->InitWithFeatures(
+      {safe_browsing::kClientSideDetectionOnlyExtractVisualFeatures}, {});
+  LoadHtml(
+      GURL("http://host.net"),
+      "<html><body><a href=\"http://phishing.com/\">login</a></body></html>");
+  RunPhishingClassifier(page_text_);
+
+  EXPECT_EQ(verdict_.dom_model_version(), 0);
 }
 
 // TODO(jialiul): Add test to verify that classification only starts on GET

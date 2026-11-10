@@ -4,6 +4,8 @@
 
 #include "components/browsing_data/content/test_browsing_data_model_delegate.h"
 
+#include <variant>
+
 namespace browsing_data {
 TestBrowsingDataModelDelegate::TestBrowsingDataModelDelegate() = default;
 TestBrowsingDataModelDelegate::~TestBrowsingDataModelDelegate() = default;
@@ -34,21 +36,19 @@ void TestBrowsingDataModelDelegate::RemoveDataKey(
   std::move(callback).Run();
 }
 
-absl::optional<BrowsingDataModel::DataOwner>
+std::optional<BrowsingDataModel::DataOwner>
 TestBrowsingDataModelDelegate::GetDataOwner(
     const BrowsingDataModel::DataKey& data_key,
     BrowsingDataModel::StorageType storage_type) const {
   if (static_cast<StorageType>(storage_type) ==
           StorageType::kTestDelegateType &&
-      absl::holds_alternative<url::Origin>(data_key)) {
-    return absl::get<url::Origin>(data_key).host();
+      std::holds_alternative<url::Origin>(data_key)) {
+    return std::get<url::Origin>(data_key).host();
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<bool>
-TestBrowsingDataModelDelegate::IsBlockedByThirdPartyCookieBlocking(
-    const BrowsingDataModel::DataKey& data_key,
+std::optional<bool> TestBrowsingDataModelDelegate::IsStorageTypeCookieLike(
     BrowsingDataModel::StorageType storage_type) const {
   switch (
       static_cast<TestBrowsingDataModelDelegate::StorageType>(storage_type)) {
@@ -57,8 +57,15 @@ TestBrowsingDataModelDelegate::IsBlockedByThirdPartyCookieBlocking(
     case StorageType::kTestDelegateTypePartitioned:
       return false;
     default:
-      return absl::nullopt;
+      return std::nullopt;
   }
+}
+
+std::optional<bool>
+TestBrowsingDataModelDelegate::IsBlockedByThirdPartyCookieBlocking(
+    const BrowsingDataModel::DataKey& data_key,
+    BrowsingDataModel::StorageType storage_type) const {
+  return IsStorageTypeCookieLike(storage_type);
 }
 
 bool TestBrowsingDataModelDelegate::IsCookieDeletionDisabled(const GURL& url) {

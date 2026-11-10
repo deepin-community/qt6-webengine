@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // based on content/shell/browser/shell_devtools_manager_delegate.cc:
 // Copyright 2013 The Chromium Authors. All rights reserved.
@@ -11,15 +12,19 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/json/json_reader.h"
 #include "content/browser/devtools/devtools_http_handler.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/devtools_agent_host_client_channel.h"
 #include "content/public/browser/devtools_socket_factory.h"
 #include "content/public/common/content_switches.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/socket/tcp_server_socket.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
 
+using namespace Qt::StringLiterals;
 using content::DevToolsAgentHost;
 
 namespace {
@@ -52,7 +57,7 @@ private:
 namespace QtWebEngineCore {
 
 DevToolsServerQt::DevToolsServerQt()
-    : m_bindAddress(QLatin1String("127.0.0.1"))
+    : m_bindAddress(u"127.0.0.1"_s)
     , m_port(0)
     , m_valid(false)
     , m_isStarted(false)
@@ -72,7 +77,7 @@ void DevToolsServerQt::parseAddressAndPort()
     if (commandLine.HasSwitch(switches::kRemoteDebuggingPort)) {
         portStr = QString::fromStdString(commandLine.GetSwitchValueASCII(switches::kRemoteDebuggingPort));
     } else if (!inspectorEnv.isEmpty()) {
-        int portColonPos = inspectorEnv.lastIndexOf(':');
+        int portColonPos = inspectorEnv.lastIndexOf(u':');
         if (portColonPos != -1) {
             portStr = inspectorEnv.mid(portColonPos + 1);
             m_bindAddress = inspectorEnv.mid(0, portColonPos);
@@ -83,8 +88,12 @@ void DevToolsServerQt::parseAddressAndPort()
 
     m_port = portStr.toInt(&m_valid);
     m_valid = m_valid && (m_port > 0 && m_port < 65535);
-    if (!m_valid)
-        qWarning("Invalid port given for the inspector server \"%s\". Examples of valid input: \"12345\" or \"192.168.2.14:12345\" (with the address of one of this host's network interface).", qPrintable(portStr));
+    if (!m_valid) {
+        qWarning("Invalid port given for the inspector server \"%ls\". "
+                 "Examples of valid input: \"12345\" or \"192.168.2.14:12345\" "
+                 "(with the address of one of this host's network interface).",
+                 qUtf16Printable(portStr));
+    }
 }
 
 std::unique_ptr<content::DevToolsSocketFactory> DevToolsServerQt::CreateSocketFactory()
@@ -123,11 +132,48 @@ void DevToolsServerQt::stop()
 void DevToolsManagerDelegateQt::Initialized(const net::IPEndPoint *ip_address)
 {
     if (ip_address && ip_address->address().size()) {
-        QString addressAndPort = QString::fromStdString(ip_address->ToString());
-        qWarning("Remote debugging server started successfully. Try pointing a Chromium-based browser to http://%s", qPrintable(addressAndPort));
+        qDebug("Remote debugging server started successfully. "
+               "Try pointing a Chromium-based browser to http://%s",
+               ip_address->ToString().c_str());
     }
     else
         qWarning("Couldn't start the inspector server on bind address. In case of invalid input, try something like: \"12345\" or \"192.168.2.14:12345\" (with the address of one of this host's interface).");
+}
+
+void DevToolsManagerDelegateQt::HandleCommand(content::DevToolsAgentHostClientChannel *channel,
+                                              base::span<const uint8_t> message,
+                                              NotHandledCallback callback)
+{
+    auto findMethodAndGetId = [](base::span<const uint8_t> message,
+                                 const char *substring) -> std::optional<int> {
+        std::string_view messageRaw(reinterpret_cast<const char *>(message.data()), message.size());
+        if (messageRaw.find(substring) == std::string_view::npos)
+            return std::nullopt;
+
+        std::string messageJSON;
+        crdtp::Status status = crdtp::json::ConvertCBORToJSON(message, &messageJSON);
+        if (!status.ok())
+            return std::nullopt;
+
+        std::optional<base::Value> parsed = base::JSONReader::Read(messageJSON);
+        if (!parsed || !parsed->is_dict())
+            return std::nullopt;
+
+        return parsed->GetDict().FindInt("id");
+    };
+
+    if (auto id = findMethodAndGetId(message, "Autofill.")) {
+        std::string responseJSON = "{\"id\":" + std::to_string(*id) + ",\"result\":{}}";
+        std::vector<uint8_t> responseCBOR;
+        crdtp::Status status =
+                crdtp::json::ConvertJSONToCBOR(crdtp::SpanFrom(responseJSON), &responseCBOR);
+        if (status.ok()) {
+            channel->DispatchProtocolMessageToClient(std::move(responseCBOR));
+            return;
+        }
+    }
+
+    std::move(callback).Run(message);
 }
 
 std::string DevToolsManagerDelegateQt::GetDiscoveryPageHTML()

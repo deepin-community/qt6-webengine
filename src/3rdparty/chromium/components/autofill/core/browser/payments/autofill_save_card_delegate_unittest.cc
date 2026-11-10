@@ -2,22 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <string>
+#include "components/autofill/core/browser/payments/autofill_save_card_delegate.h"
 
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
-#include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/metrics/payments/credit_card_save_metrics.h"
-#include "components/autofill/core/browser/payments/autofill_save_card_delegate.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
 
 using InfoBarMetric = AutofillMetrics::InfoBarMetric;
-using SaveCardOfferUserDecision = AutofillClient::SaveCardOfferUserDecision;
-using UserProvidedCardDetails = AutofillClient::UserProvidedCardDetails;
+using SaveCardOfferUserDecision =
+    payments::PaymentsAutofillClient::SaveCardOfferUserDecision;
+using UserProvidedCardDetails =
+    payments::PaymentsAutofillClient::UserProvidedCardDetails;
 using autofill_metrics::SaveCreditCardPromptResult;
+using CardSaveType = payments::PaymentsAutofillClient::CardSaveType;
 
 using UploadCallbackArgs =
     std::pair<SaveCardOfferUserDecision, UserProvidedCardDetails>;
@@ -44,12 +51,14 @@ class AutofillSaveCardDelegateTest : public ::testing::Test,
                                      public testing::WithParamInterface<bool> {
  protected:
   void LocalCallback(SaveCardOfferUserDecision decision);
-  AutofillClient::LocalSaveCardPromptCallback MakeLocalCallback();
+  payments::PaymentsAutofillClient::LocalSaveCardPromptCallback
+  MakeLocalCallback();
   void UploadCallback(SaveCardOfferUserDecision decision,
                       const UserProvidedCardDetails& user_card_details);
-  AutofillClient::UploadSaveCardPromptCallback MakeUploadCallback();
-  autofill::AutofillSaveCardDelegate CreateDelegate(
-      AutofillClient::SaveCreditCardOptions options = {});
+  payments::PaymentsAutofillClient::UploadSaveCardPromptCallback
+  MakeUploadCallback();
+  AutofillSaveCardDelegate CreateDelegate(
+      payments::PaymentsAutofillClient::SaveCreditCardOptions options = {});
   bool IsUpload() const { return GetParam(); }
 
   std::vector<SaveCardOfferUserDecision> local_offer_decisions_;
@@ -61,7 +70,7 @@ void AutofillSaveCardDelegateTest::LocalCallback(
   local_offer_decisions_.push_back(decision);
 }
 
-AutofillClient::LocalSaveCardPromptCallback
+payments::PaymentsAutofillClient::LocalSaveCardPromptCallback
 AutofillSaveCardDelegateTest::MakeLocalCallback() {
   return base::BindOnce(
       &AutofillSaveCardDelegateTest::LocalCallback,
@@ -74,15 +83,15 @@ void AutofillSaveCardDelegateTest::UploadCallback(
   upload_offer_decisions_.emplace_back(decision, user_card_details);
 }
 
-AutofillClient::UploadSaveCardPromptCallback
+payments::PaymentsAutofillClient::UploadSaveCardPromptCallback
 AutofillSaveCardDelegateTest::MakeUploadCallback() {
   return base::BindOnce(
       &AutofillSaveCardDelegateTest::UploadCallback,
       base::Unretained(this));  // Test function does not outlive test fixture.
 }
 
-autofill::AutofillSaveCardDelegate AutofillSaveCardDelegateTest::CreateDelegate(
-    AutofillClient::SaveCreditCardOptions options) {
+AutofillSaveCardDelegate AutofillSaveCardDelegateTest::CreateDelegate(
+    payments::PaymentsAutofillClient::SaveCreditCardOptions options) {
   if (IsUpload()) {
     return AutofillSaveCardDelegate(MakeUploadCallback(), options);
   }
@@ -108,6 +117,25 @@ testing::Matcher<UploadCallbackArgs> EqualToUploadCallbackArgs(
 }
 
 INSTANTIATE_TEST_SUITE_P(All, AutofillSaveCardDelegateTest, testing::Bool());
+
+TEST_P(AutofillSaveCardDelegateTest, RequiresFixFlowWithNameFix) {
+  AutofillSaveCardDelegate delegate =
+      CreateDelegate(payments::PaymentsAutofillClient::SaveCreditCardOptions{}
+                         .with_should_request_name_from_user(true));
+  EXPECT_TRUE(delegate.requires_fix_flow());
+}
+
+TEST_P(AutofillSaveCardDelegateTest, RequiresFixFlowWithExpirationDateFix) {
+  AutofillSaveCardDelegate delegate =
+      CreateDelegate(payments::PaymentsAutofillClient::SaveCreditCardOptions{}
+                         .with_should_request_expiration_date_from_user(true));
+  EXPECT_TRUE(delegate.requires_fix_flow());
+}
+
+TEST_P(AutofillSaveCardDelegateTest, RequiresFixFlowWithNoFix) {
+  AutofillSaveCardDelegate delegate = CreateDelegate();
+  EXPECT_FALSE(delegate.requires_fix_flow());
+}
 
 TEST_P(AutofillSaveCardDelegateTest,
        OnUiAcceptedWithCallbackArgumentRunsCallback) {
@@ -193,13 +221,14 @@ TEST_P(AutofillSaveCardDelegateTest, OnUiUpdatedAndAcceptedRunsUploadCallback) {
     return;
   }
 
-  CreateDelegate().OnUiUpdatedAndAccepted(
-      /*user_provided_details=*/{.cardholder_name = u"Test"});
+  payments::PaymentsAutofillClient::UserProvidedCardDetails details;
+  details.cardholder_name = u"Test";
+  CreateDelegate().OnUiUpdatedAndAccepted(details);
 
-  EXPECT_THAT(
-      upload_offer_decisions_,
-      testing::Contains(EqualToUploadCallbackArgs(
-          SaveCardOfferUserDecision::kAccepted, {.cardholder_name = u"Test"})));
+  ASSERT_EQ(upload_offer_decisions_.size(), 1u);
+  const auto& [decision, received_details] = upload_offer_decisions_[0];
+  EXPECT_EQ(decision, SaveCardOfferUserDecision::kAccepted);
+  EXPECT_EQ(received_details.cardholder_name, u"Test");
 }
 
 TEST_P(AutofillSaveCardDelegateTest, OnUiUpdatedAndAcceptedLogsUserAction) {
@@ -210,7 +239,8 @@ TEST_P(AutofillSaveCardDelegateTest, OnUiUpdatedAndAcceptedLogsUserAction) {
 
   base::HistogramTester histogram_tester;
 
-  CreateDelegate().OnUiUpdatedAndAccepted(/*user_provided_details=*/{});
+  payments::PaymentsAutofillClient::UserProvidedCardDetails details;
+  CreateDelegate().OnUiUpdatedAndAccepted(details);
 
   histogram_tester.ExpectUniqueSample(kUserActionMetricNameServer,
                                       InfoBarMetric::INFOBAR_ACCEPTED, 1);
@@ -283,8 +313,8 @@ TEST_P(AutofillSaveCardDelegateTest, OnUiIgnoredLogsPromptResult) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiShownWhenCvcSave) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCvcSaveOnly});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCvcSaveOnly});
   base::HistogramTester histogram_tester;
   delegate.OnUiShown();
   histogram_tester.ExpectUniqueSample(IsUpload()
@@ -294,8 +324,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiShownWhenCvcSave) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiAcceptedWhenCvcSave) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCvcSaveOnly});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCvcSaveOnly});
   base::HistogramTester histogram_tester;
   delegate.OnUiAccepted();
   histogram_tester.ExpectUniqueSample(IsUpload()
@@ -305,8 +335,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiAcceptedWhenCvcSave) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiIgnoredWhenCvcSave) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCvcSaveOnly});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCvcSaveOnly});
   base::HistogramTester histogram_tester;
   delegate.OnUiIgnored();
   histogram_tester.ExpectUniqueSample(IsUpload()
@@ -316,8 +346,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiIgnoredWhenCvcSave) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiCanceledCvcSave) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCvcSaveOnly});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCvcSaveOnly});
   base::HistogramTester histogram_tester;
   delegate.OnUiCanceled();
   histogram_tester.ExpectUniqueSample(IsUpload()
@@ -327,8 +357,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiCanceledCvcSave) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiShownWhenSaveWithCvc) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCardSaveWithCvc});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCardSaveWithCvc});
   base::HistogramTester histogram_tester;
   delegate.OnUiShown();
   histogram_tester.ExpectUniqueSample(
@@ -339,8 +369,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiShownWhenSaveWithCvc) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiAcceptedWhenSaveWithCvc) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCardSaveWithCvc});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCardSaveWithCvc});
   base::HistogramTester histogram_tester;
   delegate.OnUiAccepted();
   histogram_tester.ExpectUniqueSample(
@@ -351,8 +381,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiAcceptedWhenSaveWithCvc) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiIgnoredWhenSaveWithCvc) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCardSaveWithCvc});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCardSaveWithCvc});
   base::HistogramTester histogram_tester;
   delegate.OnUiIgnored();
   histogram_tester.ExpectUniqueSample(
@@ -363,8 +393,8 @@ TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiIgnoredWhenSaveWithCvc) {
 }
 
 TEST_P(AutofillSaveCardDelegateTest, MetricsOnUiCanceledWhenSaveWithCvc) {
-  auto delegate = CreateDelegate(/*options=*/{
-      .card_save_type = AutofillClient::CardSaveType::kCardSaveWithCvc});
+  auto delegate = CreateDelegate(
+      /*options=*/{.card_save_type = CardSaveType::kCardSaveWithCvc});
   base::HistogramTester histogram_tester;
   delegate.OnUiCanceled();
   histogram_tester.ExpectUniqueSample(

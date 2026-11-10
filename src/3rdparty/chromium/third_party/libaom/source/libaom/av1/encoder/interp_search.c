@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2020, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -9,6 +9,7 @@
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
  */
 
+#include "av1/common/filter.h"
 #include "av1/common/pred_common.h"
 #include "av1/encoder/interp_search.h"
 #include "av1/encoder/model_rd.h"
@@ -16,7 +17,7 @@
 #include "av1/encoder/reconinter_enc.h"
 
 // return mv_diff
-static INLINE int is_interp_filter_good_match(
+static inline int is_interp_filter_good_match(
     const INTERPOLATION_FILTER_STATS *st, MB_MODE_INFO *const mi,
     int skip_level) {
   const int is_comp = has_second_ref(mi);
@@ -39,7 +40,7 @@ static INLINE int is_interp_filter_good_match(
   return mv_diff;
 }
 
-static INLINE int save_interp_filter_search_stat(
+static inline int save_interp_filter_search_stat(
     MB_MODE_INFO *const mbmi, int64_t rd, unsigned int pred_sse,
     INTERPOLATION_FILTER_STATS *interp_filter_stats,
     int interp_filter_stats_idx) {
@@ -58,7 +59,7 @@ static INLINE int save_interp_filter_search_stat(
   return interp_filter_stats_idx;
 }
 
-static INLINE int find_interp_filter_in_stats(
+static inline int find_interp_filter_in_stats(
     MB_MODE_INFO *const mbmi, INTERPOLATION_FILTER_STATS *interp_filter_stats,
     int interp_filter_stats_idx, int skip_level) {
   // [skip_levels][single or comp]
@@ -90,7 +91,7 @@ static INLINE int find_interp_filter_in_stats(
   return -1;  // no match result found
 }
 
-int av1_find_interp_filter_match(
+static int find_interp_filter_match(
     MB_MODE_INFO *const mbmi, const AV1_COMP *const cpi,
     const InterpFilter assign_filter, const int need_search,
     INTERPOLATION_FILTER_STATS *interp_filter_stats,
@@ -106,7 +107,7 @@ int av1_find_interp_filter_match(
   return match_found_idx;
 }
 
-static INLINE int get_switchable_rate(MACROBLOCK *const x,
+static inline int get_switchable_rate(MACROBLOCK *const x,
                                       const int_interpfilters filters,
                                       const int ctx[2], int dual_filter) {
   const InterpFilter filter0 = filters.as_filters.y_filter;
@@ -121,7 +122,7 @@ static INLINE int get_switchable_rate(MACROBLOCK *const x,
 
 // Build inter predictor and calculate model rd
 // for a given plane.
-static INLINE void interp_model_rd_eval(
+static inline void interp_model_rd_eval(
     MACROBLOCK *const x, const AV1_COMP *const cpi, BLOCK_SIZE bsize,
     const BUFFER_SET *const orig_dst, int plane_from, int plane_to,
     RD_STATS *rd_stats, int is_skip_build_pred) {
@@ -149,7 +150,7 @@ static INLINE void interp_model_rd_eval(
 }
 
 // calculate the rdcost of given interpolation_filter
-static INLINE int64_t interpolation_filter_rd(
+static inline int64_t interpolation_filter_rd(
     MACROBLOCK *const x, const AV1_COMP *const cpi,
     const TileDataEnc *tile_data, BLOCK_SIZE bsize,
     const BUFFER_SET *const orig_dst, int64_t *const rd,
@@ -168,19 +169,25 @@ static INLINE int64_t interpolation_filter_rd(
   this_rd_stats = *rd_stats_luma;
   const int_interpfilters last_best = mbmi->interp_filters;
   mbmi->interp_filters = filter_sets[filter_idx];
+
+  const int is_sharp =
+      (mbmi->interp_filters.as_filters.x_filter == MULTITAP_SHARP ||
+       mbmi->interp_filters.as_filters.y_filter == MULTITAP_SHARP);
+  const int mul =
+      (is_sharp && cpi->sf.interp_sf.use_more_sharp_interp) ? 90 : 100;
+
   const int tmp_rs =
       get_switchable_rate(x, mbmi->interp_filters, switchable_ctx,
                           cm->seq_params->enable_dual_filter);
 
   int64_t min_rd = RDCOST(x->rdmult, tmp_rs, 0);
-  if (min_rd > *rd) {
+  if (min_rd * mul / 100 > *rd) {
     mbmi->interp_filters = last_best;
     return 0;
   }
 
   (void)tile_data;
 
-  assert(skip_pred != 2);
   assert((rd_stats_luma->rate >= 0) && (rd_stats->rate >= 0));
   assert((rd_stats_luma->dist >= 0) && (rd_stats->dist >= 0));
   assert((rd_stats_luma->sse >= 0) && (rd_stats->sse >= 0));
@@ -200,11 +207,16 @@ static INLINE int64_t interpolation_filter_rd(
       (skip_pred == interp_search_flags->default_interp_skip_flags)
           ? INTERP_SKIP_LUMA_SKIP_CHROMA
           : skip_pred;
+  assert(IMPLIES(tmp_skip_pred == INTERP_EVAL_LUMA_SKIP_CHROMA,
+                 cpi->sf.interp_sf.skip_model_rd_uv));
 
-  switch (tmp_skip_pred) {
-    case INTERP_EVAL_LUMA_EVAL_CHROMA:
-      // skip_pred = 0: Evaluate both luma and chroma.
-      // Luma MC
+  if (tmp_skip_pred == INTERP_SKIP_LUMA_SKIP_CHROMA) {
+    // Both luma and chroma evaluation is skipped
+    this_rd_stats = *rd_stats;
+  } else {
+    // Evaluate Luma
+    if (tmp_skip_pred == INTERP_EVAL_LUMA_EVAL_CHROMA ||
+        tmp_skip_pred == INTERP_EVAL_LUMA_SKIP_CHROMA) {
       interp_model_rd_eval(x, cpi, bsize, orig_dst, AOM_PLANE_Y, AOM_PLANE_Y,
                            &this_rd_stats_luma, 0);
       this_rd_stats = this_rd_stats_luma;
@@ -214,32 +226,28 @@ static INLINE int64_t interpolation_filter_rd(
                                           INT64_MAX);
       PrintPredictionUnitStats(cpi, tile_data, x, &rd_stats_y, bsize);
 #endif  // CONFIG_COLLECT_RD_STATS == 3
-      AOM_FALLTHROUGH_INTENDED;
-    case INTERP_SKIP_LUMA_EVAL_CHROMA:
-      // skip_pred = 1: skip luma evaluation (retain previous best luma stats)
-      // and do chroma evaluation.
+    }
+
+    // Evaluate Chroma
+    if (tmp_skip_pred == INTERP_EVAL_LUMA_EVAL_CHROMA ||
+        tmp_skip_pred == INTERP_SKIP_LUMA_EVAL_CHROMA) {
       for (int plane = 1; plane < num_planes; ++plane) {
         int64_t tmp_rd =
             RDCOST(x->rdmult, tmp_rs + this_rd_stats.rate, this_rd_stats.dist);
-        if (tmp_rd >= *rd) {
+        if (tmp_rd * mul / 100 >= *rd) {
           mbmi->interp_filters = last_best;
           return 0;
         }
         interp_model_rd_eval(x, cpi, bsize, orig_dst, plane, plane,
                              &this_rd_stats, 0);
       }
-      break;
-    case INTERP_SKIP_LUMA_SKIP_CHROMA:
-      // both luma and chroma evaluation is skipped
-      this_rd_stats = *rd_stats;
-      break;
-    case INTERP_EVAL_INVALID:
-    default: assert(0); return 0;
+    }
   }
+
   int64_t tmp_rd =
       RDCOST(x->rdmult, tmp_rs + this_rd_stats.rate, this_rd_stats.dist);
 
-  if (tmp_rd < *rd) {
+  if (tmp_rd * mul / 100 < *rd) {
     *rd = tmp_rd;
     *switchable_rate = tmp_rs;
     if (skip_pred != interp_search_flags->default_interp_skip_flags) {
@@ -266,7 +274,7 @@ static INLINE int64_t interpolation_filter_rd(
   return 0;
 }
 
-static INLINE INTERP_PRED_TYPE is_pred_filter_search_allowed(
+static inline INTERP_PRED_TYPE is_pred_filter_search_allowed(
     const AV1_COMP *const cpi, MACROBLOCKD *xd, BLOCK_SIZE bsize,
     int_interpfilters *af, int_interpfilters *lf) {
   const AV1_COMMON *cm = &cpi->common;
@@ -335,7 +343,7 @@ static DUAL_FILTER_TYPE find_best_interp_rd_facade(
   return best_filt_type;
 }
 
-static INLINE void pred_dual_interp_filter_rd(
+static inline void pred_dual_interp_filter_rd(
     MACROBLOCK *const x, const AV1_COMP *const cpi,
     const TileDataEnc *tile_data, BLOCK_SIZE bsize,
     const BUFFER_SET *const orig_dst, int64_t *const rd, RD_STATS *rd_stats_y,
@@ -372,7 +380,7 @@ static INLINE void pred_dual_interp_filter_rd(
 // a) Using above, left block interp filter
 // b) Find the best horizontal filter and
 //    then evaluate corresponding vertical filters.
-static INLINE void fast_dual_interp_filter_rd(
+static inline void fast_dual_interp_filter_rd(
     MACROBLOCK *const x, const AV1_COMP *const cpi,
     const TileDataEnc *tile_data, BLOCK_SIZE bsize,
     const BUFFER_SET *const orig_dst, int64_t *const rd, RD_STATS *rd_stats_y,
@@ -425,7 +433,7 @@ static INLINE void fast_dual_interp_filter_rd(
 }
 
 // Find the best interp filter if dual_interp_filter = 0
-static INLINE void find_best_non_dual_interp_filter(
+static inline void find_best_non_dual_interp_filter(
     MACROBLOCK *const x, const AV1_COMP *const cpi,
     const TileDataEnc *tile_data, BLOCK_SIZE bsize,
     const BUFFER_SET *const orig_dst, int64_t *const rd, RD_STATS *rd_stats_y,
@@ -471,6 +479,11 @@ static INLINE void find_best_non_dual_interp_filter(
       assert(switchable_interp_p0[i] == switchable_interp_p1[i]);
       if (switchable_interp_p0[i] < thresh &&
           switchable_interp_p1[i] < thresh) {
+        DUAL_FILTER_TYPE filt_type = i + SWITCHABLE_FILTERS * i;
+        reset_interp_filter_allowed_mask(&interp_filter_search_mask, filt_type);
+      }
+
+      if (cpi->oxcf.algo_cfg.sharpness == 3 && i == EIGHTTAP_SMOOTH) {
         DUAL_FILTER_TYPE filt_type = i + SWITCHABLE_FILTERS * i;
         reset_interp_filter_allowed_mask(&interp_filter_search_mask, filt_type);
       }
@@ -562,7 +575,7 @@ static INLINE void find_best_non_dual_interp_filter(
   }
 }
 
-static INLINE void calc_interp_skip_pred_flag(MACROBLOCK *const x,
+static inline void calc_interp_skip_pred_flag(MACROBLOCK *const x,
                                               const AV1_COMP *const cpi,
                                               int *skip_hor, int *skip_ver) {
   const AV1_COMMON *cm = &cpi->common;
@@ -612,6 +625,13 @@ static INLINE void calc_interp_skip_pred_flag(MACROBLOCK *const x,
     assert(mbmi->comp_group_idx == 1);
     if (*skip_hor == 0 && *skip_ver == 1) *skip_ver = 0;
   }
+
+  // Configure flags to skip chroma RD evaluation when skip_model_rd_uv is
+  // enabled
+  if (cpi->sf.interp_sf.skip_model_rd_uv && num_planes > 1) {
+    *skip_hor |= INTERP_EVAL_LUMA_SKIP_CHROMA;
+    *skip_ver |= INTERP_EVAL_LUMA_SKIP_CHROMA;
+  }
 }
 
 /*!\brief AV1 interpolation filter search
@@ -636,7 +656,7 @@ static INLINE void calc_interp_skip_pred_flag(MACROBLOCK *const x,
  * \param[in,out] switchable_rate   The rate associated with using a SWITCHABLE
  *                                  filter mode.
  * \param[in,out] skip_build_pred   Indicates whether or not to build the inter
- *                                  predictor. If this is 0, the inter predictor
+ *                                  predictor. If this is 3, the inter predictor
  *                                  has already been built and thus we can avoid
  *                                  repeating computation.
  * \param[in]     args              HandleInterModeArgs struct holding
@@ -664,6 +684,7 @@ int64_t av1_interpolation_filter_search(
   MB_MODE_INFO *const mbmi = xd->mi[0];
   const int need_search = av1_is_interp_needed(xd);
   const int ref_frame = xd->mi[0]->ref_frame[0];
+  const int skip_model_rd_uv = cpi->sf.interp_sf.skip_model_rd_uv;
   RD_STATS rd_stats_luma, rd_stats;
 
   // Initialization of rd_stats structures with default values
@@ -673,7 +694,7 @@ int64_t av1_interpolation_filter_search(
   int match_found_idx = -1;
   const InterpFilter assign_filter = cm->features.interp_filter;
 
-  match_found_idx = av1_find_interp_filter_match(
+  match_found_idx = find_interp_filter_match(
       mbmi, cpi, assign_filter, need_search, args->interp_filter_stats,
       args->interp_filter_stats_idx);
 
@@ -681,7 +702,7 @@ int64_t av1_interpolation_filter_search(
     *rd = args->interp_filter_stats[match_found_idx].rd;
     x->pred_sse[ref_frame] =
         args->interp_filter_stats[match_found_idx].pred_sse;
-    *skip_build_pred = 0;
+    *skip_build_pred = INTERP_EVAL_LUMA_EVAL_CHROMA;
     return 0;
   }
 
@@ -703,11 +724,13 @@ int64_t av1_interpolation_filter_search(
   PrintPredictionUnitStats(cpi, tile_data, x, &rd_stats_y, bsize);
 #endif  // CONFIG_COLLECT_RD_STATS == 3
   // Chroma MC
-  if (num_planes > 1) {
+  if (num_planes > 1 && !skip_model_rd_uv) {
     interp_model_rd_eval(x, cpi, bsize, orig_dst, AOM_PLANE_U, AOM_PLANE_V,
                          &rd_stats, *skip_build_pred);
   }
-  *skip_build_pred = 1;
+  *skip_build_pred = num_planes > 1 && skip_model_rd_uv
+                         ? INTERP_SKIP_LUMA_EVAL_CHROMA
+                         : INTERP_SKIP_LUMA_SKIP_CHROMA;
 
   av1_merge_rd_stats(&rd_stats, &rd_stats_luma);
 
@@ -744,7 +767,8 @@ int64_t av1_interpolation_filter_search(
   // Setting 0th flag corresonds to skipping luma MC and setting 1st bt
   // corresponds to skipping chroma MC  skip_flag=0 corresponds to "Don't skip
   // luma and chroma MC"  Skip flag=1 corresponds to "Skip Luma MC only"
-  // Skip_flag=2 is not a valid case
+  // Skip_flag=2 corresponds to "Skip chroma MC only". This is valid only when
+  // skip_model_rd_uv speed feature is enabled
   // skip_flag=3 corresponds to "Skip both luma and chroma MC"
   int skip_hor = interp_search_flags->default_interp_skip_flags;
   int skip_ver = interp_search_flags->default_interp_skip_flags;

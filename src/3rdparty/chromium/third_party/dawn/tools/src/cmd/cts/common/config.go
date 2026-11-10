@@ -35,6 +35,8 @@ import (
 
 	"dawn.googlesource.com/dawn/tools/src/buildbucket"
 	"dawn.googlesource.com/dawn/tools/src/cts/result"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
+	"dawn.googlesource.com/dawn/tools/src/resultsdb"
 	"github.com/tidwall/jsonc"
 )
 
@@ -43,12 +45,7 @@ import (
 // tools/src/cmd/cts/config.json.
 type Config struct {
 	// Test holds configuration data for test results.
-	Tests []struct {
-		// Mode used to refer to tests
-		ExecutionMode result.ExecutionMode
-		// The ResultDB string prefix for CTS tests.
-		Prefixes []string
-	}
+	Tests []TestConfig
 	// Gerrit holds configuration for Dawn's Gerrit server.
 	Gerrit struct {
 		// The host URL
@@ -77,6 +74,16 @@ type Config struct {
 	Sheets struct {
 		ID string
 	}
+	OsWrapper oswrapper.OSWrapper
+	Querier   resultsdb.Querier
+}
+
+// TestConfig holds configuration data for a single test type.
+type TestConfig struct {
+	// Mode used to refer to tests
+	ExecutionMode result.ExecutionMode
+	// The ResultDB string prefix for CTS tests.
+	Prefixes []string
 }
 
 // GitProject holds a git host URL and project.

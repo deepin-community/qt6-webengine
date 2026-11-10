@@ -13,12 +13,16 @@
 #include <memory>
 #include <utility>
 
+#include "api/environment/environment.h"
 #include "api/test/create_simulcast_test_fixture.h"
 #include "api/test/simulcast_test_fixture.h"
 #include "api/test/video/function_video_decoder_factory.h"
 #include "api/test/video/function_video_encoder_factory.h"
-#include "modules/video_coding/utility/simulcast_test_fixture_impl.h"
+#include "api/video_codecs/sdp_video_format.h"
+#include "api/video_codecs/video_decoder_factory.h"
+#include "api/video_codecs/video_encoder_factory.h"
 #include "test/fake_vp8_decoder.h"
+#include "test/gtest.h"
 
 namespace webrtc {
 namespace test {
@@ -27,15 +31,16 @@ namespace {
 
 std::unique_ptr<SimulcastTestFixture> CreateSpecificSimulcastTestFixture() {
   std::unique_ptr<VideoEncoderFactory> encoder_factory =
-      std::make_unique<FunctionVideoEncoderFactory>([]() {
-        return std::make_unique<FakeVp8Encoder>(Clock::GetRealTimeClock());
-      });
+      std::make_unique<FunctionVideoEncoderFactory>(
+          [](const Environment& env, const SdpVideoFormat& format) {
+            return std::make_unique<FakeVp8Encoder>(env);
+          });
   std::unique_ptr<VideoDecoderFactory> decoder_factory =
       std::make_unique<FunctionVideoDecoderFactory>(
           []() { return std::make_unique<FakeVp8Decoder>(); });
   return CreateSimulcastTestFixture(std::move(encoder_factory),
                                     std::move(decoder_factory),
-                                    SdpVideoFormat("VP8"));
+                                    SdpVideoFormat::VP8());
 }
 }  // namespace
 

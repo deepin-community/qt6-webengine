@@ -5,6 +5,7 @@
 #ifndef CAST_RECEIVER_CHANNEL_DEVICE_AUTH_NAMESPACE_HANDLER_H_
 #define CAST_RECEIVER_CHANNEL_DEVICE_AUTH_NAMESPACE_HANDLER_H_
 
+#include <openssl/base.h>
 #include <openssl/evp.h>
 
 #include <string>
@@ -25,7 +26,7 @@ struct DeviceCredentials {
   bssl::UniquePtr<EVP_PKEY> private_key;
 
   // If non-empty, this contains a serialized CrlBundle protobuf.  This may be
-  // used by the sender as part of verifying |certs|.
+  // used by the sender as part of verifying `certs`.
   std::string serialized_crl;
 };
 
@@ -40,17 +41,17 @@ class DeviceAuthNamespaceHandler final : public CastMessageHandler {
     virtual ~CredentialsProvider();
   };
 
-  // |creds_provider| must outlive |this|.
-  explicit DeviceAuthNamespaceHandler(CredentialsProvider* creds_provider);
+  // `creds_provider` must outlive `this`.
+  explicit DeviceAuthNamespaceHandler(CredentialsProvider& creds_provider);
   ~DeviceAuthNamespaceHandler();
 
   // CastMessageHandler overrides.
   void OnMessage(VirtualConnectionRouter* router,
                  CastSocket* socket,
-                 ::cast::channel::CastMessage message) override;
+                 proto::CastMessage message) override;
 
  private:
-  CredentialsProvider* const creds_provider_;
+  CredentialsProvider& creds_provider_;
 };
 
 }  // namespace openscreen::cast

@@ -8,14 +8,17 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/pdf/pdf_pref_names.h"
 #include "chrome/browser/pdf/pdf_viewer_stream_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/pdf_viewer_private.h"
 #include "chrome/common/pref_names.h"
+#include "components/pdf/common/constants.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
+#include "pdf/buildflags.h"
 #include "url/url_constants.h"
 
 namespace extensions {
@@ -25,10 +28,12 @@ namespace {
 namespace IsAllowedLocalFileAccess =
     api::pdf_viewer_private::IsAllowedLocalFileAccess;
 
-namespace SetPdfOcrPref = api::pdf_viewer_private::SetPdfOcrPref;
+namespace SaveToDrive = api::pdf_viewer_private::SaveToDrive;
 
 namespace SetPdfPluginAttributes =
     api::pdf_viewer_private::SetPdfPluginAttributes;
+
+namespace SetPdfDocumentTitle = api::pdf_viewer_private::SetPdfDocumentTitle;
 
 // Check if the current URL is allowed based on a list of allowlisted domains.
 bool IsUrlAllowedToEmbedLocalFiles(
@@ -111,55 +116,53 @@ PdfViewerPrivateIsAllowedLocalFileAccessFunction::Run() {
       prefs->GetList(prefs::kPdfLocalFileAccessAllowedForDomains))));
 }
 
-PdfViewerPrivateIsPdfOcrAlwaysActiveFunction::
-    PdfViewerPrivateIsPdfOcrAlwaysActiveFunction() = default;
-
-PdfViewerPrivateIsPdfOcrAlwaysActiveFunction::
-    ~PdfViewerPrivateIsPdfOcrAlwaysActiveFunction() = default;
-
-ExtensionFunction::ResponseAction
-PdfViewerPrivateIsPdfOcrAlwaysActiveFunction::Run() {
-  PrefService* prefs =
-      Profile::FromBrowserContext(browser_context())->GetPrefs();
-  DCHECK(prefs);
-
-  const PrefService::Preference* pref =
-      prefs->FindPreference(prefs::kAccessibilityPdfOcrAlwaysActive);
-  if (!pref) {
-    return RespondNow(
-        Error("Pref not found: *", prefs::kAccessibilityPdfOcrAlwaysActive));
-  }
-
-  DCHECK(pref->GetValue()->is_bool());
-  bool value = pref->GetValue()->GetBool();
-  return RespondNow(WithArguments(value));
-}
-
-PdfViewerPrivateSetPdfOcrPrefFunction::PdfViewerPrivateSetPdfOcrPrefFunction() =
+PdfViewerPrivateSaveToDriveFunction::PdfViewerPrivateSaveToDriveFunction() =
     default;
 
-PdfViewerPrivateSetPdfOcrPrefFunction::
-    ~PdfViewerPrivateSetPdfOcrPrefFunction() = default;
+PdfViewerPrivateSaveToDriveFunction::~PdfViewerPrivateSaveToDriveFunction() =
+    default;
 
-ExtensionFunction::ResponseAction PdfViewerPrivateSetPdfOcrPrefFunction::Run() {
-  std::optional<SetPdfOcrPref::Params> params =
-      SetPdfOcrPref::Params::Create(args());
+ExtensionFunction::ResponseAction PdfViewerPrivateSaveToDriveFunction::Run() {
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  std::optional<SaveToDrive::Params> params =
+      SaveToDrive::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
+  // TODO(crbug.com/424208776): Start the save to drive flow.
+  return RespondNow(NoArguments());
+#else
+  return RespondNow(Error("Not supported"));
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+}
 
-  PrefService* prefs =
-      Profile::FromBrowserContext(browser_context())->GetPrefs();
-  DCHECK(prefs);
+PdfViewerPrivateSetPdfDocumentTitleFunction::
+    PdfViewerPrivateSetPdfDocumentTitleFunction() = default;
 
-  const PrefService::Preference* pref =
-      prefs->FindPreference(prefs::kAccessibilityPdfOcrAlwaysActive);
-  if (!pref) {
-    return RespondNow(
-        Error("Pref not found: *", prefs::kAccessibilityPdfOcrAlwaysActive));
+PdfViewerPrivateSetPdfDocumentTitleFunction::
+    ~PdfViewerPrivateSetPdfDocumentTitleFunction() = default;
+
+// This function is only called for full-page PDFs.
+ExtensionFunction::ResponseAction
+PdfViewerPrivateSetPdfDocumentTitleFunction::Run() {
+  content::WebContents* web_contents = GetSenderWebContents();
+  if (!web_contents) {
+    return RespondNow(Error("Could not find a valid web contents."));
   }
 
-  DCHECK(pref->GetValue()->is_bool());
-  prefs->SetBoolean(prefs::kAccessibilityPdfOcrAlwaysActive, params->value);
-  return RespondNow(WithArguments(true));
+  // Title should only be set for full-page PDFs.
+  // MIME type associated with sender `WebContents` must be `application/pdf`
+  // for a full-page PDF.
+  EXTENSION_FUNCTION_VALIDATE(web_contents->GetContentsMimeType() ==
+                              pdf::kPDFMimeType);
+
+  std::optional<SetPdfDocumentTitle::Params> params =
+      SetPdfDocumentTitle::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  web_contents->UpdateTitleForEntry(
+      web_contents->GetController().GetLastCommittedEntry(),
+      base::UTF8ToUTF16(params->title));
+
+  return RespondNow(NoArguments());
 }
 
 PdfViewerPrivateSetPdfPluginAttributesFunction::

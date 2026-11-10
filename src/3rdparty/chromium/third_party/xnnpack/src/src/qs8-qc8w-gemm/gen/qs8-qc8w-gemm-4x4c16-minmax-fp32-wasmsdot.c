@@ -1,5 +1,6 @@
+// clang-format off
 // Auto-generated file. Do not edit!
-//   Template: src/qs8-gemm/MRx4c16-wasmsdot.c.in
+//   Template: src/qs8-gemm/MRx4c16-wasmdot.c.in
 //   Generator: tools/xngen
 //
 // Copyright 2023 Google LLC
@@ -11,9 +12,8 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
-
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
 
 void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
     size_t mr,
@@ -25,7 +25,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
     int8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 4);
@@ -57,6 +57,17 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
     a3 = a2;
     c3 = c2;
   }
+
+
+  const v128_t vmagic_bias = wasm_f32x4_const_splat(12582912.0f);
+  const int32_t output_min_less_zero_point = (int32_t) params->fp32_scalar.output_min - (int32_t) params->fp32_scalar.output_zero_point;
+  const v128_t vmagic_min = wasm_i32x4_splat((int32_t) float_as_uint32(12582912.0f + output_min_less_zero_point));
+  const v128_t vmagic_bias_less_output_zero_point = wasm_i32x4_splat(INT32_C(0x4B400000) - (int32_t) params->fp32_scalar.output_zero_point);
+  const v128_t voutput_max = wasm_i8x16_splat(params->fp32_scalar.output_max);
+  XNN_FORCE_REALIZATION(vmagic_bias);
+  XNN_FORCE_REALIZATION(vmagic_min);
+  XNN_FORCE_REALIZATION(vmagic_bias_less_output_zero_point);
+  XNN_FORCE_REALIZATION(voutput_max);
 
   do {
     v128_t vacc0x0 = wasm_v128_load32_zero(w);
@@ -90,28 +101,28 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
 
       const v128_t vb0 = wasm_v128_load(w);
 
-      vacc0x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va0, vb0, vacc0x0);
-      vacc1x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va1, vb0, vacc1x0);
-      vacc2x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va2, vb0, vacc2x0);
-      vacc3x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va3, vb0, vacc3x0);
+      vacc0x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb0, va0, vacc0x0);
+      vacc1x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb0, va1, vacc1x0);
+      vacc2x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb0, va2, vacc2x0);
+      vacc3x0 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb0, va3, vacc3x0);
       const v128_t vb1 = wasm_v128_load((const int8_t*) w + 16);
 
-      vacc0x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va0, vb1, vacc0x1);
-      vacc1x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va1, vb1, vacc1x1);
-      vacc2x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va2, vb1, vacc2x1);
-      vacc3x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va3, vb1, vacc3x1);
+      vacc0x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb1, va0, vacc0x1);
+      vacc1x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb1, va1, vacc1x1);
+      vacc2x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb1, va2, vacc2x1);
+      vacc3x1 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb1, va3, vacc3x1);
       const v128_t vb2 = wasm_v128_load((const int8_t*) w + 32);
 
-      vacc0x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va0, vb2, vacc0x2);
-      vacc1x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va1, vb2, vacc1x2);
-      vacc2x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va2, vb2, vacc2x2);
-      vacc3x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va3, vb2, vacc3x2);
+      vacc0x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb2, va0, vacc0x2);
+      vacc1x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb2, va1, vacc1x2);
+      vacc2x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb2, va2, vacc2x2);
+      vacc3x2 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb2, va3, vacc3x2);
       const v128_t vb3 = wasm_v128_load((const int8_t*) w + 48);
 
-      vacc0x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va0, vb3, vacc0x3);
-      vacc1x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va1, vb3, vacc1x3);
-      vacc2x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va2, vb3, vacc2x3);
-      vacc3x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(va3, vb3, vacc3x3);
+      vacc0x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb3, va0, vacc0x3);
+      vacc1x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb3, va1, vacc1x3);
+      vacc2x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb3, va2, vacc2x3);
+      vacc3x3 = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb3, va3, vacc3x3);
 
       w = (const int8_t*) w + 64;
       k -= 16 * sizeof(int8_t);
@@ -143,19 +154,16 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
     vacc2x0123 = wasm_f32x4_mul(vacc2x0123, vscale0123);
     vacc3x0123 = wasm_f32x4_mul(vacc3x0123, vscale0123);
 
-    const v128_t vmagic_bias = wasm_v128_load64_splat(params->fp32_wasmsimd.magic_bias);
     vacc0x0123 = wasm_f32x4_add(vacc0x0123, vmagic_bias);
     vacc1x0123 = wasm_f32x4_add(vacc1x0123, vmagic_bias);
     vacc2x0123 = wasm_f32x4_add(vacc2x0123, vmagic_bias);
     vacc3x0123 = wasm_f32x4_add(vacc3x0123, vmagic_bias);
 
-    const v128_t vmagic_min = wasm_v128_load64_splat(params->fp32_wasmsimd.magic_min);
     vacc0x0123 = wasm_i32x4_max(vacc0x0123, vmagic_min);
     vacc1x0123 = wasm_i32x4_max(vacc1x0123, vmagic_min);
     vacc2x0123 = wasm_i32x4_max(vacc2x0123, vmagic_min);
     vacc3x0123 = wasm_i32x4_max(vacc3x0123, vmagic_min);
 
-    const v128_t vmagic_bias_less_output_zero_point = wasm_v128_load64_splat(params->fp32_wasmsimd.magic_bias_less_output_zero_point);
     vacc0x0123 = wasm_i32x4_sub(vacc0x0123, vmagic_bias_less_output_zero_point);
     vacc1x0123 = wasm_i32x4_sub(vacc1x0123, vmagic_bias_less_output_zero_point);
     vacc2x0123 = wasm_i32x4_sub(vacc2x0123, vmagic_bias_less_output_zero_point);
@@ -166,7 +174,6 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x4c16__wasmsdot(
 
     v128_t vacc = wasm_i8x16_narrow_i16x8(vacc01x0123, vacc23x0123);
 
-    const v128_t voutput_max = wasm_v128_load64_splat(params->fp32_wasmsimd.output_max);
     vacc = wasm_i8x16_min(vacc, voutput_max);
 
     if XNN_LIKELY(nc >= 4) {

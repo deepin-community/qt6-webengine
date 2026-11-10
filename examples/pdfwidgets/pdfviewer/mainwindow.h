@@ -7,8 +7,6 @@
 #include <QLoggingCategory>
 #include <QMainWindow>
 
-Q_DECLARE_LOGGING_CATEGORY(lcExample)
-
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class MainWindow;
@@ -34,6 +32,7 @@ public:
     ~MainWindow();
 
 public slots:
+    void setContinuousMode(bool c);
     void open(const QUrl &docLocation);
 
 private slots:

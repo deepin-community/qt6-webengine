@@ -17,6 +17,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "media/audio/audio_device_description.h"
 #include "media/base/media_content_type.h"
+#include "media/base/picture_in_picture_events_info.h"
 #include "services/media_session/public/cpp/media_position.h"
 #include "services/media_session/public/mojom/media_session.mojom.h"
 
@@ -58,7 +59,7 @@ class CONTENT_EXPORT MediaSessionController
 
   // MediaSessionPlayerObserver implementation.
   void OnSuspend(int player_id) override;
-  void OnResume(int player_id) override;
+  void OnResume(int player_id, bool triggered_by_user) override;
   void OnSeekForward(int player_id, base::TimeDelta seek_time) override;
   void OnSeekBackward(int player_id, base::TimeDelta seek_time) override;
   void OnSeekTo(int player_id, base::TimeDelta seek_time) override;
@@ -68,15 +69,24 @@ class CONTENT_EXPORT MediaSessionController
                         const std::string& raw_device_id) override;
   void OnSetMute(int player_id, bool mute) override;
   void OnRequestMediaRemoting(int player_id) override;
+  void OnRequestVisibility(
+      int player_id,
+      RequestVisibilityCallback request_visibility_callback) override;
   RenderFrameHost* render_frame_host() const override;
   std::optional<media_session::MediaPosition> GetPosition(
       int player_id) const override;
   bool IsPictureInPictureAvailable(int player_id) const override;
+  bool HasSufficientlyVisibleVideo(int player_id) const override;
   bool HasAudio(int player_id) const override;
   bool HasVideo(int player_id) const override;
+  bool IsPaused(int player_id) const override;
   std::string GetAudioOutputSinkId(int player_id) const override;
   bool SupportsAudioOutputDeviceSwitching(int player_id) const override;
   media::MediaContentType GetMediaContentType() const override;
+  void OnAutoPictureInPictureInfoChanged(
+      int player_id,
+      const media::PictureInPictureEventsInfo::AutoPipInfo&
+          auto_picture_in_picture_info) override;
 
   // Test helpers.
   int get_player_id_for_testing() const { return player_id_; }
@@ -107,6 +117,9 @@ class CONTENT_EXPORT MediaSessionController
   void OnRemotePlaybackMetadataChanged(
       media_session::mojom::RemotePlaybackMetadataPtr metadata);
 
+  // Called when video visibility changes for the given media player.
+  void OnVideoVisibilityChanged(bool meets_visibility_threshold);
+
  private:
   bool IsMediaSessionNeeded() const;
 
@@ -136,6 +149,7 @@ class CONTENT_EXPORT MediaSessionController
   bool has_audio_ = false;
   bool has_video_ = false;
   bool is_picture_in_picture_available_ = false;
+  bool has_sufficiently_visible_video_ = false;
   std::string audio_output_sink_id_ =
       media::AudioDeviceDescription::kDefaultDeviceId;
   bool supports_audio_output_device_switching_ = true;

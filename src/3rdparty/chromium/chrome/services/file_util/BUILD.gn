@@ -23,19 +23,21 @@ source_set("file_util") {
     "//base",
     "//build:chromeos_buildflags",
     "//components/safe_browsing:buildflags",
-    "//extensions/buildflags:buildflags",
+    "//extensions/buildflags",
     "//mojo/public/cpp/bindings",
     "//third_party/zlib",
   ]
 
   public_deps = [
     "//chrome/services/file_util/public/mojom",
-    "//components/safe_browsing/core/common:common",
+    "//components/safe_browsing/core/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/mojom/base",
   ]
 
-  if (is_chromeos_ash) {
+  defines = []
+
+  if (is_chromeos) {
     sources += [
       "zip_file_creator.cc",
       "zip_file_creator.h",
@@ -54,27 +56,13 @@ source_set("file_util") {
       "safe_archive_analyzer.h",
     ]
 
-    if (is_linux || is_win) {
-      sources += [
-        "document_analysis_service.cc",
-        "document_analysis_service.h",
-        "safe_document_analyzer.cc",
-        "safe_document_analyzer.h",
-      ]
-    }
-
     deps += [
       "//chrome/common/safe_browsing",
       "//chrome/common/safe_browsing:archive_analyzer_results",
       "//chrome/utility/safe_browsing",
     ]
 
-    if (is_linux || is_win) {
-      deps += [
-        "//chrome/common/safe_browsing:document_analyzer_results",
-        "//chrome/utility/safe_browsing:document_analyzer",
-      ]
-    }
+    defines += [ "USE_UNRAR=$safe_browsing_use_unrar" ]
   }
 
   if (enable_extractors) {
@@ -87,7 +75,7 @@ source_set("file_util") {
       "single_file_tar_xz_file_extractor.h",
     ]
     deps += [
-      "//third_party/lzma_sdk:lzma_sdk",
+      "//third_party/lzma_sdk",
       "//third_party/lzma_sdk:lzma_sdk_xz",
     ]
   }
@@ -120,20 +108,13 @@ source_set("test_support") {
     "fake_file_util_service.h",
   ]
 
-  if (is_linux || is_win) {
-    sources += [
-      "fake_document_analysis_service.cc",
-      "fake_document_analysis_service.h",
-    ]
-  }
-
   deps = [
     ":buildflags",
     "//base",
     "//build:chromeos_buildflags",
-    "//chrome/services/file_util/public/mojom:mojom",
+    "//chrome/services/file_util/public/mojom",
     "//components/safe_browsing:buildflags",
-    "//extensions/buildflags:buildflags",
+    "//extensions/buildflags",
     "//mojo/public/cpp/bindings",
     "//testing/gmock",
     "//third_party/abseil-cpp:absl",
@@ -142,17 +123,14 @@ source_set("test_support") {
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
-  flags = [
-    "ENABLE_EXTRACTORS=$enable_extractors",
-    "ENABLE_MALDOCA=$enable_maldoca",
-  ]
+  flags = [ "ENABLE_EXTRACTORS=$enable_extractors" ]
 }
 
-if (enable_extractors && fuzztest_supported) {
+if (enable_extractors) {
   test("single_file_tar_reader_fuzzer") {
     sources = [ "single_file_tar_reader_fuzzer.cc" ]
 
-    enable_fuzztest = true
+    fuzztests = [ "SingleFileTarReaderTest.ExtractChunkNeverCrashes" ]
 
     deps = [
       ":file_util",
@@ -160,7 +138,7 @@ if (enable_extractors && fuzztest_supported) {
     ]
 
     if (safe_browsing_mode == 1) {
-      deps += [ "//chrome/common:common" ]
+      deps += [ "//chrome/common" ]
     }
 
     if (is_mac) {

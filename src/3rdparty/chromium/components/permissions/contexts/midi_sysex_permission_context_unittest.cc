@@ -7,15 +7,16 @@
 #include <string>
 
 #include "base/functional/bind.h"
-#include "base/test/scoped_feature_list.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_id.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "components/permissions/test/test_permissions_client.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
@@ -43,9 +44,9 @@ class TestPermissionContext : public MidiSysexPermissionContext {
 
   bool tab_context_updated() { return tab_context_updated_; }
 
-  void TrackPermissionDecision(ContentSetting content_setting) {
+  void TrackPermissionDecision(PermissionStatus permission_status) {
     permission_set_ = true;
-    permission_granted_ = content_setting == CONTENT_SETTING_ALLOW;
+    permission_granted_ = permission_status == PermissionStatus::GRANTED;
   }
 
  protected:
@@ -65,17 +66,11 @@ class TestPermissionContext : public MidiSysexPermissionContext {
 
 class MidiSysexPermissionContextTests
     : public content::RenderViewHostTestHarness {
- public:
-  void EnableBlockMidiByDefault() {
-    feature_list_.InitAndEnableFeature(features::kBlockMidiByDefault);
-  }
-
  protected:
   MidiSysexPermissionContextTests() = default;
   ~MidiSysexPermissionContextTests() override = default;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   TestPermissionsClient client_;
 };
 
@@ -89,8 +84,10 @@ TEST_F(MidiSysexPermissionContextTests, TestInsecureRequestingUrl) {
       web_contents()->GetPrimaryMainFrame()->GetGlobalId(),
       permissions::PermissionRequestID::RequestLocalId());
   permission_context.RequestPermission(
-      PermissionRequestData(&permission_context, id,
-                            /*user_gesture=*/true, url),
+      std::make_unique<PermissionRequestData>(
+          std::make_unique<ContentSettingPermissionResolver>(
+              ContentSettingsType::MIDI_SYSEX),
+          id, /*user_gesture=*/true, url),
       base::BindOnce(&TestPermissionContext::TrackPermissionDecision,
                      base::Unretained(&permission_context)));
 
@@ -135,88 +132,21 @@ TEST_F(MidiSysexPermissionContextTests, TestInsecureQueryingUrl) {
 
   EXPECT_EQ(PermissionStatus::DENIED,
             permission_context
-                .GetPermissionStatus(nullptr /* render_frame_host */,
-                                     insecure_url, insecure_url)
+                .GetPermissionStatus(
+                    content::PermissionDescriptorUtil::
+                        CreatePermissionDescriptorForPermissionType(
+                            blink::PermissionType::MIDI_SYSEX),
+                    nullptr /* render_frame_host */, insecure_url, insecure_url)
                 .status);
 
   EXPECT_EQ(PermissionStatus::DENIED,
             permission_context
-                .GetPermissionStatus(nullptr /* render_frame_host */,
-                                     insecure_url, secure_url)
+                .GetPermissionStatus(
+                    content::PermissionDescriptorUtil::
+                        CreatePermissionDescriptorForPermissionType(
+                            blink::PermissionType::MIDI_SYSEX),
+                    nullptr /* render_frame_host */, insecure_url, secure_url)
                 .status);
-}
-
-// Setting MIDI_SYSEX should update MIDI permissions
-TEST_F(MidiSysexPermissionContextTests, TestSynchronizingPermissions) {
-  EnableBlockMidiByDefault();
-
-  TestPermissionContext permission_context(browser_context());
-  GURL secure_url("https://www.example.com");
-  auto* settings_map =
-      PermissionsClient::Get()->GetSettingsMap(browser_context());
-
-  struct TestData {
-    // Set MIDI to this setting first
-    ContentSetting midi_set;
-
-    // Set SysEx to this setting next
-    ContentSetting sysex_set;
-
-    // Expected MIDI setting after SysEx setting completes
-    ContentSetting midi_result;
-  };
-  std::vector<TestData> tests;
-
-  tests.emplace_back(CONTENT_SETTING_BLOCK, CONTENT_SETTING_BLOCK,
-                     CONTENT_SETTING_BLOCK);
-  tests.emplace_back(CONTENT_SETTING_ASK, CONTENT_SETTING_BLOCK,
-                     CONTENT_SETTING_BLOCK);
-  tests.emplace_back(CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK,
-                     CONTENT_SETTING_BLOCK);
-
-  tests.emplace_back(CONTENT_SETTING_BLOCK, CONTENT_SETTING_ASK,
-                     CONTENT_SETTING_ASK);
-  tests.emplace_back(CONTENT_SETTING_ASK, CONTENT_SETTING_ASK,
-                     CONTENT_SETTING_ASK);
-  tests.emplace_back(CONTENT_SETTING_ALLOW, CONTENT_SETTING_ASK,
-                     CONTENT_SETTING_ALLOW);
-
-  tests.emplace_back(CONTENT_SETTING_BLOCK, CONTENT_SETTING_ALLOW,
-                     CONTENT_SETTING_ALLOW);
-  tests.emplace_back(CONTENT_SETTING_ASK, CONTENT_SETTING_ALLOW,
-                     CONTENT_SETTING_ALLOW);
-  tests.emplace_back(CONTENT_SETTING_ALLOW, CONTENT_SETTING_ALLOW,
-                     CONTENT_SETTING_ALLOW);
-
-  for (auto test : tests) {
-    // Reset previous settings.
-    settings_map->SetContentSettingDefaultScope(secure_url, secure_url,
-                                                ContentSettingsType::MIDI,
-                                                CONTENT_SETTING_DEFAULT);
-    settings_map->SetContentSettingDefaultScope(secure_url, secure_url,
-                                                ContentSettingsType::MIDI_SYSEX,
-                                                CONTENT_SETTING_DEFAULT);
-
-    // First set the MIDI permission, and verify it is set correctly:
-    settings_map->SetContentSettingDefaultScope(
-        secure_url, secure_url, ContentSettingsType::MIDI, test.midi_set);
-    EXPECT_EQ(test.midi_set,
-              settings_map->GetContentSetting(secure_url, secure_url,
-                                              ContentSettingsType::MIDI));
-
-    // Next, set the SysEx permission, and verify it is set correctly
-    settings_map->SetContentSettingDefaultScope(secure_url, secure_url,
-                                                ContentSettingsType::MIDI_SYSEX,
-                                                test.sysex_set);
-    EXPECT_EQ(test.sysex_set,
-              settings_map->GetContentSetting(secure_url, secure_url,
-                                              ContentSettingsType::MIDI_SYSEX));
-
-    // Verify the MIDI permission is as expected:
-    EXPECT_EQ(test.midi_result,
-              settings_map->GetContentSetting(secure_url, secure_url,
-                                              ContentSettingsType::MIDI));
-  }
 }
 
 }  // namespace permissions

@@ -6,11 +6,9 @@
 
 #include <cassert>
 
+#include "Config.h"
 #include "RecordInfo.h"
 #include "llvm/Support/ErrorHandling.h"
-
-CheckFieldsVisitor::CheckFieldsVisitor(const BlinkGCPluginOptions& options)
-    : options_(options), current_(0), stack_allocated_host_(false) {}
 
 CheckFieldsVisitor::Errors& CheckFieldsVisitor::invalid_fields() {
   return invalid_fields_;
@@ -19,7 +17,7 @@ CheckFieldsVisitor::Errors& CheckFieldsVisitor::invalid_fields() {
 bool CheckFieldsVisitor::ContainsInvalidFields(RecordInfo* info) {
   stack_allocated_host_ = info->IsStackAllocated();
   managed_host_ =
-      stack_allocated_host_ || info->IsGCAllocated() || info->IsNewDisallowed();
+      stack_allocated_host_ || info->IsGCDerived() || info->IsNewDisallowed();
   for (RecordInfo::Fields::iterator it = info->GetFields().begin();
        it != info->GetFields().end();
        ++it) {
@@ -57,6 +55,22 @@ void CheckFieldsVisitor::AtIterator(Iterator* edge) {
     invalid_fields_.push_back(std::make_pair(current_, kIteratorToGCManaged));
 }
 
+namespace {
+
+CheckFieldsVisitor::Error InvalidSmartPtr(Edge* ptr, bool is_gced) {
+  if (ptr->IsRefPtr()) {
+    return is_gced ? CheckFieldsVisitor::Error::kRefPtrToGCManaged
+                   : CheckFieldsVisitor::Error::kRefPtrToTraceable;
+  }
+  if (ptr->IsUniquePtr()) {
+    return is_gced ? CheckFieldsVisitor::Error::kUniquePtrToGCManaged
+                   : CheckFieldsVisitor::Error::kUniquePtrToTraceable;
+  }
+  llvm_unreachable("Unknown smart pointer kind");
+}
+
+}  // namespace
+
 void CheckFieldsVisitor::AtValue(Value* edge) {
   RecordInfo* record = edge->value();
 
@@ -73,7 +87,8 @@ void CheckFieldsVisitor::AtValue(Value* edge) {
     return;
   }
 
-  if (!stack_allocated_host_ && record->IsStackAllocated()) {
+  if (!stack_allocated_host_ && record->IsStackAllocated() &&
+      !Config::IsStackAllocatedIgnoreAnnotated(current_->field())) {
     invalid_fields_.push_back(std::make_pair(current_, kPtrFromHeapToStack));
     return;
   }
@@ -108,25 +123,32 @@ void CheckFieldsVisitor::AtValue(Value* edge) {
   // pointer it wraps is indeed heap allocated.)
   if (stack_allocated_host_ && Parent() &&
       (Parent()->IsMember() || Parent()->IsWeakMember()) &&
-      edge->value()->HasDefinition() && !edge->value()->IsGCAllocated()) {
+      edge->value()->HasDefinition() && !edge->value()->IsGCDerived()) {
     invalid_fields_.push_back(std::make_pair(current_, kMemberToGCUnmanaged));
     return;
   }
 
-  if (!Parent() || !edge->value()->IsGCAllocated())
+  if (!Parent() || (!edge->value()->IsGCDerived() &&
+                    !edge->value()
+                         ->NeedsTracing(Edge::NeedsTracingOption::kRecursive)
+                         .IsNeeded())) {
     return;
+  }
 
   // Disallow unique_ptr<T>, scoped_refptr<T>
   if (Parent()->IsUniquePtr() ||
       (Parent()->IsRefPtr() && (Parent()->Kind() == Edge::kStrong))) {
     invalid_fields_.push_back(std::make_pair(
-        current_, InvalidSmartPtr(Parent())));
+        current_, InvalidSmartPtr(Parent(), edge->value()->IsGCDerived())));
     return;
   }
   if (Parent()->IsRawPtr() && !stack_allocated_host_) {
     RawPtr* rawPtr = static_cast<RawPtr*>(Parent());
-    Error error = rawPtr->HasReferenceType() ?
-        kReferencePtrToGCManaged : kRawPtrToGCManaged;
+    Error error = edge->value()->IsGCDerived()
+                      ? (rawPtr->HasReferenceType() ? kReferencePtrToGCManaged
+                                                    : kRawPtrToGCManaged)
+                      : (rawPtr->HasReferenceType() ? kReferencePtrToTraceable
+                                                    : kRawPtrToTraceable);
     invalid_fields_.push_back(std::make_pair(current_, error));
   }
 }
@@ -140,12 +162,4 @@ void CheckFieldsVisitor::AtCollection(Collection* edge) {
   }
   if (edge->on_heap() && Parent() && Parent()->IsUniquePtr())
     invalid_fields_.push_back(std::make_pair(current_, kUniquePtrToGCManaged));
-}
-
-CheckFieldsVisitor::Error CheckFieldsVisitor::InvalidSmartPtr(Edge* ptr) {
-  if (ptr->IsRefPtr())
-    return kRefPtrToGCManaged;
-  if (ptr->IsUniquePtr())
-    return kUniquePtrToGCManaged;
-  llvm_unreachable("Unknown smart pointer kind");
 }

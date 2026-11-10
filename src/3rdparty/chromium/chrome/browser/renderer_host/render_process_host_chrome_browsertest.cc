@@ -9,11 +9,13 @@
 #include "base/path_service.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -94,7 +96,7 @@ bool IsProcessBackgrounded(const base::Process& process) {
 
 class ChromeRenderProcessHostTest : public extensions::ExtensionBrowserTest {
  public:
-  ChromeRenderProcessHostTest() {}
+  ChromeRenderProcessHostTest() = default;
 
   ChromeRenderProcessHostTest(const ChromeRenderProcessHostTest&) = delete;
   ChromeRenderProcessHostTest& operator=(const ChromeRenderProcessHostTest&) =
@@ -248,6 +250,12 @@ class ChromeRenderProcessHostTest : public extensions::ExtensionBrowserTest {
     EXPECT_NE(rph1, rph3);
     EXPECT_NE(rph2, rph3);
   }
+
+ private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
 };
 
 class ChromeRenderProcessHostTestWithCommandLine
@@ -382,7 +390,8 @@ class ChromeRenderProcessHostBackgroundingTest
   void VerifyProcessPriority(content::RenderProcessHost* process,
                              bool expected_is_backgrounded) {
     EXPECT_TRUE(process->IsInitializedAndNotDead());
-    EXPECT_EQ(expected_is_backgrounded, process->IsProcessBackgrounded());
+    EXPECT_EQ(expected_is_backgrounded,
+              process->GetPriority() == base::Process::Priority::kBestEffort);
 
     if (base::Process::CanSetPriority()) {
       base::Process p = ProcessFromHandle(process->GetProcess().Handle());
@@ -704,11 +713,10 @@ class ChromeRenderProcessHostBackgroundingTestWithAudio
                              bool lhs_backgrounded,
                              const base::Process& rhs,
                              bool rhs_backgrounded) {
-    while (IsProcessBackgrounded(lhs) != lhs_backgrounded ||
-           IsProcessBackgrounded(rhs) != rhs_backgrounded) {
-      base::RunLoop().RunUntilIdle();
-      base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
-    }
+    EXPECT_TRUE(base::test::RunUntil([&]() {
+      return IsProcessBackgrounded(lhs) == lhs_backgrounded &&
+             IsProcessBackgrounded(rhs) == rhs_backgrounded;
+    }));
   }
 
   GURL audio_url_;

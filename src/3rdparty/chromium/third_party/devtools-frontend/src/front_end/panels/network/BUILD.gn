@@ -5,6 +5,7 @@
 import("../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../scripts/build/ninja/devtools_module.gni")
 import("../../../scripts/build/ninja/generate_css.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 import("../visibility.gni")
 
 generate_css("css_files") {
@@ -25,9 +26,9 @@ generate_css("css_files") {
     "requestInitiatorViewTree.css",
     "requestPayloadTree.css",
     "requestPayloadView.css",
+    "resourceChunkView.css",
     "signedExchangeInfoTree.css",
     "signedExchangeInfoView.css",
-    "webSocketFrameView.css",
   ]
 }
 
@@ -55,6 +56,8 @@ devtools_module("network") {
     "RequestPreviewView.ts",
     "RequestResponseView.ts",
     "RequestTimingView.ts",
+    "ResourceChunkView.ts",
+    "ResourceDirectSocketChunkView.ts",
     "ResourceWebSocketFrameView.ts",
     "SignedExchangeInfoView.ts",
   ]
@@ -74,11 +77,14 @@ devtools_module("network") {
     "../../models/trace:bundle",
     "../../models/workspace:bundle",
     "../../panels/elements:bundle",
+    "../../panels/linear_memory_inspector:bundle",
     "../../panels/mobile_throttling:bundle",
     "../../panels/search:bundle",
     "../../panels/sources:bundle",
     "../../panels/utils:bundle",
+    "../../services/tracing:bundle",
     "../../third_party/chromium/client-variations:bundle",
+    "../../ui/components/buttons:bundle",
     "../../ui/components/expandable_list:bundle",
     "../../ui/components/icon_button:bundle",
     "../../ui/legacy:bundle",
@@ -89,7 +95,7 @@ devtools_module("network") {
     "../../ui/legacy/components/source_frame:bundle",
     "../../ui/legacy/components/utils:bundle",
     "../../ui/legacy/theme_support:bundle",
-    "../../ui/lit-html:bundle",
+    "../../ui/lit:bundle",
     "../settings/emulation/components:bundle",
     "./components:bundle",
     "./forward:bundle",
@@ -107,9 +113,9 @@ devtools_entrypoint("bundle") {
 
   visibility = [
     ":*",
-    "../../../test/unittests/front_end/entrypoints/missing_entrypoints/*",
-    "../../../test/unittests/front_end/panels/network/*",
     "../../entrypoints/*",
+    "../../models/ai_assistance/*",
+    "../../panels/ai_assistance:unittests",
     "../../ui/components/request_link_icon/*",
     "../application/*",
   ]
@@ -131,7 +137,45 @@ devtools_entrypoint("meta") {
   ]
 
   visibility = [
-    "../../../test/unittests/front_end/panels/network/*",
+    ":unittests",
     "../../entrypoints/*",
+  ]
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "BlockedURLsPane.test.ts",
+    "NetworkConfigView.test.ts",
+    "NetworkDataGridNode.test.ts",
+    "NetworkItemView.test.ts",
+    "NetworkLogView.test.ts",
+    "NetworkOverview.test.ts",
+    "NetworkPanel.test.ts",
+    "NetworkSearchScope.test.ts",
+    "RequestCookiesView.test.ts",
+    "RequestHTMLView.test.ts",
+    "RequestPayloadView.test.ts",
+    "RequestPreviewView.test.ts",
+    "RequestResponseView.test.ts",
+    "RequestTimingView.test.ts",
+    "ResourceDirectSocketChunkView.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    ":meta",
+    "../../core/common:bundle",
+    "../../core/i18n:bundle",
+    "../../core/platform:bundle",
+    "../../core/sdk:bundle",
+    "../../generated:protocol",
+    "../../models/text_utils:bundle",
+    "../../panels/linear_memory_inspector/components:bundle",
+    "../../testing",
+    "../../ui/legacy:bundle",
+    "../../ui/legacy/components/source_frame:bundle",
+    "./components:bundle",
   ]
 }

@@ -9,6 +9,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #define EXPECT_SAME_OBJECT(a, b) \
@@ -246,7 +247,8 @@ class JavaObjectArrayReaderTest : public testing::Test {
     for (jint i = 0; i < array_len_; ++i) {
       jobject member = env->NewObject(int_class_.obj(), int_constructor_, i);
       ASSERT_NE(member, nullptr);
-      array_members_[i] = ScopedJavaLocalRef<jobject>::Adopt(env, member);
+      UNSAFE_TODO(array_members_[i]) =
+          ScopedJavaLocalRef<jobject>::Adopt(env, member);
       env->SetObjectArrayElement(array_.obj(), i, member);
     }
   }
@@ -331,7 +333,7 @@ TEST_F(JavaObjectArrayReaderTest, RangeBasedFor) {
 
   int i = 0;
   for (ScopedJavaLocalRef<jobject> element : array_.ReadElements<jobject>()) {
-    EXPECT_SAME_OBJECT(element, array_members_[i++]);
+    UNSAFE_TODO(EXPECT_SAME_OBJECT(element, array_members_[i++]));
   }
   EXPECT_EQ(i, array_len_);
 }

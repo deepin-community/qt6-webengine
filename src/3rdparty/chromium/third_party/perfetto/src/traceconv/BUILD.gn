@@ -75,6 +75,7 @@ static_library("libpprofbuilder") {
 source_set("lib") {
   deps = [
     ":gen_cc_trace_descriptor",
+    ":gen_cc_winscope_descriptor",
     ":pprofbuilder",
     ":utils",
     "../../gn:default_deps",
@@ -82,21 +83,24 @@ source_set("lib") {
     "../../include/perfetto/ext/traced:sys_stats_counters",
     "../../include/perfetto/protozero",
     "../../protos/perfetto/trace:zero",
-    "../../src/profiling:deobfuscator",
-    "../../src/profiling/symbolizer",
-    "../../src/profiling/symbolizer:symbolize_database",
-    "../../src/protozero:proto_ring_buffer",
-    "../../src/trace_processor:lib",
-    "../../src/trace_processor:storage_minimal",
-    "../../src/trace_processor/util:descriptors",
-    "../../src/trace_processor/util:gzip",
-    "../../src/trace_processor/util:protozero_to_text",
+    "../profiling:deobfuscator",
+    "../profiling/symbolizer",
+    "../profiling/symbolizer:symbolize_database",
+    "../protozero:proto_ring_buffer",
+    "../trace_processor:lib",
+    "../trace_processor:storage_minimal",
+    "../trace_processor/util:descriptors",
+    "../trace_processor/util:gzip",
+    "../trace_processor/util:protozero_to_text",
+    "../trace_processor/util:trace_type",
   ]
   sources = [
     "deobfuscate_profile.cc",
     "deobfuscate_profile.h",
     "symbolize_profile.cc",
     "symbolize_profile.h",
+    "trace_to_firefox.cc",
+    "trace_to_firefox.h",
     "trace_to_hprof.cc",
     "trace_to_hprof.h",
     "trace_to_json.cc",
@@ -108,15 +112,19 @@ source_set("lib") {
     "trace_to_text.cc",
     "trace_to_text.h",
     "trace_to_text.h",
+    "trace_unpack.cc",
+    "trace_unpack.h",
   ]
 }
 
 source_set("main") {
   deps = [
+    ":gen_cc_trace_descriptor",
     ":lib",
     "../../gn:default_deps",
     "../../include/perfetto/ext/base:base",
     "../base:version",
+    "../protozero/text_to_proto",
   ]
   sources = [ "main.cc" ]
 }
@@ -136,7 +144,12 @@ perfetto_cc_proto_descriptor("gen_cc_trace_descriptor") {
   descriptor_target = "../../protos/perfetto/trace:descriptor"
 }
 
-perfetto_unittest_source_set("unittests") {
+perfetto_cc_proto_descriptor("gen_cc_winscope_descriptor") {
+  descriptor_name = "winscope.descriptor"
+  descriptor_target = "../../protos/perfetto/trace/android:winscope_descriptor"
+}
+
+source_set("integrationtests") {
   testonly = true
   deps = [
     ":lib",
@@ -144,6 +157,14 @@ perfetto_unittest_source_set("unittests") {
     "../../gn:gtest_and_gmock",
     "../../include/perfetto/base",
     "../../include/perfetto/ext/base:base",
+    "../../protos/third_party/pprof:cpp",
+    "../../protos/third_party/pprof:zero",
+    "../../src/base:test_support",
   ]
-  sources = [ "trace_to_text_unittest.cc" ]
+  sources = [
+    "pprof_reader.cc",
+    "pprof_reader.h",
+    "trace_to_pprof_integrationtest.cc",
+    "trace_to_text_integrationtest.cc",
+  ]
 }

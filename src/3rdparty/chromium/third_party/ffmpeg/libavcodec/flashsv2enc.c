@@ -47,11 +47,11 @@
 #include <zlib.h>
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "encode.h"
 #include "put_bits.h"
-#include "bytestream.h"
 #include "zlib_wrapper.h"
 
 #define HAS_IFRAME_IMAGE 0x02
@@ -786,7 +786,7 @@ static int optimum_block_height(FlashSV2Context * s)
 static int optimum_use15_7(FlashSV2Context * s)
 {
 #ifndef FLASHSV2_DUMB
-    double ideal = ((double)(s->avctx->bit_rate * s->avctx->time_base.den * s->avctx->ticks_per_frame)) /
+    double ideal = ((double)(s->avctx->bit_rate * s->avctx->time_base.den)) /
         ((double) s->avctx->time_base.num) * s->avctx->frame_num;
     if (ideal + use15_7_threshold < s->total_bits) {
         return 1;
@@ -802,8 +802,7 @@ static int optimum_dist(FlashSV2Context * s)
 {
 #ifndef FLASHSV2_DUMB
     double ideal =
-        s->avctx->bit_rate * s->avctx->time_base.den *
-        s->avctx->ticks_per_frame;
+        s->avctx->bit_rate * s->avctx->time_base.den;
     int dist = pow((s->total_bits / ideal) * color15_7_factor, 3);
     av_log(s->avctx, AV_LOG_DEBUG, "dist: %d\n", dist);
     return dist;
@@ -857,7 +856,7 @@ static int flashsv2_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     int res;
     int keyframe = 0;
 
-    if ((res = ff_alloc_packet(avctx, pkt, s->frame_size + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
+    if ((res = ff_alloc_packet(avctx, pkt, s->frame_size + FF_INPUT_BUFFER_MIN_SIZE)) < 0)
         return res;
 
     /* First frame needs to be a keyframe */
@@ -920,6 +919,6 @@ const FFCodec ff_flashsv2_encoder = {
     .init           = flashsv2_encode_init,
     FF_CODEC_ENCODE_CB(flashsv2_encode_frame),
     .close          = flashsv2_encode_end,
-    .p.pix_fmts     = (const enum AVPixelFormat[]){ AV_PIX_FMT_BGR24, AV_PIX_FMT_NONE },
+    CODEC_PIXFMTS(AV_PIX_FMT_BGR24),
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

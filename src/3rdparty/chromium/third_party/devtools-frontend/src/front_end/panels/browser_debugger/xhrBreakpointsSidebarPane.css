@@ -36,15 +36,11 @@
   padding: 2px 0;
 }
 
-.breakpoint-list .breakpoint-entry:hover {
-  background-color: var(--sys-color-state-hover-on-subtle);
-}
-
 .breakpoint-list .breakpoint-entry:focus-visible {
   background-color: var(--sys-color-tonal-container);
 }
 
-.breakpoint-entry [is="dt-checkbox"] {
+.breakpoint-entry devtools-checkbox {
   max-width: 100%;
 }
 

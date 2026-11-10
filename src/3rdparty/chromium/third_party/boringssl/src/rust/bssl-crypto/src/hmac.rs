@@ -1,17 +1,16 @@
-/* Copyright (c) 2023, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright 2023 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Hash-based message authentication from <https://datatracker.ietf.org/doc/html/rfc2104>.
 //!
@@ -234,6 +233,10 @@ fn hmac<const N: usize, MD: digest::Algorithm>(key: &[u8], data: &[u8]) -> [u8; 
 /// until the Rust language can support the `min_const_generics` feature. Until then we will have to
 /// pass both separately: https://github.com/rust-lang/rust/issues/60551
 struct Hmac<const N: usize, MD: digest::Algorithm> {
+    // Safety: this relies on HMAC_CTX being relocatable via `memcpy`, which is
+    // not generally true of BoringSSL types. This is fine to rely on only
+    // because we do not allow any version skew between bssl-crypto and
+    // BoringSSL. It is *not* safe to copy this code in any other project.
     ctx: bssl_sys::HMAC_CTX,
     _marker: PhantomData<MD>,
 }
@@ -366,6 +369,7 @@ impl<const N: usize, MD: digest::Algorithm> Drop for Hmac<N, MD> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
 
     #[test]
     fn hmac_sha256() {
@@ -401,10 +405,13 @@ mod tests {
         let mut hmac = HmacSha256::new_from_slice(&key);
         hmac.update(&data[..1]);
         let mut hmac2 = hmac.clone();
+        let mut hmac3 = Box::new(hmac2.clone());
         hmac.update(&data[1..]);
         hmac2.update(&data[1..]);
+        hmac3.update(&data[1..]);
         assert_eq!(hmac.digest(), expected);
         assert_eq!(hmac2.digest(), expected);
+        assert_eq!(hmac3.digest(), expected);
     }
 
     #[test]
@@ -458,9 +465,12 @@ mod tests {
         let mut hmac = HmacSha512::new_from_slice(&key);
         hmac.update(&data[..1]);
         let mut hmac2 = hmac.clone();
+        let mut hmac3 = Box::new(hmac.clone());
         hmac.update(&data[1..]);
         hmac2.update(&data[1..]);
+        hmac3.update(&data[1..]);
         assert_eq!(hmac.digest(), expected);
         assert_eq!(hmac2.digest(), expected);
+        assert_eq!(hmac3.digest(), expected);
     }
 }

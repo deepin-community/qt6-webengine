@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vbinary/vop-neon.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_f32_vmin_ukernel__neon_u8(
@@ -20,14 +23,13 @@ void xnn_f32_vmin_ukernel__neon_u8(
     const float* input_a,
     const float* input_b,
     float* output,
-    const union xnn_f32_default_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input_a != NULL);
   assert(input_b != NULL);
   assert(output != NULL);
-
 
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     const float32x4_t va0 = vld1q_f32(input_a); input_a += 4;
@@ -37,7 +39,6 @@ void xnn_f32_vmin_ukernel__neon_u8(
 
     float32x4_t vacc0 = vminq_f32(va0, vb0);
     float32x4_t vacc1 = vminq_f32(va1, vb1);
-
 
 
     vst1q_f32(output, vacc0); output += 4;

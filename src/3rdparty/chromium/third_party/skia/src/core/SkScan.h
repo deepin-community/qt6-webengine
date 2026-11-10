@@ -9,24 +9,20 @@
 #ifndef SkScan_DEFINED
 #define SkScan_DEFINED
 
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/private/base/SkFixed.h"
-#include <atomic>
 
-class SkRasterClip;
-class SkRegion;
 class SkBlitter;
 class SkPath;
+struct SkPathRaw;
+class SkRasterClip;
+class SkRegion;
 
 /** Defines a fixed-point rectangle, identical to the integer SkIRect, but its
     coordinates are treated as SkFixed rather than int32_t.
 */
 typedef SkIRect SkXRect;
-
-extern std::atomic<bool> gSkUseAnalyticAA;
-extern std::atomic<bool> gSkForceAnalyticAA;
-
-class AdditiveBlitter;
 
 class SkScan {
 public:
@@ -38,8 +34,6 @@ public:
      */
     typedef void (*HairRgnProc)(const SkPoint[], int count, const SkRegion*, SkBlitter*);
     typedef void (*HairRCProc)(const SkPoint[], int count, const SkRasterClip&, SkBlitter*);
-
-    static void FillPath(const SkPath&, const SkIRect&, SkBlitter*);
 
     // Paths of a certain size cannot be anti-aliased unless externally tiled (handled by SkDraw).
     // SkBitmapDevice automatically tiles, SkAAClip does not so SkRasterClipStack converts AA clips
@@ -75,6 +69,8 @@ public:
 
     // Needed by SkRegion::setPath
     static void FillPath(const SkPath&, const SkRegion& clip, SkBlitter*);
+    static void FillPathRaw(const SkPathRaw&, const SkRasterClip&, SkBlitter*);
+    static void FillPathRaw(const SkPathRaw&, const SkRegion&, SkBlitter*);
 
 private:
     friend class SkAAClip;
@@ -93,8 +89,6 @@ private:
     static void HairLineRgn(const SkPoint[], int count, const SkRegion*, SkBlitter*);
     static void AntiHairLineRgn(const SkPoint[], int count, const SkRegion*, SkBlitter*);
     static void AAAFillPath(const SkPath& path, SkBlitter* blitter, const SkIRect& pathIR,
-                            const SkIRect& clipBounds, bool forceRLE);
-    static void SAAFillPath(const SkPath& path, SkBlitter* blitter, const SkIRect& pathIR,
                             const SkIRect& clipBounds, bool forceRLE);
 };
 

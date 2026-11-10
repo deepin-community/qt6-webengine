@@ -7,11 +7,8 @@
 static
 hb_face_t* open_font(const char* path)
 {
-  hb_blob_t *blob = hb_blob_create_from_file_or_fail (path);
-  g_assert(blob);
-  hb_face_t* face = hb_face_create(blob, 0);
-  hb_blob_destroy(blob);
-
+  hb_face_t *face = hb_face_create_from_file_or_fail (path, 0);
+  g_assert (face);
   return face;
 }
 
@@ -44,7 +41,7 @@ gboolean check_parsing(hb_face_t* face, const char* spec, hb_tag_t axis, float e
   g_assert_cmpuint(exp_min, ==, act_min);
   g_assert_cmpuint(exp_def, ==, act_def);
   g_assert_cmpuint(exp_max, ==, act_max);
-  
+
   hb_subset_input_destroy(input);
   return true;
 }
@@ -75,6 +72,17 @@ test_parse_instancing_spec (void)
   g_assert(check_parsing(face, "wght=200:,xxxx=50", wght,  200, 1000, 1000));
   g_assert(check_parsing(face, "wght=200:,xxxx=50", xxxx,   50,   50,   50));
 
+  g_assert(check_parsing(face, "wght=200,*=drop", wght,  1000, 1000, 1000));
+  g_assert(check_parsing(face, "wght=200,*=drop", xxxx,  0, 0, 0));
+  g_assert(check_parsing(face, "*=drop,wght=200", wght,  200, 200, 200));
+  g_assert(check_parsing(face, "*=drop,wght=200", xxxx,  0, 0, 0));
+  g_assert(check_parsing(face, "*=drop,wght=200,xxxx=50", wght,  200, 200, 200));
+  g_assert(check_parsing(face, "*=drop,wght=200,xxxx=50", xxxx,  50, 50, 50));
+  g_assert(check_parsing(face, "xxxx=50,*=drop,wght=200", wght,  200, 200, 200));
+  g_assert(check_parsing(face, "xxxx=50,*=drop,wght=200", xxxx,  0, 0, 0));
+  g_assert(check_parsing(face, "*=drop", wght,  1000, 1000, 1000));
+  g_assert(check_parsing(face, "*=drop", xxxx,  0, 0, 0));
+
   g_assert(check_parsing(roboto, "wght=300",         wght, 300,  300,  300));
   g_assert(check_parsing(roboto, "wght=100:200:300", wght, 100,  200,  300));
   g_assert(check_parsing(roboto, "wght=:500:",       wght, 100,  500,  900));
@@ -88,6 +96,7 @@ test_parse_instancing_spec (void)
   g_assert(check_parsing(roboto, "wght=200:",       wght,  200,  400,  900));
 
   hb_face_destroy(face);
+  hb_face_destroy(roboto);
 }
 
 
@@ -95,6 +104,6 @@ int
 main (int argc, char **argv)
 {
   test_parse_instancing_spec();
-  
+
   return 0;
 }

@@ -6,12 +6,11 @@ import * as Common from '../../../core/common/common.js';
 import * as WindowBoundsService from '../../../services/window_bounds/window_bounds.js';
 import * as CodeMirror from '../../../third_party/codemirror.next/codemirror.next.js';
 import * as ThemeSupport from '../../legacy/theme_support/theme_support.js';
-import * as LitHtml from '../../lit-html/lit-html.js';
 import * as CodeHighlighter from '../code_highlighter/code_highlighter.js';
-import * as ComponentHelpers from '../helpers/helpers.js';
 
 import {baseConfiguration, dummyDarkTheme, dynamicSetting, DynamicSetting, themeSelection} from './config.js';
 import {toLineColumn, toOffset} from './position.js';
+import textEditorStyles from './textEditor.css.js';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -20,12 +19,10 @@ declare global {
 }
 
 export class TextEditor extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-text-editor`;
-
   readonly #shadow = this.attachShadow({mode: 'open'});
   #activeEditor: CodeMirror.EditorView|undefined = undefined;
-  #dynamicSettings: readonly DynamicSetting<unknown>[] = DynamicSetting.none;
-  #activeSettingListeners: [Common.Settings.Setting<unknown>, (event: {data: unknown}) => void][] = [];
+  #dynamicSettings: ReadonlyArray<DynamicSetting<unknown>> = DynamicSetting.none;
+  #activeSettingListeners: Array<[Common.Settings.Setting<unknown>, (event: {data: unknown}) => void]> = [];
   #pendingState: CodeMirror.EditorState|undefined;
   #lastScrollSnapshot: CodeMirror.StateEffect<unknown>|undefined;
   #resizeTimeout = -1;
@@ -44,7 +41,8 @@ export class TextEditor extends HTMLElement {
   constructor(pendingState?: CodeMirror.EditorState) {
     super();
     this.#pendingState = pendingState;
-    this.#shadow.adoptedStyleSheets = [CodeHighlighter.Style.default];
+    this.#shadow.createChild('style').textContent = CodeHighlighter.codeHighlighterStyles;
+    this.#shadow.createChild('style').textContent = textEditorStyles;
   }
 
   #createEditor(): CodeMirror.EditorView {
@@ -52,8 +50,9 @@ export class TextEditor extends HTMLElement {
       state: this.state,
       parent: this.#shadow,
       root: this.#shadow,
-      dispatch: (tr: CodeMirror.Transaction, view: CodeMirror.EditorView): void => {
+      dispatch: (tr: CodeMirror.Transaction, view: CodeMirror.EditorView) => {
         view.update([tr]);
+        this.#maybeDispatchInput(tr);
         if (tr.reconfigured) {
           this.#ensureSettingListeners();
         }
@@ -143,7 +142,7 @@ export class TextEditor extends HTMLElement {
 
   #ensureSettingListeners(): void {
     const dynamicSettings = this.#activeEditor ?
-        this.#activeEditor.state.facet<readonly DynamicSetting<unknown>[]>(dynamicSetting) :
+        this.#activeEditor.state.facet<ReadonlyArray<DynamicSetting<unknown>>>(dynamicSetting) :
         DynamicSetting.none;
     if (dynamicSettings === this.#dynamicSettings) {
       return;
@@ -155,7 +154,6 @@ export class TextEditor extends HTMLElement {
     }
     this.#activeSettingListeners = [];
 
-    const settings = Common.Settings.Settings.instance();
     for (const dynamicSetting of dynamicSettings) {
       const handler = ({data}: {data: unknown}): void => {
         const change = dynamicSetting.sync(this.state, data);
@@ -163,7 +161,7 @@ export class TextEditor extends HTMLElement {
           this.#activeEditor.dispatch({effects: change});
         }
       };
-      const setting = settings.moduleSetting(dynamicSetting.settingName);
+      const setting = Common.Settings.Settings.instance().moduleSetting(dynamicSetting.settingName);
       setting.addChangeListener(handler);
       this.#activeSettingListeners.push([setting, handler]);
     }
@@ -178,14 +176,22 @@ export class TextEditor extends HTMLElement {
     window.addEventListener('resize', this.#resizeListener);
   }
 
-  revealPosition(selection: CodeMirror.EditorSelection, highlight: boolean = true): void {
+  #maybeDispatchInput(transaction: CodeMirror.Transaction): void {
+    const userEvent = transaction.annotation(CodeMirror.Transaction.userEvent);
+    const inputType = userEvent ? CODE_MIRROR_USER_EVENT_TO_INPUT_EVENT_TYPE.get(userEvent) : null;
+    if (inputType) {
+      this.dispatchEvent(new InputEvent('input', {inputType}));
+    }
+  }
+
+  revealPosition(selection: CodeMirror.EditorSelection, highlight = true): void {
     const view = this.#activeEditor;
     if (!view) {
       return;
     }
 
     const line = view.state.doc.lineAt(selection.main.head);
-    const effects: CodeMirror.StateEffect<unknown>[] = [];
+    const effects: Array<CodeMirror.StateEffect<unknown>> = [];
     if (highlight) {
       // Lazily register the highlight line state.
       if (!view.state.field(highlightedLineState, false)) {
@@ -238,7 +244,7 @@ export class TextEditor extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-text-editor', TextEditor);
+customElements.define('devtools-text-editor', TextEditor);
 
 // Line highlighting
 
@@ -264,3 +270,18 @@ const highlightedLineState = CodeMirror.StateField.define<CodeMirror.DecorationS
   },
   provide: field => CodeMirror.EditorView.decorations.from(field, value => value),
 });
+
+const CODE_MIRROR_USER_EVENT_TO_INPUT_EVENT_TYPE = new Map([
+  ['input.type', 'insertText'],
+  ['input.type.compose', 'insertCompositionText'],
+  ['input.paste', 'insertFromPaste'],
+  ['input.drop', 'insertFromDrop'],
+  ['input.complete', 'insertReplacementText'],
+  ['delete.selection', 'deleteContent'],
+  ['delete.forward', 'deleteContentForward'],
+  ['delete.backward', 'deleteContentBackward'],
+  ['delete.cut', 'deleteByCut'],
+  ['move.drop', 'deleteByDrag'],
+  ['undo', 'historyUndo'],
+  ['redo', 'historyRedo'],
+]);

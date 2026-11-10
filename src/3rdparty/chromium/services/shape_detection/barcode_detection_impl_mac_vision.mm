@@ -106,7 +106,6 @@ void UpdateSymbologyHint(mojom::BarcodeFormat format,
       return;
     case mojom::BarcodeFormat::UNKNOWN:
       NOTREACHED();
-      return;
   }
 }
 

@@ -4,15 +4,34 @@
 
 export namespace Chrome {
   export namespace DevTools {
-    export interface EventSink<ListenerT extends(...args: any) => void> {
+    export interface EventSink<ListenerT extends(...args: any[]) => void> {
       addListener(listener: ListenerT): void;
+      removeListener(listener: ListenerT): void;
     }
 
     export interface Resource {
       readonly url: string;
+      readonly type: string;
+
+      /**
+       * For WASM resources the content of the `build_id` custom section. For JavaScript resources the
+       * `debugId` magic comment.
+       */
+      readonly buildId?: string;
 
       getContent(callback: (content: string, encoding: string) => unknown): void;
       setContent(content: string, commit: boolean, callback?: (error?: Object) => unknown): void;
+      /**
+       * Augments this resource's scopes information based on the list of {@link NamedFunctionRange}s
+       * for improved debuggability and function naming.
+       *
+       * @throws
+       * If this resource was not produced by a sourcemap or if {@link ranges} are not nested properly.
+       * Concretely: For each range, start position must be less than end position, and
+       * there must be no "straddling" (i.e. partially overlapping ranges).
+       */
+      setFunctionRangesForScript(ranges: NamedFunctionRange[]): Promise<void>;
+      attachSourceMapURL(sourceMapURL: string): Promise<void>;
     }
 
     export interface InspectedWindow {
@@ -30,7 +49,7 @@ export namespace Chrome {
             details: unknown[],
             isError: boolean,
             isException: boolean,
-            value: string
+            value: string,
           }) => unknown): void;
       getResources(callback: (resources: Resource[]) => unknown): void;
       reload(reloadOptions?: {ignoreCache?: boolean, injectedScript?: string, userAgent?: string}): void;
@@ -70,15 +89,19 @@ export namespace Chrome {
     export interface Panels {
       elements: PanelWithSidebar;
       sources: PanelWithSidebar;
+      network: NetworkPanel;
       themeName: string;
 
       create(title: string, iconPath: string, pagePath: string, callback?: (panel: ExtensionPanel) => unknown): void;
       openResource(url: string, lineNumber: number, columnNumber?: number, callback?: () => unknown): void;
 
+      setOpenResourceHandler(
+          callback?: (resource: Resource, lineNumber: number, columnNumber: number) => void, scheme?: string): void;
+
       /**
        * Fired when the theme changes in DevTools.
        *
-       * @param callback The handler callback to register and be invoked on theme changes.
+       * @param callback - The handler callback to register and be invoked on theme changes.
        */
       setThemeChangeHandler(callback?: (themeName: string) => unknown): void;
     }
@@ -94,12 +117,17 @@ export namespace Chrome {
       getHAR(callback: (harLog: object) => unknown): void;
     }
 
+    export interface NetworkPanel {
+      show(options?: {filter: string}): Promise<void>;
+    }
+
     export interface DevToolsAPI {
       network: Network;
       panels: Panels;
       inspectedWindow: InspectedWindow;
       languageServices: LanguageExtensions;
       recorder: RecorderExtensions;
+      performance: Performance;
     }
 
     export interface ExperimentalDevToolsAPI {
@@ -150,10 +178,13 @@ export namespace Chrome {
     export type RecorderExtensionPlugin = RecorderExtensionExportPlugin|RecorderExtensionReplayPlugin;
 
     export interface RecorderExtensionExportPlugin {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       stringify(recording: Record<string, any>): Promise<string>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       stringifyStep(step: Record<string, any>): Promise<string>;
     }
     export interface RecorderExtensionReplayPlugin {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       replay(recording: Record<string, any>): void;
     }
 
@@ -163,6 +194,7 @@ export namespace Chrome {
     export interface RemoteObject {
       type: RemoteObjectType;
       className?: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       value?: any;
       description?: string;
       objectId?: RemoteObjectId;
@@ -171,9 +203,21 @@ export namespace Chrome {
       hasChildren: boolean;
     }
 
+    /**
+     * This refers to a Javascript or a Wasm value of reference type
+     * in the V8 engine. We call it foreign object here to emphasize
+     * the difference with the remote objects managed by a language
+     * extension plugin.
+     */
+    export interface ForeignObject {
+      type: 'reftype';
+      valueClass: 'local'|'global'|'operand';
+      index: number;
+    }
+
     export interface PropertyDescriptor {
       name: string;
-      value: RemoteObject;
+      value: RemoteObject|ForeignObject;
     }
 
     export interface LanguageExtensionPlugin {
@@ -213,8 +257,8 @@ export namespace Chrome {
        * Retrieve function name(s) for the function(s) containing the rawLocation. This returns more than one entry if
        * the location is inside of an inlined function with the innermost function at index 0.
        */
-      getFunctionInfo(rawLocation: RawLocation):
-          Promise<{frames: Array<FunctionInfo>}|{missingSymbolFiles: Array<string>}>;
+      getFunctionInfo(rawLocation: RawLocation): Promise<{frames: FunctionInfo[], missingSymbolFiles: string[]}|
+                                                         {missingSymbolFiles: string[]}|{frames: FunctionInfo[]}>;
 
       /**
        * Find locations in raw modules corresponding to the inline function
@@ -239,7 +283,7 @@ export namespace Chrome {
        * opaque key that should be passed to the APIs accessing wasm state, e.g., getWasmLinearMemory. A stopId is
        * invalidated once the debugger resumes.
        */
-      evaluate(expression: string, context: RawLocation, stopId: unknown): Promise<RemoteObject|null>;
+      evaluate(expression: string, context: RawLocation, stopId: unknown): Promise<RemoteObject|ForeignObject|null>;
 
       /**
        * Retrieve properties of the remote object identified by the object id.
@@ -252,14 +296,14 @@ export namespace Chrome {
       releaseObject(objectId: RemoteObjectId): Promise<void>;
     }
 
-
     export interface SupportedScriptTypes {
       language: string;
+      // eslint-disable-next-line @typescript-eslint/naming-convention
       symbol_types: string[];
     }
 
     export type WasmValue = {type: 'i32'|'f32'|'f64', value: number}|{type: 'i64', value: bigint}|
-        {type: 'v128', value: string};
+        {type: 'v128', value: string}|ForeignObject;
 
     export interface LanguageExtensions {
       registerLanguageExtensionPlugin(
@@ -271,14 +315,32 @@ export namespace Chrome {
       getWasmLocal(local: number, stopId: unknown): Promise<WasmValue>;
       getWasmGlobal(global: number, stopId: unknown): Promise<WasmValue>;
       getWasmOp(op: number, stopId: unknown): Promise<WasmValue>;
+
+      reportResourceLoad(resourceUrl: string, status: {success: boolean, errorMessage?: string, size?: number}):
+          Promise<void>;
     }
 
+    export interface Position {
+      line: number;
+      column: number;
+    }
+
+    export interface NamedFunctionRange {
+      readonly name: string;
+      readonly start: Position;
+      readonly end: Position;
+    }
 
     export interface RecorderExtensions {
       registerRecorderExtensionPlugin(plugin: RecorderExtensionPlugin, pluginName: string, mediaType?: string):
           Promise<void>;
       unregisterRecorderExtensionPlugin(plugin: RecorderExtensionPlugin): Promise<void>;
       createView(title: string, pagePath: string): Promise<RecorderView>;
+    }
+
+    export interface Performance {
+      onProfilingStarted: EventSink<() => unknown>;
+      onProfilingStopped: EventSink<() => unknown>;
     }
 
     export interface Chrome {

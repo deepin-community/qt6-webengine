@@ -35,7 +35,8 @@ bool IsRightMostOffset(const ShapeResult& shape_result, unsigned offset) {
 LineTruncator::LineTruncator(const LineInfo& line_info)
     : line_style_(&line_info.LineStyle()),
       available_width_(line_info.AvailableWidth() - line_info.TextIndent()),
-      line_direction_(line_info.BaseDirection()) {}
+      line_direction_(line_info.BaseDirection()),
+      use_first_line_style_(line_info.UseFirstLineStyle()) {}
 
 const ComputedStyle& LineTruncator::EllipsisStyle() const {
   // The ellipsis is styled according to the line style.
@@ -45,17 +46,17 @@ const ComputedStyle& LineTruncator::EllipsisStyle() const {
 }
 
 void LineTruncator::SetupEllipsis() {
-  const Font& font = EllipsisStyle().GetFont();
-  ellipsis_font_data_ = font.PrimaryFont();
+  const Font* font = EllipsisStyle().GetFont();
+  ellipsis_font_data_ = font->PrimaryFont();
   DCHECK(ellipsis_font_data_);
   ellipsis_text_ =
-      ellipsis_font_data_ && ellipsis_font_data_->GlyphForCharacter(
-                                 kHorizontalEllipsisCharacter)
-          ? String(&kHorizontalEllipsisCharacter, 1u)
+      ellipsis_font_data_ &&
+              ellipsis_font_data_->GlyphForCharacter(uchar::kHorizontalEllipsis)
+          ? String(base::span_from_ref(uchar::kHorizontalEllipsis))
           : String(u"...");
   HarfBuzzShaper shaper(ellipsis_text_);
   ellipsis_shape_result_ =
-      ShapeResultView::Create(shaper.Shape(&font, line_direction_).get());
+      ShapeResultView::Create(shaper.Shape(font, line_direction_));
   ellipsis_width_ = ellipsis_shape_result_->SnappedWidth();
 }
 
@@ -87,7 +88,9 @@ LayoutUnit LineTruncator::PlaceEllipsisNextTo(
   DCHECK(ellipsis_text_);
   DCHECK(ellipsis_shape_result_);
   line_box->AddChild(
-      *ellipsized_layout_object, StyleVariant::kEllipsis,
+      *ellipsized_layout_object,
+      use_first_line_style_ ? StyleVariant::kFirstLineEllipsis
+                            : StyleVariant::kStandardEllipsis,
       ellipsis_shape_result_, ellipsis_text_,
       LogicalRect(ellipsis_inline_offset, -ellipsis_metrics.ascent,
                   ellipsis_width_, ellipsis_metrics.LineHeight()),
@@ -105,7 +108,7 @@ wtf_size_t LineTruncator::AddTruncatedChild(
   LogicalLineItems& line = *line_box;
   const LogicalLineItem& source_item = line[source_index];
   DCHECK(source_item.shape_result);
-  scoped_refptr<ShapeResult> shape_result =
+  const ShapeResult* shape_result =
       source_item.shape_result->CreateShapeResult();
   unsigned text_offset = shape_result->OffsetToFit(position, edge);
   if (IsLtr(edge) ? IsLeftMostOffset(*shape_result, text_offset)
@@ -136,7 +139,7 @@ LayoutUnit LineTruncator::TruncateLine(LayoutUnit line_width,
   // to place the ellipsis. Children maybe truncated or moved as part of the
   // process.
   LogicalLineItem* ellipsized_child = nullptr;
-  absl::optional<LogicalLineItem> truncated_child;
+  std::optional<LogicalLineItem> truncated_child;
   if (IsLtr(line_direction_)) {
     LogicalLineItem* first_child = line_box->FirstInFlowChild();
     for (auto& child : base::Reversed(*line_box)) {
@@ -166,7 +169,7 @@ LayoutUnit LineTruncator::TruncateLine(LayoutUnit line_width,
     // In order to preserve layout information before truncated, hide the
     // original fragment and insert a truncated one.
     unsigned child_index_to_truncate =
-        base::checked_cast<unsigned>(ellipsized_child - line_box->begin());
+        base::checked_cast<unsigned>(ellipsized_child - &*line_box->begin());
     line_box->InsertChild(child_index_to_truncate + 1,
                           std::move(*truncated_child));
     box_states->ChildInserted(child_index_to_truncate + 1);
@@ -175,7 +178,7 @@ LayoutUnit LineTruncator::TruncateLine(LayoutUnit line_width,
 
     HideChild(child_to_truncate);
     DCHECK_LE(ellipsized_child->inline_size, child_to_truncate->inline_size);
-    if (UNLIKELY(IsRtl(line_direction_))) {
+    if (IsRtl(line_direction_)) [[unlikely]] {
       ellipsized_child->rect.offset.inline_offset +=
           child_to_truncate->inline_size - ellipsized_child->inline_size;
     }
@@ -214,7 +217,7 @@ LayoutUnit LineTruncator::TruncateLineInTheMiddle(
         break;
       continue;
     }
-    // Skip pseudo elements like ::before.
+    // Skip pseudo-elements like ::before.
     if (!child.GetNode())
       continue;
 
@@ -438,7 +441,7 @@ bool LineTruncator::EllipsizeChild(
     LayoutUnit ellipsis_width,
     bool is_first_child,
     LogicalLineItem* child,
-    absl::optional<LogicalLineItem>* truncated_child) {
+    std::optional<LogicalLineItem>* truncated_child) {
   DCHECK(truncated_child && !*truncated_child);
 
   // Leave out-of-flow children as is.
@@ -493,7 +496,7 @@ bool LineTruncator::TruncateChild(
     LayoutUnit space_for_child,
     bool is_first_child,
     const LogicalLineItem& child,
-    absl::optional<LogicalLineItem>* truncated_child) {
+    std::optional<LogicalLineItem>* truncated_child) {
   DCHECK(truncated_child && !*truncated_child);
 
   // If the space is not enough, try the next child.
@@ -506,8 +509,7 @@ bool LineTruncator::TruncateChild(
 
   // TODO(layout-dev): Add support for OffsetToFit to ShapeResultView to avoid
   // this copy.
-  scoped_refptr<ShapeResult> shape_result =
-      child.shape_result->CreateShapeResult();
+  const ShapeResult* shape_result = child.shape_result->CreateShapeResult();
   DCHECK(shape_result);
   const TextOffsetRange original_offset = child.text_offset;
   // Compute the offset to truncate.

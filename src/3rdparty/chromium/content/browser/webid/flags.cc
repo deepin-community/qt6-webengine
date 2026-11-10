@@ -4,6 +4,8 @@
 
 #include "flags.h"
 
+#include <optional>
+
 #include "base/command_line.h"
 #include "base/metrics/field_trial_params.h"
 #include "content/common/features.h"
@@ -12,35 +14,17 @@
 
 namespace content {
 
-bool IsFedCmAuthzEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmAuthz);
-}
-
 bool IsFedCmMultipleIdentityProvidersEnabled() {
   return base::FeatureList::IsEnabled(
       features::kFedCmMultipleIdentityProviders);
-}
-
-FedCmIdpSigninStatusMode GetFedCmIdpSigninStatusFlag() {
-  if (base::FeatureList::IsEnabled(features::kFedCmIdpSigninStatusEnabled)) {
-    return FedCmIdpSigninStatusMode::ENABLED;
-  }
-  if (base::FeatureList::IsEnabled(features::kFedCmIdpSigninStatusMetrics)) {
-    return FedCmIdpSigninStatusMode::METRICS_ONLY;
-  }
-  return FedCmIdpSigninStatusMode::DISABLED;
 }
 
 bool IsFedCmMetricsEndpointEnabled() {
   return base::FeatureList::IsEnabled(features::kFedCmMetricsEndpoint);
 }
 
-bool IsFedCmSelectiveDisclosureEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmSelectiveDisclosure);
-}
-
-bool IsFedCmSkipWellKnownForSameSiteEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmSkipWellKnownForSameSite);
+bool IsFedCmDelegationEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmDelegation);
 }
 
 bool IsFedCmIdPRegistrationEnabled() {
@@ -56,37 +40,46 @@ bool IsWebIdentityDigitalCredentialsEnabled() {
   return base::FeatureList::IsEnabled(features::kWebIdentityDigitalCredentials);
 }
 
-bool IsFedCmAutoSelectedFlagEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmAutoSelectedFlag);
-}
-
-bool IsFedCmDomainHintEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmDomainHint);
-}
-
-bool IsFedCmErrorEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmError);
-}
-
-bool IsFedCmDisconnectEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmDisconnect);
-}
-
-bool IsFedCmAddAccountEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmAddAccount);
-}
-
-bool IsFedCmExemptIdpWithThirdPartyCookiesEnabled() {
+bool IsWebIdentityDigitalCredentialsCreationEnabled() {
   return base::FeatureList::IsEnabled(
-      features::kFedCmExemptIdpWithThirdPartyCookies);
+      features::kWebIdentityDigitalCredentialsCreation);
 }
 
-bool IsFedCmButtonModeEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmButtonMode);
+bool IsFedCmSameSiteLaxEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmSameSiteLax);
 }
 
-bool IsFedCmSameSiteLoginStatusEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmSameSiteLoginStatus);
+bool IsFedCmShowFilteredAccountsEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmShowFilteredAccounts);
+}
+
+bool IsFedCmLightweightModeEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmLightweightMode);
+}
+
+bool IsFedCmAlternativeIdentifiersEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmAlternativeIdentifiers);
+}
+
+bool IsFedCmCooldownOnIgnoreEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmCooldownOnIgnore);
+}
+
+bool IsFedCmUseOtherAccountAndLabelsNewSyntaxEnabled() {
+  return base::FeatureList::IsEnabled(
+      features::kFedCmUseOtherAccountAndLabelsNewSyntax);
+}
+
+bool IsFedCmAutofillEnabled() {
+  // FedCmAutofill is a new flag extracted from FedCmDelegation. To avoid
+  // breaking existing developer testing, we consider the new flag being enabled
+  // if the old one is enabled.
+  return base::FeatureList::IsEnabled(features::kFedCmAutofill) ||
+         IsFedCmDelegationEnabled();
+}
+
+bool IsFedCmIframeOriginEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmIframeOrigin);
 }
 
 }  // namespace content

@@ -4,18 +4,23 @@
 
 #include "media/formats/hls/playlist.h"
 
+#include <variant>
+
 #include "media/formats/hls/items.h"
 #include "media/formats/hls/playlist_common.h"
+#include "media/formats/hls/quirks.h"
 #include "media/formats/hls/tags.h"
 #include "media/formats/hls/types.h"
 #include "url/gurl.h"
 
 namespace media::hls {
 
-Playlist::Playlist(GURL uri,
+Playlist::Playlist(url::Origin origin,
+                   GURL uri,
                    types::DecimalInteger version,
                    bool independent_segments)
-    : uri_(std::move(uri)),
+    : security_origin_(std::move(origin)),
+      uri_(std::move(uri)),
       version_(version),
       independent_segments_(independent_segments) {}
 
@@ -23,9 +28,9 @@ Playlist::~Playlist() = default;
 
 // static
 ParseStatus::Or<Playlist::Identification> Playlist::IdentifyPlaylist(
-    base::StringPiece source) {
-  absl::optional<Kind> playlist_kind;
-  absl::optional<XVersionTag> version_tag;
+    std::string_view source) {
+  std::optional<Kind> playlist_kind;
+  std::optional<XVersionTag> version_tag;
 
   // Iterate through playlist lines until we can identify the version and the
   // playlist kind.
@@ -44,7 +49,7 @@ ParseStatus::Or<Playlist::Identification> Playlist::IdentifyPlaylist(
     }
 
     auto item = std::move(item_result).value();
-    if (auto* tag = absl::get_if<TagItem>(&item)) {
+    if (auto* tag = std::get_if<TagItem>(&item)) {
       // We can't make any assumptions on unknown tags
       if (!tag->GetName().has_value()) {
         continue;
@@ -80,7 +85,10 @@ ParseStatus::Or<Playlist::Identification> Playlist::IdentifyPlaylist(
           break;
         case TagKind::kMediaPlaylistTag:
           if (playlist_kind == Kind::kMultivariantPlaylist) {
-            return ParseStatusCode::kMultivariantPlaylistHasMediaPlaylistTag;
+            if (!HLSQuirks::AllowMediaTagsInMultivariantPlaylists()) {
+              return ParseStatusCode::kMultivariantPlaylistHasMediaPlaylistTag;
+            }
+            break;
           }
           playlist_kind = Kind::kMediaPlaylist;
           break;

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import type * as Platform from '../platform/platform.js';
+
 export abstract class Linkifier {
   abstract linkify(object: Object, options?: Options): Node;
 
@@ -20,6 +22,9 @@ export abstract class Linkifier {
 export interface Options {
   tooltip?: string;
   preventKeyboardFocus?: boolean;
+  textContent?: string;
+  // Dynamic links include hyperlinks and anchorlinks -- links that navigate the content.
+  isDynamicLink?: boolean;
 }
 
 const registeredLinkifiers: LinkifierRegistration[] = [];
@@ -43,7 +48,8 @@ export function getApplicableRegisteredlinkifiers(object: Object): LinkifierRegi
     return false;
   }
 }
+
 export interface LinkifierRegistration {
   loadLinkifier: () => Promise<Linkifier>;
-  contextTypes?: (() => Array<Function>);
+  contextTypes?: () => Array<Platform.Constructor.Constructor<unknown>>;
 }

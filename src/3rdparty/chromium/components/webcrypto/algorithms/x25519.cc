@@ -6,12 +6,14 @@
 
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "components/webcrypto/algorithms/asymmetric_key_util.h"
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/blink_key_handle.h"
 #include "components/webcrypto/generate_key_result.h"
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
+#include "crypto/evp.h"
 #include "crypto/openssl_util.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
 #include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
@@ -123,9 +125,9 @@ Status X25519Implementation::GenerateKey(
   }
 
   blink::WebCryptoKey private_key;
-  status = CreateWebCryptoX25519PrivateKey(base::make_span(privkey),
-                                           key_algorithm, extractable,
-                                           private_usages, &private_key);
+  status = CreateWebCryptoX25519PrivateKey(base::span(privkey), key_algorithm,
+                                           extractable, private_usages,
+                                           &private_key);
   if (status.IsError()) {
     return status;
   }
@@ -175,7 +177,7 @@ Status X25519Implementation::ExportKey(blink::WebCryptoKeyFormat format,
 Status X25519Implementation::DeriveBits(
     const blink::WebCryptoAlgorithm& algorithm,
     const blink::WebCryptoKey& base_key,
-    absl::optional<unsigned int> length_bits,
+    std::optional<unsigned int> length_bits,
     std::vector<uint8_t>* derived_bytes) const {
   DCHECK(derived_bytes);
 
@@ -210,8 +212,8 @@ Status X25519Implementation::DeriveBits(
   }
   DCHECK_EQ(derived_bytes->size(), derived_len);
 
-  // TODO(crbug.com/1402835): There are WPT tests to ensure small-order keys are
-  // rejected when they are used for the derive operation. However, the spec
+  // TODO(crbug.com/40251305): There are WPT tests to ensure small-order keys
+  // are rejected when they are used for the derive operation. However, the spec
   // editors are discussing the possibility of performing the checks during the
   // key import operation instead.
 
@@ -391,7 +393,7 @@ Status X25519Implementation::ImportKeyJwk(
     return Status::OperationError();
   }
   DCHECK_EQ(len, 32u);
-  if (memcmp(raw_public_key.data(), raw_key, 32) != 0) {
+  if (UNSAFE_TODO(memcmp(raw_public_key.data(), raw_key, 32)) != 0) {
     return Status::DataError();
   }
 
@@ -424,7 +426,8 @@ Status X25519Implementation::ExportKeyPkcs8(
     return Status::ErrorUnexpectedKeyType();
   }
 
-  return ExportPKeyPkcs8(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PrivateKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status X25519Implementation::ExportKeySpki(const blink::WebCryptoKey& key,
@@ -433,7 +436,8 @@ Status X25519Implementation::ExportKeySpki(const blink::WebCryptoKey& key,
     return Status::ErrorUnexpectedKeyType();
   }
 
-  return ExportPKeySpki(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PublicKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status X25519Implementation::ExportKeyJwk(const blink::WebCryptoKey& key,

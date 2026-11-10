@@ -7,7 +7,9 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
+#include "media/capture/video/video_capture_device_client.h"
 #include "services/video_capture/push_video_stream_subscription_impl.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 
 namespace video_capture {
 
@@ -18,8 +20,7 @@ VideoSourceImpl::VideoSourceImpl(
     : device_factory_(device_factory),
       device_id_(device_id),
       on_last_binding_closed_cb_(std::move(on_last_binding_closed_cb)),
-      device_status_(DeviceStatus::kNotStarted),
-      restart_device_once_when_stop_complete_(false) {
+      device_status_(DeviceStatus::kNotStarted) {
   // Unretained(this) is safe because |this| owns |receivers_|.
   receivers_.set_disconnect_handler(base::BindRepeating(
       &VideoSourceImpl::OnClientDisconnected, base::Unretained(this)));
@@ -86,10 +87,17 @@ void VideoSourceImpl::CreatePushSubscription(
   }
 }
 
-void VideoSourceImpl::RegisterVideoEffectsManager(
-    mojo::PendingRemote<mojom::VideoEffectsManager> remote) {
-  pending_video_effects_manager_ = std::move(remote);
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+void VideoSourceImpl::RegisterVideoEffectsProcessor(
+    mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor> remote) {
+  pending_video_effects_processor_ = std::move(remote);
 }
+
+void VideoSourceImpl::RegisterReadonlyVideoEffectsManager(
+    mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager> remote) {
+  pending_readonly_video_effects_manager_ = std::move(remote);
+}
+#endif
 
 void VideoSourceImpl::OnClientDisconnected() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -144,9 +152,15 @@ void VideoSourceImpl::OnCreateDeviceResponse(
       scoped_trace->AddStep("StartDevice");
 
     // Device was created successfully.
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+    auto context = media::VideoEffectsContext(
+        std::move(pending_video_effects_processor_),
+        std::move(pending_readonly_video_effects_manager_));
+#else
+    auto context = media::VideoEffectsContext();
+#endif
     info.device->StartInProcess(device_start_settings_,
-                                broadcaster_.GetWeakPtr(),
-                                std::move(pending_video_effects_manager_));
+                                broadcaster_.GetWeakPtr(), std::move(context));
     UmaHistogramTimes("Media.VideoCapture.StartSourceSuccessLatency",
                       base::TimeTicks::Now() - device_startup_start_time_);
     device_status_ = DeviceStatus::kStarted;
@@ -216,8 +230,8 @@ void VideoSourceImpl::StopDeviceAsynchronously() {
 
   // Stop the device by closing the connection to it. Stopping is complete when
   // OnStopDeviceComplete() gets invoked.
-  device_factory_->StopDevice(device_id_);
   device_status_ = DeviceStatus::kStoppingAsynchronously;
+  device_factory_->StopDevice(device_id_);
 }
 
 void VideoSourceImpl::OnStopDeviceComplete() {

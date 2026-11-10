@@ -6,7 +6,7 @@
 // form structures that were recorded as JSON files. These tests currently don't
 // produce 100% fidelity compared to real browsing. E.g. we don't support
 // invisible fields, yet. Still, they are helpful for tuning heuristics and
-// retionalization against a corpus of observed forms.
+// rationalization against a corpus of observed forms.
 //
 // Test files are located components/test/data/autofill/heuristics-json/
 // and describe the status quo. Not necessarily the correct, expected behavior.
@@ -92,7 +92,7 @@
 //      "high_level_stats": {
 //        // Which fraction of fields had the heuristic type match the tester
 //        // type.
-//        "fraction_machtes": 0.7258244384259996,
+//        "fraction_matches": 0.7258244384259996,
 //        // Number of fields for which the heuristic type matched the tester
 //        // type or did not match.
 //        "matches": 9112,
@@ -101,7 +101,7 @@
 //      // Same staistics as above, drilled down by tester type.
 //      "per_type_stats": {
 //         "{tester_type}": {
-//            "fraction_machtes": 0.9132743362831859,
+//            "fraction_matches": 0.9132743362831859,
 //            "matches": 1032,
 //            "mismatches": 98
 //         },
@@ -114,9 +114,11 @@
 //  }
 
 #include <iomanip>
+#include <ranges>
 #include <sstream>
 #include <string_view>
 
+#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
@@ -129,20 +131,31 @@
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
+#include "base/test/test_timeouts.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/browser/logging/log_router.h"
+#include "components/autofill/core/browser/ml_model/field_classification_model_handler.h"
 #include "components/autofill/core/common/autocomplete_parsing_util.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
+#include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/language_code.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/machine_learning_tflite_buildflags.h"
+#include "components/optimization_guide/proto/models.pb.h"
 #include "components/variations/variations_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -157,6 +170,29 @@ using ::testing::AssertionSuccess;
 
 namespace autofill {
 namespace {
+
+bool EnableMLClassification() {
+  static bool enable_ml_classification =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "enable-ml-classification");
+  return enable_ml_classification;
+}
+
+bool TesterAndHeuristicTypeMatch(std::string_view tester_type,
+                                 std::string_view heuristic_type) {
+  // Testers don't distinguish between standalone CVC fields and other CVC
+  // fields.
+  if (tester_type == "CREDIT_CARD_VERIFICATION_CODE" &&
+      heuristic_type == "CREDIT_CARD_STANDALONE_VERIFICATION_CODE") {
+    return true;
+  }
+  return tester_type == heuristic_type;
+}
+
+// Returns a/b or -1 in case b is 0.
+double SafeFraction(double a, double b) {
+  return b != 0 ? a / b : -1.0;
+}
 
 // Helper class that aggregates metrics and diagnostic data about field
 // classifications that matched or mismatched the expecations.
@@ -212,28 +248,29 @@ void ResultAnalyzer::AnalyzeClassification(const FormStructure& form_structure,
     }
 
     // Determine the type assigned to the field by the heuristic classification.
-    std::string heuristic_type =
-        FieldTypeToString(form_structure.field(i)->Type().GetStorableType());
+    for (FieldType field_type : form_structure.field(i)->Type().GetTypes()) {
+      std::string heuristic_type = FieldTypeToString(field_type);
 
-    // Record metrics on the divergence between tester and heuristics.
-    if (fields_in_scope_.contains(tester_type)) {
-      if (tester_type == heuristic_type) {
-        ++matches_;
-        ++match_by_type_count_[tester_type];
-        json_fields[i].GetDict().Set("last_correctness", "correct");
+      // Record metrics on the divergence between tester and heuristics.
+      if (fields_in_scope_.contains(tester_type)) {
+        if (TesterAndHeuristicTypeMatch(tester_type, heuristic_type)) {
+          ++matches_;
+          ++match_by_type_count_[tester_type];
+          json_fields[i].GetDict().Set("last_correctness", "correct");
+        } else {
+          ++mismatches_;
+          ++mismatch_by_type_count_[tester_type];
+          json_fields[i].GetDict().Set(
+              "last_correctness", "not_recognized: " + tester_type +
+                                      ", chosen_instead: " + heuristic_type);
+        }
       } else {
-        ++mismatches_;
-        ++mismatch_by_type_count_[tester_type];
+        ++ignored_by_type_count_[tester_type];
         json_fields[i].GetDict().Set("last_correctness",
-                                     "not_recognized: " + tester_type +
-                                         ", chosen_instead: " + heuristic_type);
+                                     "ignored: " + tester_type);
       }
-    } else {
-      ++ignored_by_type_count_[tester_type];
-      json_fields[i].GetDict().Set("last_correctness",
-                                   "ignored: " + tester_type);
+      json_fields[i].GetDict().Set("last_classification", heuristic_type);
     }
-    json_fields[i].GetDict().Set("last_classification", heuristic_type);
   }
 }
 
@@ -246,8 +283,8 @@ base::Value ResultAnalyzer::GetResult() {
   base::Value::Dict high_level_stats;
   high_level_stats.Set("matches", matches_);
   high_level_stats.Set("mismatches", mismatches_);
-  high_level_stats.Set("fraction_machtes",
-                       matches_ / (double)(matches_ + mismatches_));
+  high_level_stats.Set("fraction_matches",
+                       SafeFraction(matches_, matches_ + mismatches_));
   result.Set("high_level_stats", std::move(high_level_stats));
 
   // Per type stats.
@@ -260,8 +297,8 @@ base::Value ResultAnalyzer::GetResult() {
       base::Value::Dict tester_type_stats;
       tester_type_stats.Set("matches", matches);
       tester_type_stats.Set("mismatches", mismatches);
-      tester_type_stats.Set("fraction_machtes",
-                            matches / (double)(matches + mismatches));
+      tester_type_stats.Set("fraction_matches",
+                            SafeFraction(matches, matches + mismatches));
       per_type_stats.Set(type, std::move(tester_type_stats));
     }
   }
@@ -280,7 +317,7 @@ base::Value ResultAnalyzer::GetResult() {
 // Returns the path containing test input files,
 // components/test/data/autofill/heuristics-json/.
 const base::FilePath& GetInputDir() {
-  static base::NoDestructor<base::FilePath> dir([]() {
+  static base::NoDestructor<base::FilePath> dir([] {
     base::FilePath dir;
     base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &dir);
     return dir.AppendASCII("components")
@@ -319,54 +356,65 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
   FormFieldData field;
 
   if (const std::string* id = field_dict.FindString("id_attr")) {
-    field.id_attribute = base::UTF8ToUTF16(*id);
+    field.set_id_attribute(base::UTF8ToUTF16(*id));
   }
   if (const std::string* name = field_dict.FindString("name_attr")) {
-    field.name_attribute = base::UTF8ToUTF16(*name);
+    field.set_name_attribute(base::UTF8ToUTF16(*name));
   }
   // `FormFieldData::name` is used for form signature calculation and a fallback
   // from a field's name to the field's id.
-  field.name = base::TrimWhitespace(field.name_attribute, base::TRIM_ALL);
-  if (field.name.empty()) {
-    field.name = base::TrimWhitespace(field.id_attribute, base::TRIM_ALL);
+  field.set_name(std::u16string(
+      base::TrimWhitespace(field.name_attribute(), base::TRIM_ALL)));
+  if (field.name().empty()) {
+    field.set_name(std::u16string(
+        base::TrimWhitespace(field.id_attribute(), base::TRIM_ALL)));
   }
 
   if (const std::string* label = field_dict.FindString("label_attr")) {
-    field.label = base::UTF8ToUTF16(*label);
+    field.set_label(base::UTF8ToUTF16(*label));
+    // Unfortunately, the data doesn't include the label source.
+    field.set_label_source(FormFieldData::LabelSource::kForId);
   }
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
   if (const std::string* json_type = field_dict.FindString("type_attr")) {
     std::string type = *json_type == "select" ? "select-one" : *json_type;
-    field.form_control_type = autofill::StringToFormControlTypeDiscouraged(
-        type, /*fallback=*/autofill::FormControlType::kInputText);
+    field.set_form_control_type(
+        StringToFormControlTypeDiscouraged(type).value_or(
+            FormControlType::kInputText));
   }
   if (const std::string* autocomplete =
           field_dict.FindString("autocomplete_attr")) {
-    field.autocomplete_attribute = *autocomplete;
-    field.parsed_autocomplete = ParseAutocompleteAttribute(*autocomplete);
+    field.set_autocomplete_attribute(*autocomplete);
+    field.set_parsed_autocomplete(ParseAutocompleteAttribute(*autocomplete));
   }
   if (const std::string* placeholder =
           field_dict.FindString("placeholder_attr")) {
-    field.placeholder = base::UTF8ToUTF16(*placeholder);
+    field.set_placeholder(base::UTF8ToUTF16(*placeholder));
   }
   if (const std::string* maxlength = field_dict.FindString("maxlength_attr")) {
-    base::StringToUint64(*maxlength, &field.max_length);
+    uint64_t max_length = 0;
+    base::StringToUint64(*maxlength, &max_length);
+    field.set_max_length(max_length);
   }
-  field.is_focusable = true;
-  field.role = FormFieldData::RoleAttribute::kOther;
-  field.origin = form_data.main_frame_origin;
-  field.host_frame = form_data.host_frame;
-  field.host_form_id = form_data.unique_renderer_id;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  if (const base::Value::List* options =
+  field.set_is_focusable(true);
+  field.set_role(FormFieldData::RoleAttribute::kOther);
+  field.set_origin(form_data.main_frame_origin());
+  field.set_host_frame(form_data.host_frame());
+  field.set_host_form_id(form_data.renderer_id());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  std::vector<SelectOption> options;
+  if (const base::Value::List* select_options =
           field_dict.FindList("select_options")) {
-    for (const base::Value& option : *options) {
+    for (const base::Value& option : *select_options) {
       const base::Value::Dict& option_dict = option.GetDict();
-      field.options.push_back(SelectOption{
-          .value = base::UTF8ToUTF16(*option_dict.FindString("value")),
-          .content = base::UTF8ToUTF16(*option_dict.FindString("label"))});
+      const std::string* value = option_dict.FindString("value");
+      const std::string* label = option_dict.FindString("label");
+      options.push_back(
+          SelectOption{.value = value ? base::UTF8ToUTF16(*value) : u"",
+                       .text = label ? base::UTF8ToUTF16(*label) : u""});
     }
   }
+  field.set_options(std::move(options));
   return field;
 }
 
@@ -374,10 +422,10 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
     const base::Value::Dict& form_dict,
     const std::string& site_url,
     FormData& form_data) {
-  form_data.url = GURL(site_url);
-  form_data.main_frame_origin = url::Origin::Create(form_data.url);
-  form_data.host_frame = test::MakeLocalFrameToken();
-  form_data.unique_renderer_id = test::MakeFormRendererId();
+  form_data.set_url(GURL(site_url));
+  form_data.set_main_frame_origin(url::Origin::Create(form_data.url()));
+  form_data.set_host_frame(test::MakeLocalFrameToken());
+  form_data.set_renderer_id(test::MakeFormRendererId());
 
   const base::Value::List* fields = form_dict.FindList("fields");
   if (!fields) {
@@ -388,7 +436,7 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
     if (!field_json.is_dict()) {
       return AssertionFailure() << "A field is no dict in " << site_url;
     }
-    form_data.fields.push_back(
+    test_api(form_data).Append(
         ParseFieldFromJsonDict(field_json.GetDict(), form_data));
   }
 
@@ -404,10 +452,13 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
 // is a mutable parameter.
 // `site` corresponds to an entry of `.sites[]` in the JSON input file in jq
 // syntax (https://jqlang.github.io/jq/)
+// If `ml_predictions_handler` is null, heuristics with regular expressions
+// are used for parsing. If it's non-null, the ML model is applied.
 [[nodiscard]] AssertionResult ClassifyFieldsOfSite(
     base::Value::Dict& site,
     const GeoIpCountryCode& client_country,
     LanguageCode page_language,
+    FieldClassificationModelHandler* ml_predictions_handler,
     ResultAnalyzer& result_analyzer,
     LogManager* log_manager) {
   const std::string* site_url = site.FindString("site_url");
@@ -428,11 +479,26 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
         !result) {
       return result;
     }
-    FormStructure form_structure(form_data);
-    form_structure.set_current_page_language(page_language);
-    form_structure.DetermineHeuristicTypes(client_country, nullptr,
-                                           log_manager);
-    result_analyzer.AnalyzeClassification(form_structure, form.GetDict());
+    auto form_structure = std::make_unique<FormStructure>(form_data);
+    form_structure->set_current_page_language(page_language);
+    if (ml_predictions_handler) {
+      base::RunLoop run_loop;
+      ml_predictions_handler->GetModelPredictionsForForm(
+          std::move(form_structure),
+          base::BindLambdaForTesting(
+              [&form_structure,
+               &run_loop](std::unique_ptr<FormStructure> result_form) {
+                form_structure = std::move(result_form);
+                run_loop.Quit();
+              }));
+      run_loop.Run();
+    }
+    // Similarly to AutofillManager::ParseFormsAsync, the heuristics are
+    // executed after the ML model. If ML predictions are enabled, this does
+    // not override the heuristic types but performs rationalization.
+    form_structure->DetermineHeuristicTypes(client_country, log_manager);
+
+    result_analyzer.AnalyzeClassification(*form_structure, form.GetDict());
   }
   return AssertionSuccess();
 }
@@ -453,7 +519,7 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
     std::ostringstream result;
     result << caption << ": Fraction matches " << std::fixed
            << std::setprecision(2)
-           << (*dict.FindDouble("fraction_machtes") * 100.0) << "%, "
+           << (*dict.FindDouble("fraction_matches") * 100.0) << "%, "
            << "Matches: " << *dict.FindInt("matches") << ", "
            << "Mismatches: " << *dict.FindInt("mismatches") << std::endl;
     return result.str();
@@ -480,9 +546,16 @@ class HeuristicClassificationTests
   void SetUp() override;
 
  protected:
+  base::test::TaskEnvironment task_environment_;
   test::AutofillUnitTestEnvironment autofill_test_environment_;
   LogRouter log_router_;
   std::unique_ptr<LogManager> log_manager_;
+
+  // Infrastructure for ML classifications.
+  optimization_guide::TestOptimizationGuideModelProvider model_provider_;
+  FieldClassificationModelHandler ml_predictions_handler_{
+      &model_provider_, optimization_guide::proto::OptimizationTarget::
+                            OPTIMIZATION_TARGET_AUTOFILL_FIELD_CLASSIFICATION};
 };
 
 void HeuristicClassificationTests::SetUp() {
@@ -490,11 +563,51 @@ void HeuristicClassificationTests::SetUp() {
     log_router_.LogToTerminal();
   }
   log_manager_ = LogManager::Create(&log_router_, base::NullCallback());
+
+  // Set up ML model.
+  if (EnableMLClassification()) {
+    base::FilePath model_path =
+        GetInputDir().AppendASCII("internal").AppendASCII("mlmodel");
+    ASSERT_TRUE(base::PathExists(model_path));
+    std::string proto_content;
+    ASSERT_TRUE(base::ReadFileToString(model_path.AppendASCII("model-info.pb"),
+                                       &proto_content));
+    optimization_guide::proto::ModelInfo model_metadata;
+    ASSERT_TRUE(model_metadata.ParseFromString(proto_content));
+
+    std::unique_ptr<optimization_guide::ModelInfo> model_info =
+        optimization_guide::TestModelInfoBuilder()
+            .SetModelMetadata(/*any_metadata*/ model_metadata.model_metadata())
+            .SetModelFilePath(model_path.AppendASCII("model.tflite"))
+            .Build();
+
+    ml_predictions_handler_.OnModelUpdated(
+        optimization_guide::proto::
+            OPTIMIZATION_TARGET_AUTOFILL_FIELD_CLASSIFICATION,
+        *model_info);
+  }
 }
 
 TEST_P(HeuristicClassificationTests, EndToEnd) {
   base::FilePath input_file = GetParam();
   SCOPED_TRACE(::testing::Message() << input_file);
+
+  if (input_file.DirName().BaseName().MaybeAsASCII() == "internal") {
+    if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+            "run-internal-tests")) {
+      GTEST_SKIP()
+          << "You have internal tests in your checkout but they are skipped by "
+             "default because they are expensive to execute. Start the "
+             "components_unittests with "
+             "--run-internal-tests --test-launcher-timeout 100000 "
+             "to execute these tests.";
+    }
+    ASSERT_TRUE(BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS))
+        << "Internal tests are only supported with internal parsing patterns";
+    ASSERT_GE(TestTimeouts::test_launcher_timeout().InSeconds(), 100)
+        << "This is a long-running test; you must specify "
+           "--test-launcher-timeout to have a value of at least 100000.";
+  }
 
   // Read input file.
   std::string input_json_text;
@@ -521,26 +634,23 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
 
   std::vector<base::test::FeatureRef> enabled_features = {
       // Support for new field types.
-      features::kAutofillEnableSupportForBetweenStreets,
-      features::kAutofillEnableSupportForAdminLevel2,
-      features::kAutofillEnableSupportForAddressOverflow,
-      features::kAutofillEnableSupportForAddressOverflowAndLandmark,
-      features::kAutofillEnableSupportForLandmark,
-      features::kAutofillEnableSupportForApartmentNumbers,
-      features::kAutofillEnableDependentLocalityParsing,
+      features::kAutofillUseINAddressModel,
+      features::kAutofillSupportPhoneticNameForJP,
       features::kAutofillEnableExpirationDateImprovements,
-      features::kAutofillEnableSupportForBetweenStreetsOrLandmark,
-      features::kAutofillEnableParsingOfStreetLocation,
-      features::kAutofillEnableRationalizationEngineForMX,
-      // Allow local heuristics to take precedence.
-      features::kAutofillStreetNameOrHouseNumberPrecedenceOverAutocomplete,
-      features::kAutofillLocalHeuristicsOverrides,
+      features::kAutofillSupportLastNamePrefix,
+      features::kAutofillEnableLoyaltyCardsFilling,
+      features::kAutofillEnableEmailOrLoyaltyCardsFilling,
       // Other improvements.
-      features::kAutofillEnableZipOnlyAddressForms,
-      features::kAutofillDefaultToCityAndNumber,
-      features::kAutofillPreferLabelsInSomeCountries,
-      features::kAutofillEnableCacheForRegexMatching};
-  std::vector<base::test::FeatureRef> disabled_features = {};
+      features::kAutofillEnableCacheForRegexMatching,
+      features::kAutofillEnableSupportForParsingWithSharedLabels,
+      features::kAutofillImproveCityFieldClassification,
+      features::kAutofillUseNegativePatternForAllAttributes,
+  };
+  std::vector<base::test::FeatureRef> disabled_features = {
+      // TODO(crbug.com/320965828): Understand the changes to the expectations
+      // caused by this feature.
+      features::kAutofillBetterLocalHeuristicPlaceholderSupport,
+  };
 
   auto init_feature_to_value = [&](base::test::FeatureRef feature, bool value) {
     if (value) {
@@ -550,14 +660,26 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
     }
   };
 
-  std::vector<std::string> structured_fields_disable_address_lines = {"BR",
-                                                                      "MX"};
+  std::vector<std::string> structured_fields_disable_address_lines = {
+      "BR", "MX", "IN"};
   init_feature_to_value(
       features::kAutofillStructuredFieldsDisableAddressLines,
       base::Contains(structured_fields_disable_address_lines, *country));
 
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitWithFeatures(enabled_features, disabled_features);
+
+  base::test::ScopedFeatureList ml_scoped_feature_list;
+  if (EnableMLClassification()) {
+    ASSERT_TRUE(BUILDFLAG(BUILD_WITH_TFLITE_LIB));
+    ASSERT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
+        "optimization-guide-model-override"))
+        << "No model specified.";
+    base::FieldTrialParams params;
+    params.emplace(features::kAutofillModelPredictionsAreActive.name, "true");
+    ml_scoped_feature_list.InitAndEnableFeatureWithParameters(
+        features::kAutofillModelPredictions, params);
+  }
 
   // Configure page language.
   const std::string* language = config->FindString("language");
@@ -580,9 +702,10 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
   ResultAnalyzer result_analyzer(std::move(fields_in_scope));
   for (base::Value& site : *sites) {
     ASSERT_TRUE(site.is_dict());
-    ASSERT_TRUE(ClassifyFieldsOfSite(site.GetDict(), GeoIpCountryCode(*country),
-                                     page_language, result_analyzer,
-                                     log_manager_.get()));
+    ASSERT_TRUE(ClassifyFieldsOfSite(
+        site.GetDict(), GeoIpCountryCode(*country), page_language,
+        EnableMLClassification() ? &ml_predictions_handler_ : nullptr,
+        result_analyzer, log_manager_.get()));
   }
 
   // Update statistics
@@ -598,27 +721,55 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
   // Replace \r\n on windows with \n to get a canonical representation.
   base::RemoveChars(*output_json_text, "\r", &(*output_json_text));
 
-  // Write output if and only if it is different.
+  base::FilePath output_file =
+      GetParam().AddExtension(FILE_PATH_LITERAL(".new"));
   if (input_json_text != output_json_text) {
-    base::FilePath output_file =
-        GetParam().AddExtension(FILE_PATH_LITERAL(".new"));
+    // Write output if and only if it is different.
     LOG(ERROR) << "Classifications changed. Writing new file " << output_file;
     EXPECT_TRUE(base::WriteFile(output_file, *output_json_text));
+  } else {
+    // If output is as expected, delete stale .new files.
+    if (base::PathExists(output_file)) {
+      base::DeleteFile(output_file);
+    }
   }
 
   EXPECT_EQ(old_stats, new_stats);
 
   // Too large inputs crash the test.
   if (input_json_text.size() < 20000) {
-    EXPECT_EQ(input_json_text, output_json_text);
+    EXPECT_EQ(input_json_text, *output_json_text);
   } else {
-    EXPECT_TRUE(input_json_text == output_json_text);
+    EXPECT_EQ(input_json_text.length(), output_json_text->length());
+    auto mismatch = std::ranges::mismatch(input_json_text, *output_json_text);
+    if (mismatch.in1 != input_json_text.end()) {
+      int offset = mismatch.in1 - input_json_text.begin();
+      offset = std::max(offset - 128, 0);
+      EXPECT_TRUE(input_json_text == *output_json_text)
+          << "input_json_text, output_json_text differ but are too large to be "
+             "printed\ninput_json_text and output_json_text are:\n"
+          << "..." << input_json_text.substr(offset, 256) << "...\n"
+          << "..." << output_json_text->substr(offset, 256) << "...";
+    }
   }
+}
+
+// Maps a test file name to a short string that is used in the test name.
+// E.g. a file "internal/DE.json" becomes "DE" such that the test is called
+// AllForms/HeuristicClassificationTests.EndToEnd/DE.
+std::string GenerateTestName(
+    const testing::TestParamInfo<base::FilePath>& info) {
+  std::string name = info.param.BaseName()
+                         .ReplaceExtension(FILE_PATH_LITERAL(""))
+                         .MaybeAsASCII();
+  std::ranges::replace_if(name, [](char c) { return !std::isalnum(c); }, '_');
+  return name;
 }
 
 INSTANTIATE_TEST_SUITE_P(AllForms,
                          HeuristicClassificationTests,
-                         testing::ValuesIn(GetTestFiles()));
+                         testing::ValuesIn(GetTestFiles()),
+                         GenerateTestName);
 
 }  // namespace
 }  // namespace autofill

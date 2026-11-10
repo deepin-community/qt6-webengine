@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_
 
 #include <cstdint>
 
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/tagging.h"
 
 namespace partition_alloc {
@@ -31,7 +36,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) AllocationNotificationData {
 
   // In the allocation observer path, it's interesting which reporting mode is
   // enabled.
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   AllocationNotificationData& SetMteReportingMode(
       TagViolationReportingMode mode) {
     mte_reporting_mode_ = mode;
@@ -45,13 +50,13 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) AllocationNotificationData {
   constexpr TagViolationReportingMode mte_reporting_mode() const {
     return TagViolationReportingMode::kUndefined;
   }
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
 
  private:
   void* address_ = nullptr;
   size_t size_ = 0;
   const char* type_name_ = nullptr;
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   TagViolationReportingMode mte_reporting_mode_ =
       TagViolationReportingMode::kUndefined;
 #endif
@@ -66,7 +71,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) FreeNotificationData {
 
   // In the free observer path, it's interesting which reporting mode is
   // enabled.
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   FreeNotificationData& SetMteReportingMode(TagViolationReportingMode mode) {
     mte_reporting_mode_ = mode;
     return *this;
@@ -79,15 +84,15 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) FreeNotificationData {
   constexpr TagViolationReportingMode mte_reporting_mode() const {
     return TagViolationReportingMode::kUndefined;
   }
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
 
  private:
   void* address_ = nullptr;
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   TagViolationReportingMode mte_reporting_mode_ =
       TagViolationReportingMode::kUndefined;
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
 };
 
 }  // namespace partition_alloc
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_ALLOCATION_DATA_H_

@@ -7,15 +7,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/containers/adapters.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/containers/queue.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "base/trace_event/trace_event.h"
@@ -49,15 +50,18 @@ SurfaceObserver::HandleInteraction GetHandleInteraction(
 
 SurfaceManager::SurfaceManager(
     SurfaceManagerDelegate* delegate,
-    absl::optional<uint32_t> activation_deadline_in_frames,
+    std::optional<uint32_t> activation_deadline_in_frames,
     size_t max_uncommitted_frames)
     : delegate_(delegate),
       activation_deadline_in_frames_(activation_deadline_in_frames),
       root_surface_id_(FrameSinkId(0u, 0u),
                        LocalSurfaceId(1u, base::UnguessableToken::Create())),
       tick_clock_(base::DefaultTickClock::GetInstance()),
-      max_uncommitted_frames_(max_uncommitted_frames) {
-  thread_checker_.DetachFromThread();
+      max_uncommitted_frames_(max_uncommitted_frames),
+      cooldown_frames_for_ack_on_activation_during_interaction_(
+          features::
+              NumCooldownFramesForAckOnSurfaceActivationDuringInteraction()) {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
 
   // Android WebView doesn't have a task runner and doesn't need the timer.
   if (base::SequencedTaskRunner::HasCurrentDefault())
@@ -81,9 +85,13 @@ SurfaceManager::~SurfaceManager() {
 
   // All SurfaceClients and their surfaces are supposed to be
   // destroyed before SurfaceManager.
-  // TODO(crbug.com/823043): The following two DCHECKs don't hold.
+  // TODO(crbug.com/41377228): The following two DCHECKs don't hold. Destroy
+  // manually for now to avoid ~Surface calling back into a partially-destructed
+  // `this`.
   // DCHECK(surface_map_.empty());
   // DCHECK(surfaces_to_destroy_.empty());
+  surfaces_to_destroy_.clear();
+  surface_map_.clear();
 }
 
 #if DCHECK_IS_ON()
@@ -99,7 +107,7 @@ std::string SurfaceManager::SurfaceReferencesToString() {
 #endif
 
 void SurfaceManager::SetActivationDeadlineInFramesForTesting(
-    absl::optional<uint32_t> activation_deadline_in_frames) {
+    std::optional<uint32_t> activation_deadline_in_frames) {
   activation_deadline_in_frames_ = activation_deadline_in_frames;
 }
 
@@ -109,8 +117,9 @@ void SurfaceManager::SetTickClockForTesting(const base::TickClock* tick_clock) {
 
 Surface* SurfaceManager::CreateSurface(
     base::WeakPtr<SurfaceClient> surface_client,
-    const SurfaceInfo& surface_info) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    const SurfaceInfo& surface_info,
+    const SurfaceId& pending_copy_surface_id) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(surface_info.is_valid());
   DCHECK(surface_client);
 
@@ -126,9 +135,9 @@ Surface* SurfaceManager::CreateSurface(
   if (!allocation_group)
     return nullptr;
 
-  std::unique_ptr<Surface> surface =
-      std::make_unique<Surface>(surface_info, this, allocation_group,
-                                surface_client, max_uncommitted_frames_);
+  std::unique_ptr<Surface> surface = std::make_unique<Surface>(
+      surface_info, this, allocation_group, surface_client,
+      pending_copy_surface_id, max_uncommitted_frames_);
   surface->SetDependencyDeadline(
       std::make_unique<SurfaceDependencyDeadline>(tick_clock_));
   surface_map_[surface_info.id()] = std::move(surface);
@@ -144,7 +153,7 @@ Surface* SurfaceManager::CreateSurface(
 }
 
 void SurfaceManager::MarkSurfaceForDestruction(const SurfaceId& surface_id) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(surface_map_.count(surface_id));
   for (auto& observer : observer_list_)
     observer.OnSurfaceMarkedForDestruction(surface_id);
@@ -154,7 +163,9 @@ void SurfaceManager::MarkSurfaceForDestruction(const SurfaceId& surface_id) {
 void SurfaceManager::InvalidateFrameSinkId(const FrameSinkId& frame_sink_id) {
   auto it = frame_sink_id_to_allocation_groups_.find(frame_sink_id);
   if (it != frame_sink_id_to_allocation_groups_.end()) {
-    for (SurfaceAllocationGroup* group : it->second) {
+    // Copy allocation group vector since it can be modified while iterating.
+    auto allocation_groups = it->second;
+    for (SurfaceAllocationGroup* group : allocation_groups) {
       group->WillNotRegisterNewSurfaces();
     }
   }
@@ -174,7 +185,7 @@ std::vector<SurfaceId> SurfaceManager::GetCreatedSurfaceIds() const {
 
 void SurfaceManager::AddSurfaceReferences(
     const std::vector<SurfaceReference>& references) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   for (const auto& reference : references)
     AddSurfaceReferenceImpl(reference);
@@ -182,7 +193,7 @@ void SurfaceManager::AddSurfaceReferences(
 
 void SurfaceManager::RemoveSurfaceReferences(
     const std::vector<SurfaceReference>& references) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   for (const auto& reference : references)
     RemoveSurfaceReferenceImpl(reference);
@@ -214,9 +225,6 @@ void SurfaceManager::GarbageCollectSurfaces() {
 
   // ~Surface() draw callback could modify |surfaces_to_destroy_|.
   for (const auto& iter : surfaces_to_delete) {
-    base::TimeDelta delta = base::TimeTicks::Now() - iter.second;
-    UMA_HISTOGRAM_TIMES(
-        "Compositing.SurfaceManager.MarkForDestructionToDestroy", delta);
     DestroySurfaceInternal(iter.first);
   }
 
@@ -253,6 +261,17 @@ SurfaceManager::GetSurfacesThatReferenceChildForTesting(
       parents.insert(parent.first);
   }
   return parents;
+}
+
+base::TimeTicks SurfaceManager::GetSurfaceReferencedTimestamp(
+    const SurfaceId& surface_id) const {
+  CHECK(surface_id.is_valid());
+  auto surface_referenced_timestamp =
+      surface_referenced_timestamps_.find(surface_id);
+  if (surface_referenced_timestamp != surface_referenced_timestamps_.end()) {
+    return surface_referenced_timestamp->second.first;
+  }
+  return base::TimeTicks();
 }
 
 SurfaceManager::SurfaceIdSet SurfaceManager::GetLiveSurfaces() {
@@ -297,7 +316,9 @@ void SurfaceManager::AddSurfaceReferenceImpl(
   const SurfaceId& parent_id = reference.parent_id();
   const SurfaceId& child_id = reference.child_id();
 
-  if (parent_id.frame_sink_id() == child_id.frame_sink_id()) {
+  if (parent_id.frame_sink_id() == child_id.frame_sink_id() &&
+      !parent_id.IsNewerThan(child_id)) {
+    // Only newer surfaces from the same client can keep an older surface alive.
     DLOG(ERROR) << "Cannot add self reference from " << parent_id << " to "
                 << child_id;
     return;
@@ -311,6 +332,17 @@ void SurfaceManager::AddSurfaceReferenceImpl(
   }
 
   references_[parent_id].insert(child_id);
+
+  // Increase the number of references to `child_id`.
+  if (surface_referenced_timestamps_.find(child_id) ==
+      surface_referenced_timestamps_.end()) {
+    // If the surface has never been referenced before, also record the current
+    // time as the first timestamp that the surface has been referenced.
+    surface_referenced_timestamps_[child_id] =
+        std::make_pair(base::TimeTicks::Now(), 1);
+  } else {
+    surface_referenced_timestamps_[child_id].second++;
+  }
 
   for (auto& observer : observer_list_)
     observer.OnAddedSurfaceReference(parent_id, child_id);
@@ -332,12 +364,18 @@ void SurfaceManager::RemoveSurfaceReferenceImpl(
   if (child_iter == iter_parent->second.end())
     return;
 
-  for (auto& observer : observer_list_)
-    observer.OnRemovedSurfaceReference(parent_id, child_id);
-
   iter_parent->second.erase(child_iter);
   if (iter_parent->second.empty())
     references_.erase(iter_parent);
+
+  // Decrease the amount of references to `child_id`, and erase the entry from
+  // `surface_referenced_timestamps_` if we've removed the last reference.
+  CHECK(surface_referenced_timestamps_.find(child_id) !=
+        surface_referenced_timestamps_.end());
+  surface_referenced_timestamps_[child_id].second--;
+  if (surface_referenced_timestamps_[child_id].second == 0) {
+    surface_referenced_timestamps_.erase(child_id);
+  }
 }
 
 bool SurfaceManager::HasTemporaryReference(const SurfaceId& surface_id) const {
@@ -428,7 +466,7 @@ void SurfaceManager::ExpireOldTemporaryReferences() {
       // The temporary reference has existed for more than 10 seconds, a surface
       // reference should have replaced it by now. To avoid permanently leaking
       // memory delete the temporary reference.
-      base::StringPiece frame_sink_debug_label;
+      std::string_view frame_sink_debug_label;
       if (delegate_) {
         frame_sink_debug_label =
             delegate_->GetFrameSinkDebugLabel(surface_id.frame_sink_id());
@@ -447,12 +485,11 @@ void SurfaceManager::ExpireOldTemporaryReferences() {
 
   // Some surfaces may have become eligible to garbage collection, since we
   // just removed temporary references.
-  if (base::FeatureList::IsEnabled(features::kEagerSurfaceGarbageCollection))
-    GarbageCollectSurfaces();
+  GarbageCollectSurfaces();
 }
 
 Surface* SurfaceManager::GetSurfaceForId(const SurfaceId& surface_id) const {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = surface_map_.find(surface_id);
   if (it == surface_map_.end())
     return nullptr;
@@ -463,15 +500,19 @@ bool SurfaceManager::SurfaceModified(
     const SurfaceId& surface_id,
     const BeginFrameAck& ack,
     SurfaceObserver::HandleInteraction handle_interaction) {
-  CHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   bool changed = false;
-  for (auto& observer : observer_list_)
+  if (handle_interaction == SurfaceObserver::HandleInteraction::kYes) {
+    last_interactive_frame_ = ack.frame_id;
+  }
+  for (auto& observer : observer_list_) {
     changed |= observer.OnSurfaceDamaged(surface_id, ack, handle_interaction);
+  }
   return changed;
 }
 
 void SurfaceManager::FirstSurfaceActivation(const SurfaceInfo& surface_info) {
-  CHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   for (auto& observer : observer_list_)
     observer.OnFirstSurfaceActivation(surface_info);
@@ -495,10 +536,37 @@ void SurfaceManager::SurfaceActivated(Surface* surface) {
     // modified. This will allow frame production to continue for this client
     // leading to the group being unblocked.
     surface->SendAckToClient();
+  } else if (ShouldAckNonInteractiveFrame(metadata)) {
+    // If we should be early acking during an interaction, do that here. We only
+    // ack the non-interactive frames, this allows them to continue being
+    // pipelined, while their most recent frame is queued for the next
+    // aggregation. We do not ack the interactive frame so that back pressure
+    // can be properly applied. This, will persist for a number of frames (the
+    // cooldown) following an interaction.
+    surface->SendAckToClient();
   }
 
   for (auto& observer : observer_list_)
     observer.OnSurfaceActivated(surface->surface_id());
+}
+
+bool SurfaceManager::ShouldAckNonInteractiveFrame(
+    const CompositorFrameMetadata& metadata) const {
+  if (!cooldown_frames_for_ack_on_activation_during_interaction_ ||
+      !last_interactive_frame_ || metadata.is_handling_interaction) {
+    return false;
+  }
+  // If we get an ack for a previous (i.e., slow) frame while we have a more
+  // recent and valid interactive frame, then assume that we should ack it
+  // on activation.
+  if (metadata.begin_frame_ack.frame_id < last_interactive_frame_.value()) {
+    return true;
+  }
+  const uint64_t frames_since_interactive =
+      metadata.begin_frame_ack.frame_id.sequence_number -
+      last_interactive_frame_.value().sequence_number;
+  return frames_since_interactive <
+         cooldown_frames_for_ack_on_activation_during_interaction_.value();
 }
 
 void SurfaceManager::SurfaceDestroyed(Surface* surface) {
@@ -508,15 +576,15 @@ void SurfaceManager::SurfaceDestroyed(Surface* surface) {
 
 void SurfaceManager::SurfaceDamageExpected(const SurfaceId& surface_id,
                                            const BeginFrameArgs& args) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto& observer : observer_list_)
     observer.OnSurfaceDamageExpected(surface_id, args);
 }
 
 void SurfaceManager::DestroySurfaceInternal(const SurfaceId& surface_id) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = surface_map_.find(surface_id);
-  DCHECK(it != surface_map_.end());
+  CHECK(it != surface_map_.end());
   // Make sure that the surface is removed from the map before being actually
   // destroyed. An ack could be sent during the destruction of a surface which
   // could trigger a synchronous frame submission to a half-destroyed surface
@@ -626,7 +694,7 @@ void SurfaceManager::MaybeGarbageCollectAllocationGroups() {
     auto list_it = frame_sink_id_to_allocation_groups_.find(
         it->second->submitter_frame_sink_id());
     DCHECK(list_it != frame_sink_id_to_allocation_groups_.end());
-    base::Erase(list_it->second, it->second.get());
+    std::erase(list_it->second, it->second.get());
     if (list_it->second.empty())
       frame_sink_id_to_allocation_groups_.erase(list_it);
     // Destroy the allocation group. Removing it from the map is done in a
@@ -646,7 +714,7 @@ void SurfaceManager::MaybeGarbageCollectAllocationGroups() {
 
 bool SurfaceManager::HasBlockedEmbedder(
     const FrameSinkId& frame_sink_id) const {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = frame_sink_id_to_allocation_groups_.find(frame_sink_id);
   if (it == frame_sink_id_to_allocation_groups_.end())
     return false;
@@ -663,7 +731,7 @@ void SurfaceManager::AggregatedFrameSinksChanged() {
 }
 
 void SurfaceManager::CommitFramesInRangeRecursively(
-    const SurfaceRange& range,
+    SurfaceRange range,
     const CommitPredicate& predicate) {
   // Technically we need only latest active surface, but because activation will
   // happen during commit, it's impossible to predict which one will be active,

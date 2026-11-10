@@ -25,7 +25,6 @@ rtc_library("delay_variation_calculator") {
     "../../rtc_base:logging",
     "../../rtc_base:rtc_numerics",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
 
 rtc_library("logging_delay_variation_calculator") {
@@ -37,11 +36,14 @@ rtc_library("logging_delay_variation_calculator") {
   deps = [
     ":delay_variation_calculator",
     "../../api/test/metrics:global_metrics_logger_and_exporter",
+    "../../api/test/metrics:metric",
+    "../../api/test/metrics:metrics_logger",
     "../../api/units:data_size",
+    "../../api/units:timestamp",
     "../../api/video:video_frame_type",
     "../../rtc_base:logging",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
 }
 
 if (rtc_include_tests) {
@@ -55,8 +57,11 @@ if (rtc_include_tests) {
       ":delay_variation_calculator",
       ":logging_delay_variation_calculator",
       "../../api/numerics",
+      "../../api/test/metrics:metric",
       "../../api/test/metrics:metrics_logger",
+      "../../api/units:data_size",
       "../../api/units:timestamp",
+      "../../api/video:video_frame_type",
       "../../system_wrappers",
       "../../test:test_support",
     ]

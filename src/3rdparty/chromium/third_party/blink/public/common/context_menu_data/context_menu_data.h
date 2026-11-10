@@ -31,13 +31,14 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_CONTEXT_MENU_DATA_CONTEXT_MENU_DATA_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_CONTEXT_MENU_DATA_CONTEXT_MENU_DATA_H_
 
+#include <optional>
 #include <vector>
 
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/context_menu_data/menu_item_info.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
 #include "third_party/blink/public/common/navigation/impression.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom-shared.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom-shared.h"
 #include "third_party/blink/public/mojom/forms/form_control_type.mojom-shared.h"
 #include "ui/gfx/geometry/point.h"
@@ -100,7 +101,7 @@ struct ContextMenuData {
 
   // If the node is a link, the impression declared by the link's conversion
   // measurement attributes.
-  absl::optional<Impression> impression;
+  std::optional<Impression> impression;
 
   // The raw text of the selection in context.
   std::string selected_text;
@@ -160,9 +161,17 @@ struct ContextMenuData {
 
   WebMenuSourceType source_type;
 
-  // True when the context contains text selected by a text fragment. See
-  // TextFragmentAnchor.
-  bool opened_from_highlight = false;
+  // Set when the context contains text selected by an annotation (see
+  // third_party/blink/renderer/core/annotation/README.md).
+  std::optional<mojom::AnnotationType> annotation_type;
+
+  // True when the context menu was opened from an element with the
+  // `interestfor` attribute.
+  bool opened_from_interest_for = false;
+  // If opened_from_interest_for is true, and if the
+  // HTMLInterestForContextMenuItemOnly feature is enabled, this will contain
+  // the DOMNodeID of the link that generated the context menu.
+  int interest_for_node_id = 0;
 
   // The type of the form control element on which the context menu is invoked,
   // if any.
@@ -171,8 +180,6 @@ struct ContextMenuData {
   // Indicates whether the context menu is invoked on a non-form,
   // non-form-control element that is contenteditable. Thus, it is mutually
   // exclusive with `form_control_type`.
-  // TODO(crbug.com/1427131): Only true if AutofillUseDomNodeIdForRendererId
-  // is enabled.
   bool is_content_editable_for_autofill = false;
 
   // Identifies the element the context menu was invoked on if either
@@ -185,11 +192,6 @@ struct ContextMenuData {
   // associated.
   // See `autofill::FormRendererId` for the semantics of renderer IDs.
   uint64_t form_renderer_id = 0;
-
-  // True iff a field's type is plain text but heuristics (e.g. the name
-  // attribute contains 'password' as a substring) recognize it as a password
-  // field.
-  bool is_password_type_by_heuristics = false;
 
   ContextMenuData()
       : media_type(blink::mojom::ContextMenuDataMediaType::kNone),

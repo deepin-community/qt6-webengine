@@ -14,13 +14,47 @@
 
 #include "internal/platform/wifi_lan.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
+#include "internal/platform/cancellation_flag.h"
+#include "internal/platform/logging.h"
 #include "internal/platform/mutex_lock.h"
-#include "internal/platform/wifi_utils.h"
+#include "internal/platform/nsd_service_info.h"
+#include "internal/platform/output_stream.h"
+#include "internal/platform/socket.h"
+#include "internal/platform/implementation/wifi_utils.h"
 
 namespace nearby {
+using location::nearby::proto::connections::Medium;
+
+MediumSocket* WifiLanSocket::CreateVirtualSocket(
+    const std::string& salted_service_id_hash_key, OutputStream* outputstream,
+    Medium medium,
+    absl::flat_hash_map<std::string, std::shared_ptr<MediumSocket>>*
+        virtual_sockets_ptr) {
+  if (IsVirtualSocket()) {
+    NEARBY_LOGS(WARNING)
+        << "Creating the virtual socket on a virtual socket is not allowed.";
+    return nullptr;
+  }
+
+  auto virtual_socket = std::make_shared<WifiLanSocket>(outputstream);
+  virtual_socket->impl_ = this->impl_;
+  NEARBY_LOGS(WARNING) << "Created the virtual socket for Medium: "
+                       << Medium_Name(virtual_socket->GetMedium());
+
+  if (virtual_sockets_ptr_ == nullptr) {
+    virtual_sockets_ptr_ = virtual_sockets_ptr;
+  }
+
+  (*virtual_sockets_ptr_)[salted_service_id_hash_key] = virtual_socket;
+  NEARBY_LOGS(INFO) << "virtual_sockets_ size: "
+                    << virtual_sockets_ptr_->size();
+  return virtual_socket.get();
+}
 
 bool WifiLanMedium::StartAdvertising(const NsdServiceInfo& nsd_service_info) {
   return impl_->StartAdvertising(nsd_service_info);
@@ -43,7 +77,7 @@ bool WifiLanMedium::StartDiscovery(const std::string& service_id,
   }
   api::WifiLanMedium::DiscoveredServiceCallback api_callback = {
       .service_discovered_cb =
-          [this](NsdServiceInfo service_info) {
+          [this](const NsdServiceInfo& service_info) {
             MutexLock lock(&mutex_);
             std::string service_type = service_info.GetServiceType();
             // Check callback for the service type.
@@ -86,7 +120,7 @@ bool WifiLanMedium::StartDiscovery(const std::string& service_id,
             medium_callback.service_discovered_cb(service_info, service_id);
           },
       .service_lost_cb =
-          [this](NsdServiceInfo service_info) {
+          [this](const NsdServiceInfo& service_info) {
             MutexLock lock(&mutex_);
             std::string service_type = service_info.GetServiceType();
             std::string service_name = service_info.GetServiceName();
@@ -117,7 +151,7 @@ bool WifiLanMedium::StartDiscovery(const std::string& service_id,
     // Insert callback to the map first no matter it succeeds or not.
     MutexLock lock(&mutex_);
     auto pair = service_type_to_callback_map_.insert(
-        {service_type, absl::make_unique<DiscoveryCallbackInfo>()});
+        {service_type, std::make_unique<DiscoveryCallbackInfo>()});
     auto& context = *pair.first->second;
     context.medium_callback = std::move(callback);
     context.service_id = service_id;

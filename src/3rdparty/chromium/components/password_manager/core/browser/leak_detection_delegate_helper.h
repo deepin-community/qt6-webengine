@@ -29,7 +29,9 @@ class LeakDetectionDelegateHelper : public PasswordStoreConsumer {
   // Type alias for `callback_`.
   using LeakTypeReply = base::OnceCallback<void(PasswordForm::Store,
                                                 IsReused,
+                                                IsSavedAsBackup,
                                                 GURL,
+                                                std::u16string,
                                                 std::u16string,
                                                 std::vector<GURL>)>;
 

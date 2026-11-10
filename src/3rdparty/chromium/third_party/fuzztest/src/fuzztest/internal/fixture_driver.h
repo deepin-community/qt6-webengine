@@ -15,7 +15,6 @@
 #ifndef FUZZTEST_FUZZTEST_INTERNAL_FIXTURE_DRIVER_H_
 #define FUZZTEST_FUZZTEST_INTERNAL_FIXTURE_DRIVER_H_
 
-#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -27,12 +26,15 @@
 #include <utility>
 #include <vector>
 
-#include "absl/memory/memory.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "./fuzztest/internal/any.h"
-#include "./fuzztest/internal/domains/domain_base.h"
+#include "./fuzztest/internal/domains/domain.h"
 #include "./fuzztest/internal/logging.h"
+#include "./fuzztest/internal/meta.h"
+#include "./fuzztest/internal/printer.h"
 #include "./fuzztest/internal/registration.h"
 #include "./fuzztest/internal/type_support.h"
 
@@ -62,25 +64,55 @@ class FixtureWithExplicitSetUp {
 class PerIterationFixture : public FixtureWithExplicitSetUp {};
 class PerFuzzTestFixture : public FixtureWithExplicitSetUp {};
 
+// Marker interfaces for fixtures with runner functions.
+class FuzzTestRunnerFixture {
+ public:
+  virtual ~FuzzTestRunnerFixture() = default;
+  virtual void FuzzTestRunner(absl::AnyInvocable<void() &&> run_test) = 0;
+};
+class IterationRunnerFixture {
+ public:
+  virtual ~IterationRunnerFixture() = default;
+  virtual void FuzzTestIterationRunner(
+      absl::AnyInvocable<void() &&> run_iteration) = 0;
+};
+
 class UntypedFixtureDriver {
  public:
   virtual ~UntypedFixtureDriver() = 0;
 
-  // Methods for setting up and tearing down the fixture. All fixture driver
-  // implementations must ensure that every sequence of calls of the form
+  // DESIGN - FuzzTest runtime and fixture driver should follow the protocol
+  // below to run a fuzz test and its iterations:
   //
-  //  SetUpFuzzTest() SetUpIteration() [ TearDownIteration() SetUpIteration() ]*
+  // For any fuzz test, runtime calls `RunFuzzTest(run_test)` {
+  //   Fixture driver sets up the per-test fixture;
+  //   Fixture driver calls `run_test` {
+  //     Runtime runs fuzzing loop - for each iteration, runtime calls
+  //     `RunFuzzTestIteration(run_iteration)` {
+  //       Fixture driver sets up per-iteration fixture;
+  //       Fixture driver calls `run_iteration` {
+  //         Runtime calls `Test(...)` {
+  //           Fixture driver runs the property function;
+  //         }
+  //       }
+  //       Fixture driver tears down the per-iteration fixture;
+  //     }
+  //   }
+  //   Fixture driver tears down the per-test fixture;
+  // }
   //
-  // results in `fixture_ != nullptr`. Likewise, continuing any such sequence
-  // with calls to
-  //
-  //  TearDownIteration() TearDownFuzzTest()
-  //
-  // must result in `fixture_ == nullptr`.
-  virtual void SetUpFuzzTest();
-  virtual void SetUpIteration();
-  virtual void TearDownIteration();
-  virtual void TearDownFuzzTest();
+  // The reason for the nested callbacks is to support complex setup e.g.
+  // where the fixutre needs to run the test in a thread whose lifetime
+  // is limited within the setup.
+
+  // SetUp-Run-TearDowns a fuzz test using a move-only callback which should be
+  // called once and only once.
+  virtual void RunFuzzTest(absl::AnyInvocable<void() &&> run_test);
+
+  // SetUp-Run-TearDowns a test iteration using a move-only callback which
+  // should be called once and only once.
+  virtual void RunFuzzTestIteration(
+      absl::AnyInvocable<void() &&> run_iteration);
 
   // We take by rvalue ref to allow moving from it if necessary, but we want to
   // delay destroying the value until after instrumentation is turned off in the
@@ -88,7 +120,7 @@ class UntypedFixtureDriver {
   virtual void Test(MoveOnlyAny&& args_untyped) const = 0;
 
   virtual std::vector<GenericDomainCorpusType> GetSeeds() const = 0;
-  virtual std::unique_ptr<UntypedDomainInterface> GetDomains() const = 0;
+  virtual UntypedDomain GetDomains() const = 0;
 };
 
 // Typed subinterface with functionality that depends on knowing `ValueType`.
@@ -97,7 +129,7 @@ class UntypedFixtureDriver {
 template <typename ValueType, typename SeedProvider>
 class TypedFixtureDriver : public UntypedFixtureDriver {
  public:
-  TypedFixtureDriver(std::unique_ptr<TypedDomainInterface<ValueType>> domain,
+  TypedFixtureDriver(Domain<ValueType> domain,
                      std::vector<GenericDomainCorpusType> seeds,
                      const SeedProvider& seed_provider)
       : domain_(std::move(domain)),
@@ -116,9 +148,7 @@ class TypedFixtureDriver : public UntypedFixtureDriver {
     return seeds;
   }
 
-  std::unique_ptr<UntypedDomainInterface> GetDomains() const final {
-    return domain_->Clone();
-  }
+  UntypedDomain GetDomains() const final { return domain_; }
 
  protected:
   const SeedProvider& seed_provider() const { return seed_provider_; }
@@ -129,7 +159,7 @@ class TypedFixtureDriver : public UntypedFixtureDriver {
     seeds.reserve(values.size());
     for (const ValueType& val : values) {
       std::optional<GenericDomainCorpusType> corpus_value =
-          domain_->TypedFromValue(val);
+          domain_.FromValue(val);
       if (!corpus_value.has_value()) {
         const absl::Status status =
             absl::InvalidArgumentError("Could not turn value into corpus type");
@@ -137,8 +167,7 @@ class TypedFixtureDriver : public UntypedFixtureDriver {
         continue;
       }
 
-      const absl::Status status =
-          domain_->UntypedValidateCorpusValue(*corpus_value);
+      const absl::Status status = domain_.ValidateCorpusValue(*corpus_value);
       if (!status.ok()) {
         ReportBadSeed(val, status);
         continue;
@@ -154,19 +183,19 @@ class TypedFixtureDriver : public UntypedFixtureDriver {
     absl::FPrintF(GetStderr(), "\n[!] Skipping WithSeeds() value: %s:\n{",
                   status.ToString());
     AutodetectTypePrinter<ValueType>().PrintUserValue(
-        seed, &std::cerr, PrintMode::kHumanReadable);
+        seed, &std::cerr, domain_implementor::PrintMode::kHumanReadable);
     absl::FPrintF(GetStderr(), "}\n\n");
   }
 
   virtual std::vector<GenericDomainCorpusType> GetSeedsFromSeedProvider()
       const = 0;
 
-  std::unique_ptr<TypedDomainInterface<ValueType>> domain_;
+  Domain<ValueType> domain_;
   std::vector<GenericDomainCorpusType> seeds_;
   const SeedProvider& seed_provider_;
 };
 
-// ForceVectorForStringView is a temporary hack for realiably
+// ForceVectorForStringView is a temporary hack for reliably
 // finding buffer overflows. ASAN cannot detect small overflows in
 // std::string-s. See related bug at
 // https://bugs.llvm.org/show_bug.cgi?id=26380. As a temporary
@@ -223,14 +252,11 @@ class FixtureDriver<DomainT, Fixture, void (BaseFixture::*)(Args...),
 
   using TargetFunction = void (BaseFixture::*)(Args...);
 
-  explicit FixtureDriver(TargetFunction target_function, const DomainT& domain,
+  explicit FixtureDriver(TargetFunction target_function, DomainT domain,
                          std::vector<GenericDomainCorpusType> seeds,
                          const SeedProvider& seed_provider)
-      : FixtureDriver::TypedFixtureDriver(
-            absl::WrapUnique(
-                static_cast<TypedDomainInterface<value_type_t<DomainT>>*>(
-                    domain.Clone().release())),
-            std::move(seeds), seed_provider),
+      : FixtureDriver::TypedFixtureDriver(std::move(domain), std::move(seeds),
+                                          seed_provider),
         target_function_(target_function) {}
 
   void Test(MoveOnlyAny&& args_untyped) const override {
@@ -286,14 +312,11 @@ class FixtureDriver<DomainT, NoFixture, void (*)(Args...), SeedProvider>
  public:
   using TargetFunction = void (*)(Args...);
 
-  explicit FixtureDriver(TargetFunction target_function, const DomainT& domain,
+  explicit FixtureDriver(TargetFunction target_function, DomainT domain,
                          std::vector<GenericDomainCorpusType> seeds,
                          const SeedProvider& seed_provider)
-      : FixtureDriver::TypedFixtureDriver(
-            absl::WrapUnique(
-                static_cast<TypedDomainInterface<value_type_t<DomainT>>*>(
-                    domain.Clone().release())),
-            std::move(seeds), seed_provider),
+      : FixtureDriver::TypedFixtureDriver(std::move(domain), std::move(seeds),
+                                          seed_provider),
         target_function_(target_function) {}
 
   void Test(MoveOnlyAny&& args_untyped) const override {
@@ -348,10 +371,24 @@ class FixtureDriverImpl<
  public:
   using FixtureDriverImpl::FixtureDriver::FixtureDriver;
 
-  void SetUpFuzzTest() override {
+  void RunFuzzTest(absl::AnyInvocable<void() &&> run_test) override {
     this->fixture_ = std::make_unique<Fixture>();
+    if constexpr (std::is_base_of_v<FuzzTestRunnerFixture, Fixture>) {
+      this->fixture_->FuzzTestRunner(std::move(run_test));
+    } else {
+      std::move(run_test)();
+    }
+    this->fixture_ = nullptr;
   }
-  void TearDownFuzzTest() override { this->fixture_ = nullptr; }
+
+  void RunFuzzTestIteration(
+      absl::AnyInvocable<void() &&> run_iteration) override {
+    if constexpr (std::is_base_of_v<IterationRunnerFixture, Fixture>) {
+      this->fixture_->FuzzTestIterationRunner(std::move(run_iteration));
+    } else {
+      std::move(run_iteration)();
+    }
+  }
 };
 
 // The fixture driver for test fixtures with explicit setup that assume the
@@ -369,11 +406,15 @@ class FixtureDriverImpl<
  public:
   using FixtureDriverImpl::FixtureDriver::FixtureDriver;
 
-  void SetUpIteration() override {
+  void RunFuzzTest(absl::AnyInvocable<void() &&> run_test) override {
+    std::move(run_test)();
+  }
+
+  void RunFuzzTestIteration(
+      absl::AnyInvocable<void() &&> run_iteration) override {
     this->fixture_ = std::make_unique<Fixture>();
     this->fixture_->SetUp();
-  }
-  void TearDownIteration() override {
+    std::move(run_iteration)();
     this->fixture_->TearDown();
     this->fixture_ = nullptr;
   }
@@ -394,13 +435,17 @@ class FixtureDriverImpl<
  public:
   using FixtureDriverImpl::FixtureDriver::FixtureDriver;
 
-  void SetUpFuzzTest() override {
+  void RunFuzzTest(absl::AnyInvocable<void() &&> run_test) override {
     this->fixture_ = std::make_unique<Fixture>();
     this->fixture_->SetUp();
-  }
-  void TearDownFuzzTest() override {
+    std::move(run_test)();
     this->fixture_->TearDown();
     this->fixture_ = nullptr;
+  }
+
+  void RunFuzzTestIteration(
+      absl::AnyInvocable<void() &&> run_iteration) override {
+    std::move(run_iteration)();
   }
 };
 

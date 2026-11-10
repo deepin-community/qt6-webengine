@@ -12,8 +12,10 @@
 
 #include <ostream>
 #include <string>
+#include <string_view>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/strings/string_util.h"
 #include "sandbox/linux/syscall_broker/broker_command.h"
 
@@ -31,18 +33,14 @@ BrokerFilePermission& BrokerFilePermission::operator=(
 BrokerFilePermission::~BrokerFilePermission() = default;
 
 namespace {
-bool ContainsParentReference(const char* path, size_t len) {
-  // No trailing /..
-  if (len >= 3 && path[len - 3] == '/' && path[len - 2] == '.' &&
-      path[len - 1] == '.') {
+bool ContainsParentOrSelfReference(std::string_view path) {
+  // No trailing /.. or /.
+  if (path.ends_with("/..") || path.ends_with("/.")) {
     return true;
   }
-  for (size_t i = 0; i < len; i++) {
-    if (path[i] == '/' && (len - i) > 3) {
-      if (path[i + 1] == '.' && path[i + 2] == '.' && path[i + 3] == '/') {
-        return true;
-      }
-    }
+  if (path.find("/../") != std::string_view::npos ||
+      path.find("/./") != std::string_view::npos) {
+    return true;
   }
   return false;
 }
@@ -63,10 +61,10 @@ bool BrokerFilePermission::ValidatePath(const char* path) {
     return false;
   }
   // No trailing / (but "/" is valid)
-  if (len > 1 && path[len - 1] == '/') {
+  if (len > 1 && UNSAFE_TODO(path[len - 1]) == '/') {
     return false;
   }
-  if (ContainsParentReference(path, len)) {
+  if (ContainsParentOrSelfReference(std::string_view(path, len))) {
     return false;
   }
   return true;
@@ -274,8 +272,9 @@ bool BrokerFilePermission::CheckIntermediates(const char* requested_filename,
          // Check whether |requested_filename| matches a leading directory of
          // |path_|.
          (requested_length < path_.length() &&
-          memcmp(path_.c_str(), requested_filename, requested_length) == 0 &&
-          path_.c_str()[requested_length] == '/');
+          UNSAFE_TODO(memcmp(path_.c_str(), requested_filename,
+                             requested_length)) == 0 &&
+          UNSAFE_TODO(path_.c_str()[requested_length]) == '/');
 }
 
 const char* BrokerFilePermission::GetErrorMessageForTests() {
@@ -301,7 +300,7 @@ void BrokerFilePermission::DieOnInvalidPermission() {
   else
     CHECK(last_char != '/') << GetErrorMessageForTests();
 
-  CHECK(!ContainsParentReference(path_.c_str(), path_.length()));
+  CHECK(!ContainsParentOrSelfReference(path_));
 }
 
 BrokerFilePermission::BrokerFilePermission(std::string path, uint64_t flags)

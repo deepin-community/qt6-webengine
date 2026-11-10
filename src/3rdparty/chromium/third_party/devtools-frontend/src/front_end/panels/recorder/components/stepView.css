@@ -184,7 +184,7 @@ devtools-recorder-step-editor:hover {
 }
 
 devtools-recorder-step-editor.is-selected {
-  background-color: color-mix(in sRGB, var(--sys-color-tonal-container), var(--sys-color-cdt-base-container) 50%);
+  background-color: color-mix(in srgb, var(--sys-color-tonal-container), var(--sys-color-cdt-base-container) 50%);
   border: 1px solid var(--sys-color-tonal-outline);
 }
 
@@ -216,21 +216,11 @@ devtools-recorder-step-editor.is-selected {
 .step-actions {
   border: none;
   border-radius: 0;
-  width: 24px;
   height: 24px;
 
   --override-select-menu-show-button-border-radius: 0;
   --override-select-menu-show-button-outline: none;
   --override-select-menu-show-button-padding: 0;
-}
-
-.step-actions:hover,
-.step-actions:focus-within {
-  background-color: var(--sys-color-state-hover-on-subtle);
-}
-
-.step-actions:active {
-  background-color: var(--sys-color-cdt-base-container);
 }
 
 .step.has-breakpoint .circle-icon {
@@ -242,16 +232,16 @@ devtools-recorder-step-editor.is-selected {
   opacity: 100%;
 }
 
-.step:not(.is-start-of-group):not(.has-breakpoint) .icon:hover .circle-icon {
+.step:not(.is-start-of-group, .has-breakpoint) .icon:hover .circle-icon {
   transition: opacity 0.2s;
   opacity: 0%;
 }
 
-.step:not(.is-start-of-group):not(.has-breakpoint) .icon:hover .error-icon {
+.step:not(.is-start-of-group, .has-breakpoint) .icon:hover .error-icon {
   visibility: hidden;
 }
 
-.step:not(.is-start-of-group):not(.has-breakpoint) .icon:hover .breakpoint-icon {
+.step:not(.is-start-of-group, .has-breakpoint) .icon:hover .breakpoint-icon {
   transition: opacity 0.2s;
   visibility: visible;
   opacity: 50%;

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef RENDER_WIDGET_HOST_VIEW_QT_H
 #define RENDER_WIDGET_HOST_VIEW_QT_H
@@ -8,7 +9,6 @@
 #include "delegated_frame_host_client_qt.h"
 #include "render_widget_host_view_qt_delegate.h"
 
-#include "base/memory/weak_ptr.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_client.h"
@@ -17,6 +17,8 @@
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "ui/events/gesture_detection/filtered_gesture_provider.h"
+
+QT_FORWARD_DECLARE_CLASS(QWebEngineSettings)
 
 namespace content {
 class RenderFrameHost;
@@ -39,7 +41,6 @@ class WebContentsAdapterClient;
 class RenderWidgetHostViewQt
     : public content::RenderWidgetHostViewBase
     , public ui::GestureProviderClient
-    , public base::SupportsWeakPtr<RenderWidgetHostViewQt>
     , public content::TextInputManager::Observer
     , public content::RenderFrameMetadataProvider::Observer
     , public content::RenderWidgetHost::InputEventObserver
@@ -60,10 +61,10 @@ public:
     void SetSize(const gfx::Size& size) override;
     void SetBounds(const gfx::Rect&) override;
     gfx::NativeView GetNativeView() override;
-    gfx::NativeViewAccessible GetNativeViewAccessible() override { return nullptr; }
+    gfx::NativeViewAccessible GetNativeViewAccessible() override { return {}; }
     void Focus() override;
     bool HasFocus() override;
-    bool IsMouseLocked() override;
+    bool IsPointerLocked() override;
     viz::FrameSinkId GetRootFrameSinkId() override;
     bool IsSurfaceAvailableForCopy() override;
     void CopyFromSurface(const gfx::Rect &src_rect,
@@ -74,20 +75,20 @@ public:
     bool IsShowing() override;
     gfx::Rect GetViewBounds() override;
     void UpdateBackgroundColor() override;
-    blink::mojom::PointerLockResult LockMouse(bool) override;
-    blink::mojom::PointerLockResult ChangeMouseLock(bool) override;
-    void UnlockMouse() override;
+    blink::mojom::PointerLockResult LockPointer(bool) override;
+    blink::mojom::PointerLockResult ChangePointerLock(bool) override;
+    void UnlockPointer() override;
     void UpdateCursor(const ui::Cursor&) override;
     void DisplayCursor(const ui::Cursor&) override;
-    content::CursorManager *GetCursorManager() override;
+    input::CursorManager *GetCursorManager() override;
     void SetIsLoading(bool) override;
     void ImeCancelComposition() override;
-    void ImeCompositionRangeChanged(const gfx::Range &,
-                                    const absl::optional<std::vector<gfx::Rect>> &,
-                                    const absl::optional<std::vector<gfx::Rect>> &) override;
+    void ImeCompositionRangeChanged(
+        const gfx::Range &range,
+        const std::optional<std::vector<gfx::Rect>> &character_bounds) override;
     void RenderProcessGone() override;
     bool TransformPointToCoordSpaceForView(const gfx::PointF &point,
-                                           content::RenderWidgetHostViewBase *target_view,
+                                           input::RenderWidgetHostViewInput *target_view,
                                            gfx::PointF *transformed_point) override;
     void Destroy() override;
     void UpdateTooltipUnderCursor(const std::u16string &tooltip_text) override;
@@ -95,6 +96,7 @@ public:
     void WheelEventAck(const blink::WebMouseWheelEvent &event,
                        blink::mojom::InputEventResultState ack_result) override;
     void GestureEventAck(const blink::WebGestureEvent &event,
+                         blink::mojom::InputEventResultSource ack_source,
                          blink::mojom::InputEventResultState ack_result) override;
     content::MouseWheelPhaseHandler *GetMouseWheelPhaseHandler() override;
     viz::ScopedSurfaceIdAllocator DidUpdateVisualProperties(const cc::RenderFrameMetadata &metadata) override;
@@ -102,7 +104,7 @@ public:
 
     // Overridden from RenderWidgetHostViewBase:
     gfx::Rect GetBoundsInRootWindow() override;
-    void ProcessAckedTouchEvent(const content::TouchEventWithLatencyInfo &touch,
+    void ProcessAckedTouchEvent(const input::TouchEventWithLatencyInfo &touch,
                                 blink::mojom::InputEventResultState ack_result) override;
     viz::SurfaceId GetCurrentSurfaceId() const override;
     const viz::FrameSinkId &GetFrameSinkId() const override;
@@ -117,8 +119,9 @@ public:
     void DidStopFlinging() override;
     std::unique_ptr<content::SyntheticGestureTarget> CreateSyntheticGestureTarget() override;
     ui::Compositor *GetCompositor() override;
-    absl::optional<content::DisplayFeature> GetDisplayFeature() override;
-    void SetDisplayFeatureForTesting(const content::DisplayFeature*) override;
+    std::optional<content::DisplayFeature> GetDisplayFeature() override;
+    void DisableDisplayFeatureOverrideForEmulation() override {}
+    void OverrideDisplayFeatureForEmulation(const content::DisplayFeature*) override {}
     content::WebContentsAccessibility *GetWebContentsAccessibility() override;
 #if BUILDFLAG(IS_MAC)
     void ShowSharePicker(
@@ -131,6 +134,7 @@ public:
     void SpeakSelection() override { QT_NOT_YET_IMPLEMENTED }
     void ShowDefinitionForSelection() override { QT_NOT_YET_IMPLEMENTED }
     void SetWindowFrameInScreen(const gfx::Rect&) override { QT_NOT_YET_IMPLEMENTED }
+    uint64_t GetNSViewId() const override { QT_NOT_YET_IMPLEMENTED return 0; }
 #endif // BUILDFLAG(IS_MAC)
     void NotifyHostAndDelegateOnWasShown(blink::mojom::RecordContentToVisibleTimeRequestPtr) override { QT_NOT_YET_IMPLEMENTED }
     void RequestSuccessfulPresentationTimeFromHostOrDelegate(blink::mojom::RecordContentToVisibleTimeRequestPtr) override {}
@@ -153,8 +157,8 @@ public:
     void OnLocalSurfaceIdChanged(const cc::RenderFrameMetadata &) override {}
 
     // Overridden from content::RenderWidgetHost::InputEventObserver
-    void OnInputEvent(const blink::WebInputEvent &) override { }
-    void OnInputEventAck(blink::mojom::InputEventResultSource,
+    void OnInputEventAck(const content::RenderWidgetHost &,
+                         blink::mojom::InputEventResultSource,
                          blink::mojom::InputEventResultState state,
                          const blink::WebInputEvent &event) override;
 
@@ -168,6 +172,11 @@ public:
     void handleWheelEvent(QWheelEvent *);
     void processMotionEvent(const ui::MotionEvent &motionEvent);
     void resetInputManagerState() { m_imState = 0; }
+    const ui::mojom::TextInputState *getTextInputState() const
+    {
+        return text_input_manager_ ? text_input_manager_->GetTextInputState() : nullptr;
+    }
+    Qt::InputMethodHints inputMethodHints() const;
 
     // Called from WebContentsAdapter.
     gfx::SizeF lastContentsSize() const { return m_lastContentsSize; }
@@ -176,10 +185,9 @@ public:
     ui::TouchSelectionController *getTouchSelectionController() const { return m_touchSelectionController.get(); }
     TouchSelectionControllerClientQt *getTouchSelectionControllerClient() const { return m_touchSelectionControllerClient.get(); }
     blink::mojom::FrameWidgetInputHandler *getFrameWidgetInputHandler();
-    ui::TextInputType getTextInputType() const;
 
     void synchronizeVisualProperties(
-            const absl::optional<viz::LocalSurfaceId> &childSurfaceId);
+            const std::optional<viz::LocalSurfaceId> &childSurfaceId);
 
     void resetTouchSelectionController();
 
@@ -189,13 +197,13 @@ private:
 
     bool isPopup() const;
 
-    bool updateCursorFromResource(ui::mojom::CursorType type);
+    bool updateCursorFromResource(const ui::Cursor &cursorInfo);
 
     scoped_refptr<base::SingleThreadTaskRunner> m_taskRunner;
 
-    std::unique_ptr<content::CursorManager> m_cursorManager;
+    std::unique_ptr<input::CursorManager> m_cursorManager;
 
-    ui::FilteredGestureProvider m_gestureProvider;
+    scoped_refptr<ui::FilteredGestureProvider> m_gestureProvider;
 
     viz::FrameSinkId m_frameSinkId;
     std::unique_ptr<RenderWidgetHostViewQtDelegateClient> m_delegateClient;
@@ -232,7 +240,8 @@ private:
     gfx::SelectionBound m_selectionStart;
     gfx::SelectionBound m_selectionEnd;
 
-    base::WeakPtrFactory<RenderWidgetHostViewQt> m_weakPtrFactory { this };
+    // Popup
+    bool m_isPopupInitializing = false;
 };
 
 class WebContentsAccessibilityQt : public content::WebContentsAccessibility
@@ -241,6 +250,7 @@ class WebContentsAccessibilityQt : public content::WebContentsAccessibility
 public:
     WebContentsAccessibilityQt(RenderWidgetHostViewQt *rwhv) : m_rwhv(rwhv) {}
     QObject *accessibilityParentObject() const;
+    QWebEngineSettings *webEngineSettings() const;
 };
 
 } // namespace QtWebEngineCore

@@ -11,9 +11,11 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
@@ -43,7 +45,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // Client code should use Bus::GetObjectProxy() or
   // Bus::GetObjectProxyWithOptions() instead of this constructor.
   ObjectProxy(Bus* bus,
-              const std::string& service_name,
+              std::string_view service_name,
               const ObjectPath& object_path,
               int options);
 
@@ -60,13 +62,16 @@ class CHROME_DBUS_EXPORT ObjectProxy
   };
 
   // Special timeout constants.
-  //
-  // The constants correspond to DBUS_TIMEOUT_USE_DEFAULT and
-  // DBUS_TIMEOUT_INFINITE. Here we use literal numbers instead of these
-  // macros as these aren't defined with D-Bus earlier than 1.4.12.
   enum {
+    // The constant corresponds to DBUS_TIMEOUT_USE_DEFAULT. Here we use literal
+    // numbers instead of these macros as these aren't defined with D-Bus
+    // earlier than 1.4.12.
     TIMEOUT_USE_DEFAULT = -1,
-    TIMEOUT_INFINITE = 0x7fffffff,
+
+    // Max timeout for methods calls. Long method calls add to `pending_replies"
+    // in dbus_daemon and it has a limit. Once that limit is exceeded, no more
+    // calls could be made on the relevant DBusConnection.
+    TIMEOUT_MAX = base::Hours(1).InMilliseconds(),
   };
 
   // Called when an error response is returned or no response is returned.
@@ -125,7 +130,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
   //
   // If the method call is successful, a pointer to Response object will
   // be passed to the callback. If unsuccessful, nullptr will be passed to
-  // the callback.
+  // the callback and ObjectProxy will emit a log message with the error.
   //
   // Must be called in the origin thread.
   virtual void CallMethod(MethodCall* method_call,
@@ -139,30 +144,11 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // In case of error, ErrorResponse object is passed to the |callback|
   // if the remote object returned an error, or nullptr if a response was not
   // received at all (e.g., D-Bus connection is not established). In either
-  // error case, Response* should be nullptr.
+  // error case, Response* should be nullptr. Unlike CallMethod() above,
+  // ObjectProxy will not emit a log message with the error.
   virtual void CallMethodWithErrorResponse(MethodCall* method_call,
                                            int timeout_ms,
                                            ResponseOrErrorCallback callback);
-
-  // DEPRECATED. Please use CallMethodWithErrorResponse() instead.
-  // TODO(hidehiko): Remove this when migration is done.
-  // Requests to call the method of the remote object.
-  //
-  // |callback| and |error_callback| will be called in the origin thread, once
-  // the method call is complete. As it's called in the origin thread,
-  // |callback| can safely reference objects in the origin thread (i.e.
-  // UI thread in most cases).
-  //
-  // If the method call is successful, |callback| will be invoked with a
-  // Response object. If unsuccessful, |error_callback| will be invoked with an
-  // ErrorResponse object (if the remote object returned an error) or nullptr
-  // (if a response was not received at all).
-  //
-  // Must be called in the origin thread.
-  virtual void CallMethodWithErrorCallback(MethodCall* method_call,
-                                           int timeout_ms,
-                                           ResponseCallback callback,
-                                           ErrorCallback error_callback);
 
   // Requests to connect to the signal from the remote object.
   //
@@ -202,7 +188,9 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // service is already available, or if connecting to the name-owner-changed
   // signal fails, |callback| will be run once asynchronously. Otherwise,
   // |callback| will be run once in the future after the service becomes
-  // available.
+  // available. |callback| will be called in the origin thread in either case.
+  //
+  // Must be called in the origin thread.
   virtual void WaitForServiceToBeAvailable(
       WaitForServiceToBeAvailableCallback callback);
 
@@ -352,7 +340,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // Known name owner of the well-known bus name represented by |service_name_|.
   std::string service_name_owner_;
 
-  std::set<DBusPendingCall*> pending_calls_;
+  std::set<raw_ptr<DBusPendingCall, SetExperimental>> pending_calls_;
 };
 
 }  // namespace dbus

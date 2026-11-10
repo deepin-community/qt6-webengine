@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 /**
    An annotation for Tester1 tests which we do not want to run in
@@ -38,6 +37,14 @@ import java.util.concurrent.Future;
 @java.lang.annotation.Target({java.lang.annotation.ElementType.METHOD})
 @interface SingleThreadOnly{}
 
+/**
+   Annotation for Tester1 tests which must only be run if
+   sqlite3_jni_supports_nio() is true.
+*/
+@java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+@java.lang.annotation.Target({java.lang.annotation.ElementType.METHOD})
+@interface RequiresJniNio{}
+
 public class Tester1 implements Runnable {
   //! True when running in multi-threaded mode.
   private static boolean mtMode = false;
@@ -46,7 +53,7 @@ public class Tester1 implements Runnable {
   //! True to shuffle the order of the tests.
   private static boolean shuffle = false;
   //! True to dump the list of to-run tests to stdout.
-  private static boolean listRunTests = false;
+  private static int listRunTests = 0;
   //! True to squelch all out() and outln() output.
   private static boolean quietMode = false;
   //! Total number of runTests() calls.
@@ -54,13 +61,13 @@ public class Tester1 implements Runnable {
   //! List of test*() methods to run.
   private static List<java.lang.reflect.Method> testMethods = null;
   //! List of exceptions collected by run()
-  private static List<Exception> listErrors = new ArrayList<>();
+  private static final List<Exception> listErrors = new ArrayList<>();
   private static final class Metrics {
     //! Number of times createNewDb() (or equivalent) is invoked.
     volatile int dbOpen = 0;
   }
 
-  private Integer tId;
+  private final Integer tId;
 
   Tester1(Integer id){
     tId = id;
@@ -70,7 +77,7 @@ public class Tester1 implements Runnable {
 
   public static synchronized void outln(){
     if( !quietMode ){
-      System.out.println("");
+      System.out.println();
     }
   }
 
@@ -327,7 +334,7 @@ public class Tester1 implements Runnable {
 
 
     rc = sqlite3_prepare_v3(db, "INSERT INTO t2(a) VALUES(1),(2),(3)",
-                            SQLITE_PREPARE_NORMALIZE, outStmt);
+                            0, outStmt);
     affirm(0 == rc);
     stmt = outStmt.get();
     affirm(0 != stmt.getNativePointer());
@@ -382,6 +389,15 @@ public class Tester1 implements Runnable {
     stmt = prepare(db, "SELECT a FROM t ORDER BY a DESC;");
     affirm( sqlite3_stmt_readonly(stmt) );
     affirm( !sqlite3_stmt_busy(stmt) );
+    if( sqlite3_compileoption_used("ENABLE_COLUMN_METADATA") ){
+      /* Unlike in native C code, JNI won't trigger an
+         UnsatisfiedLinkError until these are called (on Linux, at
+         least). */
+      affirm("t".equals(sqlite3_column_table_name(stmt,0)));
+      affirm("main".equals(sqlite3_column_database_name(stmt,0)));
+      affirm("a".equals(sqlite3_column_origin_name(stmt,0)));
+    }
+
     int total2 = 0;
     while( SQLITE_ROW == sqlite3_step(stmt) ){
       affirm( sqlite3_stmt_busy(stmt) );
@@ -477,6 +493,7 @@ public class Tester1 implements Runnable {
     stmt = prepare(db, "SELECT a FROM t ORDER BY a DESC;");
     StringBuilder sbuf = new StringBuilder();
     n = 0;
+    final boolean tryNio = sqlite3_jni_supports_nio();
     while( SQLITE_ROW == sqlite3_step(stmt) ){
       final sqlite3_value sv = sqlite3_value_dup(sqlite3_column_value(stmt,0));
       final String txt = sqlite3_column_text16(stmt, 0);
@@ -491,12 +508,21 @@ public class Tester1 implements Runnable {
                            StandardCharsets.UTF_8)) );
       affirm( txt.length() == sqlite3_value_bytes16(sv)/2 );
       affirm( txt.equals(sqlite3_value_text16(sv)) );
+      if( tryNio ){
+        java.nio.ByteBuffer bu = sqlite3_value_nio_buffer(sv);
+        byte ba[] = sqlite3_value_blob(sv);
+        affirm( ba.length == bu.capacity() );
+        int i = 0;
+        for( byte b : ba ){
+          affirm( b == bu.get(i++) );
+        }
+      }
       sqlite3_value_free(sv);
       ++n;
     }
     sqlite3_finalize(stmt);
     affirm(3 == n);
-    affirm("w😃rldhell🤩!🤩".equals(sbuf.toString()));
+    affirm("w😃rldhell🤩!🤩".contentEquals(sbuf));
 
     try( sqlite3_stmt stmt2 = prepare(db, "SELECT ?, ?") ){
       rc = sqlite3_bind_text(stmt2, 1, "");
@@ -548,6 +574,79 @@ public class Tester1 implements Runnable {
     sqlite3_close_v2(db);
   }
 
+  @RequiresJniNio
+  private void testBindByteBuffer(){
+    /* TODO: these tests need to be much more extensive to check the
+       begin/end range handling. */
+
+    java.nio.ByteBuffer zeroCheck =
+      java.nio.ByteBuffer.allocateDirect(0);
+    affirm( null != zeroCheck );
+    zeroCheck = null;
+    sqlite3 db = createNewDb();
+    execSql(db, "CREATE TABLE t(a)");
+
+    final java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(10);
+    buf.put((byte)0x31)/*note that we'll skip this one*/
+      .put((byte)0x32)
+      .put((byte)0x33)
+      .put((byte)0x34)
+      .put((byte)0x35)/*we'll skip this one too*/;
+
+    final int expectTotal = buf.get(1) + buf.get(2) + buf.get(3);
+    sqlite3_stmt stmt = prepare(db, "INSERT INTO t(a) VALUES(?);");
+    affirm( SQLITE_ERROR == sqlite3_bind_blob(stmt, 1, buf, -1, 0),
+            "Buffer offset may not be negative." );
+    affirm( 0 == sqlite3_bind_blob(stmt, 1, buf, 1, 3) );
+    affirm( SQLITE_DONE == sqlite3_step(stmt) );
+    sqlite3_finalize(stmt);
+    stmt = prepare(db, "SELECT a FROM t;");
+    int total = 0;
+    affirm( SQLITE_ROW == sqlite3_step(stmt) );
+    byte blob[] = sqlite3_column_blob(stmt, 0);
+    java.nio.ByteBuffer nioBlob =
+      sqlite3_column_nio_buffer(stmt, 0);
+    affirm(3 == blob.length);
+    affirm(blob.length == nioBlob.capacity());
+    affirm(blob.length == nioBlob.limit());
+    int i = 0;
+    for(byte b : blob){
+      affirm( i<=3 );
+      affirm(b == buf.get(1 + i));
+      affirm(b == nioBlob.get(i));
+      ++i;
+      total += b;
+    }
+    affirm( SQLITE_DONE == sqlite3_step(stmt) );
+    sqlite3_finalize(stmt);
+    affirm(total == expectTotal);
+
+    SQLFunction func =
+      new ScalarFunction(){
+        public void xFunc(sqlite3_context cx, sqlite3_value[] args){
+          sqlite3_result_blob(cx, buf, 1, 3);
+        }
+      };
+
+    affirm( 0 == sqlite3_create_function(db, "myfunc", -1, SQLITE_UTF8, func) );
+    stmt = prepare(db, "SELECT myfunc()");
+    affirm( SQLITE_ROW == sqlite3_step(stmt) );
+    blob = sqlite3_column_blob(stmt, 0);
+    affirm(3 == blob.length);
+    i = 0;
+    total = 0;
+    for(byte b : blob){
+      affirm( i<=3 );
+      affirm(b == buf.get(1 + i++));
+      total += b;
+    }
+    affirm( SQLITE_DONE == sqlite3_step(stmt) );
+    sqlite3_finalize(stmt);
+    affirm(total == expectTotal);
+
+    sqlite3_close_v2(db);
+  }
+
   private void testSql(){
     sqlite3 db = createNewDb();
     sqlite3_stmt stmt = prepare(db, "SELECT 1");
@@ -568,7 +667,7 @@ public class Tester1 implements Runnable {
     execSql(db, "CREATE TABLE t(a); INSERT INTO t(a) VALUES('a'),('b'),('c')");
     final ValueHolder<Integer> xDestroyCalled = new ValueHolder<>(0);
     final CollationCallback myCollation = new CollationCallback() {
-        private String myState =
+        private final String myState =
           "this is local state. There is much like it, but this is mine.";
         @Override
         // Reverse-sorts its inputs...
@@ -593,9 +692,9 @@ public class Tester1 implements Runnable {
       };
     final CollationNeededCallback collLoader = new CollationNeededCallback(){
         @Override
-        public int call(sqlite3 dbArg, int eTextRep, String collationName){
+        public void call(sqlite3 dbArg, int eTextRep, String collationName){
           affirm(dbArg == db/* as opposed to a temporary object*/);
-          return sqlite3_create_collation(dbArg, "reversi", eTextRep, myCollation);
+          sqlite3_create_collation(dbArg, "reversi", eTextRep, myCollation);
         }
       };
     int rc = sqlite3_collation_needed(db, collLoader);
@@ -747,7 +846,7 @@ public class Tester1 implements Runnable {
     SQLFunction funcAgg = new AggregateFunction<Integer>(){
         @Override public void xStep(sqlite3_context cx, sqlite3_value[] args){
           /** Throwing from here should emit loud noise on stdout or stderr
-              but the exception is supressed because we have no way to inform
+              but the exception is suppressed because we have no way to inform
               sqlite about it from these callbacks. */
           //throw new RuntimeException("Throwing from an xStep");
         }
@@ -803,13 +902,17 @@ public class Tester1 implements Runnable {
     affirm( 0==rc );
     int n = 0;
     if( SQLITE_ROW == sqlite3_step(stmt) ){
+      affirm( testResult.value == sqlite3_column_java_object(stmt, 0) );
+      affirm( testResult.value == sqlite3_column_java_object(stmt, 0, sqlite3.class) );
+      affirm( null == sqlite3_column_java_object(stmt, 0, sqlite3_stmt.class) );
+      affirm( null == sqlite3_column_java_object(stmt,1) );
       final sqlite3_value v = sqlite3_column_value(stmt, 0);
       affirm( testResult.value == sqlite3_value_java_object(v) );
-      affirm( testResult.value == sqlite3_value_java_casted(v, sqlite3.class) );
+      affirm( testResult.value == sqlite3_value_java_object(v, sqlite3.class) );
       affirm( testResult.value ==
-              sqlite3_value_java_casted(v, testResult.value.getClass()) );
-      affirm( testResult.value == sqlite3_value_java_casted(v, Object.class) );
-      affirm( null == sqlite3_value_java_casted(v, String.class) );
+              sqlite3_value_java_object(v, testResult.value.getClass()) );
+      affirm( testResult.value == sqlite3_value_java_object(v, Object.class) );
+      affirm( null == sqlite3_value_java_object(v, String.class) );
       ++n;
     }
     sqlite3_finalize(stmt);
@@ -824,15 +927,28 @@ public class Tester1 implements Runnable {
       // To confirm that xFinal() is called with no aggregate state
       // when the corresponding result set is empty.
       new ValueHolder<>(false);
+    final ValueHolder<sqlite3_value[]> neverEverDoThisInClientCode = new ValueHolder<>(null);
+    final ValueHolder<sqlite3_context> neverEverDoThisInClientCode2 = new ValueHolder<>(null);
     SQLFunction func = new AggregateFunction<Integer>(){
         @Override
         public void xStep(sqlite3_context cx, sqlite3_value[] args){
+          if( null==neverEverDoThisInClientCode.value ){
+            /* !!!NEVER!!! hold a reference to an sqlite3_value or
+               sqlite3_context object like this in client code! They
+               are ONLY legal for the duration of their single
+               call. We do it here ONLY to test that the defenses
+               against clients doing this are working. */
+            neverEverDoThisInClientCode.value = args;
+          }
           final ValueHolder<Integer> agg = this.getAggregateState(cx, 0);
           agg.value += sqlite3_value_int(args[0]);
           affirm( agg == this.getAggregateState(cx, 0) );
         }
         @Override
         public void xFinal(sqlite3_context cx){
+          if( null==neverEverDoThisInClientCode2.value ){
+            neverEverDoThisInClientCode2.value = cx;
+          }
           final Integer v = this.takeAggregateState(cx);
           if(null == v){
             xFinalNull.value = true;
@@ -857,6 +973,10 @@ public class Tester1 implements Runnable {
     }
     affirm( 1==n );
     affirm(!xFinalNull.value);
+    affirm( null!=neverEverDoThisInClientCode.value );
+    affirm( null!=neverEverDoThisInClientCode2.value );
+    affirm( 0<neverEverDoThisInClientCode.value.length );
+    affirm( 0==neverEverDoThisInClientCode2.value.getNativePointer() );
     sqlite3_reset(stmt);
     affirm( 1==sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_RUN, false) );
     // Ensure that the accumulator is reset on subsequent calls...
@@ -925,7 +1045,6 @@ public class Tester1 implements Runnable {
                          "ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING"+
                          ") AS sum_y "+
                          "FROM twin ORDER BY x;");
-    affirm( 0 == rc );
     int n = 0;
     while( SQLITE_ROW == sqlite3_step(stmt) ){
       final String s = sqlite3_column_text16(stmt, 0);
@@ -1028,48 +1147,48 @@ public class Tester1 implements Runnable {
   @SingleThreadOnly /* because threads inherently break this test */
   private static void testBusy(){
     final String dbName = "_busy-handler.db";
-    final OutputPointer.sqlite3 outDb = new OutputPointer.sqlite3();
-    final OutputPointer.sqlite3_stmt outStmt = new OutputPointer.sqlite3_stmt();
-
-    int rc = sqlite3_open(dbName, outDb);
-    ++metrics.dbOpen;
-    affirm( 0 == rc );
-    final sqlite3 db1 = outDb.get();
-    execSql(db1, "CREATE TABLE IF NOT EXISTS t(a)");
-    rc = sqlite3_open(dbName, outDb);
-    ++metrics.dbOpen;
-    affirm( 0 == rc );
-    affirm( outDb.get() != db1 );
-    final sqlite3 db2 = outDb.get();
-
-    affirm( "main".equals( sqlite3_db_name(db1, 0) ) );
-    rc = sqlite3_db_config(db1, SQLITE_DBCONFIG_MAINDBNAME, "foo");
-    affirm( sqlite3_db_filename(db1, "foo").endsWith(dbName) );
-    affirm( "foo".equals( sqlite3_db_name(db1, 0) ) );
-
-    final ValueHolder<Integer> xBusyCalled = new ValueHolder<>(0);
-    BusyHandlerCallback handler = new BusyHandlerCallback(){
-        @Override public int call(int n){
-          //outln("busy handler #"+n);
-          return n > 2 ? 0 : ++xBusyCalled.value;
-        }
-      };
-    rc = sqlite3_busy_handler(db2, handler);
-    affirm(0 == rc);
-
-    // Force a locked condition...
-    execSql(db1, "BEGIN EXCLUSIVE");
-    rc = sqlite3_prepare_v2(db2, "SELECT * from t", outStmt);
-    affirm( SQLITE_BUSY == rc);
-    affirm( null == outStmt.get() );
-    affirm( 3 == xBusyCalled.value );
-    sqlite3_close_v2(db1);
-    sqlite3_close_v2(db2);
     try{
-      final java.io.File f = new java.io.File(dbName);
-      f.delete();
-    }catch(Exception e){
-      /* ignore */
+      final OutputPointer.sqlite3 outDb = new OutputPointer.sqlite3();
+      final OutputPointer.sqlite3_stmt outStmt = new OutputPointer.sqlite3_stmt();
+
+      int rc = sqlite3_open(dbName, outDb);
+      ++metrics.dbOpen;
+      affirm( 0 == rc );
+      final sqlite3 db1 = outDb.get();
+      execSql(db1, "CREATE TABLE IF NOT EXISTS t(a)");
+      rc = sqlite3_open(dbName, outDb);
+      ++metrics.dbOpen;
+      affirm( 0 == rc );
+      affirm( outDb.get() != db1 );
+      final sqlite3 db2 = outDb.get();
+
+      affirm( "main".equals( sqlite3_db_name(db1, 0) ) );
+      rc = sqlite3_db_config(db1, SQLITE_DBCONFIG_MAINDBNAME, "foo");
+      affirm( sqlite3_db_filename(db1, "foo").endsWith(dbName) );
+      affirm( "foo".equals( sqlite3_db_name(db1, 0) ) );
+      affirm( SQLITE_MISUSE == sqlite3_db_config(db1, 0, 0, null) );
+
+      final ValueHolder<Integer> xBusyCalled = new ValueHolder<>(0);
+      BusyHandlerCallback handler = new BusyHandlerCallback(){
+          @Override public int call(int n){
+            //outln("busy handler #"+n);
+            return n > 2 ? 0 : ++xBusyCalled.value;
+          }
+        };
+      rc = sqlite3_busy_handler(db2, handler);
+      affirm(0 == rc);
+
+      // Force a locked condition...
+      execSql(db1, "BEGIN EXCLUSIVE");
+      rc = sqlite3_prepare_v2(db2, "SELECT * from t", outStmt);
+      affirm( SQLITE_BUSY == rc);
+      affirm( null == outStmt.get() );
+      affirm( 3 == xBusyCalled.value );
+      sqlite3_close_v2(db1);
+      sqlite3_close_v2(db2);
+    }finally{
+      try{(new java.io.File(dbName)).delete();}
+      catch(Exception e){/* ignore */}
     }
   }
 
@@ -1093,6 +1212,7 @@ public class Tester1 implements Runnable {
 
   private void testCommitHook(){
     final sqlite3 db = createNewDb();
+    sqlite3_extended_result_codes(db, true);
     final ValueHolder<Integer> counter = new ValueHolder<>(0);
     final ValueHolder<Integer> hookResult = new ValueHolder<>(0);
     final CommitHookCallback theHook = new CommitHookCallback(){
@@ -1135,7 +1255,7 @@ public class Tester1 implements Runnable {
     affirm( 5 == counter.value );
     hookResult.value = SQLITE_ERROR;
     int rc = execSql(db, false, "BEGIN; update t set a='j' where a='i'; COMMIT;");
-    affirm( SQLITE_CONSTRAINT == rc );
+    affirm( SQLITE_CONSTRAINT_COMMITHOOK == rc );
     affirm( 6 == counter.value );
     sqlite3_close_v2(db);
   }
@@ -1354,6 +1474,9 @@ public class Tester1 implements Runnable {
     authRc.value = SQLITE_DENY;
     int rc = execSql(db, false, "UPDATE t SET a=2");
     affirm( SQLITE_AUTH==rc );
+    sqlite3_set_authorizer(db, null);
+    rc = execSql(db, false, "UPDATE t SET a=2");
+    affirm( 0==rc );
     // TODO: expand these tests considerably
     sqlite3_close(db);
   }
@@ -1415,7 +1538,7 @@ public class Tester1 implements Runnable {
 
     val.value = 0;
     final AutoExtensionCallback ax2 = new AutoExtensionCallback(){
-        @Override public synchronized int call(sqlite3 db){
+        @Override public int call(sqlite3 db){
           ++val.value;
           return 0;
         }
@@ -1626,7 +1749,7 @@ public class Tester1 implements Runnable {
     sqlite3_finalize(stmt);
 
     b = sqlite3_blob_open(db, "main", "t", "a",
-                          sqlite3_last_insert_rowid(db), 1);
+                          sqlite3_last_insert_rowid(db), 0);
     affirm( null!=b );
     rc = sqlite3_blob_reopen(b, 2);
     affirm( 0==rc );
@@ -1636,6 +1759,86 @@ public class Tester1 implements Runnable {
     affirm( 100==tgt[0] && 101==tgt[1] && 102==tgt[2], "DEF" );
     rc = sqlite3_blob_close(b);
     affirm( 0==rc );
+
+    if( !sqlite3_jni_supports_nio() ){
+      outln("WARNING: skipping tests for ByteBuffer-using sqlite3_blob APIs ",
+            "because this platform lacks that support.");
+      sqlite3_close_v2(db);
+      return;
+    }
+    /* Sanity checks for the java.nio.ByteBuffer-taking overloads of
+       sqlite3_blob_read/write(). */
+    execSql(db, "UPDATE t SET a=zeroblob(10)");
+    b = sqlite3_blob_open(db, "main", "t", "a", 1, 1);
+    affirm( null!=b );
+    java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(10);
+    for( byte i = 0; i < 10; ++i ){
+      bb.put((int)i, (byte)(48+i & 0xff));
+    }
+    rc = sqlite3_blob_write(b, 1, bb, 1, 10);
+    affirm( rc==SQLITE_ERROR, "b length < (srcOffset + bb length)" );
+    rc = sqlite3_blob_write(b, -1, bb);
+    affirm( rc==SQLITE_ERROR, "Target offset may not be negative" );
+    rc = sqlite3_blob_write(b, 0, bb, -1, -1);
+    affirm( rc==SQLITE_ERROR, "Source offset may not be negative" );
+    rc = sqlite3_blob_write(b, 1, bb, 1, 8);
+    affirm( rc==0 );
+    // b's contents: 0 49  50  51  52  53  54  55  56  0
+    //        ascii: 0 '1' '2' '3' '4' '5' '6' '7' '8' 0
+    byte br[] = new byte[10];
+    java.nio.ByteBuffer bbr =
+      java.nio.ByteBuffer.allocateDirect(bb.limit());
+    rc = sqlite3_blob_read( b, br, 0 );
+    affirm( rc==0 );
+    rc = sqlite3_blob_read( b, bbr );
+    affirm( rc==0 );
+    java.nio.ByteBuffer bbr2 = sqlite3_blob_read_nio_buffer(b, 0, 12);
+    affirm( null==bbr2, "Read size is too big");
+    bbr2 = sqlite3_blob_read_nio_buffer(b, -1, 3);
+    affirm( null==bbr2, "Source offset is negative");
+    bbr2 = sqlite3_blob_read_nio_buffer(b, 5, 6);
+    affirm( null==bbr2, "Read pos+size is too big");
+    bbr2 = sqlite3_blob_read_nio_buffer(b, 4, 7);
+    affirm( null==bbr2, "Read pos+size is too big");
+    bbr2 = sqlite3_blob_read_nio_buffer(b, 4, 6);
+    affirm( null!=bbr2 );
+    java.nio.ByteBuffer bbr3 =
+      java.nio.ByteBuffer.allocateDirect(2 * bb.limit());
+    java.nio.ByteBuffer bbr4 =
+      java.nio.ByteBuffer.allocateDirect(5);
+    rc = sqlite3_blob_read( b, bbr3 );
+    affirm( rc==0 );
+    rc = sqlite3_blob_read( b, bbr4 );
+    affirm( rc==0 );
+    affirm( sqlite3_blob_bytes(b)==bbr3.limit() );
+    affirm( 5==bbr4.limit() );
+    sqlite3_blob_close(b);
+    affirm( 0==br[0] );
+    affirm( 0==br[9] );
+    affirm( 0==bbr.get(0) );
+    affirm( 0==bbr.get(9) );
+    affirm( bbr2.limit() == 6 );
+    affirm( 0==bbr3.get(0) );
+    {
+      Exception ex = null;
+      try{ bbr3.get(11); }
+      catch(Exception e){ex = e;}
+      affirm( ex instanceof IndexOutOfBoundsException,
+              "bbr3.limit() was reset by read()" );
+      ex = null;
+    }
+    affirm( 0==bbr4.get(0) );
+    for( int i = 1; i < 9; ++i ){
+      affirm( br[i] == 48 + i );
+      affirm( br[i] == bbr.get(i) );
+      affirm( br[i] == bbr3.get(i) );
+      if( i>3 ){
+        affirm( br[i] == bbr2.get(i-4) );
+      }
+      if( i < bbr4.limit() ){
+        affirm( br[i] == bbr4.get(i) );
+      }
+    }
     sqlite3_close_v2(db);
   }
 
@@ -1646,11 +1849,15 @@ public class Tester1 implements Runnable {
       "; insert into t(a) values(1),(2),(3);",
       "select a from t;"
     };
-    final List<sqlite3_stmt> liStmt = new ArrayList<sqlite3_stmt>();
+    final List<sqlite3_stmt> liStmt = new ArrayList<>();
     final PrepareMultiCallback proxy = new PrepareMultiCallback.StepAll();
+    final ValueHolder<String> toss = new ValueHolder<>(null);
     PrepareMultiCallback m = new PrepareMultiCallback() {
         @Override public int call(sqlite3_stmt st){
           liStmt.add(st);
+          if( null!=toss.value ){
+            throw new RuntimeException(toss.value);
+          }
           return proxy.call(st);
         }
       };
@@ -1660,6 +1867,10 @@ public class Tester1 implements Runnable {
     for( sqlite3_stmt st : liStmt ){
       sqlite3_finalize(st);
     }
+    toss.value = "This is an exception.";
+    rc = sqlite3_prepare_multi(db, "SELECT 1", m);
+    affirm( SQLITE_ERROR==rc );
+    affirm( sqlite3_errmsg(db).indexOf(toss.value)>0 );
     sqlite3_close_v2(db);
   }
 
@@ -1698,7 +1909,7 @@ public class Tester1 implements Runnable {
       mlist = new ArrayList<>( testMethods.subList(0, testMethods.size()) );
       java.util.Collections.shuffle(mlist);
     }
-    if( listRunTests ){
+    if( (!fromThread && listRunTests>0) || listRunTests>1 ){
       synchronized(this.getClass()){
         if( !fromThread ){
           out("Initial test"," list: ");
@@ -1760,8 +1971,11 @@ public class Tester1 implements Runnable {
      -naps: sleep small random intervals between tests in order to add
      some chaos for cross-thread contention.
 
+
      -list-tests: outputs the list of tests being run, minus some
-      which are hard-coded. This is noisy in multi-threaded mode.
+      which are hard-coded. In multi-threaded mode, use this twice to
+      to emit the list run by each thread (which may differ from the initial
+      list, in particular if -shuffle is used).
 
      -fail: forces an exception to be thrown during the test run.  Use
      with -shuffle to make its appearance unpredictable.
@@ -1769,9 +1983,9 @@ public class Tester1 implements Runnable {
      -v: emit some developer-mode info at the end.
   */
   public static void main(String[] args) throws Exception {
-    Integer nThread = 1;
+    int nThread = 1;
     boolean doSomethingForDev = false;
-    Integer nRepeat = 1;
+    int nRepeat = 1;
     boolean forceFail = false;
     boolean sqlLog = false;
     boolean configLog = false;
@@ -1790,7 +2004,7 @@ public class Tester1 implements Runnable {
         }else if(arg.equals("shuffle")){
           shuffle = true;
         }else if(arg.equals("list-tests")){
-          listRunTests = true;
+          ++listRunTests;
         }else if(arg.equals("fail")){
           forceFail = true;
         }else if(arg.equals("sqllog")){
@@ -1809,7 +2023,7 @@ public class Tester1 implements Runnable {
 
     if( sqlLog ){
       if( sqlite3_compileoption_used("ENABLE_SQLLOG") ){
-        final ConfigSqllogCallback log = new ConfigSqllogCallback() {
+        final ConfigSqlLogCallback log = new ConfigSqlLogCallback() {
             @Override public void call(sqlite3 db, String msg, int op){
               switch(op){
                 case 0: outln("Opening db: ",db); break;
@@ -1820,7 +2034,7 @@ public class Tester1 implements Runnable {
           };
         int rc = sqlite3_config( log );
         affirm( 0==rc );
-        rc = sqlite3_config( (ConfigSqllogCallback)null );
+        rc = sqlite3_config( (ConfigSqlLogCallback)null );
         affirm( 0==rc );
         rc = sqlite3_config( log );
         affirm( 0==rc );
@@ -1833,7 +2047,7 @@ public class Tester1 implements Runnable {
       final ConfigLogCallback log = new ConfigLogCallback() {
           @Override public void call(int code, String msg){
             outln("ConfigLogCallback: ",ResultCode.getEntryForInt(code),": ", msg);
-          };
+          }
         };
       int rc = sqlite3_config( log );
       affirm( 0==rc );
@@ -1858,18 +2072,20 @@ public class Tester1 implements Runnable {
           if( forceFail ){
             testMethods.add(m);
           }
+        }else if( m.isAnnotationPresent( RequiresJniNio.class )
+                  && !sqlite3_jni_supports_nio() ){
+          outln("Skipping test for lack of JNI java.nio.ByteBuffer support: ",
+                name,"()\n");
+          ++nSkipped;
         }else if( !m.isAnnotationPresent( ManualTest.class ) ){
           if( nThread>1 && m.isAnnotationPresent( SingleThreadOnly.class ) ){
-            if( 0==nSkipped++ ){
-              out("Skipping tests in multi-thread mode:");
-            }
-            out(" "+name+"()");
+            out("Skipping test in multi-thread mode: ",name,"()\n");
+            ++nSkipped;
           }else if( name.startsWith("test") ){
             testMethods.add(m);
           }
         }
       }
-      if( nSkipped>0 ) out("\n");
     }
 
     final long timeStart = System.currentTimeMillis();
@@ -1901,6 +2117,7 @@ public class Tester1 implements Runnable {
           sqlite3_libversion_number(),"\n",
           sqlite3_libversion(),"\n",SQLITE_SOURCE_ID,"\n",
           "SQLITE_THREADSAFE=",sqlite3_threadsafe());
+    outln("JVM NIO support? ",sqlite3_jni_supports_nio() ? "YES" : "NO");
     final boolean showLoopCount = (nRepeat>1 && nThread>1);
     if( showLoopCount ){
       outln("Running ",nRepeat," loop(s) with ",nThread," thread(s) each.");

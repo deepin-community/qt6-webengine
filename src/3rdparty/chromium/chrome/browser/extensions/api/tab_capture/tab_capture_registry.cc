@@ -43,8 +43,9 @@ class TabCaptureRegistry::LiveRequest : public content::WebContentsObserver {
         extension_id_(extension_id),
         is_anonymous_(is_anonymous),
         registry_(registry),
-        render_process_id_(
-            target_contents->GetPrimaryMainFrame()->GetProcess()->GetID()),
+        render_process_id_(target_contents->GetPrimaryMainFrame()
+                               ->GetProcess()
+                               ->GetDeprecatedID()),
         render_frame_id_(
             target_contents->GetPrimaryMainFrame()->GetRoutingID()) {
     DCHECK(web_contents());
@@ -54,7 +55,7 @@ class TabCaptureRegistry::LiveRequest : public content::WebContentsObserver {
   LiveRequest(const LiveRequest&) = delete;
   LiveRequest& operator=(const LiveRequest&) = delete;
 
-  ~LiveRequest() override {}
+  ~LiveRequest() override = default;
 
   // Accessors.
   const ExtensionId& extension_id() const { return extension_id_; }
@@ -164,13 +165,9 @@ void TabCaptureRegistry::OnExtensionUnloaded(
     const Extension* extension,
     UnloadedExtensionReason reason) {
   // Cleanup all the requested media streams for this extension.
-  for (auto it = requests_.begin(); it != requests_.end();) {
-    if ((*it)->extension_id() == extension->id()) {
-      it = requests_.erase(it);
-    } else {
-      ++it;
-    }
-  }
+  std::erase_if(requests_, [extension](const auto& entry) {
+    return entry->extension_id() == extension->id();
+  });
 }
 
 std::string TabCaptureRegistry::AddRequest(
@@ -261,7 +258,6 @@ void TabCaptureRegistry::OnRequestUpdate(
     case content::MEDIA_REQUEST_STATE_REQUESTED:
     case content::MEDIA_REQUEST_STATE_NOT_REQUESTED:
       NOTREACHED();
-      return;
   }
 
   if (next_state == tab_capture::TabCaptureState::kPending &&
@@ -271,7 +267,7 @@ void TabCaptureRegistry::OnRequestUpdate(
       request->capture_state() != tab_capture::TabCaptureState::kError) {
     // Despite other code preventing multiple captures of the same tab, we can
     // reach this case due to a race condition (see crbug.com/1370338).
-    // TODO(crbug.com/1377780): Handle status updates for multiple capturers.
+    // TODO(crbug.com/40874553): Handle status updates for multiple capturers.
     return;
   }
 

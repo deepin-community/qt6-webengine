@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 // Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -52,6 +16,8 @@
 #include "gn/resolved_target_data.h"
 #include "gn/settings.h"
 #include "gn/target.h"
+
+#include <regex>
 
 RspTargetWriter::RspTargetWriter(const NinjaCBinaryTargetWriter* writer,
                                  const Target* target,
@@ -156,10 +122,18 @@ void RspTargetWriter::Run() {
     case LFLAGS: {
       EscapeOptions opts;
       opts.mode = ESCAPE_COMMAND;
-      // First the ldflags from the target and its config.
-      RecursiveTargetConfigStringsToStream(kRecursiveWriterKeepDuplicates,
-                                           target_, &ConfigValues::ldflags,
-                                           opts, out_);
+      if (lflags_remove_pattern_.length() > 0) {
+        std::ostringstream out;
+        RecursiveTargetConfigStringsToStream(kRecursiveWriterKeepDuplicates,
+                                             target_, &ConfigValues::ldflags,
+                                             opts, out);
+        out_ << std::regex_replace(out.str(),
+                                   std::regex(lflags_remove_pattern_), "");
+      } else {
+        RecursiveTargetConfigStringsToStream(kRecursiveWriterKeepDuplicates,
+                                             target_, &ConfigValues::ldflags,
+                                             opts, out_);
+      }
       out_.flush();
     } break;
     case LDIR: {
@@ -170,10 +144,9 @@ void RspTargetWriter::Run() {
                                    settings->build_settings()->root_path_utf8(),
                                    ESCAPE_COMMAND);
         for (size_t i = 0; i < all_lib_dirs.size(); i++) {
-          out_ << " -L\"";
+          out_ << " -L";
           lib_path_output.WriteDir(out_, all_lib_dirs[i],
                                    PathOutput::DIR_NO_LAST_SLASH);
-          out_ << "\"";
         }
         out_.flush();
       }

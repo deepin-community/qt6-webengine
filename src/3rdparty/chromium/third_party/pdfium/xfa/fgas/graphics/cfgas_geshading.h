@@ -9,14 +9,14 @@
 
 #include <stddef.h>
 
+#include <array>
+
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxge/dib/fx_dib.h"
 
 class CFGAS_GEShading final {
  public:
   enum class Type { kAxial = 1, kRadial };
-
-  static constexpr size_t kSteps = 256;
 
   // Axial shading.
   CFGAS_GEShading(const CFX_PointF& beginPoint,
@@ -38,26 +38,30 @@ class CFGAS_GEShading final {
 
   ~CFGAS_GEShading();
 
-  Type GetType() const { return m_type; }
-  CFX_PointF GetBeginPoint() const { return m_beginPoint; }
-  CFX_PointF GetEndPoint() const { return m_endPoint; }
-  float GetBeginRadius() const { return m_beginRadius; }
-  float GetEndRadius() const { return m_endRadius; }
-  bool IsExtendedBegin() const { return m_isExtendedBegin; }
-  bool IsExtendedEnd() const { return m_isExtendedEnd; }
-  FX_ARGB GetArgb(size_t index) const { return m_argbArray[index]; }
+  Type GetType() const { return type_; }
+  CFX_PointF GetBeginPoint() const { return begin_point_; }
+  CFX_PointF GetEndPoint() const { return end_point_; }
+  float GetBeginRadius() const { return begin_radius_; }
+  float GetEndRadius() const { return end_radius_; }
+  bool IsExtendedBegin() const { return is_extended_begin_; }
+  bool IsExtendedEnd() const { return is_extended_end_; }
+  FX_ARGB GetArgb(float value) const {
+    return argb_array_[static_cast<size_t>(value * (kSteps - 1))];
+  }
 
  private:
-  void InitArgbArray(FX_ARGB beginArgb, FX_ARGB endArgb);
+  static constexpr size_t kSteps = 256;
 
-  const Type m_type;
-  const CFX_PointF m_beginPoint;
-  const CFX_PointF m_endPoint;
-  const float m_beginRadius;
-  const float m_endRadius;
-  const bool m_isExtendedBegin;
-  const bool m_isExtendedEnd;
-  FX_ARGB m_argbArray[kSteps];
+  void InitArgbArray(FX_ARGB begin_argb, FX_ARGB end_argb);
+
+  const Type type_;
+  const CFX_PointF begin_point_;
+  const CFX_PointF end_point_;
+  const float begin_radius_;
+  const float end_radius_;
+  const bool is_extended_begin_;
+  const bool is_extended_end_;
+  std::array<FX_ARGB, kSteps> argb_array_;
 };
 
 #endif  // XFA_FGAS_GRAPHICS_CFGAS_GESHADING_H_

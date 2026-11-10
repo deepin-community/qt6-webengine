@@ -4,17 +4,28 @@
 
 #include "components/performance_manager/graph/process_node_impl.h"
 
+#include <optional>
+
 #include "base/containers/contains.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/process/process.h"
+#include "base/scoped_observation.h"
+#include "base/task/task_traits.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_command_line.h"
+#include "base/test/task_environment.h"
+#include "base/trace_event/named_trigger.h"
+#include "components/performance_manager/embedder/scoped_global_scenario_memory.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/public/render_process_host_id.h"
 #include "components/performance_manager/public/render_process_host_proxy.h"
+#include "components/performance_manager/scenarios/browser_performance_scenarios.h"
+#include "components/performance_manager/test_support/graph/mock_process_node_observer.h"
 #include "components/performance_manager/test_support/graph_test_harness.h"
 #include "components/performance_manager/test_support/mock_graphs.h"
-#include "content/public/browser/background_tracing_config.h"
-#include "content/public/browser/background_tracing_manager.h"
+#include "content/public/common/content_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -94,20 +105,27 @@ TEST_F(ProcessNodeImplTest, ProcessLifeCycle) {
 
 namespace {
 
-class LenientMockObserver : public ProcessNodeImpl::Observer {
+class MockObserver : public MockProcessNodeObserver {
  public:
-  LenientMockObserver() {}
-  ~LenientMockObserver() override {}
-
-  MOCK_METHOD1(OnProcessNodeAdded, void(const ProcessNode*));
-  MOCK_METHOD1(OnProcessLifetimeChange, void(const ProcessNode*));
-  MOCK_METHOD1(OnBeforeProcessNodeRemoved, void(const ProcessNode*));
-  MOCK_METHOD1(OnMainThreadTaskLoadIsLow, void(const ProcessNode*));
-  MOCK_METHOD2(OnPriorityChanged, void(const ProcessNode*, base::TaskPriority));
-  MOCK_METHOD1(OnAllFramesInProcessFrozen, void(const ProcessNode*));
+  explicit MockObserver(Graph* graph = nullptr) {
+    // If a `graph` is passed, automatically start observing it.
+    if (graph) {
+      scoped_observation_.Observe(graph);
+    }
+  }
 
   void SetNotifiedProcessNode(const ProcessNode* process_node) {
     notified_process_node_ = process_node;
+  }
+
+  void TestNotifiedProcessNode(const ProcessNode* process_node) {
+    EXPECT_EQ(notified_process_node_, process_node);
+  }
+
+  void ExpectNoEdges(const ProcessNode* process_node) {
+    // Node should be created without edges.
+    EXPECT_TRUE(process_node->GetFrameNodes().empty());
+    EXPECT_TRUE(process_node->GetWorkerNodes().empty());
   }
 
   const ProcessNode* TakeNotifiedProcessNode() {
@@ -117,25 +135,48 @@ class LenientMockObserver : public ProcessNodeImpl::Observer {
   }
 
  private:
+  base::ScopedObservation<Graph, ProcessNodeObserver> scoped_observation_{this};
   raw_ptr<const ProcessNode, DanglingUntriaged> notified_process_node_ =
       nullptr;
 };
 
-using MockObserver = ::testing::StrictMock<LenientMockObserver>;
-
-using testing::_;
-using testing::Invoke;
-using testing::Return;
+using ::testing::_;
+using ::testing::DoAll;
+using ::testing::InSequence;
+using ::testing::Invoke;
+using ::testing::InvokeWithoutArgs;
+using ::testing::Return;
 
 }  // namespace
 
 TEST_F(ProcessNodeImplTest, ObserverWorks) {
+  MockObserver head_obs;
   MockObserver obs;
+  MockObserver tail_obs;
+  graph()->AddProcessNodeObserver(&head_obs);
   graph()->AddProcessNodeObserver(&obs);
+  graph()->AddProcessNodeObserver(&tail_obs);
 
-  // Create a page node and expect a matching call to "OnProcessNodeAdded".
-  EXPECT_CALL(obs, OnProcessNodeAdded(_))
-      .WillOnce(Invoke(&obs, &MockObserver::SetNotifiedProcessNode));
+  // Remove observers at the head and tail of the list inside a callback, and
+  // expect that `obs` is still notified correctly.
+  EXPECT_CALL(head_obs, OnBeforeProcessNodeAdded(_))
+      .WillOnce(InvokeWithoutArgs([&] {
+        graph()->RemoveProcessNodeObserver(&head_obs);
+        graph()->RemoveProcessNodeObserver(&tail_obs);
+      }));
+  // `tail_obs` should not be notified as it was removed.
+  EXPECT_CALL(tail_obs, OnBeforeProcessNodeAdded(_)).Times(0);
+
+  // Create a page node and expect a matching call to both "OnBeforeProcessNodeAdded" and
+  // "OnProcessNodeAdded".
+  {
+    InSequence seq;
+    EXPECT_CALL(obs, OnBeforeProcessNodeAdded(_))
+        .WillOnce(DoAll(Invoke(&obs, &MockObserver::SetNotifiedProcessNode),
+                        Invoke(&obs, &MockObserver::ExpectNoEdges)));
+    EXPECT_CALL(obs, OnProcessNodeAdded(_))
+        .WillOnce(Invoke(&obs, &MockObserver::TestNotifiedProcessNode));
+  }
   auto process_node = CreateNode<ProcessNodeImpl>();
   const ProcessNode* raw_process_node = process_node.get();
   EXPECT_EQ(raw_process_node, obs.TakeNotifiedProcessNode());
@@ -165,11 +206,22 @@ TEST_F(ProcessNodeImplTest, ObserverWorks) {
   process_node->OnAllFramesInProcessFrozenForTesting();
   EXPECT_EQ(raw_process_node, obs.TakeNotifiedProcessNode());
 
-  // Release the page node and expect a call to "OnBeforeProcessNodeRemoved".
-  EXPECT_CALL(obs, OnBeforeProcessNodeRemoved(_))
-      .WillOnce(Invoke(&obs, &MockObserver::SetNotifiedProcessNode));
+  // Re-entrant iteration should work.
+  EXPECT_CALL(obs, OnMainThreadTaskLoadIsLow(raw_process_node))
+      .WillOnce(InvokeWithoutArgs([&] {
+        process_node->set_priority(base::TaskPriority::USER_BLOCKING);
+      }));
+  EXPECT_CALL(obs, OnPriorityChanged(raw_process_node, _));
+  process_node->SetMainThreadTaskLoadIsLow(false);
+
+  // Release the page node and expect a call to both "OnBeforeProcessNodeRemoved" and
+  // "OnProcessNodeRemoved".
+  {
+    InSequence seq;
+    EXPECT_CALL(obs, OnBeforeProcessNodeRemoved(raw_process_node));
+    EXPECT_CALL(obs, OnProcessNodeRemoved(raw_process_node));
+  }
   process_node.reset();
-  EXPECT_EQ(raw_process_node, obs.TakeNotifiedProcessNode());
 
   graph()->RemoveProcessNodeObserver(&obs);
 }
@@ -224,88 +276,58 @@ TEST_F(ProcessNodeImplTest, PublicInterface) {
   EXPECT_TRUE(process_node->GetMainThreadTaskLoadIsLow());
 
   // For properties returning nodes, simply test that the public interface impls
-  //  yield the same result as their private counterpart.
+  // yield the same result as their private counterpart.
 
-  const auto& frame_nodes = process_node->frame_nodes();
+  auto frame_nodes = process_node->frame_nodes();
   auto public_frame_nodes = public_process_node->GetFrameNodes();
   EXPECT_EQ(frame_nodes.size(), public_frame_nodes.size());
-  for (const auto* frame_node : frame_nodes) {
+  for (const FrameNodeImpl* frame_node : frame_nodes) {
     const FrameNode* public_frame_node = frame_node;
     EXPECT_TRUE(base::Contains(public_frame_nodes, public_frame_node));
   }
-
-  decltype(public_frame_nodes) visited_frame_nodes;
-  public_process_node->VisitFrameNodes(
-      [&visited_frame_nodes](const FrameNode* frame_node) -> bool {
-        visited_frame_nodes.insert(frame_node);
-        return true;
-      });
-  EXPECT_EQ(public_frame_nodes, visited_frame_nodes);
 }
 
-namespace {
+TEST_F(ProcessNodeImplTest, InitializeChildProcessCoordination) {
+  auto process_node = CreateNode<ProcessNodeImpl>();
 
-class LenientFakeBackgroundTracingManager
-    : public content::BackgroundTracingManager {
- public:
-  LenientFakeBackgroundTracingManager() { SetInstance(this); }
-  ~LenientFakeBackgroundTracingManager() override { SetInstance(nullptr); }
+  // No global memory mapped. ProcessNodeImpl automatically creates a process
+  // memory region on request.
+  process_node->InitializeChildProcessCoordination(
+      0u, base::BindLambdaForTesting(
+              [&](base::ReadOnlySharedMemoryRegion global_region,
+                  base::ReadOnlySharedMemoryRegion process_region) {
+                EXPECT_FALSE(global_region.IsValid());
+                EXPECT_TRUE(process_region.IsValid());
+              })
+              .Then(task_env().QuitClosure()));
+  task_env().RunUntilQuit();
 
-  // Functions we want to intercept.
-  MOCK_METHOD(bool, HasActiveScenario, (), (override));
-  MOCK_METHOD(bool,
-              DoEmitNamedTrigger,
-              (const std::string& trigger_name),
-              (override));
+  // Map global memory.
+  ScopedGlobalScenarioMemory global_shared_memory;
+  process_node->InitializeChildProcessCoordination(
+      0u, base::BindLambdaForTesting(
+              [&](base::ReadOnlySharedMemoryRegion global_region,
+                  base::ReadOnlySharedMemoryRegion process_region) {
+                EXPECT_TRUE(global_region.IsValid());
+                EXPECT_TRUE(process_region.IsValid());
+              })
+              .Then(task_env().QuitClosure()));
+  task_env().RunUntilQuit();
 
-  // Functions we don't care about.
-  void SetReceiveCallback(ReceiveCallback receive_callback) override {}
-  bool InitializeScenarios(
-      const perfetto::protos::gen::ChromeFieldTracingConfig& config,
-      DataFiltering data_filtering) override {
-    return true;
-  }
-
-  bool SetActiveScenario(
-      std::unique_ptr<content::BackgroundTracingConfig> config,
-      DataFiltering data_filtering) override {
-    return true;
-  }
-
-  bool HasTraceToUpload() override { return false; }
-  void GetTraceToUpload(
-      base::OnceCallback<void(absl::optional<std::string>,
-                              absl::optional<std::string>)> callback) override {
-  }
-  std::unique_ptr<content::BackgroundTracingConfig> GetBackgroundTracingConfig(
-      const std::string& trial_name) override {
-    return nullptr;
-  }
-  void SetSystemProfileRecorder(
-      base::RepeatingCallback<std::string()> recorder) override {}
-  void AbortScenarioForTesting() override {}
-  void SaveTraceForTesting(std::string&& trace_data,
-                           const std::string& scenario_name,
-                           const std::string& rule_name,
-                           const base::Token& uuid) override {}
-
-  void DeleteTracesInDateRange(base::Time start, base::Time end) override {}
-};
-
-using FakeBackgroundTracingManager =
-    ::testing::StrictMock<LenientFakeBackgroundTracingManager>;
-
-}  // namespace
-
-TEST_F(ProcessNodeImplTest, FireBackgroundTracingTriggerOnUI) {
-  const std::string kTrigger1("trigger1");
-
-  FakeBackgroundTracingManager manager;
-
-  // Expect a new trigger to be registered and triggered.
-  EXPECT_CALL(manager, DoEmitNamedTrigger(_));
-  ProcessNodeImpl::FireBackgroundTracingTriggerOnUIForTesting(kTrigger1);
-  testing::Mock::VerifyAndClear(&manager);
+  // In single process mode, memory shouldn't be shared even if it's mapped,
+  // because the request isn't actually sent from a different process.
+  base::test::ScopedCommandLine scoped_command_line;
+  scoped_command_line.GetProcessCommandLine()->AppendSwitch(
+      switches::kSingleProcess);
+  process_node->InitializeChildProcessCoordination(
+      0u, base::BindLambdaForTesting(
+              [&](base::ReadOnlySharedMemoryRegion global_region,
+                  base::ReadOnlySharedMemoryRegion process_region) {
+                EXPECT_FALSE(global_region.IsValid());
+                EXPECT_FALSE(process_region.IsValid());
+              })
+              .Then(task_env().QuitClosure()));
+  task_env().RunUntilQuit();
 }
 
 }  // namespace performance_manager

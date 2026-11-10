@@ -11,15 +11,19 @@
 #define LIBANGLE_RENDERER_WGPU_TEXTUREWGPU_H_
 
 #include "libANGLE/renderer/TextureImpl.h"
+#include "libANGLE/renderer/wgpu/ContextWgpu.h"
+#include "libANGLE/renderer/wgpu/RenderTargetWgpu.h"
+#include "libANGLE/renderer/wgpu/wgpu_helpers.h"
 
 namespace rx
 {
-
-class TextureWgpu : public TextureImpl
+class TextureWgpu : public TextureImpl, public angle::ObserverInterface
 {
   public:
     TextureWgpu(const gl::TextureState &state);
     ~TextureWgpu() override;
+
+    void onDestroy(const gl::Context *context) override;
 
     angle::Result setImage(const gl::Context *context,
                            const gl::ImageIndex &index,
@@ -162,6 +166,75 @@ class TextureWgpu : public TextureImpl
     angle::Result initializeContents(const gl::Context *context,
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
+
+    angle::Result getAttachmentRenderTarget(const gl::Context *context,
+                                            GLenum binding,
+                                            const gl::ImageIndex &imageIndex,
+                                            GLsizei samples,
+                                            FramebufferAttachmentRenderTarget **rtOut) override;
+
+    angle::Result ensureImageInitialized(const gl::Context *context);
+
+    void releaseOwnershipOfImage(const gl::Context *context);
+    webgpu::ImageHelper *getImage() const { return mImage; }
+
+    // We monitor the ImageHelper and set dirty bits if the ImageHelper changes. This can
+    // support changes in the ImageHelper even outside the TextureWgpu class.
+    void onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message) override;
+
+  private:
+    angle::Result setImageImpl(const gl::Context *context,
+                               GLenum internalFormat,
+                               GLenum type,
+                               const gl::ImageIndex &index,
+                               const gl::Extents &size,
+                               const gl::PixelUnpackState &unpack,
+                               const uint8_t *pixels);
+
+    angle::Result setSubImageImpl(const gl::Context *context,
+                                  const webgpu::Format &webgpuFormat,
+                                  GLenum type,
+                                  const gl::ImageIndex &index,
+                                  const gl::Box &area,
+                                  const gl::PixelUnpackState &unpack,
+                                  const uint8_t *pixels);
+
+    angle::Result initializeImage(ContextWgpu *contextWgpu, ImageMipLevels mipLevels);
+
+    angle::Result redefineLevel(const gl::Context *context,
+                                const webgpu::Format &webgpuFormat,
+                                const gl::ImageIndex &index,
+                                const gl::Extents &size);
+
+    uint32_t getMipLevelCount(ImageMipLevels mipLevels) const;
+
+    uint32_t getMaxLevelCount() const;
+    angle::Result respecifyImageStorageIfNecessary(ContextWgpu *contextWgpu, gl::Command source);
+    void prepareForGenerateMipmap(ContextWgpu *contextWgpu);
+    angle::Result maybeUpdateBaseMaxLevels(ContextWgpu *contextWgpu);
+    angle::Result initSingleLayerRenderTargets(ContextWgpu *contextWgpu,
+                                               GLuint layerCount,
+                                               gl::LevelIndex levelIndex,
+                                               gl::RenderToTextureImageIndex renderToTextureIndex);
+    const webgpu::Format &getBaseLevelFormat(ContextWgpu *contextWgpu) const;
+
+    void setImageHelper(webgpu::ImageHelper *imageHelper, bool ownsImageHelper);
+
+    bool mOwnsImage             = false;
+    webgpu::ImageHelper *mImage = nullptr;
+    gl::LevelIndex mCurrentBaseLevel;
+    gl::LevelIndex mCurrentMaxLevel;
+    gl::CubeFaceArray<gl::TexLevelMask> mRedefinedLevels;
+
+    angle::ObserverBinding mImageObserverBinding;
+
+    // Render targets stored as array of vector of vectors
+    //
+    // - First dimension: only RenderToTextureImageIndex::Default for now.
+    // - Second dimension: level
+    // - Third dimension: layer
+    gl::RenderToTextureImageMap<std::vector<std::vector<RenderTargetWgpu>>>
+        mSingleLayerRenderTargets;
 };
 
 }  // namespace rx

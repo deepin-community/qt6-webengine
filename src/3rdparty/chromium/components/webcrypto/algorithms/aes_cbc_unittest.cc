@@ -6,9 +6,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
@@ -105,7 +107,7 @@ TEST_F(WebCryptoAesCbcTest, InputTooLarge) {
   // Pretend the input is large. Don't pass data pointer as NULL in case that
   // is special cased; the implementation shouldn't actually dereference the
   // data.
-  base::span<const uint8_t> input(iv.data(), size_t{INT_MAX} - 3);
+  base::span<const uint8_t> UNSAFE_TODO(input(iv.data(), size_t{INT_MAX} - 3));
 
   EXPECT_EQ(
       Status::ErrorDataTooLarge(),
@@ -135,7 +137,7 @@ struct AesCbcKnownAnswer {
   const char* ciphertext;
 };
 
-const AesCbcKnownAnswer kAesCbcKnownAnswers[] = {
+constexpr auto kAesCbcKnownAnswers = std::to_array<AesCbcKnownAnswer>({
     // F.2.1 (CBC-AES128.Encrypt)
     // http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf
     {"2b7e151628aed2a6abf7158809cf4f3c", "000102030405060708090a0b0c0d0e0f",
@@ -163,7 +165,8 @@ const AesCbcKnownAnswer kAesCbcKnownAnswers[] = {
 
     // Taken from encryptor_unittest.cc (EncryptorTest.EmptyEncrypt())
     {"3132383d5369787465656e4279746573", "5377656574205369787465656e204956", "",
-     "8518b8878d34e7185e300d0fcc426396"}};
+     "8518b8878d34e7185e300d0fcc426396"},
+});
 
 TEST_F(WebCryptoAesCbcTest, KnownAnswers) {
   for (const auto& test : kAesCbcKnownAnswers) {
@@ -570,8 +573,7 @@ TEST_F(WebCryptoAesCbcTest, ImportJwkUnknownKeyOps) {
         })";
 
   EXPECT_EQ(Status::Success(),
-            ImportKey(blink::kWebCryptoKeyFormatJwk,
-                      base::as_bytes(base::make_span(jwk)),
+            ImportKey(blink::kWebCryptoKeyFormatJwk, base::as_byte_span(jwk),
                       CreateAlgorithm(blink::kWebCryptoAlgorithmIdAesCbc),
                       false, blink::kWebCryptoKeyUsageEncrypt, &key));
 }
@@ -586,11 +588,11 @@ TEST_F(WebCryptoAesCbcTest, ImportJwkInvalidJson) {
 
   // Fail on invalid JSON.
   const std::string bad_json = R"({ "kty": "oct", "alg": "HS256", "use": )";
-  EXPECT_EQ(Status::ErrorJwkNotDictionary(),
-            ImportKey(blink::kWebCryptoKeyFormatJwk,
-                      base::as_bytes(base::make_span(bad_json)),
-                      CreateAlgorithm(blink::kWebCryptoAlgorithmIdAesCbc),
-                      false, blink::kWebCryptoKeyUsageEncrypt, &key));
+  EXPECT_EQ(
+      Status::ErrorJwkNotDictionary(),
+      ImportKey(blink::kWebCryptoKeyFormatJwk, base::as_byte_span(bad_json),
+                CreateAlgorithm(blink::kWebCryptoAlgorithmIdAesCbc), false,
+                blink::kWebCryptoKeyUsageEncrypt, &key));
 }
 
 // Fail on inconsistent key_ops - asking for "encrypt" however JWK contains

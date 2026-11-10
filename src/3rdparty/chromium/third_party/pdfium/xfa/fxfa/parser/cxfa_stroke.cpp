@@ -9,8 +9,10 @@
 #include <math.h>
 
 #include <utility>
+#include <vector>
 
 #include "fxjs/xfa/cjx_object.h"
+#include "xfa/fgas/graphics/cfgas_gecolor.h"
 #include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fxfa/cxfa_ffwidget.h"
 #include "xfa/fxfa/parser/cxfa_color.h"
@@ -24,38 +26,38 @@ void XFA_StrokeTypeSetLineDash(CFGAS_GEGraphics* pGraphics,
                                XFA_AttributeValue iCapType) {
   switch (iStrokeType) {
     case XFA_AttributeValue::DashDot: {
-      float dashArray[] = {4, 1, 2, 1};
+      std::vector<float> dash_array = {4, 1, 2, 1};
       if (iCapType != XFA_AttributeValue::Butt) {
-        dashArray[1] = 2;
-        dashArray[3] = 2;
+        dash_array[1] = 2;
+        dash_array[3] = 2;
       }
-      pGraphics->SetLineDash(0, dashArray);
+      pGraphics->SetLineDash(std::move(dash_array));
       break;
     }
     case XFA_AttributeValue::DashDotDot: {
-      float dashArray[] = {4, 1, 2, 1, 2, 1};
+      std::vector<float> dash_array = {4, 1, 2, 1, 2, 1};
       if (iCapType != XFA_AttributeValue::Butt) {
-        dashArray[1] = 2;
-        dashArray[3] = 2;
-        dashArray[5] = 2;
+        dash_array[1] = 2;
+        dash_array[3] = 2;
+        dash_array[5] = 2;
       }
-      pGraphics->SetLineDash(0, dashArray);
+      pGraphics->SetLineDash(std::move(dash_array));
       break;
     }
     case XFA_AttributeValue::Dashed: {
-      float dashArray[] = {5, 1};
-      if (iCapType != XFA_AttributeValue::Butt)
-        dashArray[1] = 2;
-
-      pGraphics->SetLineDash(0, dashArray);
+      std::vector<float> dash_array = {5, 1};
+      if (iCapType != XFA_AttributeValue::Butt) {
+        dash_array[1] = 2;
+      }
+      pGraphics->SetLineDash(std::move(dash_array));
       break;
     }
     case XFA_AttributeValue::Dotted: {
-      float dashArray[] = {2, 1};
-      if (iCapType != XFA_AttributeValue::Butt)
-        dashArray[1] = 2;
-
-      pGraphics->SetLineDash(0, dashArray);
+      std::vector<float> dash_array = {2, 1};
+      if (iCapType != XFA_AttributeValue::Butt) {
+        dash_array[1] = 2;
+      }
+      pGraphics->SetLineDash(std::move(dash_array));
       break;
     }
     default:
@@ -64,7 +66,7 @@ void XFA_StrokeTypeSetLineDash(CFGAS_GEGraphics* pGraphics,
   }
 }
 
-CXFA_Stroke::CXFA_Stroke(CXFA_Document* pDoc,
+CXFA_Stroke::CXFA_Stroke(CXFA_Document* doc,
                          XFA_PacketType ePacket,
                          Mask<XFA_XDPPACKET> validPackets,
                          XFA_ObjectType oType,
@@ -72,7 +74,7 @@ CXFA_Stroke::CXFA_Stroke(CXFA_Document* pDoc,
                          pdfium::span<const PropertyData> properties,
                          pdfium::span<const AttributeData> attributes,
                          CJX_Object* js_node)
-    : CXFA_Node(pDoc,
+    : CXFA_Node(doc,
                 ePacket,
                 validPackets,
                 oType,
@@ -112,8 +114,9 @@ void CXFA_Stroke::SetMSThickness(CXFA_Measurement msThinkness) {
 
 FX_ARGB CXFA_Stroke::GetColor() const {
   const auto* pNode = GetChild<CXFA_Color>(0, XFA_Element::Color, false);
-  if (!pNode)
+  if (!pNode) {
     return 0xFF000000;
+  }
 
   return CXFA_Color::StringToFXARGB(
       pNode->JSObject()->GetCData(XFA_Attribute::Value).AsStringView());
@@ -122,16 +125,13 @@ FX_ARGB CXFA_Stroke::GetColor() const {
 void CXFA_Stroke::SetColor(FX_ARGB argb) {
   CXFA_Color* pNode =
       JSObject()->GetOrCreateProperty<CXFA_Color>(0, XFA_Element::Color);
-  if (!pNode)
+  if (!pNode) {
     return;
+  }
 
-  int a;
-  int r;
-  int g;
-  int b;
-  std::tie(a, r, g, b) = ArgbDecode(argb);
-  pNode->JSObject()->SetCData(XFA_Attribute::Value,
-                              WideString::Format(L"%d,%d,%d", r, g, b));
+  pNode->JSObject()->SetCData(
+      XFA_Attribute::Value,
+      WideString::FromASCII(CFGAS_GEColor::ColorToString(argb).AsStringView()));
 }
 
 XFA_AttributeValue CXFA_Stroke::GetJoinType() {
@@ -151,18 +151,22 @@ float CXFA_Stroke::GetRadius() const {
 
 bool CXFA_Stroke::SameStyles(CXFA_Stroke* stroke,
                              Mask<SameStyleOption> dwFlags) {
-  if (this == stroke)
+  if (this == stroke) {
     return true;
-  if (fabs(GetThickness() - stroke->GetThickness()) >= 0.01f)
+  }
+  if (fabs(GetThickness() - stroke->GetThickness()) >= 0.01f) {
     return false;
+  }
   if (!(dwFlags & SameStyleOption::kNoPresence) &&
       IsVisible() != stroke->IsVisible()) {
     return false;
   }
-  if (GetStrokeType() != stroke->GetStrokeType())
+  if (GetStrokeType() != stroke->GetStrokeType()) {
     return false;
-  if (GetColor() != stroke->GetColor())
+  }
+  if (GetColor() != stroke->GetColor()) {
     return false;
+  }
   if ((dwFlags & CXFA_Stroke::SameStyleOption::kCorner) &&
       fabs(GetRadius() - stroke->GetRadius()) >= 0.01f) {
     return false;
@@ -173,16 +177,19 @@ bool CXFA_Stroke::SameStyles(CXFA_Stroke* stroke,
 void CXFA_Stroke::Stroke(CFGAS_GEGraphics* pGS,
                          const CFGAS_GEPath& pPath,
                          const CFX_Matrix& matrix) {
-  if (!IsVisible())
+  if (!IsVisible()) {
     return;
+  }
 
   float fThickness = GetThickness();
-  if (fThickness < 0.001f)
+  if (fThickness < 0.001f) {
     return;
+  }
 
   CFGAS_GEGraphics::StateRestorer restorer(pGS);
-  if (IsCorner() && fThickness > 2 * GetRadius())
+  if (IsCorner() && fThickness > 2 * GetRadius()) {
     fThickness = 2 * GetRadius();
+  }
 
   pGS->SetLineWidth(fThickness);
   pGS->EnableActOnDash();

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "type_conversion.h"
 
@@ -23,8 +24,6 @@ QImage toQImage(const SkBitmap &bitmap)
     QImage image;
     switch (bitmap.colorType()) {
     case kUnknown_SkColorType:
-    case kRGBA_F16_SkColorType:
-    case kRGBA_F32_SkColorType:
     case kRGBA_F16Norm_SkColorType:
     case kR8G8_unorm_SkColorType:
     case kA16_float_SkColorType:
@@ -106,6 +105,7 @@ QImage toQImage(const SkBitmap &bitmap)
     case kBGR_101010x_SkColorType:
     case kBGR_101010x_XR_SkColorType:
     case kBGRA_1010102_SkColorType:
+    case kBGRA_10101010_XR_SkColorType:
         switch (bitmap.alphaType()) {
         case kUnknown_SkAlphaType:
             break;
@@ -134,6 +134,37 @@ QImage toQImage(const SkBitmap &bitmap)
             break;
         case kPremul_SkAlphaType:
             image = toQImage(bitmap, QImage::Format_RGBA64_Premultiplied);
+            break;
+        }
+        break;
+    case kRGBA_F16_SkColorType:
+    case kRGB_F16F16F16x_SkColorType:
+        switch (bitmap.alphaType()) {
+        case kUnknown_SkAlphaType:
+            break;
+        case kUnpremul_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBA16FPx4);
+            break;
+        case kOpaque_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBX16FPx4);
+            break;
+        case kPremul_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBA16FPx4_Premultiplied);
+            break;
+        }
+        break;
+    case kRGBA_F32_SkColorType:
+        switch (bitmap.alphaType()) {
+        case kUnknown_SkAlphaType:
+            break;
+        case kUnpremul_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBA32FPx4);
+            break;
+        case kOpaque_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBX32FPx4);
+            break;
+        case kPremul_SkAlphaType:
+            image = toQImage(bitmap, QImage::Format_RGBA32FPx4_Premultiplied);
             break;
         }
         break;
@@ -224,7 +255,7 @@ QIcon toQIcon(const std::vector<SkBitmap> &bitmaps)
 int flagsFromModifiers(Qt::KeyboardModifiers modifiers)
 {
     int modifierFlags = ui::EF_NONE;
-#if defined(Q_OS_OSX)
+#if defined(Q_OS_MACOS)
     if (!qApp->testAttribute(Qt::AA_MacDontSwapCtrlAndMeta)) {
         if ((modifiers & Qt::ControlModifier) != 0)
             modifierFlags |= ui::EF_COMMAND_DOWN;
@@ -259,42 +290,6 @@ QList<QSslCertificate> toCertificateChain(net::X509Certificate *certificate)
     for (auto &&buffer : certificate->intermediate_buffers())
         chain.append(toCertificate(buffer.get()));
     return chain;
-}
-
-Qt::InputMethodHints toQtInputMethodHints(ui::TextInputType inputType)
-{
-    switch (inputType) {
-    case ui::TEXT_INPUT_TYPE_TEXT:
-        return Qt::ImhPreferLowercase;
-    case ui::TEXT_INPUT_TYPE_SEARCH:
-        return Qt::ImhPreferLowercase | Qt::ImhNoAutoUppercase;
-    case ui::TEXT_INPUT_TYPE_PASSWORD:
-        return Qt::ImhSensitiveData | Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase
-                | Qt::ImhHiddenText;
-    case ui::TEXT_INPUT_TYPE_EMAIL:
-        return Qt::ImhEmailCharactersOnly;
-    case ui::TEXT_INPUT_TYPE_NUMBER:
-        return Qt::ImhFormattedNumbersOnly;
-    case ui::TEXT_INPUT_TYPE_TELEPHONE:
-        return Qt::ImhDialableCharactersOnly;
-    case ui::TEXT_INPUT_TYPE_URL:
-        return Qt::ImhUrlCharactersOnly | Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase;
-    case ui::TEXT_INPUT_TYPE_DATE_TIME:
-    case ui::TEXT_INPUT_TYPE_DATE_TIME_LOCAL:
-    case ui::TEXT_INPUT_TYPE_DATE_TIME_FIELD:
-        return Qt::ImhDate | Qt::ImhTime;
-    case ui::TEXT_INPUT_TYPE_DATE:
-    case ui::TEXT_INPUT_TYPE_MONTH:
-    case ui::TEXT_INPUT_TYPE_WEEK:
-        return Qt::ImhDate;
-    case ui::TEXT_INPUT_TYPE_TIME:
-        return Qt::ImhTime;
-    case ui::TEXT_INPUT_TYPE_TEXT_AREA:
-    case ui::TEXT_INPUT_TYPE_CONTENT_EDITABLE:
-        return Qt::ImhMultiLine | Qt::ImhPreferLowercase;
-    default:
-        return Qt::ImhNone;
-    }
 }
 
 } // namespace QtWebEngineCore

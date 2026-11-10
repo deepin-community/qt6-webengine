@@ -1,16 +1,21 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "compositor.h"
 
 #include "base/memory/ref_counted.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 
+#include <QGuiApplication>
 #include <QHash>
-#include <QMutex>
+#include <QReadWriteLock>
 #include <QQuickWindow>
+#include <QWaitCondition>
 
 namespace QtWebEngineCore {
+
+Q_LOGGING_CATEGORY(lcWebEngineCompositor, "qt.webengine.compositor");
 
 // Compositor::Id
 
@@ -36,7 +41,8 @@ struct Compositor::Binding
     const Id id;
     Compositor *compositor = nullptr;
     Observer *observer = nullptr;
-
+    QWaitCondition condition;
+    bool waitForRelease = false;
     Binding(Id id) : id(id) { }
     ~Binding();
 };
@@ -44,7 +50,8 @@ struct Compositor::Binding
 class Compositor::BindingMap
 {
 public:
-    void lock() { m_mutex.lock(); }
+    void lock() { m_mutex.lockForRead(); }
+    void lockForWrite() { m_mutex.lockForWrite(); }
 
     void unlock() { m_mutex.unlock(); }
 
@@ -59,8 +66,11 @@ public:
     void remove(Id id) { m_map.remove(id); }
 
 private:
-    QMutex m_mutex;
+    QReadWriteLock m_mutex;
     QHash<Id, Binding *> m_map;
+
+    friend class Compositor;
+
 } static g_bindings;
 
 Compositor::Binding::~Binding()
@@ -73,7 +83,7 @@ Compositor::Binding::~Binding()
 void Compositor::Observer::bind(Id id)
 {
     DCHECK(!m_binding);
-    g_bindings.lock();
+    g_bindings.lockForWrite();
     m_binding = g_bindings.findOrCreate(id);
     DCHECK(!m_binding->observer);
     m_binding->observer = this;
@@ -82,12 +92,15 @@ void Compositor::Observer::bind(Id id)
 
 void Compositor::Observer::unbind()
 {
-    DCHECK(m_binding);
-    g_bindings.lock();
-    m_binding->observer = nullptr;
-    if (m_binding->compositor == nullptr)
-        delete m_binding;
-    m_binding = nullptr;
+    g_bindings.lockForWrite();
+    if (m_binding) {
+        m_binding->observer = nullptr;
+        while (m_binding->waitForRelease)
+            m_binding->condition.wait(&g_bindings.m_mutex);
+        if (m_binding->compositor == nullptr)
+            delete m_binding;
+        m_binding = nullptr;
+    }
     g_bindings.unlock();
 }
 
@@ -100,12 +113,36 @@ Compositor::Handle<Compositor> Compositor::Observer::compositor()
     return nullptr;
 }
 
+Compositor::Observer::~Observer()
+{
+    DCHECK(!m_binding); // check that unbind() was called by derived final class
+}
+
+void Compositor::Observer::lockForRelease()
+{
+    g_bindings.lockForWrite();
+    Q_ASSERT(m_binding);
+    m_binding->waitForRelease = true;
+    g_bindings.unlock();
+}
+
+void Compositor::Observer::unlockForRelease()
+{
+    g_bindings.lockForWrite();
+    Q_ASSERT(m_binding);
+    if (m_binding->waitForRelease) {
+        m_binding->waitForRelease = false;
+        m_binding->condition.wakeAll();
+    }
+    g_bindings.unlock();
+}
+
 // Compositor
 
 void Compositor::bind(Id id)
 {
     DCHECK(!m_binding);
-    g_bindings.lock();
+    g_bindings.lockForWrite();
     m_binding = g_bindings.findOrCreate(id);
     DCHECK(!m_binding->compositor);
     m_binding->compositor = this;
@@ -114,22 +151,24 @@ void Compositor::bind(Id id)
 
 void Compositor::unbind()
 {
-    DCHECK(m_binding);
-    g_bindings.lock();
-    m_binding->compositor = nullptr;
-    if (m_binding->observer == nullptr)
-        delete m_binding;
-    m_binding = nullptr;
+    g_bindings.lockForWrite();
+    if (m_binding) {
+        while (m_binding->waitForRelease)
+            m_binding->condition.wait(&g_bindings.m_mutex);
+        m_binding->compositor = nullptr;
+        if (m_binding->observer == nullptr)
+            delete m_binding;
+        m_binding = nullptr;
+    }
     g_bindings.unlock();
 }
 
-Compositor::Handle<Compositor::Observer> Compositor::observer()
+void Compositor::readyToSwap()
 {
     g_bindings.lock();
     if (m_binding && m_binding->observer)
-        return m_binding->observer; // delay unlock
+        m_binding->observer->readyToSwap();
     g_bindings.unlock();
-    return nullptr;
 }
 
 void Compositor::waitForTexture()
@@ -142,17 +181,28 @@ void Compositor::releaseTexture()
 
 QSGTexture *Compositor::texture(QQuickWindow *, uint32_t textureOptions)
 {
-    Q_UNREACHABLE();
-    return nullptr;
+    Q_UNREACHABLE_RETURN(nullptr);
 }
 
 bool Compositor::textureIsFlipped()
 {
-    Q_UNREACHABLE();
-    return false;
+    Q_UNREACHABLE_RETURN(false);
 }
 
 void Compositor::releaseResources() { }
+
+Compositor::Compositor(Type type) : m_type(type)
+{
+    qCDebug(lcWebEngineCompositor, "Compositor Type: %s",
+            m_type == Type::Software ? "Software" : "Native");
+    qCDebug(lcWebEngineCompositor, "QPA Platform Plugin: %ls",
+            qUtf16Printable(QGuiApplication::platformName()));
+}
+
+Compositor::~Compositor()
+{
+    DCHECK(!m_binding); // check that unbind() was called by derived final class
+}
 
 // static
 void Compositor::unlockBindings()

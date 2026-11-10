@@ -48,8 +48,8 @@ name (which may be shared by other sections), and an unique
 name. See the output of @option{sections}.
 
 Metadata tags stored in the container or in the streams are recognized
-and printed in the corresponding "FORMAT", "STREAM" or "PROGRAM_STREAM"
-section.
+and printed in the corresponding "FORMAT", "STREAM", "STREAM_GROUP_STREAM"
+or "PROGRAM_STREAM" section.
 
 @c man end
 
@@ -139,13 +139,6 @@ stream.
 All the container format information is printed within a section with
 name "FORMAT".
 
-@item -show_format_entry @var{name}
-Like @option{-show_format}, but only prints the specified entry of the
-container format information, rather than all. This option may be given more
-than once, then all specified entries will be shown.
-
-This option is deprecated, use @code{show_entries} instead.
-
 @item -show_entries @var{section_entries}
 Set list of entries to show.
 
@@ -231,6 +224,13 @@ multimedia stream.
 
 Each media stream information is printed within a dedicated section
 with name "PROGRAM_STREAM".
+
+@item -show_stream_groups
+Show information about stream groups and their streams contained in the
+input multimedia stream.
+
+Each media stream information is printed within a dedicated section
+with name "STREAM_GROUP_STREAM".
 
 @item -show_chapters
 Show information about chapters stored in the format.
@@ -344,6 +344,19 @@ while other writers always print them. This option enables one to control this b
 Valid values are @code{always}/@code{1}, @code{never}/@code{0} and @code{auto}/@code{-1}.
 Default is @var{auto}.
 
+@item -analyze_frames
+Analyze frames and/or their side data up to the provided read interval,
+providing additional information that may be useful at a stream level.
+Must be paired with the @option{-show_streams} option or it will have no effect.
+
+Currently, the additional fields provided by this option when enabled are the
+@code{closed_captions} and @code{film_grain} fields.
+
+For example, to analyze the first 20 seconds and populate these fields:
+@example
+ffprobe -show_streams -analyze_frames -read_intervals "%+20" INPUT
+@end example
+
 @item -bitexact
 Force bitexact output, useful to produce output which is not dependent
 on the specific build.
@@ -415,8 +428,9 @@ keyN=valN
 [/SECTION]
 @end example
 
-Metadata tags are printed as a line in the corresponding FORMAT, STREAM or
-PROGRAM_STREAM section, and are prefixed by the string "TAG:".
+Metadata tags are printed as a line in the corresponding FORMAT, STREAM,
+STREAM_GROUP_STREAM or PROGRAM_STREAM section, and are prefixed by the
+string "TAG:".
 
 A description of the accepted options follows.
 
