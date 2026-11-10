@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef DEV_TOOLS_HTTP_HANDLER_DELEGATE_QT_H
 #define DEV_TOOLS_HTTP_HANDLER_DELEGATE_QT_H
@@ -44,6 +45,8 @@ public:
     bool HasBundledFrontendResources() override;
 
     void Initialized(const net::IPEndPoint *ip_address) override;
+    void HandleCommand(content::DevToolsAgentHostClientChannel *channel,
+                       base::span<const uint8_t> message, NotHandledCallback callback) override;
 };
 
 } // namespace QtWebEngineCore

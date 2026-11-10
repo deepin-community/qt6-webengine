@@ -82,7 +82,7 @@ source_set("zlib_common_headers") {
 use_arm_neon_optimizations = false
 if ((current_cpu == "arm" || current_cpu == "arm64") &&
     !(is_win && !is_clang)) {
-  # TODO(richard.townsend@arm.com): Optimizations temporarily disabled for
+  # TODO(ritownsend@google.com): Optimizations temporarily disabled for
   # Windows on Arm MSVC builds, see http://crbug.com/v8/10012.
   if (arm_use_neon) {
     use_arm_neon_optimizations = true
@@ -140,7 +140,7 @@ if (use_arm_neon_optimizations) {
     defines = [ "CRC32_ARMV8_CRC32" ]
     if (is_android) {
       defines += [ "ARMV8_OS_ANDROID" ]
-    } else if (is_linux || is_chromeos) {
+    } else if (is_linux || is_chromeos || is_ohos) {
       defines += [ "ARMV8_OS_LINUX" ]
     } else if (is_mac) {
       defines += [ "ARMV8_OS_MACOS" ]
@@ -160,10 +160,18 @@ if (use_arm_neon_optimizations) {
 
     include_dirs = [ "." ]
 
-    if (!is_win && !is_clang) {
+    # OHOS clang 15 miscompiles crc32_simd.c's per-function CRC target
+    # attributes, so pass -march explicitly (as done for GCC) for OHOS too.
+    if ((!is_win && !is_clang) || is_ohos) {
       assert(!use_thin_lto,
              "ThinLTO fails mixing different module-level targets")
-      cflags_c = [ "-march=armv8-a+aes+crc" ]
+      if (current_cpu == "arm64") {
+        cflags_c = [ "-march=armv8-a+aes+crc" ]
+      } else if (current_cpu == "arm") {
+        cflags_c = [ "-march=armv8-a+crc" ]
+      } else {
+        assert(false, "Unexpected cpu: $current_cpu")
+      }
     }
 
     sources = [
@@ -179,12 +187,15 @@ if (use_arm_neon_optimizations) {
   }
 }
 
-config("zlib_inflate_chunk_simd_config") {
+config("zlib_data_chunk_simd_config") {
   if (use_x86_x64_optimizations) {
     defines = [ "INFLATE_CHUNK_SIMD_SSE2" ]
 
     if (current_cpu == "x64") {
-      defines += [ "INFLATE_CHUNK_READ_64LE" ]
+      defines += [
+        "INFLATE_CHUNK_READ_64LE",
+        "DEFLATE_CHUNK_WRITE_64LE",
+      ]
     }
   }
 
@@ -192,12 +203,15 @@ config("zlib_inflate_chunk_simd_config") {
     defines = [ "INFLATE_CHUNK_SIMD_NEON" ]
 
     if (current_cpu == "arm64") {
-      defines += [ "INFLATE_CHUNK_READ_64LE" ]
+      defines += [
+        "INFLATE_CHUNK_READ_64LE",
+        "DEFLATE_CHUNK_WRITE_64LE",
+      ]
     }
   }
 }
 
-source_set("zlib_inflate_chunk_simd") {
+source_set("zlib_data_chunk_simd") {
   visibility = [ ":*" ]
 
   if (use_x86_x64_optimizations || use_arm_neon_optimizations) {
@@ -219,7 +233,7 @@ source_set("zlib_inflate_chunk_simd") {
   configs += [ "//build/config/compiler:no_chromium_code" ]
   configs += [ ":zlib_warnings" ]
 
-  public_configs = [ ":zlib_inflate_chunk_simd_config" ]
+  public_configs = [ ":zlib_data_chunk_simd_config" ]
 
   public_deps = [ ":zlib_common_headers" ]
 }
@@ -342,7 +356,7 @@ component("bundled_zlib") {
   if (use_x86_x64_optimizations || use_arm_neon_optimizations) {
     deps += [
       ":zlib_adler32_simd",
-      ":zlib_inflate_chunk_simd",
+      ":zlib_data_chunk_simd",
       ":zlib_slide_hash_simd",
     ]
 
@@ -461,7 +475,7 @@ static_library("bundled_minizip") {
     ]
   }
 
-  if (is_apple || is_android || is_nacl) {
+  if (is_apple || is_android) {
     # Mac, Android and the BSDs don't have fopen64, ftello64, or fseeko64. We
     # use fopen, ftell, and fseek instead on these systems.
     defines = [ "USE_FILE32API" ]
@@ -493,11 +507,16 @@ shim_headers("minizip_shim") {
   ]
 }
 
+config("use_system_minizip") {
+  defines = [ "USE_SYSTEM_MINIZIP=1" ]
+}
+
 source_set("system_minizip") {
   deps = [
     ":minizip_shim",
   ]
   libs = [ "minizip" ]
+  public_configs = [ ":use_system_minizip" ]
 }
 
 group("minizip") {
@@ -538,6 +557,36 @@ executable("zlib_bench") {
   configs += [ "//build/config/compiler:no_chromium_code" ]
 }
 
+executable("minigzip") {
+  include_dirs = [ "." ]
+
+  sources = [ "test/minigzip.c" ]
+  if (!is_debug) {
+    configs -= [ "//build/config/compiler:default_optimization" ]
+    configs += [ "//build/config/compiler:optimize_speed" ]
+  }
+
+  deps = [ ":zlib" ]
+
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+}
+
+executable("zpipe") {
+  include_dirs = [ "." ]
+
+  sources = [ "examples/zpipe.c" ]
+  if (!is_debug) {
+    configs -= [ "//build/config/compiler:default_optimization" ]
+    configs += [ "//build/config/compiler:optimize_speed" ]
+  }
+
+  deps = [ ":zlib" ]
+
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+}
+
 if (!is_win || target_os != "winuwp") {
   executable("minizip_bin") {
     include_dirs = [ "." ]
@@ -545,9 +594,7 @@ if (!is_win || target_os != "winuwp") {
     sources = [ "contrib/minizip/minizip.c" ]
 
     if (is_clang) {
-      cflags = [
-        "-Wno-incompatible-pointer-types-discards-qualifiers",
-      ]
+      cflags = [ "-Wno-incompatible-pointer-types-discards-qualifiers" ]
     }
 
     if (!is_debug) {
@@ -567,9 +614,7 @@ if (!is_win || target_os != "winuwp") {
     sources = [ "contrib/minizip/miniunz.c" ]
 
     if (is_clang) {
-      cflags = [
-        "-Wno-incompatible-pointer-types-discards-qualifiers",
-      ]
+      cflags = [ "-Wno-incompatible-pointer-types-discards-qualifiers" ]
     }
 
     if (!is_debug) {

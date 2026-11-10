@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
 
+#include <numeric>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -15,25 +17,33 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/new_tab_page/one_google_bar/one_google_bar_data.h"
 #include "chrome/browser/new_tab_page/one_google_bar/one_google_bar_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/background/ntp_custom_background_service.h"
+#include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/new_tab_page_resources.h"
+#include "chrome/grit/new_tab_page_untrusted_resources.h"
+#include "components/policy/content/policy_blocklist_service.h"
 #include "components/search/ntp_features.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/url_util.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "third_party/re2/src/re2/re2.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/template_expressions.h"
 #include "url/url_util.h"
+
+using URLBlocklistState = policy::URLBlocklist::URLBlocklistState;
 
 namespace {
 
@@ -44,10 +54,8 @@ std::string FormatTemplate(int resource_id,
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
   scoped_refptr<base::RefCountedMemory> bytes =
       bundle.LoadDataResourceBytes(resource_id);
-  base::StringPiece string_piece(reinterpret_cast<const char*>(bytes->front()),
-                                 bytes->size());
   return ui::ReplaceTemplateExpressions(
-      string_piece, replacements,
+      base::as_string_view(*bytes), replacements,
       /* skip_unexpected_placeholder_check= */ true);
 }
 
@@ -61,6 +69,39 @@ void ServeBackgroundImageData(content::URLDataSource::GotDataCallback callback,
                               std::string data_string) {
   std::move(callback).Run(
       base::MakeRefCounted<base::RefCountedString>(std::move(data_string)));
+}
+
+std::string AsyncParamDataAsCSV(
+    const std::unordered_map<std::string, std::string> param_data) {
+  if (param_data.empty()) {
+    return "";
+  }
+
+  std::string csv = std::accumulate(
+      param_data.cbegin(), param_data.cend(), std::string(),
+      [&](std::string acc, const std::pair<std::string, std::string>& param) {
+        return acc + "," + param.first + ":" + param.second;
+      });
+
+  // Strip preceding comma and return value.
+  return csv.substr(1);
+}
+
+std::map<std::string, std::string> ExtractQueryParams(
+    std::string_view query_params) {
+  std::map<std::string, std::string> params;
+  url::Component query(0, query_params.length());
+  url::Component key, value;
+  while (url::ExtractQueryKeyValue(query_params, &query, &key, &value)) {
+    url::RawCanonOutputW<kMaxUriDecodeLen> output;
+    url::DecodeURLEscapeSequences(query_params.substr(value.begin, value.len),
+                                  url::DecodeURLMode::kUTF8OrIsomorphic,
+                                  &output);
+    params.insert({std::string(query_params.substr(key.begin, key.len)),
+                   base::UTF16ToUTF8(output.view())});
+  }
+
+  return params;
 }
 
 }  // namespace
@@ -86,7 +127,7 @@ std::string UntrustedSource::GetContentSecurityPolicy(
     case network::mojom::CSPDirectiveName::ChildSrc:
       return "child-src https:;";
     case network::mojom::CSPDirectiveName::DefaultSrc:
-      // TODO(https://crbug.com/1085325): Audit and tighten CSP.
+      // TODO(crbug.com/40693567): Audit and tighten CSP.
       return std::string();
     case network::mojom::CSPDirectiveName::FrameAncestors:
       return base::StringPrintf("frame-ancestors %s",
@@ -110,20 +151,51 @@ void UntrustedSource::StartDataRequest(
     const GURL& url,
     const content::WebContents::Getter& wc_getter,
     content::URLDataSource::GotDataCallback callback) {
-  const std::string path = url.has_path() ? url.path().substr(1) : "";
   GURL url_param = GURL(url.query());
+  if (url_param.is_valid() && IsURLBlockedByPolicy(url_param)) {
+    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>());
+    return;
+  }
+  const std::string path = url.has_path() ? url.path().substr(1) : "";
   if (path == "one-google-bar" && one_google_bar_service_) {
+    std::map<std::string, std::string> params;
+
     std::string query_params;
-    net::GetValueForKeyInQuery(url, "paramsencoded", &query_params);
-    base::Base64Decode(query_params, &query_params);
-    bool wait_for_refresh =
-        one_google_bar_service_->SetAdditionalQueryParams(query_params);
-    one_google_bar_callbacks_.push_back(std::move(callback));
-    if (one_google_bar_service_->one_google_bar_data().has_value() &&
-        !wait_for_refresh &&
-        base::FeatureList::IsEnabled(ntp_features::kCacheOneGoogleBar)) {
-      OnOneGoogleBarDataUpdated();
+    if (net::GetValueForKeyInQuery(url, "paramsencoded", &query_params)) {
+      base::Base64Decode(query_params, &query_params);
+      if (!query_params.empty() && query_params.starts_with("&")) {
+        params = ExtractQueryParams(query_params.substr(1));
+      }
     }
+
+    if (params.find("async") == params.end()) {
+      std::unordered_map<std::string, std::string> async_param_data;
+      async_param_data["fixed"] = "0";
+
+      bool async_bar_parts = base::FeatureList::IsEnabled(
+          ntp_features::kNtpOneGoogleBarAsyncBarParts);
+      if (async_bar_parts) {
+        async_param_data["abp"] = "1";
+
+        NtpCustomBackgroundService* ntp_custom_background_service =
+            NtpCustomBackgroundServiceFactory::GetForProfile(profile_);
+        if (ntp_custom_background_service &&
+            ntp_custom_background_service->GetCustomBackground()) {
+          async_param_data["dark"] = "1";
+        } else {
+          content::WebContents* web_contents = wc_getter.Run();
+          if (web_contents && web_contents->GetColorMode() ==
+                                  ui::ColorProviderKey::ColorMode::kDark) {
+            async_param_data["dark"] = "1";
+          }
+        }
+      }
+
+      params.insert({"async", AsyncParamDataAsCSV(async_param_data)});
+    }
+
+    one_google_bar_service_->SetAdditionalQueryParams(params);
+    one_google_bar_callbacks_.push_back(std::move(callback));
     if (one_google_bar_callbacks_.size() == 1) {
       one_google_bar_load_start_time_ = base::TimeTicks::Now();
       one_google_bar_service_->Refresh();
@@ -136,6 +208,13 @@ void UntrustedSource::StartDataRequest(
         IDR_NEW_TAB_PAGE_UNTRUSTED_ONE_GOOGLE_BAR_JS));
     return;
   }
+  if (path == "one_google_bar_api.js") {
+    ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+    std::move(callback).Run(bundle.LoadDataResourceBytes(
+        IDR_NEW_TAB_PAGE_UNTRUSTED_ONE_GOOGLE_BAR_API_JS));
+    return;
+  }
+  // TODO(romanarora): add support for one_google_bar_api.js?
   if (path == "image" && url_param.is_valid() &&
       (url_param.SchemeIs(url::kHttpsScheme) ||
        url_param.SchemeIs(content::kChromeUIUntrustedScheme))) {
@@ -152,18 +231,9 @@ void UntrustedSource::StartDataRequest(
   }
   if (path == "custom_background_image") {
     // Parse all query parameters to hash map and decode values.
-    std::unordered_map<std::string, std::string> params;
-    url::Component query(0, url.query_piece().length());
-    url::Component key, value;
-    while (
-        url::ExtractQueryKeyValue(url.query().c_str(), &query, &key, &value)) {
-      url::RawCanonOutputW<kMaxUriDecodeLen> output;
-      url::DecodeURLEscapeSequences(
-          url.query_piece().substr(value.begin, value.len),
-          url::DecodeURLMode::kUTF8OrIsomorphic, &output);
-      params.insert({std::string(url.query_piece().substr(key.begin, key.len)),
-                     base::UTF16ToUTF8(output.view())});
-    }
+    std::map<std::string, std::string> params =
+        ExtractQueryParams(url.query_piece());
+
     // Extract desired values.
     ServeBackgroundImage(
         params.count("url") == 1 ? GURL(params["url"]) : GURL(),
@@ -182,7 +252,7 @@ void UntrustedSource::StartDataRequest(
         IDR_NEW_TAB_PAGE_UNTRUSTED_BACKGROUND_IMAGE_JS));
     return;
   }
-  if (base::Contains(path, "background.jpg")) {
+  if (base::EndsWith(path, "background.jpg")) {
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
         base::BindOnce(&ReadBackgroundImageData,
@@ -194,7 +264,7 @@ void UntrustedSource::StartDataRequest(
 }
 
 std::string UntrustedSource::GetMimeType(const GURL& url) {
-  const base::StringPiece stripped_path = url.path_piece();
+  const std::string_view stripped_path = url.path_piece();
   if (base::EndsWith(stripped_path, ".js",
                      base::CompareCase::INSENSITIVE_ASCII)) {
     return "application/javascript";
@@ -228,8 +298,9 @@ bool UntrustedSource::ShouldServiceRequest(
   }
   const std::string path = url.path().substr(1);
   return path == "one-google-bar" || path == "one_google_bar.js" ||
-         path == "image" || path == "background_image" ||
-         path == "custom_background_image" || path == "background_image.js" ||
+         path == "one_google_bar_api.js" || path == "image" ||
+         path == "background_image" || path == "custom_background_image" ||
+         path == "background_image.js" ||
          base::Contains(path, "background.jpg");
 }
 
@@ -249,6 +320,9 @@ void UntrustedSource::OnOneGoogleBarDataUpdated() {
     ui::TemplateReplacements replacements;
     replacements["textdirection"] = base::i18n::IsRTL() ? "rtl" : "ltr";
     replacements["barHtml"] = data->bar_html;
+    replacements["varsHeadScript"] = base::StringPrintf(
+        "let abp = %s;", base::ToString(base::FeatureList::IsEnabled(
+                             ntp_features::kNtpOneGoogleBarAsyncBarParts)));
     replacements["inHeadScript"] = data->in_head_script;
     replacements["inHeadStyle"] = data->in_head_style;
     replacements["afterBarScript"] = data->after_bar_script;
@@ -282,14 +356,13 @@ void UntrustedSource::ServeBackgroundImage(
     const std::string& position_y,
     const std::string& scrim_display,
     content::URLDataSource::GotDataCallback callback) {
-  if (!url.is_valid() || !(url.SchemeIs(url::kHttpsScheme) ||
-                           url.SchemeIs(content::kChromeUIUntrustedScheme))) {
+  if (!IsURLAllowed(url)) {
     std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>());
     return;
   }
   ui::TemplateReplacements replacements;
   replacements["url"] = url.spec();
-  if (url_2x.is_valid()) {
+  if (IsURLAllowed(url_2x)) {
     replacements["backgroundUrl"] =
         base::StringPrintf("image-set(url(%s) 1x, url(%s) 2x)",
                            url.spec().c_str(), url_2x.spec().c_str());
@@ -306,4 +379,26 @@ void UntrustedSource::ServeBackgroundImage(
   std::move(callback).Run(
       base::MakeRefCounted<base::RefCountedString>(FormatTemplate(
           IDR_NEW_TAB_PAGE_UNTRUSTED_BACKGROUND_IMAGE_HTML, replacements)));
+}
+
+bool UntrustedSource::IsURLAllowed(const GURL& url) {
+  if (!url.is_valid() ||
+      !(url.SchemeIs(url::kHttpsScheme) ||
+        url.SchemeIs(content::kChromeUIUntrustedScheme)) ||
+      IsURLBlockedByPolicy(url)) {
+    LOG(WARNING) << "URL is not allowed.";
+    return false;
+  }
+  return true;
+}
+
+bool UntrustedSource::IsURLBlockedByPolicy(const GURL& url) {
+  PolicyBlocklistService* service =
+      PolicyBlocklistFactory::GetForBrowserContext(profile_);
+  URLBlocklistState blocklist_state = service->GetURLBlocklistState(url);
+  if (blocklist_state == URLBlocklistState::URL_IN_BLOCKLIST) {
+    LOG(WARNING) << "URL is blocked by a policy.";
+    return true;
+  }
+  return false;
 }

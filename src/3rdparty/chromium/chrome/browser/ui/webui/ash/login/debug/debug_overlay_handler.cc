@@ -112,8 +112,9 @@ void DebugOverlayHandler::DeclareLocalizedValues(
 
 void DebugOverlayHandler::HandleCaptureScreenshot(const std::string& name) {
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  if (root_windows.size() == 0)
+  if (root_windows.size() == 0) {
     return;
+  }
 
   screenshot_index_++;
   std::string filename_base =
@@ -127,18 +128,18 @@ void DebugOverlayHandler::HandleCaptureScreenshot(const std::string& name) {
       filename.append(base::StringPrintf("- Display %zu", screen));
     }
 
-    if (add_resolution_to_filename_)
+    if (add_resolution_to_filename_) {
       filename.append("_" + rect.size().ToString());
+    }
 
     if (DarkLightModeController::Get()->IsDarkModeEnabled()) {
       filename.append("_dark");
     }
 
     filename.append(".png");
-    ui::GrabWindowSnapshotAsyncPNG(
-        root_window, rect,
-        base::BindOnce(&RunStoreScreenshotOnTaskRunner, screenshot_dir_,
-                       filename));
+    ui::GrabWindowSnapshotAsPNG(root_window, rect,
+                                base::BindOnce(&RunStoreScreenshotOnTaskRunner,
+                                               screenshot_dir_, filename));
   }
 }
 

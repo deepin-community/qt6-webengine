@@ -9,6 +9,7 @@ import("//build/config/logging.gni")
 import("//build/config/ozone.gni")
 import("//gpu/vulkan/features.gni")
 import("//testing/test.gni")
+import("//ui/gl/features.gni")
 
 visibility = [ "//ui/ozone/*" ]
 
@@ -21,8 +22,11 @@ source_set("gbm") {
     "common/drm_util.h",
     "common/drm_wrapper.cc",
     "common/drm_wrapper.h",
+    "common/hardware_display_controller_info.cc",
+    "common/hardware_display_controller_info.h",
     "common/scoped_drm_types.cc",
     "common/scoped_drm_types.h",
+    "common/tile_property.h",
     "gpu/crtc_commit_request.cc",
     "gpu/crtc_commit_request.h",
     "gpu/crtc_controller.cc",
@@ -117,7 +121,6 @@ source_set("gbm") {
 
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
     "//build/config/linux/libdrm",
     "//gpu/vulkan:buildflags",
     "//ipc",
@@ -125,6 +128,8 @@ source_set("gbm") {
     "//mojo/public/cpp/system",
     "//services/service_manager/public/cpp",
     "//skia",
+    "//skia:skcms",
+    "//third_party/angle:includes",
     "//third_party/libsync",
     "//third_party/minigbm",
     "//ui/base",
@@ -151,15 +156,18 @@ source_set("gbm") {
     "//ui/platform_window",
   ]
 
-  if (!is_castos) {
+  if (!is_castos && !use_static_angle) {
     data_deps = [
       "//third_party/angle:libEGL",
       "//third_party/angle:libGLESv2",
     ]
   }
 
-  if (is_chromeos_ash) {
-    deps += [ "//ui/base/ime/ash" ]
+  if (is_chromeos) {
+    deps += [
+      "//ash/constants",
+      "//ui/base/ime/ash",
+    ]
   }
 
   if (enable_vulkan) {
@@ -170,26 +178,32 @@ source_set("gbm") {
     deps += [ "//gpu/vulkan" ]
   }
 
-  public_configs = [ "//third_party/khronos:khronos_headers" ]
-
   defines = [
     "OZONE_IMPLEMENTATION",
 
     # Enable VLOG(1) so that they are included in field feedbacks.
     "ENABLED_VLOG_LEVEL=1",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("gbm_unittests") {
   testonly = true
   sources = [
     "common/drm_util_unittest.cc",
+    "common/hardware_display_controller_info_unittest.cc",
     "gpu/drm_display_unittest.cc",
     "gpu/drm_gpu_display_manager_unittest.cc",
+    "gpu/drm_gpu_util_unittest.cc",
     "gpu/drm_overlay_manager_unittest.cc",
     "gpu/drm_overlay_validator_unittest.cc",
     "gpu/drm_thread_unittest.cc",
     "gpu/drm_window_unittest.cc",
+    "gpu/fake_drm_device.cc",
+    "gpu/fake_drm_device.h",
     "gpu/fake_drm_device_generator.cc",
     "gpu/fake_drm_device_generator.h",
     "gpu/hardware_display_controller_unittest.cc",
@@ -221,6 +235,10 @@ source_set("gbm_unittests") {
     "//ui/ozone:platform",
     "//ui/ozone/common",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("drm_integration_tests") {
@@ -237,10 +255,29 @@ source_set("drm_integration_tests") {
     "//base/test:test_support",
     "//build/config/linux/libdrm",
     "//skia",
-    "//ui/display/types:types",
+    "//ui/display/types",
     "//ui/gfx/linux:gbm",
     "//ui/gfx/linux:test_support",
     "//ui/ozone:platform",
     "//ui/ozone/common",
   ]
+}
+
+source_set("ui_controls") {
+  testonly = true
+
+  sources = [
+    "test/ui_controls_system_input_injector.cc",
+    "test/ui_controls_system_input_injector.h",
+  ]
+
+  deps = [
+    "//base/test:test_support",
+    "//ui/aura:test_support",
+    "//ui/base:test_support",
+    "//ui/ozone:platform",
+    "//ui/ozone/common",
+  ]
+
+  visibility += [ "//chrome/test:test_support" ]
 }

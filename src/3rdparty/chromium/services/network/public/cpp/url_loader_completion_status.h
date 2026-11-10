@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <optional>
+
 #include "base/component_export.h"
 #include "base/time/time.h"
 #include "net/dns/public/resolve_error_info.h"
@@ -15,7 +17,6 @@
 #include "services/network/public/mojom/blocked_by_response_reason.mojom-shared.h"
 #include "services/network/public/mojom/cors.mojom-shared.h"
 #include "services/network/public/mojom/trust_tokens.mojom-shared.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
 namespace network {
@@ -56,9 +57,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) URLLoaderCompletionStatus {
   // cache.
   bool exists_in_cache = false;
 
-  // A copy of the data requested exists in the in-memory cache.
-  bool exists_in_memory_cache = false;
-
   // Time the request completed.
   base::TimeTicks completion_time;
 
@@ -72,7 +70,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) URLLoaderCompletionStatus {
   int64_t decoded_body_length = 0;
 
   // Optional CORS error details.
-  absl::optional<CorsErrorStatus> cors_error_status;
+  std::optional<CorsErrorStatus> cors_error_status;
 
   // Information about any preflight request sent for Private Network Access
   // as part of this load, that was not previously reported in
@@ -95,15 +93,15 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) URLLoaderCompletionStatus {
       mojom::TrustTokenOperationStatus::kOk;
 
   // Optional SSL certificate info.
-  absl::optional<net::SSLInfo> ssl_info;
+  std::optional<net::SSLInfo> ssl_info;
 
   // More detailed reason for failing the response with
   // net::ERR_BLOCKED_BY_RESPONSE |error_code|.
-  absl::optional<mojom::BlockedByResponseReason> blocked_by_response_reason;
+  std::optional<mojom::BlockedByResponseReason> blocked_by_response_reason;
 
-  // Set when response blocked by CORB needs to be reported to the DevTools
+  // Set when response blocked by ORB needs to be reported to the DevTools
   // console.
-  bool should_report_corb_blocking = false;
+  bool should_report_orb_blocking = false;
 
   // Host resolution error info for this request.
   net::ResolveErrorInfo resolve_error_info;

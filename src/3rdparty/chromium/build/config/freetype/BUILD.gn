@@ -11,6 +11,6 @@ group("freetype") {
   } else if (use_qt_freetype) {
     public_configs = [ qt_freetype_config ]
   } else {
-    public_deps = [ "//third_party:freetype_harfbuzz" ]
+    public_deps = [ "//third_party/freetype" ]
   }
 }

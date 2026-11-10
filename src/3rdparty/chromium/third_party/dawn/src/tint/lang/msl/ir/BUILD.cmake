@@ -34,6 +34,8 @@
 #                       Do not modify this file directly
 ################################################################################
 
+include(lang/msl/ir/transform/BUILD.cmake)
+
 ################################################################################
 # Target:    tint_lang_msl_ir
 # Kind:      lib
@@ -41,6 +43,12 @@
 tint_add_target(tint_lang_msl_ir lib
   lang/msl/ir/builtin_call.cc
   lang/msl/ir/builtin_call.h
+  lang/msl/ir/component.cc
+  lang/msl/ir/component.h
+  lang/msl/ir/member_builtin_call.cc
+  lang/msl/ir/member_builtin_call.h
+  lang/msl/ir/memory_order.cc
+  lang/msl/ir/memory_order.h
 )
 
 tint_target_add_dependencies(tint_lang_msl_ir lib
@@ -52,19 +60,20 @@ tint_target_add_dependencies(tint_lang_msl_ir lib
   tint_lang_core_type
   tint_lang_msl
   tint_lang_msl_intrinsic
+  tint_utils
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
-  tint_utils_id
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
-  tint_utils_reflection
-  tint_utils_result
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
-  tint_utils_traits
+)
+
+tint_target_add_external_dependencies(tint_lang_msl_ir lib
+  "src_utils"
 )
 
 ################################################################################
@@ -73,6 +82,7 @@ tint_target_add_dependencies(tint_lang_msl_ir lib
 ################################################################################
 tint_add_target(tint_lang_msl_ir_test test
   lang/msl/ir/builtin_call_test.cc
+  lang/msl/ir/member_builtin_call_test.cc
 )
 
 tint_target_add_dependencies(tint_lang_msl_ir_test test
@@ -86,21 +96,19 @@ tint_target_add_dependencies(tint_lang_msl_ir_test test
   tint_lang_msl
   tint_lang_msl_intrinsic
   tint_lang_msl_ir
+  tint_utils
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
-  tint_utils_id
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
-  tint_utils_reflection
-  tint_utils_result
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
-  tint_utils_traits
 )
 
 tint_target_add_external_dependencies(tint_lang_msl_ir_test test
   "gtest"
+  "src_utils"
 )

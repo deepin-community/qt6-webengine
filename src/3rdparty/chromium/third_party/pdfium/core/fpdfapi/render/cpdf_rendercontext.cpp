@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "build/build_config.h"
 #include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/page/cpdf_pageobject.h"
 #include "core/fpdfapi/page/cpdf_pageobjectholder.h"
@@ -17,19 +18,19 @@
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfapi/render/cpdf_renderstatus.h"
 #include "core/fpdfapi/render/cpdf_textrenderer.h"
+#include "core/fxcrt/check.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/dib/fx_dib.h"
-#include "third_party/base/check.h"
 
 CPDF_RenderContext::CPDF_RenderContext(
-    CPDF_Document* pDoc,
+    CPDF_Document* doc,
     RetainPtr<CPDF_Dictionary> pPageResources,
     CPDF_PageImageCache* pPageCache)
-    : m_pDocument(pDoc),
-      m_pPageResources(std::move(pPageResources)),
-      m_pPageCache(pPageCache) {}
+    : document_(doc),
+      page_resources_(std::move(pPageResources)),
+      page_cache_(pPageCache) {}
 
 CPDF_RenderContext::~CPDF_RenderContext() = default;
 
@@ -43,6 +44,7 @@ void CPDF_RenderContext::GetBackgroundToDevice(
   Render(device, object, options, &matrix);
 }
 
+#if BUILDFLAG(IS_WIN)
 void CPDF_RenderContext::GetBackgroundToBitmap(RetainPtr<CFX_DIBitmap> bitmap,
                                                const CPDF_PageObject* object,
                                                const CFX_Matrix& matrix) {
@@ -50,21 +52,23 @@ void CPDF_RenderContext::GetBackgroundToBitmap(RetainPtr<CFX_DIBitmap> bitmap,
   device.Attach(std::move(bitmap));
   GetBackgroundToDevice(&device, object, /*options=*/nullptr, matrix);
 }
+#endif
 
 void CPDF_RenderContext::AppendLayer(CPDF_PageObjectHolder* pObjectHolder,
                                      const CFX_Matrix& mtObject2Device) {
-  m_Layers.emplace_back(pObjectHolder, mtObject2Device);
+  layers_.emplace_back(pObjectHolder, mtObject2Device);
 }
 
 void CPDF_RenderContext::Render(CFX_RenderDevice* pDevice,
                                 const CPDF_PageObject* pStopObj,
                                 const CPDF_RenderOptions* pOptions,
                                 const CFX_Matrix* pLastMatrix) {
-  for (auto& layer : m_Layers) {
+  for (auto& layer : layers_) {
     CFX_RenderDevice::StateRestorer restorer(pDevice);
     CPDF_RenderStatus status(this, pDevice);
-    if (pOptions)
+    if (pOptions) {
       status.SetOptions(*pOptions);
+    }
     status.SetStopObject(pStopObj);
     status.SetTransparency(layer.GetObjectHolder()->GetTransparency());
     CFX_Matrix final_matrix = layer.GetMatrix();
@@ -75,17 +79,18 @@ void CPDF_RenderContext::Render(CFX_RenderDevice* pDevice,
     status.Initialize(nullptr, nullptr);
     status.RenderObjectList(layer.GetObjectHolder(), final_matrix);
     if (status.GetRenderOptions().GetOptions().bLimitedImageCache) {
-      m_pPageCache->CacheOptimization(
+      page_cache_->CacheOptimization(
           status.GetRenderOptions().GetCacheSizeLimit());
     }
-    if (status.IsStopped())
+    if (status.IsStopped()) {
       break;
+    }
   }
 }
 
 CPDF_RenderContext::Layer::Layer(CPDF_PageObjectHolder* pHolder,
                                  const CFX_Matrix& matrix)
-    : m_pObjectHolder(pHolder), m_Matrix(matrix) {}
+    : object_holder_(pHolder), matrix_(matrix) {}
 
 CPDF_RenderContext::Layer::Layer(const Layer& that) = default;
 

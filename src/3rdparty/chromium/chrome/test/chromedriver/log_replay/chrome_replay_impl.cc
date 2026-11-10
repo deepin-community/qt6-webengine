@@ -20,7 +20,9 @@ ChromeReplayImpl::ChromeReplayImpl(
     const base::CommandLine& command,
     base::ScopedTempDir* user_data_dir,
     base::ScopedTempDir* extension_dir,
-    bool network_emulation_enabled)
+    bool network_emulation_enabled,
+    bool autoaccept_beforeunload,
+    bool enable_extension_targets)
     : ChromeDesktopImpl(std::move(browser_info),
                         std::move(window_types),
                         std::move(websocket_client),
@@ -31,7 +33,10 @@ ChromeReplayImpl::ChromeReplayImpl(
                         command,
                         user_data_dir,
                         extension_dir,
-                        network_emulation_enabled) {}
+                        network_emulation_enabled,
+                        autoaccept_beforeunload,
+                        enable_extension_targets,
+                        /*quit_gracefully=*/false) {}
 
 ChromeReplayImpl::~ChromeReplayImpl() = default;
 

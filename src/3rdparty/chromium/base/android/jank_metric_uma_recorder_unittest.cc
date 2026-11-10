@@ -25,15 +25,6 @@ using ::testing::IsEmpty;
 namespace base::android {
 namespace {
 
-jlongArray GenerateJavaLongArray(JNIEnv* env,
-                                 const int64_t long_array[],
-                                 const size_t array_length) {
-  ScopedJavaLocalRef<jlongArray> java_long_array =
-      ToJavaLongArray(env, long_array, array_length);
-
-  return java_long_array.Release();
-}
-
 // Durations are received in nanoseconds, but are recorded to UMA in
 // milliseconds.
 const int64_t kDurations[] = {
@@ -46,21 +37,13 @@ const int64_t kDurations[] = {
     1'000'000,   // 1ms
     20'000'000,  // 20ms
 };
-const size_t kDurationsLen = std::size(kDurations);
-
-jintArray GenerateJavaIntArray(JNIEnv* env,
-                               const int int_array[],
-                               const size_t array_length) {
-  ScopedJavaLocalRef<jintArray> java_int_array =
-      ToJavaIntArray(env, int_array, array_length);
-
-  return java_int_array.Release();
-}
 
 const int kMissedVsyncs[] = {
     0, 0, 2, 0, 1, 0, 0, 0,
 };
-const size_t kMissedVsyncsLen = kDurationsLen;
+
+static_assert(std::size(kDurations) == std::size(kMissedVsyncs));
+const size_t kNumFrames = std::size(kDurations);
 
 struct ScrollTestCase {
   JankScenario scenario;
@@ -72,14 +55,12 @@ struct ScrollTestCase {
 }  // namespace
 
 TEST(JankMetricUMARecorder, TestUMARecording) {
-
   JNIEnv* env = AttachCurrentThread();
 
-  jlongArray java_durations =
-      GenerateJavaLongArray(env, kDurations, kDurationsLen);
-
-  jintArray java_missed_vsyncs =
-      GenerateJavaIntArray(env, kMissedVsyncs, kMissedVsyncsLen);
+  ScopedJavaLocalRef<jlongArray> java_durations =
+      ToJavaLongArray(env, kDurations);
+  ScopedJavaLocalRef<jintArray> java_missed_vsyncs =
+      ToJavaIntArray(env, kMissedVsyncs);
 
   const int kMinScenario = static_cast<int>(JankScenario::PERIODIC_REPORTING);
   const int kMaxScenario = static_cast<int>(JankScenario::MAX_VALUE);
@@ -96,15 +77,14 @@ TEST(JankMetricUMARecorder, TestUMARecording) {
     // everything is scoped to just this iteration of the for loop.
     HistogramTester histogram_tester;
 
-    RecordJankMetrics(
-        env,
-        /* java_durations_ns= */
-        base::android::JavaParamRef<jlongArray>(env, java_durations),
-        /* java_missed_vsyncs = */
-        base::android::JavaParamRef<jintArray>(env, java_missed_vsyncs),
-        /* java_reporting_interval_start_time = */ 0,
-        /* java_reporting_interval_duration = */ 1000,
-        /* java_scenario_enum = */ i);
+    RecordJankMetrics(env,
+                      /* java_durations_ns= */
+                      java_durations,
+                      /* java_missed_vsyncs = */
+                      java_missed_vsyncs,
+                      /* java_reporting_interval_start_time = */ 0,
+                      /* java_reporting_interval_duration = */ 1000,
+                      /* java_scenario_enum = */ i);
 
     const std::string kDurationName =
         GetAndroidFrameTimelineDurationHistogramName(
@@ -135,6 +115,62 @@ TEST(JankMetricUMARecorder, TestUMARecording) {
                             Bucket(FrameJankStatus::kNonJanky, 6)))
         << kJankyName;
   }
+}
+
+TEST(JankMetricUMARecorder, TestWebviewScrollingScenario) {
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jlongArray> java_durations =
+      ToJavaLongArray(env, kDurations);
+  ScopedJavaLocalRef<jintArray> java_missed_vsyncs =
+      ToJavaIntArray(env, kMissedVsyncs);
+
+  const int scenario = static_cast<int>(JankScenario::WEBVIEW_SCROLLING);
+  HistogramTester histogram_tester;
+  RecordJankMetrics(env,
+                    /* java_durations_ns= */
+                    java_durations,
+                    /* java_missed_vsyncs = */
+                    java_missed_vsyncs,
+                    /* java_reporting_interval_start_time = */ 0,
+                    /* java_reporting_interval_duration = */ 1000, scenario);
+
+  const std::string kDurationName =
+      "Android.FrameTimelineJank.Duration.WebviewScrolling";
+  const std::string kJankyName =
+      "Android.FrameTimelineJank.FrameJankStatus.WebviewScrolling";
+  histogram_tester.ExpectTotalCount(kDurationName, 0);
+  histogram_tester.ExpectTotalCount(kJankyName, 0);
+}
+
+TEST(JankMetricUMARecorder, TestCombinedWebviewScrollingScenario) {
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jlongArray> java_durations =
+      ToJavaLongArray(env, kDurations);
+  ScopedJavaLocalRef<jintArray> java_missed_vsyncs =
+      ToJavaIntArray(env, kMissedVsyncs);
+
+  const int scenario =
+      static_cast<int>(JankScenario::COMBINED_WEBVIEW_SCROLLING);
+  HistogramTester histogram_tester;
+  RecordJankMetrics(env,
+                    /* java_durations_ns= */
+                    java_durations,
+                    /* java_missed_vsyncs = */
+                    java_missed_vsyncs,
+                    /* java_reporting_interval_start_time = */ 0,
+                    /* java_reporting_interval_duration = */ 1000, scenario);
+
+  // |COMBINED_WEBVIEW_SCROLLING| scenario uses 'WebviewScrolling' suffix for
+  // emitting the per frame metrics.
+  const std::string kDurationName =
+      "Android.FrameTimelineJank.Duration.WebviewScrolling";
+  const std::string kJankyName =
+      "Android.FrameTimelineJank.FrameJankStatus.WebviewScrolling";
+
+  histogram_tester.ExpectTotalCount(kDurationName, kNumFrames);
+  histogram_tester.ExpectTotalCount(kJankyName, kNumFrames);
 }
 
 class JankMetricUMARecorderPerScrollTests
@@ -178,17 +214,15 @@ TEST_P(JankMetricUMARecorderPerScrollTests, EmitsPerScrollHistograms) {
     missed_vsyncs.push_back(0);
   }
 
-  jlongArray java_durations =
-      GenerateJavaLongArray(env, durations.data(), durations.size());
-  jintArray java_missed_vsyncs =
-      GenerateJavaIntArray(env, missed_vsyncs.data(), missed_vsyncs.size());
+  ScopedJavaLocalRef<jlongArray> java_durations =
+      ToJavaLongArray(env, durations);
+  ScopedJavaLocalRef<jintArray> java_missed_vsyncs =
+      ToJavaIntArray(env, missed_vsyncs);
 
-  RecordJankMetrics(
-      env, base::android::JavaParamRef<jlongArray>(env, java_durations),
-      base::android::JavaParamRef<jintArray>(env, java_missed_vsyncs),
-      /* java_reporting_interval_start_time = */ 0,
-      /* java_reporting_interval_duration = */ 1000,
-      static_cast<int>(params.scenario));
+  RecordJankMetrics(env, java_durations, java_missed_vsyncs,
+                    /* java_reporting_interval_start_time = */ 0,
+                    /* java_reporting_interval_duration = */ 1000,
+                    static_cast<int>(params.scenario));
 
   int expected_delayed_frames_percentage =
       (100 * expected_janky_frames) / params.num_frames;

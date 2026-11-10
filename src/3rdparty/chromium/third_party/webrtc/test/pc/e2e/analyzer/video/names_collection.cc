@@ -10,14 +10,18 @@
 
 #include "test/pc/e2e/analyzer/video/names_collection.h"
 
+#include <cstddef>
+#include <optional>
 #include <set>
+#include <string>
+#include <vector>
 
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
+#include "api/array_view.h"
 
 namespace webrtc {
 
-NamesCollection::NamesCollection(rtc::ArrayView<const std::string> names) {
+NamesCollection::NamesCollection(ArrayView<const std::string> names) {
   names_ = std::vector<std::string>(names.begin(), names.end());
   for (size_t i = 0; i < names_.size(); ++i) {
     index_.emplace(names_[i], i);
@@ -65,15 +69,14 @@ size_t NamesCollection::AddIfAbsent(absl::string_view name) {
   return out;
 }
 
-absl::optional<size_t> NamesCollection::RemoveIfPresent(
-    absl::string_view name) {
+std::optional<size_t> NamesCollection::RemoveIfPresent(absl::string_view name) {
   auto it = index_.find(name);
   if (it == index_.end()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   size_t index = it->second;
   if (removed_[index]) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   removed_[index] = true;
   size_--;

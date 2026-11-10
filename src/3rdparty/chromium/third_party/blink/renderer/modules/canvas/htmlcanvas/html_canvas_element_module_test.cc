@@ -32,6 +32,8 @@
 #include "third_party/blink/renderer/platform/graphics/test/mock_embedded_frame_sink_provider.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
+#include "third_party/blink/renderer/platform/text/layout_locale.h"
+#include "third_party/blink/renderer/platform/text/text_direction.h"
 
 using ::testing::_;
 using ::testing::Values;
@@ -61,7 +63,7 @@ class HTMLCanvasElementModuleTest : public ::testing::Test,
  protected:
   void SetUp() override {
     web_view_helper_.Initialize();
-    GetDocument().documentElement()->setInnerHTML(
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
         String::FromUTF8("<body><canvas id='c'></canvas></body>"));
     canvas_element_ =
         To<HTMLCanvasElement>(GetDocument().getElementById(AtomicString("c")));
@@ -98,6 +100,55 @@ TEST_F(HTMLCanvasElementModuleTest, TransferControlToOffscreen) {
   EXPECT_EQ(canvas_id, canvas_element().GetDomNodeId());
 }
 
+// Test that lang and direction attributes are transferred correctly.
+TEST_F(HTMLCanvasElementModuleTest, TransferLangAndDirectionToOffscreen) {
+  NonThrowableExceptionState exception_state;
+  canvas_element_->setAttribute(AtomicString("lang"), "zh-CN");
+  canvas_element_->setAttribute(AtomicString("dir"), "rtl");
+
+  OffscreenCanvas* offscreen_canvas =
+      TransferControlToOffscreen(exception_state);
+
+  const LayoutLocale* locale = offscreen_canvas->GetLocale();
+  EXPECT_EQ(locale->LocaleString(), AtomicString("zh-CN"));
+
+  const TextDirection direction = offscreen_canvas->GetTextDirection(
+      /*conputed_style=*/nullptr);
+  EXPECT_EQ(direction, TextDirection::kRtl);
+}
+
+// Test that lang and direction defaults are transferred correctly.
+TEST_F(HTMLCanvasElementModuleTest,
+       TransferLangAndDirectionDefaultsToOffscreen) {
+  NonThrowableExceptionState exception_state;
+  OffscreenCanvas* offscreen_canvas =
+      TransferControlToOffscreen(exception_state);
+
+  const LayoutLocale* locale = offscreen_canvas->GetLocale();
+  EXPECT_EQ(locale, &LayoutLocale::GetDefault());
+
+  const TextDirection direction = offscreen_canvas->GetTextDirection(
+      /*conputed_style=*/nullptr);
+  EXPECT_EQ(direction, TextDirection::kLtr);
+}
+
+// Test that lang and direction from document are transferred correctly.
+TEST_F(HTMLCanvasElementModuleTest,
+       TransferLangAndDirectionDocumentToOffscreen) {
+  NonThrowableExceptionState exception_state;
+  GetDocument().documentElement()->setAttribute(AtomicString("lang"), "zh-CN");
+  GetDocument().documentElement()->setAttribute(AtomicString("dir"), "rtl");
+  OffscreenCanvas* offscreen_canvas =
+      TransferControlToOffscreen(exception_state);
+
+  const LayoutLocale* locale = offscreen_canvas->GetLocale();
+  EXPECT_EQ(locale->LocaleString(), AtomicString("zh-CN"));
+
+  const TextDirection direction = offscreen_canvas->GetTextDirection(
+      /*conputed_style=*/nullptr);
+  EXPECT_EQ(direction, TextDirection::kRtl);
+}
+
 // Verifies that a desynchronized canvas has the appropriate opacity/blending
 // information sent to the CompositorFrameSink.
 TEST_P(HTMLCanvasElementModuleTest, LowLatencyCanvasCompositorFrameOpacity) {
@@ -120,9 +171,10 @@ TEST_P(HTMLCanvasElementModuleTest, LowLatencyCanvasCompositorFrameOpacity) {
       ->set_supports_gpu_memory_buffer_format(buffer_format, true);
   InitializeSharedGpuContextGLES2(context_provider.get());
 
-  // To intercept SubmitCompositorFrame/SubmitCompositorFrameSync messages sent
-  // by a canvas's CanvasResourceDispatcher, we have to override the Mojo
-  // EmbeddedFrameSinkProvider interface impl and its CompositorFrameSinkClient.
+  // To intercept SubmitCompositorFrame messages sent by a canvas's
+  // CanvasResourceDispatcher, we have to override the Mojo
+  // EmbeddedFrameSinkProvider interface impl and its
+  // CompositorFrameSinkClient.
   MockEmbeddedFrameSinkProvider mock_embedded_frame_sink_provider;
   mojo::Receiver<mojom::blink::EmbeddedFrameSinkProvider>
       embedded_frame_sink_provider_receiver(&mock_embedded_frame_sink_provider);
@@ -161,12 +213,12 @@ TEST_P(HTMLCanvasElementModuleTest, LowLatencyCanvasCompositorFrameOpacity) {
             EXPECT_NE(shared_quad_state_list.front()->are_contents_opaque,
                       context_alpha);
           })));
-  canvas_element().PreFinalizeFrame();
+  context_->PreFinalizeFrame();
   context_->FinalizeFrame(FlushReason::kTesting);
   canvas_element().PostFinalizeFrame(FlushReason::kTesting);
   platform->RunUntilIdle();
 
-  SharedGpuContext::ResetForTesting();
+  SharedGpuContext::Reset();
 #endif
 }
 

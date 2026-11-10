@@ -4,8 +4,11 @@
 
 #include "third_party/blink/renderer/core/timing/performance_script_timing.h"
 
+#include <cstdint>
+
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_script_invoker_type.h"
 #include "third_party/blink/renderer/core/frame/dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
@@ -26,34 +29,40 @@ PerformanceScriptTiming::PerformanceScriptTiming(
     ScriptTimingInfo* info,
     base::TimeTicks time_origin,
     bool cross_origin_isolated_capability,
-    DOMWindow* source)
-    : PerformanceEntry(
-          (info->EndTime() - info->StartTime()).InMilliseconds(),
-          performance_entry_names::kScript,
-          DOMWindowPerformance::performance(*source->ToLocalDOMWindow())
-              ->MonotonicTimeToDOMHighResTimeStamp(info->StartTime()),
-          source) {
+    DOMWindow* source,
+    uint32_t navigation_id)
+    : PerformanceEntry((info->EndTime() - info->StartTime()).InMilliseconds(),
+                       performance_entry_names::kScript,
+                       Performance::MonotonicTimeToDOMHighResTimeStamp(
+                           time_origin,
+                           info->StartTime(),
+                           false,
+                           cross_origin_isolated_capability),
+                       source,
+                       navigation_id) {
   info_ = info;
-  time_origin_ = time_origin;
-  cross_origin_isolated_capability_ = cross_origin_isolated_capability;
   if (!info_->Window() || !source) {
-    window_attribution_ = AtomicString("other");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kOther;
   } else if (info_->Window() == source) {
-    window_attribution_ = AtomicString("self");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kSelf;
   } else if (!info_->Window()->GetFrame()) {
-    window_attribution_ = AtomicString("other");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kOther;
   } else if (info_->Window()->GetFrame()->Tree().IsDescendantOf(
                  source->GetFrame())) {
-    window_attribution_ = AtomicString("descendant");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kDescendant;
   } else if (source->GetFrame()->Tree().IsDescendantOf(
                  info_->Window()->GetFrame())) {
-    window_attribution_ = AtomicString("ancestor");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kAncestor;
   } else if (source->GetFrame()->Tree().Top() ==
              info_->Window()->GetFrame()->Top()) {
-    window_attribution_ = AtomicString("same-page");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kSamePage;
   } else {
-    window_attribution_ = AtomicString("other");
+    window_attribution_ = V8ScriptWindowAttribution::Enum::kOther;
   }
+
+  execution_start_ = Performance::MonotonicTimeToDOMHighResTimeStamp(
+      time_origin, info->ExecutionStartTime(), false,
+      cross_origin_isolated_capability);
 }
 
 PerformanceScriptTiming::~PerformanceScriptTiming() = default;
@@ -78,7 +87,7 @@ AtomicString PerformanceScriptTiming::invoker() const {
     }
     case ScriptTimingInfo::InvokerType::kEventHandler:
     case ScriptTimingInfo::InvokerType::kUserCallback: {
-      WTF::StringBuilder builder;
+      StringBuilder builder;
       if (info_->GetInvokerType() ==
           ScriptTimingInfo::InvokerType::kEventHandler) {
         builder.Append(info_->ClassLikeName());
@@ -91,7 +100,7 @@ AtomicString PerformanceScriptTiming::invoker() const {
 
     case ScriptTimingInfo::InvokerType::kPromiseResolve:
     case ScriptTimingInfo::InvokerType::kPromiseReject: {
-      WTF::StringBuilder builder;
+      StringBuilder builder;
       if (info_->PropertyLikeName().empty()) {
         return AtomicString(
             info_->GetInvokerType() ==
@@ -112,17 +121,9 @@ AtomicString PerformanceScriptTiming::invoker() const {
                          : "catch");
       return builder.ToAtomicString();
     }
+    case ScriptTimingInfo::InvokerType::kUserEntryPoint:
+      return AtomicString(info_->GetSourceLocation().function_name);
   }
-}
-DOMHighResTimeStamp PerformanceScriptTiming::executionStart() const {
-  return ToMonotonicTime(info_->ExecutionStartTime());
-}
-
-DOMHighResTimeStamp PerformanceScriptTiming::ToMonotonicTime(
-    base::TimeTicks time) const {
-  return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      time_origin_, time, /*allow_negative_value=*/false,
-      cross_origin_isolated_capability_);
 }
 
 DOMHighResTimeStamp PerformanceScriptTiming::forcedStyleAndLayoutDuration()
@@ -138,47 +139,46 @@ LocalDOMWindow* PerformanceScriptTiming::window() const {
   return info_->Window();
 }
 
-const AtomicString& PerformanceScriptTiming::windowAttribution() const {
-  return window_attribution_;
+V8ScriptWindowAttribution PerformanceScriptTiming::windowAttribution() const {
+  return V8ScriptWindowAttribution(window_attribution_);
 }
 
-AtomicString PerformanceScriptTiming::invokerType() const {
+V8ScriptInvokerType PerformanceScriptTiming::invokerType() const {
   switch (info_->GetInvokerType()) {
     case ScriptTimingInfo::InvokerType::kClassicScript:
-      return AtomicString("classic-script");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kClassicScript);
     case ScriptTimingInfo::InvokerType::kModuleScript:
-      return AtomicString("module-script");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kModuleScript);
     case ScriptTimingInfo::InvokerType::kEventHandler:
-      return AtomicString("event-listener");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kEventListener);
     case ScriptTimingInfo::InvokerType::kUserCallback:
-      return AtomicString("user-callback");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kUserCallback);
     case ScriptTimingInfo::InvokerType::kPromiseResolve:
-      return AtomicString("resolve-promise");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kResolvePromise);
     case ScriptTimingInfo::InvokerType::kPromiseReject:
-      return AtomicString("reject-promise");
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kRejectPromise);
+    case ScriptTimingInfo::InvokerType::kUserEntryPoint:
+      return V8ScriptInvokerType(V8ScriptInvokerType::Enum::kUserEntryPoint);
   }
+  NOTREACHED();
 }
 
-WTF::String PerformanceScriptTiming::sourceLocation() const {
-  const ScriptTimingInfo::ScriptSourceLocation& source_location =
-      info_->GetSourceLocation();
-  if (!source_location.url) {
-    return WTF::String("");
-  }
+WTF::String PerformanceScriptTiming::sourceURL() const {
+  return info_->GetSourceLocation().url;
+}
+WTF::String PerformanceScriptTiming::sourceFunctionName() const {
+  return info_->GetSourceLocation().function_name;
+}
+int32_t PerformanceScriptTiming::sourceCharPosition() const {
+  return info_->GetSourceLocation().char_position;
+}
 
-  StringBuilder builder;
-  if (!source_location.function_name.empty()) {
-    builder.Append(source_location.function_name);
-    builder.Append("@");
-  }
+int32_t PerformanceScriptTiming::sourceLine() const {
+  return info_->GetSourceLocation().line_number;
+}
 
-  builder.Append(source_location.url);
-  if (source_location.start_position >= 0) {
-    builder.Append(":");
-    builder.AppendNumber(source_location.start_position);
-  }
-
-  return builder.ToString();
+int32_t PerformanceScriptTiming::sourceColumn() const {
+  return info_->GetSourceLocation().column_number;
 }
 
 PerformanceEntryType PerformanceScriptTiming::EntryTypeEnum() const {
@@ -188,13 +188,19 @@ PerformanceEntryType PerformanceScriptTiming::EntryTypeEnum() const {
 void PerformanceScriptTiming::BuildJSONValue(V8ObjectBuilder& builder) const {
   PerformanceEntry::BuildJSONValue(builder);
   builder.AddString("invoker", invoker());
-  builder.AddString("invokerType", invokerType());
-  builder.AddString("windowAttribution", windowAttribution());
+  builder.AddString("invokerType", invokerType().AsString());
+  builder.AddString("windowAttribution", windowAttribution().AsString());
   builder.AddNumber("executionStart", executionStart());
   builder.AddNumber("forcedStyleAndLayoutDuration",
                     forcedStyleAndLayoutDuration());
   builder.AddNumber("pauseDuration", pauseDuration());
-  builder.AddString("sourceLocation", sourceLocation());
+  builder.AddString("sourceURL", sourceURL());
+  builder.AddString("sourceFunctionName", sourceFunctionName());
+  builder.AddNumber("sourceCharPosition", sourceCharPosition());
+  if (RuntimeEnabledFeatures::LongAnimationFrameSourceLineColumnEnabled()) {
+    builder.AddNumber("sourceLine", sourceLine());
+    builder.AddNumber("sourceColumn", sourceColumn());
+  }
 }
 
 void PerformanceScriptTiming::Trace(Visitor* visitor) const {

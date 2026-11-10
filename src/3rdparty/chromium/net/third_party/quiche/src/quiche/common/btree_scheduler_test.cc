@@ -5,6 +5,9 @@
 #include "quiche/common/btree_scheduler.h"
 
 #include <optional>
+#include <ostream>
+#include <string>
+#include <tuple>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -219,6 +222,23 @@ TEST(BTreeSchedulerTest, ShouldYield) {
   EXPECT_THAT(scheduler.ShouldYield(20), IsOkAndHolds(false));
   EXPECT_THAT(scheduler.ShouldYield(21), IsOkAndHolds(true));
   EXPECT_THAT(scheduler.ShouldYield(30), IsOkAndHolds(false));
+}
+
+TEST(BTreeSchedulerTest, Deschedule) {
+  BTreeScheduler<int, int> scheduler;
+  QUICHE_EXPECT_OK(scheduler.Register(10, 100));
+  QUICHE_EXPECT_OK(scheduler.Register(20, 101));
+
+  EXPECT_THAT(scheduler.Deschedule(10),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(scheduler.Deschedule(11), StatusIs(absl::StatusCode::kNotFound));
+
+  EXPECT_FALSE(scheduler.IsScheduled(10));
+  QUICHE_EXPECT_OK(scheduler.Schedule(10));
+  EXPECT_TRUE(scheduler.IsScheduled(10));
+  QUICHE_EXPECT_OK(scheduler.Deschedule(10));
+  EXPECT_FALSE(scheduler.IsScheduled(10));
+  QUICHE_EXPECT_OK(scheduler.Unregister(10));
 }
 
 struct CustomPriority {

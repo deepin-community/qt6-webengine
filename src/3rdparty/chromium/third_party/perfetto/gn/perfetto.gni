@@ -70,6 +70,14 @@ if (!defined(is_nacl)) {
   is_nacl = false
 }
 
+if (!defined(is_gcc)) {
+  is_gcc = !is_clang && !is_win
+}
+
+if (!defined(is_qnx)) {
+  is_qnx = false
+}
+
 declare_args() {
   # The Android blueprint file generator set this to true (as well as
   # is_perfetto_build_generator). This is just about being built in the
@@ -94,6 +102,12 @@ if (!defined(perfetto_build_with_embedder)) {
   perfetto_build_with_embedder = build_with_chromium || is_perfetto_embedder
 }
 
+# Controls whether the `libperfetto` target bundles the JSON export code in its
+# dependencies. Can be overriden by embedders to reduce dependency bloat.
+if (!defined(perfetto_libperfetto_includes_json)) {
+  perfetto_libperfetto_includes_json = build_with_chromium && !is_nacl
+}
+
 perfetto_build_standalone =
     !perfetto_build_with_android && !build_with_chromium &&
     !perfetto_build_with_embedder
@@ -104,7 +118,9 @@ perfetto_build_standalone =
 if (perfetto_build_standalone || is_perfetto_build_generator) {
   perfetto_root_path = "//"
   import("//gn/standalone/android.gni")  # For android_api_level
+  import("//gn/standalone/libc++/libc++.gni")  # For use_custom_libcxx
   import("//gn/standalone/sanitizers/vars.gni")  # For is_fuzzer
+  import("//gn/standalone/toolchain/llvm.gni")
 } else if (!defined(perfetto_root_path)) {
   perfetto_root_path = "//third_party/perfetto/"
   import("//build/config/android/config.gni")  # For android_api_level
@@ -192,7 +208,10 @@ declare_args() {
   enable_perfetto_integration_tests =
       perfetto_build_standalone || perfetto_build_with_android
 
-  enable_perfetto_benchmarks = perfetto_build_standalone && !is_win
+  enable_perfetto_android_java_sdk =
+      perfetto_build_with_android || (is_android && perfetto_build_standalone)
+
+  enable_perfetto_benchmarks = perfetto_build_standalone && !is_win && !is_qnx
 
   enable_perfetto_fuzzers =
       perfetto_build_standalone && defined(is_fuzzer) && is_fuzzer
@@ -208,7 +227,7 @@ declare_args() {
   # are monolithic and don't use a common shared library. This is mainly to
   # avoid LD_LIBRARY_PATH dances when testing locally.
   # On Windows we default to monolithic executables, because pairing
-  # dllexport/import adds extra complexity for little benefit. The only reason
+  # dllexport/import adds extra complexity for little benefit. Te only reason
   # for monolithic_binaries=false is saving binary size, which matters mainly on
   # Android. See also comments on PERFETTO_EXPORT_ENTRYPOINT in compiler.h.
   monolithic_binaries = !perfetto_build_with_android && (is_win || is_mac)
@@ -232,7 +251,7 @@ declare_args() {
   # the stack and prints the stack trace on stderr. Requires a dependency on
   # libbacktrace when enabled.
   enable_perfetto_stderr_crash_dump =
-      is_debug && perfetto_build_standalone && !is_wasm && !is_win
+      is_debug && perfetto_build_standalone && !is_wasm && !is_win && !is_qnx
 
   # Enables more aggressive compiler flags that assume recent Intel CPUs.
   # Runtime checks during initialization will print an error message and exit
@@ -242,6 +261,11 @@ declare_args() {
   enable_perfetto_x64_cpu_opt =
       current_cpu == "x64" && is_linux && !is_wasm &&
       perfetto_build_standalone && !is_perfetto_build_generator
+
+  # Enables complie-time thread safety analysis.
+  perfetto_thread_safety_annotations =
+      perfetto_build_standalone && !is_perfetto_build_generator &&
+      defined(use_custom_libcxx) && use_custom_libcxx
 }
 
 declare_args() {
@@ -259,12 +283,13 @@ declare_args() {
 
   # The traced_probes daemon is very Linux-specific, as it depends on ftrace and
   # various /proc interfaces. There is no point making its code platform-neutral
-  # as it won't do anything useful on Windows.
+  # as it won't do anything useful on Windows or QNX.
   # The only reason why we still build it on Mac OS is to be able to run the
   # unittests there and making dev on mac less cumbersome. The traced_probes
   # code happens to build cleanly and for now the mainteinance cost on Mac is
   # extremely low.
-  enable_perfetto_traced_probes = enable_perfetto_platform_services && !is_win
+  enable_perfetto_traced_probes =
+      enable_perfetto_platform_services && !is_win && !is_qnx
 
   # The relay service is enabled when platform services are enabled.
   # TODO(chinglinyu) check if we can enable on Windows.
@@ -294,6 +319,14 @@ declare_args() {
   enable_perfetto_trace_processor_json =
       enable_perfetto_trace_processor && !perfetto_build_with_android
 
+  # Enables the support for importing profiles from the MacOS Instruments app.
+  # Requires a dependency on libexpat for XML parsing.
+  # Disabled in chromium due to some fuzzer related build failure (b/363347029).
+  enable_perfetto_trace_processor_mac_instruments =
+      enable_perfetto_trace_processor &&
+      (perfetto_build_standalone || perfetto_build_with_android) &&
+      !is_perfetto_build_generator
+
   # Enables httpd RPC support in the trace processor.
   # Further per-OS conditionals are applied in gn/BUILD.gn.
   # Chromium+Win: httpd support depends on enable_perfetto_ipc, which is not
@@ -312,14 +345,32 @@ declare_args() {
   # Enables function name demangling using sources from llvm. Otherwise
   # trace_processor falls back onto using the c++ runtime demangler, which
   # typically handles only itanium mangling.
+  # llvm-demangle is incompatible with GCC and can be used only when building
+  # with clang.
   enable_perfetto_llvm_demangle =
-      enable_perfetto_trace_processor && perfetto_build_standalone
+      is_clang && enable_perfetto_trace_processor && perfetto_build_standalone
 
   # Enables gRPC in the Perfetto codebase. gRPC significantly increases build
   # times and the general footprint of Perfetto. As it only required for
   # BigTrace and even then only to build the final ready-to-ship binary, don't
   # enable this by default.
   enable_perfetto_grpc = false
+
+  # Enables the ETM importer in trace_processor. This feature is experimental at
+  # this point and it requires extra libraries so we only enable it in selected
+  # builds.
+  enable_perfetto_etm_importer =
+      is_linux && enable_perfetto_trace_processor &&
+      perfetto_build_standalone && !is_perfetto_build_generator
+
+  # Enables the use of the LLVM symbolizer in trace_processor.
+  enable_perfetto_llvm_symbolizer = false
+
+  # Enables Winscope features in trace_processor. These are used by the
+  # standalone Winscope tool, Android prebuilts, and trace extractor metrics.
+  enable_perfetto_winscope =
+      enable_perfetto_trace_processor &&
+      (perfetto_build_standalone || is_perfetto_build_generator)
 }
 
 declare_args() {
@@ -337,6 +388,11 @@ declare_args() {
   # time. Incremental builds that add/remove files will not be supported without
   # rerunning gn.
   enable_perfetto_site = false
+
+  # Check that the merged perfetto_trace.proto can be translated to a C++ lite
+  # proto and compiled. This is disabled by default because it's expensive (it
+  # can take a couple of minutes).
+  enable_perfetto_merged_protos_check = false
 
   # Skip buildtools dependency checks (needed for ChromeOS).
   skip_buildtools_check = false

@@ -14,14 +14,11 @@
 
 // Keep this import first.
 import '../base/static_initializers';
-
 import m from 'mithril';
-
 import {defer} from '../base/deferred';
-import {reportError, setErrorHandler} from '../base/logging';
+import {reportError, addErrorHandler, ErrorDetails} from '../base/logging';
 import {initLiveReloadIfLocalhost} from '../core/live_reload';
 import {raf} from '../core/raf_scheduler';
-import {setScheduleFullRedraw} from '../widgets/raf';
 
 function getRoot() {
   // Works out the root directory where the content should be served from
@@ -41,24 +38,12 @@ function getRoot() {
 function setupContentSecurityPolicy() {
   // Note: self and sha-xxx must be quoted, urls data: and blob: must not.
   const policy = {
-    'default-src': [
-      `'self'`,
-    ],
-    'script-src': [
-      `'self'`,
-    ],
+    'default-src': [`'self'`],
+    'script-src': [`'self'`],
     'object-src': ['none'],
-    'connect-src': [
-      `'self'`,
-    ],
-    'img-src': [
-      `'self'`,
-      'data:',
-      'blob:',
-    ],
-    'style-src': [
-      `'self'`,
-    ],
+    'connect-src': [`'self'`],
+    'img-src': [`'self'`, 'data:', 'blob:'],
+    'style-src': [`'self'`],
     'navigate-to': ['https://*.perfetto.dev', 'self'],
   };
   const meta = document.createElement('meta');
@@ -72,9 +57,6 @@ function setupContentSecurityPolicy() {
 }
 
 function main() {
-  // Wire up raf for widgets.
-  setScheduleFullRedraw(() => raf.scheduleFullRedraw());
-
   setupContentSecurityPolicy();
 
   // Load the css. The load is asynchronous and the CSS is not ready by the time
@@ -92,14 +74,18 @@ function main() {
   document.head.append(css);
 
   // Add Error handlers for JS error and for uncaught exceptions in promises.
-  setErrorHandler((err: string) => console.log(err));
+  addErrorHandler((err: ErrorDetails) => console.log(err.message, err.stack));
   window.addEventListener('error', (e) => reportError(e));
   window.addEventListener('unhandledrejection', (e) => reportError(e));
 
   // Prevent pinch zoom.
-  document.body.addEventListener('wheel', (e: MouseEvent) => {
-    if (e.ctrlKey) e.preventDefault();
-  }, {passive: false});
+  document.body.addEventListener(
+    'wheel',
+    (e: MouseEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    },
+    {passive: false},
+  );
 
   cssLoadPromise.then(() => onCssLoaded());
 }

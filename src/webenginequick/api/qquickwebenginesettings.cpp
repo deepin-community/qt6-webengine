@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebengineprofile.h"
 #include "qquickwebenginesettings_p.h"
@@ -17,9 +18,9 @@ QQuickWebEngineSettings::QQuickWebEngineSettings(QQuickWebEngineSettings *parent
     //! \nativetype QQuickWebEngineSettings
     \inqmlmodule QtWebEngine
     \since QtWebEngine 1.1
-    \brief Allows configuration of browser properties and attributes.
+    \brief Allows configuration of web engine properties and attributes.
 
-    The WebEngineSettings type can be used to configure browser properties and generic
+    The WebEngineSettings type can be used to configure web properties and generic
     attributes, such as JavaScript support, focus behavior, and access to remote content. This type
     is uncreatable, but the default settings for all web engine views can be accessed by using
     the \l [QML] {WebEngine::settings}{WebEngine.settings} property.
@@ -71,11 +72,14 @@ bool QQuickWebEngineSettings::javascriptCanOpenWindows() const
 /*!
     \qmlproperty bool WebEngineSettings::javascriptCanAccessClipboard
 
-    Allows JavaScript programs to read from or write to the clipboard.
-    Writing to the clipboard is always allowed if it is specifically requested by the user.
+    Allows JavaScript programs to write (copy) sanitized content to the clipboard. A
+    sanitized write is done with the \c{write} and \c{writeText} JavaScript Clipboard API
+    calls and must be accompanied by user action.
 
-    To enable also the pasting of clipboard content from JavaScript,
-    use javascriptCanPaste.
+    Unsanitized writes, and reading from the clipboard, are
+    enabled by \l{javascriptCanPaste}.
+
+    Prior to Chromium version 81, this setting enabled all clipboard writes.
 
     Since unrestricted clipboard access is a potential security concern, it is
     recommended that applications leave this disabled and instead respond to
@@ -117,6 +121,11 @@ bool QQuickWebEngineSettings::localStorageEnabled() const
 
     Allows locally loaded documents to access remote URLs.
 
+    Mutually exclusive with localContentCanAccessFileUrls, i.e. enabling this will
+    disable localContentCanAccessFileUrls.
+
+    Note dnsPrefetchEnabled below operates independently of this setting.
+
     Disabled by default.
 */
 bool QQuickWebEngineSettings::localContentCanAccessRemoteUrls() const
@@ -146,6 +155,8 @@ bool QQuickWebEngineSettings::spatialNavigationEnabled() const
     \qmlproperty bool WebEngineSettings::localContentCanAccessFileUrls
 
     Allows locally loaded documents to access other local URLs.
+
+    Mutually exclusive with localContentCanAccessRemoteUrls.
 
     Enabled by default.
 */
@@ -315,7 +326,7 @@ bool QQuickWebEngineSettings::allowRunningInsecureContent() const
   \qmlproperty bool WebEngineSettings::allowGeolocationOnInsecureOrigins
   \since QtWebEngine 1.5
 
-  Since Qt 5.7, only secure origins such as HTTPS have been able to request
+  Only secure origins such as HTTPS are able to request
   Geolocation features. This provides an override to allow non secure
   origins to access Geolocation again.
 
@@ -352,7 +363,7 @@ bool QQuickWebEngineSettings::showScrollBars() const
   Inhibits playback of media content until the user interacts with
   the page.
 
-  By default, Qt WebEngine uses Chromium settings, as described in
+  By default, \QWE uses Chromium settings, as described in
   \l {Autoplay Policy Changes}. To overwrite the default behavior,
   this property must be set to \c false.
 
@@ -382,8 +393,13 @@ bool QQuickWebEngineSettings::webRTCPublicInterfacesOnly() const
     \qmlproperty bool WebEngineSettings::javascriptCanPaste
     \since QtWebEngine 1.7
 
-    Enables JavaScript \c{execCommand("paste")}.
-    This also requires enabling javascriptCanAccessClipboard.
+    Allows JavaScript programs to read (paste) from the clipboard and to write unsanitized
+    content. A sanitized write is done with the \c{write} and \c{writeText} JavaScript
+    Clipboard API calls and must be accompanied by user action; unsanitized writes are any
+    writes which do not meet these criteria.
+
+    For this setting to have any effect, \l{javascriptCanAccessClipboard} must also be
+    enabled.
 
     Since unrestricted clipboard access is a potential security concern, it is
     recommended that applications leave this disabled and instead respond to
@@ -402,6 +418,10 @@ bool QQuickWebEngineSettings::javascriptCanPaste() const
 
     Enables speculative prefetching of DNS records for HTML links before
     they are activated.
+
+    Should not be enabled if local content is not meant
+    to access remote content. As it the DNS prefetches will happen
+    independently of whether the fetch is allowed.
 
     Disabled by default.
 */
@@ -468,6 +488,36 @@ bool QQuickWebEngineSettings::forceDarkMode() const
 }
 
 /*!
+    \qmlproperty bool WebEngineSettings::printHeaderAndFooter
+    \since QtWebEngine 6.9
+
+    Specifies that printing results will contain basic page information (URL,
+    title, date, page number) in header and footer area. It is the embedder's
+    responsibility to provide enough space for these texts by setting proper top
+    and bottom margins.
+
+    Disabled by default.
+ */
+bool QQuickWebEngineSettings::printHeaderAndFooter() const
+{
+    return d_ptr->testAttribute(QWebEngineSettings::PrintHeaderAndFooter);
+}
+
+/*!
+    \qmlproperty bool WebEngineSettings::preferCSSMarginsForPrinting
+    \since QtWebEngine 6.9
+
+    Turns on preferring CSS margins over the default (0, 0, 0, 0) sizes when
+    printing a web page.
+
+    Disabled by default.
+*/
+bool QQuickWebEngineSettings::preferCSSMarginsForPrinting() const
+{
+    return d_ptr->testAttribute(QWebEngineSettings::PreferCSSMarginsForPrinting);
+}
+
+/*!
     \qmlproperty bool WebEngineSettings::scrollAnimatorEnabled
     \since QtWebEngine 6.8
 
@@ -478,6 +528,54 @@ bool QQuickWebEngineSettings::forceDarkMode() const
 bool QQuickWebEngineSettings::scrollAnimatorEnabled() const
 {
     return d_ptr->testAttribute(QWebEngineSettings::ScrollAnimatorEnabled);
+}
+
+/*!
+    \qmlproperty bool WebEngineSettings::touchEventsApiEnabled
+    \since QtWebEngine 6.9
+
+    Enables support for JavaScript touch events API, meaning \c ontouchstart,
+    \c ontouchend and \c ontouchmove handlers will be present in the \c document.window object.
+
+    Note that some websites use this API to decide whether they run on a mobile device or on desktop
+    and base their design on it. This can cause unwanted results on touchscreen laptops or other
+    setups that emulate a fake touch device.
+
+    Enabled by default if a touch device detected by the system
+    and disabled otherwise.
+ */
+bool QQuickWebEngineSettings::touchEventsApiEnabled() const
+{
+    return d_ptr->testAttribute(QWebEngineSettings::TouchEventsApiEnabled);
+}
+
+/*!
+    \qmlproperty bool WebEngineSettings::backForwardCacheEnabled
+    \since QtWebEngine 6.10
+
+    Enables support for back/forward cache (or bfcache) to speed up back and
+    forward navigation.
+
+    Disabled by default.
+*/
+bool QQuickWebEngineSettings::backForwardCacheEnabled() const
+{
+    return d_ptr->testAttribute(QWebEngineSettings::BackForwardCacheEnabled);
+}
+
+/*!
+    \qmlproperty bool WebEngineSettings::trimAccessibilityIdentifiers
+    \since QtWebEngine 6.11
+
+    Forces the HTML 'id' attribute to be used as the automation ID (QAccessible::Identifier)
+    without modification. When disabled, Qt will instead prepend the entire object hierarchy
+    to the identifier.
+
+    Disabled by default.
+*/
+bool QQuickWebEngineSettings::trimAccessibilityIdentifiers() const
+{
+    return d_ptr->testAttribute(QWebEngineSettings::TrimAccessibilityIdentifiers);
 }
 
 /*!
@@ -807,6 +905,22 @@ void QQuickWebEngineSettings::setForceDarkMode(bool on)
         Q_EMIT forceDarkModeChanged();
 }
 
+void QQuickWebEngineSettings::setPrintHeaderAndFooter(bool on)
+{
+    bool wasOn = d_ptr->testAttribute(QWebEngineSettings::PrintHeaderAndFooter);
+    d_ptr->setAttribute(QWebEngineSettings::PrintHeaderAndFooter, on);
+    if (wasOn != on)
+        Q_EMIT printHeaderAndFooterChanged();
+}
+
+void QQuickWebEngineSettings::setPreferCSSMarginsForPrinting(bool on)
+{
+    bool wasOn = d_ptr->testAttribute(QWebEngineSettings::PreferCSSMarginsForPrinting);
+    d_ptr->setAttribute(QWebEngineSettings::PreferCSSMarginsForPrinting, on);
+    if (wasOn != on)
+        Q_EMIT preferCSSMarginsForPrintingChanged();
+}
+
 void QQuickWebEngineSettings::setScrollAnimatorEnabled(bool on)
 {
     bool wasOn = d_ptr->testAttribute(QWebEngineSettings::ScrollAnimatorEnabled);
@@ -846,6 +960,30 @@ void QQuickWebEngineSettings::setImageAnimationPolicy(
     d_ptr->setImageAnimationPolicy(newPolicy);
     if (oldPolicy != newPolicy)
         Q_EMIT imageAnimationPolicyChanged();
+}
+
+void QQuickWebEngineSettings::setTouchEventsApiEnabled(bool on)
+{
+    bool wasOn = d_ptr->testAttribute(QWebEngineSettings::TouchEventsApiEnabled);
+    d_ptr->setAttribute(QWebEngineSettings::TouchEventsApiEnabled, on);
+    if (wasOn != on)
+        Q_EMIT touchEventsApiEnabledChanged();
+}
+
+void QQuickWebEngineSettings::setBackForwardCacheEnabled(bool on)
+{
+    bool wasOn = d_ptr->testAttribute(QWebEngineSettings::BackForwardCacheEnabled);
+    d_ptr->setAttribute(QWebEngineSettings::BackForwardCacheEnabled, on);
+    if (wasOn != on)
+        Q_EMIT backForwardCacheEnabledChanged();
+}
+
+void QQuickWebEngineSettings::setTrimAccessibilityIdentifiers(bool on)
+{
+    bool wasOn = d_ptr->testAttribute(QWebEngineSettings::TrimAccessibilityIdentifiers);
+    d_ptr->setAttribute(QWebEngineSettings::TrimAccessibilityIdentifiers, on);
+    if (wasOn != on)
+        Q_EMIT trimAccessibilityIdentifiersChanged();
 }
 
 QT_END_NAMESPACE

@@ -15,6 +15,7 @@ bool HasAttributionOsSupport(mojom::AttributionSupport attribution_support) {
       return true;
     case mojom::AttributionSupport::kWeb:
     case mojom::AttributionSupport::kNone:
+    case mojom::AttributionSupport::kUnset:
       return false;
   }
 }
@@ -26,6 +27,7 @@ bool HasAttributionWebSupport(mojom::AttributionSupport attribution_support) {
       return true;
     case mojom::AttributionSupport::kOs:
     case mojom::AttributionSupport::kNone:
+    case mojom::AttributionSupport::kUnset:
       return false;
   }
 }

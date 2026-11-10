@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "base/memory/raw_span.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "crypto/signature_verifier.h"
@@ -22,10 +23,6 @@
 #include "third_party/boringssl/src/include/openssl/base.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/pki/parsed_certificate.h"
-
-namespace crypto {
-class RSAPrivateKey;
-}
 
 namespace net {
 
@@ -66,28 +63,17 @@ NET_EXPORT_PRIVATE bool GetTLSServerEndPointChannelBinding(
     const X509Certificate& certificate,
     std::string* token);
 
-// Creates a public-private keypair and a self-signed certificate.
-// Subject, serial number and validity period are given as parameters.
-// The certificate is signed by the private key in |key|. The key length and
-// signature algorithm may be updated periodically to match best practices.
+// Creates a certificate which cannot be used: a random private key is
+// generated, then a self-signed certificate using that private key is created
+// and the private key is discarded. The resulting cert can never be used to
+// actually authenticate anything because the private key is unknown, so this
+// function is only useful for test and demonstration purposes.
 //
-// |subject| specifies the subject and issuer names as in AddName()
-//
-// SECURITY WARNING
-//
-// Using self-signed certificates has the following security risks:
-// 1. Encryption without authentication and thus vulnerable to
-//    man-in-the-middle attacks.
-// 2. Self-signed certificates cannot be revoked.
-//
-// Use this certificate only after the above risks are acknowledged.
-NET_EXPORT bool CreateKeyAndSelfSignedCert(
-    const std::string& subject,
-    uint32_t serial_number,
-    base::Time not_valid_before,
-    base::Time not_valid_after,
-    std::unique_ptr<crypto::RSAPrivateKey>* key,
-    std::string* der_cert);
+// |subject| specifies the subject and issuer names as in AddName() - a string
+// consisting of a very small subset of the X.509 DN syntax. All fields of the
+// cert that are not specified here are hardcoded. The certificate's lifetime is
+// always from 5 minutes ago to 1 hour from now.
+NET_EXPORT std::vector<uint8_t> CreateUnusableCert(std::string_view subject);
 
 struct NET_EXPORT Extension {
   Extension(base::span<const uint8_t> oid,
@@ -96,10 +82,25 @@ struct NET_EXPORT Extension {
   ~Extension();
   Extension(const Extension&);
 
-  base::span<const uint8_t> oid;
+  base::raw_span<const uint8_t> oid;
   bool critical;
-  base::span<const uint8_t> contents;
+  base::raw_span<const uint8_t> contents;
 };
+
+// Create a certificate signed by |issuer_key| and write it to |der_encoded|.
+//
+// |subject| and |issuer| specify names as in AddName(). If you want to create
+// a self-signed certificate, see |CreateSelfSignedCert|.
+NET_EXPORT bool CreateCert(EVP_PKEY* subject_key,
+                           DigestAlgorithm digest_alg,
+                           std::string_view subject,
+                           uint32_t serial_number,
+                           base::Time not_valid_before,
+                           base::Time not_valid_after,
+                           const std::vector<Extension>& extension_specs,
+                           std::string_view issuer,
+                           EVP_PKEY* issuer_key,
+                           std::string* der_encoded);
 
 // Creates a self-signed certificate from a provided key, using the specified
 // hash algorithm.
@@ -108,7 +109,7 @@ struct NET_EXPORT Extension {
 NET_EXPORT bool CreateSelfSignedCert(
     EVP_PKEY* key,
     DigestAlgorithm alg,
-    const std::string& subject,
+    std::string_view subject,
     uint32_t serial_number,
     base::Time not_valid_before,
     base::Time not_valid_after,
@@ -127,7 +128,7 @@ NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
     std::string_view data);
 
 // Overload with no definition, to disallow creating a CRYPTO_BUFFER from a
-// char* due to StringPiece implicit ctor.
+// char* due to std::string_view implicit ctor.
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
     const char* invalid_data);
 
@@ -141,7 +142,7 @@ CreateCryptoBufferFromStaticDataUnsafe(base::span<const uint8_t> data);
 NET_EXPORT bool CryptoBufferEqual(const CRYPTO_BUFFER* a,
                                   const CRYPTO_BUFFER* b);
 
-// Returns a StringPiece pointing to the data in |buffer|.
+// Returns a std::string_view pointing to the data in |buffer|.
 NET_EXPORT std::string_view CryptoBufferAsStringPiece(
     const CRYPTO_BUFFER* buffer);
 
@@ -170,7 +171,7 @@ NET_EXPORT bssl::ParseCertificateOptions DefaultParseCertificateOptions();
 // valid certificate, returns false and |hash| is in an undefined state.
 [[nodiscard]] NET_EXPORT bool CalculateSha256SpkiHash(
     const CRYPTO_BUFFER* buffer,
-    HashValue* hash);
+    SHA256HashValue* hash);
 
 // Calls |verifier->VerifyInit|, using the public key from |certificate|,
 // checking if the digitalSignature key usage bit is present, and returns true

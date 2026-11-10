@@ -7,6 +7,7 @@
 #include <iterator>
 #include <limits>
 
+#include "core/fxcrt/notreached.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -40,7 +41,7 @@ float DoOperator2(CPDF_PSEngine* engine, float v1, float v2, PDF_PSOP op) {
 
 }  // namespace
 
-TEST(CPDF_PSProc, AddOperator) {
+TEST(CPDFPSProcTest, AddOperator) {
   static const struct {
     const char* name;
     PDF_PSOP op;
@@ -71,26 +72,31 @@ TEST(CPDF_PSProc, AddOperator) {
   };
 
   CPDF_PSProc proc;
-  EXPECT_EQ(0U, proc.num_operators());
-  for (size_t i = 0; i < std::size(kTestData); ++i) {
-    ByteStringView word(kTestData[i].name);
+  for (const auto& item : kTestData) {
+    ByteStringView word(item.name);
     proc.AddOperatorForTesting(word);
-    ASSERT_EQ(i + 1, proc.num_operators());
     const std::unique_ptr<CPDF_PSOP>& new_psop = proc.last_operator();
     ASSERT_TRUE(new_psop);
     PDF_PSOP new_op = new_psop->GetOp();
-    EXPECT_EQ(kTestData[i].op, new_op);
+    EXPECT_EQ(item.op, new_op);
     if (new_op == PSOP_CONST) {
       float fv = new_psop->GetFloatValue();
-      if (word == "invalid")
-        EXPECT_FLOAT_EQ(0, fv);
-      else
-        EXPECT_EQ(word, ByteString::FormatFloat(fv));
+      if (word == "55") {
+        EXPECT_FLOAT_EQ(55.0f, fv);
+      } else if (word == "123.4") {
+        EXPECT_FLOAT_EQ(123.4f, fv);
+      } else if (word == "-5") {
+        EXPECT_FLOAT_EQ(-5.0f, fv);
+      } else if (word == "invalid") {
+        EXPECT_FLOAT_EQ(0.0f, fv);
+      } else {
+        NOTREACHED();
+      }
     }
   }
 }
 
-TEST(CPDF_PSEngine, Basic) {
+TEST(CPDFPSEngineTest, Basic) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(300.0f, DoOperator2(&engine, 100, 200, PSOP_ADD));
@@ -103,7 +109,7 @@ TEST(CPDF_PSEngine, Basic) {
   EXPECT_FLOAT_EQ(5.0f, DoOperator1(&engine, -5, PSOP_ABS));
 }
 
-TEST(CPDF_PSEngine, DivByZero) {
+TEST(CPDFPSEngineTest, DivByZero) {
   CPDF_PSEngine engine;
 
   // Integer divide by zero is defined as resulting in 0.
@@ -114,7 +120,7 @@ TEST(CPDF_PSEngine, DivByZero) {
   EXPECT_FLOAT_EQ(0.0f, DoOperator2(&engine, 100, 0.0, PSOP_DIV));
 }
 
-TEST(CPDF_PSEngine, Ceiling) {
+TEST(CPDFPSEngineTest, Ceiling) {
   CPDF_PSEngine engine;
 
   // Smallest positive float value.
@@ -136,7 +142,7 @@ TEST(CPDF_PSEngine, Ceiling) {
   EXPECT_FLOAT_EQ(-5.0f, DoOperator1(&engine, -5.5f, PSOP_CEILING));
 }
 
-TEST(CPDF_PSEngine, Floor) {
+TEST(CPDFPSEngineTest, Floor) {
   CPDF_PSEngine engine;
 
   // Smallest positive float value.
@@ -161,7 +167,7 @@ TEST(CPDF_PSEngine, Floor) {
   EXPECT_FLOAT_EQ(-6.0f, DoOperator1(&engine, -5.5f, PSOP_FLOOR));
 }
 
-TEST(CPDF_PSEngine, Round) {
+TEST(CPDFPSEngineTest, Round) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(6.0f, DoOperator1(&engine, 5.9f, PSOP_ROUND));
@@ -186,7 +192,7 @@ TEST(CPDF_PSEngine, Round) {
   EXPECT_FLOAT_EQ(-5.0f, DoOperator1(&engine, -5.5f, PSOP_ROUND));
 }
 
-TEST(CPDF_PSEngine, Truncate) {
+TEST(CPDFPSEngineTest, Truncate) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(0.0f, DoOperator1(&engine, -0.9f, PSOP_TRUNCATE));
@@ -211,7 +217,7 @@ TEST(CPDF_PSEngine, Truncate) {
                   DoOperator1(&engine, max_int * -1.5f, PSOP_TRUNCATE));
 }
 
-TEST(CPDF_PSEngine, Comparisons) {
+TEST(CPDFPSEngineTest, Comparisons) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(1.0f, DoOperator2(&engine, 0.0f, 0.0f, PSOP_EQ));
@@ -245,7 +251,7 @@ TEST(CPDF_PSEngine, Comparisons) {
   EXPECT_FLOAT_EQ(1.0f, DoOperator2(&engine, -1.0f, 0.0f, PSOP_LE));
 }
 
-TEST(CPDF_PSEngine, Logic) {
+TEST(CPDFPSEngineTest, Logic) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(1.0f, DoOperator0(&engine, PSOP_TRUE));
@@ -270,7 +276,7 @@ TEST(CPDF_PSEngine, Logic) {
   EXPECT_FLOAT_EQ(0.0f, DoOperator1(&engine, 1.0f, PSOP_NOT));
 }
 
-TEST(CPDF_PSEngine, MathFunctions) {
+TEST(CPDFPSEngineTest, MathFunctions) {
   CPDF_PSEngine engine;
 
   EXPECT_FLOAT_EQ(1.4142135f, DoOperator1(&engine, 2.0f, PSOP_SQRT));

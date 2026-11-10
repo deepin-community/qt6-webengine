@@ -31,6 +31,8 @@
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "dawn/common/ityp_vector.h"
+#include "dawn/native/IntegerTypes.h"
 #include "dawn/native/SubresourceStorage.h"
 #include "dawn/native/dawn_platform.h"
 
@@ -56,9 +58,8 @@ struct BufferSyncInfo {
 struct TextureSyncInfo {
     wgpu::TextureUsage usage = wgpu::TextureUsage::None;
     wgpu::ShaderStage shaderStages = wgpu::ShaderStage::None;
+    bool operator==(const TextureSyncInfo& b) const = default;
 };
-
-bool operator==(const TextureSyncInfo& a, const TextureSyncInfo& b);
 
 // The texture usage inside passes must be tracked per-subresource.
 using TextureSubresourceSyncInfo = SubresourceStorage<TextureSyncInfo>;
@@ -83,12 +84,6 @@ struct SyncScopeResourceUsage {
 // textures used, because some unused BindGroups may not be used at all in synchronization
 // scope but their resources still need to be validated on Queue::Submit.
 struct ComputePassResourceUsage {
-    // Somehow without this defaulted constructor, MSVC or its STDlib have an issue where they
-    // use the copy constructor (that's deleted) when doing operations on a
-    // vector<ComputePassResourceUsage>
-    ComputePassResourceUsage(ComputePassResourceUsage&&);
-    ComputePassResourceUsage();
-
     std::vector<SyncScopeResourceUsage> dispatchUsages;
 
     // All the resources referenced by this compute pass for validation in Queue::Submit.
@@ -105,11 +100,11 @@ struct ComputePassResourceUsage {
 struct RenderPassResourceUsage : public SyncScopeResourceUsage {
     // Storage to track the occlusion queries used during the pass.
     std::vector<QuerySetBase*> querySets;
-    std::vector<std::vector<bool>> queryAvailabilities;
+    std::vector<ityp::vector<QueryIndex, bool>> queryAvailabilities;
 };
 
-using RenderPassUsages = std::vector<RenderPassResourceUsage>;
-using ComputePassUsages = std::vector<ComputePassResourceUsage>;
+using RenderPassUsages = ityp::vector<PassIndex, RenderPassResourceUsage>;
+using ComputePassUsages = ityp::vector<PassIndex, ComputePassResourceUsage>;
 
 // Contains a hierarchy of "ResourceUsage" that mirrors the hierarchy of the CommandBuffer and
 // is used for validation and to produce barriers and lazy clears in the backends.

@@ -76,7 +76,8 @@ class COMPONENTS_DOWNLOAD_EXPORT AutoResumptionHandler
   void OnDownloadDestroyed(download::DownloadItem* item) override;
 
  private:
-  using DownloadMap = std::map<std::string, DownloadItem*>;
+  using DownloadMap =
+      std::map<std::string, raw_ptr<DownloadItem, CtnExperimental>>;
 
   // NetworkStatusListener::Observer implementation.
   void OnNetworkStatusReady(network::mojom::ConnectionType type) override;
@@ -109,7 +110,8 @@ class COMPONENTS_DOWNLOAD_EXPORT AutoResumptionHandler
   DownloadMap resumable_downloads_;
 
   // A temporary list of downloads which are being retried immediately.
-  std::set<download::DownloadItem*> downloads_to_retry_;
+  std::set<raw_ptr<download::DownloadItem, SetExperimental>>
+      downloads_to_retry_;
 
   bool recompute_task_params_scheduled_ = false;
 

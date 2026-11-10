@@ -43,7 +43,7 @@ struct CONTENT_EXPORT MainFunctionParams {
   MainFunctionParams(MainFunctionParams&&);
   MainFunctionParams& operator=(MainFunctionParams&&);
 
-  // TODO(crbug.com/1449286): detect under BRP.
+  // TODO(crbug.com/40269737): detect under BRP.
   raw_ptr<const base::CommandLine, DanglingUntriaged> command_line;
 
 #if BUILDFLAG(IS_WIN)
@@ -56,8 +56,8 @@ struct CONTENT_EXPORT MainFunctionParams {
 #endif
 
   // Set to true if this content process's main function should enable startup
-  // tracing after initializing Mojo.
-  bool needs_startup_tracing_after_mojo_init = false;
+  // tracing after initializing the sandbox.
+  bool needs_startup_tracing_after_sandbox_init = false;
 
   // If non-null, this is the time the HangWatcher would have started if not
   // delayed until after sandbox initialization.

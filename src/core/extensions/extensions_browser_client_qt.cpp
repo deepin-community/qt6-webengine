@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Portions copyright 2015 The Chromium Embedded Framework Authors.
 // Portions copyright 2014 The Chromium Authors. All rights reserved.
@@ -12,6 +13,7 @@
 
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notimplemented.h"
 #include "base/path_service.h"
 #include "base/task/thread_pool.h"
 #include "base/memory/ref_counted_memory.h"
@@ -21,6 +23,8 @@
 #include "content/public/browser/render_frame_host.h"
 #include "extensions/browser/api/core_extensions_browser_api_provider.h"
 #include "extensions/browser/api/extensions_api_client.h"
+#include "extensions/browser/api/file_system/file_system_delegate.h"
+#include "extensions/browser/api/messaging/messaging_delegate.h"
 #include "extensions/browser/api/runtime/runtime_api_delegate.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host_delegate.h"
@@ -37,6 +41,7 @@
 #include "third_party/zlib/google/compression_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 
+#include "api/runtime_api_delegate_qt.h"
 #include "component_extension_resource_manager_qt.h"
 #include "extension_system_factory_qt.h"
 #include "extension_web_contents_observer_qt.h"
@@ -61,7 +66,7 @@ void DetermineCharset(const std::string &mime_type,
     if (base::StartsWith(mime_type, "text/", base::CompareCase::INSENSITIVE_ASCII)) {
         // All of our HTML files should be UTF-8 and for other resource types
         // (like images), charset doesn't matter.
-        DCHECK(base::IsStringUTF8(base::StringPiece(reinterpret_cast<const char *>(data->front()), data->size())));
+        DCHECK(base::IsStringUTF8(std::string_view(reinterpret_cast<const char *>(data->front()), data->size())));
         *out_charset = "utf-8";
     }
 }
@@ -76,7 +81,7 @@ scoped_refptr<base::RefCountedMemory> GetResource(int resource_id, const std::st
             : nullptr;
 
     if (replacements) {
-        base::StringPiece input(reinterpret_cast<const char *>(bytes->front()), bytes->size());
+        std::string_view input(reinterpret_cast<const char *>(bytes->front()), bytes->size());
         std::string temp_str = ui::ReplaceTemplateExpressions(input, *replacements);
         DCHECK(!temp_str.empty());
         return base::MakeRefCounted<base::RefCountedString>(std::move(temp_str));
@@ -106,15 +111,13 @@ public:
     void FollowRedirect(const std::vector<std::string> &removed_headers,
                         const net::HttpRequestHeaders &modified_headers,
                         const net::HttpRequestHeaders &modified_cors_exempt_headers,
-                        const absl::optional<GURL> &new_url) override
+                        const std::optional<GURL> &new_url) override
     {
         NOTREACHED() << "No redirects for local file loads.";
     }
     // Current implementation reads all resource data at start of resource
     // load, so priority, and pausing is not currently implemented.
     void SetPriority(net::RequestPriority priority, int32_t intra_priority_value) override {}
-    void PauseReadingBodyFromNet() override {}
-    void ResumeReadingBodyFromNet() override {}
 
 private:
     ResourceBundleFileLoader(scoped_refptr<net::HttpResponseHeaders> headers)
@@ -166,10 +169,10 @@ private:
         if (!head->mime_type.empty()) {
             head->headers->AddHeader(net::HttpRequestHeaders::kContentType, head->mime_type.c_str());
         }
-        client_->OnReceiveResponse(std::move(head), std::move(consumer_handle), absl::nullopt);
+        client_->OnReceiveResponse(std::move(head), std::move(consumer_handle), std::nullopt);
 
-        uint32_t write_size = data->size();
-        MojoResult result = producer_handle->WriteData(data->front(), &write_size, MOJO_WRITE_DATA_FLAG_NONE);
+        size_t write_size = data->size();
+        MojoResult result = producer_handle->WriteData((base::span<const uint8_t>)(*data), MOJO_WRITE_DATA_FLAG_NONE, write_size);
         OnFileWritten(result);
     }
 
@@ -242,16 +245,22 @@ public:
 };
 
 ExtensionsBrowserClientQt::ExtensionsBrowserClientQt()
-    : api_client_(new ExtensionsAPIClientQt)
-    , resource_manager_(new ComponentExtensionResourceManagerQt)
 {
-    AddAPIProvider(std::make_unique<CoreExtensionsBrowserAPIProvider>());
-    AddAPIProvider(std::make_unique<ChromeExtensionsBrowserAPIProvider>());
-    AddAPIProvider(std::make_unique<QtWebEngineExtensionsBrowserAPIProvider>());
 }
 
 ExtensionsBrowserClientQt::~ExtensionsBrowserClientQt()
 {
+}
+
+void ExtensionsBrowserClientQt::Init()
+{
+    Q_ASSERT(!api_client_);
+    api_client_ = std::make_unique<ExtensionsAPIClientQt>();
+    resource_manager_ = std::make_unique<ComponentExtensionResourceManagerQt>();
+
+    AddAPIProvider(std::make_unique<CoreExtensionsBrowserAPIProvider>());
+    AddAPIProvider(std::make_unique<ChromeExtensionsBrowserAPIProvider>());
+    AddAPIProvider(std::make_unique<QtWebEngineExtensionsBrowserAPIProvider>());
 }
 
 bool ExtensionsBrowserClientQt::IsShuttingDown()
@@ -291,19 +300,19 @@ BrowserContext *ExtensionsBrowserClientQt::GetOriginalContext(BrowserContext *co
     return context;
 }
 
-content::BrowserContext* ExtensionsBrowserClientQt::GetContextRedirectedToOriginal(content::BrowserContext *context, bool)
+content::BrowserContext* ExtensionsBrowserClientQt::GetContextRedirectedToOriginal(content::BrowserContext *context)
 {
     // like in ShellExtensionsBrowserClient:
     return context;
 }
 
-content::BrowserContext* ExtensionsBrowserClientQt::GetContextOwnInstance(content::BrowserContext *context, bool)
+content::BrowserContext* ExtensionsBrowserClientQt::GetContextOwnInstance(content::BrowserContext *context)
 {
     // like in ShellExtensionsBrowserClient:
     return context;
 }
 
-content::BrowserContext* ExtensionsBrowserClientQt::GetContextForOriginalOnly(content::BrowserContext *context, bool)
+content::BrowserContext* ExtensionsBrowserClientQt::GetContextForOriginalOnly(content::BrowserContext *context)
 {
     // like in ShellExtensionsBrowserClient:
     return context;
@@ -383,7 +392,8 @@ bool ExtensionsBrowserClientQt::AllowCrossRendererResourceLoad(const network::Re
                                                                bool is_incognito,
                                                                const Extension *extension,
                                                                const ExtensionSet &extensions,
-                                                               const ProcessMap &process_map)
+                                                               const ProcessMap &process_map,
+                                                               const GURL& upstream_url)
 {
     if (extension && extension->id() == extension_misc::kPdfExtensionId)
         return true;
@@ -396,7 +406,7 @@ bool ExtensionsBrowserClientQt::AllowCrossRendererResourceLoad(const network::Re
     if (url_request_util::AllowCrossRendererResourceLoad(request, destination,
                                                          page_transition, child_id,
                                                          is_incognito, extension, extensions,
-                                                         process_map, &allowed)) {
+                                                         process_map, upstream_url, &allowed)) {
         return allowed;
     }
     // Couldn't determine if resource is allowed. Block the load.
@@ -458,9 +468,7 @@ void ExtensionsBrowserClientQt::RegisterBrowserInterfaceBindersForFrame(
 
 std::unique_ptr<RuntimeAPIDelegate> ExtensionsBrowserClientQt::CreateRuntimeAPIDelegate(content::BrowserContext *context) const
 {
-    // TODO(extensions): Implement to support Apps.
-    NOTREACHED();
-    return std::unique_ptr<RuntimeAPIDelegate>();
+    return std::make_unique<RuntimeAPIDelegateQt>(context);
 }
 
 const ComponentExtensionResourceManager *ExtensionsBrowserClientQt::GetComponentExtensionResourceManager()
@@ -496,11 +504,6 @@ bool ExtensionsBrowserClientQt::IsMinBrowserVersionSupported(const std::string &
     return true;
 }
 
-bool ExtensionsBrowserClientQt::IsLockScreenContext(content::BrowserContext *context)
-{
-    return false;
-}
-
 // Returns the locale used by the application.
 std::string ExtensionsBrowserClientQt::GetApplicationLocale()
 {
@@ -517,9 +520,16 @@ bool ExtensionsBrowserClientQt::IsInDemoMode()
     return false;
 }
 
-ExtensionWebContentsObserver *ExtensionsBrowserClientQt::GetExtensionWebContentsObserver(content::WebContents *web_contents)
+extensions::ExtensionWebContentsObserver *
+ExtensionsBrowserClientQt::GetExtensionWebContentsObserver(content::WebContents *web_contents)
 {
     return ExtensionWebContentsObserverQt::FromWebContents(web_contents);
+}
+
+void ExtensionsBrowserClientQt::CreateExtensionWebContentsObserver(
+        content::WebContents *web_contents)
+{
+    ExtensionWebContentsObserverQt::CreateForWebContents(web_contents);
 }
 
 KioskDelegate *ExtensionsBrowserClientQt::GetKioskDelegate()
@@ -544,7 +554,8 @@ media_device_salt::MediaDeviceSaltService *ExtensionsBrowserClientQt::GetMediaDe
 }
 mojo::PendingRemote<network::mojom::URLLoaderFactory>
 ExtensionsBrowserClientQt::GetControlledFrameEmbedderURLLoader(
-        int frame_tree_node_id, content::BrowserContext *browser_context)
+        const url::Origin &, content::FrameTreeNodeId frame_tree_node_id,
+        content::BrowserContext *browser_context)
 {
     return mojo::PendingRemote<network::mojom::URLLoaderFactory>();
 }

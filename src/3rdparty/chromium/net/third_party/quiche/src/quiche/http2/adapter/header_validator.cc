@@ -2,13 +2,14 @@
 
 #include <array>
 #include <bitset>
+#include <string>
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "quiche/http2/adapter/header_validator_base.h"
-#include "quiche/http2/http2_constants.h"
+#include "quiche/http2/core/http2_constants.h"
 #include "quiche/common/platform/api/quiche_logging.h"
 
 namespace http2 {
@@ -17,47 +18,45 @@ namespace adapter {
 namespace {
 
 // From RFC 9110 Section 5.6.2.
-const absl::string_view kHttpTokenChars =
+constexpr absl::string_view kHttpTokenChars =
     "!#$%&'*+-.^_`|~0123456789"
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-const absl::string_view kHttp2HeaderNameAllowedChars =
+constexpr absl::string_view kHttp2HeaderNameAllowedChars =
     "!#$%&'*+-.0123456789"
     "^_`abcdefghijklmnopqrstuvwxyz|~";
 
-const absl::string_view kHttp2HeaderValueAllowedChars =
+constexpr absl::string_view kHttp2HeaderValueAllowedChars =
     "\t "
     "!\"#$%&'()*+,-./"
     "0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
     "abcdefghijklmnopqrstuvwxyz{|}~";
 
-const absl::string_view kHttp2StatusValueAllowedChars = "0123456789";
+constexpr absl::string_view kHttp2StatusValueAllowedChars = "0123456789";
 
-const absl::string_view kValidAuthorityChars =
+constexpr absl::string_view kValidAuthorityChars =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~%!$&'()["
     "]*+,;=:";
 
-const absl::string_view kValidPathChars =
+constexpr absl::string_view kValidPathChars =
     "/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~%!$&'()"
     "*+,;=:@?";
 
-const absl::string_view kValidPathCharsWithFragment =
+constexpr absl::string_view kValidPathCharsWithFragment =
     "/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~%!$&'()"
     "*+,;=:@?#";
 
 using CharMap = std::array<bool, 256>;
 
-CharMap BuildValidCharMap(absl::string_view valid_chars) {
-  CharMap map;
-  map.fill(false);
+constexpr CharMap BuildValidCharMap(absl::string_view valid_chars) {
+  CharMap map = {};
   for (char c : valid_chars) {
-    // Cast to uint8_t, guaranteed to have 8 bits. A char may have more, leading
-    // to possible indices above 256.
+    // An array index must be a nonnegative integer, hence the cast to uint8_t.
     map[static_cast<uint8_t>(c)] = true;
   }
   return map;
 }
-CharMap AllowObsText(CharMap map) {
+constexpr CharMap AllowObsText(CharMap map) {
   // Characters above 0x80 are allowed in header field values as `obs-text` in
   // RFC 7230.
   for (uint8_t c = 0xff; c >= 0x80; --c) {
@@ -76,13 +75,13 @@ bool AllCharsInMap(absl::string_view str, const CharMap& map) {
 }
 
 bool IsValidStatus(absl::string_view status) {
-  static const CharMap valid_chars =
+  static constexpr CharMap valid_chars =
       BuildValidCharMap(kHttp2StatusValueAllowedChars);
   return AllCharsInMap(status, valid_chars);
 }
 
 bool IsValidMethod(absl::string_view method) {
-  static const CharMap valid_chars = BuildValidCharMap(kHttpTokenChars);
+  static constexpr CharMap valid_chars = BuildValidCharMap(kHttpTokenChars);
   return AllCharsInMap(method, valid_chars);
 }
 
@@ -149,8 +148,12 @@ HeaderValidator::HeaderStatus HeaderValidator::ValidateSingleHeader(
       } else if (value.empty()) {
         pseudo_header_state_[STATE_PATH_IS_EMPTY] = true;
         return HEADER_FIELD_INVALID;
-      } else if (validate_path_ &&
-                 !IsValidPath(value, allow_fragment_in_path_)) {
+      } else if (validate_path_) {
+        if (!IsValidPath(value, allow_fragment_in_path_)) {
+          return HEADER_FIELD_INVALID;
+        }
+      } else if (value.find_first_of(" \t") != absl::string_view::npos) {
+        // Tab and space are not valid path characters.
         return HEADER_FIELD_INVALID;
       }
       if (value[0] == '/') {
@@ -244,16 +247,16 @@ bool HeaderValidator::FinishHeaderBlock(HeaderType type) {
 }
 
 bool HeaderValidator::IsValidHeaderName(absl::string_view name) {
-  static const CharMap valid_chars =
+  static constexpr CharMap valid_chars =
       BuildValidCharMap(kHttp2HeaderNameAllowedChars);
   return AllCharsInMap(name, valid_chars);
 }
 
 bool HeaderValidator::IsValidHeaderValue(absl::string_view value,
                                          ObsTextOption option) {
-  static const CharMap valid_chars =
+  static constexpr CharMap valid_chars =
       BuildValidCharMap(kHttp2HeaderValueAllowedChars);
-  static const CharMap valid_chars_with_obs_text =
+  static constexpr CharMap valid_chars_with_obs_text =
       AllowObsText(BuildValidCharMap(kHttp2HeaderValueAllowedChars));
   return AllCharsInMap(value, option == ObsTextOption::kAllow
                                   ? valid_chars_with_obs_text
@@ -261,13 +264,14 @@ bool HeaderValidator::IsValidHeaderValue(absl::string_view value,
 }
 
 bool HeaderValidator::IsValidAuthority(absl::string_view authority) {
-  static const CharMap valid_chars = BuildValidCharMap(kValidAuthorityChars);
+  static constexpr CharMap valid_chars =
+      BuildValidCharMap(kValidAuthorityChars);
   return AllCharsInMap(authority, valid_chars);
 }
 
 bool HeaderValidator::IsValidPath(absl::string_view path, bool allow_fragment) {
-  static const CharMap valid_chars = BuildValidCharMap(kValidPathChars);
-  static const CharMap valid_chars_with_fragment =
+  static constexpr CharMap valid_chars = BuildValidCharMap(kValidPathChars);
+  static constexpr CharMap valid_chars_with_fragment =
       BuildValidCharMap(kValidPathCharsWithFragment);
   if (allow_fragment) {
     return AllCharsInMap(path, valid_chars_with_fragment);

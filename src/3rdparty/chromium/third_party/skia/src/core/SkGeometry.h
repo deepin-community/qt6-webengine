@@ -11,6 +11,7 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
+#include "include/private/base/SkFloatingPoint.h"
 #include "src/base/SkVx.h"
 
 #include <cstring>
@@ -348,12 +349,12 @@ struct SkConic {
     }
 
     void setW(SkScalar w) {
-        if (SkScalarIsFinite(w)) {
+        if (SkIsFinite(w)) {
             SkASSERT(w > 0);
         }
 
         // Guard against bad weights by forcing them to 1.
-        fW = w > 0 && SkScalarIsFinite(w) ? w : 1;
+        fW = w > 0 && SkIsFinite(w) ? w : 1;
     }
 
     /**
@@ -437,7 +438,7 @@ struct SkQuadCoeff {
         fA = P2 - times_2(P1) + fC;
     }
 
-    skvx::float2 eval(const skvx::float2& tt) {
+    skvx::float2 eval(const skvx::float2& tt) const {
         return (fA * tt + fB) * tt + fC;
     }
 
@@ -463,7 +464,7 @@ struct SkConicCoeff {
         fDenom.fA = 0 - fDenom.fB;
     }
 
-    skvx::float2 eval(SkScalar t) {
+    skvx::float2 eval(SkScalar t) const {
         skvx::float2 tt(t);
         skvx::float2 numer = fNumer.eval(tt);
         skvx::float2 denom = fDenom.eval(tt);
@@ -487,7 +488,7 @@ struct SkCubicCoeff {
         fD = P0;
     }
 
-    skvx::float2 eval(const skvx::float2& t) {
+    skvx::float2 eval(const skvx::float2& t) const {
         return ((fA * t + fB) * t + fC) * t + fD;
     }
 

@@ -11,6 +11,7 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkFlattenable.h"
+#include "include/core/SkFourByteTag.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPathEffect.h"
@@ -21,6 +22,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSerialProcs.h"
 #include "include/core/SkShader.h"
+#include "include/core/SkSpan.h"
 #include "include/private/base/SkAlign.h"
 #include "include/private/base/SkAssert.h"
 #include "src/core/SkBlenderBase.h"
@@ -35,6 +37,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 class SkBlender;
 class SkData;
@@ -48,10 +51,6 @@ class SkRegion;
 class SkString;
 class SkTypeface;
 struct SkPoint3;
-
-#ifdef SK_SUPPORT_LEGACY_DRAWLOOPER
-#include "include/core/SkDrawLooper.h"
-#endif
 
 class SkReadBuffer {
 public:
@@ -126,7 +125,7 @@ public:
     void readRRect(SkRRect* rrect);
     void readRegion(SkRegion* region);
 
-    void readPath(SkPath* path);
+    std::optional<SkPath> readPath();
 
     SkPaint readPaint() {
         return SkPaintPriv::Unflatten(*this);
@@ -138,9 +137,6 @@ public:
         return sk_sp<T>((T*)this->readFlattenable(T::GetFlattenableType()));
     }
     sk_sp<SkColorFilter> readColorFilter() { return this->readFlattenable<SkColorFilterBase>(); }
-#ifdef SK_SUPPORT_LEGACY_DRAWLOOPER
-    sk_sp<SkDrawLooper> readDrawLooper() { return this->readFlattenable<SkDrawLooper>(); }
-#endif
     sk_sp<SkImageFilter> readImageFilter() { return this->readFlattenable<SkImageFilter_Base>(); }
     sk_sp<SkBlender> readBlender() { return this->readFlattenable<SkBlenderBase>(); }
     sk_sp<SkMaskFilter> readMaskFilter() { return this->readFlattenable<SkMaskFilterBase>(); }
@@ -152,11 +148,11 @@ public:
 
     // binary data and arrays
     bool readByteArray(void* value, size_t size);
-    bool readColorArray(SkColor* colors, size_t size);
-    bool readColor4fArray(SkColor4f* colors, size_t size);
-    bool readIntArray(int32_t* values, size_t size);
-    bool readPointArray(SkPoint* points, size_t size);
-    bool readScalarArray(SkScalar* values, size_t size);
+    bool readColorArray(SkSpan<SkColor>);
+    bool readColor4fArray(SkSpan<SkColor4f>);
+    bool readIntArray(SkSpan<int32_t>);
+    bool readPointArray(SkSpan<SkPoint>);
+    bool readScalarArray(SkSpan<SkScalar>);
 
     const void* skipByteArray(size_t* size);
 
@@ -190,6 +186,13 @@ public:
 
     bool allowSkSL() const { return fAllowSkSL; }
     void setAllowSkSL(bool allow) { fAllowSkSL = allow; }
+
+    bool allowTags(SkFourByteTag tag) const {
+        if (!fProcs.fAllowTagsProc) {
+            return true;
+        }
+        return fProcs.fAllowTagsProc(tag, fProcs.fAllowTagsCtx);
+    }
 
     /**
      *  If isValid is false, sets the buffer to be "invalid". Returns true if the buffer

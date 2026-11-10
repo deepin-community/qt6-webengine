@@ -20,13 +20,13 @@
 #include <memory>
 
 #include "absl/strings/string_view.h"
+#include "internal/platform/implementation/apple/awdl.h"
 #include "internal/platform/implementation/apple/atomic_boolean.h"
 #include "internal/platform/implementation/apple/atomic_uint32.h"
 #include "internal/platform/implementation/apple/ble.h"
 #include "internal/platform/implementation/apple/condition_variable.h"
 #include "internal/platform/implementation/apple/count_down_latch.h"
 #include "internal/platform/implementation/apple/device_info.h"
-#import "internal/platform/implementation/apple/log_message.h"
 #import "internal/platform/implementation/apple/multi_thread_executor.h"
 #include "internal/platform/implementation/apple/mutex.h"
 #include "internal/platform/implementation/apple/preferences_manager.h"
@@ -34,6 +34,8 @@
 #import "internal/platform/implementation/apple/single_thread_executor.h"
 #include "internal/platform/implementation/apple/timer.h"
 #import "internal/platform/implementation/apple/utils.h"
+#include "internal/platform/implementation/apple/wifi.h"
+#include "internal/platform/implementation/apple/wifi_hotspot.h"
 #include "internal/platform/implementation/apple/wifi_lan.h"
 #include "internal/platform/implementation/mutex.h"
 #include "internal/platform/implementation/shared/file.h"
@@ -135,11 +137,6 @@ std::unique_ptr<OutputFile> ImplementationPlatform::CreateOutputFile(const std::
   return shared::IOFile::CreateOutputFile(file_path);
 }
 
-std::unique_ptr<LogMessage> ImplementationPlatform::CreateLogMessage(
-    const char* file, int line, LogMessage::Severity severity) {
-  return std::make_unique<apple::LogMessage>(file, line, severity);
-}
-
 // Java-like Executors
 std::unique_ptr<SubmittableExecutor> ImplementationPlatform::CreateSingleThreadExecutor() {
   return std::make_unique<apple::SingleThreadExecutor>();
@@ -177,14 +174,24 @@ std::unique_ptr<ServerSyncMedium> ImplementationPlatform::CreateServerSyncMedium
   return nullptr;
 }
 
-std::unique_ptr<WifiMedium> ImplementationPlatform::CreateWifiMedium() { return nullptr; }
+std::unique_ptr<WifiMedium> ImplementationPlatform::CreateWifiMedium() {
+  return std::make_unique<apple::WifiMedium>();
+}
 
 std::unique_ptr<WifiLanMedium> ImplementationPlatform::CreateWifiLanMedium() {
   return std::make_unique<apple::WifiLanMedium>();
 }
 
+std::unique_ptr<AwdlMedium> ImplementationPlatform::CreateAwdlMedium() {
+  return std::make_unique<apple::AwdlMedium>();
+}
+
 std::unique_ptr<WifiHotspotMedium> ImplementationPlatform::CreateWifiHotspotMedium() {
+#if TARGET_OS_IOS
+  return std::make_unique<apple::WifiHotspotMedium>();
+#else
   return nullptr;
+#endif
 }
 
 std::unique_ptr<WifiDirectMedium> ImplementationPlatform::CreateWifiDirectMedium() {
@@ -228,7 +235,7 @@ absl::StatusOr<WebResponse> ImplementationPlatform::SendRequest(const WebRequest
   [condition unlock];
 
   if (blockResponse == nil) {
-    return absl::UnknownError([[blockError localizedDescription] UTF8String]);
+    return absl::FailedPreconditionError([[blockError localizedDescription] UTF8String]);
   }
 
   WebResponse webResponse;

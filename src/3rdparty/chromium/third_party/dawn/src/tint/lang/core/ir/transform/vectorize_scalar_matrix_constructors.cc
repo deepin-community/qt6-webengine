@@ -54,10 +54,9 @@ struct State {
     /// Process the module.
     void Process() {
         // Find and replace matrix constructors that take scalar operands.
-        Vector<Construct*, 8> worklist;
-        for (auto inst : ir.instructions.Objects()) {
-            if (auto* construct = inst->As<Construct>(); construct && construct->Alive()) {
-                if (construct->Result(0)->Type()->As<type::Matrix>()) {
+        for (auto inst : ir.Instructions()) {
+            if (auto* construct = inst->As<Construct>()) {
+                if (construct->Result()->Type()->As<type::Matrix>()) {
                     if (construct->Operands().Length() > 0 &&
                         construct->Operands()[0]->Type()->Is<type::Scalar>()) {
                         b.InsertBefore(construct, [&] {  //
@@ -72,23 +71,22 @@ struct State {
     /// Replace a matrix construct instruction.
     /// @param construct the instruction to replace
     void ReplaceConstructor(Construct* construct) {
-        auto* mat = construct->Result(0)->Type()->As<type::Matrix>();
+        auto* mat = construct->Result()->Type()->As<type::Matrix>();
         auto* col = mat->ColumnType();
         const auto& scalars = construct->Operands();
 
         // Collect consecutive scalars into column vectors.
         Vector<Value*, 4> columns;
-        for (uint32_t c = 0; c < mat->columns(); c++) {
+        for (uint32_t c = 0; c < mat->Columns(); c++) {
             Vector<Value*, 4> values;
             for (uint32_t r = 0; r < col->Width(); r++) {
                 values.Push(scalars[c * col->Width() + r]);
             }
-            columns.Push(b.Construct(col, std::move(values))->Result(0));
+            columns.Push(b.Construct(col, std::move(values))->Result());
         }
 
         // Construct the matrix from the column vectors and replace the original instruction.
-        auto* replacement = b.Construct(mat, std::move(columns))->Result(0);
-        construct->Result(0)->ReplaceAllUsesWith(replacement);
+        b.ConstructWithResult(construct->DetachResult(), std::move(columns));
         construct->Destroy();
     }
 };
@@ -96,7 +94,8 @@ struct State {
 }  // namespace
 
 Result<SuccessType> VectorizeScalarMatrixConstructors(Module& ir) {
-    auto result = ValidateAndDumpIfNeeded(ir, "VectorizeScalarMatrixConstructors transform");
+    auto result = ValidateAndDumpIfNeeded(ir, "core.VectorizeScalarMatrixConstructors",
+                                          kVectorizeScalarMatrixConstructorsCapabilities);
     if (result != Success) {
         return result;
     }

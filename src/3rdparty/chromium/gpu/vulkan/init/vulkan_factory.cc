@@ -27,7 +27,7 @@
 
 namespace gpu {
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 std::unique_ptr<VulkanImplementation> CreateVulkanImplementation(
     bool use_swiftshader,
     bool allow_protected_memory) {
@@ -57,10 +57,9 @@ std::unique_ptr<VulkanImplementation> CreateVulkanImplementation(
   return std::make_unique<VulkanImplementationMac>(use_swiftshader);
 #else
   NOTREACHED();
-  return {};
 #endif
 #endif
 }
-#endif  // !defined(TOOLKIT_QT)
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
 
 }  // namespace gpu

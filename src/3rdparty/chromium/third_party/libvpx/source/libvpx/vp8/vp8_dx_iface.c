@@ -131,7 +131,7 @@ static vpx_codec_err_t vp8_peek_si_internal(const uint8_t *data,
                                             void *decrypt_state) {
   vpx_codec_err_t res = VPX_CODEC_OK;
 
-  assert(data != NULL);
+  if (data == NULL) return VPX_CODEC_INVALID_PARAM;
 
   if (data + data_sz <= data) {
     res = VPX_CODEC_INVALID_PARAM;
@@ -246,6 +246,14 @@ static int update_fragments(vpx_codec_alg_priv_t *ctx, const uint8_t *data,
     memset((void *)ctx->fragments.ptrs, 0, sizeof(ctx->fragments.ptrs));
     memset(ctx->fragments.sizes, 0, sizeof(ctx->fragments.sizes));
   }
+
+  /* Flush signal in fragment mode but no fragments were accumulated yet.
+   * Nothing to decode; treat as a no-op. */
+  if (ctx->fragments.enabled && data == NULL && data_sz == 0 &&
+      ctx->fragments.count == 0) {
+    return 0;
+  }
+
   if (ctx->fragments.enabled && !(data == NULL && data_sz == 0)) {
     /* Store a pointer to this fragment and return. We haven't
      * received the complete frame yet, so we will wait with decoding.
@@ -488,7 +496,7 @@ static vpx_codec_err_t vp8_decode(vpx_codec_alg_priv_t *ctx,
       if (pc->fb_idx_ref_cnt[pc->new_fb_idx] > 0) {
         pc->fb_idx_ref_cnt[pc->new_fb_idx]--;
       }
-      pc->error.setjmp = 0;
+      pbi->common.error.setjmp = 0;
 #if CONFIG_MULTITHREAD
       if (pbi->restart_threads) {
         ctx->si.w = 0;
@@ -586,6 +594,8 @@ static vpx_codec_err_t vp8_set_reference(vpx_codec_alg_priv_t *ctx,
 
     image2yuvconfig(&frame->img, &sd);
 
+    if (ctx->yv12_frame_buffers.pbi[0] == NULL) return VPX_CODEC_CORRUPT_FRAME;
+
     return vp8dx_set_reference(ctx->yv12_frame_buffers.pbi[0],
                                frame->frame_type, &sd);
   } else {
@@ -602,6 +612,8 @@ static vpx_codec_err_t vp8_get_reference(vpx_codec_alg_priv_t *ctx,
     YV12_BUFFER_CONFIG sd;
 
     image2yuvconfig(&frame->img, &sd);
+
+    if (ctx->yv12_frame_buffers.pbi[0] == NULL) return VPX_CODEC_CORRUPT_FRAME;
 
     return vp8dx_get_reference(ctx->yv12_frame_buffers.pbi[0],
                                frame->frame_type, &sd);
@@ -747,6 +759,7 @@ CODEC_INTERFACE(vpx_codec_vp8_dx) = {
       NULL,    /* vpx_codec_enc_config_set_fn_t */
       NULL,    /* vpx_codec_get_global_headers_fn_t */
       NULL,    /* vpx_codec_get_preview_frame_fn_t */
-      NULL     /* vpx_codec_enc_mr_get_mem_loc_fn_t */
+      NULL,    /* vpx_codec_enc_mr_get_mem_loc_fn_t */
+      NULL     /* vpx_codec_enc_mr_free_mem_loc_fn_t */
   }
 };

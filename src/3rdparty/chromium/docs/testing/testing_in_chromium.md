@@ -15,9 +15,8 @@ for one platform.
 *   **[gtest]** is Google's C++ test framework,
     which helps you write better C++ tests in Chromium.
     gtest is test framework for unit tests in Chromium and browser tests are built on top of it.
-*   **Browser Tests** is built on top of gtest, and it is used to write integration tests
+*   **[Browser Tests]** is built on top of gtest, and it is used to write integration tests
     and e2e tests in Chromium.
-    <!-- TODO(leilei) Add link to browser tests --->
 *   **[Web Tests] (formerly known as "Layout Tests" or "LayoutTests")**
     is used by Blink to test many components, including but not
     limited to layout and rendering. In general, web tests involve loading pages
@@ -65,6 +64,25 @@ tracks the effort to enable them on Android.
 
 Web Tests were enabled on Android K before, but it is disabled on Android platform now,
 see [this thread](https://groups.google.com/a/chromium.org/forum/#!topic/blink-dev/338WKwWPbPI/discussion) for more context.
+***
+
+*** note
+**Tast Tests Note**
+
+Tast tests are written, maintained and gardened by ChromeOS engineers.
+
+ChromeOS tests that Chrome engineers support should be (re)written in the following priority order:
+*   unit tests
+*   linux_chromeos browser_tests
+*   linux_chromeos interactive_ui_tests
+*   [Crosier tests](http://go/crosier)
+
+When a Tast test fails:
+*   If the change is written by a ChromeOS engineer, the ChromeOS [gardener](http://go/cros-gardening) can revert it.
+*   Otherwise the ChromeOS gardener can revert the Chrome-authored change accompanied by a test from the supported frameworks above or manual repro steps that a Chrome engineer can run under [linux_chromeos](../chromeos_build_instructions.md#Chromium-OS-on-Linux-linux_chromeos) (preferable) or using Simple Chrome VM [instructions](https://chromium.googlesource.com/chromiumos/docs/+/HEAD/simple_chrome_workflow.md).
+*   If the above is not possible, the ChromeOS gardener or ChromeOS feature owner should inform the author about the failure, and the author uses their best judgment on whether to revert, fix on trunk, or let ChromeOS engineers update the test (e.g. if test needs an update or if the test is just testing internal implementation details of Chrome but doesn't break user functionality).
+
+
 ***
 
 ## General Principles
@@ -182,6 +200,7 @@ Tests are not configured to upload metrics, such as UMA, UKM or crash reports.
 
 [gtest]: https://github.com/google/googletest
 [Simple gtests]: https://github.com/google/googletest/blob/main/docs/primer.md#simple-tests
+[Browser Tests]: https://chromium.googlesource.com/website/+/HEAD/site/developers/testing/browser-tests/index.md
 [Robolectric]: android_robolectric_tests.md
 [Instrumentation Tests]: https://chromium.googlesource.com/chromium/src/+/main/docs/testing/android_instrumentation_tests.md
 [EarlGrey]: https://github.com/google/EarlGrey

@@ -7,31 +7,33 @@ from __future__ import annotations
 import abc
 import json
 import logging
-import subprocess
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
+import os
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
-from crossbench import helper, plt
-from crossbench.env import ValidationError
+import psutil
+from typing_extensions import override
 
-from .browser import Browser
+from crossbench import plt
+from crossbench.browsers.browser import Browser
+from crossbench.env.runner_env import ValidationError
 
 if TYPE_CHECKING:
   import datetime as dt
-  import pathlib
+  import subprocess
 
-  from crossbench.runner.groups import BrowserSessionRunGroup
-  from crossbench.runner.run import Run
-  from crossbench.runner.runner import Runner
+  from crossbench.env.runner_env import RunnerEnv
+  from crossbench.path import AnyPath
+  from crossbench.runner.groups.session import BrowserSessionRunGroup
 
 
 class AppleScript:
 
   @classmethod
-  def with_args(cls, app_path: pathlib.Path, apple_script: str,
-                **kwargs) -> Tuple[str, List[str]]:
+  def with_args(cls, app_path: AnyPath, apple_script: str,
+                **kwargs) -> tuple[str, list[str]]:
     variables = []
     replacements = {}
-    args: List[str] = []
+    args: list[str] = []
     for variable, value in kwargs.items():
       args.append(value)
       unique_variable = f"cb_input_{variable}"
@@ -68,6 +70,39 @@ class AppleScript:
     pass
 
 
+def try_get_parent_app_name(platform: plt.Platform) -> str:
+  if platform.is_remote:
+    return ""
+  launched_apps: dict[str, str] = {}
+  try:
+    for line in platform.sh_stdout("launchctl", "list").splitlines():
+      parts = line.split()
+      if len(parts) == 3:
+        pid, _, label = parts
+        # Input:  "application.com.google.Chrome.46262139.72133274"
+        # Output: "Chrome"
+        label_parts = label.split(".")
+        if len(label_parts) <= 3:
+          continue
+        launched_apps[pid] = label_parts[3]
+  except Exception as e:  # pylint: disable=broad-except
+    logging.debug("Could not list all parents: %s", e)
+    return ""
+  if not launched_apps:
+    logging.debug("Could not find any apps")
+    return ""
+  try:
+    for parent in psutil.Process(os.getpid()).parents():
+      if label := launched_apps.get(str(parent.pid), ""):
+        return label
+  except Exception as e:  # pylint: disable=broad-except
+    logging.debug("Could not find parent parent app process: %s", e)
+  return ""
+
+
+SYSTEM_EVENTS_CHECK = (
+    'tell application "System Events" to log (count of windows)')
+
 class AppleScriptBrowser(Browser, metaclass=abc.ABCMeta):
   APPLE_SCRIPT_ALLOW_JS_MENU: str = ""
   APPLE_SCRIPT_JS_COMMAND: str = ""
@@ -82,10 +117,17 @@ class AppleScriptBrowser(Browser, metaclass=abc.ABCMeta):
                                                  **kwargs)
     return self.platform.exec_apple_script(wrapper_script, *args)
 
+  @override
+  def validate_env(self, env: RunnerEnv) -> None:
+    super().validate_env(env)
+    self._check_system_events_allowed(env)
+
+  @override
   def start(self, session: BrowserSessionRunGroup) -> None:
-    assert not self._is_running
+    super().start(session)
     # Start process directly
     startup_flags = self._get_browser_flags_for_session(session)
+    self._log_browser_start(startup_flags)
     self._browser_process = self.platform.popen(
         self.path, *startup_flags, shell=False)
     if self._browser_process.poll():
@@ -94,20 +136,34 @@ class AppleScriptBrowser(Browser, metaclass=abc.ABCMeta):
     self.platform.sleep(3)
     self._exec_apple_script("activate")
     self._setup_window()
-    self._check_js_from_apple_script_allowed(session)
+    self._check_js_from_apple_script_allowed(session.env)
 
-  def _check_js_from_apple_script_allowed(
-      self, session: BrowserSessionRunGroup) -> None:
+  def _check_system_events_allowed(self, env: RunnerEnv) -> None:
     try:
-      self.js(session.runner, "return 1")
+      self._exec_apple_script(SYSTEM_EVENTS_CHECK)
+    except plt.SubprocessError as e:
+      logging.error("Not allowed to run AppleScript and send System Events!")
+      logging.debug("    SubprocessError: %s", e)
+      app_name = try_get_parent_app_name(self.platform) or "parent"
+      env.handle_warning(
+          f"Enable the 'System Events' permission for the {app_name} App. \n"
+          "  See 'System Settings' > 'Privacy & Security' > 'Automation'.\n")
+    try:
+      self._exec_apple_script(SYSTEM_EVENTS_CHECK)
+    except plt.SubprocessError as e:
+      raise ValidationError(
+          " Not allowed to run AppleScript and send System Events!") from e
+
+  def _check_js_from_apple_script_allowed(self, env: RunnerEnv) -> None:
+    try:
+      self.js("return 1")
     except plt.SubprocessError as e:
       logging.error("Browser does not allow JS from AppleScript!")
       logging.debug("    SubprocessError: %s", e)
-      session.runner.env.handle_warning(
-          "Enable JavaScript from Apple Script Events: "
-          f"'{self.APPLE_SCRIPT_ALLOW_JS_MENU}'")
+      env.handle_warning("Enable JavaScript from Apple Script Events: "
+                         f"'{self.APPLE_SCRIPT_ALLOW_JS_MENU}'")
     try:
-      self.js(session.runner, "return 1;")
+      self.js("return 1;")
     except plt.SubprocessError as e:
       raise ValidationError(
           " JavaScript from Apple Script Events was not enabled") from e
@@ -117,14 +173,14 @@ class AppleScriptBrowser(Browser, metaclass=abc.ABCMeta):
   def _setup_window(self) -> None:
     pass
 
+  @override
   def js(
       self,
-      runner: Runner,
       script: str,
       timeout: Optional[dt.timedelta] = None,
       arguments: Sequence[object] = ()
   ) -> Any:
-    del runner, timeout
+    del timeout
     js_script = AppleScript.js_script_with_args(script, arguments)
     json_result: str = self._exec_apple_script(
         self.APPLE_SCRIPT_JS_COMMAND.strip(), js_script=js_script).rstrip()
@@ -133,15 +189,15 @@ class AppleScriptBrowser(Browser, metaclass=abc.ABCMeta):
       raise AppleScript.JavaScriptFromAppleScriptException(result)
     return result
 
-  def show_url(self,
-               runner: Runner,
-               url: str,
-               target: Optional[str] = None) -> None:
-    del runner
+  @override
+  def show_url(self, url: str, target: Optional[str] = None) -> None:
+    if target not in (None, "_self"):
+      raise NotImplementedError(
+          f"AppleScriptBrowser show_url does not support target {target}")
     self._exec_apple_script(self.APPLE_SCRIPT_SET_URL, url=url)
     self.platform.sleep(0.5)
 
-  def quit(self, runner: Runner) -> None:
-    del runner
+  @override
+  def quit(self) -> None:
     self._exec_apple_script("quit")
-    helper.wait_and_kill(self._browser_process)
+    self.platform.terminate_gracefully(self._browser_process)

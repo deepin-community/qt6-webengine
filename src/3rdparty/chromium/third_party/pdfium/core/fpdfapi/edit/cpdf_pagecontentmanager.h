@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <set>
+#include <variant>
 
 #include "core/fxcrt/fx_string_wrappers.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 class CPDF_Array;
 class CPDF_Document;
@@ -32,6 +32,8 @@ class CPDF_PageContentManager {
   // Changes the stream at `stream_index` to contain the data in `buf`. If `buf`
   // is empty, then schedule the removal of the stream instead.
   void UpdateStream(size_t stream_index, fxcrt::ostringstream* buf);
+
+  bool HasStreamAtIndex(size_t stream_index);
 
  private:
   // Gets the Content stream at a given index. If Contents is a single stream
@@ -54,7 +56,7 @@ class CPDF_PageContentManager {
   UnownedPtr<CPDF_Document> const document_;
   const std::set<uint32_t> objects_with_multi_refs_;
   // When holding a CPDF_Stream, the pointer may be null.
-  absl::variant<RetainPtr<CPDF_Stream>, RetainPtr<CPDF_Array>> contents_;
+  std::variant<RetainPtr<CPDF_Stream>, RetainPtr<CPDF_Array>> contents_;
   std::set<size_t> streams_to_remove_;
 };
 

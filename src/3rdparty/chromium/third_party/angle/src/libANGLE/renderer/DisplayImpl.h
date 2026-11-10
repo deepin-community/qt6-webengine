@@ -97,8 +97,6 @@ class DisplayImpl : public EGLImplFactory, public angle::Subject
     virtual egl::Error waitNative(const gl::Context *context, EGLint engine) = 0;
     virtual gl::Version getMaxSupportedESVersion() const                     = 0;
     virtual gl::Version getMaxConformantESVersion() const                    = 0;
-    // If desktop GL is not supported in any capacity for a given backend, this returns None.
-    virtual Optional<gl::Version> getMaxSupportedDesktopVersion() const = 0;
     const egl::Caps &getCaps() const;
 
     virtual void setBlobCacheFuncs(EGLSetBlobFuncANDROID set, EGLGetBlobFuncANDROID get) {}
@@ -119,17 +117,24 @@ class DisplayImpl : public EGLImplFactory, public angle::Subject
 
     virtual egl::Error waitUntilWorkScheduled();
 
-    virtual bool isX11() const;
-    virtual bool isWayland() const;
-    virtual bool isGBM() const;
+    virtual void lockVulkanQueue() { UNREACHABLE(); }
+    virtual void unlockVulkanQueue() { UNREACHABLE(); }
 
-    virtual bool supportsDmaBufFormat(EGLint format) const;
+    virtual angle::NativeWindowSystem getWindowSystem() const;
+
+    virtual bool supportsDmaBufFormat(EGLint format);
     virtual egl::Error queryDmaBufFormats(EGLint max_formats, EGLint *formats, EGLint *num_formats);
     virtual egl::Error queryDmaBufModifiers(EGLint format,
                                             EGLint max_modifiers,
                                             EGLuint64KHR *modifiers,
                                             EGLBoolean *external_only,
                                             EGLint *num_modifiers);
+
+    virtual egl::Error querySupportedCompressionRates(const egl::Config *configuration,
+                                                      const egl::AttributeMap &attributes,
+                                                      EGLint *rates,
+                                                      EGLint rate_size,
+                                                      EGLint *num_rates) const;
 
   protected:
     const egl::DisplayState &mState;

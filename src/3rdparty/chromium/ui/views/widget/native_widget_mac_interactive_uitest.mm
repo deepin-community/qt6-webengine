@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/views/widget/native_widget_mac.h"
-
 #import <Cocoa/Cocoa.h>
 
 #import "base/mac/mac_util.h"
 #include "base/memory/raw_ptr.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/test/ui_controls.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
@@ -15,7 +14,9 @@
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/test/native_widget_factory.h"
 #include "ui/views/test/test_widget_observer.h"
+#include "ui/views/test/widget_activation_waiter.h"
 #include "ui/views/test/widget_test.h"
+#include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget_interactive_uitest_utils.h"
 
 namespace views::test {
@@ -61,10 +62,11 @@ class NativeWidgetMacInteractiveUITest::Observer : public TestWidgetObserver {
   Observer& operator=(const Observer&) = delete;
 
   void OnWidgetActivationChanged(Widget* widget, bool active) override {
-    if (active)
+    if (active) {
       parent_->activation_count_++;
-    else
+    } else {
       parent_->deactivation_count_++;
+    }
   }
 
  private:
@@ -79,9 +81,8 @@ TEST_P(NativeWidgetMacInteractiveUITest, ShowAttainsKeyStatus) {
   EXPECT_FALSE(widget->IsActive());
   EXPECT_EQ(0, activation_count_);
   {
-    WidgetActivationWaiter wait_for_first_active(widget, true);
     widget->Show();
-    wait_for_first_active.Wait();
+    WaitForWidgetActive(widget, true);
   }
   EXPECT_TRUE(widget->IsActive());
   EXPECT_TRUE(widget->GetNativeWindow().GetNativeNSWindow().keyWindow);
@@ -93,18 +94,16 @@ TEST_P(NativeWidgetMacInteractiveUITest, ShowAttainsKeyStatus) {
   Widget* widget2 = MakeWidget();  // Note: not observed.
   EXPECT_EQ(0, deactivation_count_);
   {
-    WidgetActivationWaiter wait_for_deactivate(widget, false);
     widget2->Show();
-    wait_for_deactivate.Wait();
+    WaitForWidgetActive(widget2, true);
   }
   EXPECT_EQ(1, deactivation_count_);
   EXPECT_FALSE(widget->IsActive());
   EXPECT_EQ(1, activation_count_);
 
   {
-    WidgetActivationWaiter wait_for_external_activate(widget, true);
     [widget->GetNativeWindow().GetNativeNSWindow() makeKeyAndOrderFront:nil];
-    wait_for_external_activate.Wait();
+    WaitForWidgetActive(widget, true);
   }
   EXPECT_TRUE(widget->IsActive());
   EXPECT_EQ(1, deactivation_count_);
@@ -176,6 +175,8 @@ NSData* ViewAsTIFF(NSView* view) {
   return [bitmap TIFFRepresentation];
 }
 
+}  // namespace
+
 class TestBubbleView : public BubbleDialogDelegateView {
  public:
   explicit TestBubbleView(Widget* parent) {
@@ -185,8 +186,6 @@ class TestBubbleView : public BubbleDialogDelegateView {
   TestBubbleView(const TestBubbleView&) = delete;
   TestBubbleView& operator=(const TestBubbleView&) = delete;
 };
-
-}  // namespace
 
 // Test that parent windows keep their traffic lights enabled when showing
 // dialogs.
@@ -260,7 +259,7 @@ TEST_F(NativeWidgetMacInteractiveUITest,
   params.native_widget =
       CreatePlatformNativeWidgetImpl(widget, kStubCapture, nullptr);
   // Start the window off in the dock.
-  params.show_state = ui::SHOW_STATE_MINIMIZED;
+  params.show_state = ui::mojom::WindowShowState::kMinimized;
   // "{}" in base64encode, to create some dummy restoration data.
   const std::string kDummyWindowRestorationData = "e30=";
   params.workspace = kDummyWindowRestorationData;
@@ -367,12 +366,11 @@ TEST_F(NativeWidgetMacInteractiveUITest, GlobalNSTextInputContextUpdates) {
   Widget* widget = CreateTopLevelNativeWidget();
   Textfield* textfield = new Textfield;
   textfield->SetBounds(0, 0, 100, 100);
-  widget->GetContentsView()->AddChildView(textfield);
+  widget->GetContentsView()->AddChildViewRaw(textfield);
   textfield->RequestFocus();
   {
-    WidgetActivationWaiter wait_for_first_active(widget, true);
     widget->Show();
-    wait_for_first_active.Wait();
+    WaitForWidgetActive(widget, true);
   }
   EXPECT_TRUE(widget->GetNativeView().GetNativeNSView().inputContext);
   EXPECT_EQ(widget->GetNativeView().GetNativeNSView().inputContext,
@@ -391,6 +389,36 @@ TEST_F(NativeWidgetMacInteractiveUITest, GlobalNSTextInputContextUpdates) {
 
   widget->Close();
   base::RunLoop().RunUntilIdle();
+}
+
+// Ensure that view accelerators unregistered when closing a widget with type
+// CLIENT_OWNS_WIDGET.
+TEST_F(NativeWidgetMacInteractiveUITest, UnregisterAccelerators) {
+  auto parent_widget = base::WrapUnique<Widget>(
+      CreateTopLevelNativeWidget(Widget::InitParams::CLIENT_OWNS_WIDGET));
+  parent_widget->SetBounds(gfx::Rect(100, 100, 100, 100));
+  ShowKeyWindow(parent_widget.get());
+
+  auto child_widget = std::make_unique<Widget>();
+  Widget::InitParams params = CreateParams(
+      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
+  params.parent = parent_widget->GetNativeView();
+  params.child = true;
+  child_widget->Init(std::move(params));
+  child_widget->Show();
+  ASSERT_EQ(child_widget->GetFocusManager(), parent_widget->GetFocusManager());
+
+  auto* focus_manager = parent_widget->GetFocusManager();
+  ui::Accelerator accelerator(ui::VKEY_F10,
+                              ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN);
+  ASSERT_FALSE(focus_manager->IsAcceleratorRegistered(accelerator));
+  View* view =
+      child_widget->GetContentsView()->AddChildView(std::make_unique<View>());
+  view->AddAccelerator(accelerator);
+  ASSERT_TRUE(focus_manager->IsAcceleratorRegistered(accelerator));
+
+  child_widget.reset();
+  EXPECT_FALSE(focus_manager->IsAcceleratorRegistered(accelerator));
 }
 
 INSTANTIATE_TEST_SUITE_P(NativeWidgetMacInteractiveUITestInstance,

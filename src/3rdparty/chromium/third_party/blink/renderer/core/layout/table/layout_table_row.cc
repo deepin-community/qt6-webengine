@@ -174,7 +174,6 @@ unsigned LayoutTableRow::RowIndex() const {
     ++index;
   }
   NOTREACHED();
-  return 0;
 }
 
 }  // namespace blink

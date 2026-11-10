@@ -44,7 +44,7 @@ class AllocatorState {
 
   // Maximum number of virtual memory slots (guard-page buffered pages) this
   // class can allocate.
-  static constexpr size_t kMaxRequestedSlots = 4096;
+  static constexpr size_t kMaxRequestedSlots = 32767;
   // When PartitionAlloc is used as the backing allocator, we might have to
   // reserve extra slots to store PA metadata. Therefore, the number of reserved
   // slots might be higher than the number of requested slots. Note that the
@@ -52,7 +52,7 @@ class AllocatorState {
   // from PA is significantly smaller.
   static constexpr size_t kMaxReservedSlots = 2 * kMaxRequestedSlots;
   // Maximum number of concurrent allocations/metadata this class can allocate.
-  static constexpr size_t kMaxMetadata = 2048;
+  static constexpr size_t kMaxMetadata = 16384;
   // Invalid metadata index.
   static constexpr MetadataIdx kInvalidMetadataIdx = kMaxMetadata;
 
@@ -63,6 +63,9 @@ class AllocatorState {
   // stack traces. (Stack trace entries take ~3.5 bytes on average.)
   static constexpr size_t kMaxPackedTraceLength = 400;
 
+  static_assert(sizeof(SlotIdx) >= sizeof(MetadataIdx),
+                "Should not need more metadata slots than allocation "
+                "slots.");
   static_assert(std::numeric_limits<SlotIdx>::max() >= kMaxReservedSlots,
                 "SlotIdx can hold all possible slot index values");
   static_assert(std::numeric_limits<MetadataIdx>::max() >= kMaxMetadata - 1,
@@ -70,6 +73,8 @@ class AllocatorState {
   static_assert(kInvalidMetadataIdx >= kMaxMetadata,
                 "kInvalidMetadataIdx can not reference a real index");
 
+  // These should not be renumbered and should be kept in sync with
+  // Crash::ErrorType in crash.proto
   enum class ErrorType {
     kUseAfterFree = 0,
     kBufferUnderflow = 1,

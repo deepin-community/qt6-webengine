@@ -32,8 +32,10 @@ def load_json(path):
         return json.loads(map_file.read(), object_pairs_hook=reject_duplicate_keys)
 
 
-def load_forward_table(path):
+def load_forward_table(path, key=None):
     pairs = load_json(path)
+    if key is not None:
+        pairs = pairs[key]
     reject_duplicate_keys(pairs)
     return {gl: angle for gl, angle in pairs}
 
@@ -100,7 +102,7 @@ def get_component_type(format_id):
 def get_channel_tokens(format_id):
     if 'EXTERNAL' in format_id:
         return ['R8', 'G8', 'B8', 'A8']
-    r = re.compile(r'([' + kChannels + '][\d]+)')
+    r = re.compile(r'([' + kChannels + r'][\d]+)')
     return list(filter(r.match, r.split(format_id)))
 
 
@@ -132,7 +134,10 @@ def get_bits(format_id):
     else:
         tokens = get_channel_tokens(format_id)
         for token in tokens:
-            bits[token[0]] = int(token[1:])
+            # Some padding tokens can appear multiple times in a format name
+            # (e.g. R10X6G10X6B10X6A10X6 has four X6 tokens). They should be
+            # accumulated for the correct pixelBytes value.
+            bits[token[0]] = bits.get(token[0], 0) + int(token[1:])
     return bits
 
 
@@ -150,13 +155,13 @@ def gl_format_channels(internal_format):
         return 'rgba'
     if internal_format.find('GL_RGB10_A2') == 0:
         return 'rgba'
-    if internal_format == 'GL_RGB10_UNORM_ANGLEX':
+    if internal_format.find('GL_RGB10') == 0:
         return 'rgb'
     # signed/unsigned int_10_10_10_2 for vertex format
     if internal_format.find('INT_10_10_10_2_OES') == 0:
         return 'rgba'
 
-    channels_pattern = re.compile('GL_(COMPRESSED_)?(SIGNED_)?(ETC\d_)?([A-Z]+)')
+    channels_pattern = re.compile(r'GL_(COMPRESSED_)?(SIGNED_)?(ETC\d_)?([A-Z]+)')
     match = re.search(channels_pattern, internal_format)
     channels_string = match.group(4)
 
@@ -192,7 +197,7 @@ def get_internal_format_initializer(internal_format, format_id):
     if not gl_format_no_alpha or channels != 'rgba':
         return 'nullptr'
 
-    elif internal_format == 'GL_RGB10_UNORM_ANGLEX':
+    elif internal_format == 'GL_RGB10_EXT':
         return 'nullptr'
 
     elif 'BC1_' in format_id:
@@ -270,8 +275,6 @@ def get_vertex_copy_function(src_format, dst_format):
         return "nullptr"
 
     if src_format.endswith('_VERTEX'):
-        assert 'FLOAT' in dst_format, (
-            'get_vertex_copy_function: can only convert to float,' + ' not to ' + dst_format)
         is_signed = 'true' if 'SINT' in src_format or 'SNORM' in src_format or 'SSCALED' in src_format else 'false'
         is_normal = 'true' if 'NORM' in src_format else 'false'
         if 'A2' in src_format:

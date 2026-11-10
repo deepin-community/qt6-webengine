@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QQUICKWEBENGINEFAVICONPROVIDER_P_P_H
 #define QQUICKWEBENGINEFAVICONPROVIDER_P_P_H
@@ -29,11 +30,12 @@ class FaviconImageResponse : public QQuickImageResponse
     Q_OBJECT
 
 public:
-    FaviconImageResponse(const QUrl &imageSource, const QSize &requestedSize);
+    FaviconImageResponse(const QUrl &imageSource, const QSize &requestedSize, bool isIconUrl);
 
     QQuickTextureFactory *textureFactory() const override;
     const QUrl &imageSource() const { return m_imageSource; }
     const QSize &requestedSize() const { return m_requestedSize; }
+    bool isIconUrl() const { return m_isIconUrl; }
 
 public slots:
     void handleDone(QPixmap pixmap);
@@ -42,6 +44,7 @@ private:
     QImage m_image;
     QUrl m_imageSource;
     QSize m_requestedSize;
+    bool m_isIconUrl;
 };
 
 class FaviconImageRequester : public QObject
@@ -49,7 +52,7 @@ class FaviconImageRequester : public QObject
     Q_OBJECT
 
 public:
-    FaviconImageRequester(const QUrl &imageSource, const QSize &requestedSize);
+    FaviconImageRequester(const QUrl &imageSource, const QSize &requestedSize, bool isIconUrl);
     void start();
 
 public slots:
@@ -65,23 +68,36 @@ private:
 
     QUrl m_imageSource;
     QSize m_requestedSize;
+    bool m_isIconUrl;
     QList<QPointer<QQuickWebEngineView>> m_processedViews;
 };
 
 class Q_WEBENGINEQUICK_EXPORT QQuickWebEngineFaviconProvider : public QQuickAsyncImageProvider
 {
     Q_OBJECT
-
 public:
     static QString identifier();
+    static QUrl faviconProviderUrlBase(const QUrl &, const QString &identifier);
     static QUrl faviconProviderUrl(const QUrl &);
 
     QQuickWebEngineFaviconProvider();
+    virtual bool isIconUrl() const { return true; }
     QQuickImageResponse *requestImageResponse(const QString &id,
                                               const QSize &requestedSize) override;
 
 signals:
     void imageResponseRequested(QPointer<FaviconImageResponse> faviconResponse);
+};
+
+class Q_WEBENGINEQUICK_EXPORT QQuickWebEngineFaviconDBProvider : public QQuickWebEngineFaviconProvider
+{
+    Q_OBJECT
+public:
+    static QString identifier();
+    static QUrl faviconProviderUrl(const QUrl &);
+
+    QQuickWebEngineFaviconDBProvider() = default;
+    bool isIconUrl() const override { return false; }
 };
 
 class Q_WEBENGINEQUICK_EXPORT FaviconProviderHelper : public QObject
@@ -100,7 +116,7 @@ public slots:
 private:
     FaviconProviderHelper();
     void startFaviconRequest(QPointer<FaviconImageResponse> faviconResponse);
-    QPointer<QQuickWebEngineView> findViewByImageSource(const QUrl &imageSource) const;
+    QPointer<QQuickWebEngineView> findViewByImageSource(const QUrl &imageSource, bool isIconUrl) const;
     QList<QPointer<QQuickWebEngineView>> m_views;
 };
 

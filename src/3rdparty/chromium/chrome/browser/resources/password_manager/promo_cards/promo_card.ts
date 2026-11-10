@@ -9,7 +9,9 @@ import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import type {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {assertNotReached} from 'chrome://resources/js/assert.js';
+import {BatchUploadPasswordsEntryPoint, SyncBrowserProxyImpl} from '../sync_browser_proxy.js';
 import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -29,13 +31,14 @@ export enum PromoCardId {
   ACCESS_ON_ANY_DEVICE = 'access_on_any_device_promo',
   RELAUNCH_CHROME = 'relaunch_chrome_promo',
   MOVE_PASSWORDS = 'move_passwords_promo',
+  SCREENLOCK_REAUTH = 'screenlock_reauth_promo',  // Obsolete
 }
 
 /**
  * These values are persisted to logs. Entries should not be renumbered and
  * numeric values should never be reused.
  *
- * Needs to stay in sync with PromoCardType in promo_card.cc
+ * Needs to stay in sync with PromoCardType in promo_card.h
  */
 enum PromoCardMetricId {
   CHECKUP = 0,
@@ -44,8 +47,9 @@ enum PromoCardMetricId {
   UNUSED_ACCESS_ON_ANY_DEVICE = 3,
   RELAUNCH_CHROME = 4,
   MOVE_PASSWORDS = 5,
+  // SCREENLOCK_REAUTH = 6, Obsolete
   // Must be last.
-  COUNT = 6,
+  COUNT = 7,
 }
 
 function recordPromoCardAction(card: PromoCardMetricId) {
@@ -65,7 +69,9 @@ export interface PromoCardElement {
 
 const isOpenedAsShortcut = window.matchMedia('(display-mode: standalone)');
 
-export class PromoCardElement extends PolymerElement {
+const PromoCardElementBase = I18nMixin(PolymerElement);
+
+export class PromoCardElement extends PromoCardElementBase {
   static get is() {
     return 'promo-card';
   }
@@ -80,7 +86,7 @@ export class PromoCardElement extends PolymerElement {
     };
   }
 
-  promoCard: PromoCard;
+  declare promoCard: PromoCard;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -121,10 +127,10 @@ export class PromoCardElement extends PolymerElement {
         recordPromoCardAction(PromoCardMetricId.RELAUNCH_CHROME);
         break;
       case PromoCardId.MOVE_PASSWORDS:
-        this.dispatchEvent(new CustomEvent(
-            'move-passwords-clicked', {bubbles: true, composed: true}));
+        SyncBrowserProxyImpl.getInstance().openBatchUpload(
+            BatchUploadPasswordsEntryPoint.PROMO_CARD);
         recordPromoCardAction(PromoCardMetricId.MOVE_PASSWORDS);
-        return;
+        break;
       default:
         assertNotReached();
     }

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/scalar.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_1x1__scalar(
@@ -24,8 +30,8 @@ void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_1x1__scalar(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_qc4w_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_qc4w_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params)
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -34,6 +40,7 @@ void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_1x1__scalar(
 
   const int8_t* a0 = a;
   float* c0 = c;
+
 
   kc = round_up_po2(kc, 2);
   do {

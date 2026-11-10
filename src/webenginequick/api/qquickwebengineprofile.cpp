@@ -1,12 +1,12 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebengineprofile.h"
 #include "qquickwebengineprofile_p.h"
 #include "qquickwebenginedownloadrequest.h"
 #include "qquickwebenginesettings_p.h"
 #include "qquickwebenginescriptcollection_p.h"
-#include "qquickwebenginescriptcollection_p_p.h"
 #include "qquickwebengineview_p_p.h"
 
 #include "profile_adapter.h"
@@ -23,10 +23,14 @@
 
 #include <QtCore/qdir.h>
 #include <QtCore/qfileinfo.h>
-#include <QtQml/qqmlcontext.h>
 #include <QtQml/qqmlengine.h>
+#include <QtQml/qqmlinfo.h>
 
 using QtWebEngineCore::ProfileAdapter;
+
+#if QT_CONFIG(webengine_extensions)
+#include <QtWebEngineCore/qwebengineextensionmanager.h>
+#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -77,7 +81,7 @@ QT_BEGIN_NAMESPACE
     \c off-the-record is set.
     \value DiskHttpCache Use a disk cache. This is the default if \c off-the-record
     is not set. Falls back to \c MemoryHttpCache if \c off-the-record is set.
-    \value NoCache Disable both in-memory and disk caching. (Added in Qt 5.7)
+    \value NoCache Disable both in-memory and disk caching.
 */
 
 /*!
@@ -91,6 +95,9 @@ QT_BEGIN_NAMESPACE
     \value  AllowPersistentCookies
             Cookies marked persistent are saved to and restored from disk, whereas session cookies
             are only stored to disk for crash recovery. This is the default setting.
+    \value [since 6.11] OnlyPersistentCookies
+            Cookies marked persistent are saved to and restored from disk, whereas session cookies
+            are never stored to disk, even for crash recovery.
     \value  ForcePersistentCookies
             Both session and persistent cookies are saved to and restored from disk.
 */
@@ -242,9 +249,15 @@ void QQuickWebEngineProfilePrivate::cleanDownloads()
     m_ongoingDownloads.clear();
 }
 
-void QQuickWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
+void QQuickWebEngineProfilePrivate::downloadRequested(const DownloadItemInfo &info)
 {
     Q_Q(QQuickWebEngineProfile);
+
+    if (!q->receivers(SIGNAL(downloadRequested(QQuickWebEngineDownloadRequest*)))) {
+        m_profileAdapter->acceptDownload(info.id, info.accepted, info.useDownloadTargetCallback, info.path,
+                                         info.savePageFormat);
+        return;
+    }
 
     Q_ASSERT(!m_ongoingDownloads.contains(info.id));
     QWebEngineDownloadRequestPrivate *itemPrivate =
@@ -262,6 +275,7 @@ void QQuickWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
     itemPrivate->savePageFormat = static_cast<QWebEngineDownloadRequest::SavePageFormat>(
                 info.savePageFormat);
     itemPrivate->isSavePageDownload = info.isSavePageDownload;
+    itemPrivate->useDownloadTargetCallback = info.useDownloadTargetCallback;
     if (info.page && info.page->clientType() == QtWebEngineCore::WebContentsAdapterClient::QmlClient)
         itemPrivate->adapterClient = info.page;
     else
@@ -275,17 +289,9 @@ void QQuickWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
     QQmlEngine::setObjectOwnership(download, QQmlEngine::JavaScriptOwnership);
     Q_EMIT q->downloadRequested(download);
 
-    QWebEngineDownloadRequest::DownloadState state = download->state();
-    info.path = QDir(download->downloadDirectory()).filePath(download->downloadFileName());
-    info.savePageFormat = itemPrivate->savePageFormat;
-    info.accepted = state != QWebEngineDownloadRequest::DownloadCancelled
-                      && state != QWebEngineDownloadRequest::DownloadRequested;
-
-    if (state == QWebEngineDownloadRequest::DownloadRequested) {
-        // Delete unaccepted downloads.
-        info.accepted = false;
-        delete download;
-    }
+    // Callbacks of automatically accepted save operations have to be called here
+    if (info.isSavePageDownload && info.accepted)
+        itemPrivate->answer();
 }
 
 void QQuickWebEngineProfilePrivate::downloadUpdated(const DownloadItemInfo &info)
@@ -325,16 +331,12 @@ void QQuickWebEngineProfilePrivate::clearHttpCacheCompleted()
 
 QQuickWebEngineScriptCollection *QQuickWebEngineProfilePrivate::getUserScripts()
 {
-    Q_Q(QQuickWebEngineProfile);
     if (!m_scriptCollection)
         m_scriptCollection.reset(
             new QQuickWebEngineScriptCollection(
-                new QQuickWebEngineScriptCollectionPrivate(
+                new QWebEngineScriptCollection(
                     new QWebEngineScriptCollectionPrivate(
-                        m_profileAdapter->userResourceController()))));
-
-    if (!m_scriptCollection->qmlEngine())
-        m_scriptCollection->setQmlEngine(qmlEngine(q));
+                        profileAdapter()->userResourceController()))));
 
     return m_scriptCollection.data();
 }
@@ -366,6 +368,9 @@ QQuickWebEngineScriptCollection *QQuickWebEngineProfilePrivate::getUserScripts()
 
     Each web engine view has an associated profile. Views that do not have a specific profile set
     share a common one, which is off-the-record by default.
+
+    \note It is recommended to use the new \l {WebEngineProfilePrototype} for profile creation
+    from 6.9
 */
 
 /*!
@@ -414,6 +419,27 @@ QQuickWebEngineScriptCollection *QQuickWebEngineProfilePrivate::getUserScripts()
 QQuickWebEngineProfile::QQuickWebEngineProfile(QObject *parent)
     : QObject(parent),
       d_ptr(new QQuickWebEngineProfilePrivate(new QtWebEngineCore::ProfileAdapter()))
+{
+    qmlWarning(this) << QStringLiteral(
+            "Please use WebEngineProfilePrototype for profile creation from 6.9, as this function "
+            "will be deprecated in the future releases");
+    d_ptr->q_ptr = this;
+}
+
+/*!
+    Constructs a new profile with the storage name \a storageName and parent \a parent.
+
+    The storage name must be unique.
+
+    A disk-based QQuickWebEngineProfile should be destroyed on or before application exit, otherwise the cache
+    and persistent data may not be fully flushed to disk.
+
+    \since QtWebEngine 6.9
+    \sa storageName()
+*/
+QQuickWebEngineProfile::QQuickWebEngineProfile(const QString &storageName, QObject *parent)
+    : QObject(parent)
+    , d_ptr(new QQuickWebEngineProfilePrivate(new QtWebEngineCore::ProfileAdapter(storageName)))
 {
     d_ptr->q_ptr = this;
 }
@@ -518,7 +544,17 @@ void QQuickWebEngineProfile::setOffTheRecord(bool offTheRecord)
 
     if (!offTheRecord && d->profileAdapter()->storageName().isEmpty()) {
         qWarning("Storage name is empty. Cannot change profile from off-the-record "
-                 "to disk-based behavior as it requires a proper storage name");
+                 "to disk-based behavior until a proper storage name is set");
+        // Wait for the profile storage name is set
+        QObject::connect(
+                this, &QQuickWebEngineProfile::storageNameChanged, this,
+                [this]() {
+                    if (!storageName().isEmpty()) {
+                        qWarning("Switching to disk-based behavior");
+                        this->setOffTheRecord(false);
+                    }
+                },
+                Qt::SingleShotConnection);
         return;
     }
 
@@ -538,7 +574,7 @@ void QQuickWebEngineProfile::setOffTheRecord(bool offTheRecord)
 /*!
     \qmlproperty string WebEngineProfile::persistentStoragePath
 
-    The path to the location where the persistent data for the browser and web content are
+    The path to the location where the persistent data for web content is
     stored. Persistent data includes persistent cookies, HTML5 local storage, and visited links.
 
     By default, the storage is located below
@@ -549,7 +585,7 @@ void QQuickWebEngineProfile::setOffTheRecord(bool offTheRecord)
 /*!
     \property QQuickWebEngineProfile::persistentStoragePath
 
-    The path to the location where the persistent data for the browser and web content are
+    The path to the location where the persistent data for web content is
     stored. Persistent data includes persistent cookies, HTML5 local storage, and visited links.
 
     By default, the storage is located below
@@ -610,7 +646,7 @@ void QQuickWebEngineProfile::setCachePath(const QString &path)
 /*!
     \qmlproperty string WebEngineProfile::httpUserAgent
 
-    The user-agent string sent with HTTP to identify the browser.
+    The user-agent string sent with HTTP to identify the application.
 
     \note On Windows 8.1 and newer, the default user agent will always report
     "Windows NT 6.2" (Windows 8), unless the application does contain a manifest
@@ -620,7 +656,7 @@ void QQuickWebEngineProfile::setCachePath(const QString &path)
 /*!
     \property QQuickWebEngineProfile::httpUserAgent
 
-    The user-agent string sent with HTTP to identify the browser.
+    The user-agent string sent with HTTP to identify the application.
 */
 
 QString QQuickWebEngineProfile::httpUserAgent() const
@@ -688,6 +724,9 @@ void QQuickWebEngineProfile::setHttpCacheType(QQuickWebEngineProfile::HttpCacheT
             Cookies marked persistent are saved to and restored from disk, whereas session cookies
             are only stored to disk for crash recovery.
             This is the default value for non off-the-record profile with storageName.
+    \value  WebEngineProfile.OnlyPersistentCookies
+            Cookies marked persistent are saved to and restored from disk, whereas session cookies
+            are never stored to disk, even for crash recovery.
     \value WebEngineProfile.ForcePersistentCookies
             Both session and persistent cookies are saved to and restored from disk.
 */
@@ -955,7 +994,7 @@ QString QQuickWebEngineProfile::downloadPath() const
 
     Whether the push messaging service is enabled.
     \note By default the push messaging service is disabled.
-    \note \QWE uses the \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)} as a browser push service.
+    \note \QWE uses the \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)} as a notification push service.
     Therefore, all push messages will go through the Google push service and its respective servers.
 */
 
@@ -965,7 +1004,7 @@ QString QQuickWebEngineProfile::downloadPath() const
 
     Whether the push messaging service is enabled.
     \note By default the push messaging service is disabled.
-    \note \QWE uses the \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)} as a browser push service.
+    \note \QWE uses the \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)} as a notification push service.
     Therefore, all push messages will go through the Google push service and its respective servers.
 */
 
@@ -1097,10 +1136,15 @@ QQuickWebEngineSettings *QQuickWebEngineProfile::settings() const
 }
 
 /*!
+    \property QQuickWebEngineProfile::userScripts
+
+    \brief The collection of QWebEngineScript objects that are injected into
+    all pages that share this profile.
+*/
+/*!
     \qmlproperty WebEngineScriptCollection WebEngineProfile::userScripts
     \since 1.5
-
-    Returns the collection of WebEngineScript objects that are injected into
+    \brief The collection of WebEngineScript objects that are injected into
     all pages that share this profile.
 */
 
@@ -1125,7 +1169,8 @@ QWebEngineClientCertificateStore *QQuickWebEngineProfile::clientCertificateStore
 }
 
 /*!
-    Return the Client Hints settings associated with this browsing context.
+    \property QQuickWebEngineProfile::clientHints
+    \brief The Client Hints settings associated with this browsing context.
 
     \since 6.8
     \sa QWebEngineClientHints
@@ -1134,6 +1179,23 @@ QWebEngineClientHints *QQuickWebEngineProfile::clientHints() const
 {
     Q_D(const QQuickWebEngineProfile);
     return d->m_clientHints.data();
+}
+
+/*!
+    \property QQuickWebEngineProfile::extensionManager
+    \brief The extension manager associated with this profile.
+
+    \since 6.10
+    \sa QWebEngineExtensionManager
+*/
+QWebEngineExtensionManager *QQuickWebEngineProfile::extensionManager()
+{
+#if QT_CONFIG(webengine_extensions)
+    Q_D(QQuickWebEngineProfile);
+    return d->profileAdapter()->extensionManager();
+#else
+    return nullptr;
+#endif
 }
 
 /*!
@@ -1175,7 +1237,7 @@ QWebEnginePermission QQuickWebEngineProfile::queryPermission(const QUrl &securit
         return QWebEnginePermission(new QWebEnginePermissionPrivate());
     }
 
-    auto *pvt = new QWebEnginePermissionPrivate(securityOrigin, permissionType, nullptr, d->profileAdapter());
+    auto *pvt = new QWebEnginePermissionPrivate(securityOrigin, permissionType, d->profileAdapter());
     return QWebEnginePermission(pvt);
 }
 
@@ -1280,14 +1342,6 @@ QList<QWebEnginePermission> QQuickWebEngineProfile::listPermissionsForPermission
     }
 
     return d->profileAdapter()->listPermissions(QUrl(), permissionType);
-}
-
-void QQuickWebEngineProfile::ensureQmlContext(const QObject *object)
-{
-    if (!qmlContext(this)) {
-        auto engine = qmlEngine(object);
-        QQmlEngine::setContextForObject(this, new QQmlContext(engine, engine));
-    }
 }
 
 QT_END_NAMESPACE

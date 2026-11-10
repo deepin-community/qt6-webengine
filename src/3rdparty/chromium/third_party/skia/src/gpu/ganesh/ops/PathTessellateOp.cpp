@@ -4,13 +4,21 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
 #include "src/gpu/ganesh/ops/PathTessellateOp.h"
+#include <limits>
 
+#include "include/core/SkColor.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrOpFlushState.h"
+#include "src/gpu/ganesh/GrPipeline.h"
+#include "src/gpu/ganesh/GrProcessorAnalysis.h"
+#include "src/gpu/ganesh/GrProgramInfo.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/gpu/ganesh/GrRenderTargetProxy.h"
+#include "src/gpu/ganesh/GrShaderCaps.h"
+#include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #include "src/gpu/ganesh/tessellate/GrPathTessellationShader.h"
 
 namespace skgpu::ganesh {
@@ -46,10 +54,13 @@ GrDrawOp::CombineResult PathTessellateOp::onCombineIfPossible(GrOp* grOp,
                                                               SkArenaAlloc*,
                                                               const GrCaps&) {
     auto* op = grOp->cast<PathTessellateOp>();
+    bool verbCountOverflow = std::numeric_limits<int>::max() - fTotalCombinedPathVerbCnt <
+            op->fTotalCombinedPathVerbCnt;
     bool canMerge = fAAType == op->fAAType &&
                     fStencil == op->fStencil &&
                     fProcessors == op->fProcessors &&
-                    fShaderMatrix == op->fShaderMatrix;
+                    fShaderMatrix == op->fShaderMatrix &&
+                    !verbCountOverflow;
     if (canMerge) {
         fTotalCombinedPathVerbCnt += op->fTotalCombinedPathVerbCnt;
         fPatchAttribs |= op->fPatchAttribs;

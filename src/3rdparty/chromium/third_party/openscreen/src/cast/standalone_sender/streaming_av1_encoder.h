@@ -17,10 +17,9 @@
 #include <thread>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"
 #include "cast/standalone_sender/streaming_video_encoder.h"
-#include "cast/streaming/constants.h"
-#include "cast/streaming/frame_id.h"
+#include "cast/streaming/public/constants.h"
+#include "cast/streaming/public/frame_id.h"
 #include "cast/streaming/rtp_time.h"
 #include "platform/api/task_runner.h"
 #include "platform/api/time.h"
@@ -77,7 +76,7 @@ class StreamingAv1Encoder : public StreamingVideoEncoder {
   using Av1ImageUniquePtr = std::unique_ptr<aom_image_t, Av1ImageDeleter>;
 
   // Represents the state of one frame encode. This is created in
-  // EncodeAndSend(), and passed to the encode thread via the |encode_queue_|.
+  // EncodeAndSend(), and passed to the encode thread via the `encode_queue_`.
   struct WorkUnit {
     Av1ImageUniquePtr image;
     Clock::duration duration;
@@ -100,22 +99,22 @@ class StreamingAv1Encoder : public StreamingVideoEncoder {
   // Destroys the AV1 encoder context if it has been initialized.
   void DestroyEncoder();
 
-  // The procedure for the |encode_thread_| that loops, processing work units
-  // from the |encode_queue_| by calling Encode() until it's time to end the
+  // The procedure for the `encode_thread_` that loops, processing work units
+  // from the `encode_queue_` by calling Encode() until it's time to end the
   // thread.
   void ProcessWorkUnitsUntilTimeToQuit();
 
-  // If the |encoder_| is live, attempt reconfiguration to allow it to encode
+  // If the `encoder_` is live, attempt reconfiguration to allow it to encode
   // frames at a new frame size or target bitrate. If reconfiguration is not
-  // possible, destroy the existing instance and re-create a new |encoder_|
+  // possible, destroy the existing instance and re-create a new `encoder_`
   // instance.
   void PrepareEncoder(int width, int height, int target_bitrate);
 
   // Wraps the complex libaom aom_codec_encode() call using inputs from
-  // |work_unit| and populating results there.
+  // `work_unit` and populating results there.
   void EncodeFrame(bool force_key_frame, WorkUnitWithResults& work_unit);
 
-  // Computes and populates |work_unit.stats| after the last call to
+  // Computes and populates `work_unit.stats` after the last call to
   // EncodeFrame().
   void ComputeFrameEncodeStats(Clock::duration encode_wall_time,
                                int target_bitrate,
@@ -124,14 +123,14 @@ class StreamingAv1Encoder : public StreamingVideoEncoder {
   // Assembles and enqueues an EncodedFrame with the Sender on the main thread.
   void SendEncodedFrame(WorkUnitWithResults results);
 
-  // Allocates a aom_image_t and copies the content from |frame| to it.
+  // Allocates a aom_image_t and copies the content from `frame` to it.
   static Av1ImageUniquePtr CloneAsAv1Image(const VideoFrame& frame);
 
   // The reference time of the first frame passed to EncodeAndSend().
   Clock::time_point start_time_ = Clock::time_point::min();
 
   // The RTP timestamp of the last frame that was pushed into the
-  // |encode_queue_| by EncodeAndSend(). This is used to check whether
+  // `encode_queue_` by EncodeAndSend(). This is used to check whether
   // timestamps are monotonically increasing.
   RtpTimeTicks last_enqueued_rtp_timestamp_;
 
@@ -139,19 +138,20 @@ class StreamingAv1Encoder : public StreamingVideoEncoder {
   std::mutex mutex_;
 
   // Used by the encode thread to sleep until more work is available.
-  std::condition_variable cv_ ABSL_GUARDED_BY(mutex_);
+  std::condition_variable cv_;  // ABSL_GUARDED_BY(mutex_)
 
   // These encode parameters not passed in the WorkUnit struct because it is
   // desirable for them to be applied as soon as possible, with the very next
-  // WorkUnit popped from the |encode_queue_| on the encode thread, and not to
+  // WorkUnit popped from the `encode_queue_` on the encode thread, and not to
   // wait until some later WorkUnit is processed.
-  bool needs_key_frame_ ABSL_GUARDED_BY(mutex_) = true;
-  int target_bitrate_ ABSL_GUARDED_BY(mutex_) = 2 << 20;  // Default: 2 Mbps.
+  bool needs_key_frame_ /* ABSL_GUARDED_BY(mutex_) */ = true;
+  int target_bitrate_ /* ABSL_GUARDED_BY(mutex_) */ =
+      2 << 20;  // Default: 2 Mbps.
 
   // The queue of frame encodes. The size of this queue is implicitly bounded by
   // EncodeAndSend(), where it checks for the total in-flight media duration and
   // maybe drops a frame.
-  std::queue<WorkUnit> encode_queue_ ABSL_GUARDED_BY(mutex_);
+  std::queue<WorkUnit> encode_queue_;  // ABSL_GUARDED_BY(mutex_)
 
   // Current AV1 encoder configuration. Most of the fields are unchanging, and
   // are populated in the ctor; but thereafter, only the encode thread accesses

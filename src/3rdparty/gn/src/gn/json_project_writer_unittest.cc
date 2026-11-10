@@ -129,6 +129,15 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ],
             "weak_framework_switch": "-weak_framework "
          },
+         "cxx_module": {
+            "command": "c++ {{source}} {{cflags}} {{cflags_cc}} {{defines}} {{include_dirs}} -o {{output}}",
+            "framework_dir_switch": "-F",
+            "framework_switch": "-framework ",
+            "lib_dir_switch": "-L",
+            "lib_switch": "-l",
+            "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.pcm" ],
+            "weak_framework_switch": "-weak_framework "
+         },
          "link": {
             "command": "ld -o {{target_output_name}} {{source}} {{ldflags}} {{libs}}",
             "framework_dir_switch": "-F",
@@ -163,7 +172,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_dir_switch": "-Lnative=",
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
-            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ]
+            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_cdylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -174,7 +184,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_dylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -185,7 +196,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_macro": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -196,7 +208,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_rlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -207,7 +220,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_staticlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -218,7 +232,8 @@ TEST_F(JSONWriter, ActionWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "solink": {
             "command": "ld -shared -o {{target_output_name}}.so {{inputs}} {{ldflags}} {{libs}}",
@@ -354,6 +369,15 @@ TEST_F(JSONWriter, RustTarget) {
             "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ],
             "weak_framework_switch": "-weak_framework "
          },
+         "cxx_module": {
+            "command": "c++ {{source}} {{cflags}} {{cflags_cc}} {{defines}} {{include_dirs}} -o {{output}}",
+            "framework_dir_switch": "-F",
+            "framework_switch": "-framework ",
+            "lib_dir_switch": "-L",
+            "lib_switch": "-l",
+            "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.pcm" ],
+            "weak_framework_switch": "-weak_framework "
+         },
          "link": {
             "command": "ld -o {{target_output_name}} {{source}} {{ldflags}} {{libs}}",
             "framework_dir_switch": "-F",
@@ -388,7 +412,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_dir_switch": "-Lnative=",
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
-            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ]
+            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_cdylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -399,7 +424,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_dylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -410,7 +436,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_macro": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -421,7 +448,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_rlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -432,7 +460,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_staticlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -443,7 +472,8 @@ TEST_F(JSONWriter, RustTarget) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "solink": {
             "command": "ld -shared -o {{target_output_name}}.so {{inputs}} {{ldflags}} {{libs}}",
@@ -603,6 +633,15 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ],
             "weak_framework_switch": "-weak_framework "
          },
+         "cxx_module": {
+            "command": "c++ {{source}} {{cflags}} {{cflags_cc}} {{defines}} {{include_dirs}} -o {{output}}",
+            "framework_dir_switch": "-F",
+            "framework_switch": "-framework ",
+            "lib_dir_switch": "-L",
+            "lib_switch": "-l",
+            "outputs": [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.pcm" ],
+            "weak_framework_switch": "-weak_framework "
+         },
          "link": {
             "command": "ld -o {{target_output_name}} {{source}} {{ldflags}} {{libs}}",
             "framework_dir_switch": "-F",
@@ -637,7 +676,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_dir_switch": "-Lnative=",
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
-            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ]
+            "outputs": [ "{{root_out_dir}}/{{crate_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_cdylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -648,7 +688,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_dylib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -659,7 +700,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_macro": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -670,7 +712,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_rlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -681,7 +724,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "rust_staticlib": {
             "command": "{{rustenv}} rustc --crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}} -o {{output}} {{rustdeps}} {{externs}}",
@@ -692,7 +736,8 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
             "lib_switch": "-l",
             "linker_arg": "-Clink-arg=",
             "output_prefix": "lib",
-            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+            "outputs": [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ],
+            "weak_framework_switch": "-lframework="
          },
          "solink": {
             "command": "ld -shared -o {{target_output_name}}.so {{inputs}} {{ldflags}} {{libs}}",
@@ -734,4 +779,59 @@ TEST_F(JSONWriter, ForEachWithResponseFile) {
 }
 )_";
   EXPECT_EQ(expected_json, out) << out;
+}
+
+TEST_F(JSONWriter, FilterTargetsWithDataDeps) {
+  Err err;
+  TestWithScope setup;
+
+  // Create targets :a, :b, :c
+  Target target_a(setup.settings(), Label(SourceDir("//foo/"), "a"));
+  target_a.set_output_type(Target::STATIC_LIBRARY);
+  target_a.visibility().SetPublic();
+
+  Target target_b(setup.settings(), Label(SourceDir("//foo/"), "b"));
+  target_b.set_output_type(Target::STATIC_LIBRARY);
+  target_b.visibility().SetPublic();
+
+  Target target_c(setup.settings(), Label(SourceDir("//foo/"), "c"));
+  target_c.set_output_type(Target::STATIC_LIBRARY);
+  target_c.visibility().SetPublic();
+
+  // :a depends on :b, and data_depends on :c
+  target_a.private_deps().push_back(LabelTargetPair(&target_b));
+  target_a.data_deps().push_back(LabelTargetPair(&target_c));
+
+  target_a.SetToolchain(setup.toolchain());
+  target_b.SetToolchain(setup.toolchain());
+  target_c.SetToolchain(setup.toolchain());
+
+  ASSERT_TRUE(target_a.OnResolved(&err));
+  ASSERT_TRUE(target_b.OnResolved(&err));
+  ASSERT_TRUE(target_c.OnResolved(&err));
+
+  std::vector<const Target*> all_targets = {&target_a, &target_b, &target_c};
+  std::vector<const Target*> filtered;
+
+  // Only DEPS_LINKED (should include :a and :b, but not :c)
+  ASSERT_TRUE(JSONProjectWriter::FilterTargets(
+      setup.build_settings(), all_targets, &filtered, "//foo:a",
+      /*filter_with_data_deps=*/false, &err));
+  std::set<Label> labels_linked;
+  for (const Target* t : filtered)
+    labels_linked.insert(t->label());
+  EXPECT_GT(labels_linked.count(Label(SourceDir("//foo/"), "a")), 0u);
+  EXPECT_GT(labels_linked.count(Label(SourceDir("//foo/"), "b")), 0u);
+  EXPECT_EQ(labels_linked.count(Label(SourceDir("//foo/"), "c")), 0u);
+
+  // DEPS_ALL (should include :a, :b, :c)
+  ASSERT_TRUE(JSONProjectWriter::FilterTargets(
+      setup.build_settings(), all_targets, &filtered, "//foo:a",
+      /*filter_with_data_deps=*/true, &err));
+  std::set<Label> labels_all;
+  for (const Target* t : filtered)
+    labels_all.insert(t->label());
+  EXPECT_GT(labels_all.count(Label(SourceDir("//foo/"), "a")), 0u);
+  EXPECT_GT(labels_all.count(Label(SourceDir("//foo/"), "b")), 0u);
+  EXPECT_GT(labels_all.count(Label(SourceDir("//foo/"), "c")), 0u);
 }

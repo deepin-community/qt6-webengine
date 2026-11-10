@@ -90,8 +90,9 @@ class CanvasCaptureHandlerTest
   }
 
   MOCK_METHOD1(DoOnRunning, void(bool));
-  void OnRunning(blink::RunState run_state) {
-    bool state = (run_state == blink::RunState::kRunning) ? true : false;
+  void OnRunning(blink::VideoCaptureRunState run_state) {
+    bool state =
+        (run_state == blink::VideoCaptureRunState::kRunning) ? true : false;
     DoOnRunning(state);
   }
 
@@ -137,17 +138,17 @@ class CanvasCaptureHandlerTest
     EXPECT_EQ(expected_width, size.width());
     EXPECT_EQ(expected_height, size.height());
     const uint8_t* y_plane =
-        video_frame->visible_data(media::VideoFrame::kYPlane);
+        video_frame->visible_data(media::VideoFrame::Plane::kY);
     EXPECT_NEAR(74, y_plane[0], kTestCanvasCaptureFrameColorErrorTolerance);
     const uint8_t* u_plane =
-        video_frame->visible_data(media::VideoFrame::kUPlane);
+        video_frame->visible_data(media::VideoFrame::Plane::kU);
     EXPECT_NEAR(193, u_plane[0], kTestCanvasCaptureFrameColorErrorTolerance);
     const uint8_t* v_plane =
-        video_frame->visible_data(media::VideoFrame::kVPlane);
+        video_frame->visible_data(media::VideoFrame::Plane::kV);
     EXPECT_NEAR(105, v_plane[0], kTestCanvasCaptureFrameColorErrorTolerance);
     if (!opaque) {
       const uint8_t* a_plane =
-          video_frame->visible_data(media::VideoFrame::kAPlane);
+          video_frame->visible_data(media::VideoFrame::Plane::kA);
       EXPECT_EQ(kTestAlphaValue, a_plane[0]);
     }
   }
@@ -213,14 +214,15 @@ TEST_P(CanvasCaptureHandlerTest, GetFormatsStartAndStop) {
   EXPECT_CALL(*this, DoOnDeliverFrame(_, _))
       .Times(1)
       .WillOnce(RunOnceClosure(std::move(quit_closure)));
-  source->StartCapture(
-      params,
-      base::BindRepeating(&CanvasCaptureHandlerTest::OnDeliverFrame,
-                          base::Unretained(this)),
-      /*sub_capture_target_version_callback=*/base::DoNothing(),
-      /*frame_dropped_callback=*/base::DoNothing(),
-      base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
-                          base::Unretained(this)));
+
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb = base::BindRepeating(
+      &CanvasCaptureHandlerTest::OnDeliverFrame, base::Unretained(this));
+  video_capture_callbacks.frame_dropped_cb = base::DoNothing();
+  video_capture_callbacks.sub_capture_target_version_cb = base::DoNothing();
+  source->StartCapture(params, std::move(video_capture_callbacks),
+                       base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
+                                           base::Unretained(this)));
   copier_->Convert(GenerateTestImage(testing::get<0>(GetParam()),
                                      testing::get<1>(GetParam()),
                                      testing::get<2>(GetParam())),
@@ -246,14 +248,15 @@ TEST_P(CanvasCaptureHandlerTest, VerifyFrame) {
   base::RunLoop run_loop;
   EXPECT_CALL(*this, DoOnRunning(true)).Times(1);
   media::VideoCaptureParams params;
-  source->StartCapture(
-      params,
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb =
       base::BindRepeating(&CanvasCaptureHandlerTest::OnVerifyDeliveredFrame,
-                          base::Unretained(this), opaque_frame, width, height),
-      /*sub_capture_target_version_callback=*/base::DoNothing(),
-      /*frame_dropped_callback=*/base::DoNothing(),
-      base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
-                          base::Unretained(this)));
+                          base::Unretained(this), opaque_frame, width, height);
+  video_capture_callbacks.frame_dropped_cb = base::DoNothing();
+  video_capture_callbacks.sub_capture_target_version_cb = base::DoNothing();
+  source->StartCapture(params, std::move(video_capture_callbacks),
+                       base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
+                                           base::Unretained(this)));
   copier_->Convert(GenerateTestImage(opaque_frame, width, height),
                    canvas_capture_handler_->CanDiscardAlpha(),
                    /*context_provider=*/nullptr,
@@ -275,15 +278,15 @@ TEST_F(CanvasCaptureHandlerTest, DropAlphaDeliversOpaqueFrame) {
   EXPECT_CALL(*this, DoOnRunning(true)).Times(1);
   media::VideoCaptureParams params;
   source->SetCanDiscardAlpha(true);
-  source->StartCapture(
-      params,
-      base::BindRepeating(&CanvasCaptureHandlerTest::OnVerifyDeliveredFrame,
-                          base::Unretained(this), /*opaque_frame=*/true, width,
-                          height),
-      /*sub_capture_target_version_callback=*/base::DoNothing(),
-      /*frame_dropped_callback=*/base::DoNothing(),
-      base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
-                          base::Unretained(this)));
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb = base::BindRepeating(
+      &CanvasCaptureHandlerTest::OnVerifyDeliveredFrame, base::Unretained(this),
+      /*opaque_frame=*/true, width, height);
+  video_capture_callbacks.frame_dropped_cb = base::DoNothing();
+  video_capture_callbacks.sub_capture_target_version_cb = base::DoNothing();
+  source->StartCapture(params, std::move(video_capture_callbacks),
+                       base::BindRepeating(&CanvasCaptureHandlerTest::OnRunning,
+                                           base::Unretained(this)));
   copier_->Convert(GenerateTestImage(/*opaque=*/false, width, height),
                    canvas_capture_handler_->CanDiscardAlpha(),
                    /*context_provider=*/nullptr,

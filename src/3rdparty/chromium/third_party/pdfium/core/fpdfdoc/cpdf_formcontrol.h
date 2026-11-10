@@ -7,6 +7,8 @@
 #ifndef CORE_FPDFDOC_CPDF_FORMCONTROL_H_
 #define CORE_FPDFDOC_CPDF_FORMCONTROL_H_
 
+#include <optional>
+
 #include "constants/appearance.h"
 #include "core/fpdfdoc/cpdf_aaction.h"
 #include "core/fpdfdoc/cpdf_action.h"
@@ -22,7 +24,6 @@
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_color.h"
 #include "core/fxge/dib/fx_dib.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CFX_RenderDevice;
 class CPDF_Dictionary;
@@ -40,10 +41,10 @@ class CPDF_FormControl {
                    CPDF_InteractiveForm* pForm);
   ~CPDF_FormControl();
 
-  CPDF_FormField::Type GetType() const { return m_pField->GetType(); }
-  CPDF_FormField* GetField() const { return m_pField; }
+  CPDF_FormField::Type GetType() const { return field_->GetType(); }
+  CPDF_FormField* GetField() const { return field_; }
   RetainPtr<const CPDF_Dictionary> GetWidgetDict() const {
-    return m_pWidgetDict;
+    return widget_dict_;
   }
   CFX_FloatRect GetRect() const;
 
@@ -54,11 +55,11 @@ class CPDF_FormControl {
   bool IsDefaultChecked() const;
 
   HighlightingMode GetHighlightingMode() const;
-  bool HasMKEntry(const ByteString& csEntry) const;
+  bool HasMKEntry(ByteStringView entry) const;
   int GetRotation() const;
 
-  CFX_Color::TypeAndARGB GetColorARGB(const ByteString& csEntry);
-  float GetOriginalColorComponent(int index, const ByteString& csEntry);
+  CFX_Color::TypeAndARGB GetColorARGB(ByteStringView entry);
+  float GetOriginalColorComponent(int index, ByteStringView entry);
 
   CFX_Color GetOriginalBorderColor() {
     return GetOriginalColor(pdfium::appearance::kBC);
@@ -92,7 +93,7 @@ class CPDF_FormControl {
   int GetTextPosition() const;
   CPDF_DefaultAppearance GetDefaultAppearance() const;
 
-  absl::optional<WideString> GetDefaultControlFontName() const;
+  std::optional<WideString> GetDefaultControlFontName() const;
   int GetControlAlignment() const;
 
   ByteString GetOnStateName() const;
@@ -100,15 +101,15 @@ class CPDF_FormControl {
 
  private:
   RetainPtr<CPDF_Font> GetDefaultControlFont() const;
-  CFX_Color GetOriginalColor(const ByteString& csEntry);
+  CFX_Color GetOriginalColor(ByteStringView entry);
 
-  WideString GetCaption(const ByteString& csEntry) const;
-  RetainPtr<CPDF_Stream> GetIcon(const ByteString& csEntry);
+  WideString GetCaption(ByteStringView entry) const;
+  RetainPtr<CPDF_Stream> GetIcon(ByteStringView entry);
   CPDF_ApSettings GetMK() const;
 
-  UnownedPtr<CPDF_FormField> const m_pField;
-  RetainPtr<CPDF_Dictionary> const m_pWidgetDict;
-  UnownedPtr<const CPDF_InteractiveForm> const m_pForm;
+  UnownedPtr<CPDF_FormField> const field_;
+  RetainPtr<CPDF_Dictionary> const widget_dict_;
+  UnownedPtr<const CPDF_InteractiveForm> const form_;
 };
 
 #endif  // CORE_FPDFDOC_CPDF_FORMCONTROL_H_

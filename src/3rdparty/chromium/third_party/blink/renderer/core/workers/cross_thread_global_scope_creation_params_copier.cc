@@ -5,8 +5,9 @@
 #include "third_party/blink/renderer/core/workers/cross_thread_global_scope_creation_params_copier.h"
 
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 
-namespace WTF {
+namespace blink {
 
 namespace {
 
@@ -21,12 +22,10 @@ network::mojom::blink::CSPSourcePtr CSPSourceIsolatedCopy(
       in->is_port_wildcard);
 }
 
-network::mojom::blink::CSPHashSourcePtr CSPHashSourceIsolatedCopy(
-    const network::mojom::blink::CSPHashSourcePtr& in) {
-  if (!in)
-    return nullptr;
-  return network::mojom::blink::CSPHashSource::New(
-      in->algorithm, CrossThreadCopier<Vector<uint8_t>>::Copy(in->value));
+network::IntegrityMetadata IntegrityMetadataIsolatedCopy(
+    const network::IntegrityMetadata& in) {
+  return network::IntegrityMetadata(
+      in.algorithm, CrossThreadCopier<std::vector<uint8_t>>::Copy(in.value));
 }
 
 HashMap<network::mojom::blink::CSPDirectiveName, String>
@@ -47,17 +46,28 @@ network::mojom::blink::CSPSourceListPtr CSPSourceListIsolatedCopy(
   for (const auto& source : in->sources)
     sources.push_back(CSPSourceIsolatedCopy(source));
 
-  Vector<network::mojom::blink::CSPHashSourcePtr> hashes;
-  for (const auto& hash : in->hashes)
-    hashes.push_back(CSPHashSourceIsolatedCopy(hash));
+  Vector<network::IntegrityMetadata> hashes;
+  for (const auto& hash : in->hashes) {
+    hashes.push_back(IntegrityMetadataIsolatedCopy(hash));
+  }
+
+  Vector<network::IntegrityMetadata> url_hashes;
+  for (const auto& hash : in->url_hashes) {
+    url_hashes.push_back(IntegrityMetadataIsolatedCopy(hash));
+  }
+
+  Vector<network::IntegrityMetadata> eval_hashes;
+  for (const auto& hash : in->eval_hashes) {
+    eval_hashes.push_back(IntegrityMetadataIsolatedCopy(hash));
+  }
 
   return network::mojom::blink::CSPSourceList::New(
       std::move(sources), CrossThreadCopier<Vector<String>>::Copy(in->nonces),
-      std::move(hashes), in->allow_self, in->allow_star,
-      in->allow_response_redirects, in->allow_inline,
+      std::move(hashes), std::move(url_hashes), std::move(eval_hashes),
+      in->allow_self, in->allow_star, in->allow_inline,
       in->allow_inline_speculation_rules, in->allow_eval, in->allow_wasm_eval,
-      in->allow_wasm_unsafe_eval, in->allow_dynamic, in->allow_unsafe_hashes,
-      in->report_sample);
+      in->allow_wasm_unsafe_eval, in->allow_dynamic, in->allow_dynamic_url,
+      in->allow_unsafe_hashes, in->report_sample, in->report_hash_algorithm);
 }
 
 HashMap<network::mojom::blink::CSPDirectiveName,
@@ -123,4 +133,4 @@ CrossThreadCopier<std::unique_ptr<blink::GlobalScopeCreationParams>>::Copy(
   return pointer;
 }
 
-}  // namespace WTF
+}  // namespace blink

@@ -1,12 +1,11 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QWEBENGINEFRAME_H
 #define QWEBENGINEFRAME_H
 
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
-#include <QtQml/qqmlregistration.h>
-#include <QtQml/qjsvalue.h>
 #include <QtCore/qcompare.h>
 #include <QtCore/QList>
 #include <QtCore/QSizeF>
@@ -19,6 +18,12 @@ class WebContentsAdapter;
 }
 
 QT_BEGIN_NAMESPACE
+class QJSValue;
+
+namespace QtWebEnginePrivate {
+template<typename Functor, typename Arg>
+using if_callback_with_arg_t = std::enable_if_t<QtPrivate::AreFunctionsCompatible<void(*)(Arg), Functor>::value, bool>;
+} // namespace QtWebEnginePrivate
 
 class QWebEngineFrame
 {
@@ -30,10 +35,15 @@ class QWebEngineFrame
     Q_PROPERTY(QUrl url READ url FINAL)
     Q_PROPERTY(QSizeF size READ size FINAL)
     Q_PROPERTY(bool isMainFrame READ isMainFrame FINAL)
+    Q_PROPERTY(QList<QWebEngineFrame> children READ children)
 
 public:
-    QML_VALUE_TYPE(webEngineFrame)
-    QML_ADDED_IN_VERSION(6, 8)
+    QWebEngineFrame() = default;
+    QWebEngineFrame(const QWebEngineFrame &other) = default;
+    QWebEngineFrame &operator=(const QWebEngineFrame &other) = default;
+    QWebEngineFrame(QWebEngineFrame &&other) = default;
+    QWebEngineFrame &operator=(QWebEngineFrame &&other) = default;
+    ~QWebEngineFrame() = default;
 
     Q_WEBENGINECORE_EXPORT bool isValid() const;
     Q_WEBENGINECORE_EXPORT QString name() const;
@@ -43,21 +53,84 @@ public:
     Q_WEBENGINECORE_EXPORT QSizeF size() const;
     Q_WEBENGINECORE_EXPORT bool isMainFrame() const;
 
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true>
+    void runJavaScript(const QString &script, Functor &&callback)
+    {
+        runJavaScript(script, 0, std::forward<Functor>(callback));
+    }
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true>
+    void runJavaScript(const QString &script, quint32 worldId, Functor &&callback)
+    {
+        if constexpr (std::is_constructible_v<bool, Functor>) {
+            if (!callback)
+                return runJavaScriptImpl(script, worldId, nullptr);
+        }
+        runJavaScriptImpl(script, worldId,
+                          QtPrivate::makeCallableObject<void(*)(const QVariant &)>(std::forward<Functor>(callback)));
+    }
+#if QT_DEPRECATED_SINCE(6, 15)
+    QT_DEPRECATED_VERSION_X_6_15("Use version without callback instead of a nullptr callback")
+    void runJavaScript(const QString &script, std::nullptr_t)
+    {
+        return runJavaScriptImpl(script, 0, nullptr);
+    }
+    QT_DEPRECATED_VERSION_X_6_15("Use version without callback instead of a nullptr callback")
+    void runJavaScript(const QString &script, quint32 worldId, std::nullptr_t)
+    {
+        return runJavaScriptImpl(script, worldId, nullptr);
+    }
+#endif
+
+#if QT_WEBENGINECORE_REMOVED_SINCE(6, 12)
     Q_WEBENGINECORE_EXPORT void
     runJavaScript(const QString &script, const std::function<void(const QVariant &)> &callback);
     Q_WEBENGINECORE_EXPORT void
     runJavaScript(const QString &script, quint32 worldId,
                   const std::function<void(const QVariant &)> &callback);
+#endif
     Q_WEBENGINECORE_EXPORT Q_INVOKABLE void runJavaScript(const QString &script,
                                                           quint32 worldId = 0);
+
+#if QT_DEPRECATED_SINCE(6, 10)
     Q_WEBENGINECORE_EXPORT Q_INVOKABLE void runJavaScript(const QString &script,
                                                           const QJSValue &callback);
     Q_WEBENGINECORE_EXPORT Q_INVOKABLE void runJavaScript(const QString &script, quint32 worldId,
                                                           const QJSValue &callback);
+#endif
 
     Q_WEBENGINECORE_EXPORT Q_INVOKABLE void printToPdf(const QString &filePath);
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QByteArray &> = true>
+    void printToPdf(Functor &&resultCallback)
+    {
+        auto wrappedCallback = [myCallback = std::forward<Functor>(resultCallback)](std::shared_ptr<QByteArray> result) mutable {
+            if constexpr (std::is_convertible_v<Functor, bool>) {
+                if (myCallback) {
+                    if (result)
+                        myCallback(*result);
+                    else
+                        myCallback(QByteArray());
+                }
+            } else {
+                if (result)
+                    myCallback(*result);
+                else
+                    myCallback(QByteArray());
+            }
+        };
+        printToPdfImpl(QtPrivate::makeCallableObject<void(*)(std::shared_ptr<QByteArray>)>(std::move(wrappedCallback)));
+    }
+#if QT_DEPRECATED_SINCE(6, 12)
+    Q_WEBENGINECORE_EXPORT void printToPdf(std::nullptr_t)
+    {
+        printToPdfImpl(nullptr);
+    }
+#endif
+#if QT_WEBENGINECORE_REMOVED_SINCE(6, 12)
     Q_WEBENGINECORE_EXPORT void printToPdf(const std::function<void(const QByteArray &)> &callback);
+#endif
+#if QT_DEPRECATED_SINCE(6, 10)
     Q_WEBENGINECORE_EXPORT Q_INVOKABLE void printToPdf(const QJSValue &callback);
+#endif
 
     friend inline bool comparesEqual(const QWebEngineFrame &lhs,
                                      const QWebEngineFrame &rhs) noexcept
@@ -71,7 +144,10 @@ private:
     friend class QWebEnginePage;
     friend class QWebEnginePagePrivate;
     friend class QQuickWebEngineView;
-    friend class QQuickWebEngineViewPrivate;
+    friend class QQuickWebEngineFrame;
+
+    Q_WEBENGINECORE_EXPORT void runJavaScriptImpl(const QString &scriptSource, quint32 worldId, QtPrivate::QSlotObjectBase *callback);
+    Q_WEBENGINECORE_EXPORT void printToPdfImpl(QtPrivate::QSlotObjectBase *callback);
 
     Q_WEBENGINECORE_EXPORT
     QWebEngineFrame(QWeakPointer<QtWebEngineCore::WebContentsAdapter> adapter, quint64 id);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -592,8 +592,8 @@ SIMD_INLINE v128 v128_shr_s64(v128 a, unsigned int c) {
 
 /* These intrinsics require immediate values, so we must use #defines
    to enforce that. */
-#define v128_shl_n_byte(a, c) _mm_slli_si128(a, (c)&127)
-#define v128_shr_n_byte(a, c) _mm_srli_si128(a, (c)&127)
+#define v128_shl_n_byte(a, c) _mm_slli_si128(a, (c) & 127)
+#define v128_shr_n_byte(a, c) _mm_srli_si128(a, (c) & 127)
 #define v128_shl_n_8(a, c) \
   _mm_and_si128(_mm_set1_epi8((char)(0xff << (c))), _mm_slli_epi16(a, c))
 #define v128_shr_n_u8(a, c) \

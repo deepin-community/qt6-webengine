@@ -7,16 +7,23 @@
 
 #include <stdint.h>
 
+#include <optional>
+
 #include "media/base/media_export.h"
 #include "media/media_buildflags.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
 // Defines values that specify registered Initialization Data Types used
 // in Encrypted Media Extensions (EME).
-// http://w3c.github.io/encrypted-media/initdata-format-registry.html#registry
-enum class EmeInitDataType { UNKNOWN, WEBM, CENC, KEYIDS, MAX = KEYIDS };
+// https://www.w3.org/TR/eme-initdata-registry/#registry
+enum class EmeInitDataType {
+  UNKNOWN,
+  WEBM,
+  CENC,
+  KEYIDS,
+  kMaxValue = KEYIDS,
+};
 
 // Defines bitmask values that specify codecs used in Encrypted Media Extensions
 // (EME). Generally codec profiles are not specified and it is assumed that the
@@ -189,7 +196,7 @@ enum class EmeConfigRuleState {
 };
 
 struct MEDIA_EXPORT EmeConfig {
-  using Rule = absl::optional<EmeConfig>;
+  using Rule = std::optional<EmeConfig>;
 
   // Refer to the EME spec for definitions on what identifier, persistence, and
   // hw_secure_codecs represent.
@@ -203,8 +210,8 @@ struct MEDIA_EXPORT EmeConfig {
   static EmeConfig::Rule SupportedRule() { return EmeConfig(); }
 
   // To represent an EmeConfig::Rule where the feature is not supported.
-  // Internally, we represent Unsupported as absl::nullopt.
-  static EmeConfig::Rule UnsupportedRule() { return absl::nullopt; }
+  // Internally, we represent Unsupported as std::nullopt.
+  static EmeConfig::Rule UnsupportedRule() { return std::nullopt; }
 };
 
 inline bool operator==(EmeConfig const& lhs, EmeConfig const& rhs) {

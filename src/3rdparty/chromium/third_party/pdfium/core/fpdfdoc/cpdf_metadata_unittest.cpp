@@ -7,7 +7,7 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(CPDF_MetadataTest, CheckSharedFormEmailAtTopLevel) {
+TEST(CPDFMetadataTest, CheckSharedFormEmailAtTopLevel) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node xmlns:adhocwf=\"http://ns.adobe.com/AcrobatAdhocWorkflow/1.0/\">\n"
@@ -15,8 +15,8 @@ TEST(CPDF_MetadataTest, CheckSharedFormEmailAtTopLevel) {
       "<adhocwf:version>1.1</adhocwf:version>\n"
       "</node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
@@ -24,7 +24,7 @@ TEST(CPDF_MetadataTest, CheckSharedFormEmailAtTopLevel) {
   EXPECT_EQ(UnsupportedFeature::kDocumentSharedFormEmail, results[0]);
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormAcrobatAtTopLevel) {
+TEST(CPDFMetadataTest, CheckSharedFormAcrobatAtTopLevel) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node xmlns:adhocwf=\"http://ns.adobe.com/AcrobatAdhocWorkflow/1.0/\">\n"
@@ -32,8 +32,8 @@ TEST(CPDF_MetadataTest, CheckSharedFormAcrobatAtTopLevel) {
       "<adhocwf:version>1.1</adhocwf:version>\n"
       "</node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
@@ -41,7 +41,7 @@ TEST(CPDF_MetadataTest, CheckSharedFormAcrobatAtTopLevel) {
   EXPECT_EQ(UnsupportedFeature::kDocumentSharedFormAcrobat, results[0]);
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormFilesystemAtTopLevel) {
+TEST(CPDFMetadataTest, CheckSharedFormFilesystemAtTopLevel) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node xmlns:adhocwf=\"http://ns.adobe.com/AcrobatAdhocWorkflow/1.0/\">\n"
@@ -49,8 +49,8 @@ TEST(CPDF_MetadataTest, CheckSharedFormFilesystemAtTopLevel) {
       "<adhocwf:version>1.1</adhocwf:version>\n"
       "</node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
@@ -58,7 +58,7 @@ TEST(CPDF_MetadataTest, CheckSharedFormFilesystemAtTopLevel) {
   EXPECT_EQ(UnsupportedFeature::kDocumentSharedFormFilesystem, results[0]);
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormWithoutWorkflow) {
+TEST(CPDFMetadataTest, CheckSharedFormWithoutWorkflow) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node xmlns:adhocwf=\"http://ns.adobe.com/AcrobatAdhocWorkflow/1.0/\">\n"
@@ -66,15 +66,15 @@ TEST(CPDF_MetadataTest, CheckSharedFormWithoutWorkflow) {
       "<adhocwf:version>1.1</adhocwf:version>\n"
       "</node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
   EXPECT_EQ(0U, results.size());
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormAsChild) {
+TEST(CPDFMetadataTest, CheckSharedFormAsChild) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<grandparent><parent>\n"
@@ -84,8 +84,8 @@ TEST(CPDF_MetadataTest, CheckSharedFormAsChild) {
       "</node>"
       "</parent></grandparent>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
@@ -93,20 +93,20 @@ TEST(CPDF_MetadataTest, CheckSharedFormAsChild) {
   EXPECT_EQ(UnsupportedFeature::kDocumentSharedFormEmail, results[0]);
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormAsNoAdhoc) {
+TEST(CPDFMetadataTest, CheckSharedFormAsNoAdhoc) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node></node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
   EXPECT_EQ(0U, results.size());
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormExceedMaxDepth) {
+TEST(CPDFMetadataTest, CheckSharedFormExceedMaxDepth) {
   // Node <parent> has the depth of 130, which exceeds the maximum node depth of
   // `kMaxMetaDataDepth`.
   static const char kData[] =
@@ -131,15 +131,15 @@ TEST(CPDF_MetadataTest, CheckSharedFormExceedMaxDepth) {
       "</node>"
       "</parent>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(kData).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(kData).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
   ASSERT_EQ(0U, results.size());
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormWrongNamespace) {
+TEST(CPDFMetadataTest, CheckSharedFormWrongNamespace) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<node xmlns:adhocwf=\"http://ns.adobe.com/AcrobatAdhocWorkflow/2.0/\">\n"
@@ -147,15 +147,15 @@ TEST(CPDF_MetadataTest, CheckSharedFormWrongNamespace) {
       "<adhocwf:version>1.1</adhocwf:version>\n"
       "</node>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();
   EXPECT_EQ(0U, results.size());
 }
 
-TEST(CPDF_MetadataTest, CheckSharedFormMultipleErrors) {
+TEST(CPDFMetadataTest, CheckSharedFormMultipleErrors) {
   static const char data[] =
       "<?xml charset=\"utf-8\"?>\n"
       "<grandparent>"
@@ -177,8 +177,8 @@ TEST(CPDF_MetadataTest, CheckSharedFormMultipleErrors) {
       "</node3>"
       "</grandparent>";
 
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(ByteStringView(data).raw_span());
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(ByteStringView(data).unsigned_span());
   CPDF_Metadata metadata(stream);
 
   auto results = metadata.CheckForSharedForm();

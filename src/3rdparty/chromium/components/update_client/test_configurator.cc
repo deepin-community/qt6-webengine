@@ -4,6 +4,8 @@
 
 #include "components/update_client/test_configurator.h"
 
+#include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -14,12 +16,14 @@
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
+#include "base/test/bind.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/patch/in_process_file_patcher.h"
 #include "components/services/unzip/in_process_unzipper.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/crx_cache.h"
 #include "components/update_client/crx_downloader_factory.h"
 #include "components/update_client/net/network_chromium.h"
 #include "components/update_client/patch/patch_impl.h"
@@ -30,7 +34,6 @@
 #include "components/update_client/unzip/unzip_impl.h"
 #include "components/update_client/unzipper.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -49,9 +52,6 @@ std::vector<GURL> MakeDefaultUrls() {
 TestConfigurator::TestConfigurator(PrefService* pref_service)
     : enabled_cup_signing_(false),
       pref_service_(pref_service),
-      persisted_data_(
-          CreatePersistedData(pref_service,
-                              std::make_unique<TestActivityDataService>())),
       unzip_factory_(base::MakeRefCounted<update_client::UnzipChromiumFactory>(
           base::BindRepeating(&unzip::LaunchInProcessUnzipper))),
       patch_factory_(base::MakeRefCounted<update_client::PatchChromiumFactory>(
@@ -67,6 +67,14 @@ TestConfigurator::TestConfigurator(PrefService* pref_service)
           [](bool /*is_machine*/) { return UpdaterStateAttributes(); })),
       is_network_connection_metered_(false) {
   std::ignore = crx_cache_root_temp_dir_.CreateUniqueTempDir();
+  crx_cache_ =
+      base::MakeRefCounted<CrxCache>(crx_cache_root_temp_dir_.GetPath().Append(
+          FILE_PATH_LITERAL("crx_cache")));
+  auto activity = std::make_unique<TestActivityDataService>();
+  activity_data_service_ = activity.get();
+  persisted_data_ = CreatePersistedData(
+      base::BindRepeating([](PrefService* pref) { return pref; }, pref_service),
+      std::move(activity));
 }
 
 TestConfigurator::~TestConfigurator() = default;
@@ -167,11 +175,6 @@ scoped_refptr<PatcherFactory> TestConfigurator::GetPatcherFactory() {
   return patch_factory_;
 }
 
-bool TestConfigurator::EnabledDeltas() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return true;
-}
-
 bool TestConfigurator::EnabledBackgroundDownloader() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return false;
@@ -185,6 +188,11 @@ bool TestConfigurator::EnabledCupSigning() const {
 PrefService* TestConfigurator::GetPrefService() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return pref_service_;
+}
+
+TestActivityDataService* TestConfigurator::GetActivityDataService() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return activity_data_service_;
 }
 
 PersistedData* TestConfigurator::GetPersistedData() const {
@@ -203,7 +211,7 @@ TestConfigurator::GetProtocolHandlerFactory() const {
   return std::make_unique<ProtocolHandlerFactoryJSON>();
 }
 
-absl::optional<bool> TestConfigurator::IsMachineExternallyManaged() const {
+std::optional<bool> TestConfigurator::IsMachineExternallyManaged() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return is_machine_externally_managed_;
 }
@@ -213,13 +221,9 @@ UpdaterStateProvider TestConfigurator::GetUpdaterStateProvider() const {
   return updater_state_provider_;
 }
 
-absl::optional<base::FilePath> TestConfigurator::GetCrxCachePath() const {
+scoped_refptr<CrxCache> TestConfigurator::GetCrxCache() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!crx_cache_root_temp_dir_.IsValid()) {
-    return absl::nullopt;
-  }
-  return absl::optional<base::FilePath>(
-      crx_cache_root_temp_dir_.GetPath().AppendASCII("crx_cache"));
+  return crx_cache_;
 }
 
 bool TestConfigurator::IsConnectionMetered() const {
@@ -270,7 +274,7 @@ void TestConfigurator::SetCrxDownloaderFactory(
 }
 
 void TestConfigurator::SetIsMachineExternallyManaged(
-    absl::optional<bool> is_machine_externally_managed) {
+    std::optional<bool> is_machine_externally_managed) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   is_machine_externally_managed_ = is_machine_externally_managed;
 }

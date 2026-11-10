@@ -3,60 +3,37 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#pragma once
+#ifndef XNNPACK_SRC_XNNPACK_MICROKERNEL_UTILS_H_
+#define XNNPACK_SRC_XNNPACK_MICROKERNEL_UTILS_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 
-#include <xnnpack/common.h>
+#include "src/xnnpack/config-types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// The total tile size needed to cover kernel_size.
-XNN_INTERNAL size_t xnn_dwconv_multipass_tile_size(
-  size_t kernel_size,
-  size_t first_pass_tile,
-  size_t middle_pass_tile,
-  size_t last_pass_tile);
+// When parallelizing GEMMs, try to tile the computation such that we have at
+// least this many tiles per thread.
+#define XNN_GEMM_MIN_TILES_PER_THREAD 5
 
-// The total count of weights (in bytes) needed for multipass dwconv.
-size_t xnn_dwconv_multipass_weights_size(
-  size_t tile_size,
-  size_t channels,
-  size_t channel_tile,
-  size_t channel_subtile,
-  size_t channel_round,
-  size_t bias_element_size,
-  size_t log2_filter_element_size,
-  size_t extra_weights_byte);
+// Compute the optimal tile size (integer multiple `nr`) for a GEMM such that
+// the number of tiles is minimized, but such that the data needed for each tile
+// fits in either the L1 or L2 cache.
+size_t xnn_gemm_best_tile_size(size_t num_groups, size_t m, size_t n,
+                               size_t m_stride, size_t n_stride,
+                               size_t cn_stride, size_t mr, size_t nr,
+                               size_t num_threads);
 
-// Calculate the number of bytes read.
-size_t xnn_dwconv_multipass_bytes_read(
-  size_t kernel_size,
-  size_t first_pass_tile,
-  size_t middle_pass_tile,
-  size_t last_pass_tile,
-  size_t channels,
-  size_t channel_tile,
-  size_t channel_subtile,
-  size_t channel_round,
-  size_t log2_input_size,
-  size_t log2_filter_size,
-  size_t bias_element_size,
-  size_t log2_accumulator_size);
-
-// Calculate the number of bytes written.
-size_t xnn_dwconv_multipass_bytes_written(
-  size_t kernel_size,
-  size_t first_pass_tile,
-  size_t middle_pass_tile,
-  size_t last_pass_tile,
-  size_t channels,
-  size_t channel_round,
-  size_t log2_accumulator_size,
-  size_t log2_output_size);
-
+// Checks wheter it is worthwhile to inline the lhs packing for a GEMM with the
+// given parameters.
+bool xnn_should_inline_lhs_packing(const struct xnn_gemm_config* gemm_config,
+                                   size_t m_packed_stride, size_t n_stride,
+                                   size_t cn_stride, size_t mc, size_t nc);
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // XNNPACK_SRC_XNNPACK_MICROKERNEL_UTILS_H_

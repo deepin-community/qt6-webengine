@@ -21,7 +21,6 @@ void AddUiColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
   const bool dark_mode = key.color_mode == ColorProviderKey::ColorMode::kDark;
 
   ColorMixer& mixer = provider->AddMixer();
-  mixer[kColorAvatarHeaderArt] = {kColorMidground};
   mixer[kColorAvatarIconGuest] = {kColorSecondaryForeground};
   mixer[kColorAvatarIconIncognito] = {kColorPrimaryForeground};
   mixer[kColorBadgeBackground] =
@@ -112,6 +111,7 @@ void AddUiColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
       SkColorSetA(gfx::kGoogleGrey900, 0xE6)};
   mixer[kColorLiveCaptionBubbleButtonIcon] =
       ui::DeriveDefaultIconColor(kColorLiveCaptionBubbleForegroundDefault);
+  mixer[kColorLiveCaptionBubbleButtonBackground] = {SK_ColorTRANSPARENT};
   mixer[kColorLiveCaptionBubbleButtonIconDisabled] = ui::SetAlpha(
       kColorLiveCaptionBubbleButtonIcon, gfx::kDisabledControlAlpha);
   mixer[kColorLiveCaptionBubbleForegroundDefault] =
@@ -167,32 +167,12 @@ void AddUiColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
       SetAlpha(kColorNotificationInputForeground, gfx::kGoogleGreyAlpha700);
   mixer[kColorOverlayScrollbarFill] =
       SetAlpha(kColorEndpointForeground, gfx::kGoogleGreyAlpha700);
-  mixer[kColorOverlayScrollbarFillDark] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorWHITE), gfx::kGoogleGreyAlpha700);
-  mixer[kColorOverlayScrollbarFillLight] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorBLACK), gfx::kGoogleGreyAlpha700);
   mixer[kColorOverlayScrollbarFillHovered] =
       SetAlpha(kColorEndpointForeground, gfx::kGoogleGreyAlpha800);
-  mixer[kColorOverlayScrollbarFillHoveredDark] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorWHITE), gfx::kGoogleGreyAlpha800);
-  mixer[kColorOverlayScrollbarFillHoveredLight] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorBLACK), gfx::kGoogleGreyAlpha800);
   mixer[kColorOverlayScrollbarStroke] =
       SetAlpha(kColorEndpointBackground, gfx::kGoogleGreyAlpha400);
-  mixer[kColorOverlayScrollbarStrokeDark] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillDark),
-               gfx::kGoogleGreyAlpha400);
-  mixer[kColorOverlayScrollbarStrokeLight] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillLight),
-               gfx::kGoogleGreyAlpha400);
   mixer[kColorOverlayScrollbarStrokeHovered] =
       SetAlpha(kColorEndpointBackground, gfx::kGoogleGreyAlpha500);
-  mixer[kColorOverlayScrollbarStrokeHoveredDark] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillHoveredDark),
-               gfx::kGoogleGreyAlpha500);
-  mixer[kColorOverlayScrollbarStrokeHoveredLight] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillHoveredLight),
-               gfx::kGoogleGreyAlpha500);
   mixer[kColorProgressBar] = PickGoogleColorTwoBackgrounds(
       kColorAccent, kColorDialogBackground, kColorProgressBarBackground,
       color_utils::kMinimumVisibleContrastRatio);
@@ -244,23 +224,8 @@ void AddUiColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
     mixer[kColorTabBackgroundHighlightedFocused] =
         SetAlpha(std::move(tab_background_base), 0x53);
   }
-  mixer[kColorTabBorderSelected] =
-      PickGoogleColor(kColorAccent, kColorDialogBackground,
-                      color_utils::kMinimumVisibleContrastRatio);
   mixer[kColorTabContentSeparator] = {kColorMidground};
-  mixer[kColorTabForeground] = {kColorSecondaryForeground};
-  mixer[kColorTabForegroundSelected] =
-      PickGoogleColor(kColorAccent, kColorDialogBackground,
-                      color_utils::kMinimumReadableContrastRatio);
-  mixer[kColorTableBackground] = {kColorPrimaryBackground};
-  mixer[kColorTableBackgroundAlternate] = {kColorTableBackground};
-  mixer[kColorTableBackgroundSelectedFocused] = {kColorItemSelectionBackground};
-  mixer[kColorTableBackgroundSelectedUnfocused] = {
-      kColorTableBackgroundSelectedFocused};
-  mixer[kColorTableForeground] = {kColorPrimaryForeground};
-  mixer[kColorTableForegroundSelectedFocused] = {kColorTableForeground};
-  mixer[kColorTableForegroundSelectedUnfocused] = {
-      kColorTableForegroundSelectedFocused};
+  mixer[kColorTabForegroundDisabled] = {kColorSysStateDisabled};
   mixer[kColorTableGroupingIndicator] = {kColorItemHighlight};
   mixer[kColorTableHeaderBackground] = {kColorTableBackground};
   mixer[kColorTableHeaderForeground] = {kColorTableForeground};
@@ -406,6 +371,9 @@ void AddUiColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
                 : SkColorSetA(SK_ColorBLACK, 0x4D)};
   mixer[kColorWebNativeControlScrollbarThumbInactive] = {
       dark_mode ? SK_ColorWHITE : SkColorSetRGB(0xEA, 0xEA, 0xEA)};
+  mixer[kColorWebNativeControlScrollbarThumbOverlayMinimalMode] = {
+      dark_mode ? SkColorSetA(SK_ColorWHITE, 0x8B)
+                : SkColorSetA(SK_ColorBLACK, 0x72)};
   mixer[kColorWebNativeControlScrollbarThumbPressed] = {
       dark_mode ? SkColorSetA(SK_ColorWHITE, 0x80)
                 : SkColorSetA(SK_ColorBLACK, 0x80)};

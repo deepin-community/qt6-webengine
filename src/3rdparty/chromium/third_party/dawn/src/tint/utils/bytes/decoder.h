@@ -34,11 +34,13 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "src/tint/utils/bytes/reader.h"
-#include "src/tint/utils/reflection/reflection.h"
+#include "src/tint/utils/reflection.h"
+#include "src/tint/utils/result.h"
 
 namespace tint::bytes {
 
@@ -101,25 +103,27 @@ struct Decoder<bool, void> {
 
 /// Decoder specialization for types that use TINT_REFLECT
 template <typename T>
-struct Decoder<T, std::enable_if_t<HasReflection<T>>> {
+    requires(HasReflection<T>)
+struct Decoder<T> {
     /// Decode decodes the reflected type from @p reader.
     /// @param reader the reader to decode from
     /// @returns the decoded reflected type, or an error if the stream is too short.
     static Result<T> Decode(Reader& reader) {
         T object{};
-        diag::List errs;
+        std::stringstream errs{};
         ForeachField(object, [&](auto& field) {  //
             auto value = bytes::Decode<std::decay_t<decltype(field)>>(reader);
             if (value == Success) {
                 field = value.Get();
             } else {
-                errs.add(value.Failure().reason);
+                errs << value.Failure() << "\n";
             }
         });
-        if (errs.empty()) {
+        auto err = errs.str();
+        if (err.empty()) {
             return object;
         }
-        return Failure{errs};
+        return Failure{err};
     }
 };
 
@@ -132,7 +136,7 @@ struct Decoder<std::unordered_map<K, V>, void> {
     static Result<std::unordered_map<K, V>> Decode(Reader& reader) {
         std::unordered_map<K, V> out;
 
-        while (true) {
+        while (!reader.IsEOF()) {
             auto stop = bytes::Decode<bool>(reader);
             if (stop != Success) {
                 return stop.Failure();
@@ -155,6 +159,34 @@ struct Decoder<std::unordered_map<K, V>, void> {
     }
 };
 
+/// Decoder specialization for std::unordered_set
+template <typename V>
+struct Decoder<std::unordered_set<V>, void> {
+    /// Decode decodes the set from @p reader.
+    /// @param reader the reader to decode from
+    /// @returns the decoded set, or an error if the stream is too short.
+    static Result<std::unordered_set<V>> Decode(Reader& reader) {
+        std::unordered_set<V> out;
+
+        while (!reader.IsEOF()) {
+            auto stop = bytes::Decode<bool>(reader);
+            if (stop != Success) {
+                return stop.Failure();
+            }
+            if (stop.Get()) {
+                break;
+            }
+            auto val = bytes::Decode<V>(reader);
+            if (val != Success) {
+                return val.Failure();
+            }
+            out.emplace(std::move(val.Get()));
+        }
+
+        return out;
+    }
+};
+
 /// Decoder specialization for std::vector
 template <typename V>
 struct Decoder<std::vector<V>, void> {
@@ -164,7 +196,7 @@ struct Decoder<std::vector<V>, void> {
     static Result<std::vector<V>> Decode(Reader& reader) {
         std::vector<V> out;
 
-        while (true) {
+        while (!reader.IsEOF()) {
             auto stop = bytes::Decode<bool>(reader);
             if (stop != Success) {
                 return stop.Failure();

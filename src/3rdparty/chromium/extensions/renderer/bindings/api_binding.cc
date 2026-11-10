@@ -10,7 +10,6 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -26,8 +25,9 @@
 #include "extensions/renderer/bindings/binding_access_checker.h"
 #include "extensions/renderer/bindings/declarative_event.h"
 #include "gin/arguments.h"
-#include "gin/handle.h"
 #include "gin/per_context_data.h"
+#include "v8/include/cppgc/allocation.h"
+#include "v8/include/v8-cppgc.h"
 
 namespace extensions {
 
@@ -66,8 +66,7 @@ std::string GetJSEnumEntryName(const std::string& original) {
 
 std::unique_ptr<APISignature> GetAPISignatureFromDictionary(
     const base::Value::Dict* dict,
-    BindingAccessChecker* access_checker,
-    const std::string& api_name) {
+    BindingAccessChecker* access_checker) {
   const base::Value* params = dict->Find("parameters");
   if (params && !params->is_list())
     params = nullptr;
@@ -77,8 +76,7 @@ std::unique_ptr<APISignature> GetAPISignatureFromDictionary(
   if (returns_async && !returns_async->is_dict())
     returns_async = nullptr;
 
-  return APISignature::CreateFromValues(*params, returns_async, access_checker,
-                                        api_name, false /*is_event_signature*/);
+  return APISignature::CreateFromValues(*params, returns_async, access_checker);
 }
 
 void RunAPIBindingHandlerCallback(
@@ -104,7 +102,7 @@ struct APIBinding::MethodData {
   // sendMessage).
   const std::string full_name;
   // The expected API signature.
-  raw_ptr<const APISignature, ExperimentalRenderer> signature;
+  raw_ptr<const APISignature> signature;
   // The callback used by the v8 function.
   APIBinding::HandlerCallback callback;
 };
@@ -162,7 +160,7 @@ struct APIBinding::EventData {
   // EventData is only accessed from the callbacks associated with the
   // APIBinding, and both the APIBinding and APIEventHandler are owned by the
   // same object (the APIBindingsSystem).
-  raw_ptr<APIBinding, ExperimentalRenderer> binding;
+  raw_ptr<APIBinding> binding;
 };
 
 struct APIBinding::CustomPropertyData {
@@ -181,7 +179,7 @@ struct APIBinding::CustomPropertyData {
   // chrome.storage.local.
   std::string property_name;
   // Values curried into this particular type from the schema.
-  raw_ptr<const base::Value::List, ExperimentalRenderer> property_values;
+  raw_ptr<const base::Value::List> property_values;
 
   CreateCustomType create_custom_type;
 };
@@ -222,8 +220,7 @@ APIBinding::APIBinding(const std::string& api_name,
       std::string full_name =
           base::StringPrintf("%s.%s", api_name_.c_str(), name->c_str());
 
-      auto signature =
-          GetAPISignatureFromDictionary(func_dict, access_checker, full_name);
+      auto signature = GetAPISignatureFromDictionary(func_dict, access_checker);
 
       methods_[*name] =
           std::make_unique<MethodData>(full_name, signature.get());
@@ -265,8 +262,8 @@ APIBinding::APIBinding(const std::string& api_name,
           std::string full_name =
               base::StringPrintf("%s.%s", id->c_str(), function_name->c_str());
 
-          auto signature = GetAPISignatureFromDictionary(
-              func_dict, access_checker, full_name);
+          auto signature =
+              GetAPISignatureFromDictionary(func_dict, access_checker);
 
           type_refs->AddTypeMethodSignature(full_name, std::move(signature));
         }
@@ -345,9 +342,9 @@ APIBinding::APIBinding(const std::string& api_name,
         // TODO(devlin): Track this down and CHECK(params).
         base::Value empty_params(base::Value::Type::LIST);
         std::unique_ptr<APISignature> event_signature =
-            APISignature::CreateFromValues(
-                params ? *params : empty_params, nullptr /*returns_async*/,
-                access_checker, *name, true /*is_event_signature*/);
+            APISignature::CreateFromValues(params ? *params : empty_params,
+                                           nullptr /*returns_async*/,
+                                           access_checker);
         DCHECK(!event_signature->has_async_return());
         type_refs_->AddEventSignature(full_name, std::move(event_signature));
       }
@@ -365,7 +362,7 @@ APIBinding::~APIBinding() = default;
 v8::Local<v8::Object> APIBinding::CreateInstance(
     v8::Local<v8::Context> context) {
   DCHECK(binding::IsContextValid(context));
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   if (object_template_.IsEmpty())
     InitializeTemplate(isolate);
   DCHECK(!object_template_.IsEmpty());
@@ -482,8 +479,9 @@ void APIBinding::DecorateTemplateWithProperties(
       auto is_this_platform = [&this_platform](const base::Value& platform) {
         return platform.is_string() && platform.GetString() == this_platform;
       };
-      if (base::ranges::none_of(*platforms, is_this_platform))
+      if (std::ranges::none_of(*platforms, is_this_platform)) {
         continue;
+      }
     }
 
     v8::Local<v8::String> v8_key = gin::StringToSymbol(isolate, item.first);
@@ -543,9 +541,10 @@ void APIBinding::GetEventObject(
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context;
-  if (!info.Holder()->GetCreationContext().ToLocal(&context) ||
-      !binding::IsContextValidOrThrowError(context))
+  if (!info.HolderV2()->GetCreationContext(isolate).ToLocal(&context) ||
+      !binding::IsContextValidOrThrowError(context)) {
     return;
+  }
 
   CHECK(info.Data()->IsExternal());
   auto* event_data =
@@ -555,12 +554,11 @@ void APIBinding::GetEventObject(
           context, event_data->full_name, &retval)) {
     // A custom event was created; our work is done.
   } else if (event_data->supports_rules) {
-    gin::Handle<DeclarativeEvent> event = gin::CreateHandle(
-        isolate, new DeclarativeEvent(
-                     event_data->full_name, event_data->binding->type_refs_,
-                     event_data->binding->request_handler_, event_data->actions,
-                     event_data->conditions, 0));
-    retval = event.ToV8();
+    auto* event = cppgc::MakeGarbageCollected<DeclarativeEvent>(
+        isolate->GetCppHeap()->GetAllocationHandle(), event_data->full_name,
+        event_data->binding->type_refs_, event_data->binding->request_handler_,
+        event_data->actions, event_data->conditions, 0);
+    retval = event->GetWrapper(isolate).ToLocalChecked();
   } else {
     retval = event_data->binding->event_handler_->CreateEventInstance(
         event_data->full_name, event_data->supports_filters,
@@ -576,9 +574,10 @@ void APIBinding::GetCustomPropertyObject(
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context;
-  if (!info.Holder()->GetCreationContext().ToLocal(&context) ||
-      !binding::IsContextValid(context))
+  if (!info.HolderV2()->GetCreationContext(isolate).ToLocal(&context) ||
+      !binding::IsContextValid(context)) {
     return;
+  }
 
   v8::Context::Scope context_scope(context);
   CHECK(info.Data()->IsExternal());

@@ -17,15 +17,21 @@
 #ifndef SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_TABLE_FUNCTIONS_CONNECTED_FLOW_H_
 #define SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_TABLE_FUNCTIONS_CONNECTED_FLOW_H_
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/dataframe/specs.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/static_table_function.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/tables_py.h"
 #include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/flow_tables_py.h"
+#include "src/trace_processor/tables/slice_tables_py.h"
 
-#include <queue>
-#include <set>
-
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 
 class TraceProcessorContext;
 
@@ -35,7 +41,7 @@ class TraceProcessorContext;
 // - FOLLOWING_FLOW
 class ConnectedFlow : public StaticTableFunction {
  public:
-  enum class Mode {
+  enum class Mode : uint8_t {
     // Directly connected slices through the same flow ID given by the trace
     // writer.
     kDirectlyConnectedFlow,
@@ -47,24 +53,33 @@ class ConnectedFlow : public StaticTableFunction {
     kFollowingFlow,
   };
 
-  ConnectedFlow(Mode mode, const TraceStorage*);
+  class Cursor : public StaticTableFunction::Cursor {
+   public:
+    Cursor(Mode mode, TraceStorage* storage);
+    bool Run(const std::vector<SqlValue>& arguments) override;
+
+   private:
+    Mode mode_;
+    TraceStorage* storage_ = nullptr;
+    tables::ConnectedFlowTable table_;
+    tables::FlowTable::ConstCursor outgoing_cursor_;
+    tables::FlowTable::ConstCursor incoming_cursor_;
+    tables::SliceTable::ConstCursor descendant_cursor_;
+  };
+
+  ConnectedFlow(Mode mode, TraceStorage*);
   ~ConnectedFlow() override;
 
-  Table::Schema CreateSchema() override;
+  std::unique_ptr<StaticTableFunction::Cursor> MakeCursor() override;
+  dataframe::DataframeSpec CreateSpec() override;
   std::string TableName() override;
-  uint32_t EstimateRowCount() override;
-  base::Status ValidateConstraints(const QueryConstraints&) override;
-  base::Status ComputeTable(const std::vector<Constraint>& cs,
-                            const std::vector<Order>& ob,
-                            const BitVector& cols_used,
-                            std::unique_ptr<Table>& table_return) override;
+  uint32_t GetArgumentCount() const override;
 
  private:
   Mode mode_;
-  const TraceStorage* storage_ = nullptr;
+  TraceStorage* storage_ = nullptr;
 };
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor
 
 #endif  // SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_TABLE_FUNCTIONS_CONNECTED_FLOW_H_

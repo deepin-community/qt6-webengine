@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-spmm/sse.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/spmm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/spmm.h"
 
 
 void xnn_f32_spmm_minmax_ukernel_16x1__sse(
@@ -23,14 +28,17 @@ void xnn_f32_spmm_minmax_ukernel_16x1__sse(
     const uint32_t* nidx_nnzmap,
     float* output,
     size_t output_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mc != 0);
   assert(mc % sizeof(float) == 0);
   assert(nc != 0);
 
-  const __m128 vmin = _mm_load_ps(params->sse.min);
-  const __m128 vmax = _mm_load_ps(params->sse.max);
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
+
   size_t output_decrement = output_stride * nc - 16 * sizeof(float);
   while XNN_LIKELY(mc >= 16 * sizeof(float)) {
     const float* w = weights;

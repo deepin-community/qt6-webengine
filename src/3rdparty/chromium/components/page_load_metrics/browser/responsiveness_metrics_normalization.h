@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_RESPONSIVENESS_METRICS_NORMALIZATION_H_
 #define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_RESPONSIVENESS_METRICS_NORMALIZATION_H_
 
-#include <queue>
+#include <vector>
 
 #include "base/time/time.h"
 #include "components/page_load_metrics/common/page_load_metrics.mojom.h"
@@ -34,12 +34,12 @@ class ResponsivenessMetricsNormalization {
   void ClearAllUserInteractionLatencies();
 
   // Approximate a high percentile of user interaction latency.
-  absl::optional<mojom::UserInteractionLatency> ApproximateHighPercentile()
+  std::optional<mojom::UserInteractionLatency> ApproximateHighPercentile()
       const;
 
   uint64_t num_user_interactions() const { return num_user_interactions_; }
 
-  absl::optional<mojom::UserInteractionLatency> worst_latency() const;
+  std::optional<mojom::UserInteractionLatency> worst_latency() const;
 
  private:
   void NormalizeUserInteractionLatencies(

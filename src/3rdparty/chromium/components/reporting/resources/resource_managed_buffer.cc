@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/reporting/resources/resource_managed_buffer.h"
+
 #include <cstdint>
 #include <memory>
 
-#include "components/reporting/resources/resource_managed_buffer.h"
-
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
-
 #include "components/reporting/util/status.h"
 
 namespace reporting {
@@ -48,7 +48,7 @@ void ResourceManagedBuffer::Clear() {
 
 char* ResourceManagedBuffer::at(size_t pos) {
   CHECK_LT(pos, size_);
-  return buffer_.get() + pos;
+  return UNSAFE_TODO(buffer_.get() + pos);
 }
 
 size_t ResourceManagedBuffer::size() const {

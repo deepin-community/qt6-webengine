@@ -24,7 +24,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_XMLHTTPREQUEST_XML_HTTP_REQUEST_H_
 
 #include <memory>
+#include <optional>
 
+#include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -33,6 +35,7 @@
 #include "services/network/public/mojom/url_loader_factory.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_xml_http_request_response_type.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document_parser_client.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
@@ -43,11 +46,14 @@
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_progress_event_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/bindings/v8_external_memory_accounter.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cancellable_task.h"
+#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_info.h"
+#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_tracker.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -70,7 +76,6 @@ class ExecutionContext;
 class FormData;
 class PrivateToken;
 class ScriptState;
-class ScriptValue;
 class TextResourceDecoder;
 class ThreadableLoader;
 class URLSearchParams;
@@ -88,7 +93,7 @@ class CORE_EXPORT XMLHttpRequest final
   static XMLHttpRequest* Create(ScriptState*);
   static XMLHttpRequest* Create(ExecutionContext*);
 
-  XMLHttpRequest(ExecutionContext*, scoped_refptr<const DOMWrapperWorld> world);
+  XMLHttpRequest(ExecutionContext*, const DOMWrapperWorld* world);
   ~XMLHttpRequest() override;
 
   // These exact numeric values are important because JS expects them.
@@ -98,15 +103,6 @@ class CORE_EXPORT XMLHttpRequest final
     kHeadersReceived = 2,
     kLoading = 3,
     kDone = 4
-  };
-
-  enum ResponseTypeCode {
-    kResponseTypeDefault,
-    kResponseTypeText,
-    kResponseTypeJSON,
-    kResponseTypeDocument,
-    kResponseTypeBlob,
-    kResponseTypeArrayBuffer,
   };
 
   // ExecutionContextLifecycleObserver
@@ -152,14 +148,16 @@ class CORE_EXPORT XMLHttpRequest final
   const AtomicString& getResponseHeader(const AtomicString&) const;
   String responseText(ExceptionState&);
   Document* responseXML(ExceptionState&);
-  ScriptValue response(ScriptState*, ExceptionState&);
+  v8::Local<v8::Value> response(ScriptState*);
   unsigned timeout() const {
     return static_cast<unsigned>(timeout_.InMilliseconds());
   }
   void setTimeout(unsigned timeout, ExceptionState&);
-  ResponseTypeCode GetResponseTypeCode() const { return response_type_code_; }
-  String responseType();
-  void setResponseType(const String&, ExceptionState&);
+  V8XMLHttpRequestResponseType::Enum GetResponseTypeCode() const {
+    return response_type_code_;
+  }
+  V8XMLHttpRequestResponseType responseType();
+  void setResponseType(const V8XMLHttpRequestResponseType&, ExceptionState&);
   String responseURL();
 
   // For Inspector.
@@ -174,7 +172,7 @@ class CORE_EXPORT XMLHttpRequest final
   DEFINE_ATTRIBUTE_EVENT_LISTENER(readystatechange, kReadystatechange)
 
   void Trace(Visitor*) const override;
-  const char* NameInHeapSnapshot() const override { return "XMLHttpRequest"; }
+  const char* GetHumanReadableName() const override { return "XMLHttpRequest"; }
 
   bool HasRequestHeaderForTesting(AtomicString name) const;
 
@@ -185,7 +183,7 @@ class CORE_EXPORT XMLHttpRequest final
                    uint64_t total_bytes_to_be_sent) override;
   void DidReceiveResponse(uint64_t identifier,
                           const ResourceResponse&) override;
-  void DidReceiveData(const char* data, unsigned data_length) override;
+  void DidReceiveData(base::span<const char> data) override;
   // When responseType is set to "blob", didDownloadData() is called instead
   // of didReceiveData().
   void DidDownloadData(uint64_t data_length) override;
@@ -204,7 +202,7 @@ class CORE_EXPORT XMLHttpRequest final
 
   void EndLoading();
 
-  v8::Local<v8::Value> ResponseJSON(v8::Isolate*, ExceptionState&);
+  v8::Local<v8::Value> ResponseJSON(ScriptState*);
   Blob* ResponseBlob();
   DOMArrayBuffer* ResponseArrayBuffer();
 
@@ -223,21 +221,21 @@ class CORE_EXPORT XMLHttpRequest final
   AtomicString GetResponseMIMEType() const;
   // Returns the "final charset" defined in
   // https://xhr.spec.whatwg.org/#final-charset.
-  WTF::TextEncoding FinalResponseCharset() const;
+  TextEncoding FinalResponseCharset() const;
   bool ResponseIsXML() const;
   bool ResponseIsHTML() const;
 
   std::unique_ptr<TextResourceDecoder> CreateDecoder() const;
 
   void InitResponseDocument();
-  void ParseDocumentChunk(const char* data, unsigned data_length);
+  void ParseDocumentChunk(base::span<const uint8_t> data);
 
   bool AreMethodAndURLValidForSend();
 
   void ThrowForLoadFailureIfNeeded(ExceptionState&, const String&);
 
   bool InitSend(ExceptionState&);
-  void SendBytesData(const void*, size_t, ExceptionState&);
+  void SendBytesData(base::span<const uint8_t>, ExceptionState&);
   void send(Document*, ExceptionState&);
   void send(const String&, ExceptionState&);
   void send(Blob*, ExceptionState&);
@@ -296,6 +294,11 @@ class CORE_EXPORT XMLHttpRequest final
   //   so there is no need.
   void ReportMemoryUsageToV8();
 
+  // Creates a task scope used for firing events if the `task_state_` is set
+  // and different from the current task.
+  std::optional<scheduler::TaskAttributionTracker::TaskScope>
+  MaybeCreateTaskAttributionScope();
+
   Member<XMLHttpRequestUpload> upload_;
 
   KURL url_;
@@ -342,12 +345,17 @@ class CORE_EXPORT XMLHttpRequest final
 
   Member<XMLHttpRequestProgressEventThrottle> progress_event_throttle_;
 
+  // V8XMLHttpRequestResponseType::Enum::k is the default value. For readability
+  // we alias it to kResponseTypeDefault.
+  static constexpr auto kResponseTypeDefault =
+      V8XMLHttpRequestResponseType::Enum::k;
+
   // An enum corresponding to the allowed string values for the responseType
   // attribute.
-  ResponseTypeCode response_type_code_ = kResponseTypeDefault;
+  V8XMLHttpRequestResponseType::Enum response_type_code_ = kResponseTypeDefault;
 
   // The DOMWrapperWorld in which the request initiated. Can be null.
-  scoped_refptr<const DOMWrapperWorld> world_;
+  Member<const DOMWrapperWorld> world_;
   // Stores the SecurityOrigin associated with the |world_| if it's an isolated
   // world.
   scoped_refptr<const SecurityOrigin> isolated_world_security_origin_;
@@ -355,6 +363,8 @@ class CORE_EXPORT XMLHttpRequest final
   // This blob loader will be used if |m_downloadingToFile| is true and
   // |m_responseTypeCode| is NOT ResponseTypeBlob.
   Member<BlobLoader> blob_loader_;
+
+  Member<scheduler::TaskAttributionInfo> task_state_;
 
   bool async_ = true;
 
@@ -377,6 +387,8 @@ class CORE_EXPORT XMLHttpRequest final
   bool response_array_buffer_failure_ = false;
 
   probe::AsyncTaskContext async_task_context_;
+
+  NO_UNIQUE_ADDRESS V8ExternalMemoryAccounterBase external_memory_accounter_;
 };
 
 std::ostream& operator<<(std::ostream&, const XMLHttpRequest*);

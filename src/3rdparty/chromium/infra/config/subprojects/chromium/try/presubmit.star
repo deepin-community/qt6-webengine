@@ -3,15 +3,16 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.android builder group."""
 
-load("//lib/builders.star", "os")
-load("//lib/branches.star", "branches")
-load("//lib/try.star", "try_")
-load("//lib/consoles.star", "consoles")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builders.star", "os")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//try.star", "try_")
+load("//lib/try_constants.star", "try_constants")
 load("//project.star", "PLATFORMS", "platform")
 load("../fallback-cq.star", "fallback_cq")
 
 try_.defaults.set(
-    pool = try_.DEFAULT_POOL,
+    pool = try_constants.DEFAULT_POOL,
     cores = 8,
     os = os.LINUX_DEFAULT,
     list_view = "presubmit",
@@ -28,7 +29,7 @@ try_.defaults.set(
     # This will improve our turnaround time for landing infra/config changes
     # when addressing outages
     priority = 25,
-    service_account = try_.DEFAULT_SERVICE_ACCOUNT,
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
 )
 
 consoles.list_view(
@@ -36,22 +37,6 @@ consoles.list_view(
     branch_selector = branches.selector.ALL_BRANCHES,
     title = "presubmit builders",
 )
-
-def presubmit_builder(*, name, tryjob, **kwargs):
-    """Define a presubmit builder.
-
-    Presubmit builders are builders that run fast checks that don't require
-    building. Their results aren't re-used because they tend to provide guards
-    against generated files being out of date, so they MUST run quickly so that
-    the submit after a CQ dry run doesn't take long.
-    """
-    if tryjob:
-        tryjob_args = {a: getattr(tryjob, a) for a in dir(tryjob)}
-        if tryjob_args.get("disable_reuse") == None:
-            tryjob_args["disable_reuse"] = True
-        tryjob_args["add_default_filters"] = False
-        tryjob = try_.job(**tryjob_args)
-    return try_.builder(name = name, tryjob = tryjob, **kwargs)
 
 # Errors that this builder would catch would go unnoticed until a project is set
 # up on a branch day or even worse when a branch was turned into an LTS branch,
@@ -70,20 +55,26 @@ def branch_configs():
     """
     return [{
         "name": "standard branch",
-        "platforms": [p for p in PLATFORMS if p != platform.CROS_LTS],
-        "sheriff_rotation": "chrome_browser_release",
+        "initialize": {},
     }, {
         "name": "desktop extended stable branch",
-        "platforms": [platform.MAC, platform.WINDOWS],
-        "sheriff_rotation": "chrome_browser_release",
+        "platform_set": {
+            "platforms": [platform.MAC, platform.WINDOWS],
+            "gardener_rotation": "chrome_browser_release",
+        },
     }] + [{
         "name": p,
-        "platforms": [p],
+        "platform_set": {
+            "platforms": [p],
+        },
     } for p in PLATFORMS]
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "branch-config-verifier",
     executable = "recipe:branch_configuration/tester",
+    # TODO: crbug.com/383375912 - If the checkout can be sped up, switch back to
+    # using the default
+    execution_timeout = 25 * time.minute,
     properties = {
         "branch_script": "infra/config/scripts/branch.py",
         "branch_configs": branch_configs(),
@@ -94,7 +85,7 @@ presubmit_builder(
     ),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "reclient-config-deployment-verifier",
     executable = "recipe:reclient_config_deploy_check/tester",
     properties = {
@@ -105,7 +96,6 @@ presubmit_builder(
                 "cfg_file": [
                     "buildtools/reclient_cfgs/chromium-browser-clang/rewrapper_linux.cfg",
                     "buildtools/reclient_cfgs/chromium-browser-clang/rewrapper_windows.cfg",
-                    "buildtools/reclient_cfgs/nacl/rewrapper_linux.cfg",
                 ],
             },
         ],
@@ -119,7 +109,7 @@ presubmit_builder(
     ),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "builder-config-verifier",
     description_html = "checks that builder configs in properties files match the recipe-side configs",
     executable = "recipe:chromium/builder_config_verifier",
@@ -131,10 +121,13 @@ presubmit_builder(
     ),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "targets-config-verifier",
     description_html = "checks that target configs specified in starlark match those specified in //testing/buildbot",
     executable = "recipe:chromium/targets_config_verifier",
+    # TODO: crbug.com/383375912 - If the checkout can be sped up, switch back to
+    # using the default
+    execution_timeout = 25 * time.minute,
     properties = {
         "builder_config_directory": "infra/config/generated/builders",
         "precommit_buckets": ["try"],
@@ -144,12 +137,33 @@ presubmit_builder(
     ),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
+    name = "targets-config-verifier-dev",
+    description_html = "checks that target configs specified in starlark for dev builders match those specified in //testing/buildbot",
+    executable = "recipe:chromium/targets_config_verifier",
+    contact_team_email = "chrome-dev-infra@google.com",
+    # TODO: crbug.com/383375912 - If the checkout can be sped up, switch back to
+    # using the default
+    execution_timeout = 25 * time.minute,
+    properties = {
+        "builder_config_directory": "infra/config/generated/builders-dev",
+        "precommit_buckets": ["try"],
+    },
+    tryjob = try_.job(
+        location_filters = ["infra/config/generated/builders-dev/[^/]+/[^/]+/targets/.+\\.json"],
+    ),
+)
+
+try_.presubmit_builder(
     name = "gn-args-verifier",
     description_html = "checks that GN args generated by starlark definition match those originally specified in //tools/mb/mb_config.pyl",
     executable = "recipe:chromium/gn_args_verifier",
     contact_team_email = "chrome-browser-infra-team@google.com",
+    # TODO: crbug.com/383375912 - If the checkout can be sped up, switch back to
+    # using the default
+    execution_timeout = 25 * time.minute,
     properties = {
+        "gclient_config": "chromium",
         "builder_config_directory": "infra/config/generated/builders",
         "mb_config_paths": ["src/tools/mb/mb_config.pyl"],
     },
@@ -158,7 +172,7 @@ presubmit_builder(
     ),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "chromium_presubmit",
     branch_selector = branches.selector.ALL_BRANCHES,
     executable = "recipe:presubmit",
@@ -173,7 +187,7 @@ presubmit_builder(
     tryjob = try_.job(),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "win-presubmit",
     executable = "recipe:presubmit",
     builderless = True,
@@ -190,7 +204,7 @@ presubmit_builder(
     tryjob = try_.job(),
 )
 
-presubmit_builder(
+try_.presubmit_builder(
     name = "requires-testing-checker",
     description_html = "prevents CLs that requires testing from landing on branches with no CQ",
     executable = "recipe:requires_testing_checker",

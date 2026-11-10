@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef CONTENT_MAIN_DELEGATE_QT_H
 #define CONTENT_MAIN_DELEGATE_QT_H
@@ -9,16 +10,14 @@
 #include "content_browser_client_qt.h"
 #include "content_client_qt.h"
 #include "content_utility_client_qt.h"
-
-#if defined(USE_OZONE) || BUILDFLAG(IS_WIN)
-#include "compositor/content_gpu_client_qt.h"
-#endif
+#include "gpu/content_gpu_client_qt.h"
 
 namespace QtWebEngineCore {
 
 class ContentMainDelegateQt : public content::ContentMainDelegate
 {
 public:
+    ContentGpuClientQt *gpuClient() const { return m_gpuClient.get(); }
 
     // This is where the embedder puts all of its startup code that needs to run
     // before the sandbox is engaged.
@@ -26,19 +25,15 @@ public:
 
     content::ContentClient *CreateContentClient() override;
     content::ContentBrowserClient* CreateContentBrowserClient() override;
-#if defined(USE_OZONE) || BUILDFLAG(IS_WIN)
     content::ContentGpuClient* CreateContentGpuClient() override;
-#endif
     content::ContentRendererClient* CreateContentRendererClient() override;
     content::ContentUtilityClient* CreateContentUtilityClient() override;
-    absl::optional<int> BasicStartupComplete() override;
+    std::optional<int> BasicStartupComplete() override;
 
 private:
     ContentClientQt m_contentClient;
     std::unique_ptr<ContentBrowserClientQt> m_browserClient;
-#if defined(USE_OZONE) || BUILDFLAG(IS_WIN)
     std::unique_ptr<ContentGpuClientQt> m_gpuClient;
-#endif
     std::unique_ptr<ContentUtilityClientQt> m_utilityClient;
 };
 

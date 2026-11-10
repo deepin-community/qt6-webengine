@@ -10,7 +10,7 @@ if (angle_use_wayland) {
 }
 
 declare_args() {
-  angle_use_custom_libvulkan = !is_android && !is_fuchsia && !is_ggp
+  angle_use_custom_libvulkan = !is_android && !is_fuchsia
 
   # On real CrOS devices, we should use the system Vulkan loader. On the
   # ChromeOS-for-Linux build, we should use the built libvulkan because the
@@ -22,8 +22,12 @@ declare_args() {
 }
 
 config("angle_libvulkan_config") {
+  defines = []
   if (angle_use_custom_libvulkan) {
-    defines = [ "ANGLE_USE_CUSTOM_LIBVULKAN" ]
+    defines += [ "ANGLE_USE_CUSTOM_LIBVULKAN" ]
+  }
+  if (is_qtwebengine) {
+    defines += [ "ANGLE_PLATFORM_QTWEBENGINE" ]
   }
 }
 
@@ -109,7 +113,7 @@ if (angle_enable_vulkan) {
       } else {
         public_deps = [ "$angle_vulkan_loader_dir:libvulkan" ]
       }
-      data_deps += [ "$angle_vulkan_tools_dir:VkICD_mock_icd" ]
+#      data_deps += [ "$angle_vulkan_tools_dir:VkICD_mock_icd" ]
     }
   }
 
@@ -123,7 +127,7 @@ if (angle_enable_vulkan) {
       if (!angle_use_vulkan_null_display) {
         public_deps += [ "//third_party/fuchsia-sdk/sdk/pkg/vulkan_layers:VkLayer_image_pipe_swapchain" ]
       }
-    } else if (!is_android && !is_ggp) {
+    } else if (!is_android) {
       if (angle_shared_libvulkan) {
         data_deps = [ "$angle_vulkan_loader_dir:libvulkan" ]
       } else {
@@ -151,6 +155,18 @@ if (angle_enable_vulkan) {
         if (!is_android) {
           data_deps +=
               [ "$angle_vulkan_validation_layers_dir:vulkan_gen_json_files" ]
+        }
+      }
+    }
+  }
+
+  if (angle_enable_vulkan_api_dump_layer) {
+    group("lunarg_vulkantools") {
+      data_deps = []
+      if (!is_fuchsia) {
+        data_deps += [ "$angle_lunarg_vulkantools_dir:lunarg_vulkantools" ]
+        if (!is_android) {
+          data_deps += [ "$angle_lunarg_vulkantools_dir:vulkan_gen_json_files" ]
         }
       }
     }

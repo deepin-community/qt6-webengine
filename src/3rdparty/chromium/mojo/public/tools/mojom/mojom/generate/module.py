@@ -136,7 +136,7 @@ class Kind:
             == (rhs.spec, rhs.parent_kind, rhs.is_nullable))
 
   def __hash__(self):
-    # TODO(crbug.com/1060471): Remove this and other __hash__ methods on Kind
+    # TODO(crbug.com/40122051): Remove this and other __hash__ methods on Kind
     # and its subclasses. This is to support existing generator code which uses
     # some primitive Kinds as dict keys. The default hash (object identity)
     # breaks these dicts when a pickled Module instance is unpickled and used
@@ -389,6 +389,9 @@ PRIMITIVES = (
 
 ATTRIBUTE_MIN_VERSION = 'MinVersion'
 ATTRIBUTE_DEFAULT = 'Default'
+ATTRIBUTE_DISPATCH_DEBUG_ALIAS = 'DispatchDebugAlias'
+ATTRIBUTE_ESTIMATE_SIZE = 'EstimateSize'
+ATTRIBUTE_SEND_VALIDATION = 'SendValidation'
 ATTRIBUTE_EXTENSIBLE = 'Extensible'
 ATTRIBUTE_NO_INTERRUPT = 'NoInterrupt'
 ATTRIBUTE_STABLE = 'Stable'
@@ -400,6 +403,7 @@ ATTRIBUTE_SERVICE_SANDBOX = 'ServiceSandbox'
 ATTRIBUTE_REQUIRE_CONTEXT = 'RequireContext'
 ATTRIBUTE_ALLOWED_CONTEXT = 'AllowedContext'
 ATTRIBUTE_RUNTIME_FEATURE = 'RuntimeFeature'
+ATTRIBUTE_INCLUDE_SEND_VALIDATION = 'IncludeSendValidation'
 
 
 class NamedValue:
@@ -951,6 +955,42 @@ class Parameter:
                                       rhs.default, rhs.attributes))
 
 
+class Result:
+
+  def __init__(self, method, success_kind, failure_kind):
+    self.method = method
+    self.success_kind = success_kind
+    self.failure_kind = failure_kind
+
+  def Repr(self):
+    return GenericRepr(self, {
+        'success_kind': self.success_kind,
+        'failure_kind': self.failure_kind,
+    })
+
+  def ToResponseParam(self, module):
+    result = Union(
+        "%s_%s_ResponseParam_Result" %
+        (self.method.interface.mojom_name, self.method.mojom_name), module)
+    result.AddField(
+        'success',
+        self.success_kind,
+        0,
+    )
+    result.AddField(
+        'failure',
+        self.failure_kind,
+        1,
+    )
+
+    param = Parameter()
+    param.mojom_name = 'result'
+    param.kind = result
+    param.ordinal = 0
+    param.default = None
+    return param
+
+
 class Method:
   def __init__(self, interface, mojom_name, ordinal=None, attributes=None):
     self.interface = interface
@@ -961,6 +1001,7 @@ class Method:
     self.parameters = []
     self.param_struct = None
     self.response_parameters = None
+    self.result_response = None
     self.response_param_struct = None
     self.attributes = attributes
 
@@ -1022,6 +1063,23 @@ class Method:
   def allow_interrupt(self):
     return not self.attributes.get(ATTRIBUTE_NO_INTERRUPT) \
         if self.attributes else True
+
+  @property
+  def estimate_message_size(self):
+    return self.attributes.get(ATTRIBUTE_ESTIMATE_SIZE) \
+        if self.attributes else False
+
+  @property
+  def send_validation(self):
+    if not self.attributes:
+      return None
+    send_validation = self.attributes.get(ATTRIBUTE_SEND_VALIDATION, None)
+    if send_validation is None:
+      return None
+    if not isinstance(send_validation, Feature):
+      raise Exception("SendValidation attribute on %s must be a feature." %
+                      self.name)
+    return send_validation
 
   @property
   def unlimited_message_size(self):
@@ -1181,6 +1239,11 @@ class Interface(ReferenceKind):
                        'a UUID.'.format(self.mojom_name))
     return (int(u.hex[:16], 16), int(u.hex[16:], 16))
 
+  @property
+  def dispatch_debug_alias(self):
+    return self.attributes.get(ATTRIBUTE_DISPATCH_DEBUG_ALIAS) \
+           if self.attributes else None
+
   def __hash__(self):
     return id(self)
 
@@ -1232,7 +1295,7 @@ class Enum(ValueKind):
       spec = 'x:' + mojom_name
     else:
       spec = None
-    ValueKind.__init__(self, spec, False, module)
+    super().__init__(spec, False, module)
     self.mojom_name = mojom_name
     self.name = None
     self.native_only = False
@@ -1378,6 +1441,13 @@ class Module:
 
   def Dump(self, f):
     pickle.dump(self, f)
+
+  @property
+  def include_send_validation(self):
+    if self.attributes and self.attributes.get(
+        ATTRIBUTE_INCLUDE_SEND_VALIDATION):
+      return True
+    return False
 
   @classmethod
   def Load(cls, f):
@@ -1546,37 +1616,38 @@ def PassesAssociatedKinds(interface):
   return False
 
 
-def _AnyMethodParameterRecursive(method, predicate, visited_kinds=None):
-  def _HasProperty(kind):
-    if kind in visited_kinds:
-      # No need to examine the kind again.
-      return False
-    visited_kinds.add(kind)
-    if predicate(kind):
-      return True
-    if IsArrayKind(kind):
-      return _HasProperty(kind.kind)
-    if IsStructKind(kind) or IsUnionKind(kind):
-      for field in kind.fields:
-        if _HasProperty(field.kind):
-          return True
-    if IsMapKind(kind):
-      if _HasProperty(kind.key_kind) or _HasProperty(kind.value_kind):
-        return True
-    return False
-
+def _HasProperty(kind, predicate, visited_kinds=None):
   if visited_kinds is None:
     visited_kinds = set()
 
-  for param in method.parameters:
-    if _HasProperty(param.kind):
-      return True
-  if method.response_parameters != None:
-    for param in method.response_parameters:
-      if _HasProperty(param.kind):
+  if kind in visited_kinds:
+    # No need to examine the kind again.
+    return False
+  visited_kinds.add(kind)
+  if predicate(kind):
+    return True
+  if IsArrayKind(kind):
+    return _HasProperty(kind.kind, predicate, visited_kinds)
+  if IsStructKind(kind) or IsUnionKind(kind):
+    for field in kind.fields:
+      if _HasProperty(field.kind, predicate, visited_kinds):
         return True
+  if IsMapKind(kind):
+    if _HasProperty(kind.key_kind, predicate, visited_kinds) or _HasProperty(
+        kind.value_kind, predicate, visited_kinds):
+      return True
   return False
 
+
+def _AnyMethodParameterRecursive(method, predicate, visited_kinds=None):
+  for param in method.parameters:
+    if _HasProperty(param.kind, predicate, visited_kinds):
+      return True
+  if method.response_parameters is not None:
+    for param in method.response_parameters:
+      if _HasProperty(param.kind, predicate, visited_kinds):
+        return True
+  return False
 
 # Finds out whether a method passes associated interfaces and associated
 # interface requests.
@@ -1588,6 +1659,84 @@ def MethodPassesAssociatedKinds(method, visited_kinds=None):
 # Determines whether a method passes interfaces.
 def MethodPassesInterfaces(method):
   return _AnyMethodParameterRecursive(method, IsInterfaceKind)
+
+def MethodNeedsRemoteKind(method, kind_to_check, visited_kinds=None):
+
+  def needs_remote_import(reference_kind):
+    return (
+        (IsInterfaceKind(reference_kind) or IsPendingRemoteKind(reference_kind)
+         or IsPendingAssociatedRemoteKind(reference_kind))
+        # if types are compared directly, it will fail
+        # but the nested reference_kind.kind matches the top level
+        # kind_to_check.
+        and kind_to_check == reference_kind.kind)
+
+  return _AnyMethodParameterRecursive(method,
+                                      needs_remote_import,
+                                      visited_kinds=visited_kinds)
+
+
+def MethodNeedsReceiverKind(method, kind_to_check, visited_kinds=None):
+
+  def needs_receiver_import(reference_kind):
+    return (
+        (IsPendingReceiverKind(reference_kind)
+         or IsPendingAssociatedReceiverKind(reference_kind))
+        # if types are compared directly, it will fail
+        # but the nested reference_kind.kind matches the top level
+        # kind_to_check
+        and kind_to_check == reference_kind.kind)
+
+  return _AnyMethodParameterRecursive(method,
+                                      needs_receiver_import,
+                                      visited_kinds=visited_kinds)
+
+
+def CollectSendValidationTypesFromKind(kind):
+  """Collects all enums, structs, and unions used in a kind.
+
+  Args:
+    kind: {Kind} The kind to check.
+
+  Returns:
+    {tuple}: A tuple of three sets containing the enums, structs, and unions
+        used in the kind.
+  """
+  enums = set()
+  structs = set()
+  unions = set()
+
+  def collect(kind):
+    if IsEnumKind(kind):
+      enums.add(kind)
+    elif IsStructKind(kind):
+      structs.add(kind)
+    elif IsUnionKind(kind):
+      unions.add(kind)
+    return False  # Continue recursion
+
+  _HasProperty(kind, collect)
+  return enums, structs, unions
+
+
+def CollectSendValidationTypesFromMethod(method):
+  """Collects all enums, structs, and unions used in a method's parameters and
+  response_parameters."""
+  enums = set()
+  structs = set()
+  unions = set()
+
+  def collect(kind):
+    if IsEnumKind(kind):
+      enums.add(kind)
+    elif IsStructKind(kind):
+      structs.add(kind)
+    elif IsUnionKind(kind):
+      unions.add(kind)
+    return False  # Continue recursion
+
+  _AnyMethodParameterRecursive(method, collect)
+  return enums, structs, unions
 
 
 def GetSyncMethodOrdinals(interface):
@@ -1677,3 +1826,9 @@ def ContainsNativeTypes(kind):
     return False
 
   return Check(kind)
+
+
+def EnsureUnnullable(kind):
+  if IsNullableKind(kind):
+    return kind.MakeUnnullableKind()
+  return kind

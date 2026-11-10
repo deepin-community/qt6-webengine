@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "gpu/command_buffer/client/program_info_manager.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <string_view>
 
-#include "gpu/command_buffer/client/program_info_manager.h"
+#include "base/compiler_specific.h"
+#include "base/memory/raw_span.h"
 
 namespace {
 
@@ -18,7 +21,7 @@ template <typename T>
 T Load(base::span<const int8_t> data, size_t offset) {
   auto subspan = data.subspan(offset, sizeof(T));
   T ret;
-  memcpy(&ret, subspan.data(), sizeof(T));
+  UNSAFE_TODO(memcpy(&ret, subspan.data(), sizeof(T)));
   return ret;
 }
 
@@ -48,7 +51,7 @@ class DataIterator {
   }
 
  private:
-  base::span<const int8_t> data_;
+  base::raw_span<const int8_t> data_;
 };
 
 // Writes the string pointed by name and of maximum size buffsize. If length is
@@ -65,8 +68,8 @@ void FillNameAndLength(GLsizei bufsize,
     DCHECK_LE(string.size(), static_cast<size_t>(INT_MAX));
     // Note: bufsize counts the terminating \0, but not string.size().
     max_length = std::min(bufsize - 1, static_cast<GLsizei>(string.size()));
-    memcpy(name, string.data(), max_length);
-    name[max_length] = '\0';
+    UNSAFE_TODO(memcpy(name, string.data(), max_length));
+    UNSAFE_TODO(name[max_length]) = '\0';
   }
   if (length) {
     *length = max_length;
@@ -283,9 +286,7 @@ bool ProgramInfoManager::Program::GetProgramiv(
       return true;
     default:
       NOTREACHED();
-      break;
   }
-  return false;
 }
 
 GLuint ProgramInfoManager::Program::GetUniformBlockIndex(
@@ -327,7 +328,7 @@ bool ProgramInfoManager::Program::GetUniformsiv(
     return false;
   }
   for (GLsizei ii = 0; ii < count; ++ii) {
-    if (indices[ii] >= num_uniforms) {
+    if (UNSAFE_TODO(indices[ii]) >= num_uniforms) {
       return false;
     }
   }
@@ -338,20 +339,22 @@ bool ProgramInfoManager::Program::GetUniformsiv(
     case GL_UNIFORM_SIZE:
       DCHECK_EQ(num_uniforms, uniform_infos_.size());
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = static_cast<GLint>(uniform_infos_[indices[ii]].size);
+        UNSAFE_TODO(params[ii]) =
+            static_cast<GLint>(uniform_infos_[UNSAFE_TODO(indices[ii])].size);
       }
       return true;
     case GL_UNIFORM_TYPE:
       DCHECK_EQ(num_uniforms, uniform_infos_.size());
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = static_cast<GLint>(uniform_infos_[indices[ii]].type);
+        UNSAFE_TODO(params[ii]) =
+            static_cast<GLint>(uniform_infos_[UNSAFE_TODO(indices[ii])].type);
       }
       return true;
     case GL_UNIFORM_NAME_LENGTH:
       DCHECK_EQ(num_uniforms, uniform_infos_.size());
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = static_cast<GLint>(
-            uniform_infos_[indices[ii]].name.length() + 1);
+        UNSAFE_TODO(params[ii]) = static_cast<GLint>(
+            uniform_infos_[UNSAFE_TODO(indices[ii])].name.length() + 1);
       }
       return true;
   }
@@ -361,34 +364,37 @@ bool ProgramInfoManager::Program::GetUniformsiv(
   switch (pname) {
     case GL_UNIFORM_BLOCK_INDEX:
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = uniforms_es3_[indices[ii]].block_index;
+        UNSAFE_TODO(params[ii]) =
+            uniforms_es3_[UNSAFE_TODO(indices[ii])].block_index;
       }
       return true;
     case GL_UNIFORM_OFFSET:
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = uniforms_es3_[indices[ii]].offset;
+        UNSAFE_TODO(params[ii]) =
+            uniforms_es3_[UNSAFE_TODO(indices[ii])].offset;
       }
       return true;
     case GL_UNIFORM_ARRAY_STRIDE:
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = uniforms_es3_[indices[ii]].array_stride;
+        UNSAFE_TODO(params[ii]) =
+            uniforms_es3_[UNSAFE_TODO(indices[ii])].array_stride;
       }
       return true;
     case GL_UNIFORM_MATRIX_STRIDE:
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = uniforms_es3_[indices[ii]].matrix_stride;
+        UNSAFE_TODO(params[ii]) =
+            uniforms_es3_[UNSAFE_TODO(indices[ii])].matrix_stride;
       }
       return true;
     case GL_UNIFORM_IS_ROW_MAJOR:
       for (GLsizei ii = 0; ii < count; ++ii) {
-        params[ii] = uniforms_es3_[indices[ii]].is_row_major;
+        UNSAFE_TODO(params[ii]) =
+            uniforms_es3_[UNSAFE_TODO(indices[ii])].is_row_major;
       }
       return true;
     default:
       NOTREACHED();
-      break;
   }
-  return false;
 }
 
 void ProgramInfoManager::Program::UpdateES2(base::span<const int8_t> result) {
@@ -596,7 +602,6 @@ bool ProgramInfoManager::Program::IsCached(ProgramInfoType type) const {
       return true;
     default:
       NOTREACHED();
-      return true;
   }
 }
 
@@ -656,7 +661,6 @@ ProgramInfoManager::Program* ProgramInfoManager::GetProgramInfo(
       break;
     default:
       NOTREACHED();
-      return nullptr;
   }
   return info;
 }
@@ -931,8 +935,8 @@ bool ProgramInfoManager::GetActiveUniformBlockiv(
           case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES:
             for (size_t ii = 0;
                  ii < uniform_block->active_uniform_indices.size(); ++ii) {
-              params[ii] = static_cast<GLint>(
-                  uniform_block->active_uniform_indices[ii]);
+              UNSAFE_TODO(params[ii]) =
+                  static_cast<GLint>(uniform_block->active_uniform_indices[ii]);
             }
             break;
           case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER:
@@ -1001,7 +1005,8 @@ bool ProgramInfoManager::GetUniformIndices(GLES2Implementation* gl,
       DCHECK_LT(0, count);
       DCHECK(names && indices);
       for (GLsizei ii = 0; ii < count; ++ii) {
-        indices[ii] = info->GetUniformIndex(names[ii]);
+        UNSAFE_TODO(indices[ii]) =
+            info->GetUniformIndex(UNSAFE_TODO(names[ii]));
       }
       return true;
     }

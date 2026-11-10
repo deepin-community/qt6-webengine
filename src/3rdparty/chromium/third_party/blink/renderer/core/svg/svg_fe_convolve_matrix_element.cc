@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -39,11 +40,11 @@ namespace blink {
 template <>
 CORE_EXPORT const SVGEnumerationMap&
 GetEnumerationMap<FEConvolveMatrix::EdgeModeType>() {
-  static const SVGEnumerationMap::Entry enum_items[] = {
-      {FEConvolveMatrix::EDGEMODE_DUPLICATE, "duplicate"},
-      {FEConvolveMatrix::EDGEMODE_WRAP, "wrap"},
-      {FEConvolveMatrix::EDGEMODE_NONE, "none"},
-  };
+  static constexpr auto enum_items = std::to_array<const char* const>({
+      "duplicate",
+      "wrap",
+      "none",
+  });
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
@@ -167,6 +168,11 @@ gfx::Point SVGFEConvolveMatrixElement::TargetPoint() const {
 float SVGFEConvolveMatrixElement::ComputeDivisor() const {
   if (divisor_->IsSpecified())
     return divisor_->CurrentValue()->Value();
+  if (RuntimeEnabledFeatures::SvgFeConvolveMatrixZeroDivisorBehaviorEnabled()) {
+    // If the divisor is not set, then return zero to get the sum-of-matrix
+    // behavior (see FEColorMatrix::ComputeDivisor).
+    return 0;
+  }
   float divisor_value = 0;
   SVGNumberList* kernel_matrix = kernel_matrix_->CurrentValue();
   uint32_t kernel_matrix_size = kernel_matrix->length();
@@ -204,14 +210,12 @@ void SVGFEConvolveMatrixElement::SvgAttributeChanged(
       attr_name == svg_names::kTargetXAttr ||
       attr_name == svg_names::kTargetYAttr ||
       attr_name == svg_names::kPreserveAlphaAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     PrimitiveAttributeChanged(attr_name);
     return;
   }
 
   if (attr_name == svg_names::kInAttr || attr_name == svg_names::kOrderAttr ||
       attr_name == svg_names::kKernelMatrixAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     Invalidate();
     return;
   }

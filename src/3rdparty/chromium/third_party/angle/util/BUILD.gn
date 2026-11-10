@@ -224,11 +224,34 @@ angle_source_set("angle_trace_fixture") {
   ]
   public_deps = [
     ":angle_trace_loader",
+    "$angle_root:angle_capture_common",
     "$angle_root:includes",
   ]
   if (is_ios) {
     # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
     check_includes = false
+  }
+}
+
+if (angle_enable_cl) {
+  angle_source_set("angle_trace_fixture_cl") {
+    testonly = true
+    defines = [ "ANGLE_REPLAY_IMPLEMENTATION" ]
+    suppressed_configs += [ "$angle_root:constructor_and_destructor_warnings" ]
+    sources = [
+      "capture/trace_fixture_cl.cpp",
+      "capture/trace_fixture_cl.h",
+      "capture/trace_interface.h",
+    ]
+    public_deps = [
+      ":angle_trace_loader",
+      "$angle_root:angle_capture_common",
+      "$angle_root:includes",
+    ]
+    if (is_ios) {
+      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      check_includes = false
+    }
   }
 }
 

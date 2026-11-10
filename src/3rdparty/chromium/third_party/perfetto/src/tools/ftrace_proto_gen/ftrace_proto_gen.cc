@@ -16,14 +16,9 @@
 
 #include "src/tools/ftrace_proto_gen/ftrace_proto_gen.h"
 
-#include <algorithm>
 #include <fstream>
-#include <regex>
+#include <vector>
 
-#include "perfetto/base/logging.h"
-#include "perfetto/ext/base/file_utils.h"
-#include "perfetto/ext/base/pipe.h"
-#include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
 
 namespace perfetto {
@@ -59,7 +54,8 @@ std::string EventNameToProtoFieldName(const std::string& group,
   // These groups have events where the name alone conflicts with an existing
   // proto:
   if (group == "sde" || group == "g2d" || group == "dpu" || group == "mali" ||
-      group == "lwis" || group == "samsung") {
+      group == "lwis" || group == "samsung" || group == "kgsl" ||
+      group == "hypervisor") {
     event_name = group + "_" + event_name;
   }
   return event_name;
@@ -133,6 +129,9 @@ void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_eventlist,
   // consider merging with common_preempt_count to avoid extra proto tags.
   optional uint32 common_flags = 5;
 
+  // Range reserved for self-describing messages.
+  reserved 65536 to 131072;
+
   oneof event {
 )";
 
@@ -167,6 +166,10 @@ void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_eventlist,
     // generated code.
     if (i == 327) {
       *fout << "    GenericFtraceEvent generic = " << i << ";\n";
+      ++i;
+    }
+    if (i == 542) {
+      *fout << "    KprobeEvent kprobe_event = " << i << ";\n";
       ++i;
     }
   }

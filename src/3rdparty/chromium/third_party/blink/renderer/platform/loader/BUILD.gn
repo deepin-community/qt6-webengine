@@ -3,6 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/jumbo.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
+import("//testing/test.gni")
 import("//third_party/blink/renderer/build/scripts/scripts.gni")
 import("//third_party/blink/renderer/platform/platform.gni")
 import("//third_party/blink/renderer/platform/platform_generated.gni")
@@ -69,6 +71,8 @@ blink_platform_sources("loader") {
     "fetch/memory_cache.h",
     "fetch/null_resource_fetcher_properties.cc",
     "fetch/null_resource_fetcher_properties.h",
+    "fetch/policy_container_utils.cc",
+    "fetch/policy_container_utils.h",
     "fetch/preload_key.h",
     "fetch/raw_resource.cc",
     "fetch/raw_resource.h",
@@ -128,12 +132,19 @@ blink_platform_sources("loader") {
     "fetch/trust_token_params_conversion.h",
     "fetch/unique_identifier.cc",
     "fetch/unique_identifier.h",
+    "fetch/url_loader/background_response_processor.h",
     "fetch/url_loader/background_url_loader.cc",
     "fetch/url_loader/background_url_loader.h",
     "fetch/url_loader/cached_metadata_handler.cc",
     "fetch/url_loader/cached_metadata_handler.h",
-    "fetch/url_loader/dedicated_or_shared_worker_fetch_context_impl.cc",
-    "fetch/url_loader/dedicated_or_shared_worker_fetch_context_impl.h",
+    "fetch/url_loader/code_cache_fetcher.cc",
+    "fetch/url_loader/code_cache_fetcher.h",
+    "fetch/url_loader/content_decoding_url_loader_throttle.cc",
+    "fetch/url_loader/content_decoding_url_loader_throttle.h",
+    "fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc",
+    "fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.h",
+    "fetch/url_loader/isolated_code_cache_fetcher.cc",
+    "fetch/url_loader/isolated_code_cache_fetcher.h",
     "fetch/url_loader/mojo_url_loader_client.cc",
     "fetch/url_loader/mojo_url_loader_client.h",
     "fetch/url_loader/navigation_body_loader.cc",
@@ -153,12 +164,16 @@ blink_platform_sources("loader") {
     "fetch/url_loader/url_loader_client.h",
     "fetch/url_loader/url_loader_factory.cc",
     "fetch/url_loader/url_loader_factory.h",
+    "fetch/url_loader/webui_bundled_code_cache_fetcher.cc",
+    "fetch/url_loader/webui_bundled_code_cache_fetcher.h",
     "fetch/url_loader/worker_main_script_loader.cc",
     "fetch/url_loader/worker_main_script_loader.h",
     "fetch/url_loader/worker_main_script_loader_client.h",
+    "fetch/webui_bundled_cached_metadata_handler.cc",
+    "fetch/webui_bundled_cached_metadata_handler.h",
     "fetch/worker_resource_timing_notifier.h",
-    "internet_disconnected_url_loader.cc",
-    "internet_disconnected_url_loader.h",
+    "integrity_report.cc",
+    "integrity_report.h",
     "link_header.cc",
     "link_header.h",
     "mixed_content.cc",
@@ -178,13 +193,16 @@ blink_platform_sources("loader") {
   sources +=
       get_target_outputs(":make_platform_loader_generated_delivery_type_names")
 
-  jumbo_excluded_sources = [  "fetch/url_loader/sync_load_context.cc" ]
+  jumbo_excluded_sources = [
+      "fetch/url_loader/sync_load_context.cc",
+      "fetch/url_loader/resource_request_sender.cc",
+  ]
 
   deps = [
     ":make_platform_loader_generated_delivery_type_names",
     ":make_platform_loader_generated_fetch_initiator_type_names",
     "//components/link_header_util",
-    "//components/variations/net:net",
+    "//components/variations/net",
     "//net",
     "//services/metrics/public/cpp:ukm_builders",
     "//services/network/public/cpp",
@@ -193,14 +211,14 @@ blink_platform_sources("loader") {
     "//third_party/blink/public/common:headers",
     "//third_party/blink/public/mojom:mojom_platform_blink",
     "//third_party/blink/renderer/platform:allow_discouraged_type",
-    "//third_party/blink/renderer/platform/blob:blob",
-    "//third_party/blink/renderer/platform/instrumentation:instrumentation",
-    "//third_party/blink/renderer/platform/network:network",
-    "//third_party/blink/renderer/platform/scheduler:scheduler",
+    "//third_party/blink/renderer/platform/blob",
+    "//third_party/blink/renderer/platform/instrumentation",
+    "//third_party/blink/renderer/platform/network",
+    "//third_party/blink/renderer/platform/scheduler",
   ]
   public_deps = [
     "//third_party/blink/public/mojom:mojom_platform_headers",
-    "//third_party/blink/renderer/platform/heap:heap",
+    "//third_party/blink/renderer/platform/heap",
   ]
   allow_circular_includes_from =
       [ "//third_party/blink/renderer/platform/network:network" ]
@@ -218,12 +236,14 @@ jumbo_source_set("unit_tests") {
     "cors/cors_test.cc",
     "fetch/buffering_bytes_consumer_test.cc",
     "fetch/bytes_consumer_test.cc",
+    "fetch/cached_metadata_test.cc",
     "fetch/client_hints_preferences_test.cc",
     "fetch/data_pipe_bytes_consumer_test.cc",
     "fetch/fetch_api_request_body_mojom_traits_test.cc",
     "fetch/fetch_utils_test.cc",
     "fetch/memory_cache_correctness_test.cc",
     "fetch/memory_cache_test.cc",
+    "fetch/policy_container_utils_test.cc",
     "fetch/raw_resource_test.cc",
     "fetch/resource_fetcher_properties_test.cc",
     "fetch/resource_fetcher_test.cc",
@@ -259,9 +279,13 @@ jumbo_source_set("unit_tests") {
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/blink/public:test_headers",
-    "//third_party/blink/renderer/platform:platform",
+    "//third_party/blink/renderer/platform",
     "//third_party/blink/renderer/platform:test_support",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 jumbo_source_set("test_support") {
@@ -275,6 +299,12 @@ jumbo_source_set("test_support") {
   sources = [
     "testing/bytes_consumer_test_reader.cc",
     "testing/bytes_consumer_test_reader.h",
+    "testing/fake_background_resource_fetch_assets.cc",
+    "testing/fake_background_resource_fetch_assets.h",
+    "testing/fake_resource_load_info_notifier.cc",
+    "testing/fake_resource_load_info_notifier.h",
+    "testing/fake_url_loader_factory_for_background_thread.cc",
+    "testing/fake_url_loader_factory_for_background_thread.h",
     "testing/fetch_testing_platform_support.cc",
     "testing/fetch_testing_platform_support.h",
     "testing/mock_fetch_context.h",
@@ -297,10 +327,22 @@ jumbo_source_set("test_support") {
     "//net",
     "//skia",
     "//third_party/blink/public:blink_headers",
-    "//third_party/blink/renderer/platform:platform",
+    "//third_party/blink/renderer/platform",
     "//third_party/blink/renderer/platform/blob:generator",
     "//third_party/blink/renderer/platform/heap:test_support",
     "//third_party/blink/renderer/platform/scheduler:test_support",
     "//third_party/icu",
   ]
+}
+
+fuzzer_test("policy_container_utils_fuzzer") {
+  sources = [ "fetch/policy_container_utils_fuzzer.cc" ]
+  deps = [
+    "//chromium/third_party/blink/renderer/core:testing",
+    "//chromium/third_party/blink/renderer/platform",
+    "//chromium/third_party/blink/renderer/platform:blink_fuzzer_test_support",
+  ]
+  dict = "//testing/libfuzzer/fuzzers/dicts/content_security_policy.dict"
+  seed_corpus = "//testing/libfuzzer/fuzzers/content_security_policy_corpus"
+  additional_configs = [ "//chromium/third_party/blink/renderer:inside_blink" ]
 }

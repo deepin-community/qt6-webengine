@@ -63,7 +63,6 @@ BluetoothDeviceMac::GetGattErrorCodeFromNSError(NSError* error) {
       return gatt_error_code;
     }
     NOTREACHED();
-    return BluetoothGattService::GattErrorCode::kFailed;
   }
   // TODO(http://crbug.com/619595): Need to convert the error code from
   // CoreBluetooth to a GattErrorCode value.

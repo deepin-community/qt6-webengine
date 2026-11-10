@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef FILE_SYSTEM_ACCESS_PERMISSION_GRANT_QT_H
 #define FILE_SYSTEM_ACCESS_PERMISSION_GRANT_QT_H
@@ -19,19 +20,21 @@ class FileSystemAccessPermissionGrantQt : public content::FileSystemAccessPermis
 {
 public:
     FileSystemAccessPermissionGrantQt(base::WeakPtr<FileSystemAccessPermissionContextQt> context,
-                                      const url::Origin &origin, const base::FilePath &path,
+                                      const url::Origin &origin,
+                                      const content::PathInfo &path_info,
                                       HandleType handle_type, GrantType type);
 
     // content::FileSystemAccessPermissionGrant:
     blink::mojom::PermissionStatus GetStatus() override { return m_status; }
-    base::FilePath GetPath() override { return m_path; }
+    base::FilePath GetPath() override { return m_pathInfo.path; }
+    std::string GetDisplayName() override { return m_pathInfo.display_name; }
     void RequestPermission(content::GlobalRenderFrameHostId frame_id,
                            UserActivationState user_activation_state,
                            base::OnceCallback<void(PermissionRequestOutcome)> callback) override;
 
     const url::Origin &origin() const { return m_origin; }
     HandleType handleType() const { return m_handleType; }
-    const base::FilePath &path() const { return m_path; }
+    const base::FilePath &path() const { return m_pathInfo.path; }
     GrantType type() const { return m_type; }
 
     void SetStatus(blink::mojom::PermissionStatus status);
@@ -45,7 +48,7 @@ private:
 
     base::WeakPtr<FileSystemAccessPermissionContextQt> const m_context;
     const url::Origin m_origin;
-    const base::FilePath m_path;
+    const content::PathInfo m_pathInfo;
     const HandleType m_handleType;
     const GrantType m_type;
 

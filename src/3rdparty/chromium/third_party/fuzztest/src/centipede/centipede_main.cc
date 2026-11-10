@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "absl/base/nullability.h"
 #include "./centipede/centipede_callbacks.h"
 #include "./centipede/centipede_default_callbacks.h"
 #include "./centipede/centipede_interface.h"
 #include "./centipede/config_file.h"
 #include "./centipede/environment_flags.h"
 
-int main(int argc, char** argv) {
-  const auto leftover_argv = centipede::config::InitCentipede(argc, argv);
-
-  const auto env = centipede::CreateEnvironmentFromFlags(leftover_argv);
-  centipede::DefaultCallbacksFactory<centipede::CentipedeDefaultCallbacks>
+int main(int argc, char** absl_nonnull argv) {
+  const auto runtime_state = fuzztest::internal::InitCentipede(argc, argv);
+  const auto env = fuzztest::internal::CreateEnvironmentFromFlags(
+      runtime_state->leftover_argv());
+  fuzztest::internal::DefaultCallbacksFactory<
+      fuzztest::internal::CentipedeDefaultCallbacks>
       callbacks;
   return CentipedeMain(env, callbacks);
 }

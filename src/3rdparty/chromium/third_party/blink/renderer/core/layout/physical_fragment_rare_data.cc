@@ -17,12 +17,19 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(wtf_size_t num_fields) {
 PhysicalFragmentRareData::PhysicalFragmentRareData(
     const PhysicalRect* scrollable_overflow,
     const PhysicalBoxStrut* borders,
+    const PhysicalBoxStrut* scrollbar,
     const PhysicalBoxStrut* padding,
-    absl::optional<PhysicalRect> inflow_bounds,
+    std::optional<PhysicalRect> inflow_bounds,
     BoxFragmentBuilder& builder,
     wtf_size_t num_fields)
     : table_collapsed_borders_(builder.table_collapsed_borders_),
-      mathml_paint_info_(builder.mathml_paint_info_) {
+      mathml_paint_info_(builder.mathml_paint_info_),
+      reading_flow_nodes_(
+          builder.reading_flow_nodes_.size()
+              ? MakeGarbageCollected<GCedHeapVector<Member<Node>>>(
+                    builder.reading_flow_nodes_)
+              : nullptr),
+      gap_geometry_(builder.gap_geometry_) {
   field_list_.ReserveInitialCapacity(num_fields);
 
   // Each field should be processed in order of FieldId to avoid vector
@@ -34,6 +41,9 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(
   }
   if (borders) {
     SetField(FieldId::kBorders).borders = *borders;
+  }
+  if (scrollbar) {
+    SetField(FieldId::kScrollbar).scrollbar = *scrollbar;
   }
   if (padding) {
     SetField(FieldId::kPadding).padding = *padding;
@@ -69,13 +79,12 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(
   }
 
   if (!builder.table_column_geometries_.empty()) {
-    table_column_geometries_ =
-        MakeGarbageCollected<TableFragmentData::ColumnGeometries>(
-            builder.table_column_geometries_);
+    table_column_geometries_ = MakeGarbageCollected<GCedTableColumnGeometries>(
+        builder.table_column_geometries_);
   }
 
-  // size() can be smaller than num_fields because FieldId::kMargins is not
-  // set yet.
+  // size() can be smaller than num_fields because kMargins and
+  // kOffsetFromRootFragmentationContext are not set yet.
   DCHECK_LE(field_list_.size(), num_fields);
 }
 
@@ -92,7 +101,8 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(
 PhysicalFragmentRareData::PhysicalFragmentRareData(
     const PhysicalFragmentRareData& other)
     : table_collapsed_borders_(other.table_collapsed_borders_),
-      table_column_geometries_(other.table_column_geometries_) {
+      table_column_geometries_(other.table_column_geometries_),
+      gap_geometry_(other.gap_geometry_) {
   field_list_.ReserveInitialCapacity(other.field_list_.capacity());
 
   // Each field should be processed in order of FieldId to avoid vector
@@ -100,6 +110,7 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(
 
   SET_IF_EXISTS(kScrollableOverflow, scrollable_overflow, other);
   SET_IF_EXISTS(kBorders, borders, other);
+  SET_IF_EXISTS(kScrollbar, scrollbar, other);
   SET_IF_EXISTS(kPadding, padding, other);
   SET_IF_EXISTS(kInflowBounds, inflow_bounds, other);
   CLONE_IF_EXISTS(kFrameSetLayoutData, frame_set_layout_data, other);
@@ -112,6 +123,8 @@ PhysicalFragmentRareData::PhysicalFragmentRareData(
   SET_IF_EXISTS(kTableSectionRowOffsets, table_section_row_offsets, other);
   SET_IF_EXISTS(kPageName, page_name, other);
   SET_IF_EXISTS(kMargins, margins, other);
+  SET_IF_EXISTS(kOffsetFromRootFragmentationContext,
+                offset_from_root_fragmentation_context, other);
 
   DCHECK_EQ(field_list_.size(), other.field_list_.size());
 }
@@ -127,6 +140,7 @@ PhysicalFragmentRareData::~PhysicalFragmentRareData() = default;
   switch (type) {                                                           \
     FUNC(kScrollableOverflow, scrollable_overflow);                         \
     FUNC(kBorders, borders);                                                \
+    FUNC(kScrollbar, scrollbar);                                            \
     FUNC(kPadding, padding);                                                \
     FUNC(kInflowBounds, inflow_bounds);                                     \
     FUNC(kFrameSetLayoutData, frame_set_layout_data);                       \
@@ -137,6 +151,8 @@ PhysicalFragmentRareData::~PhysicalFragmentRareData() = default;
     FUNC(kTableSectionRowOffsets, table_section_row_offsets);               \
     FUNC(kPageName, page_name);                                             \
     FUNC(kMargins, margins);                                                \
+    FUNC(kOffsetFromRootFragmentationContext,                               \
+         offset_from_root_fragmentation_context);                           \
   }
 
 #define CONSTRUCT_UNION_MEMBER(id, name) \

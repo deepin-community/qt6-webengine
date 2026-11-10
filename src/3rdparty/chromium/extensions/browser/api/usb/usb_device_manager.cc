@@ -8,8 +8,9 @@
 #include <memory>
 #include <optional>
 #include <utility>
+
 #include "base/containers/contains.h"
-#include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -103,9 +104,6 @@ bool MyWillDispatchDeviceEvent(
   return false;
 }
 
-base::LazyInstance<BrowserContextKeyedAPIFactory<UsbDeviceManager>>::Leaky
-    g_event_router_factory = LAZY_INSTANCE_INITIALIZER;
-
 }  // namespace
 
 // static
@@ -117,7 +115,9 @@ UsbDeviceManager* UsbDeviceManager::Get(
 // static
 BrowserContextKeyedAPIFactory<UsbDeviceManager>*
 UsbDeviceManager::GetFactoryInstance() {
-  return g_event_router_factory.Pointer();
+  static base::NoDestructor<BrowserContextKeyedAPIFactory<UsbDeviceManager>>
+      instance;
+  return instance.get();
 }
 
 void UsbDeviceManager::Observer::OnDeviceAdded(

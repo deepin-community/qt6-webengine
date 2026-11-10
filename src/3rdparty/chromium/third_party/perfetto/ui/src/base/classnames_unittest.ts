@@ -19,7 +19,6 @@ test('classnames', () => {
   expect(classNames('foo', '', 'bar')).toEqual('foo bar');
   expect(classNames(false, 'foo', 'bar')).toEqual('foo bar');
   expect(classNames(undefined, 'foo', 'bar')).toEqual('foo bar');
-  expect(classNames('foo', 'bar', ['baz', 'qux'])).toEqual('foo bar baz qux');
   expect(classNames('foo bar', 'baz')).toEqual('foo bar baz');
 });
 
@@ -27,20 +26,13 @@ test('example usecase with flags', () => {
   const foo = true;
   const bar = false;
   const baz = true;
-  expect(classNames(
-             foo && 'foo',
-             bar && 'bar',
-             baz && 'baz',
-             ))
-      .toEqual('foo baz');
+  expect(classNames(foo && 'foo', bar && 'bar', baz && 'baz')).toEqual(
+    'foo baz',
+  );
 });
 
 test('example usecase with possibly undefined classnames', () => {
-  let fooClass: string|undefined;
+  let fooClass: string | undefined;
   const barClass = 'bar';
-  expect(classNames(
-             fooClass,
-             barClass,
-             ))
-      .toEqual('bar');
+  expect(classNames(fooClass, barClass)).toEqual('bar');
 });

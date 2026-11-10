@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 // StorageMonitorLinux unit tests.
 
 #include "components/storage_monitor/storage_monitor_linux.h"
@@ -57,19 +59,17 @@ struct TestDeviceData {
   uint64_t partition_size_in_bytes;
 };
 
-const TestDeviceData kTestDeviceData[] = {
-  { kDeviceDCIM1, "UUID:FFF0-000F",
-    StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM, 88788 },
-  { kDeviceDCIM2, "VendorModelSerial:ComName:Model2010:8989",
-    StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM,
-    8773 },
-  { kDeviceDCIM3, "VendorModelSerial:::WEM319X792",
-    StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM, 22837 },
-  { kDeviceNoDCIM, "UUID:ABCD-1234",
-    StorageInfo::REMOVABLE_MASS_STORAGE_NO_DCIM, 512 },
-  { kDeviceFixed, "UUID:743A-2349",
-    StorageInfo::FIXED_MASS_STORAGE, 17282 },
-};
+constexpr auto kTestDeviceData = std::to_array<TestDeviceData>({
+    {kDeviceDCIM1, "UUID:FFF0-000F",
+     StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM, 88788},
+    {kDeviceDCIM2, "VendorModelSerial:ComName:Model2010:8989",
+     StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM, 8773},
+    {kDeviceDCIM3, "VendorModelSerial:::WEM319X792",
+     StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM, 22837},
+    {kDeviceNoDCIM, "UUID:ABCD-1234",
+     StorageInfo::REMOVABLE_MASS_STORAGE_NO_DCIM, 512},
+    {kDeviceFixed, "UUID:743A-2349", StorageInfo::FIXED_MASS_STORAGE, 17282},
+});
 
 std::unique_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
                                            const base::FilePath& mount_point) {
@@ -307,9 +307,12 @@ class StorageMonitorLinuxTest : public testing::Test {
     entry.mnt_freq = 0;
     entry.mnt_passno = 0;
     for (size_t i = 0; i < data_size; ++i) {
-      entry.mnt_fsname = const_cast<char*>(data[i].mount_device.c_str());
-      entry.mnt_dir = const_cast<char*>(data[i].mount_point.c_str());
-      entry.mnt_type = const_cast<char*>(data[i].mount_type.c_str());
+      entry.mnt_fsname =
+          const_cast<char*>(UNSAFE_TODO(data[i]).mount_device.c_str());
+      entry.mnt_dir =
+          const_cast<char*>(UNSAFE_TODO(data[i]).mount_point.c_str());
+      entry.mnt_type =
+          const_cast<char*>(UNSAFE_TODO(data[i]).mount_type.c_str());
       ASSERT_EQ(0, addmntent(file, &entry));
     }
     ASSERT_EQ(1, endmntent(file));
@@ -327,7 +330,7 @@ class StorageMonitorLinuxTest : public testing::Test {
   std::unique_ptr<TestStorageMonitorLinux> monitor_;
 };
 
-// TODO(https://crbug.com/1297464): This test is flaky.
+// TODO(crbug.com/40822314): This test is flaky.
 // Simple test case where we attach and detach a media device.
 TEST_F(StorageMonitorLinuxTest, DISABLED_BasicAttachDetach) {
   base::FilePath test_path = CreateMountPointWithDCIMDir(kMountPointA);

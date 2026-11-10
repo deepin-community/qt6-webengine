@@ -14,7 +14,7 @@ use crate::handle::{self, CastHandle, Handle, UntypedHandle};
 use crate::mojo_types::*;
 
 bitflags::bitflags! {
-    #[derive(Default)]
+    #[derive(Clone, Copy, Default)]
     pub struct WriteFlags: u32 {
         /// Write all the data to the pipe if possible or none at all.
         const ALL_OR_NONE = 1 << 0;
@@ -22,7 +22,7 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
-    #[derive(Default)]
+    #[derive(Clone, Copy, Default)]
     pub struct ReadFlags: u32 {
         /// Write all the data to the pipe if possible or none at all.
         const ALL_OR_NONE = 1 << 0;
@@ -290,12 +290,16 @@ impl<T> Consumer<T> {
             )
         });
         unsafe { buf.set_len((num_bytes / elem_size) as usize) }
-        if r != MojoResult::Okay { Err(r) } else { Ok(buf) }
+        if r != MojoResult::Okay {
+            Err(r)
+        } else {
+            Ok(buf)
+        }
     }
 
     /// Begin two-phase read. Returns a ReadDataBuffer to perform read and
     /// commit.
-    pub fn begin(&self) -> Result<ReadDataBuffer<T>, MojoResult> {
+    pub fn begin(&self) -> Result<ReadDataBuffer<'_, '_, T>, MojoResult> {
         let mut buffer_num_bytes: u32 = 0;
         let mut buffer_ptr: *const ffi::c_void = ptr::null();
         let r = MojoResult::from_code(unsafe {
@@ -368,7 +372,7 @@ impl<T> Producer<T> {
 
     /// Begin two-phase write. Returns a WriteDataBuffer to perform write and
     /// commit.
-    pub fn begin(&self) -> Result<WriteDataBuffer<T>, MojoResult> {
+    pub fn begin(&self) -> Result<WriteDataBuffer<'_, '_, T>, MojoResult> {
         let mut buffer_num_bytes: u32 = 0;
         let mut buffer_ptr: *mut ffi::c_void = ptr::null_mut();
         let r = MojoResult::from_code(unsafe {

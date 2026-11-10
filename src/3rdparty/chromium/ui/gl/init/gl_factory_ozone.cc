@@ -42,17 +42,22 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
                                          attribs);
   }
 
+  scoped_refptr<GLContextStub> context;
   switch (GetGLImplementation()) {
     case kGLImplementationMockGL:
-      return scoped_refptr<GLContext>(new GLContextStub(share_group));
     case kGLImplementationStubGL: {
       scoped_refptr<GLContextStub> stub_context =
-          new GLContextStub(share_group);
-      stub_context->SetUseStubApi(true);
+          base::MakeRefCounted<GLContextStub>(share_group);
+      if (GetGLImplementation() == kGLImplementationStubGL) {
+        stub_context->SetUseStubApi(true);
+      }
+      // The stub ctx needs to be initialized so that the gl::GLContext can
+      // store the |compatible_surface|.
+      stub_context->Initialize(compatible_surface, attribs);
       return stub_context;
     }
     case kGLImplementationDisabled:
-      return nullptr;
+      break;
     default:
       NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
@@ -73,8 +78,6 @@ scoped_refptr<GLSurface> CreateViewGLSurface(GLDisplay* display,
     default:
       NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
-
-  return nullptr;
 }
 
 scoped_refptr<Presenter> CreateSurfacelessViewGLSurface(
@@ -100,7 +103,6 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurface(GLDisplay* display,
     default:
       NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
-  return nullptr;
 }
 
 void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
@@ -128,7 +130,6 @@ bool InitializeExtensionSettingsOneOffPlatform(GLDisplay* display) {
       return true;
     default:
       NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
-      return false;
   }
 }
 

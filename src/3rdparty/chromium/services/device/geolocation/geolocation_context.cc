@@ -5,8 +5,8 @@
 #include "services/device/geolocation/geolocation_context.h"
 
 #include <utility>
+#include <vector>
 
-#include "base/containers/cxx20_erase_vector.h"
 #include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/device/geolocation/geolocation_impl.h"
@@ -27,9 +27,10 @@ void GeolocationContext::Create(
 
 void GeolocationContext::BindGeolocation(
     mojo::PendingReceiver<mojom::Geolocation> receiver,
-    const GURL& requesting_url) {
+    const GURL& requesting_url,
+    mojom::GeolocationClientId client_id) {
   GeolocationImpl* impl =
-      new GeolocationImpl(std::move(receiver), requesting_url, this);
+      new GeolocationImpl(std::move(receiver), requesting_url, client_id, this);
   impls_.push_back(base::WrapUnique<GeolocationImpl>(impl));
   if (geoposition_override_) {
     impl->SetOverride(*geoposition_override_);
@@ -39,7 +40,7 @@ void GeolocationContext::BindGeolocation(
 }
 
 void GeolocationContext::OnPermissionRevoked(const url::Origin& origin) {
-  base::EraseIf(impls_, [&origin](const auto& impl) {
+  std::erase_if(impls_, [&origin](const auto& impl) {
     if (!origin.IsSameOriginWith(impl->url())) {
       return false;
     }
@@ -51,8 +52,8 @@ void GeolocationContext::OnPermissionRevoked(const url::Origin& origin) {
 
 void GeolocationContext::OnConnectionError(GeolocationImpl* impl) {
   auto it =
-      base::ranges::find(impls_, impl, &std::unique_ptr<GeolocationImpl>::get);
-  DCHECK(it != impls_.end());
+      std::ranges::find(impls_, impl, &std::unique_ptr<GeolocationImpl>::get);
+  CHECK(it != impls_.end());
   impls_.erase(it);
 }
 

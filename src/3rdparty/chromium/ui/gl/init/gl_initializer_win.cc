@@ -17,14 +17,11 @@
 #include "base/trace_event/trace_event.h"
 #include "base/win/windows_version.h"
 #include "ui/gl/direct_composition_support.h"
-#include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_display.h"
 #include "ui/gl/gl_egl_api_implementation.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_utils.h"
-#include "ui/gl/gl_surface_wgl.h"
-#include "ui/gl/gl_wgl_api_implementation.h"
 #include "ui/gl/init/gl_display_initializer.h"
 #include "ui/gl/vsync_provider_win.h"
 
@@ -37,6 +34,7 @@ const wchar_t kD3DCompiler[] = L"D3DCompiler_47.dll";
 
 bool LoadD3DXLibrary(const base::FilePath& module_path,
                      const base::FilePath::StringType& name) {
+  TRACE_EVENT("gpu,startup", __func__);
   base::NativeLibrary library =
       base::LoadNativeLibrary(module_path.Append(name), nullptr);
   if (!library) {
@@ -49,11 +47,7 @@ bool LoadD3DXLibrary(const base::FilePath& module_path,
   return true;
 }
 
-bool InitializeStaticEGLInternalFromLibrary(GLImplementation implementation) {
-#if BUILDFLAG(USE_STATIC_ANGLE)
-  NOTREACHED();
-#endif
-
+bool LoadD3DCompiler() {
   base::FilePath module_path;
   if (!base::PathService::Get(base::DIR_MODULE, &module_path))
     return false;
@@ -61,15 +55,25 @@ bool InitializeStaticEGLInternalFromLibrary(GLImplementation implementation) {
   // Attempt to load the D3DX shader compiler using an absolute path. This is to
   // ensure that we load the versions of these DLLs that we ship. If that fails,
   // load the OS version.
-  LoadD3DXLibrary(module_path, kD3DCompiler);
+  return LoadD3DXLibrary(module_path, kD3DCompiler);
+}
 
-  base::FilePath gles_path = module_path;
+#if !BUILDFLAG(USE_STATIC_ANGLE)
+bool InitializeStaticEGLInternalFromLibrary() {
+  base::FilePath gles_path;
+  if (!base::PathService::Get(base::DIR_MODULE, &gles_path)) {
+    return false;
+  }
 
   // Load libglesv2.dll before libegl.dll because the latter is dependent on
   // the former and if there is another version of libglesv2.dll in the dll
   // search path, it will get loaded instead.
-  base::NativeLibrary gles_library =
-      base::LoadNativeLibrary(gles_path.Append(L"libglesv2.dll"), nullptr);
+  base::NativeLibrary gles_library;
+  {
+    TRACE_EVENT("gpu,startup", "Load gles_library");
+    gles_library =
+        base::LoadNativeLibrary(gles_path.Append(L"libglesv2.dll"), nullptr);
+  }
   if (!gles_library) {
     DVLOG(1) << "libglesv2.dll not found";
     return false;
@@ -77,8 +81,12 @@ bool InitializeStaticEGLInternalFromLibrary(GLImplementation implementation) {
 
   // When using EGL, first try eglGetProcAddress and then Windows
   // GetProcAddress on both the EGL and GLES2 DLLs.
-  base::NativeLibrary egl_library =
-      base::LoadNativeLibrary(gles_path.Append(L"libegl.dll"), nullptr);
+  base::NativeLibrary egl_library;
+  {
+    TRACE_EVENT("gpu,startup", "Load egl_library");
+    egl_library =
+        base::LoadNativeLibrary(gles_path.Append(L"libegl.dll"), nullptr);
+  }
   if (!egl_library) {
     DVLOG(1) << "libegl.dll not found.";
     base::UnloadNativeLibrary(gles_library);
@@ -102,18 +110,21 @@ bool InitializeStaticEGLInternalFromLibrary(GLImplementation implementation) {
 
   return true;
 }
+#endif  // !BUILFDLAG(USE_STATIC_ANGLE)
 
 bool InitializeStaticEGLInternal(GLImplementationParts implementation) {
+  DCHECK(implementation.gl == kGLImplementationEGLANGLE);
+
+  if (!LoadD3DCompiler()) {
+    return false;
+  }
+
 #if BUILDFLAG(USE_STATIC_ANGLE)
-  if (implementation.gl == kGLImplementationEGLANGLE) {
-    // Use ANGLE if it is requested and it is statically linked
-    if (!InitializeStaticANGLEEGL())
-      return false;
-  } else if (!InitializeStaticEGLInternalFromLibrary(implementation.gl)) {
+  if (!InitializeStaticANGLEEGL()) {
     return false;
   }
 #else
-  if (!InitializeStaticEGLInternalFromLibrary(implementation.gl)) {
+  if (!InitializeStaticEGLInternalFromLibrary()) {
     return false;
   }
 #endif  // !BUILDFLAG(USE_STATIC_ANGLE)
@@ -125,105 +136,17 @@ bool InitializeStaticEGLInternal(GLImplementationParts implementation) {
   return true;
 }
 
-bool InitializeStaticWGLInternal() {
-#if BUILDFLAG(IS_QTWEBENGINE)
-  const wchar_t *libraryName = L"opengl32.dll";
-  if (usingSoftwareDynamicGL())
-      libraryName = L"opengl32sw.dll";
-
-  base::NativeLibrary library =
-      base::LoadNativeLibrary(base::FilePath(libraryName), nullptr);
-  if (!library) {
-    DVLOG(1) << libraryName << " not found";
-    return false;
-  }
-#else
-  base::NativeLibrary library =
-      base::LoadNativeLibrary(base::FilePath(L"opengl32.dll"), nullptr);
-  if (!library) {
-    DVLOG(1) << "opengl32.dll not found";
-    return false;
-  }
-#endif
-
-  GLGetProcAddressProc get_proc_address =
-      reinterpret_cast<GLGetProcAddressProc>(
-          base::GetFunctionPointerFromNativeLibrary(library,
-                                                    "wglGetProcAddress"));
-  if (!get_proc_address) {
-    LOG(ERROR) << "wglGetProcAddress not found.";
-    base::UnloadNativeLibrary(library);
-    return false;
-  }
-
-  SetGLGetProcAddressProc(get_proc_address);
-  AddGLNativeLibrary(library);
-  SetGLImplementation(kGLImplementationDesktopGL);
-
-  // Initialize GL surface and get some functions needed for the context
-  // creation below.
-  if (!GLSurfaceWGL::InitializeOneOff()) {
-    LOG(ERROR) << "GLSurfaceWGL::InitializeOneOff failed.";
-    return false;
-  }
-  wglCreateContextProc wglCreateContextFn =
-      reinterpret_cast<wglCreateContextProc>(
-          GetGLProcAddress("wglCreateContext"));
-  wglDeleteContextProc wglDeleteContextFn =
-      reinterpret_cast<wglDeleteContextProc>(
-          GetGLProcAddress("wglDeleteContext"));
-  wglMakeCurrentProc wglMakeCurrentFn =
-      reinterpret_cast<wglMakeCurrentProc>(GetGLProcAddress("wglMakeCurrent"));
-
-  // Create a temporary GL context to bind to entry points. This is needed
-  // because wglGetProcAddress is specified to return nullptr for all queries
-  // if a context is not current in MSDN documentation, and the static
-  // bindings may contain functions that need to be queried with
-  // wglGetProcAddress. OpenGL wiki further warns that other error values
-  // than nullptr could also be returned from wglGetProcAddress on some
-  // implementations, so we need to clear the WGL bindings and reinitialize
-  // them after the context creation.
-  HGLRC gl_context = wglCreateContextFn(GLSurfaceWGL::GetDisplayDC());
-  if (!gl_context) {
-    LOG(ERROR) << "Failed to create temporary context.";
-    return false;
-  }
-  if (!wglMakeCurrentFn(GLSurfaceWGL::GetDisplayDC(), gl_context)) {
-    LOG(ERROR) << "Failed to make temporary GL context current.";
-    wglDeleteContextFn(gl_context);
-    return false;
-  }
-
-  InitializeStaticGLBindingsGL();
-  InitializeStaticGLBindingsWGL();
-
-  wglMakeCurrent(nullptr, nullptr);
-  wglDeleteContext(gl_context);
-
-  return true;
-}
-
 }  // namespace
 
-#if !BUILDFLAG(IS_QTWEBENGINE)
 GLDisplay* InitializeGLOneOffPlatform(gl::GpuPreference gpu_preference) {
   VSyncProviderWin::InitializeOneOff();
 
   GLDisplayEGL* display = GetDisplayEGL(gpu_preference);
   switch (GetGLImplementation()) {
-    case kGLImplementationDesktopGL:
-      if (!GLSurfaceWGL::InitializeOneOff()) {
-        LOG(ERROR) << "GLSurfaceWGL::InitializeOneOff failed.";
-        return false;
-      }
-      break;
     case kGLImplementationEGLANGLE: {
       if (!InitializeDisplay(display, EGLDisplayPlatform(GetDC(nullptr)))) {
         LOG(ERROR) << "GLDisplayEGL::Initialize failed.";
         return nullptr;
-      }
-      if (auto d3d11_device = QueryD3D11DeviceObjectFromANGLE()) {
-        InitializeDirectComposition(std::move(d3d11_device));
       }
       break;
     }
@@ -235,7 +158,6 @@ GLDisplay* InitializeGLOneOffPlatform(gl::GpuPreference gpu_preference) {
   }
   return display;
 }
-#endif
 
 bool InitializeStaticGLBindings(GLImplementationParts implementation) {
   // Prevent reinitialization with a different implementation. Once the gpu
@@ -252,8 +174,6 @@ bool InitializeStaticGLBindings(GLImplementationParts implementation) {
   switch (implementation.gl) {
     case kGLImplementationEGLANGLE:
       return InitializeStaticEGLInternal(implementation);
-    case kGLImplementationDesktopGL:
-      return InitializeStaticWGLInternal();
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       SetGLImplementationParts(implementation);
@@ -262,8 +182,6 @@ bool InitializeStaticGLBindings(GLImplementationParts implementation) {
     default:
       NOTREACHED();
   }
-
-  return false;
 }
 
 void ShutdownGLPlatform(GLDisplay* display) {
@@ -272,7 +190,6 @@ void ShutdownGLPlatform(GLDisplay* display) {
     display->Shutdown();
   ClearBindingsEGL();
   ClearBindingsGL();
-  ClearBindingsWGL();
 }
 
 }  // namespace init

@@ -29,6 +29,14 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
   // Opens the inspector for |agent_host|.
   virtual void Inspect(DevToolsAgentHost* agent_host);
 
+  // Opens the DevTools window for |agent_host|.
+  virtual scoped_refptr<DevToolsAgentHost> OpenDevTools(
+      content::DevToolsAgentHost* agent_host);
+
+  // Activates the associated inspector for `agent_host` if there
+  // is one.
+  virtual void Activate(DevToolsAgentHost* agent_host);
+
   // Returns DevToolsAgentHost type to use for given |web_contents| target.
   virtual std::string GetTargetType(WebContents* web_contents);
 
@@ -56,9 +64,12 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
   virtual DevToolsAgentHost::List RemoteDebuggingTargets(TargetType target_type);
 
   // Creates new inspectable target given the |url|.
-  virtual scoped_refptr<DevToolsAgentHost> CreateNewTarget(
-      const GURL& url,
-      TargetType target_type);
+  // |new_window| is currently only used on Android - Desktop platforms handle
+  // window creation elsewhere. Note that there is also a limit to the number of
+  // windows that may be opened on Android, and this parameter may be ignored if
+  // new windows cannot be opened.
+  virtual scoped_refptr<DevToolsAgentHost>
+  CreateNewTarget(const GURL& url, TargetType target_type, bool new_window);
 
   // Get all live browser contexts created by CreateBrowserContext() method.
   virtual std::vector<BrowserContext*> GetBrowserContexts();

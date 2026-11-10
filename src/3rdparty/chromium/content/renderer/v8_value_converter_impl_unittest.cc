@@ -10,6 +10,7 @@
 #include <cmath>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
@@ -54,7 +55,7 @@ class ScopedAvoidIdentityHashForTesting {
   ~ScopedAvoidIdentityHashForTesting();
 
  private:
-  raw_ptr<content::V8ValueConverterImpl, ExperimentalRenderer> converter_;
+  raw_ptr<content::V8ValueConverterImpl> converter_;
 };
 
 ScopedAvoidIdentityHashForTesting::ScopedAvoidIdentityHashForTesting(
@@ -262,7 +263,7 @@ class V8ValueConverterImplTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
   gin::IsolateHolder isolate_holder_;
   v8::Isolate::Scope isolate_scope_;
-  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_ = nullptr;
+  raw_ptr<v8::Isolate> isolate_ = nullptr;
 
   // Context for the JavaScript in the test.
   v8::Persistent<v8::Context> context_;
@@ -1254,13 +1255,12 @@ TEST_F(V8ValueConverterImplTest, StrategyBypass) {
   const char kExampleData[] = {1, 2, 3, 4, 5};
   v8::Local<v8::ArrayBuffer> array_buffer(
       v8::ArrayBuffer::New(isolate_, sizeof(kExampleData)));
-  memcpy(array_buffer->GetBackingStore()->Data(), kExampleData,
-         sizeof(kExampleData));
+  UNSAFE_TODO(memcpy(array_buffer->GetBackingStore()->Data(), kExampleData,
+                     sizeof(kExampleData)));
   std::unique_ptr<base::Value> binary_value(
       converter.FromV8Value(array_buffer, context));
   ASSERT_TRUE(binary_value);
-  base::Value reference_binary_value(
-      base::as_bytes(base::make_span(kExampleData)));
+  base::Value reference_binary_value(base::as_byte_span(kExampleData));
   EXPECT_EQ(reference_binary_value, *binary_value);
 
   v8::Local<v8::ArrayBufferView> array_buffer_view(
@@ -1269,7 +1269,7 @@ TEST_F(V8ValueConverterImplTest, StrategyBypass) {
       converter.FromV8Value(array_buffer_view, context));
   ASSERT_TRUE(binary_view_value);
   base::Value reference_binary_view_value(
-      base::as_bytes(base::make_span(kExampleData).subspan(1, 3)));
+      base::as_byte_span(kExampleData).subspan<1, 3>());
   EXPECT_EQ(reference_binary_view_value, *binary_view_value);
 
   v8::Local<v8::Number> number(v8::Number::New(isolate_, 0.0));

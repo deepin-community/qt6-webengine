@@ -109,7 +109,9 @@ enum BufferFormatPreference {
 // again to resume capture; or the mojo binding can be dropped to auto-terminate
 // the capturer.
 interface FrameSinkVideoCapturer {
-  // Specifies the pixel format to use.
+  // Specifies the pixel format to use. Please note when format is
+  // PIXEL_FORMAT_ARGB, the frame might be BGRA or RGBA depends on platform
+  // support, please refer to the actual VideoFrameInfo's format at callback.
   //
   // Default, if never called: PIXEL_FORMAT_I420.
   SetFormat(media.mojom.VideoPixelFormat format);
@@ -153,6 +155,18 @@ interface FrameSinkVideoCapturer {
   //
   // Default, if never called: true.
   SetAutoThrottlingEnabled(bool enabled);
+
+  // Determines whether the capturer should detect animations and aim to match
+  // their frame rate. If |enabled| is true, the capturer will attempt to
+  // identify the majority damaged rect and its animation frame rate,
+  // while adhering to the |majority_damaged_pixel_min_ratio| threshold.
+  // This ratio is calculated as the area of the majority damaged rect
+  // divided by the total area of all damaged rects. An animation will only
+  // be considered valid if the ratio meets or exceeds the specified threshold.
+  //
+  // By default, this feature is enabled, with the ratio threshold set to 2/3.
+  SetAnimationFpsLockIn(bool enabled,
+                        float majority_damaged_pixel_min_ratio);
 
   // Targets a different compositor frame sink. This may be called anytime,
   // before or after Start().

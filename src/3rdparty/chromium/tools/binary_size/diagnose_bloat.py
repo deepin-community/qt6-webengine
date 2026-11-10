@@ -100,8 +100,8 @@ class NativeDiff(BaseDiff):
   def summary_stat(self):
     m = NativeDiff._RE_SUMMARY_STAT.search(self._diff)
     if m:
-      return _DiffResult(
-          NativeDiff._SUMMARY_STAT_NAME, m.group('value'), m.group('units'))
+      return _DiffResult(NativeDiff._SUMMARY_STAT_NAME,
+                         float(m.group('value')), m.group('units'))
     raise Exception('Could not extract total from:\n' + self._diff)
 
   def DetailedResults(self):
@@ -244,11 +244,6 @@ class _BuildHelper:
     self._SetDefaults()
     self.is_bundle = 'minimal' in self.target
 
-  def _MaybeAddGoogleSuffix(self, path):
-    if self.IsTrichrome() and '_google' in self.target:
-      return path.replace('.', 'Google.', 1)
-    return path
-
   @property
   def abs_apk_paths(self):
     return [os.path.join(self.output_directory, x) for x in self.apk_paths]
@@ -283,19 +278,20 @@ class _BuildHelper:
   @property
   def supersize_input(self):
     if self.IsTrichrome():
-      return self._MaybeAddGoogleSuffix(
-          os.path.join(self.output_directory, 'apks', 'Trichrome.ssargs'))
+      suffix = self.TrichromeSuffix()
+      return os.path.join(self.output_directory, 'apks',
+                          f'Trichrome{suffix}.ssargs')
     return self.abs_apk_paths[0]
 
   @property
   def apk_paths(self):
     if self.IsTrichrome():
-      ret = [
-          os.path.join('apks', 'TrichromeChrome.minimal.apks'),
-          os.path.join('apks', 'TrichromeWebView.minimal.apks'),
-          os.path.join('apks', 'TrichromeLibrary.apk'),
+      suffix = self.TrichromeSuffix()
+      return [
+          os.path.join('apks', f'TrichromeChrome{suffix}.minimal.apks'),
+          os.path.join('apks', f'TrichromeWebView{suffix}.minimal.apks'),
+          os.path.join('apks', f'TrichromeLibrary{suffix}.apk'),
       ]
-      return [self._MaybeAddGoogleSuffix(x) for x in ret]
 
     return [os.path.join('apks', self.apk_name)]
 
@@ -329,13 +325,13 @@ class _BuildHelper:
     return self.apk_name + '.size'
 
   def _SetDefaults(self):
-    has_internal = os.path.exists(os.path.join(_SRC_ROOT, 'internal'))
+    has_internal = os.path.exists(os.path.join(_SRC_ROOT, 'internal', 'OWNERS'))
     if has_internal:
       self.extra_gn_args_str = (
           'is_chrome_branded=true ' + self.extra_gn_args_str)
     else:
       self.extra_gn_args_str = (
-          'ffmpeg_branding="Chrome" proprietary_codecs=true' +
+          'ffmpeg_branding="Chrome" proprietary_codecs=true ' +
           self.extra_gn_args_str)
     if self.IsLinux():
       self.extra_gn_args_str = (
@@ -346,9 +342,15 @@ class _BuildHelper:
       if self.IsLinux():
         self.target = 'chrome'
       elif self.enable_chrome_android_internal:
-        self.target = 'trichrome_google_32_minimal_apks'
+        if 'target_cpu="arm64"' in self.extra_gn_args_str:
+          self.target = 'trichrome_google_64_minimal_apks'
+        else:
+          self.target = 'trichrome_google_32_minimal_apks'
       else:
-        self.target = 'trichrome_32_minimal_apks'
+        if 'target_cpu="arm64"' in self.extra_gn_args_str:
+          self.target = 'trichrome_64_minimal_apks'
+        else:
+          self.target = 'trichrome_32_minimal_apks'
 
   def _GenGnCmd(self):
     gn_args = 'is_official_build=true'
@@ -397,6 +399,17 @@ class _BuildHelper:
 
   def IsTrichrome(self):
     return 'trichrome' in self.target
+
+  def TrichromeSuffix(self):
+    assert self.IsTrichrome()
+    ret = ''
+    if '_google' in self.target:
+      ret = 'Google'
+    if '64_32' in self.target:
+      ret += '6432'
+    elif '64' in self.target:
+      ret += '64'
+    return ret
 
   def IsLinux(self):
     return self.target_os == 'linux'
@@ -591,12 +604,13 @@ class _DiffArchiveManager:
     path = os.path.join(self.archive_dir, 'last_diff_summary.txt')
     if self._summary_stats:
       with open(path, 'w') as f:
-        stats = sorted(
-            self._summary_stats, key=lambda x: x[0].value, reverse=True)
+        stats = sorted(self._summary_stats,
+                       key=lambda x: x[0].value,
+                       reverse=True)
         _WriteToFile(f, '\nDiff Summary')
         for s, before, after in stats:
           _WriteToFile(f, '{:>+10} {} {} for range: {}..{}',
-                               s.value, s.units, s.name, before, after)
+                       s.value, s.units, s.name, before, after)
 
     # Print cached file if all builds were cached.
     num_archives = len(self.build_archives)
@@ -929,6 +943,10 @@ def main():
                            'Android default: trichrome_32_minimal_apks or '
                            'trichrome_google_32_minimal_apks (depending on '
                            '--enable-chrome-android-internal).')
+  build_group.add_argument('--arm64',
+                           action='store_true',
+                           help='Adds target_cpu="arm64" and sets the default '
+                           'target to trichrome_64_minimal_apks')
   build_group.add_argument('--custom-apk-name',
                            help='The apk name by default is derived from the '
                            'target name, but occasionally targets set a custom '
@@ -953,6 +971,11 @@ def main():
                       format='%(levelname).1s %(relativeCreated)6d %(message)s')
   if args.target and args.target.endswith('_bundle'):
     parser.error('Bundle targets must use _minimal_apks variants')
+  if args.arm64:
+    if args.gn_args:
+      args.gn_args = 'target_cpu="arm64" ' + args.gn_args
+    else:
+      args.gn_args = 'target_cpu="arm64"'
 
   if _GN_PATH is None:
     parser.error('Could not find "gn" on your PATH')

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -24,12 +25,16 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/random/bit_gen_ref.h"
 #include "absl/random/random.h"
+#include "absl/status/status.h"
 #include "absl/types/optional.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
-#include "./fuzztest/domain.h"
+#include "./fuzztest/domain_core.h"
 #include "./domain_tests/domain_testing.h"
+#include "./fuzztest/internal/serialization.h"
+#include "./fuzztest/internal/type_support.h"
 
 namespace fuzztest {
 namespace {
@@ -82,7 +87,7 @@ TEST(StructOf, MutateGeneratesValidValues) {
   Set<std::string> field_s;
   Value agg(domain, bitgen);
   while (field_a.size() < 2 && field_s.size() < 10) {
-    agg.Mutate(domain, bitgen, false);
+    agg.Mutate(domain, bitgen, {}, false);
     EXPECT_THAT(agg.user_value.a, AnyOf(5, 10));
     field_a.insert(agg.user_value.a);
     field_s.insert(agg.user_value.s);
@@ -104,11 +109,11 @@ TEST(StructOf, WorksWithStructWithUpTo16Fields) {
   Value value(domain, bitgen);
   const uint32_t initial_sum = value.user_value.sum();
   while (value.user_value.sum() == initial_sum) {
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
   }
   // Check that shrinking works too.
   while (value.user_value.sum() != 0) {
-    value.Mutate(domain, bitgen, true);
+    value.Mutate(domain, bitgen, {}, true);
   }
 }
 
@@ -151,7 +156,7 @@ TEST(ConstructorOf, MutateGeneratesValidValues) {
   Set<std::string> field_s;
   Value agg(domain, bitgen);
   while (field_a.size() < 2 && field_d.size() < 10 && field_s.size() < 10) {
-    agg.Mutate(domain, bitgen, false);
+    agg.Mutate(domain, bitgen, {}, false);
     EXPECT_THAT(agg.user_value.a(), AnyOf(5, 10));
     field_a.insert(agg.user_value.a());
     field_d.insert(agg.user_value.d());
@@ -181,11 +186,11 @@ TEST(ConstructorOf, WorksWithTemplatedConstructors) {
   Value value(domain, bitgen);
   const uint32_t initial_sum = value.user_value.sum();
   while (value.user_value.sum() == initial_sum) {
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
   }
   // Check that shrinking works too.
   while (value.user_value.sum() != 0) {
-    value.Mutate(domain, bitgen, true);
+    value.Mutate(domain, bitgen, {}, true);
   }
 }
 
@@ -201,7 +206,7 @@ TEST(ConstructorOf, WorksWithMoveConstructors) {
   Value value(domain, bitgen);
   const std::string initial_value = value.user_value.data_;
   while (value.user_value.data_ == initial_value) {
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
   }
 }
 
@@ -254,7 +259,7 @@ TEST(VariantOf, MutateGenerateValidValues) {
   Value value(domain, bitgen);
   while (unique_values[0].size() < 2 || unique_values[1].size() < n ||
          counter[2] < n || counter[3] < n) {
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
     if (value.user_value.index() == 0) {
       int val = std::get<0>(value.user_value);
       EXPECT_THAT(val, AnyOf(5, 10));
@@ -277,7 +282,23 @@ TEST(VariantOf, WorksWithACustomVariantType) {
   EXPECT_THAT(v, AnyOf(VariantWith<int>(_), VariantWith<double>(_)));
 }
 
-TEST(Variantof, ValidationRejectsInvalidValue) {
+struct Alternative1 {};
+
+struct Alternative2 {
+  int64_t value;
+};
+
+TEST(VariantOf, WorksWithStructInnerDomain) {
+  auto domain = VariantOf(StructOf<Alternative1>(),
+                          StructOf<Alternative2>(Arbitrary<int64_t>()));
+  absl::BitGen bitgen;
+  absl::variant<Alternative1, Alternative2> v =
+      Value(domain, bitgen).user_value;
+  EXPECT_THAT(
+      v, AnyOf(VariantWith<Alternative1>(_), VariantWith<Alternative2>(_)));
+}
+
+TEST(VariantOf, ValidationRejectsInvalidValue) {
   absl::BitGen bitgen;
 
   auto domain_a = VariantOf(InRange(0, 9), InRange(0.4, 9.1));
@@ -325,7 +346,7 @@ TEST(OptionalOf, MutateCanMakeValuesOrNull) {
   absl::BitGen bitgen;
   Value value(domain, bitgen);
   while (values.size() < 4) {
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
     values.insert(value.user_value);
   }
   EXPECT_THAT(values, UnorderedElementsAre(std::nullopt, Optional(1),
@@ -347,7 +368,7 @@ TEST(OptionalOf, AlwaysGenerateNulloptWhenPolicySet) {
   Value value(domain, bitgen);
   for (int i = 0; i < 10000; ++i) {
     EXPECT_TRUE(value == std::nullopt) << "Didn't expect non-null value!";
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
   }
 }
 
@@ -359,7 +380,7 @@ TEST(OptionalOf, DoesntGenerateNulloptWhenPolicySet) {
   Value value(domain, bitgen);
   for (int i = 0; i < 10000; ++i) {
     EXPECT_TRUE(value != std::nullopt) << "Didn't expect null value!";
-    value.Mutate(domain, bitgen, false);
+    value.Mutate(domain, bitgen, {}, false);
   }
 }
 
@@ -428,6 +449,49 @@ TEST(TupleOf, ValidationRejectsInvalidInnerValue) {
       domain_b.ValidateCorpusValue(value_a.corpus_value),
       IsInvalid(testing::MatchesRegex(
           R"(Invalid value in aggregate >> The value .+ is not InRange\(.+\))")));
+}
+
+TEST(TupleOf, DomainWithCustomPairCorpusType) {
+  class DomainWithCustomPairCorpusType
+      : public fuzztest::domain_implementor::DomainBase<
+            DomainWithCustomPairCorpusType, std::pair<uint8_t, uint8_t>,
+            std::pair<uint64_t, uint64_t>> {
+   public:
+    using corpus_type = DomainWithCustomPairCorpusType::DomainBase::corpus_type;
+    using value_type = DomainWithCustomPairCorpusType::DomainBase::value_type;
+
+    corpus_type Init(absl::BitGenRef prng) { return {0, 0}; }
+
+    void Mutate(corpus_type& val, absl::BitGenRef prng,
+                const domain_implementor::MutationMetadata& metadata,
+                bool only_shrink) {}
+
+    absl::Status ValidateCorpusValue(const corpus_type& value) const {
+      return absl::OkStatus();
+    }
+
+    auto GetPrinter() const { return internal::UnknownPrinter(); }
+
+    value_type GetValue(const corpus_type& v) const { return value_type(v); }
+
+    std::optional<corpus_type> FromValue(const value_type& v) const {
+      return corpus_type(v);
+    }
+
+    std::optional<corpus_type> ParseCorpus(
+        const internal::IRObject& obj) const {
+      return corpus_type{};
+    }
+
+    internal::IRObject SerializeCorpus(const corpus_type& v) const {
+      return internal::IRObject{};
+    }
+  };
+
+  auto domain = TupleOf(DomainWithCustomPairCorpusType{});
+  std::tuple<std::pair<uint8_t, uint8_t>> value{{1, 2}};
+  auto optional_corpus_tuple = domain.FromValue(value);
+  EXPECT_TRUE(optional_corpus_tuple.has_value());
 }
 
 }  // namespace

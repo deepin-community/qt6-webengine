@@ -43,6 +43,7 @@ namespace blink {
 class Animation;
 class ContainerNode;
 class CSSStyleSheet;
+class CustomElementRegistry;
 class DOMSelection;
 class Document;
 class Element;
@@ -53,9 +54,6 @@ class Node;
 class SVGTreeScopeResources;
 class ScopedStyleResolver;
 class StyleSheetList;
-class CreateElementFlags;
-class QualifiedName;
-class V8UnionElementCreationOptionsOrString;
 
 // The root node of a document tree (in which case this is a Document) or of a
 // shadow tree (in which case this is a ShadowRoot). Various things, like
@@ -75,7 +73,7 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   Element* activeElement() const;
   StyleSheetList* styleSheets() { return &StyleSheets(); }
   V8ObservableArrayCSSStyleSheet* adoptedStyleSheets() {
-    return AdoptedStyleSheets();
+    return &EnsureAdoptedStyleSheets();
   }
   DOMSelection* getSelection() { return GetSelection(); }
   HeapVector<Member<Animation>> getAnimations();
@@ -143,9 +141,11 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
 
   ContainerNode& RootNode() const { return *root_node_; }
 
-  IdTargetObserverRegistry& GetIdTargetObserverRegistry() const {
-    return *id_target_observer_registry_.Get();
+  IdTargetObserverRegistry* GetIdTargetObserverRegistry() const {
+    return id_target_observer_registry_ ? id_target_observer_registry_.Get()
+                                        : nullptr;
   }
+  IdTargetObserverRegistry& EnsureIdTargetObserverRegistry();
 
   RadioButtonGroupScope& GetRadioButtonGroupScope() {
     return radio_button_group_scope_;
@@ -174,56 +174,57 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   V8ObservableArrayCSSStyleSheet* AdoptedStyleSheets() const {
     return adopted_style_sheets_.Get();
   }
+  V8ObservableArrayCSSStyleSheet& EnsureAdoptedStyleSheets();
   bool HasAdoptedStyleSheets() const;
   void SetAdoptedStyleSheetsForTesting(HeapVector<Member<CSSStyleSheet>>&);
   void ClearAdoptedStyleSheets();
 
-  Element* CreateElementForBinding(const AtomicString& local_name,
-                                   ExceptionState& = ASSERT_NO_EXCEPTION);
-  Element* CreateElementForBinding(
-      const AtomicString& local_name,
-      const V8UnionElementCreationOptionsOrString* string_or_options,
-      ExceptionState& exception_state);
-  Element* createElementNS(const AtomicString& namespace_uri,
-                           const AtomicString& qualified_name,
-                           ExceptionState&);
-  Element* createElementNS(
-      const AtomicString& namespace_uri,
-      const AtomicString& qualified_name,
-      const V8UnionElementCreationOptionsOrString* string_or_options,
-      ExceptionState& exception_state);
 
-  // "create an element" defined in DOM standard. This supports both of
-  // autonomous custom elements and customized built-in elements.
-  Element* CreateElement(const QualifiedName&,
-                         const CreateElementFlags,
-                         const AtomicString& is);
+  // Returns the custom element registry associated with this tree scope.
+  //
+  // DOMWrapperWorld rule: any caller that will hand the returned registry
+  // to script must pass the caller's ScriptState. Without it, an isolated
+  // world (e.g., an extension content script) can reach a registry created
+  // in a different world (typically the main world) and leak raw cross-
+  // world v8 objects -- e.g., custom-element constructors handed out via
+  // the shared `when_defined_promise_map_`. When ScriptState is supplied,
+  // this method returns nullptr if the registry's creation world differs
+  // from the caller's world (or, for the global registry, if the caller is
+  // not in the main world).
+  //
+  // Callers that only use the registry for blink-internal work (creating
+  // elements, managing element<->registry associations, serialization,
+  // etc.) may omit `script_state` (or pass nullptr) to bypass the world
+  // check.
+  CustomElementRegistry* customElementRegistry(
+      ScriptState* script_state = nullptr) const;
+  // Return true when custom element registry was set successfully, return false
+  // otherwise.
+  bool SetCustomElementRegistry(CustomElementRegistry*);
+
+  // Given a `node` targeteted by an event, returns the element that this event
+  // should be dispatched to.
+  Element* ElementForHitTest(Node*, HitTestPointType) const;
 
  protected:
-  explicit TreeScope(ContainerNode&,
-                     Document&,
-                     V8ObservableArrayCSSStyleSheet::SetAlgorithmCallback,
-                     V8ObservableArrayCSSStyleSheet::DeleteAlgorithmCallback);
-  explicit TreeScope(Document&,
-                     V8ObservableArrayCSSStyleSheet::SetAlgorithmCallback,
-                     V8ObservableArrayCSSStyleSheet::DeleteAlgorithmCallback);
+  TreeScope(ContainerNode&, Document&);
+  explicit TreeScope(Document&);
   virtual ~TreeScope();
 
   void SetDocument(Document& document) { document_ = &document; }
   void SetParentTreeScope(TreeScope&);
 
-  virtual void OnAdoptedStyleSheetSet(ScriptState*,
-                                      V8ObservableArrayCSSStyleSheet&,
-                                      uint32_t,
-                                      Member<CSSStyleSheet>&,
-                                      ExceptionState&);
-  virtual void OnAdoptedStyleSheetDelete(ScriptState*,
-                                         V8ObservableArrayCSSStyleSheet&,
-                                         uint32_t,
-                                         ExceptionState&);
-
  private:
-  Element* HitTestPointInternal(Node*, HitTestPointType) const;
+  static void OnAdoptedStyleSheetSet(GarbageCollectedMixin*,
+                                     ScriptState*,
+                                     V8ObservableArrayCSSStyleSheet&,
+                                     uint32_t,
+                                     Member<CSSStyleSheet>&);
+  static void OnAdoptedStyleSheetDelete(GarbageCollectedMixin*,
+                                        ScriptState*,
+                                        V8ObservableArrayCSSStyleSheet&,
+                                        uint32_t);
+
   Element* FindAnchorWithName(const String& name);
 
   void StyleSheetWasAdded(CSSStyleSheet* sheet);
@@ -249,6 +250,8 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   Member<StyleSheetList> style_sheet_list_;
 
   Member<V8ObservableArrayCSSStyleSheet> adopted_style_sheets_;
+
+  Member<CustomElementRegistry> custom_element_registry_;
 };
 
 inline bool TreeScope::HasElementWithId(const AtomicString& id) const {

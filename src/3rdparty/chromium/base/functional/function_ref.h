@@ -9,12 +9,21 @@
 #include <type_traits>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind_internal.h"
-#include "third_party/abseil-cpp/absl/base/attributes.h"
 #include "third_party/abseil-cpp/absl/functional/function_ref.h"
 
 namespace base {
 
+#if defined(_MSC_VER)
+template <typename R, typename... Args>
+class FunctionRef<R(Args...)> : public absl::FunctionRef<R(Args...)>
+{
+ public:
+  using absl::FunctionRef<R(Args...)>::FunctionRef;
+};
+
+#else
 template <typename Signature>
 class FunctionRef;
 
@@ -32,7 +41,7 @@ class FunctionRef;
 // valid to invoke.
 //
 // The usual lifetime precautions for other non-owning references types (e.g.
-// `base::StringPiece`, `base::span`) also apply to `base::FunctionRef`.
+// `std::string_view`, `base::span`) also apply to `base::FunctionRef`.
 // `base::FunctionRef` should typically be used as an argument; returning a
 // `base::FunctionRef` or storing a `base::FunctionRef` as a field is dangerous
 // and likely to result in lifetime bugs.
@@ -63,18 +72,18 @@ class FunctionRef;
 template <typename R, typename... Args>
 class FunctionRef<R(Args...)> {
   template <typename Functor,
-            typename RunType = internal::MakeFunctorTraits<Functor>::RunType>
+            typename RunType = internal::FunctorTraits<Functor>::RunType>
   static constexpr bool kCompatibleFunctor =
       std::convertible_to<internal::ExtractReturnType<RunType>, R> &&
       std::same_as<internal::ExtractArgs<RunType>, internal::TypeList<Args...>>;
 
  public:
-  // `ABSL_ATTRIBUTE_LIFETIME_BOUND` is important; since `FunctionRef` retains
+  // `LIFETIME_BOUND` is important; since `FunctionRef` retains
   // only a reference to `functor`, `functor` must outlive `this`.
   template <typename Functor>
     requires kCompatibleFunctor<Functor>
   // NOLINTNEXTLINE(google-explicit-constructor)
-  FunctionRef(const Functor& functor ABSL_ATTRIBUTE_LIFETIME_BOUND)
+  FunctionRef(const Functor& functor LIFETIME_BOUND)
       : wrapped_func_ref_(functor) {}
 
   // Constructs a reference to the given function pointer. This constructor
@@ -90,6 +99,10 @@ class FunctionRef<R(Args...)> {
   // NOLINTNEXTLINE(google-explicit-constructor)
   FunctionRef(Func* func) : wrapped_func_ref_(func) {}
 
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  FunctionRef(const absl::FunctionRef<R(Args...)>& func LIFETIME_BOUND)
+      : wrapped_func_ref_(func) {}
+
   // Null FunctionRefs are not allowed.
   FunctionRef() = delete;
 
@@ -104,7 +117,7 @@ class FunctionRef<R(Args...)> {
  private:
   absl::FunctionRef<R(Args...)> wrapped_func_ref_;
 };
-
+#endif
 }  // namespace base
 
 #endif  // BASE_FUNCTIONAL_FUNCTION_REF_H_

@@ -4,6 +4,7 @@
 
 #include "services/network/tls_socket_factory.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -23,7 +24,6 @@
 #include "services/network/public/mojom/tls_socket.mojom.h"
 #include "services/network/ssl_config_type_converter.h"
 #include "services/network/tls_client_socket.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 namespace {
@@ -41,6 +41,15 @@ class FakeCertVerifier : public net::CertVerifier {
     verify_result->Reset();
     verify_result->verified_cert = params.certificate();
     return net::OK;
+  }
+  void Verify2QwacBinding(
+      const std::string& binding,
+      const std::string& hostname,
+      const scoped_refptr<net::X509Certificate>& tls_cert,
+      base::OnceCallback<void(const scoped_refptr<net::X509Certificate>&)>
+          callback,
+      const net::NetLogWithSource& net_log) override {
+    std::move(callback).Run(nullptr);
   }
   void SetConfig(const Config& config) override {}
   void AddObserver(Observer* observer) override {}
@@ -76,9 +85,9 @@ void TLSSocketFactory::UpgradeToTLS(
     UpgradeToTLSCallback callback) {
   const net::StreamSocket* socket = socket_delegate->BorrowSocket();
   if (!socket || !socket->IsConnected()) {
-    std::move(callback).Run(
-        net::ERR_SOCKET_NOT_CONNECTED, mojo::ScopedDataPipeConsumerHandle(),
-        mojo::ScopedDataPipeProducerHandle(), absl::nullopt);
+    std::move(callback).Run(net::ERR_SOCKET_NOT_CONNECTED,
+                            mojo::ScopedDataPipeConsumerHandle(),
+                            mojo::ScopedDataPipeProducerHandle(), std::nullopt);
     return;
   }
   CreateTLSClientSocket(

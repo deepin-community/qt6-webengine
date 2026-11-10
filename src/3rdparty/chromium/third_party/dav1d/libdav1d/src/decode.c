@@ -73,42 +73,29 @@ static void init_quant_tables(const Dav1dSequenceHeader *const seq_hdr,
     }
 }
 
-static int read_mv_component_diff(Dav1dTaskContext *const t,
+static int read_mv_component_diff(MsacContext *const msac,
                                   CdfMvComponent *const mv_comp,
-                                  const int have_fp)
+                                  const int mv_prec)
 {
-    Dav1dTileState *const ts = t->ts;
-    const Dav1dFrameContext *const f = t->f;
-    const int have_hp = f->frame_hdr->hp;
-    const int sign = dav1d_msac_decode_bool_adapt(&ts->msac, mv_comp->sign);
-    const int cl = dav1d_msac_decode_symbol_adapt16(&ts->msac,
-                                                    mv_comp->classes, 10);
-    int up, fp, hp;
+    const int sign = dav1d_msac_decode_bool_adapt(msac, mv_comp->sign);
+    const int cl = dav1d_msac_decode_symbol_adapt16(msac, mv_comp->classes, 10);
+    int up, fp = 3, hp = 1;
 
     if (!cl) {
-        up = dav1d_msac_decode_bool_adapt(&ts->msac, mv_comp->class0);
-        if (have_fp) {
-            fp = dav1d_msac_decode_symbol_adapt4(&ts->msac,
-                                                 mv_comp->class0_fp[up], 3);
-            hp = have_hp ? dav1d_msac_decode_bool_adapt(&ts->msac,
-                                                        mv_comp->class0_hp) : 1;
-        } else {
-            fp = 3;
-            hp = 1;
+        up = dav1d_msac_decode_bool_adapt(msac, mv_comp->class0);
+        if (mv_prec >= 0) {  // !force_integer_mv
+            fp = dav1d_msac_decode_symbol_adapt4(msac, mv_comp->class0_fp[up], 3);
+            if (mv_prec > 0) // allow_high_precision_mv
+                hp = dav1d_msac_decode_bool_adapt(msac, mv_comp->class0_hp);
         }
     } else {
         up = 1 << cl;
         for (int n = 0; n < cl; n++)
-            up |= dav1d_msac_decode_bool_adapt(&ts->msac,
-                                               mv_comp->classN[n]) << n;
-        if (have_fp) {
-            fp = dav1d_msac_decode_symbol_adapt4(&ts->msac,
-                                                 mv_comp->classN_fp, 3);
-            hp = have_hp ? dav1d_msac_decode_bool_adapt(&ts->msac,
-                                                        mv_comp->classN_hp) : 1;
-        } else {
-            fp = 3;
-            hp = 1;
+            up |= dav1d_msac_decode_bool_adapt(msac, mv_comp->classN[n]) << n;
+        if (mv_prec >= 0) {  // !force_integer_mv
+            fp = dav1d_msac_decode_symbol_adapt4(msac, mv_comp->classN_fp, 3);
+            if (mv_prec > 0) // allow_high_precision_mv
+                hp = dav1d_msac_decode_bool_adapt(msac, mv_comp->classN_hp);
         }
     }
 
@@ -117,25 +104,16 @@ static int read_mv_component_diff(Dav1dTaskContext *const t,
     return sign ? -diff : diff;
 }
 
-static void read_mv_residual(Dav1dTaskContext *const t, mv *const ref_mv,
-                             CdfMvContext *const mv_cdf, const int have_fp)
+static void read_mv_residual(Dav1dTileState *const ts, mv *const ref_mv,
+                             const int mv_prec)
 {
-    switch (dav1d_msac_decode_symbol_adapt4(&t->ts->msac, t->ts->cdf.mv.joint,
-                                            N_MV_JOINTS - 1))
-    {
-    case MV_JOINT_HV:
-        ref_mv->y += read_mv_component_diff(t, &mv_cdf->comp[0], have_fp);
-        ref_mv->x += read_mv_component_diff(t, &mv_cdf->comp[1], have_fp);
-        break;
-    case MV_JOINT_H:
-        ref_mv->x += read_mv_component_diff(t, &mv_cdf->comp[1], have_fp);
-        break;
-    case MV_JOINT_V:
-        ref_mv->y += read_mv_component_diff(t, &mv_cdf->comp[0], have_fp);
-        break;
-    default:
-        break;
-    }
+    MsacContext *const msac = &ts->msac;
+    const enum MVJoint mv_joint =
+        dav1d_msac_decode_symbol_adapt4(msac, ts->cdf.mv.joint, N_MV_JOINTS - 1);
+    if (mv_joint & MV_JOINT_V)
+        ref_mv->y += read_mv_component_diff(msac, &ts->cdf.mv.comp[0], mv_prec);
+    if (mv_joint & MV_JOINT_H)
+        ref_mv->x += read_mv_component_diff(msac, &ts->cdf.mv.comp[1], mv_prec);
 }
 
 static void read_tx_tree(Dav1dTaskContext *const t,
@@ -183,14 +161,8 @@ static void read_tx_tree(Dav1dTaskContext *const t,
         }
         t->by -= txsh;
     } else {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->dir tx, off, is_split ? TX_4X4 : mul * txh)
-        case_set_upto16(t_dim->h, l., 1, by4);
-#undef set_ctx
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->dir tx, off, is_split ? TX_4X4 : mul * txw)
-        case_set_upto16(t_dim->w, a->, 0, bx4);
-#undef set_ctx
+        dav1d_memset_pow2[t_dim->lw](&t->a->tx[bx4], is_split ? TX_4X4 : txw);
+        dav1d_memset_pow2[t_dim->lh](&t->l.tx[by4], is_split ? TX_4X4 : txh);
     }
 }
 
@@ -441,17 +413,17 @@ static void order_palette(const uint8_t *pal_idx, const ptrdiff_t stride,
 
 static void read_pal_indices(Dav1dTaskContext *const t,
                              uint8_t *const pal_idx,
-                             const Av1Block *const b, const int pl,
+                             const int pal_sz, const int pl,
                              const int w4, const int h4,
                              const int bw4, const int bh4)
 {
     Dav1dTileState *const ts = t->ts;
     const ptrdiff_t stride = bw4 * 4;
     assert(pal_idx);
-    pixel *const pal_tmp = t->scratch.pal_idx_uv;
-    pal_tmp[0] = dav1d_msac_decode_uniform(&ts->msac, b->pal_sz[pl]);
+    uint8_t *const pal_tmp = t->scratch.pal_idx_uv;
+    pal_tmp[0] = dav1d_msac_decode_uniform(&ts->msac, pal_sz);
     uint16_t (*const color_map_cdf)[8] =
-        ts->cdf.m.color_map[pl][b->pal_sz[pl] - 2];
+        ts->cdf.m.color_map[pl][pal_sz - 2];
     uint8_t (*const order)[8] = t->scratch.pal_order;
     uint8_t *const ctx = t->scratch.pal_ctx;
     for (int i = 1; i < 4 * (w4 + h4) - 1; i++) {
@@ -461,7 +433,7 @@ static void read_pal_indices(Dav1dTaskContext *const t,
         order_palette(pal_tmp, stride, i, first, last, order, ctx);
         for (int j = first, m = 0; j >= last; j--, m++) {
             const int color_idx = dav1d_msac_decode_symbol_adapt8(&ts->msac,
-                                      color_map_cdf[ctx[m]], b->pal_sz[pl] - 1);
+                                      color_map_cdf[ctx[m]], pal_sz - 1);
             pal_tmp[(i - j) * stride + j] = order[m][color_idx];
         }
     }
@@ -486,19 +458,13 @@ static void read_vartx_tree(Dav1dTaskContext *const t,
     {
         b->max_ytx = b->uvtx = TX_4X4;
         if (f->frame_hdr->txfm_mode == DAV1D_TX_SWITCHABLE) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir tx, off, TX_4X4)
-            case_set(bh4, l., 1, by4);
-            case_set(bw4, a->, 0, bx4);
-#undef set_ctx
+            dav1d_memset_pow2[b_dim[2]](&t->a->tx[bx4], TX_4X4);
+            dav1d_memset_pow2[b_dim[3]](&t->l.tx[by4], TX_4X4);
         }
     } else if (f->frame_hdr->txfm_mode != DAV1D_TX_SWITCHABLE || b->skip) {
         if (f->frame_hdr->txfm_mode == DAV1D_TX_SWITCHABLE) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir tx, off, mul * b_dim[2 + diridx])
-            case_set(bh4, l., 1, by4);
-            case_set(bw4, a->, 0, bx4);
-#undef set_ctx
+            dav1d_memset_pow2[b_dim[2]](&t->a->tx[bx4], b_dim[2 + 0]);
+            dav1d_memset_pow2[b_dim[3]](&t->l.tx[by4], b_dim[2 + 1]);
         }
         b->uvtx = dav1d_max_txfm_size_for_bs[bs][f->cur.p.layout];
     } else {
@@ -718,8 +684,7 @@ static int decode_b(Dav1dTaskContext *const t,
                     const enum BlockLevel bl,
                     const enum BlockSize bs,
                     const enum BlockPartition bp,
-                    const enum EdgeFlags intra_edge_flags)
-{
+                    const enum EdgeFlags intra_edge_flags) {
     Dav1dTileState *const ts = t->ts;
     const Dav1dFrameContext *const f = t->f;
     Av1Block b_mem, *const b = t->frame_thread.pass ?
@@ -744,11 +709,13 @@ static int decode_b(Dav1dTaskContext *const t,
 
             const enum IntraPredMode y_mode_nofilt =
                 b->y_mode == FILTER_PRED ? DC_PRED : b->y_mode;
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir mode, off, mul * y_mode_nofilt); \
-            rep_macro(type, t->dir intra, off, mul)
-            case_set(bh4, l., 1, by4);
-            case_set(bw4, a->, 0, bx4);
+#define set_ctx(rep_macro) \
+            rep_macro(edge->mode, off, y_mode_nofilt); \
+            rep_macro(edge->intra, off, 1)
+            BlockContext *edge = t->a;
+            for (int i = 0, off = bx4; i < 2; i++, off = by4, edge = &t->l) {
+                case_set(b_dim[2 + i]);
+            }
 #undef set_ctx
             if (IS_INTER_OR_SWITCH(f->frame_hdr)) {
                 refmvs_block *const r = &t->rt.r[(t->by & 31) + 5 + bh4 - 1][t->bx];
@@ -764,17 +731,15 @@ static int decode_b(Dav1dTaskContext *const t,
             }
 
             if (has_chroma) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-                rep_macro(type, t->dir uvmode, off, mul * b->uv_mode)
-                case_set(cbh4, l., 1, cby4);
-                case_set(cbw4, a->, 0, cbx4);
-#undef set_ctx
+                uint8_t uv_mode = b->uv_mode;
+                dav1d_memset_pow2[ulog2(cbw4)](&t->a->uvmode[cbx4], uv_mode);
+                dav1d_memset_pow2[ulog2(cbh4)](&t->l.uvmode[cby4], uv_mode);
             }
         } else {
             if (IS_INTER_OR_SWITCH(f->frame_hdr) /* not intrabc */ &&
                 b->comp_type == COMP_INTER_NONE && b->motion_mode == MM_WARP)
             {
-                if (b->matrix[0] == SHRT_MIN) {
+                if (b->matrix[0] == INT16_MIN) {
                     t->warpmv.type = DAV1D_WM_TYPE_IDENTITY;
                 } else {
                     t->warpmv.type = DAV1D_WM_TYPE_AFFINE;
@@ -806,13 +771,15 @@ static int decode_b(Dav1dTaskContext *const t,
             if (f->bd_fn.recon_b_inter(t, bs, b)) return -1;
 
             const uint8_t *const filter = dav1d_filter_dir[b->filter2d];
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir filter[0], off, mul * filter[0]); \
-            rep_macro(type, t->dir filter[1], off, mul * filter[1]); \
-            rep_macro(type, t->dir intra, off, 0)
-            case_set(bh4, l., 1, by4);
-            case_set(bw4, a->, 0, bx4);
+            BlockContext *edge = t->a;
+            for (int i = 0, off = bx4; i < 2; i++, off = by4, edge = &t->l) {
+#define set_ctx(rep_macro) \
+                rep_macro(edge->filter[0], off, filter[0]); \
+                rep_macro(edge->filter[1], off, filter[1]); \
+                rep_macro(edge->intra, off, 0)
+                case_set(b_dim[2 + i]);
 #undef set_ctx
+            }
 
             if (IS_INTER_OR_SWITCH(f->frame_hdr)) {
                 refmvs_block *const r = &t->rt.r[(t->by & 31) + 5 + bh4 - 1][t->bx];
@@ -830,11 +797,8 @@ static int decode_b(Dav1dTaskContext *const t,
             }
 
             if (has_chroma) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-                rep_macro(type, t->dir uvmode, off, mul * DC_PRED)
-                case_set(cbh4, l., 1, cby4);
-                case_set(cbw4, a->, 0, cbx4);
-#undef set_ctx
+                dav1d_memset_pow2[ulog2(cbw4)](&t->a->uvmode[cbx4], DC_PRED);
+                dav1d_memset_pow2[ulog2(cbh4)](&t->l.uvmode[cby4], DC_PRED);
             }
         }
         return 0;
@@ -994,15 +958,12 @@ static int decode_b(Dav1dTaskContext *const t,
     }
 
     // delta-q/lf
-    if (!(t->bx & (31 >> !f->seq_hdr->sb128)) &&
-        !(t->by & (31 >> !f->seq_hdr->sb128)))
-    {
+    if (!((t->bx | t->by) & (31 >> !f->seq_hdr->sb128))) {
         const int prev_qidx = ts->last_qidx;
         const int have_delta_q = f->frame_hdr->delta.q.present &&
             (bs != (f->seq_hdr->sb128 ? BS_128x128 : BS_64x64) || !b->skip);
 
-        int8_t prev_delta_lf[4];
-        memcpy(prev_delta_lf, ts->last_delta_lf, 4);
+        uint32_t prev_delta_lf = ts->last_delta_lf.u32;
 
         if (have_delta_q) {
             int delta_q = dav1d_msac_decode_symbol_adapt4(&ts->msac,
@@ -1038,8 +999,8 @@ static int decode_b(Dav1dTaskContext *const t,
                             delta_lf = -delta_lf;
                         delta_lf *= 1 << f->frame_hdr->delta.lf.res_log2;
                     }
-                    ts->last_delta_lf[i] =
-                        iclip(ts->last_delta_lf[i] + delta_lf, -63, 63);
+                    ts->last_delta_lf.i8[i] =
+                        iclip(ts->last_delta_lf.i8[i] + delta_lf, -63, 63);
                     if (have_delta_q && DEBUG_BLOCK_INFO)
                         printf("Post-delta_lf[%d:%d]: r=%d\n", i, delta_lf,
                                ts->msac.rng);
@@ -1054,13 +1015,13 @@ static int decode_b(Dav1dTaskContext *const t,
             init_quant_tables(f->seq_hdr, f->frame_hdr, ts->last_qidx, ts->dqmem);
             ts->dq = ts->dqmem;
         }
-        if (!memcmp(ts->last_delta_lf, (int8_t[4]) { 0, 0, 0, 0 }, 4)) {
+        if (!ts->last_delta_lf.u32) {
             // assign frame-wide lf values to this sb
             ts->lflvl = f->lf.lvl;
-        } else if (memcmp(ts->last_delta_lf, prev_delta_lf, 4)) {
+        } else if (ts->last_delta_lf.u32 != prev_delta_lf) {
             // find sb-specific lf lvl parameters
-            dav1d_calc_lf_values(ts->lflvlmem, f->frame_hdr, ts->last_delta_lf);
             ts->lflvl = ts->lflvlmem;
+            dav1d_calc_lf_values(ts->lflvlmem, f->frame_hdr, ts->last_delta_lf.i8);
         }
     }
 
@@ -1185,7 +1146,7 @@ static int decode_b(Dav1dTaskContext *const t,
                                       ts->cdf.m.use_filter_intra[bs]);
             if (is_filter) {
                 b->y_mode = FILTER_PRED;
-                b->y_angle = dav1d_msac_decode_symbol_adapt4(&ts->msac,
+                b->y_angle = dav1d_msac_decode_symbol_adapt8(&ts->msac,
                                  ts->cdf.m.filter_intra, 4);
             }
             if (DEBUG_BLOCK_INFO)
@@ -1202,7 +1163,7 @@ static int decode_b(Dav1dTaskContext *const t,
                 ts->frame_thread[p].pal_idx += bw4 * bh4 * 8;
             } else
                 pal_idx = t->scratch.pal_idx_y;
-            read_pal_indices(t, pal_idx, b, 0, w4, h4, bw4, bh4);
+            read_pal_indices(t, pal_idx, b->pal_sz[0], 0, w4, h4, bw4, bh4);
             if (DEBUG_BLOCK_INFO)
                 printf("Post-y-pal-indices: r=%d\n", ts->msac.rng);
         }
@@ -1216,7 +1177,7 @@ static int decode_b(Dav1dTaskContext *const t,
                 ts->frame_thread[p].pal_idx += cbw4 * cbh4 * 8;
             } else
                 pal_idx = t->scratch.pal_idx_uv;
-            read_pal_indices(t, pal_idx, b, 1, cw4, ch4, cbw4, cbh4);
+            read_pal_indices(t, pal_idx, b->pal_sz[1], 1, cw4, ch4, cbw4, cbh4);
             if (DEBUG_BLOCK_INFO)
                 printf("Post-uv-pal-indices: r=%d\n", ts->msac.rng);
         }
@@ -1263,39 +1224,39 @@ static int decode_b(Dav1dTaskContext *const t,
                                        has_chroma ? &t->a->tx_lpf_uv[cbx4] : NULL,
                                        has_chroma ? &t->l.tx_lpf_uv[cby4] : NULL);
         }
-
         // update contexts
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->dir tx_intra, off, mul * (((uint8_t *) &t_dim->lw)[diridx])); \
-        rep_macro(type, t->dir tx, off, mul * (((uint8_t *) &t_dim->lw)[diridx])); \
-        rep_macro(type, t->dir mode, off, mul * y_mode_nofilt); \
-        rep_macro(type, t->dir pal_sz, off, mul * b->pal_sz[0]); \
-        rep_macro(type, t->dir seg_pred, off, mul * seg_pred); \
-        rep_macro(type, t->dir skip_mode, off, 0); \
-        rep_macro(type, t->dir intra, off, mul); \
-        rep_macro(type, t->dir skip, off, mul * b->skip); \
-        /* see aomedia bug 2183 for why we use luma coordinates here */ \
-        rep_macro(type, t->pal_sz_uv[diridx], off, mul * (has_chroma ? b->pal_sz[1] : 0)); \
-        if (IS_INTER_OR_SWITCH(f->frame_hdr)) { \
-            rep_macro(type, t->dir comp_type, off, mul * COMP_INTER_NONE); \
-            rep_macro(type, t->dir ref[0], off, mul * ((uint8_t) -1)); \
-            rep_macro(type, t->dir ref[1], off, mul * ((uint8_t) -1)); \
-            rep_macro(type, t->dir filter[0], off, mul * DAV1D_N_SWITCHABLE_FILTERS); \
-            rep_macro(type, t->dir filter[1], off, mul * DAV1D_N_SWITCHABLE_FILTERS); \
-        }
         const enum IntraPredMode y_mode_nofilt =
             b->y_mode == FILTER_PRED ? DC_PRED : b->y_mode;
-        case_set(bh4, l., 1, by4);
-        case_set(bw4, a->, 0, bx4);
+        BlockContext *edge = t->a;
+        for (int i = 0, off = bx4; i < 2; i++, off = by4, edge = &t->l) {
+            int t_lsz = ((uint8_t *) &t_dim->lw)[i]; // lw then lh
+#define set_ctx(rep_macro) \
+            rep_macro(edge->tx_intra, off, t_lsz); \
+            rep_macro(edge->tx, off, t_lsz); \
+            rep_macro(edge->mode, off, y_mode_nofilt); \
+            rep_macro(edge->pal_sz, off, b->pal_sz[0]); \
+            rep_macro(edge->seg_pred, off, seg_pred); \
+            rep_macro(edge->skip_mode, off, 0); \
+            rep_macro(edge->intra, off, 1); \
+            rep_macro(edge->skip, off, b->skip); \
+            /* see aomedia bug 2183 for why we use luma coordinates here */ \
+            rep_macro(t->pal_sz_uv[i], off, (has_chroma ? b->pal_sz[1] : 0)); \
+            if (IS_INTER_OR_SWITCH(f->frame_hdr)) { \
+                rep_macro(edge->comp_type, off, COMP_INTER_NONE); \
+                rep_macro(edge->ref[0], off, ((uint8_t) -1)); \
+                rep_macro(edge->ref[1], off, ((uint8_t) -1)); \
+                rep_macro(edge->filter[0], off, DAV1D_N_SWITCHABLE_FILTERS); \
+                rep_macro(edge->filter[1], off, DAV1D_N_SWITCHABLE_FILTERS); \
+            }
+            case_set(b_dim[2 + i]);
 #undef set_ctx
+        }
         if (b->pal_sz[0])
             f->bd_fn.copy_pal_block_y(t, bx4, by4, bw4, bh4);
         if (has_chroma) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-                rep_macro(type, t->dir uvmode, off, mul * b->uv_mode)
-                case_set(cbh4, l., 1, cby4);
-                case_set(cbw4, a->, 0, cbx4);
-#undef set_ctx
+            uint8_t uv_mode = b->uv_mode;
+            dav1d_memset_pow2[ulog2(cbw4)](&t->a->uvmode[cbx4], uv_mode);
+            dav1d_memset_pow2[ulog2(cbh4)](&t->l.uvmode[cby4], uv_mode);
             if (b->pal_sz[1])
                 f->bd_fn.copy_pal_block_uv(t, bx4, by4, bw4, bh4);
         }
@@ -1324,7 +1285,7 @@ static int decode_b(Dav1dTaskContext *const t,
         }
 
         const union mv ref = b->mv[0];
-        read_mv_residual(t, &b->mv[0], &ts->cdf.dmv, 0);
+        read_mv_residual(ts, &b->mv[0], -1);
 
         // clip intrabc motion vector to decoded parts of current tile
         int border_left = ts->tiling.col_start * 4;
@@ -1397,26 +1358,24 @@ static int decode_b(Dav1dTaskContext *const t,
         }
 
         splat_intrabc_mv(f->c, t, bs, b, bw4, bh4);
-
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->dir tx_intra, off, mul * b_dim[2 + diridx]); \
-        rep_macro(type, t->dir mode, off, mul * DC_PRED); \
-        rep_macro(type, t->dir pal_sz, off, 0); \
-        /* see aomedia bug 2183 for why this is outside if (has_chroma) */ \
-        rep_macro(type, t->pal_sz_uv[diridx], off, 0); \
-        rep_macro(type, t->dir seg_pred, off, mul * seg_pred); \
-        rep_macro(type, t->dir skip_mode, off, 0); \
-        rep_macro(type, t->dir intra, off, 0); \
-        rep_macro(type, t->dir skip, off, mul * b->skip)
-        case_set(bh4, l., 1, by4);
-        case_set(bw4, a->, 0, bx4);
+        BlockContext *edge = t->a;
+        for (int i = 0, off = bx4; i < 2; i++, off = by4, edge = &t->l) {
+#define set_ctx(rep_macro) \
+            rep_macro(edge->tx_intra, off, b_dim[2 + i]); \
+            rep_macro(edge->mode, off, DC_PRED); \
+            rep_macro(edge->pal_sz, off, 0); \
+            /* see aomedia bug 2183 for why this is outside if (has_chroma) */ \
+            rep_macro(t->pal_sz_uv[i], off, 0); \
+            rep_macro(edge->seg_pred, off, seg_pred); \
+            rep_macro(edge->skip_mode, off, 0); \
+            rep_macro(edge->intra, off, 0); \
+            rep_macro(edge->skip, off, b->skip)
+            case_set(b_dim[2 + i]);
 #undef set_ctx
+        }
         if (has_chroma) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir uvmode, off, mul * DC_PRED)
-            case_set(cbh4, l., 1, cby4);
-            case_set(cbw4, a->, 0, cbx4);
-#undef set_ctx
+            dav1d_memset_pow2[ulog2(cbw4)](&t->a->uvmode[cbx4], DC_PRED);
+            dav1d_memset_pow2[ulog2(cbh4)](&t->l.uvmode[cby4], DC_PRED);
         }
     } else {
         // inter-specific mode/mv coding
@@ -1586,8 +1545,8 @@ static int decode_b(Dav1dTaskContext *const t,
                 break; \
             case NEWMV: \
                 b->mv[idx] = mvstack[b->drl_idx].mv.mv[idx]; \
-                read_mv_residual(t, &b->mv[idx], &ts->cdf.mv, \
-                                 !f->frame_hdr->force_integer_mv); \
+                const int mv_prec = f->frame_hdr->hp - f->frame_hdr->force_integer_mv; \
+                read_mv_residual(ts, &b->mv[idx], mv_prec); \
                 break; \
             }
             has_subpel_filter = imin(bw4, bh4) == 1 ||
@@ -1775,8 +1734,8 @@ static int decode_b(Dav1dTaskContext *const t,
                 if (DEBUG_BLOCK_INFO)
                     printf("Post-intermode[%d,drl=%d]: r=%d\n",
                            b->inter_mode, b->drl_idx, ts->msac.rng);
-                read_mv_residual(t, &b->mv[0], &ts->cdf.mv,
-                                 !f->frame_hdr->force_integer_mv);
+                const int mv_prec = f->frame_hdr->hp - f->frame_hdr->force_integer_mv;
+                read_mv_residual(ts, &b->mv[0], mv_prec);
                 if (DEBUG_BLOCK_INFO)
                     printf("Post-residualmv[mv=y:%d,x:%d]: r=%d\n",
                            b->mv[0].y, b->mv[0].x, ts->msac.rng);
@@ -1860,7 +1819,7 @@ static int decode_b(Dav1dTaskContext *const t,
                             b->matrix[2] = t->warpmv.matrix[4];
                             b->matrix[3] = t->warpmv.matrix[5] - 0x10000;
                         } else {
-                            b->matrix[0] = SHRT_MIN;
+                            b->matrix[0] = INT16_MIN;
                         }
                     }
                 }
@@ -1945,32 +1904,29 @@ static int decode_b(Dav1dTaskContext *const t,
             splat_tworef_mv(f->c, t, bs, b, bw4, bh4);
         else
             splat_oneref_mv(f->c, t, bs, b, bw4, bh4);
-
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->dir seg_pred, off, mul * seg_pred); \
-        rep_macro(type, t->dir skip_mode, off, mul * b->skip_mode); \
-        rep_macro(type, t->dir intra, off, 0); \
-        rep_macro(type, t->dir skip, off, mul * b->skip); \
-        rep_macro(type, t->dir pal_sz, off, 0); \
-        /* see aomedia bug 2183 for why this is outside if (has_chroma) */ \
-        rep_macro(type, t->pal_sz_uv[diridx], off, 0); \
-        rep_macro(type, t->dir tx_intra, off, mul * b_dim[2 + diridx]); \
-        rep_macro(type, t->dir comp_type, off, mul * b->comp_type); \
-        rep_macro(type, t->dir filter[0], off, mul * filter[0]); \
-        rep_macro(type, t->dir filter[1], off, mul * filter[1]); \
-        rep_macro(type, t->dir mode, off, mul * b->inter_mode); \
-        rep_macro(type, t->dir ref[0], off, mul * b->ref[0]); \
-        rep_macro(type, t->dir ref[1], off, mul * ((uint8_t) b->ref[1]))
-        case_set(bh4, l., 1, by4);
-        case_set(bw4, a->, 0, bx4);
+        BlockContext *edge = t->a;
+        for (int i = 0, off = bx4; i < 2; i++, off = by4, edge = &t->l) {
+#define set_ctx(rep_macro) \
+            rep_macro(edge->seg_pred, off, seg_pred); \
+            rep_macro(edge->skip_mode, off, b->skip_mode); \
+            rep_macro(edge->intra, off, 0); \
+            rep_macro(edge->skip, off, b->skip); \
+            rep_macro(edge->pal_sz, off, 0); \
+            /* see aomedia bug 2183 for why this is outside if (has_chroma) */ \
+            rep_macro(t->pal_sz_uv[i], off, 0); \
+            rep_macro(edge->tx_intra, off, b_dim[2 + i]); \
+            rep_macro(edge->comp_type, off, b->comp_type); \
+            rep_macro(edge->filter[0], off, filter[0]); \
+            rep_macro(edge->filter[1], off, filter[1]); \
+            rep_macro(edge->mode, off, b->inter_mode); \
+            rep_macro(edge->ref[0], off, b->ref[0]); \
+            rep_macro(edge->ref[1], off, ((uint8_t) b->ref[1]))
+            case_set(b_dim[2 + i]);
 #undef set_ctx
-
+        }
         if (has_chroma) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-            rep_macro(type, t->dir uvmode, off, mul * DC_PRED)
-            case_set(cbh4, l., 1, cby4);
-            case_set(cbw4, a->, 0, cbx4);
-#undef set_ctx
+            dav1d_memset_pow2[ulog2(cbw4)](&t->a->uvmode[cbx4], DC_PRED);
+            dav1d_memset_pow2[ulog2(cbh4)](&t->l.uvmode[cby4], DC_PRED);
         }
     }
 
@@ -1979,12 +1935,12 @@ static int decode_b(Dav1dTaskContext *const t,
         f->frame_hdr->segmentation.update_map)
     {
         uint8_t *seg_ptr = &f->cur_segmap[t->by * f->b4_stride + t->bx];
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
+#define set_ctx(rep_macro) \
         for (int y = 0; y < bh4; y++) { \
-            rep_macro(type, seg_ptr, 0, mul * b->seg_id); \
+            rep_macro(seg_ptr, 0, b->seg_id); \
             seg_ptr += f->b4_stride; \
         }
-        case_set(bw4, NULL, 0, 0);
+        case_set(b_dim[2]);
 #undef set_ctx
     }
     if (!b->skip) {
@@ -2421,10 +2377,10 @@ static int decode_sb(Dav1dTaskContext *const t, const enum BlockLevel bl,
     }
 
     if (t->frame_thread.pass != 2 && (bp != PARTITION_SPLIT || bl == BL_8X8)) {
-#define set_ctx(type, dir, diridx, off, mul, rep_macro) \
-        rep_macro(type, t->a->partition, bx8, mul * dav1d_al_part_ctx[0][bl][bp]); \
-        rep_macro(type, t->l.partition, by8, mul * dav1d_al_part_ctx[1][bl][bp])
-        case_set_upto16(hsz,,,);
+#define set_ctx(rep_macro) \
+        rep_macro(t->a->partition, bx8, dav1d_al_part_ctx[0][bl][bp]); \
+        rep_macro(t->l.partition, by8, dav1d_al_part_ctx[1][bl][bp])
+        case_set_upto16(ulog2(hsz));
 #undef set_ctx
     }
 
@@ -2470,7 +2426,7 @@ static void setup_tile(Dav1dTileState *const ts,
                        const Dav1dFrameContext *const f,
                        const uint8_t *const data, const size_t sz,
                        const int tile_row, const int tile_col,
-                       const int tile_start_off)
+                       const unsigned tile_start_off)
 {
     const int col_sb_start = f->frame_hdr->tiling.col_start_sb[tile_col];
     const int col_sb128_start = col_sb_start >> !f->seq_hdr->sb128;
@@ -2495,7 +2451,7 @@ static void setup_tile(Dav1dTileState *const ts,
 
     dav1d_cdf_thread_copy(&ts->cdf, &f->in_cdf);
     ts->last_qidx = f->frame_hdr->quant.yac;
-    memset(ts->last_delta_lf, 0, sizeof(ts->last_delta_lf));
+    ts->last_delta_lf.u32 = 0;
 
     dav1d_msac_init(&ts->msac, data, sz, f->frame_hdr->disable_cdf_update);
 
@@ -2616,6 +2572,25 @@ static void read_restoration_info(Dav1dTaskContext *const t,
     }
 }
 
+// modeled after the equivalent function in aomdec:decodeframe.c
+static int check_trailing_bits_after_symbol_coder(const MsacContext *const msac) {
+    // check marker bit (single 1), followed by zeroes
+    const int n_bits = -(msac->cnt + 14);
+    assert(n_bits <= 0); // this assumes we errored out when cnt <= -15 in caller
+    const int n_bytes = (n_bits + 7) >> 3;
+    const uint8_t *p = &msac->buf_pos[n_bytes];
+    const int pattern = 128 >> ((n_bits - 1) & 7);
+    if ((p[-1] & (2 * pattern - 1)) != pattern)
+        return 1;
+
+    // check remainder zero bytes
+    for (; p < msac->buf_end; p++)
+        if (*p)
+            return 1;
+
+    return 0;
+}
+
 int dav1d_decode_tile_sbrow(Dav1dTaskContext *const t) {
     const Dav1dFrameContext *const f = t->f;
     const enum BlockLevel root_bl = f->seq_hdr->sb128 ? BL_128X128 : BL_64X64;
@@ -2658,9 +2633,6 @@ int dav1d_decode_tile_sbrow(Dav1dTaskContext *const t) {
         f->bd_fn.backup_ipred_edge(t);
         return 0;
     }
-
-    // error out on symbol decoder overread
-    if (ts->msac.cnt < -15) return 1;
 
     if (f->c->n_tc > 1 && f->frame_hdr->use_ref_frame_mvs) {
         f->c->refmvs_dsp.load_tmvs(&f->rf, ts->tiling.row,
@@ -2767,7 +2739,12 @@ int dav1d_decode_tile_sbrow(Dav1dTaskContext *const t) {
     memcpy(&f->lf.tx_lpf_right_edge[1][align_h * tile_col + (t->by >> ss_ver)],
            &t->l.tx_lpf_uv[(t->by & 16) >> ss_ver], sb_step >> ss_ver);
 
-    return 0;
+    // error out on symbol decoder overread
+    if (ts->msac.cnt <= -15) return 1;
+
+    return c->strict_std_compliance &&
+           (t->by >> f->sb_shift) + 1 >= f->frame_hdr->tiling.row_start_sb[tile_row + 1] &&
+           check_trailing_bits_after_symbol_coder(&ts->msac);
 }
 
 int dav1d_decode_frame_init(Dav1dFrameContext *const f) {
@@ -2822,15 +2799,16 @@ int dav1d_decode_frame_init(Dav1dFrameContext *const f) {
     const uint8_t *const size_mul = ss_size_mul[f->cur.p.layout];
     const int hbd = !!f->seq_hdr->hbd;
     if (c->n_fc > 1) {
+        const unsigned sb_step4 = f->sb_step * 4;
         int tile_idx = 0;
         for (int tile_row = 0; tile_row < f->frame_hdr->tiling.rows; tile_row++) {
-            int row_off = f->frame_hdr->tiling.row_start_sb[tile_row] *
-                          f->sb_step * 4 * f->sb128w * 128;
-            int b_diff = (f->frame_hdr->tiling.row_start_sb[tile_row + 1] -
-                          f->frame_hdr->tiling.row_start_sb[tile_row]) * f->sb_step * 4;
+            const unsigned row_off = f->frame_hdr->tiling.row_start_sb[tile_row] *
+                                     sb_step4 * f->sb128w * 128;
+            const unsigned b_diff = (f->frame_hdr->tiling.row_start_sb[tile_row + 1] -
+                                     f->frame_hdr->tiling.row_start_sb[tile_row]) * sb_step4;
             for (int tile_col = 0; tile_col < f->frame_hdr->tiling.cols; tile_col++) {
                 f->frame_thread.tile_start_off[tile_idx++] = row_off + b_diff *
-                    f->frame_hdr->tiling.col_start_sb[tile_col] * f->sb_step * 4;
+                    f->frame_hdr->tiling.col_start_sb[tile_col] * sb_step4;
             }
         }
 
@@ -3261,7 +3239,7 @@ error:
     return retval;
 }
 
-void dav1d_decode_frame_exit(Dav1dFrameContext *const f, const int retval) {
+void dav1d_decode_frame_exit(Dav1dFrameContext *const f, int retval) {
     const Dav1dContext *const c = f->c;
 
     if (f->sr_cur.p.data[0])
@@ -3272,8 +3250,16 @@ void dav1d_decode_frame_exit(Dav1dFrameContext *const f, const int retval) {
                (size_t)f->frame_thread.cf_sz * 128 * 128 / 2);
     }
     for (int i = 0; i < 7; i++) {
-        if (f->refp[i].p.frame_hdr)
+        if (f->refp[i].p.frame_hdr) {
+            if (!retval && c->n_fc > 1 && c->strict_std_compliance &&
+                atomic_load(&f->refp[i].progress[1]) == FRAME_ERROR)
+            {
+                retval = DAV1D_ERR(EINVAL);
+                atomic_store(&f->task_thread.error, 1);
+                atomic_store(&f->sr_cur.progress[1], FRAME_ERROR);
+            }
             dav1d_thread_picture_unref(&f->refp[i]);
+        }
         dav1d_ref_dec(&f->ref_mvs_ref[i]);
     }
 
@@ -3327,6 +3313,7 @@ int dav1d_decode_frame(Dav1dFrameContext *const f) {
         }
     }
     dav1d_decode_frame_exit(f, res);
+    res = f->task_thread.retval;
     f->n_tile_data = 0;
     return res;
 }

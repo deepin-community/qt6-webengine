@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/css/parser/css_proto_converter.h"
+
 #include <string>
 
 // TODO(metzman): Figure out how to remove this include and use DCHECK.
+#include "base/compiler_specific.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/css/parser/css.pb.h"
@@ -45,7 +47,7 @@ const std::string Converter::kPseudoLookupTable[] = {
     "-internal-media-controls-overlay-cast-button",
     "-internal-multi-select-focus",
     "-internal-popover-in-top-layer",
-    "-internal-shadow-host-has-appearance",
+    "-internal-shadow-host-has-non-auto-appearance",
     "-internal-spatial-navigation-focus",
     "-internal-video-persistent",
     "-internal-video-persistent-ancestor",
@@ -64,6 +66,7 @@ const std::string Converter::kPseudoLookupTable[] = {
     "-webkit-scrollbar-track-piece",
     "active",
     "active-view-transition",
+    "active-view-transition-type",
     "after",
     "autofill",
     "backdrop",
@@ -89,6 +92,8 @@ const std::string Converter::kPseudoLookupTable[] = {
     "focus-within",
     "fullscreen",
     "future",
+    "has-interest",
+    "has-slotted",
     "horizontal",
     "host",
     "hover",
@@ -119,7 +124,9 @@ const std::string Converter::kPseudoLookupTable[] = {
     "selection",
     "single-button",
     "start",
+    "state",
     "target",
+    "target-of-interest",
     "user-invalid",
     "user-valid",
     "valid",
@@ -943,7 +950,8 @@ void Converter::AppendTableValue(int id,
   static_assert(EnumSize == TableSize,
                 "Enum used as index should not overflow lookup table");
   CHECK(id > 0 && static_cast<size_t>(id) < TableSize);
-  string_ += lookup_table[id];
+  // SAFTEY: check above plus compiler deduced TableSize.
+  UNSAFE_BUFFERS(string_ += lookup_table[id]);
 }
 
 template <size_t EnumSize, class T, size_t TableSize>

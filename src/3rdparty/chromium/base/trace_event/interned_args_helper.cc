@@ -11,8 +11,7 @@
 #include "third_party/perfetto/protos/perfetto/trace/track_event/source_location.pbzero.h"
 #include "third_party/perfetto/protos/perfetto/trace/track_event/task_execution.pbzero.h"
 
-namespace base {
-namespace trace_event {
+namespace base::trace_event {
 
 namespace {
 
@@ -38,11 +37,15 @@ void InternedSourceLocation::Add(
     const TraceSourceLocation& location) {
   auto* msg = interned_data->add_source_locations();
   msg->set_iid(iid);
-  if (location.file_name != nullptr)
+  if (location.file_name != nullptr) {
     msg->set_file_name(location.file_name);
-  if (location.function_name != nullptr)
+  }
+  if (location.function_name != nullptr) {
     msg->set_function_name(location.function_name);
-  // TODO(ssid): Add line number once it is allowed in internal proto.
+  }
+  if (location.line_number != 0) {
+    msg->set_line_number(static_cast<uint32_t>(location.line_number));
+  }
   // TODO(ssid): Add program counter to the proto fields when
   // !BUILDFLAG(ENABLE_LOCATION_SOURCE).
   // TODO(http://crbug.com760702) remove file name and just pass the program
@@ -112,11 +115,10 @@ void InternedMapping::Add(perfetto::EventContext* ctx,
 }
 
 // static
-absl::optional<size_t> InternedUnsymbolizedSourceLocation::Get(
+std::optional<size_t> InternedUnsymbolizedSourceLocation::Get(
     perfetto::EventContext* ctx,
     uintptr_t address) {
   auto* index_for_field = GetOrCreateIndexForField(ctx->GetIncrementalState());
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   ModuleCacheForTracing* module_cache = static_cast<ModuleCacheForTracing*>(
       ctx->GetTlsUserData(kModuleCacheForTracingKey));
   if (!module_cache) {
@@ -126,12 +128,8 @@ absl::optional<size_t> InternedUnsymbolizedSourceLocation::Get(
   }
   const base::ModuleCache::Module* module =
       module_cache->GetModuleCache().GetModuleForAddress(address);
-#else
-  const base::ModuleCache::Module* module =
-      index_for_field->module_cache_.GetModuleForAddress(address);
-#endif
   if (!module) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   size_t iid;
   if (index_for_field->index_.LookUpOrInsert(&iid, address)) {
@@ -156,5 +154,4 @@ void InternedUnsymbolizedSourceLocation::Add(
   msg->set_rel_pc(location.rel_pc);
 }
 
-}  // namespace trace_event
-}  // namespace base
+}  // namespace base::trace_event

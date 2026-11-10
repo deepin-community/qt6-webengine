@@ -2,6 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "partition_alloc/partition_alloc.h"
+
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -10,9 +17,8 @@
 
 #include "base/debug/debugging_buildflags.h"
 #include "base/timer/lap_timer.h"
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/extended_api.h"
-#include "partition_alloc/partition_alloc.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "partition_alloc/partition_alloc_base/strings/stringprintf.h"
 #include "partition_alloc/partition_alloc_base/threading/platform_thread_for_testing.h"
@@ -25,7 +31,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 
-#if BUILDFLAG(IS_ANDROID) || defined(ARCH_CPU_32_BITS) || BUILDFLAG(IS_FUCHSIA)
+#if PA_BUILDFLAG(IS_ANDROID) || PA_BUILDFLAG(PA_ARCH_CPU_32_BITS) || \
+    PA_BUILDFLAG(IS_FUCHSIA)
 // Some tests allocate many GB of memory, which can cause issues on Android and
 // address-space exhaustion for any 32-bit process.
 #define MEMORY_CONSTRAINED
@@ -69,7 +76,8 @@ perf_test::PerfResultReporter SetUpReporter(const std::string& story_name) {
 enum class AllocatorType {
   kSystem,
   kPartitionAlloc,
-  kPartitionAllocWithThreadCache,
+  kPartitionAllocWithThreadCache, /* NormalBucketDist */
+  kPartitionAllocWithThreadCacheAndDenserBucketDist,
 #if BUILDFLAG(ENABLE_ALLOCATION_STACK_TRACE_RECORDER)
   kPartitionAllocWithAllocationStackTraceRecorder,
 #endif
@@ -113,10 +121,10 @@ class PartitionAllocator : public Allocator {
 
 class PartitionAllocatorWithThreadCache : public Allocator {
  public:
-  explicit PartitionAllocatorWithThreadCache(bool use_alternate_bucket_dist)
+  explicit PartitionAllocatorWithThreadCache(bool use_denser_bucket_dist)
       : scope_(allocator_.root()) {
     ThreadCacheRegistry::Instance().PurgeAll();
-    if (!use_alternate_bucket_dist) {
+    if (use_denser_bucket_dist) {
       allocator_.root()->SwitchToDenserBucketDistribution();
     } else {
       allocator_.root()->ResetBucketDistributionForTesting();
@@ -136,9 +144,9 @@ class PartitionAllocatorWithThreadCache : public Allocator {
   }
 
  private:
-  static constexpr partition_alloc::PartitionOptions kOpts = []() {
+  static constexpr partition_alloc::PartitionOptions kOpts = [] {
     partition_alloc::PartitionOptions opts;
-#if !BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if !PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
     opts.thread_cache = PartitionOptions::kEnabled;
 #endif
     return opts;
@@ -360,8 +368,7 @@ float DirectMapped(Allocator* allocator) {
   return timer.LapsPerSecond();
 }
 
-std::unique_ptr<Allocator> CreateAllocator(AllocatorType type,
-                                           bool use_alternate_bucket_dist) {
+std::unique_ptr<Allocator> CreateAllocator(AllocatorType type) {
   switch (type) {
     case AllocatorType::kSystem:
       return std::make_unique<SystemAllocator>();
@@ -369,7 +376,10 @@ std::unique_ptr<Allocator> CreateAllocator(AllocatorType type,
       return std::make_unique<PartitionAllocator>();
     case AllocatorType::kPartitionAllocWithThreadCache:
       return std::make_unique<PartitionAllocatorWithThreadCache>(
-          use_alternate_bucket_dist);
+          /*use_denser_bucket_dist=*/false);
+    case AllocatorType::kPartitionAllocWithThreadCacheAndDenserBucketDist:
+      return std::make_unique<PartitionAllocatorWithThreadCache>(
+          /*use_denser_bucket_dist=*/true);
 #if BUILDFLAG(ENABLE_ALLOCATION_STACK_TRACE_RECORDER)
     case AllocatorType::kPartitionAllocWithAllocationStackTraceRecorder:
       return std::make_unique<
@@ -387,13 +397,37 @@ void LogResults(int thread_count,
                << "," << min_laps_per_second;
 }
 
+std::string MakeTestName(int thread_count, AllocatorType alloc_type) {
+  char const* alloc_type_str;
+  switch (alloc_type) {
+    case AllocatorType::kSystem:
+      alloc_type_str = "System";
+      break;
+    case AllocatorType::kPartitionAlloc:
+      alloc_type_str = "PartitionAlloc";
+      break;
+    case AllocatorType::kPartitionAllocWithThreadCache:
+      alloc_type_str = "PartitionAllocWithThreadCache";
+      break;
+    case AllocatorType::kPartitionAllocWithThreadCacheAndDenserBucketDist:
+      alloc_type_str = "PartitionAllocWithThreadCacheAndDenserBucketDist";
+      break;
+#if BUILDFLAG(ENABLE_ALLOCATION_STACK_TRACE_RECORDER)
+    case AllocatorType::kPartitionAllocWithAllocationStackTraceRecorder:
+      alloc_type_str = "PartitionAllocWithAllocationStackTraceRecorder";
+      break;
+#endif
+  }
+
+  return base::TruncatingStringPrintf("%s_%d", alloc_type_str, thread_count);
+}
+
 void RunTest(int thread_count,
-             bool use_alternate_bucket_dist,
              AllocatorType alloc_type,
              float (*test_fn)(Allocator*),
              float (*noisy_neighbor_fn)(Allocator*),
              const char* story_base_name) {
-  auto alloc = CreateAllocator(alloc_type, use_alternate_bucket_dist);
+  auto alloc = CreateAllocator(alloc_type);
 
   std::unique_ptr<TestLoopThread> noisy_neighbor_thread = nullptr;
   if (noisy_neighbor_fn) {
@@ -418,27 +452,10 @@ void RunTest(int thread_count,
     noisy_neighbor_thread->Run();
   }
 
-  char const* alloc_type_str;
-  switch (alloc_type) {
-    case AllocatorType::kSystem:
-      alloc_type_str = "System";
-      break;
-    case AllocatorType::kPartitionAlloc:
-      alloc_type_str = "PartitionAlloc";
-      break;
-    case AllocatorType::kPartitionAllocWithThreadCache:
-      alloc_type_str = "PartitionAllocWithThreadCache";
-      break;
-#if BUILDFLAG(ENABLE_ALLOCATION_STACK_TRACE_RECORDER)
-    case AllocatorType::kPartitionAllocWithAllocationStackTraceRecorder:
-      alloc_type_str = "PartitionAllocWithAllocationStackTraceRecorder";
-      break;
-#endif
-  }
-
-  std::string name = base::TruncatingStringPrintf(
-      "%s%s_%s_%d", kMetricPrefixMemoryAllocation, story_base_name,
-      alloc_type_str, thread_count);
+  std::string test_name = MakeTestName(thread_count, alloc_type);
+  std::string name =
+      base::TruncatingStringPrintf("%s%s_%s", kMetricPrefixMemoryAllocation,
+                                   story_base_name, test_name.c_str());
 
   DisplayResults(name + "_total", total_laps_per_second);
   DisplayResults(name + "_worst", min_laps_per_second);
@@ -447,7 +464,8 @@ void RunTest(int thread_count,
 }
 
 class PartitionAllocMemoryAllocationPerfTest
-    : public testing::TestWithParam<std::tuple<int, bool, AllocatorType>> {};
+    : public testing::TestWithParam<std::tuple<int, AllocatorType>> {
+};
 
 // Only one partition with a thread cache: cannot use the thread cache when
 // PartitionAlloc is malloc().
@@ -456,64 +474,63 @@ INSTANTIATE_TEST_SUITE_P(
     PartitionAllocMemoryAllocationPerfTest,
     ::testing::Combine(
         ::testing::Values(1, 2, 3, 4),
-        ::testing::Values(false, true),
         ::testing::Values(
             AllocatorType::kSystem,
             AllocatorType::kPartitionAlloc,
-            AllocatorType::kPartitionAllocWithThreadCache
+            AllocatorType::kPartitionAllocWithThreadCache,
+            AllocatorType::kPartitionAllocWithThreadCacheAndDenserBucketDist
 #if BUILDFLAG(ENABLE_ALLOCATION_STACK_TRACE_RECORDER)
             ,
             AllocatorType::kPartitionAllocWithAllocationStackTraceRecorder
 #endif
-            )));
+            )),
+    [](const testing::TestParamInfo<
+        PartitionAllocMemoryAllocationPerfTest::ParamType>& info) {
+      return MakeTestName(std::get<0>(info.param), std::get<1>(info.param));
+    });
 
 // This test (and the other one below) allocates a large amount of memory, which
 // can cause issues on Android.
 #if !defined(MEMORY_CONSTRAINED)
 TEST_P(PartitionAllocMemoryAllocationPerfTest, SingleBucket) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), SingleBucket, nullptr,
-          "SingleBucket");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params), SingleBucket,
+          nullptr, "SingleBucket");
 }
 #endif  // defined(MEMORY_CONSTRAINED)
 
 TEST_P(PartitionAllocMemoryAllocationPerfTest, SingleBucketWithFree) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), SingleBucketWithFree, nullptr,
-          "SingleBucketWithFree");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params),
+          SingleBucketWithFree, nullptr, "SingleBucketWithFree");
 }
 
 #if !defined(MEMORY_CONSTRAINED)
 TEST_P(PartitionAllocMemoryAllocationPerfTest, MultiBucket) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), MultiBucket, nullptr, "MultiBucket");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params), MultiBucket,
+          nullptr, "MultiBucket");
 }
 #endif  // defined(MEMORY_CONSTRAINED)
 
 TEST_P(PartitionAllocMemoryAllocationPerfTest, MultiBucketWithFree) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), MultiBucketWithFree, nullptr,
-          "MultiBucketWithFree");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params),
+          MultiBucketWithFree, nullptr, "MultiBucketWithFree");
 }
 
 TEST_P(PartitionAllocMemoryAllocationPerfTest, DirectMapped) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), DirectMapped, nullptr,
-          "DirectMapped");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params), DirectMapped,
+          nullptr, "DirectMapped");
 }
 
 #if !defined(MEMORY_CONSTRAINED)
 TEST_P(PartitionAllocMemoryAllocationPerfTest,
        DISABLED_MultiBucketWithNoisyNeighbor) {
   auto params = GetParam();
-  RunTest(std::get<int>(params), std::get<bool>(params),
-          std::get<AllocatorType>(params), MultiBucket, DirectMapped,
-          "MultiBucketWithNoisyNeighbor");
+  RunTest(std::get<int>(params), std::get<AllocatorType>(params), MultiBucket,
+          DirectMapped, "MultiBucketWithNoisyNeighbor");
 }
 #endif  // !defined(MEMORY_CONSTRAINED)
 

@@ -206,7 +206,13 @@ PositionTemplate<Strategy> EndOfParagraphAlgorithm(
     }
     return Strategy::Next(*next_node_iterator, start_block);
   };
-
+  // If the first node in the paragraph is non editable, the position has
+  // enclosing node as its anchor node. The following while loop breaks out
+  // without iterating over next node if next_node_iterator is an enclosing
+  // block. Move to next node here since it is needed only for the start_node.
+  if (start_node == start_block) {
+    next_node_iterator = nextNode();
+  }
   while (next_node_iterator) {
     if (boundary_crossing_rule == kCannotCrossEditingBoundary &&
         !NodeIsUserSelectAll(next_node_iterator) &&
@@ -214,8 +220,15 @@ PositionTemplate<Strategy> EndOfParagraphAlgorithm(
       break;
     if (boundary_crossing_rule == kCanSkipOverEditingBoundary) {
       while (next_node_iterator &&
-             IsEditable(*next_node_iterator) != start_node_is_editable)
-        next_node_iterator = nextNode();
+             IsEditable(*next_node_iterator) != start_node_is_editable) {
+        if (!next_node_iterator->IsDescendantOf(highest_root)) {
+          break;
+        }
+        candidate_node = next_node_iterator;
+        candidate_type = PositionAnchorType::kAfterAnchor;
+        next_node_iterator =
+            Strategy::NextSkippingChildren(*next_node_iterator, start_block);
+      }
       if (!next_node_iterator ||
           !next_node_iterator->IsDescendantOf(highest_root))
         break;
@@ -228,7 +241,17 @@ PositionTemplate<Strategy> EndOfParagraphAlgorithm(
     }
     const ComputedStyle& style = layout_object->StyleRef();
     if (style.Visibility() != EVisibility::kVisible) {
-      next_node_iterator = nextNode();
+      if (RuntimeEnabledFeatures::
+              HandleDeletionAtStartAndEndBoundaryContainingHiddenElementEnabled()) {
+        // We should skip the children of hidden elements and
+        // place the position immediately after the anchor.
+        candidate_node = next_node_iterator;
+        candidate_type = PositionAnchorType::kAfterAnchor;
+        next_node_iterator =
+            Strategy::NextSkippingChildren(*next_node_iterator, start_block);
+      } else {
+        next_node_iterator = nextNode();
+      }
       continue;
     }
 
@@ -317,6 +340,18 @@ VisiblePosition StartOfParagraph(
   return StartOfParagraphAlgorithm<EditingStrategy>(c, boundary_crossing_rule);
 }
 
+VisiblePosition StartOfParagraphInFlatTree(
+    const VisiblePosition& pos,
+    EditingBoundaryCrossingRule boundary_crossing_rule) {
+  VisiblePositionInFlatTree pos_in_flat_tree =
+      CreateVisiblePosition(ToPositionInFlatTree(pos.DeepEquivalent()));
+  VisiblePositionInFlatTree start_of_paragraph_in_flat_tree =
+      StartOfParagraphAlgorithm<EditingInFlatTreeStrategy>(
+          pos_in_flat_tree, boundary_crossing_rule);
+  return CreateVisiblePosition(
+      ToPositionInDOMTree(start_of_paragraph_in_flat_tree.DeepEquivalent()));
+}
+
 VisiblePositionInFlatTree StartOfParagraph(
     const VisiblePositionInFlatTree& c,
     EditingBoundaryCrossingRule boundary_crossing_rule) {
@@ -328,6 +363,18 @@ VisiblePosition EndOfParagraph(
     const VisiblePosition& c,
     EditingBoundaryCrossingRule boundary_crossing_rule) {
   return EndOfParagraphAlgorithm<EditingStrategy>(c, boundary_crossing_rule);
+}
+
+VisiblePosition EndOfParagraphInFlatTree(
+    const VisiblePosition& pos,
+    EditingBoundaryCrossingRule boundary_crossing_rule) {
+  VisiblePositionInFlatTree pos_in_flat_tree =
+      CreateVisiblePosition(ToPositionInFlatTree(pos.DeepEquivalent()));
+  VisiblePositionInFlatTree end_of_paragraph_in_flat_tree =
+      EndOfParagraphAlgorithm<EditingInFlatTreeStrategy>(
+          pos_in_flat_tree, boundary_crossing_rule);
+  return CreateVisiblePosition(
+      ToPositionInDOMTree(end_of_paragraph_in_flat_tree.DeepEquivalent()));
 }
 
 Position EndOfParagraph(const Position& c,

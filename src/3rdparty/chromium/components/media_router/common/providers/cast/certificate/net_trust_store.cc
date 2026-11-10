@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -20,6 +21,7 @@
 #include "third_party/boringssl/src/pki/pem.h"
 #include "third_party/boringssl/src/pki/simple_path_builder_delegate.h"
 #include "third_party/openscreen/src/cast/common/public/trust_store.h"
+#include "third_party/openscreen/src/platform/base/span.h"
 
 namespace {
 
@@ -55,11 +57,12 @@ namespace openscreen::cast {
 
 // static
 std::unique_ptr<openscreen::cast::TrustStore> TrustStore::CreateInstanceForTest(
-    const std::vector<uint8_t>& trust_anchor_der) {
+    openscreen::ByteView trust_anchor_der) {
   // TODO(issuetracker.google.com/222145200): We need to allow linking this
   // implementation into `openscreen_unittests` when in the chromium waterfall.
   auto result = std::make_unique<cast_certificate::NetTrustStore>();
-  result->AddAnchor(trust_anchor_der);
+  result->AddAnchor(UNSAFE_TODO(
+      base::span(trust_anchor_der.cbegin(), trust_anchor_der.cend())));
   return result;
 }
 
@@ -67,7 +70,7 @@ std::unique_ptr<openscreen::cast::TrustStore> TrustStore::CreateInstanceForTest(
 std::unique_ptr<openscreen::cast::TrustStore>
 TrustStore::CreateInstanceFromPemFile(std::string_view file_path) {
   std::string pem_data;
-  CHECK(base::ReadFileToString(base::FilePath::FromASCII(base::StringPiece(
+  CHECK(base::ReadFileToString(base::FilePath::FromASCII(std::string_view(
                                    file_path.data(), file_path.size())),
                                &pem_data));
   bssl::PEMTokenizer tokenizer(pem_data, {std::string("CERTIFICATE")});
@@ -75,8 +78,8 @@ TrustStore::CreateInstanceFromPemFile(std::string_view file_path) {
   while (tokenizer.GetNext()) {
     const std::string& data = tokenizer.data();
     auto* data_ptr = reinterpret_cast<const uint8_t*>(data.data());
-    result->AddAnchor(
-        base::span<const uint8_t>(data_ptr, data_ptr + data.size()));
+    result->AddAnchor(UNSAFE_TODO(
+        base::span<const uint8_t>(data_ptr, data_ptr + data.size())));
   }
   return result;
 }

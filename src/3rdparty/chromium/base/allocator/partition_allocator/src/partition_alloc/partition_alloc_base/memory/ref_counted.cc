@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/memory/ref_counted.h"
 
 #include <limits>
 #include <ostream>
 #include <type_traits>
 
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 
 namespace partition_alloc::internal::base::subtle {
 
@@ -20,7 +26,7 @@ bool RefCountedThreadSafeBase::HasAtLeastOneRef() const {
   return !ref_count_.IsZero();
 }
 
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
 RefCountedThreadSafeBase::~RefCountedThreadSafeBase() {
   PA_BASE_DCHECK(in_dtor_) << "RefCountedThreadSafe object deleted without "
                               "calling Release()";
@@ -33,7 +39,7 @@ RefCountedThreadSafeBase::~RefCountedThreadSafeBase() {
 // these functions out-of-line. However, compilers are wily. Further testing may
 // show that `PA_NOINLINE` helps or hurts.
 //
-#if !defined(ARCH_CPU_X86_FAMILY)
+#if !PA_BUILDFLAG(PA_ARCH_CPU_X86_FAMILY)
 bool RefCountedThreadSafeBase::Release() const {
   return ReleaseImpl();
 }

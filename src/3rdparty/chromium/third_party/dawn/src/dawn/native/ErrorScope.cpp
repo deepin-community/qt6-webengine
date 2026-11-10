@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "dawn/common/Assert.h"
+#include "dawn/common/StringViewUtils.h"
 
 namespace dawn::native {
 
@@ -52,12 +53,18 @@ wgpu::ErrorType ErrorFilterToErrorType(wgpu::ErrorFilter filter) {
 ErrorScope::ErrorScope(wgpu::ErrorFilter errorFilter)
     : mMatchedErrorType(ErrorFilterToErrorType(errorFilter)) {}
 
+ErrorScope::ErrorScope(wgpu::ErrorType error, std::string_view message)
+    : mMatchedErrorType(error), mCapturedError(error), mErrorMessage(message) {}
+
 wgpu::ErrorType ErrorScope::GetErrorType() const {
     return mCapturedError;
 }
 
-const std::string& ErrorScope::GetErrorMessage() const {
-    return mErrorMessage;
+WGPUStringView ErrorScope::GetErrorMessage() const {
+    if (!mErrorMessage.empty()) {
+        return ToOutputStringView(mErrorMessage);
+    }
+    return kEmptyOutputStringView;
 }
 
 ErrorScopeStack::ErrorScopeStack() = default;
@@ -79,7 +86,7 @@ bool ErrorScopeStack::Empty() const {
     return mScopes.empty();
 }
 
-bool ErrorScopeStack::HandleError(wgpu::ErrorType type, const char* message) {
+bool ErrorScopeStack::HandleError(wgpu::ErrorType type, std::string_view message) {
     for (auto it = mScopes.rbegin(); it != mScopes.rend(); ++it) {
         if (it->mMatchedErrorType != type) {
             // Error filter does not match. Move on to the next scope.
@@ -92,17 +99,7 @@ bool ErrorScopeStack::HandleError(wgpu::ErrorType type, const char* message) {
             it->mCapturedError = type;
             it->mErrorMessage = message;
         }
-
-        if (type == wgpu::ErrorType::DeviceLost) {
-            if (it->mCapturedError != wgpu::ErrorType::DeviceLost) {
-                // DeviceLost overrides any other error that is not a DeviceLost.
-                it->mCapturedError = type;
-                it->mErrorMessage = message;
-            }
-        } else {
-            // Errors that are not device lost are captured and stop propogating.
-            return true;
-        }
+        return true;
     }
 
     // The error was not captured.

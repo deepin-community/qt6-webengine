@@ -29,142 +29,174 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "dawn/common/Math.h"
+#include "dawn/common/StringViewUtils.h"
 #include "dawn/native/ChainUtils.h"
 #include "dawn/native/Device.h"
+#include "dawn/native/Error.h"
 #include "dawn/native/Instance.h"
 #include "dawn/native/PhysicalDevice.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
+namespace {
+static constexpr DeviceDescriptor kDefaultDeviceDesc = {};
+}  // anonymous namespace
 
-AdapterBase::AdapterBase(Ref<PhysicalDeviceBase> physicalDevice,
-                         FeatureLevel featureLevel,
+AdapterBase::AdapterBase(InstanceBase* instance,
+                         Ref<PhysicalDeviceBase> physicalDevice,
+                         wgpu::FeatureLevel featureLevel,
                          const TogglesState& requiredAdapterToggles,
                          wgpu::PowerPreference powerPreference)
-    : mPhysicalDevice(std::move(physicalDevice)),
+    : mInstance(instance),
+      mPhysicalDevice(std::move(physicalDevice)),
       mFeatureLevel(featureLevel),
       mTogglesState(requiredAdapterToggles),
       mPowerPreference(powerPreference) {
-    DAWN_ASSERT(mPhysicalDevice->SupportsFeatureLevel(featureLevel));
+    DAWN_ASSERT(mPhysicalDevice->SupportsFeatureLevel(featureLevel, mInstance.Get()));
     DAWN_ASSERT(mTogglesState.GetStage() == ToggleStage::Adapter);
     // Cache the supported features of this adapter. Note that with device toggles overriding, a
     // device created by this adapter may support features not in this set and vice versa.
     mSupportedFeatures = mPhysicalDevice->GetSupportedFeatures(mTogglesState);
+    // Cache the limits of this adapter. UpdateLimits should be called when the adapter's
+    // limits-related status changes, e.g. SetUseTieredLimits.
+    UpdateLimits();
 }
 
 AdapterBase::~AdapterBase() = default;
 
 void AdapterBase::SetUseTieredLimits(bool useTieredLimits) {
     mUseTieredLimits = useTieredLimits;
-}
-
-FeaturesSet AdapterBase::GetSupportedFeatures() const {
-    return mSupportedFeatures;
+    UpdateLimits();
 }
 
 PhysicalDeviceBase* AdapterBase::GetPhysicalDevice() {
     return mPhysicalDevice.Get();
 }
 
+const PhysicalDeviceBase* AdapterBase::GetPhysicalDevice() const {
+    return mPhysicalDevice.Get();
+}
+
+InstanceBase* AdapterBase::GetInstance() const {
+    return mInstance.Get();
+}
+
 InstanceBase* AdapterBase::APIGetInstance() const {
-    InstanceBase* instance = mPhysicalDevice->GetInstance();
+    InstanceBase* instance = mInstance.Get();
     DAWN_ASSERT(instance != nullptr);
-    instance->APIReference();
+    instance->APIAddRef();
     return instance;
 }
 
-bool AdapterBase::APIGetLimits(SupportedLimits* limits) const {
-    DAWN_ASSERT(limits != nullptr);
-    InstanceBase* instance = mPhysicalDevice->GetInstance();
+void AdapterBase::UpdateLimits() {
+    mLimits = mPhysicalDevice->GetLimits();
 
-    UnpackedPtr<SupportedLimits> unpacked;
-    if (instance->ConsumedError(ValidateAndUnpack(limits), &unpacked)) {
-        return false;
+    // Disable unsafe limits if needed.
+    if (!mTogglesState.IsEnabled(Toggle::AllowUnsafeAPIs)) {
+        mLimits.v1.maxImmediateSize = 0;
     }
 
+    // Apply the tiered limits if needed.
     if (mUseTieredLimits) {
-        limits->limits = ApplyLimitTiers(mPhysicalDevice->GetLimits().v1);
-    } else {
-        limits->limits = mPhysicalDevice->GetLimits().v1;
+        ApplyLimitTiers(&mLimits);
     }
-
-    if (auto* subgroupLimits = unpacked.Get<DawnExperimentalSubgroupLimits>()) {
-        if (!mTogglesState.IsEnabled(Toggle::AllowUnsafeAPIs)) {
-            // If AllowUnsafeAPIs is not enabled, return the default-initialized
-            // DawnExperimentalSubgroupLimits object, where minSubgroupSize and
-            // maxSubgroupSize are WGPU_LIMIT_U32_UNDEFINED.
-            *subgroupLimits = DawnExperimentalSubgroupLimits{};
-        } else {
-            *subgroupLimits = mPhysicalDevice->GetLimits().experimentalSubgroupLimits;
-        }
-    }
-
-    return true;
 }
 
-void AdapterBase::APIGetProperties(AdapterProperties* properties) const {
-    DAWN_ASSERT(properties != nullptr);
-    InstanceBase* instance = mPhysicalDevice->GetInstance();
+const CombinedLimits& AdapterBase::GetLimits() const {
+    return mLimits;
+}
 
-    UnpackedPtr<AdapterProperties> unpacked;
-    if (instance->ConsumedError(ValidateAndUnpack(properties), &unpacked)) {
-        return;
+wgpu::Status AdapterBase::APIGetLimits(Limits* limits) const {
+    if (mInstance->ConsumedError(FillLimits(limits, mSupportedFeatures, mLimits))) {
+        return wgpu::Status::Error;
+    }
+    return wgpu::Status::Success;
+}
+
+wgpu::Status AdapterBase::APIGetInfo(AdapterInfo* info) const {
+    DAWN_ASSERT(info != nullptr);
+
+    UnpackedPtr<AdapterInfo> unpacked;
+    if (mInstance->ConsumedError(ValidateAndUnpack(info), &unpacked)) {
+        return wgpu::Status::Error;
     }
 
+    bool hadError = false;
     if (unpacked.Get<AdapterPropertiesMemoryHeaps>() != nullptr &&
         !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesMemoryHeaps)) {
-        instance->ConsumedError(
+        hadError |= mInstance->ConsumedError(
             DAWN_VALIDATION_ERROR("Feature AdapterPropertiesMemoryHeaps is not available."));
     }
     if (unpacked.Get<AdapterPropertiesD3D>() != nullptr &&
         !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesD3D)) {
-        instance->ConsumedError(
+        hadError |= mInstance->ConsumedError(
             DAWN_VALIDATION_ERROR("Feature AdapterPropertiesD3D is not available."));
     }
+    if (unpacked.Get<AdapterPropertiesVk>() != nullptr &&
+        !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesVk)) {
+        hadError |= mInstance->ConsumedError(
+            DAWN_VALIDATION_ERROR("Feature AdapterPropertiesVk is not available."));
+    }
+    if (unpacked.Get<AdapterPropertiesSubgroupMatrixConfigs>() != nullptr &&
+        !mSupportedFeatures.IsEnabled(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix)) {
+        hadError |= mInstance->ConsumedError(
+            DAWN_VALIDATION_ERROR("Feature ChromiumExperimentalSubgroupMatrix is not available."));
+    }
+    if (hadError) {
+        return wgpu::Status::Error;
+    }
+
     if (auto* powerPreferenceDesc = unpacked.Get<DawnAdapterPropertiesPowerPreference>()) {
         powerPreferenceDesc->powerPreference = mPowerPreference;
     }
 
     mPhysicalDevice->PopulateBackendProperties(unpacked);
 
-    properties->vendorID = mPhysicalDevice->GetVendorId();
-    properties->deviceID = mPhysicalDevice->GetDeviceId();
-    properties->adapterType = mPhysicalDevice->GetAdapterType();
-    properties->backendType = mPhysicalDevice->GetBackendType();
-    properties->compatibilityMode = mFeatureLevel == FeatureLevel::Compatibility;
-
-    // Get lengths, with null terminators.
-    size_t vendorNameCLen = mPhysicalDevice->GetVendorName().length() + 1;
-    size_t architectureCLen = mPhysicalDevice->GetArchitectureName().length() + 1;
-    size_t nameCLen = mPhysicalDevice->GetName().length() + 1;
-    size_t driverDescriptionCLen = mPhysicalDevice->GetDriverDescription().length() + 1;
-
     // Allocate space for all strings.
-    char* ptr = new char[vendorNameCLen + architectureCLen + nameCLen + driverDescriptionCLen];
+    size_t allocSize = mPhysicalDevice->GetVendorName().length() +
+                       mPhysicalDevice->GetArchitectureName().length() +
+                       mPhysicalDevice->GetName().length() +
+                       mPhysicalDevice->GetDriverDescription().length();
+    absl::Span<char> outBuffer{new char[allocSize], allocSize};
 
-    properties->vendorName = ptr;
-    memcpy(ptr, mPhysicalDevice->GetVendorName().c_str(), vendorNameCLen);
-    ptr += vendorNameCLen;
+    auto AddString = [&](const std::string& in, StringView* out) {
+        DAWN_ASSERT(in.length() <= outBuffer.length());
+        memcpy(outBuffer.data(), in.data(), in.length());
+        *out = {outBuffer.data(), in.length()};
+        outBuffer = outBuffer.subspan(in.length());
+    };
 
-    properties->architecture = ptr;
-    memcpy(ptr, mPhysicalDevice->GetArchitectureName().c_str(), architectureCLen);
-    ptr += architectureCLen;
+    AddString(mPhysicalDevice->GetVendorName(), &info->vendor);
+    AddString(mPhysicalDevice->GetArchitectureName(), &info->architecture);
+    AddString(mPhysicalDevice->GetName(), &info->device);
+    AddString(mPhysicalDevice->GetDriverDescription(), &info->description);
+    DAWN_ASSERT(outBuffer.empty());
 
-    properties->name = ptr;
-    memcpy(ptr, mPhysicalDevice->GetName().c_str(), nameCLen);
-    ptr += nameCLen;
+    info->backendType = mPhysicalDevice->GetBackendType();
+    info->adapterType = mPhysicalDevice->GetAdapterType();
+    info->vendorID = mPhysicalDevice->GetVendorId();
+    info->deviceID = mPhysicalDevice->GetDeviceId();
+    info->subgroupMinSize = mPhysicalDevice->GetSubgroupMinSize();
+    info->subgroupMaxSize = mPhysicalDevice->GetSubgroupMaxSize();
 
-    properties->driverDescription = ptr;
-    memcpy(ptr, mPhysicalDevice->GetDriverDescription().c_str(), driverDescriptionCLen);
-    ptr += driverDescriptionCLen;
+    if (mPhysicalDevice->GetBackendType() == wgpu::BackendType::D3D12 &&
+        mTogglesState.IsEnabled(Toggle::D3D12RelaxMinSubgroupSizeTo8)) {
+        info->subgroupMinSize = std::min(info->subgroupMinSize, 8u);
+    }
+
+    return wgpu::Status::Success;
 }
 
-void APIAdapterPropertiesFreeMembers(WGPUAdapterProperties properties) {
+void APIAdapterInfoFreeMembers(WGPUAdapterInfo info) {
     // This single delete is enough because everything is a single allocation.
-    delete[] properties.vendorName;
+    delete[] info.vendor.data;
 }
 
 void APIAdapterPropertiesMemoryHeapsFreeMembers(
@@ -172,29 +204,49 @@ void APIAdapterPropertiesMemoryHeapsFreeMembers(
     delete[] memoryHeapProperties.heapInfo;
 }
 
+void APIDawnDrmFormatCapabilitiesFreeMembers(WGPUDawnDrmFormatCapabilities capabilities) {
+    delete[] capabilities.properties;
+}
+
+void APIAdapterPropertiesSubgroupMatrixConfigsFreeMembers(
+    WGPUAdapterPropertiesSubgroupMatrixConfigs subgroupMatrixConfigs) {
+    delete[] subgroupMatrixConfigs.configs;
+}
+
 bool AdapterBase::APIHasFeature(wgpu::FeatureName feature) const {
     return mSupportedFeatures.IsEnabled(feature);
 }
 
-size_t AdapterBase::APIEnumerateFeatures(wgpu::FeatureName* features) const {
-    return mSupportedFeatures.EnumerateFeatures(features);
+void AdapterBase::APIGetFeatures(wgpu::SupportedFeatures* features) const {
+    this->APIGetFeatures(reinterpret_cast<SupportedFeatures*>(features));
 }
 
+void AdapterBase::APIGetFeatures(SupportedFeatures* features) const {
+    mSupportedFeatures.ToSupportedFeatures(features);
+}
+
+void APISupportedFeaturesFreeMembers(WGPUSupportedFeatures supportedFeatures) {
+    delete[] supportedFeatures.features;
+}
+
+// TODO(https://crbug.com/dawn/2465) Could potentially re-implement via AllowSpontaneous async mode.
 DeviceBase* AdapterBase::APICreateDevice(const DeviceDescriptor* descriptor) {
-    constexpr DeviceDescriptor kDefaultDesc = {};
     if (descriptor == nullptr) {
-        descriptor = &kDefaultDesc;
+        descriptor = &kDefaultDeviceDesc;
     }
 
-    auto result = CreateDevice(descriptor);
-    if (result.IsError()) {
-        mPhysicalDevice->GetInstance()->ConsumedError(result.AcquireError());
+    auto [lostEvent, result] = CreateDevice(descriptor);
+    mInstance->GetEventManager()->TrackEvent(lostEvent);
+    Ref<DeviceBase> device;
+    if (mInstance->ConsumedError(std::move(result), &device)) {
         return nullptr;
     }
-    return ReturnToAPI(result.AcquireSuccess());
+    return ReturnToAPI(std::move(device));
 }
 
-ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDevice(const DeviceDescriptor* rawDescriptor) {
+ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDeviceInternal(
+    const DeviceDescriptor* rawDescriptor,
+    Ref<DeviceBase::DeviceLostEvent> lostEvent) {
     DAWN_ASSERT(rawDescriptor != nullptr);
 
     // Create device toggles state from required toggles descriptor and inherited adapter toggles
@@ -210,118 +262,192 @@ ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDevice(const DeviceDescriptor*
     // Default toggles for all backend
     deviceToggles.Default(Toggle::LazyClearResourceOnFirstUse, true);
     deviceToggles.Default(Toggle::TimestampQuantization, true);
+    if (mInstance->IsBackendValidationEnabled()) {
+        deviceToggles.Default(Toggle::UseUserDefinedLabelsInBackend, true);
+    }
 
     // Backend-specific forced and default device toggles
-    mPhysicalDevice->SetupBackendDeviceToggles(&deviceToggles);
+    mPhysicalDevice->SetupBackendDeviceToggles(mInstance->GetPlatform(), &deviceToggles);
+
+    std::unordered_set<wgpu::FeatureName> requiredFeatureSet;
+    for (uint32_t i = 0; i < descriptor->requiredFeatureCount; ++i) {
+        requiredFeatureSet.insert(descriptor->requiredFeatures[i]);
+    }
 
     // Validate all required features are supported by the adapter and suitable under device
-    // toggles. Note that certain toggles in device toggles state may be overriden by user and
+    // toggles. Note that certain toggles in device toggles state may be overridden by user and
     // different from the adapter toggles state, and in this case a device may support features
-    // that not supported by the adapter. We allow such toggles overriding for the convinience e.g.
-    // creating a deivce for internal usage with AllowUnsafeAPI enabled from an adapter that
-    // disabled AllowUnsafeAPIS.
-    for (uint32_t i = 0; i < descriptor->requiredFeatureCount; ++i) {
-        wgpu::FeatureName feature = descriptor->requiredFeatures[i];
+    // that not supported by the adapter. We allow such toggles overriding for the convenience e.g.
+    // creating a device for internal usage with AllowUnsafeAPIs enabled from an adapter that
+    // disabled AllowUnsafeAPIs.
+    for (wgpu::FeatureName requiredFeature : requiredFeatureSet) {
         FeatureValidationResult result =
-            mPhysicalDevice->ValidateFeatureSupportedWithToggles(feature, deviceToggles);
+            mPhysicalDevice->ValidateFeatureSupportedWithToggles(requiredFeature, deviceToggles);
         DAWN_INVALID_IF(!result.success, "Invalid feature required: %s",
                         result.errorMessage.c_str());
     }
 
     if (descriptor->requiredLimits != nullptr) {
-        // Only consider limits in RequiredLimits structure, and currently no chained structure
-        // supported.
-        DAWN_INVALID_IF(descriptor->requiredLimits->nextInChain != nullptr,
-                        "can not chain after requiredLimits.");
+        CombinedLimits requiredLimits;
+        DAWN_TRY_CONTEXT(ValidateAndUnpackLimitsIn(descriptor->requiredLimits, requiredFeatureSet,
+                                                   &requiredLimits),
+                         "Validating and unpacking descriptor->requiredLimits");
 
-        SupportedLimits supportedLimits;
-        bool success = APIGetLimits(&supportedLimits);
-        DAWN_ASSERT(success);
-
-        DAWN_TRY_CONTEXT(ValidateLimits(supportedLimits.limits, descriptor->requiredLimits->limits),
-                         "validating required limits");
+        DAWN_TRY_CONTEXT(ValidateLimits(GetLimits(), requiredLimits), "validating required limits");
     }
 
-    return mPhysicalDevice->CreateDevice(this, descriptor, deviceToggles);
+    if (auto* allocatorDesc = descriptor.Get<DawnDeviceAllocatorControl>()) {
+        DAWN_INVALID_IF(!requiredFeatureSet.contains(wgpu::FeatureName::DawnDeviceAllocatorControl),
+                        "%s is not enabled.", wgpu::FeatureName::DawnDeviceAllocatorControl);
+
+        DAWN_INVALID_IF(!IsPowerOfTwo(allocatorDesc->allocatorHeapBlockSize),
+                        "allocator heap block size (%d) isn't a power of two.",
+                        allocatorDesc->allocatorHeapBlockSize);
+    }
+
+    DAWN_INVALID_IF(mAdapterIsConsumed,
+                    "adapter is \"consumed\": it has already been used to create a device");
+
+    auto result =
+        mPhysicalDevice->CreateDevice(this, descriptor, deviceToggles, std::move(lostEvent));
+
+    // The adapter should be consumed only upon successful device creation if the instance doesn't
+    // allow multiple devices per adapter, or if the descriptor explicitly requests consumption.
+    auto* consumeAdapterDesc = descriptor.Get<DawnConsumeAdapterDescriptor>();
+    const bool consumeOnSuccess =
+        !mInstance->HasFeature(wgpu::InstanceFeatureName::MultipleDevicesPerAdapter) ||
+        (consumeAdapterDesc && consumeAdapterDesc->consumeAdapter);
+    if (result.IsSuccess() && consumeOnSuccess) {
+        mAdapterIsConsumed = true;
+    }
+
+    return result;
 }
 
-void AdapterBase::APIRequestDevice(const DeviceDescriptor* descriptor,
-                                   WGPURequestDeviceCallback callback,
-                                   void* userdata) {
-    constexpr DeviceDescriptor kDefaultDescriptor = {};
-    if (descriptor == nullptr) {
-        descriptor = &kDefaultDescriptor;
-    }
-    auto result = CreateDevice(descriptor);
+std::pair<Ref<DeviceBase::DeviceLostEvent>, ResultOrError<Ref<DeviceBase>>>
+AdapterBase::CreateDevice(const DeviceDescriptor* descriptor) {
+    DAWN_ASSERT(descriptor != nullptr);
+
+    Ref<DeviceBase::DeviceLostEvent> lostEvent = DeviceBase::DeviceLostEvent::Create(descriptor);
+    auto result = CreateDeviceInternal(descriptor, lostEvent);
+
+    // Catch any errors to directly complete the device lost event with the error message.
     if (result.IsError()) {
-        std::unique_ptr<ErrorData> errorData = result.AcquireError();
-        // TODO(crbug.com/dawn/1122): Call callbacks only on wgpuInstanceProcessEvents
-        callback(WGPURequestDeviceStatus_Error, nullptr, errorData->GetFormattedMessage().c_str(),
-                 userdata);
-        return;
+        auto error = result.AcquireError();
+        lostEvent->SetLost(mInstance->GetEventManager(), wgpu::DeviceLostReason::FailedCreation,
+                           "Failed to create device:\n" + error->GetFormattedMessage());
+
+        // When the device fails to initialize, we need to both promote the device ref to an
+        // external ref to clean up resources, and drop it, so we acquire it in this scope.
+        APIRef<DeviceBase> device;
+        device.Acquire(ReturnToAPI(std::move(lostEvent->mDevice)));
+        return {lostEvent, std::move(error)};
     }
-    Ref<DeviceBase> device = result.AcquireSuccess();
-    WGPURequestDeviceStatus status =
-        device == nullptr ? WGPURequestDeviceStatus_Unknown : WGPURequestDeviceStatus_Success;
-    // TODO(crbug.com/dawn/1122): Call callbacks only on wgpuInstanceProcessEvents
-    callback(status, ToAPI(ReturnToAPI(std::move(device))), nullptr, userdata);
+
+    return {lostEvent, std::move(result)};
 }
 
-Future AdapterBase::APIRequestDeviceF(const DeviceDescriptor* descriptor,
-                                      const RequestDeviceCallbackInfo& callbackInfo) {
+Future AdapterBase::APIRequestDevice(const DeviceDescriptor* descriptor,
+                                     const WGPURequestDeviceCallbackInfo& callbackInfo) {
     struct RequestDeviceEvent final : public EventManager::TrackedEvent {
         WGPURequestDeviceCallback mCallback;
-        void* mUserdata;
-        ResultOrError<Ref<DeviceBase>> mDeviceOrError;
+        raw_ptr<void> mUserdata1;
+        raw_ptr<void> mUserdata2;
 
-        RequestDeviceEvent(const RequestDeviceCallbackInfo& callbackInfo,
-                           ResultOrError<Ref<DeviceBase>> deviceOrError)
-            : TrackedEvent(callbackInfo.mode, TrackedEvent::Completed{}),
+        WGPURequestDeviceStatus mStatus;
+        Ref<DeviceBase> mDevice = nullptr;
+        std::string mMessage;
+
+        RequestDeviceEvent(const WGPURequestDeviceCallbackInfo& callbackInfo,
+                           Ref<DeviceBase> device)
+            : TrackedEvent(static_cast<wgpu::CallbackMode>(callbackInfo.mode),
+                           TrackedEvent::Completed{}),
               mCallback(callbackInfo.callback),
-              mUserdata(callbackInfo.userdata),
-              mDeviceOrError(std::move(deviceOrError)) {
-            CompleteIfSpontaneous();
-        }
+              mUserdata1(callbackInfo.userdata1),
+              mUserdata2(callbackInfo.userdata2),
+              mStatus(WGPURequestDeviceStatus_Success),
+              mDevice(std::move(device)) {}
+
+        RequestDeviceEvent(const WGPURequestDeviceCallbackInfo& callbackInfo,
+                           const std::string& message)
+            : TrackedEvent(static_cast<wgpu::CallbackMode>(callbackInfo.mode),
+                           TrackedEvent::Completed{}),
+              mCallback(callbackInfo.callback),
+              mUserdata1(callbackInfo.userdata1),
+              mUserdata2(callbackInfo.userdata2),
+              mStatus(WGPURequestDeviceStatus_Error),
+              mMessage(message) {}
 
         ~RequestDeviceEvent() override { EnsureComplete(EventCompletionType::Shutdown); }
 
         void Complete(EventCompletionType completionType) override {
-            if (mDeviceOrError.IsError()) {
-                std::unique_ptr<ErrorData> errorData = mDeviceOrError.AcquireError();
-                mCallback(WGPURequestDeviceStatus_Error, nullptr,
-                          errorData->GetFormattedMessage().c_str(), mUserdata);
-                return;
+            if (completionType == EventCompletionType::Shutdown) {
+                mStatus = WGPURequestDeviceStatus_CallbackCancelled;
+                mDevice = nullptr;
+                mMessage = "A valid external Instance reference no longer exists.";
             }
-            Ref<DeviceBase> device = mDeviceOrError.AcquireSuccess();
-            WGPURequestDeviceStatus status = device == nullptr ? WGPURequestDeviceStatus_Unknown
-                                                               : WGPURequestDeviceStatus_Success;
-            mCallback(status, ToAPI(ReturnToAPI(std::move(device))), nullptr, mUserdata);
+            mCallback(mStatus, ToAPI(ReturnToAPI(std::move(mDevice))), ToOutputStringView(mMessage),
+                      mUserdata1.ExtractAsDangling(), mUserdata2.ExtractAsDangling());
         }
     };
 
-    constexpr DeviceDescriptor kDefaultDescriptor = {};
     if (descriptor == nullptr) {
-        descriptor = &kDefaultDescriptor;
+        descriptor = &kDefaultDeviceDesc;
     }
 
-    FutureID futureID = mPhysicalDevice->GetInstance()->GetEventManager()->TrackEvent(
-        callbackInfo.mode,
-        AcquireRef(new RequestDeviceEvent(callbackInfo, CreateDevice(descriptor))));
+    FutureID futureID = kNullFutureID;
+    auto [lostEvent, result] = CreateDevice(descriptor);
+    if (result.IsSuccess()) {
+        futureID = mInstance->GetEventManager()->TrackEvent(
+            AcquireRef(new RequestDeviceEvent(callbackInfo, result.AcquireSuccess())));
+    } else {
+        futureID = mInstance->GetEventManager()->TrackEvent(AcquireRef(
+            new RequestDeviceEvent(callbackInfo, result.AcquireError()->GetFormattedMessage())));
+    }
+    mInstance->GetEventManager()->TrackEvent(std::move(lostEvent));
     return {futureID};
+}
+
+wgpu::Status AdapterBase::APIGetFormatCapabilities(wgpu::TextureFormat format,
+                                                   DawnFormatCapabilities* capabilities) {
+    if (!mSupportedFeatures.IsEnabled(wgpu::FeatureName::DawnFormatCapabilities)) {
+        [[maybe_unused]] bool hadError = mInstance->ConsumedError(
+            DAWN_VALIDATION_ERROR("Feature DawnFormatCapabilities is not available."));
+        return wgpu::Status::Error;
+    }
+    DAWN_ASSERT(capabilities != nullptr);
+
+    UnpackedPtr<DawnFormatCapabilities> unpacked;
+    if (mInstance->ConsumedError(ValidateAndUnpack(capabilities), &unpacked)) {
+        return wgpu::Status::Error;
+    }
+
+    if (unpacked.Get<DawnDrmFormatCapabilities>() != nullptr &&
+        !mSupportedFeatures.IsEnabled(wgpu::FeatureName::DawnDrmFormatCapabilities)) {
+        [[maybe_unused]] bool hadError = mInstance->ConsumedError(
+            DAWN_VALIDATION_ERROR("Feature DawnDrmFormatCapabilities is not available."));
+        return wgpu::Status::Error;
+    }
+
+    mPhysicalDevice->PopulateBackendFormatCapabilities(format, unpacked);
+    return wgpu::Status::Success;
 }
 
 const TogglesState& AdapterBase::GetTogglesState() const {
     return mTogglesState;
 }
 
-FeatureLevel AdapterBase::GetFeatureLevel() const {
+wgpu::FeatureLevel AdapterBase::GetFeatureLevel() const {
     return mFeatureLevel;
 }
 
+const std::string& AdapterBase::GetName() const {
+    return mPhysicalDevice->GetName();
+}
+
 std::vector<Ref<AdapterBase>> SortAdapters(std::vector<Ref<AdapterBase>> adapters,
-                                           const RequestAdapterOptions* options) {
-    const bool highPerformance =
-        options != nullptr && options->powerPreference == wgpu::PowerPreference::HighPerformance;
+                                           const UnpackedPtr<RequestAdapterOptions>& options) {
+    const bool highPerformance = options->powerPreference == wgpu::PowerPreference::HighPerformance;
 
     const auto ComputeAdapterTypeRank = [&](const Ref<AdapterBase>& a) {
         switch (a->GetPhysicalDevice()->GetAdapterType()) {

@@ -7,14 +7,23 @@
 
 #include "src/gpu/ganesh/vk/GrVkImage.h"
 
+#include "build/build_config.h"
+#include "include/core/SkSize.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
+#include "src/gpu/ganesh/vk/GrVkCaps.h"
+#include "src/gpu/ganesh/vk/GrVkDescriptorSet.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
 #include "src/gpu/ganesh/vk/GrVkImageView.h"
-#include "src/gpu/ganesh/vk/GrVkTexture.h"
+#include "src/gpu/ganesh/vk/GrVkResourceProvider.h"
+#include "src/gpu/ganesh/vk/GrVkUniformHandler.h"
 #include "src/gpu/ganesh/vk/GrVkUtil.h"
 #include "src/gpu/vk/VulkanMemory.h"
 #include "src/gpu/vk/VulkanMutableTextureStatePriv.h"
 #include "src/gpu/vk/VulkanUtilsPriv.h"
+
+#include <string.h>
+#include <functional>
+#include <utility>
 
 #define VK_CALL(GPU, X) GR_VK_CALL(GPU->vkInterface(), X)
 
@@ -495,7 +504,7 @@ bool GrVkImage::InitImageInfo(GrVkGpu* gpu, const ImageDesc& imageDesc, GrVkImag
         createflags |= VK_IMAGE_CREATE_PROTECTED_BIT;
     }
 
-#if defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_QTWEBENGINE)
     // The initialLayout should be undefined for the external image.
     // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkImageCreateInfo.html#VUID-VkImageCreateInfo-pNext-01443
     initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -508,11 +517,11 @@ bool GrVkImage::InitImageInfo(GrVkGpu* gpu, const ImageDesc& imageDesc, GrVkImag
 #else
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
 #endif  // defined(SK_BUILD_FOR_WIN)
-#endif  // defined(TOOLKIT_QT)
+#endif  // BUILDFLAG(IS_QTWEBENGINE)
 
     const VkImageCreateInfo imageCreateInfo = {
         VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,         // sType
-#if defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_QTWEBENGINE)
         &externalMemoryImageCreateInfo,              // pNext
 #else
         nullptr,                                     // pNext
@@ -734,7 +743,7 @@ GrVkGpu* GrVkImage::getVkGpu() const {
     return static_cast<GrVkGpu*>(this->getGpu());
 }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 void GrVkImage::setCurrentQueueFamilyToGraphicsQueue(GrVkGpu* gpu) {
     skgpu::MutableTextureStates::SetVkQueueFamilyIndex(fMutableState.get(), gpu->queueIndex());
 }

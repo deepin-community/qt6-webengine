@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 // clang-format off
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import {assert} from 'chrome://resources/js/assert.js';
 import {sendWithPromise} from 'chrome://resources/js/cr.js';
 import {$, appendParam} from 'chrome://resources/js/util.js';
 // </if>
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 import {assert} from 'chrome://resources/ash/common/assert.js';
 import {sendWithPromise} from 'chrome://resources/ash/common/cr.m.js';
 import {NativeEventTarget as EventTarget} from 'chrome://resources/ash/common/event_target.js';
@@ -52,7 +52,6 @@ export let SyncTrustedRecoveryMethod;
  * Sync trusted vault encryption keys optionally passed with 'authCompleted'
  * message.
  * @typedef {{
- *   obfuscatedGaiaId: string,
  *   encryptionKeys: Array<SyncTrustedVaultKey>,
  *   trustedRecoveryMethods: Array<SyncTrustedRecoveryMethod>
  * }}
@@ -93,6 +92,7 @@ export let AuthCompletedCredentials;
  *   service: string,
  *   dontResizeNonEmbeddedPages: boolean,
  *   clientId: string,
+ *   clientVersion: (string|undefined),
  *   gaiaPath: string,
  *   emailDomain: string,
  *   showTos: string,
@@ -111,6 +111,7 @@ export let AuthCompletedCredentials;
  *   frameUrl: URL,
  *   isFirstUser : (boolean|undefined),
  *   recordAccountCreation : (boolean|undefined),
+ *   autoReloadAttempts : number,
  * }}
  */
 export let AuthParams;
@@ -175,8 +176,6 @@ export const SUPPORTED_PARAMS = [
                    // window.
   'clientId',      // Chrome client id.
   'needPassword',  // Whether the host is interested in getting a password.
-                   // If this set to |false|, |confirmPasswordCallback| is
-                   // not called before dispatching |authCopleted|.
                    // Default is |true|.
   'flow',          // One of 'default', 'enterprise', or
                    // 'cfm' or 'enterpriseLicense'.
@@ -194,8 +193,7 @@ export const SUPPORTED_PARAMS = [
   'menuEnterpriseEnrollment',    // Enables "Enterprise enrollment" menu item.
   'lsbReleaseBoard',             // Chrome OS Release board name
   'isFirstUser',                 // True if this is non-enterprise device,
-                                 // and there are no users yet.
-  'obfuscatedOwnerId',           // Obfuscated device owner ID, if needed.
+  // and there are no users yet.
   'extractSamlPasswordAttributes',  // If enabled attempts to extract password
                                     // attributes from the SAML response.
   'ignoreCrOSIdpSetting',           // If set to true, causes Gaia to ignore 3P
@@ -235,6 +233,10 @@ export const SUPPORTED_PARAMS = [
   'pwl',
   // Control if the account creation during sign in flow should be handled.
   'recordAccountCreation',
+  // Url parameter for the number of automatic reloads done to the
+  // authentication flow to avoid login page timeout. Added for
+  // `DeviceAuthenticationFlowAutoReloadInterval` policy.
+  'autoReloadAttempts',
 ];
 
 // Timeout in ms to wait for the message from Gaia indicating end of the flow.
@@ -437,7 +439,6 @@ export class Authenticator extends EventTarget {
 
     this.clientId_ = null;
 
-    this.confirmPasswordCallback = null;
     this.noPasswordCallback = null;
     this.onePasswordCallback = null;
     this.insecureContentBlockedCallback = null;
@@ -612,6 +613,9 @@ export class Authenticator extends EventTarget {
     this.webviewEventManager_.addEventListener(
         this.samlHandler_, 'challengeMachineKeyRequired',
         e => this.onChallengeMachineKeyRequired_(e));
+    this.webviewEventManager_.addEventListener(
+        this.samlHandler_, 'isSamlFlowChange',
+        e => this.onIsSamlFlowChanged_(e));
 
     this.webviewEventManager_.addEventListener(
         this.webview_, 'droplink', e => this.onDropLink_(e));
@@ -809,6 +813,9 @@ export class Authenticator extends EventTarget {
       if (data.rart) {
         url = appendParam(url, 'rart', data.rart);
       }
+      if (data.autoReloadAttempts) {
+        url = appendParam(url, 'auto_reload_attempts', data.autoReloadAttempts);
+      }
 
       return url;
     }
@@ -843,9 +850,6 @@ export class Authenticator extends EventTarget {
     }
     if (data.isFirstUser) {
       url = appendParam(url, 'is_first_user', 'true');
-    }
-    if (data.obfuscatedOwnerId) {
-      url = appendParam(url, 'obfuscated_owner_id', data.obfuscatedOwnerId);
     }
     if (data.hl) {
       url = appendParam(url, 'hl', data.hl);
@@ -894,6 +898,9 @@ export class Authenticator extends EventTarget {
     if (data.pwl) {
       url = appendParam(url, 'pwl', data.pwl);
     }
+    if (data.autoReloadAttempts) {
+      url = appendParam(url, 'auto_reload_attempts', data.autoReloadAttempts);
+    }
 
     return url;
   }
@@ -923,7 +930,7 @@ export class Authenticator extends EventTarget {
 
     if (this.isConstrainedWindow_) {
       let isEmbeddedPage = false;
-      if (this.idpOrigin_ && currentUrl.lastIndexOf(this.idpOrigin_) === 0) {
+      if (this.idpOrigin_ && currentUrl.startsWith(this.idpOrigin_)) {
         const headers = details.responseHeaders;
         for (let i = 0; headers && i < headers.length; ++i) {
           if (headers[i].name.toLowerCase() === EMBEDDED_FORM_HEADER) {
@@ -998,7 +1005,8 @@ export class Authenticator extends EventTarget {
       return;
     }
     const currentUrl = details.url;
-    if (currentUrl.lastIndexOf(this.idpOrigin_, 0) !== 0) {
+    if (this.idpOrigin_ === null || this.idpOrigin_ === undefined ||
+      !currentUrl.startsWith(this.idpOrigin_)) {
       return;
     }
 
@@ -1007,15 +1015,43 @@ export class Authenticator extends EventTarget {
       const header = headers[i];
       const headerName = header.name.toLowerCase();
       if (headerName === SIGN_IN_HEADER) {
+        // See go/gaia-response-headers#google-accounts-signin for the expected
+        // format of the sign-in header fields.
         const headerValues = header.value.toLowerCase().split(',');
         const signinDetails = {};
         headerValues.forEach(function(e) {
           const pair = e.split('=');
-          signinDetails[pair[0].trim()] = pair[1].trim();
+          const key = pair[0].trim();
+          if (key in signinDetails) {
+            // TODO(crbug.com/427954993): temporary log to learn if this ever
+            // happens in the wild. Should be replaced either with some error
+            // handling or an assert.
+            console.error(
+                'Authenticator: the sign-in header contains multiple ' + key +
+                ' values');
+          }
+          signinDetails[key] = pair[1].trim();
         });
-        // Removes "" around.
-        const email = signinDetails['email'].slice(1, -1);
-        this.setEmail_(email);
+        // Email and obfuscated ID are expected to be quoted strings.
+        if (!signinDetails['email'].startsWith('"') ||
+            !signinDetails['email'].endsWith('"')) {
+          // TODO(crbug.com/427954993): temporary log to learn if this ever
+          // happens in the wild. Should be replaced either with some error
+          // handling or an assert.
+          console.error(
+              'Authenticator: unexpected format of the email field in the ' +
+              'sign-in header');
+        }
+        this.setEmail_(signinDetails['email'].slice(1, -1));
+        if (!signinDetails['obfuscatedid'].startsWith('"') ||
+            !signinDetails['obfuscatedid'].endsWith('"')) {
+          // TODO(crbug.com/427954993): temporary log to learn if this ever
+          // happens in the wild. Should be replaced either with some error
+          // handling or an assert.
+          console.error(
+              'Authenticator: unexpected format of the obfuscatedid field in ' +
+              'the sign-in header');
+        }
         this.gaiaId_ = signinDetails['obfuscatedid'].slice(1, -1);
         this.sessionIndex_ = signinDetails['sessionindex'];
       }
@@ -1087,20 +1123,6 @@ export class Authenticator extends EventTarget {
   }
 
   /**
-   * Invoked by the hosting page to verify the Saml password.
-   */
-  verifyConfirmedPassword(password) {
-    if (!this.samlHandler_.verifyConfirmedPassword(password)) {
-      this.confirmPasswordCallback(
-          this.email_, this.samlHandler_.scrapedPasswordCount);
-      return;
-    }
-
-    this.password_ = password;
-    this.onAuthCompleted_();
-  }
-
-  /**
    * Check Saml flow and start password confirmation flow if needed.
    * Otherwise, continue with auto completion.
    * @private
@@ -1167,7 +1189,10 @@ export class Authenticator extends EventTarget {
       // Fall through to finish the auth flow even if this.needPassword
       // is true. This is because the flag is used as an intention to get
       // password when it is available but not a mandatory requirement.
-      console.warn('Authenticator: No password scraped for SAML.');
+      const flowString = this.authFlow === AuthFlow.SAML ? 'SAML' : 'DEFAULT';
+      console.warn(
+        'Authenticator: No password when completing online auth. Auth flow is: '
+        + flowString);
     } else if (this.needPassword) {
       if (this.samlHandler_.scrapedPasswordCount === 1) {
         // If we scraped exactly one password, we complete the
@@ -1177,14 +1202,6 @@ export class Authenticator extends EventTarget {
           this.onePasswordCallback();
         }
         this.onAuthCompleted_();
-        return;
-      }
-
-      if (this.confirmPasswordCallback) {
-        // Confirm scraped password. The flow follows in
-        // verifyConfirmedPassword.
-        this.confirmPasswordCallback(
-            this.email_, this.samlHandler_.scrapedPasswordCount);
         return;
       }
     }
@@ -1310,6 +1327,7 @@ export class Authenticator extends EventTarget {
     if (!e.detail.isSAMLPage) {
       return;
     }
+    this.dispatchEvent(new Event('samlPageLoaded'));
 
     this.authFlow = AuthFlow.SAML;
 
@@ -1365,6 +1383,17 @@ export class Authenticator extends EventTarget {
   }
 
   /**
+   * Invoked when |samlHandler_| fires 'isSamlFlowChange' event.
+   * @private
+   */
+  onIsSamlFlowChanged_(e) {
+    const isSamlFlow = e.detail.isSamlFlow;
+    if (isSamlFlow) {
+      this.authFlow = AuthFlow.SAML;
+    }
+  }
+
+  /**
    * Invoked when a link is dropped on the webview.
    * @private
    */
@@ -1395,7 +1424,7 @@ export class Authenticator extends EventTarget {
 
     // Posts a message to IdP pages to initiate communication.
     const currentUrl = this.webview_.src;
-    if (currentUrl.lastIndexOf(this.idpOrigin_) === 0) {
+    if (this.idpOrigin_ && currentUrl.startsWith(this.idpOrigin_)) {
       const msg = {
         'method': 'handshake',
       };

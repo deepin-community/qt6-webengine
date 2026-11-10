@@ -25,18 +25,18 @@
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 
 #include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_inline_text.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_clipper.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_masker.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
-#include "third_party/blink/renderer/core/layout/svg/layout_svg_transformable_container.h"
-#include "third_party/blink/renderer/core/layout/svg/layout_svg_viewport_container.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
+#include "third_party/blink/renderer/core/paint/css_mask_painter.h"
 #include "third_party/blink/renderer/core/paint/outline_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/svg/svg_length_functions.h"
-#include "third_party/blink/renderer/platform/graphics/stroke_data.h"
+#include "third_party/blink/renderer/platform/geometry/stroke_data.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/clear_collection_scope.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -87,8 +87,9 @@ gfx::RectF SVGLayoutSupport::LocalVisualRect(const LayoutObject& object) {
 
   // Return early for any cases where we don't actually paint
   if (object.StyleRef().Visibility() != EVisibility::kVisible &&
-      !object.EnclosingLayer()->HasVisibleContent())
+      !object.EnclosingLayer()->HasVisibleContent()) {
     return gfx::RectF();
+  }
 
   gfx::RectF visual_rect = object.VisualRectInLocalSVGCoordinates();
   if (int outset = OutlinePainter::OutlineOutsetExtent(
@@ -97,6 +98,19 @@ gfx::RectF SVGLayoutSupport::LocalVisualRect(const LayoutObject& object) {
     visual_rect.Outset(outset);
   }
   return visual_rect;
+}
+
+gfx::RectF SVGLayoutSupport::ApplyFiltersToRect(const LayoutObject& object,
+                                                const gfx::RectF& rect) {
+  CHECK(!object.NeedsPaintPropertyUpdate());
+  if (!object.StyleRef().HasFilter()) {
+    return rect;
+  }
+  gfx::RectF float_rect = rect;
+  const gfx::RectF filter_reference_box =
+      SVGResources::ReferenceBoxForEffects(object);
+  float_rect.UnionEvenIfEmpty(filter_reference_box);
+  return object.StyleRef().Filter().MapRect(float_rect);
 }
 
 PhysicalRect SVGLayoutSupport::VisualRectInAncestorSpace(
@@ -117,9 +131,7 @@ static gfx::RectF MapToSVGRootIncludingFilter(
   gfx::RectF visual_rect = local_visual_rect;
   const LayoutObject* parent = &object;
   for (; !parent->IsSVGRoot(); parent = parent->Parent()) {
-    const ComputedStyle& style = parent->StyleRef();
-    if (style.HasFilter())
-      visual_rect = style.Filter().MapRect(visual_rect);
+    visual_rect = SVGLayoutSupport::ApplyFiltersToRect(*parent, visual_rect);
     visual_rect = parent->LocalToSVGParentTransform().MapRect(visual_rect);
   }
 
@@ -227,37 +239,6 @@ void SVGLayoutSupport::MapAncestorToLocal(const LayoutObject& object,
   transform_state.ApplyTransform(local_to_svg_root);
 }
 
-bool SVGLayoutSupport::LayoutSizeOfNearestViewportChanged(
-    const LayoutObject* start) {
-  for (; start; start = start->Parent()) {
-    if (auto* svg_root = DynamicTo<LayoutSVGRoot>(*start)) {
-      return svg_root->IsLayoutSizeChanged();
-    }
-    if (auto* svg_viewport = DynamicTo<LayoutSVGViewportContainer>(*start)) {
-      return svg_viewport->IsLayoutSizeChanged();
-    }
-  }
-  NOTREACHED();
-  return false;
-}
-
-bool SVGLayoutSupport::ScreenScaleFactorChanged(const LayoutObject* ancestor) {
-  for (; ancestor; ancestor = ancestor->Parent()) {
-    if (auto* svg_root = DynamicTo<LayoutSVGRoot>(*ancestor)) {
-      return svg_root->DidScreenScaleFactorChange();
-    }
-    if (auto* svg_transformable =
-            DynamicTo<LayoutSVGTransformableContainer>(*ancestor)) {
-      return svg_transformable->DidScreenScaleFactorChange();
-    }
-    if (auto* svg_viewport = DynamicTo<LayoutSVGViewportContainer>(*ancestor)) {
-      return svg_viewport->DidScreenScaleFactorChange();
-    }
-  }
-  NOTREACHED();
-  return false;
-}
-
 bool SVGLayoutSupport::IsOverflowHidden(const LayoutObject& object) {
   // LayoutSVGRoot should never query for overflow state - it should always clip
   // itself to the initial viewport size.
@@ -282,9 +263,9 @@ void SVGLayoutSupport::AdjustWithClipPathAndMask(
   if (LayoutSVGResourceClipper* clipper =
           GetSVGResourceAsType(*client, style.ClipPath()))
     visual_rect.Intersect(clipper->ResourceBoundingBox(object_bounding_box));
-  if (auto* masker = GetSVGResourceAsType<LayoutSVGResourceMasker>(
-          *client, style.MaskerResource())) {
-    visual_rect.Intersect(masker->ResourceBoundingBox(object_bounding_box, 1));
+  if (auto mask_bbox =
+          CSSMaskPainter::MaskBoundingBox(layout_object, PhysicalOffset())) {
+    visual_rect.Intersect(*mask_bbox);
   }
 }
 
@@ -315,12 +296,15 @@ gfx::RectF SVGLayoutSupport::ComputeVisualRectForText(
 }
 
 DashArray SVGLayoutSupport::ResolveSVGDashArray(
-    const SVGDashArray& svg_dash_array,
+    const SVGDashArray* svg_dash_array,
     const ComputedStyle& style,
     const SVGViewportResolver& viewport_resolver) {
   DashArray dash_array;
-  for (const Length& dash_length : svg_dash_array.data) {
-    dash_array.push_back(ValueForLength(dash_length, viewport_resolver, style));
+  if (svg_dash_array) {
+    for (const Length& dash_length : *svg_dash_array) {
+      dash_array.push_back(
+          ValueForLength(dash_length, viewport_resolver, style));
+    }
   }
   return dash_array;
 }
@@ -340,7 +324,7 @@ void SVGLayoutSupport::ApplyStrokeStyleToStrokeData(StrokeData& stroke_data,
   stroke_data.SetMiterLimit(style.StrokeMiterLimit());
 
   DashArray dash_array =
-      ResolveSVGDashArray(*style.StrokeDashArray(), style, viewport_resolver);
+      ResolveSVGDashArray(style.StrokeDashArray(), style, viewport_resolver);
   float dash_offset =
       ValueForLength(style.StrokeDashOffset(), viewport_resolver, style);
   // Apply scaling from 'pathLength'.
@@ -362,7 +346,7 @@ bool SVGLayoutSupport::IsLayoutableTextNode(const LayoutObject* object) {
 
 bool SVGLayoutSupport::WillIsolateBlendingDescendantsForStyle(
     const ComputedStyle& style) {
-  return style.HasGroupingProperty(style.BoxReflect()) || style.HasMaskForSVG();
+  return style.HasGroupingProperty(style.BoxReflect());
 }
 
 bool SVGLayoutSupport::WillIsolateBlendingDescendantsForObject(
@@ -375,9 +359,6 @@ bool SVGLayoutSupport::WillIsolateBlendingDescendantsForObject(
 }
 
 bool SVGLayoutSupport::IsIsolationRequired(const LayoutObject* object) {
-  if (object->StyleRef().HasMaskForSVG()) {
-    return true;
-  }
   return WillIsolateBlendingDescendantsForObject(object) &&
          object->HasNonIsolatedBlendingDescendants();
 }

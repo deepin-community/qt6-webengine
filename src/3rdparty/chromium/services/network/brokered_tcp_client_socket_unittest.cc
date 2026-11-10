@@ -4,6 +4,7 @@
 
 #include "services/network/brokered_tcp_client_socket.h"
 
+#include "base/compiler_specific.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/task_environment.h"
@@ -52,7 +53,7 @@ class BrokeredTcpClientSocketTest : public testing::Test,
         std::make_unique<net::TCPServerSocket>(nullptr, net::NetLogSource());
     net::IPEndPoint local_address(net::IPAddress::IPv4Localhost(), 0);
     ASSERT_THAT(
-        listen_socket_->Listen(local_address, 1, /*ipv6_only=*/absl::nullopt),
+        listen_socket_->Listen(local_address, 1, /*ipv6_only=*/std::nullopt),
         IsOk());
     // Get the server's address (including the actual port number).
     ASSERT_THAT(listen_socket_->GetLocalAddress(&local_address), IsOk());
@@ -139,7 +140,7 @@ TEST_F(BrokeredTcpClientSocketTest, Bind) {
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/1456795): Re-enable on Fuchsia once cause for failure is
+// TODO(crbug.com/40918119): Re-enable on Fuchsia once cause for failure is
 // determined.
 #define MAYBE_FailedBind DISABLED_FailedBind
 #else
@@ -151,7 +152,7 @@ TEST_F(BrokeredTcpClientSocketTest, MAYBE_FailedBind) {
   net::TCPServerSocket ipv6_server_socket(nullptr, net::NetLogSource());
   net::IPEndPoint local_address(net::IPAddress::IPv6Localhost(), 0);
   int listen_result =
-      ipv6_server_socket.Listen(local_address, 1, /*ipv6_only=*/absl::nullopt);
+      ipv6_server_socket.Listen(local_address, 1, /*ipv6_only=*/std::nullopt);
   if (listen_result != net::OK) {
     LOG(ERROR) << "Failed to listen on ::1 - probably because IPv6 is disabled."
                   " Skipping the test";
@@ -378,7 +379,7 @@ TEST_F(BrokeredTcpClientSocketTest, FullDuplex_ReadFirst) {
   auto request_buffer =
       base::MakeRefCounted<net::IOBufferWithSize>(kWriteBufLen);
   char* request_data = request_buffer->data();
-  memset(request_data, 'A', kWriteBufLen);
+  UNSAFE_TODO(memset(request_data, 'A', kWriteBufLen));
   net::TestCompletionCallback write_callback;
 
   int bytes_written = 0;
@@ -412,7 +413,7 @@ TEST_F(BrokeredTcpClientSocketTest, FullDuplex_WriteFirst) {
   auto request_buffer =
       base::MakeRefCounted<net::IOBufferWithSize>(kWriteBufLen);
   char* request_data = request_buffer->data();
-  memset(request_data, 'A', kWriteBufLen);
+  UNSAFE_TODO(memset(request_data, 'A', kWriteBufLen));
   net::TestCompletionCallback write_callback;
 
   int bytes_written = 0;

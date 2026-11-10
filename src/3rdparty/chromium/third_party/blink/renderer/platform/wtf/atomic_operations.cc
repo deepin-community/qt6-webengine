@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/wtf/atomic_operations.h"
 
-namespace WTF {
+namespace blink {
 
 namespace {
 
@@ -132,4 +137,4 @@ void AtomicMemzero(void* buf, size_t bytes) {
   AtomicMemzeroImpl<uintptr_t>(buf, bytes);
 }
 
-}  // namespace WTF
+}  // namespace blink

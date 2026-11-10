@@ -3,11 +3,11 @@ Flow control tests for for-loops.
 `;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
 
 import { runFlowControlTest } from './harness.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('for_basic')
   .desc('Test that flow control executes a for-loop body the correct number of times')
@@ -70,7 +70,7 @@ g.test('for_continue')
     );
   });
 
-g.test('for_initalizer')
+g.test('for_initializer')
   .desc('Test flow control for a for-loop initializer')
   .params(u => u.combine('preventValueOptimizations', [true, false]))
   .fn(t => {
@@ -91,7 +91,7 @@ fn initializer() -> i32 {
     }));
   });
 
-g.test('for_complex_initalizer')
+g.test('for_complex_initializer')
   .desc('Test flow control for a complex for-loop initializer')
   .params(u => u.combine('preventValueOptimizations', [true, false]))
   .fn(t => {
@@ -268,4 +268,54 @@ g.test('nested_for_continue')
   ${f.expect_order(9)}
 `
     );
+  });
+
+g.test('for_logical_and_condition')
+  .desc('Test flow control for a for-loop with a logical and condition')
+  .params(u => u.combine('preventValueOptimizations', [true, false]))
+  .fn(t => {
+    runFlowControlTest(t, f => ({
+      entrypoint: `
+  ${f.expect_order(0)}
+  for (var i = ${f.value(0)}; a(i) && b(i); i++) {
+    ${f.expect_order(3, 6)}
+  }
+  ${f.expect_order(8)}
+      `,
+      extra: `
+fn a(i : i32) -> bool {
+  ${f.expect_order(1, 4, 7)}
+  return i < ${f.value(2)};
+}
+fn b(i : i32) -> bool {
+  ${f.expect_order(2, 5)}
+  return i < ${f.value(5)};
+}
+      `,
+    }));
+  });
+
+g.test('for_logical_or_condition')
+  .desc('Test flow control for a for-loop with a logical or condition')
+  .params(u => u.combine('preventValueOptimizations', [true, false]))
+  .fn(t => {
+    runFlowControlTest(t, f => ({
+      entrypoint: `
+  ${f.expect_order(0)}
+  for (var i = ${f.value(0)}; a(i) || b(i); i++) {
+    ${f.expect_order(2, 4, 7, 10)}
+  }
+  ${f.expect_order(13)}
+      `,
+      extra: `
+fn a(i : i32) -> bool {
+  ${f.expect_order(1, 3, 5, 8, 11)}
+  return i < ${f.value(2)};
+}
+fn b(i : i32) -> bool {
+  ${f.expect_order(6, 9, 12)}
+  return i < ${f.value(4)};
+}
+      `,
+    }));
   });

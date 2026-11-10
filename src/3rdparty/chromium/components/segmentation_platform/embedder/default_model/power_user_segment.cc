@@ -230,7 +230,7 @@ void PowerUserSegment::ExecuteModelWithInput(
   // Invalid inputs.
   if (inputs.size() != kPowerUserUMAFeatures.size()) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
+        FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
     return;
   }
 
@@ -279,4 +279,5 @@ void PowerUserSegment::ExecuteModelWithInput(
       base::BindOnce(std::move(callback), ModelProvider::Response(1, result)));
 }
 
+#undef RANK
 }  // namespace segmentation_platform

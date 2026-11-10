@@ -55,7 +55,7 @@ std::string GetDecoderName(VideoDecoderType type) {
     case VideoDecoderType::kOutOfProcess:
       return "OOPVideoDecoder";
     case VideoDecoderType::kVideoToolbox:
-      return "VideoTooboxVideoDecoder";
+      return "VideoToolboxVideoDecoder";
   }
 }
 
@@ -81,6 +81,8 @@ std::string GetDecoderName(AudioDecoderType type) {
       return "AudioToolboxAudioDecoder";
     case AudioDecoderType::kMediaFoundation:
       return "MediaFoundationAudioDecoder";
+    case AudioDecoderType::kSymphonia:
+      return "SymphoniaAudioDecoder";
   }
 }
 

@@ -15,6 +15,7 @@
 
 from python.generators.trace_processor_table.public import Column as C
 from python.generators.trace_processor_table.public import ColumnFlag
+from python.generators.trace_processor_table.public import CppAccess
 from python.generators.trace_processor_table.public import CppDouble
 from python.generators.trace_processor_table.public import CppInt64
 from python.generators.trace_processor_table.public import CppOptional
@@ -23,12 +24,11 @@ from python.generators.trace_processor_table.public import CppTableId
 from python.generators.trace_processor_table.public import CppUint32
 from python.generators.trace_processor_table.public import Table
 
-from src.trace_processor.tables.counter_tables import COUNTER_TABLE
-from src.trace_processor.tables.flow_tables import FLOW_TABLE
-from src.trace_processor.tables.metadata_tables import PROCESS_TABLE
 from src.trace_processor.tables.profiler_tables import STACK_PROFILE_CALLSITE_TABLE
+from src.trace_processor.tables.profiler_tables import STACK_PROFILE_FRAME_TABLE
 from src.trace_processor.tables.slice_tables import SLICE_TABLE
-from src.trace_processor.tables.sched_tables import SCHED_SLICE_TABLE
+from src.trace_processor.tables.track_tables import TRACK_TABLE
+from src.trace_processor.tables.winscope_tables import SURFACE_FLINGER_LAYERS_SNAPSHOT_TABLE
 
 TABLE_INFO_TABLE = Table(
     python_module=__file__,
@@ -42,114 +42,168 @@ TABLE_INFO_TABLE = Table(
         C('sorted', CppInt64()),
     ])
 
-ANCESTOR_SLICE_TABLE = Table(
+SLICE_SUBSET_TABLE = Table(
     python_module=__file__,
-    class_name="AncestorSliceTable",
-    sql_name="ancestor_slice",
+    class_name="SliceSubsetTable",
+    sql_name="not_exposed_to_sql",
     columns=[
-        C("start_id", CppTableId(SLICE_TABLE), flags=ColumnFlag.HIDDEN),
+        C('id', CppTableId(SLICE_TABLE), flags=ColumnFlag.SORTED),
+        C('ts', CppInt64(), flags=ColumnFlag.SORTED),
+        C('dur', CppInt64()),
+        C('track_id', CppTableId(TRACK_TABLE)),
+        C('category', CppOptional(CppString())),
+        C('name', CppOptional(CppString())),
+        C('depth', CppUint32()),
+        C('parent_id', CppOptional(CppTableId(SLICE_TABLE))),
+        C('arg_set_id', CppOptional(CppUint32())),
+        C('thread_ts', CppOptional(CppInt64())),
+        C('thread_dur', CppOptional(CppInt64())),
+        C('thread_instruction_count', CppOptional(CppInt64())),
+        C('thread_instruction_delta', CppOptional(CppInt64())),
     ],
-    parent=SLICE_TABLE)
-
-ANCESTOR_SLICE_BY_STACK_TABLE = Table(
-    python_module=__file__,
-    class_name="AncestorSliceByStackTable",
-    sql_name="ancestor_slice_by_stack",
-    columns=[
-        C("start_stack_id", CppInt64(), flags=ColumnFlag.HIDDEN),
-    ],
-    parent=SLICE_TABLE)
+    add_implicit_column=False,
+)
 
 ANCESTOR_STACK_PROFILE_CALLSITE_TABLE = Table(
     python_module=__file__,
     class_name="AncestorStackProfileCallsiteTable",
-    sql_name="experimental_ancestor_stack_profile_callsite",
+    sql_name="not_exposed_to_sql",
     columns=[
-        C("start_id",
-          CppTableId(STACK_PROFILE_CALLSITE_TABLE),
-          flags=ColumnFlag.HIDDEN),
+        C(
+            'id',
+            CppTableId(STACK_PROFILE_CALLSITE_TABLE),
+            flags=ColumnFlag.SORTED,
+        ),
+        C('depth', CppUint32()),
+        C('parent_id', CppOptional(CppTableId(STACK_PROFILE_CALLSITE_TABLE))),
+        C('frame_id', CppTableId(STACK_PROFILE_FRAME_TABLE)),
     ],
-    parent=STACK_PROFILE_CALLSITE_TABLE)
+    add_implicit_column=False,
+)
 
 CONNECTED_FLOW_TABLE = Table(
     python_module=__file__,
     class_name="ConnectedFlowTable",
     sql_name="not_exposed_to_sql",
     columns=[
-        C("start_id", CppTableId(SLICE_TABLE), flags=ColumnFlag.HIDDEN),
+        C('slice_out', CppTableId(SLICE_TABLE)),
+        C('slice_in', CppTableId(SLICE_TABLE)),
+        C('trace_id', CppOptional(CppInt64())),
+        C('arg_set_id', CppOptional(CppUint32())),
     ],
-    parent=FLOW_TABLE)
+)
 
-DESCENDANT_SLICE_TABLE = Table(
+ARGS_WITH_DEFAULTS_TABLE = Table(
     python_module=__file__,
-    class_name="DescendantSliceTable",
-    sql_name="descendant_slice",
+    class_name='WinscopeArgsWithDefaultsTable',
+    sql_name='__intrinsic_winscope_proto_to_args_with_defaults',
     columns=[
-        C("start_id", CppTableId(SLICE_TABLE), flags=ColumnFlag.HIDDEN),
+        C("table_name", CppString(), flags=ColumnFlag.HIDDEN),
+        C(
+            'base64_proto_id',
+            CppUint32(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'flat_key',
+            CppString(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'key',
+            CppString(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'int_value',
+            CppOptional(CppInt64()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'string_value',
+            CppOptional(CppString()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'real_value',
+            CppOptional(CppDouble()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'value_type',
+            CppString(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
     ],
-    parent=SLICE_TABLE)
-
-DESCENDANT_SLICE_BY_STACK_TABLE = Table(
-    python_module=__file__,
-    class_name="DescendantSliceByStackTable",
-    sql_name="descendant_slice_by_stack",
-    columns=[
-        C("start_stack_id", CppInt64(), flags=ColumnFlag.HIDDEN),
-    ],
-    parent=SLICE_TABLE)
+)
 
 EXPERIMENTAL_ANNOTATED_CALLSTACK_TABLE = Table(
     python_module=__file__,
     class_name="ExperimentalAnnotatedCallstackTable",
     sql_name="experimental_annotated_callstack",
     columns=[
+        C('id', CppTableId(STACK_PROFILE_CALLSITE_TABLE)),
+        C('depth', CppUint32()),
+        C('parent_id', CppOptional(CppTableId(STACK_PROFILE_CALLSITE_TABLE))),
+        C('frame_id', CppTableId(STACK_PROFILE_FRAME_TABLE)),
         C("annotation", CppString()),
-        C("start_id",
-          CppTableId(STACK_PROFILE_CALLSITE_TABLE),
-          flags=ColumnFlag.HIDDEN),
     ],
-    parent=STACK_PROFILE_CALLSITE_TABLE)
-
-EXPERIMENTAL_COUNTER_DUR_TABLE = Table(
-    python_module=__file__,
-    class_name="ExperimentalCounterDurTable",
-    sql_name="experimental_counter_dur",
-    columns=[
-        C("dur", CppInt64()),
-        C("delta", CppDouble()),
-    ],
-    parent=COUNTER_TABLE)
-
-EXPERIMENTAL_SCHED_UPID_TABLE = Table(
-    python_module=__file__,
-    class_name="ExperimentalSchedUpidTable",
-    sql_name="experimental_sched_upid",
-    columns=[
-        C("upid", CppOptional(CppTableId(PROCESS_TABLE))),
-    ],
-    parent=SCHED_SLICE_TABLE)
+    add_implicit_column=False,
+)
 
 EXPERIMENTAL_SLICE_LAYOUT_TABLE = Table(
     python_module=__file__,
     class_name="ExperimentalSliceLayoutTable",
     sql_name="experimental_slice_layout",
     columns=[
+        C('id', CppTableId(SLICE_TABLE)),
         C("layout_depth", CppUint32()),
-        C("filter_track_ids", CppString(), flags=ColumnFlag.HIDDEN),
     ],
-    parent=SLICE_TABLE)
+    add_implicit_column=False,
+)
+
+DFS_WEIGHT_BOUNDED_TABLE = Table(
+    python_module=__file__,
+    class_name="DfsWeightBoundedTable",
+    sql_name="__intrinsic_dfs_weight_bounded",
+    columns=[
+        C("root_node_id", CppUint32()),
+        C("node_id", CppUint32()),
+        C("parent_node_id", CppOptional(CppUint32())),
+    ],
+)
+
+DATAFRAME_QUERY_PLAN_DECODER_TABLE_TABLE = Table(
+    python_module=__file__,
+    class_name="DataframeQueryPlanDecoderTable",
+    sql_name="not_exposed_to_sql",
+    columns=[
+        C("bytecode_str", CppString()),
+        C("serialized_bc", CppString(), flags=ColumnFlag.HIDDEN),
+    ],
+)
+
+SURFACE_FLINGER_HIERARCHY_PATH_TABLE = Table(
+    python_module=__file__,
+    class_name="WinscopeSurfaceFlingerHierarchyPathTable",
+    sql_name="__intrinsic_winscope_surfaceflinger_hierarchy_path",
+    columns=[
+        C('snapshot_id', CppUint32()),
+        C('layer_id', CppUint32()),
+        C('ancestor_id', CppUint32()),
+    ],
+)
 
 # Keep this list sorted.
 ALL_TABLES = [
-    ANCESTOR_SLICE_BY_STACK_TABLE,
-    ANCESTOR_SLICE_TABLE,
     ANCESTOR_STACK_PROFILE_CALLSITE_TABLE,
+    ARGS_WITH_DEFAULTS_TABLE,
     CONNECTED_FLOW_TABLE,
-    DESCENDANT_SLICE_BY_STACK_TABLE,
-    DESCENDANT_SLICE_TABLE,
+    DATAFRAME_QUERY_PLAN_DECODER_TABLE_TABLE,
+    DFS_WEIGHT_BOUNDED_TABLE,
     EXPERIMENTAL_ANNOTATED_CALLSTACK_TABLE,
-    EXPERIMENTAL_COUNTER_DUR_TABLE,
-    EXPERIMENTAL_SCHED_UPID_TABLE,
     EXPERIMENTAL_SLICE_LAYOUT_TABLE,
+    SLICE_SUBSET_TABLE,
+    SURFACE_FLINGER_HIERARCHY_PATH_TABLE,
     TABLE_INFO_TABLE,
 ]

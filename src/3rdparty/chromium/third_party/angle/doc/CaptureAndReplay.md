@@ -38,7 +38,8 @@ Some simple environment variables control frame capture:
  * `ANGLE_CAPTURE_COMPRESSION`:
    * Set to `0` to disable capture compression. Default is `1`.
  * `ANGLE_CAPTURE_OUT_DIR=<path>`:
-   * Can specify an alternate replay output directory.
+   * Can specify an alternate replay output directory. This can either be an
+   absolute path, or relative to CWD.
    * Example: `ANGLE_CAPTURE_OUT_DIR=samples/capture_replay`. Default is the CWD.
  * `ANGLE_CAPTURE_FRAME_START=<n>`:
    * Uses mid-execution capture to write "Setup" functions that starts a Context at frame `n`.
@@ -51,9 +52,9 @@ Some simple environment variables control frame capture:
      * Results in filenames like this:
        ```
        foo.angledata.gz
-       foo_context1_001.cpp
-       foo_context1_002.cpp
-       foo_context1_003.cpp
+       foo_context1_0001.cpp
+       foo_context1_0002.cpp
+       foo_context1_0003.cpp
        foo_context1.cpp
        foo_context1.h
        foo.json
@@ -62,6 +63,10 @@ Some simple environment variables control frame capture:
        ```
  * `ANGLE_CAPTURE_SERIALIZE_STATE`:
    * Set to `1` to enable GL state serialization. Default is `0`.
+ * `ANGLE_CAPTURE_MAX_RESIDENT_BINARY_SIZE=<n>`:
+   * Maximum binary data storage space in bytes. Must be a power of 2. Default is 2GB with a useful range of 512MB-4GB.
+ * `ANGLE_CAPTURE_BLOCK_SIZE=<n>`:
+   * Block size for binary data, in bytes. Must be a power of 2. Default is 256MB, with a useful range of 32-512MB
 
 A good way to test out the capture is to use environment variables in conjunction with the sample
 template. For example:
@@ -101,9 +106,9 @@ Place all the trace output files into it.  For example, if the label was `deskto
 ```
 src/tests/restricted_traces$ ls -1 desktop_test/
 desktop_test.angledata.gz
-desktop_test_context1_001.cpp
-desktop_test_context1_002.cpp
-desktop_test_context1_003.cpp
+desktop_test_context1_0001.cpp
+desktop_test_context1_0002.cpp
+desktop_test_context1_0003.cpp
 desktop_test_context1.cpp
 desktop_test_context1.h
 desktop_test.json
@@ -124,6 +129,9 @@ ANGLE_CAPTURE_ENABLED=0 out/Debug/angle_perftests --gtest_filter="*desktop_test*
 ```
 ## Capturing an Android application
 
+For more comprehensive Android capture/replay documentation, see
+the [restricted_traces README file](../src/tests/restricted_traces/README.md).
+
 In order to capture on Android, the following additional steps must be taken. These steps
 presume you've built and installed the ANGLE APK with capture enabled, and selected ANGLE
 as the GLES driver for your application.
@@ -137,19 +145,17 @@ as the GLES driver for your application.
     Then create an output directory that it can write to:
     ```
     $ adb shell mkdir -p /sdcard/Android/data/$PACKAGE_NAME/angle_capture
+    $ adb shell chmod 777 /sdcard/Android/data/$PACKAGE_NAME/angle_capture
     ```
 
-2. Set properties to use for environment variable
+2. Set properties to use for environment variables
 
     On Android, it is difficult to set an environment variable before starting native code.
-    To work around this, ANGLE will read debug system properties before starting the capture
+    To work around this, ANGLE will read debug system properties before starting each capture
     and use them to prime environment variables used by the capture code.
 
-    Note: Mid-execution capture doesn't work for Android just yet, so frame_start must be
-    zero, which is the default. This it is sufficient to only set the end frame.
-    ```
-    $ adb shell setprop debug.angle.capture.frame_end 200
-    ```
+    As with desktop captures, Android captures can be taken from a starting frame to an
+    ending frame or triggered at an arbitrary frame.
 
     There are other properties that can be set that match 1:1 with the env vars, but
     they are not required for capture:
@@ -188,7 +194,7 @@ as the GLES driver for your application.
 
 ### Starting capture at an arbitrary frame
 In some scenarios, you don't know which frame you want to start on. You'll only know when target
-content is being rendered.  For that we've added a trigger that can allow starting the capture at
+content is being rendered.  For that we've added a trigger that can allow starting captures at
 any time.
 
 To use it, set the following environment variable, in addition to all the setup steps above. Set
@@ -203,7 +209,12 @@ set the value back to zero:
 ```
 adb shell setprop debug.angle.capture.trigger 0
 ```
-ANGLE will detect this change and start recording the requested number of frames.
+ANGLE will detect this change and start recording the requested number of frames, and the trace
+files will be written to OUT_DIR.
+
+Any number of traces can be captured in succession. After a trace has been captured, reset the TRIGGER
+to the number of frames to be captured, optionally reset the OUT_DIR location, and again set the
+trigger back to zero to begin the new trace.
 
 ## Testing
 
@@ -227,14 +238,12 @@ replay run stage of multiple tests together.
 From the command line, navigate to the ANGLE root folder [angle][angle_folder] then run the
 command below:
 ```
-python3 src/tests/capture_replay_tests.py --gtest_filter=*/ES2_Vulkan --keep-temp-files --output-to-file --batch-count=8
+python3 src/tests/capture_replay_tests.py --gtest_filter=*/ES2_Vulkan --keep-temp-files --batch-count=8
 ```
 
 * `--gtest_filter` to run only specific tests
 * `--keep-temp-files` to keep the trace files
-* `--output-to-file` to write the log to results.txt at
- [src/tests/capture_replay_tests][capture_replay_test_folder] folder.
-* `--batch-count` to set the number of tests in a batch. More tests in a batch means that
+* `--batch-count` to set the number of tests in a (capture) batch. More tests in a batch means that
 the tests will finish faster, but also means a lower level of granularity.
 All command line arguments can be found at the top of the [python script][link_to_python_script].
 

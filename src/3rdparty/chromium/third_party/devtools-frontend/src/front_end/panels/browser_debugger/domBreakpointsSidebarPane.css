@@ -4,6 +4,10 @@
  * found in the LICENSE file.
  */
 
+.dom-breakpoints-container {
+  overflow: auto;
+}
+
 .breakpoint-list {
   padding-bottom: 3px;
 }
@@ -25,13 +29,23 @@
   background-color: var(--sys-color-tonal-container);
 }
 
-.breakpoint-list .breakpoint-entry:not(:focus-visible):hover {
-  background-color: var(--sys-color-state-hover-on-subtle);
-}
-
 .breakpoint-hit {
   background-color: var(--sys-color-neutral-container);
   color: var(--sys-color-on-surface);
+}
+
+.placeholder {
+  display: flex;
+  height: 100%;
+  justify-content: center;
+}
+
+:host-context(.sources.panel) .empty-view-scroller {
+  display: none;
+}
+
+:host-context(.elements.panel) .placeholder .gray-info-message {
+  display: none;
 }
 
 @media (forced-colors: active) {

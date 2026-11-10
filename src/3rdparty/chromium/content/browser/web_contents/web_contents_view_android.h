@@ -8,8 +8,12 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
+#include "content/browser/web_contents/web_contents_view_drag_security_info.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "content/public/common/drop_data.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -69,7 +73,6 @@ class WebContentsViewAndroid : public WebContentsView,
   void RestoreFocus() override;
   void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
-  void TransferDragSecurityInfo(WebContentsView* view) override;
   gfx::Rect GetViewBounds() const override;
   void CreateView(gfx::NativeView context) override;
   RenderWidgetHostViewBase* CreateViewForWidget(
@@ -83,7 +86,9 @@ class WebContentsViewAndroid : public WebContentsView,
   void SetOverscrollControllerEnabled(bool enabled) override;
   void OnCapturerCountChanged() override;
   void FullscreenStateChanged(bool is_fullscreen) override;
-  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
+  BackForwardTransitionAnimationManager*
+  GetBackForwardTransitionAnimationManager() override;
+  void DestroyBackForwardTransitionAnimationManager() override;
 
   // Backend implementation of RenderViewHostDelegateView.
   void ShowContextMenu(RenderFrameHost& render_frame_host,
@@ -92,21 +97,20 @@ class WebContentsViewAndroid : public WebContentsView,
       RenderFrameHost* render_frame_host,
       mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
       const gfx::Rect& bounds,
-      int item_height,
       double item_font_size,
       int selected_item,
       std::vector<blink::mojom::MenuItemPtr> menu_items,
       bool right_aligned,
       bool allow_multiple_selection) override;
   ui::OverscrollRefreshHandler* GetOverscrollRefreshHandler() const override;
-  void StartDragging(const DropData& drop_data,
-                     const url::Origin& source_origin,
-                     blink::DragOperationsMask allowed_ops,
-                     const gfx::ImageSkia& image,
-                     const gfx::Vector2d& cursor_offset,
-                     const gfx::Rect& drag_obj_rect,
-                     const blink::mojom::DragEventSourceInfo& event_info,
-                     RenderWidgetHostImpl* source_rwh) override;
+  void StartDragging(
+      RenderFrameHost& source_rfh,
+      const DropData& drop_data,
+      blink::DragOperationsMask allowed_ops,
+      const gfx::ImageSkia& image,
+      const gfx::Vector2d& cursor_offset,
+      const gfx::Rect& drag_obj_rect,
+      const blink::mojom::DragEventSourceInfo& event_info) override;
   void UpdateDragOperation(ui::mojom::DragOperation operation,
                            bool document_is_handling_drag) override;
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
@@ -136,25 +140,12 @@ class WebContentsViewAndroid : public WebContentsView,
   void OnControlsResizeViewChanged() override;
   void NotifyVirtualKeyboardOverlayRect(
       const gfx::Rect& keyboard_rect) override;
+  void ShowInterestInElement(int nodeID) override;
 
   void SetFocus(bool focused);
   void set_device_orientation(int orientation) {
     device_orientation_ = orientation;
   }
-
-  // Insert `screenshot_layer` into the layer tree, as a *direct* sibling of
-  // `parent_for_web_page_widgets_`.
-  //
-  // `screenshot_layer_on_top` controls the position of `screenshot_layer`:
-  // `true` means the screenshot will be placed right above
-  // `parent_for_web_page_widgets_`; `false` means right below it.
-  //
-  // TODO(crbug/1488075): The boolean might not be enough if
-  // `parent_for_web_page_widgets_` has more siblings, and we need finer control
-  // of the position.
-  void AddScreenshotLayerForNavigationTransitions(
-      scoped_refptr<cc::slim::Layer> screenshot_layer,
-      bool screenshot_layer_on_top);
 
   // See the block comments above `parent_for_web_page_widgets_` for the
   // hierarchies of layers and native views. The callers can operate upon all
@@ -165,22 +156,36 @@ class WebContentsViewAndroid : public WebContentsView,
 
   WebContentsImpl* web_contents() { return web_contents_; }
 
-  // Guaranteed non-null if `features::kBackForwardTransitions` is enabled.
-  BackForwardTransitionAnimationManagerAndroid*
-  back_forward_animation_manager();
+  using RenderWidgetHostViewCreateFunction =
+      RenderWidgetHostViewAndroid* (*)(RenderWidgetHostImpl*,
+                                       gfx::NativeView,
+                                       cc::slim::Layer*);
+
+  // Used to override the creation of RenderWidgetHostViews in tests.
+  CONTENT_EXPORT static void InstallCreateHookForTests(
+      RenderWidgetHostViewCreateFunction create_render_widget_host_view);
 
  private:
-  void OnDragEntered(const std::vector<DropData::Metadata>& metadata,
-                     const gfx::PointF& location,
+  void OnDragEntered(const gfx::PointF& location,
                      const gfx::PointF& screen_location);
+  void DragEnteredCallback(const gfx::PointF& location,
+                           const gfx::PointF& screen_location,
+                           base::WeakPtr<RenderWidgetHostViewBase> target);
   void OnDragUpdated(const gfx::PointF& location,
                      const gfx::PointF& screen_location);
+  void DragUpdatedCallback(const gfx::PointF& location,
+                           const gfx::PointF& screen_location,
+                           base::WeakPtr<RenderWidgetHostViewBase> target,
+                           std::optional<gfx::PointF> transformed_pt);
   void OnDragExited();
-  void OnPerformDrop(DropData* drop_data,
-                     const gfx::PointF& location,
+  void OnPerformDrop(const gfx::PointF& location,
                      const gfx::PointF& screen_location);
+  void PerformDropCallback(const gfx::PointF& location,
+                           const gfx::PointF& screen_location,
+                           base::WeakPtr<RenderWidgetHostViewBase> target,
+                           std::optional<gfx::PointF> transformed_pt);
   void OnDragEnded();
-  void OnSystemDragEnded();
+  void OnSystemDragEnded(RenderWidgetHost* source_rwh);
 
   SelectPopup* GetSelectPopup();
 
@@ -214,7 +219,7 @@ class WebContentsViewAndroid : public WebContentsView,
   //   |                |- Overscroll
   //   |                |- SelectionHandle
   //   |
-  //   |- `NavigationEntryScreenshot`  // TODO(https://crbug.com/1509888)
+  //   |- `NavigationEntryScreenshot`
   //
   // ViewAndroid hierarchy:
   // `view_`
@@ -230,6 +235,20 @@ class WebContentsViewAndroid : public WebContentsView,
   // Show/hide popup UI for <select> tag.
   std::unique_ptr<SelectPopup> select_popup_;
 
+  // Source RenderWidgetHost when dragging out of this WebContents.
+  base::WeakPtr<RenderWidgetHostImpl> current_source_rwh_for_drag_;
+  // base::FeatureList::IsEnabled(features::kAndroidDragDropOopif).
+  bool drag_drop_oopif_enabled_ = false;
+  // Current drop data set on drop event.
+  std::unique_ptr<DropData> drop_data_;
+  // Metadata for the current drag.
+  std::vector<DropData::Metadata> drag_metadata_;
+  // We keep track of the target RenderWidgetHost we are currently over when
+  // dragging into this WebContents. If it changes during a drag, we need to
+  // re-send the DragEnter message.
+  base::WeakPtr<RenderWidgetHostImpl> current_target_rwh_for_drag_;
+  // Holds the security info for the current drag.
+  WebContentsViewDragSecurityInfo drag_security_info_;
   // Whether drag went beyond the movement threshold to be considered as an
   // intentional drag. If true, ::ShowContextMenu will be ignored.
   bool drag_exceeded_movement_threshold_ = false;
@@ -249,6 +268,8 @@ class WebContentsViewAndroid : public WebContentsView,
   // Manages the animation during a session history navigation.
   std::unique_ptr<BackForwardTransitionAnimationManagerAndroid>
       back_forward_animation_manager_;
+
+  base::WeakPtrFactory<WebContentsViewAndroid> weak_ptr_factory_{this};
 };
 
 } // namespace content

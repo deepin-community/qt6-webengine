@@ -21,16 +21,34 @@ import {
   ValidBindableResource,
 } from '../../../../capability_info.js';
 import { GPUConst } from '../../../../constants.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
 import {
   ProgrammableEncoderType,
   kProgrammableEncoderTypes,
 } from '../../../../util/command_buffer_maker.js';
-import { ValidationTest } from '../../validation_test.js';
+import * as vtu from '../../validation_test_utils.js';
 
 const kComputeCmds = ['dispatch', 'dispatchIndirect'] as const;
 type ComputeCmd = (typeof kComputeCmds)[number];
 const kRenderCmds = ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'] as const;
 type RenderCmd = (typeof kRenderCmds)[number];
+
+const kPipelineTypes = ['auto0', 'explicit'] as const;
+type PipelineType = (typeof kPipelineTypes)[number];
+const kBindingTypes = ['auto0', 'auto1', 'explicit'] as const;
+type BindingType = (typeof kBindingTypes)[number];
+
+const kEmptyBindGroup0Ndx = 0;
+const kEmptyBindGroup1Ndx = 1;
+const kNonEmptyBindGroup0Ndx = 2;
+const kNonEmptyBindGroup1Ndx = 3;
+
+// Swaps 2 array elements in place.
+function swapArrayElements<T>(array: T[], ndx1: number, ndx2: number) {
+  const t = array[ndx1];
+  array[ndx1] = array[ndx2];
+  array[ndx2] = t;
+}
 
 // Test resource type compatibility in pipeline and bind group
 // [1]: Need to add externalTexture
@@ -54,16 +72,16 @@ const kCompatTestParams = kUnitCaseParamsBuilder
   .expand('call', p => getTestCmds(p.encoderType))
   .combine('callWithZero', [true, false]);
 
-class F extends ValidationTest {
+class F extends AllFeaturesMaxLimitsGPUTest {
   getIndexBuffer(): GPUBuffer {
-    return this.device.createBuffer({
+    return this.createBufferTracked({
       size: 8 * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.INDEX,
     });
   }
 
   getIndirectBuffer(indirectParams: Array<number>): GPUBuffer {
-    const buffer = this.device.createBuffer({
+    const buffer = this.createBufferTracked({
       mappedAtCreation: true,
       size: indirectParams.length * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
@@ -147,7 +165,7 @@ class F extends ValidationTest {
   createBindGroupWithLayout(bglEntries: Array<GPUBindGroupLayoutEntry>): GPUBindGroup {
     const bgEntries: Array<GPUBindGroupEntry> = [];
     for (const entry of bglEntries) {
-      const resource = this.getBindingResource(this.getBindingResourceType(entry));
+      const resource = vtu.getBindingResource(this, this.getBindingResourceType(entry));
       bgEntries.push({
         binding: entry.binding,
         resource,
@@ -277,6 +295,134 @@ class F extends ValidationTest {
 
     validateFinish(success);
   }
+
+  runDefaultLayoutBindingTest<T extends GPURenderPipeline | GPUComputePipeline>({
+    visibility,
+    empty,
+    pipelineType,
+    bindingType,
+    swap,
+    success,
+    makePipelinesFn,
+    doCommandFn,
+  }: {
+    visibility: number;
+    empty: boolean;
+    pipelineType: PipelineType;
+    bindingType: BindingType;
+    swap: boolean;
+    success: boolean;
+    makePipelinesFn: (t: F, explicitPipelineLayout: GPUPipelineLayout) => T[];
+    doCommandFn: (params: {
+      t: F;
+      encoder: GPUCommandEncoder;
+      pipeline: T;
+      emptyBindGroups: GPUBindGroup[];
+      nonEmptyBindGroups: GPUBindGroup[];
+    }) => void;
+  }) {
+    const { device } = this;
+    const explicitEmptyBindGroupLayout = device.createBindGroupLayout({
+      entries: [],
+    });
+    const explicitBindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility,
+          buffer: {},
+        },
+      ],
+    });
+    const explicitPipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [
+        explicitEmptyBindGroupLayout,
+        explicitEmptyBindGroupLayout,
+        explicitBindGroupLayout,
+        explicitBindGroupLayout,
+      ],
+    });
+
+    const [pipelineAuto0, pipelineAuto1, pipelineExplicit] = makePipelinesFn(
+      this,
+      explicitPipelineLayout
+    );
+
+    const buffer = this.createBufferTracked({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM,
+    });
+
+    let emptyBindGroupLayouts;
+    let nonEmptyBindGroupLayouts;
+    const pipeline = pipelineType === 'auto0' ? pipelineAuto0 : pipelineExplicit;
+
+    // Gets a bindGroupLayout either from the explicit layout passed in
+    // or one of the 2 `layout: 'auto'` pipelines.
+    const getBindGroupLayout = (
+      explicitBindGroupLayout: GPUBindGroupLayout,
+      bindGroupIndex: number
+    ) =>
+      bindingType === 'explicit'
+        ? explicitBindGroupLayout
+        : bindingType === 'auto0'
+        ? pipelineAuto0.getBindGroupLayout(bindGroupIndex)
+        : pipelineAuto1.getBindGroupLayout(bindGroupIndex);
+
+    if (empty) {
+      // Testing empty:
+      // - emptyBindGroupLayout comes from a possibly incompatible place.
+      // - nonEmptyBindGroupLayout comes from the pipeline we'll render/compute with.
+      emptyBindGroupLayouts = [
+        getBindGroupLayout(explicitEmptyBindGroupLayout, kEmptyBindGroup0Ndx),
+        getBindGroupLayout(explicitEmptyBindGroupLayout, kEmptyBindGroup1Ndx),
+      ];
+      if (swap) {
+        swapArrayElements(emptyBindGroupLayouts, 0, 1);
+      }
+      nonEmptyBindGroupLayouts = [
+        pipeline.getBindGroupLayout(kNonEmptyBindGroup0Ndx),
+        pipeline.getBindGroupLayout(kNonEmptyBindGroup1Ndx),
+      ];
+    } else {
+      // Testing non-empty:
+      // - nonEmptyBindGroupLayout comes from a possibly incompatible place.
+      // - emptyBindGroupLayout comes from the pipeline we'll render/compute with.
+      nonEmptyBindGroupLayouts = [
+        getBindGroupLayout(explicitBindGroupLayout, kNonEmptyBindGroup0Ndx),
+        getBindGroupLayout(explicitBindGroupLayout, kNonEmptyBindGroup1Ndx),
+      ];
+      if (swap) {
+        swapArrayElements(nonEmptyBindGroupLayouts, 0, 1);
+      }
+      emptyBindGroupLayouts = [
+        pipeline.getBindGroupLayout(kEmptyBindGroup0Ndx),
+        pipeline.getBindGroupLayout(kEmptyBindGroup1Ndx),
+      ];
+    }
+
+    const emptyBindGroups = emptyBindGroupLayouts.map(layout =>
+      device.createBindGroup({
+        layout,
+        entries: [],
+      })
+    );
+
+    const nonEmptyBindGroups = nonEmptyBindGroupLayouts.map(layout =>
+      device.createBindGroup({
+        layout,
+        entries: [{ binding: 0, resource: { buffer } }],
+      })
+    );
+
+    const encoder = device.createCommandEncoder();
+
+    doCommandFn({ t: this, encoder, pipeline, emptyBindGroups, nonEmptyBindGroups });
+
+    this.expectValidationError(() => {
+      encoder.finish();
+    }, !success);
+  }
 }
 
 export const g = makeTestGroup(F);
@@ -386,8 +532,15 @@ g.test('buffer_binding,render_pipeline')
   .fn(t => {
     const { type } = t.params;
 
+    t.skipIf(
+      (type === 'storage' || type === 'read-only-storage') &&
+        t.isCompatibility &&
+        !(t.device.limits.maxStorageBuffersInFragmentStage! > 1),
+      `maxStorageBuffersInFragmentStage(${t.device.limits.maxStorageBuffersInFragmentStage}) is not >= 1`
+    );
+
     // Create fixed bindGroup
-    const uniformBuffer = t.getUniformBuffer();
+    const uniformBuffer = vtu.getUniformBuffer(t);
 
     const bindGroup = t.device.createBindGroup({
       entries: [
@@ -603,6 +756,18 @@ g.test('bgl_visibility_mismatch')
     );
   });
 
+function resourceIsStorageTexture(resourceType: ValidBindableResource) {
+  return (
+    resourceType === 'readonlyStorageTex' ||
+    resourceType === 'readwriteStorageTex' ||
+    resourceType === 'writeonlyStorageTex'
+  );
+}
+
+function resourceIsStorageBuffer(resourceType: ValidBindableResource) {
+  return resourceType === 'storageBuf';
+}
+
 g.test('bgl_resource_type_mismatch')
   .desc(
     `
@@ -620,6 +785,20 @@ g.test('bgl_resource_type_mismatch')
   .fn(t => {
     const { encoderType, call, callWithZero, bgResourceType, plResourceType, useU32Array } =
       t.params;
+
+    t.skipIf(
+      t.isCompatibility &&
+        (resourceIsStorageTexture(plResourceType) || resourceIsStorageTexture(bgResourceType)) &&
+        !(t.device.limits.maxStorageTexturesInFragmentStage! >= 1),
+      `maxStorageTexturesInFragmentStage(${t.device.limits.maxStorageTexturesInFragmentStage}) is not >= 1`
+    );
+
+    t.skipIf(
+      t.isCompatibility &&
+        (resourceIsStorageBuffer(plResourceType) || resourceIsStorageBuffer(bgResourceType)) &&
+        !(t.device.limits.maxStorageBuffersInFragmentStage! >= 1),
+      `maxStorageBuffersInFragmentStage(${t.device.limits.maxStorageBuffersInFragmentStage}) is not >= 1`
+    );
 
     const bglEntries: Array<GPUBindGroupLayoutEntry> = [
       t.createBindGroupLayoutEntry(encoderType, bgResourceType, useU32Array),
@@ -651,25 +830,37 @@ g.test('bgl_resource_type_mismatch')
     );
   });
 
-g.test('empty_bind_group_layouts_requires_empty_bind_groups,compute_pass')
+g.test('empty_bind_group_layouts_never_requires_empty_bind_groups,compute_pass')
   .desc(
     `
-  Test that a compute pipeline with empty bind groups layouts requires empty bind groups to be set.
+  Test that a compute pipeline with empty bind group layouts doesn't require empty bind groups to be
+  set as empty bind group layout items should always be ignored.
   `
   )
   .params(u =>
     u
+      .combine('emptyBindGroupLayoutType', ['Null', 'Undefined', 'Empty'] as const)
       .combine('bindGroupLayoutEntryCount', [3, 4])
       .combine('computeCommand', ['dispatchIndirect', 'dispatch'] as const)
   )
   .fn(t => {
-    const { bindGroupLayoutEntryCount, computeCommand } = t.params;
+    const { emptyBindGroupLayoutType, bindGroupLayoutEntryCount, computeCommand } = t.params;
 
     const emptyBGLCount = 4;
     const emptyBGL = t.device.createBindGroupLayout({ entries: [] });
     const emptyBGLs = [];
     for (let i = 0; i < emptyBGLCount; i++) {
-      emptyBGLs.push(emptyBGL);
+      switch (emptyBindGroupLayoutType) {
+        case 'Null':
+          emptyBGLs.push(null);
+          break;
+        case 'Undefined':
+          emptyBGLs.push(undefined);
+          break;
+        case 'Empty':
+          emptyBGLs.push(emptyBGL);
+          break;
+      }
     }
 
     const pipelineLayout = t.device.createPipelineLayout({
@@ -701,21 +892,23 @@ g.test('empty_bind_group_layouts_requires_empty_bind_groups,compute_pass')
     t.doCompute(computePass, computeCommand, true);
     computePass.end();
 
-    const success = bindGroupLayoutEntryCount === emptyBGLCount;
+    const success = true;
 
     t.expectValidationError(() => {
       encoder.finish();
     }, !success);
   });
 
-g.test('empty_bind_group_layouts_requires_empty_bind_groups,render_pass')
+g.test('empty_bind_group_layouts_never_requires_empty_bind_groups,render_pass')
   .desc(
     `
-  Test that a render pipeline with empty bind groups layouts requires empty bind groups to be set.
+  Test that a render pipeline with empty bind groups layouts doesn't require empty bind groups to be
+  set as empty bind group layout items should always be ignored.
   `
   )
   .params(u =>
     u
+      .combine('emptyBindGroupLayoutType', ['Null', 'Undefined', 'Empty'] as const)
       .combine('bindGroupLayoutEntryCount', [3, 4])
       .combine('renderCommand', [
         'draw',
@@ -725,13 +918,23 @@ g.test('empty_bind_group_layouts_requires_empty_bind_groups,render_pass')
       ] as const)
   )
   .fn(t => {
-    const { bindGroupLayoutEntryCount, renderCommand } = t.params;
+    const { emptyBindGroupLayoutType, bindGroupLayoutEntryCount, renderCommand } = t.params;
 
     const emptyBGLCount = 4;
     const emptyBGL = t.device.createBindGroupLayout({ entries: [] });
     const emptyBGLs = [];
     for (let i = 0; i < emptyBGLCount; i++) {
-      emptyBGLs.push(emptyBGL);
+      switch (emptyBindGroupLayoutType) {
+        case 'Null':
+          emptyBGLs.push(null);
+          break;
+        case 'Undefined':
+          emptyBGLs.push(undefined);
+          break;
+        case 'Empty':
+          emptyBGLs.push(emptyBGL);
+          break;
+      }
     }
 
     const pipelineLayout = t.device.createPipelineLayout({
@@ -763,7 +966,7 @@ g.test('empty_bind_group_layouts_requires_empty_bind_groups,render_pass')
 
     const encoder = t.device.createCommandEncoder();
 
-    const attachmentTexture = t.device.createTexture({
+    const attachmentTexture = t.createTextureTracked({
       format: 'rgba8unorm',
       size: { width: 16, height: 16, depthOrArrayLayers: 1 },
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
@@ -787,9 +990,209 @@ g.test('empty_bind_group_layouts_requires_empty_bind_groups,render_pass')
     t.doRender(renderPass, renderCommand, true);
     renderPass.end();
 
-    const success = bindGroupLayoutEntryCount === emptyBGLCount;
+    const success = true;
 
     t.expectValidationError(() => {
       encoder.finish();
     }, !success);
+  });
+
+// pipelineType specifies which pipeline to try to render/compute with
+//    auto0 = the first `layout: 'auto'` pipeline
+//    explicit = a pipeline crated with an explicit pipeline layout using explicit bind group layouts
+//
+// bindingType specifies where to get bindGroupLayouts to use to create bindGroups
+//    auto0 = the first `layout: 'auto'` pipeline
+//    auto1 = the second `layout: 'auto'` pipeline
+//    explicit = a pipeline crated with an explicit pipeline layout using explicit bind group layouts
+//
+// swap specifies to swap the bindgroups we're testing. We test 2 of each type, 2 empty bindgroups and
+// 2 non-empty bindgroups. The 2 empty bindgroups, when swapped should still be compatible. Similarly
+// the 2 non-empty bindgroups, when swapped, should still be compatible.
+const kPipelineTypesAndBindingTypeParams = [
+  { pipelineType: 'auto0', bindingType: 'auto0', swap: false, _success: true },
+  { pipelineType: 'explicit', bindingType: 'explicit', swap: false, _success: true },
+  { pipelineType: 'explicit', bindingType: 'auto0', swap: false, _success: false },
+  { pipelineType: 'auto0', bindingType: 'explicit', swap: false, _success: false },
+  { pipelineType: 'auto0', bindingType: 'auto1', swap: false, _success: false },
+  { pipelineType: 'auto0', bindingType: 'auto0', swap: true, _success: true },
+] as const;
+
+g.test('default_bind_group_layouts_never_match,compute_pass')
+  .desc(
+    `
+  Test that bind groups created with default bind group layouts never match other layouts, except
+  when the default bind group layouts are empty because the empty bind group layouts should all be
+  treated as null bind group layouts and be ignored when checking setBindGroup() against the current
+  pipeline.
+
+  * Test that a pipeline with an explicit layout can not be used with a bindGroup from an auto
+    layout except the explicit layout is empty.
+  * Test that a pipeline with an auto layout can not be used with a bindGroup from an explicit
+    layout except the layout got from the pipeline is empty.
+  * Test that an auto layout from one pipeline can not be used with an auto layout from a different
+    pipeline except the layouts got from the pipeline are empty.
+  * Test matching bindgroup layouts on the same default layout pipeline are compatible. In other words if
+    you only define group(2) then group(0)'s empty layout and group(1)'s empty layout should be compatible.
+    Similarly if group(2) and group(3) have the same types of resources they should be compatible.
+  `
+  )
+  .params(u =>
+    u
+      .combineWithParams(kPipelineTypesAndBindingTypeParams)
+      .combine('empty', [false, true])
+      .combine('computeCommand', ['dispatchIndirect', 'dispatch'] as const)
+  )
+  .fn(t => {
+    const {
+      pipelineType,
+      bindingType,
+      swap,
+      _success: successWhenNonEmpty,
+      computeCommand,
+      empty,
+    } = t.params;
+
+    const success = empty || successWhenNonEmpty;
+
+    t.runDefaultLayoutBindingTest<GPUComputePipeline>({
+      visibility: GPUShaderStage.COMPUTE,
+      empty,
+      pipelineType,
+      bindingType,
+      swap,
+      success,
+      makePipelinesFn: (t, explicitPipelineLayout) => {
+        return (['auto', 'auto', explicitPipelineLayout] as const).map<GPUComputePipeline>(layout =>
+          t.device.createComputePipeline({
+            layout,
+            compute: {
+              module: t.device.createShaderModule({
+                code: `
+                @group(2) @binding(0) var<uniform> u1: vec4f;
+                @group(3) @binding(0) var<uniform> u2: vec4f;
+                @compute @workgroup_size(2) fn main() { _ = u1; _ = u2; }
+              `,
+              }),
+              entryPoint: 'main',
+            },
+          })
+        );
+      },
+      doCommandFn: ({ t, encoder, pipeline, emptyBindGroups, nonEmptyBindGroups }) => {
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(kEmptyBindGroup0Ndx, emptyBindGroups[0]);
+        pass.setBindGroup(kEmptyBindGroup1Ndx, emptyBindGroups[1]);
+        pass.setBindGroup(kNonEmptyBindGroup0Ndx, nonEmptyBindGroups[0]);
+        pass.setBindGroup(kNonEmptyBindGroup1Ndx, nonEmptyBindGroups[1]);
+        t.doCompute(pass, computeCommand, true);
+        pass.end();
+      },
+    });
+  });
+
+g.test('default_bind_group_layouts_never_match,render_pass')
+  .desc(
+    `
+  Test that bind groups created with default bind group layouts never match other layouts, except
+  when the default bind group layouts are empty because the empty bind group layouts should all be
+  treated as null bind group layouts and be ignored when checking setBindGroup() against the current
+  pipeline.
+
+  * Test that a pipeline with an explicit layout can not be used with a bindGroup from an auto
+    layout except the explicit layout is empty.
+  * Test that a pipeline with an auto layout can not be used with a bindGroup from an explicit
+    layout except the layout got from the pipeline is empty.
+  * Test that an auto layout from one pipeline can not be used with an auto layout from a different
+    pipeline except the layouts got from the pipeline are empty.
+  * Test matching bindgroup layouts on the same default layout pipeline are compatible. In other words if
+    you only define group(2) then group(0)'s empty layout and group(1)'s empty layout should be compatible.
+    Similarly if group(2) and group(3) have the same types of resources they should be compatible.
+  `
+  )
+  .params(u =>
+    u
+      .combineWithParams(kPipelineTypesAndBindingTypeParams)
+      .combine('empty', [false, true])
+      .combine('renderCommand', [
+        'draw',
+        'drawIndexed',
+        'drawIndirect',
+        'drawIndexedIndirect',
+      ] as const)
+  )
+  .fn(t => {
+    const {
+      pipelineType,
+      bindingType,
+      swap,
+      _success: successWhenNonEmpty,
+      renderCommand,
+      empty,
+    } = t.params;
+
+    const success = empty || successWhenNonEmpty;
+
+    t.runDefaultLayoutBindingTest<GPURenderPipeline>({
+      visibility: GPUShaderStage.VERTEX,
+      empty,
+      pipelineType,
+      bindingType,
+      swap,
+      success,
+      makePipelinesFn: (t, explicitPipelineLayout) => {
+        return (['auto', 'auto', explicitPipelineLayout] as const).map<GPURenderPipeline>(
+          layout => {
+            const colorFormat = 'rgba8unorm';
+            return t.device.createRenderPipeline({
+              layout,
+              vertex: {
+                module: t.device.createShaderModule({
+                  code: `
+                @group(2) @binding(0) var<uniform> u1: vec4f;
+                @group(3) @binding(0) var<uniform> u2: vec4f;
+                @vertex fn main() -> @builtin(position) vec4f { return u1 + u2; }
+              `,
+                }),
+                entryPoint: 'main',
+              },
+              fragment: {
+                module: t.device.createShaderModule({
+                  code: `@fragment fn main() {}`,
+                }),
+                entryPoint: 'main',
+                targets: [{ format: colorFormat, writeMask: 0 }],
+              },
+            });
+          }
+        );
+      },
+      doCommandFn: ({ t, encoder, pipeline, emptyBindGroups, nonEmptyBindGroups }) => {
+        const attachmentTexture = t.createTextureTracked({
+          format: 'rgba8unorm',
+          size: { width: 16, height: 16, depthOrArrayLayers: 1 },
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+
+        const renderPass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: attachmentTexture.createView(),
+              clearValue: [0, 0, 0, 0],
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+
+        renderPass.setPipeline(pipeline);
+        renderPass.setBindGroup(kEmptyBindGroup0Ndx, emptyBindGroups[0]);
+        renderPass.setBindGroup(kEmptyBindGroup1Ndx, emptyBindGroups[1]);
+        renderPass.setBindGroup(kNonEmptyBindGroup0Ndx, nonEmptyBindGroups[0]);
+        renderPass.setBindGroup(kNonEmptyBindGroup1Ndx, nonEmptyBindGroups[1]);
+        t.doRender(renderPass, renderCommand, true);
+        renderPass.end();
+      },
+    });
   });

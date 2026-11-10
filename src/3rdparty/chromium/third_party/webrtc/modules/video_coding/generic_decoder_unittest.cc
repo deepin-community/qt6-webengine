@@ -11,47 +11,72 @@
 #include "modules/video_coding/generic_decoder.h"
 
 #include <cstdint>
-#include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
-#include "absl/types/optional.h"
 #include "api/array_view.h"
+#include "api/field_trials.h"
 #include "api/rtp_packet_infos.h"
+#include "api/scoped_refptr.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
+#include "api/video/encoded_frame.h"
+#include "api/video/i420_buffer.h"
+#include "api/video/video_codec_type.h"
+#include "api/video/video_content_type.h"
+#include "api/video/video_frame.h"
+#include "api/video/video_frame_type.h"
+#include "api/video/video_timing.h"
 #include "api/video_codecs/video_decoder.h"
+#include "common_video/frame_instrumentation_data.h"
+#include "common_video/include/corruption_score_calculator.h"
 #include "common_video/test/utilities.h"
+#include "modules/video_coding/include/video_coding_defines.h"
 #include "modules/video_coding/timing/timing.h"
 #include "system_wrappers/include/clock.h"
+#include "test/create_test_field_trials.h"
 #include "test/fake_decoder.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/time_controller/simulated_time_controller.h"
+
+using ::testing::Eq;
+using ::testing::Field;
+using ::testing::Property;
+using ::testing::Return;
 
 namespace webrtc {
 namespace video_coding {
 
+class MockCorruptionScoreCalculator : public CorruptionScoreCalculator {
+ public:
+  MOCK_METHOD(void,
+              CalculateCorruptionScore,
+              (const VideoFrame& frame,
+               const FrameInstrumentationData& frame_instrumentation_data,
+               VideoContentType content_type),
+              (override));
+};
+
 class ReceiveCallback : public VCMReceiveCallback {
  public:
-  int32_t FrameToRender(VideoFrame& frame,
-                        absl::optional<uint8_t> qp,
-                        TimeDelta decode_time,
-                        VideoContentType content_type,
-                        VideoFrameType frame_type) override {
-    frames_.push_back(frame);
+  int32_t OnFrameToRender(const FrameToRender& arguments) override {
+    frames_.push_back(arguments.video_frame);
     return 0;
   }
 
-  absl::optional<VideoFrame> PopLastFrame() {
+  std::optional<VideoFrame> PopLastFrame() {
     if (frames_.empty())
-      return absl::nullopt;
+      return std::nullopt;
     auto ret = frames_.front();
     frames_.pop_back();
     return ret;
   }
 
-  rtc::ArrayView<const VideoFrame> GetAllFrames() const { return frames_; }
+  ArrayView<const VideoFrame> GetAllFrames() const { return frames_; }
 
-  void OnDroppedFrames(uint32_t frames_dropped) {
+  void OnDroppedFrames(uint32_t frames_dropped) override {
     frames_dropped_ += frames_dropped;
   }
 
@@ -67,9 +92,13 @@ class GenericDecoderTest : public ::testing::Test {
   GenericDecoderTest()
       : time_controller_(Timestamp::Zero()),
         clock_(time_controller_.GetClock()),
+        field_trials_(CreateTestFieldTrials()),
         timing_(time_controller_.GetClock(), field_trials_),
         decoder_(time_controller_.GetTaskQueueFactory()),
-        vcm_callback_(&timing_, time_controller_.GetClock(), field_trials_),
+        vcm_callback_(&timing_,
+                      time_controller_.GetClock(),
+                      field_trials_,
+                      &corruption_score_calculator_),
         generic_decoder_(&decoder_) {}
 
   void SetUp() override {
@@ -84,12 +113,13 @@ class GenericDecoderTest : public ::testing::Test {
 
   GlobalSimulatedTimeController time_controller_;
   Clock* const clock_;
-  test::ScopedKeyValueConfig field_trials_;
+  FieldTrials field_trials_;
   VCMTiming timing_;
-  webrtc::test::FakeDecoder decoder_;
+  test::FakeDecoder decoder_;
   VCMDecodedFrameCallback vcm_callback_;
   VCMGenericDecoder generic_decoder_;
   ReceiveCallback user_callback_;
+  MockCorruptionScoreCalculator corruption_score_calculator_;
 };
 
 TEST_F(GenericDecoderTest, PassesPacketInfos) {
@@ -98,7 +128,7 @@ TEST_F(GenericDecoderTest, PassesPacketInfos) {
   encoded_frame.SetPacketInfos(packet_infos);
   generic_decoder_.Decode(encoded_frame, clock_->CurrentTime());
   time_controller_.AdvanceTime(TimeDelta::Millis(10));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_EQ(decoded_frame->packet_infos().size(), 3U);
 }
@@ -118,7 +148,7 @@ TEST_F(GenericDecoderTest, FrameDroppedIfTooManyFramesInFlight) {
   ASSERT_EQ(10U, frames.size());
   // Expect that the first frame was dropped since all decodes released at the
   // same time and the oldest frame info is the first one dropped.
-  EXPECT_EQ(frames[0].timestamp(), 90000u);
+  EXPECT_EQ(frames[0].rtp_timestamp(), 90000u);
   EXPECT_EQ(1u, user_callback_.frames_dropped());
 }
 
@@ -134,7 +164,7 @@ TEST_F(GenericDecoderTest, PassesPacketInfosForDelayedDecoders) {
   }
 
   time_controller_.AdvanceTime(TimeDelta::Millis(200));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_EQ(decoded_frame->packet_infos().size(), 3U);
 }
@@ -143,11 +173,11 @@ TEST_F(GenericDecoderTest, MaxCompositionDelayNotSetByDefault) {
   EncodedFrame encoded_frame;
   generic_decoder_.Decode(encoded_frame, clock_->CurrentTime());
   time_controller_.AdvanceTime(TimeDelta::Millis(10));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_THAT(
       decoded_frame->render_parameters().max_composition_delay_in_frames,
-      testing::Eq(absl::nullopt));
+      testing::Eq(std::nullopt));
 }
 
 TEST_F(GenericDecoderTest, MaxCompositionDelayActivatedByPlayoutDelay) {
@@ -156,10 +186,10 @@ TEST_F(GenericDecoderTest, MaxCompositionDelayActivatedByPlayoutDelay) {
   // is specified as X,Y, where X=0, Y>0.
   constexpr int kMaxCompositionDelayInFrames = 3;  // ~50 ms at 60 fps.
   timing_.SetMaxCompositionDelayInFrames(
-      absl::make_optional(kMaxCompositionDelayInFrames));
+      std::make_optional(kMaxCompositionDelayInFrames));
   generic_decoder_.Decode(encoded_frame, clock_->CurrentTime());
   time_controller_.AdvanceTime(TimeDelta::Millis(10));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_THAT(
       decoded_frame->render_parameters().max_composition_delay_in_frames,
@@ -170,7 +200,7 @@ TEST_F(GenericDecoderTest, IsLowLatencyStreamFalseByDefault) {
   EncodedFrame encoded_frame;
   generic_decoder_.Decode(encoded_frame, clock_->CurrentTime());
   time_controller_.AdvanceTime(TimeDelta::Millis(10));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_FALSE(decoded_frame->render_parameters().use_low_latency_rendering);
 }
@@ -179,13 +209,35 @@ TEST_F(GenericDecoderTest, IsLowLatencyStreamActivatedByPlayoutDelay) {
   EncodedFrame encoded_frame;
   const VideoPlayoutDelay kPlayoutDelay(TimeDelta::Zero(),
                                         TimeDelta::Millis(50));
-  timing_.set_min_playout_delay(kPlayoutDelay.min());
-  timing_.set_max_playout_delay(kPlayoutDelay.max());
+  timing_.set_playout_delay(kPlayoutDelay);
   generic_decoder_.Decode(encoded_frame, clock_->CurrentTime());
   time_controller_.AdvanceTime(TimeDelta::Millis(10));
-  absl::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
+  std::optional<VideoFrame> decoded_frame = user_callback_.PopLastFrame();
   ASSERT_TRUE(decoded_frame.has_value());
   EXPECT_TRUE(decoded_frame->render_parameters().use_low_latency_rendering);
+}
+
+TEST_F(GenericDecoderTest, CallCalculateCorruptionScoreInDecoded) {
+  constexpr uint32_t kRtpTimestamp = 1;
+  FrameInfo frame_info;
+  frame_info.frame_instrumentation_data =
+      FrameInstrumentationData{.sequence_index = 1};
+  frame_info.rtp_timestamp = kRtpTimestamp;
+  frame_info.decode_start = Timestamp::Zero();
+  frame_info.content_type = VideoContentType::SCREENSHARE;
+  frame_info.frame_type = VideoFrameType::kVideoFrameDelta;
+  VideoFrame video_frame = VideoFrame::Builder()
+                               .set_video_frame_buffer(I420Buffer::Create(5, 5))
+                               .set_rtp_timestamp(kRtpTimestamp)
+                               .build();
+  vcm_callback_.Map(std::move(frame_info));
+
+  EXPECT_CALL(corruption_score_calculator_,
+              CalculateCorruptionScore(
+                  Property(&VideoFrame::rtp_timestamp, Eq(kRtpTimestamp)),
+                  Field(&FrameInstrumentationData::sequence_index, Eq(1)),
+                  VideoContentType::SCREENSHARE));
+  vcm_callback_.Decoded(video_frame);
 }
 
 }  // namespace video_coding

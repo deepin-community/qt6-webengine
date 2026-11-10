@@ -2,9 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
-
-assert(is_chromeos_ash)
+assert(is_chromeos)
 
 static_library("secure_channel") {
   sources = [
@@ -170,13 +168,12 @@ static_library("secure_channel") {
   deps = [
     "//ash/constants",
     "//base",
-    "//chromeos",
     "//chromeos/ash/components/multidevice",
     "//chromeos/ash/components/multidevice/logging",
+    "//chromeos/ash/components/timer_factory",
     "//chromeos/ash/services/device_sync/proto",
     "//chromeos/ash/services/secure_channel/public/cpp/shared",
     "//chromeos/ash/services/secure_channel/public/mojom",
-    "//components/cross_device/timer_factory",
     "//crypto",
     "//device/bluetooth",
     "//device/bluetooth/public/cpp",
@@ -189,10 +186,14 @@ static_library("secure_channel") {
 
   visibility = [
     ":*",
-    "//chrome/browser/ash",
-    "//chrome/browser/chromeos",
+    "//chrome/browser/ash/eche_app",
+    "//chrome/browser/ash/secure_channel",
     "//chromeos/ash/services/secure_channel/public/cpp/client:unit_tests",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 static_library("test_support") {
@@ -243,6 +244,8 @@ static_library("test_support") {
     "fake_multiplexed_channel.h",
     "fake_nearby_connection_manager.cc",
     "fake_nearby_connection_manager.h",
+    "fake_nearby_connection_state_listener.cc",
+    "fake_nearby_connection_state_listener.h",
     "fake_pending_connection_manager.cc",
     "fake_pending_connection_manager.h",
     "fake_pending_connection_request.h",
@@ -273,9 +276,9 @@ static_library("test_support") {
     "//base/test:test_support",
     "//chromeos/ash/components/multidevice",
     "//chromeos/ash/components/multidevice/logging",
+    "//chromeos/ash/components/timer_factory",
     "//chromeos/ash/services/secure_channel/public/cpp/shared",
     "//chromeos/ash/services/secure_channel/public/mojom",
-    "//components/cross_device/timer_factory",
     "//device/bluetooth",
     "//testing/gmock",
   ]
@@ -338,15 +341,19 @@ source_set("unit_tests") {
     "//chromeos/ash/components/multidevice",
     "//chromeos/ash/components/multidevice:test_support",
     "//chromeos/ash/components/multidevice/logging",
+    "//chromeos/ash/components/timer_factory",
+    "//chromeos/ash/components/timer_factory:test_support",
     "//chromeos/ash/services/secure_channel/public/cpp/client:test_support",
     "//chromeos/ash/services/secure_channel/public/cpp/client:unit_tests",
     "//chromeos/ash/services/secure_channel/public/cpp/shared",
     "//chromeos/ash/services/secure_channel/public/mojom",
     "//chromeos/ash/services/secure_channel/public/mojom:unit_tests",
-    "//components/cross_device/timer_factory:test_support",
-    "//components/cross_device/timer_factory:timer_factory",
     "//device/bluetooth:mocks",
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

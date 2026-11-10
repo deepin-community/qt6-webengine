@@ -70,6 +70,21 @@ class MEDIA_EXPORT MediaFoundationRenderer
     kMaxValue = kFailedToGetMediaEngineEx,
   };
 
+  // An enum for recording MediaFoundationRenderer playback detected rendered
+  // video frames. Reported to UMA. Do not change existing values. Updates to
+  // RenderedVideoFrameDetectionResult also requires the changes updated to
+  // tools/metrics/histograms/metadata/media/enums.xml.
+  //
+  // LINT.IfChange(RenderedVideoFrameDetectionResult)
+  enum class RenderedVideoFrameDetectionResult {
+    kUnknown = 0,      // Unknown or video playback ended too early.
+    kDetected = 1,     // Rendered video frames detected within the given time.
+    kNotDetected = 2,  // Rendered video frames NOT detected.
+    // Add new values here and update `kMaxValue`. Never reuse existing values.
+    kMaxValue = kNotDetected,
+  };
+  // LINT.ThenChange(/tools/metrics/histograms/metadata/media/enums.xml:MediaFoundationRendererRenderedVideoFrameDetectionResult)
+
   // Report `reason` to UMA.
   static void ReportErrorReason(ErrorReason reason);
 
@@ -86,7 +101,7 @@ class MEDIA_EXPORT MediaFoundationRenderer
                   RendererClient* client,
                   PipelineStatusCallback init_cb) override;
   void SetCdm(CdmContext* cdm_context, CdmAttachedCB cdm_attached_cb) override;
-  void SetLatencyHint(absl::optional<base::TimeDelta> latency_hint) override;
+  void SetLatencyHint(std::optional<base::TimeDelta> latency_hint) override;
   void Flush(base::OnceClosure flush_cb) override;
   void StartPlayingFrom(base::TimeDelta time) override;
   void SetPlaybackRate(double playback_rate) override;
@@ -123,7 +138,13 @@ class MEDIA_EXPORT MediaFoundationRenderer
   HRESULT PopulateStatistics(PipelineStatistics& statistics);
   void SendStatistics();
   void StartSendingStatistics();
-  void StopSendingStatistics();
+  void StopSendingStatistics(
+      bool conclude_rendered_video_frame_detection = true);
+  bool NeedRenderedVideoFrameDetection();
+  void CheckRenderedVideoFrame(const PipelineStatistics& stats);
+  void RestartRenderedVideoFrameDetectionTimerInNotReported();
+  void ReportRenderedVideoFrameDetectionResult(
+      RenderedVideoFrameDetectionResult result);
 
   // Callbacks for `mf_media_engine_notify_`.
   void OnPlaybackError(PipelineStatus status, HRESULT hr);
@@ -238,6 +259,19 @@ class MEDIA_EXPORT MediaFoundationRenderer
 
   bool has_reported_playing_ = false;
   bool has_reported_significant_playback_ = false;
+
+  // Value saved from last call to SetLatencyHint(). Latency hint can only be
+  // used to determine real-time mode on MediaEngine creation.
+  // IMFMediaEngineEx::SetRealTimeMode is only applicable to the next
+  // IMFMediaEngine::SetSource call so we aren't able to change real-time mode
+  // dynamically in MFR use cases.
+  std::optional<base::TimeDelta> latency_hint_;
+
+  // Whether reporting for the rendered video frame detection has done or not.
+  bool has_reported_rendered_video_frame_detection_ = false;
+
+  // Start time for the rendered video frame detection.
+  std::optional<base::TimeTicks> rendered_video_frame_detection_start_time_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<MediaFoundationRenderer> weak_factory_{this};

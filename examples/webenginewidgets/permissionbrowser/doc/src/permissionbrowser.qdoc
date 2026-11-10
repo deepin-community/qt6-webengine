@@ -9,7 +9,9 @@
     \brief Demonstrates how to handle website permission requests, and manage
     existing permissions.
 
-    \image permissionbrowser-example.png
+    \image permissionbrowser-example.png {Permission browser with web page showing
+           clipboard, notifications, and fonts sections on left and permissions
+           panel on right with grant and delete options}
 
     Permission Browser demonstrates how to use the \l{QWebEnginePermission} class
     to manage website permissions. The example includes code for handling incoming
@@ -34,7 +36,7 @@
     \printuntil /^\}/
 
     The rest of the layout for the application is defined inside mainwindow.ui,
-    and was created using Qt Creator's Design mode. \c MainWindow is a child class
+    and was created using \QC \uicontrol Design mode. \c MainWindow is a child class
     of Ui_MainWindow, which is a C++ class generated at compile time from the
     definitions found inside mainwindow.ui.
 
@@ -97,9 +99,9 @@
     \section1 Modifying a permission and displaying it to the user
 
     The QWebEnginePermission interface provides the \l {QWebEnginePermission::grant}{grant}()
-    and {QWebEnginePermission::deny}{deny}() functions, which are all that's needed to
+    and \l {QWebEnginePermission::deny}{deny}() functions, which are all that's needed to
     change the status of a permission. If the application needs to forget about a permission,
-    we use the {QWebEnginePermission::reset}{reset}() function.
+    we use the \l {QWebEnginePermission::reset}{reset}() function.
 
     Inside the \c PermissionWidget constructor, we hook those function up to the buttons'
     \c clicked signal, so that we can execute the relevant functionality on the
@@ -127,7 +129,7 @@
 
     When a pending permission is granted or denied, we want to move the associated
     widget to the list above, which contains all currently existing permissions.
-    We do this in the MainWindow::handlePermissionModified slot.
+    We do this in the \c MainWindow::handlePermissionModified slot.
 
     \quotefromfile webenginewidgets/permissionbrowser/mainwindow.cpp
     \skipto void MainWindow::handlePermissionModified
@@ -193,13 +195,13 @@
     \list
         \li \l QWebEngineProfile::StoreOnDisk is the default, and it ensures
         that any permissions that have been granted in the current application run will be
-        loaded back up at next startup. A permission onlycneeds to be granted once, and
+        loaded back up at next startup. A permission only needs to be granted once, and
         subsequent uses of the API that triggered the request will automatically be granted,
         until the application calls QWebEnginePermission::reset().
-        li \l QWebEngineProfile::StoreInMemory Has the same behavior as above,
+        \li \l QWebEngineProfile::StoreInMemory Has the same behavior as above,
         except that permissions will be destroyed at application exit, and not committed
         to disk.
-        li \l QWebEngineProfile::AskEveryTime makes sure permissions are never
+        \li \l QWebEngineProfile::AskEveryTime makes sure permissions are never
         remembered, and all act as if they're non-persistent. Thus, every time a web API needs
         a permission, a new prompt will be shown to the user. This option is intended for
         backwards compatibility and applications which implement their own permission storage.

@@ -7,13 +7,12 @@
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/box_fragment_painter.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -205,8 +204,8 @@ TEST_F(LayoutInlineTest, RelativePositionedHitTest) {
   const PhysicalOffset hit_location(18, 15);
   HitTestLocation location(hit_location);
 
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
-  Element* span = GetDocument().QuerySelector(AtomicString("span"));
+  Element* div = QuerySelector("div");
+  Element* span = QuerySelector("span");
   Node* text = span->firstChild();
 
   // Shouldn't hit anything in SPAN as it's in another paint layer
@@ -300,7 +299,7 @@ TEST_F(LayoutInlineTest, MultilineRelativePositionedHitTest) {
   {
     PhysicalOffset hit_location(13, 33);
     HitTestLocation location(hit_location);
-    Node* target = GetDocument().QuerySelector(AtomicString("img"));
+    Node* target = QuerySelector("img");
 
     HitTestResult hit_result(hit_request, location);
     bool hit_outcome =
@@ -343,104 +342,6 @@ TEST_F(LayoutInlineTest, HitTestCulledInlinePreWrap) {
   Element* span = GetElementById("span");
   Node* text_node = span->firstChild();
   EXPECT_EQ(hit_result.InnerNode(), text_node);
-}
-
-TEST_F(LayoutInlineTest, VisualRectInDocument) {
-  LoadAhem();
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      body {
-        margin:0px;
-        font: 20px/20px Ahem;
-      }
-    </style>
-    <div style="width: 400px">
-      <span>xx<br>
-        <span id="target">yy
-          <div style="width:111px;height:222px;background:yellow"></div>
-          yy
-        </span>
-      </span>
-    </div>
-  )HTML");
-
-  auto* target = To<LayoutInline>(GetLayoutObjectByElementId("target"));
-  const int width = 400;
-  EXPECT_EQ(PhysicalRect(0, 20, width, 222 + 20 * 2),
-            target->VisualRectInDocument());
-  EXPECT_EQ(PhysicalRect(0, 20, width, 222 + 20 * 2),
-            target->VisualRectInDocument(kUseGeometryMapper));
-}
-
-TEST_F(LayoutInlineTest, VisualRectInDocumentVerticalRL) {
-  LoadAhem();
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      body {
-        margin:0px;
-        font: 20px/20px Ahem;
-      }
-    </style>
-    <div style="width: 400px; height: 400px; writing-mode: vertical-rl">
-      <span>xx<br>
-        <span id="target">yy
-          <div style="width:111px; height:222px; background:yellow"></div>
-          yy
-        </span>
-      </span>
-    </div>
-  )HTML");
-
-  auto* target = To<LayoutInline>(GetLayoutObjectByElementId("target"));
-  const int height = 400;
-  PhysicalRect expected(400 - 111 - 20 * 3, 0, 111 + 20 * 2, height);
-  EXPECT_EQ(expected, target->VisualRectInDocument());
-  EXPECT_EQ(expected, target->VisualRectInDocument(kUseGeometryMapper));
-}
-
-TEST_F(LayoutInlineTest, VisualRectInDocumentSVGTspan) {
-  LoadAhem();
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      body {
-        margin:0px;
-        font: 20px/20px Ahem;
-      }
-    </style>
-    <svg>
-      <text x="10" y="50" width="100">
-        <tspan id="target" dx="15" dy="25">tspan</tspan>
-      </text>
-    </svg>
-  )HTML");
-
-  auto* target = To<LayoutInline>(GetLayoutObjectByElementId("target"));
-  const int ascent = 16;
-  PhysicalRect expected(10 + 15, 50 + 25 - ascent, 20 * 5, 20);
-  EXPECT_EQ(expected, target->VisualRectInDocument());
-  EXPECT_EQ(expected, target->VisualRectInDocument(kUseGeometryMapper));
-}
-
-TEST_F(LayoutInlineTest, VisualRectInDocumentSVGTspanTB) {
-  LoadAhem();
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      body {
-        margin:0px;
-        font: 20px/20px Ahem;
-      }
-    </style>
-    <svg>
-      <text x="50" y="10" width="100" writing-mode="tb">
-        <tspan id="target" dx="15" dy="25">tspan</tspan>
-      </text>
-    </svg>
-  )HTML");
-
-  auto* target = To<LayoutInline>(GetLayoutObjectByElementId("target"));
-  PhysicalRect expected(50 + 15 - 20 / 2, 10 + 25, 20, 20 * 5);
-  EXPECT_EQ(expected, target->VisualRectInDocument());
-  EXPECT_EQ(expected, target->VisualRectInDocument(kUseGeometryMapper));
 }
 
 // When adding focus ring rects, we should avoid adding duplicated rect for
@@ -671,7 +572,7 @@ TEST_F(LayoutInlineTest, AbsoluteBoundingBoxRectHandlingEmptyInlineVerticalRL) {
                 ->AbsoluteBoundingBoxRectHandlingEmptyInline());
 }
 
-TEST_F(LayoutInlineTest, AddAnnotatedRegions) {
+TEST_F(LayoutInlineTest, AddDraggableRegions) {
   LoadAhem();
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -688,24 +589,24 @@ TEST_F(LayoutInlineTest, AddAnnotatedRegions) {
     </div>
   )HTML");
 
-  Vector<AnnotatedRegionValue> regions1;
-  GetLayoutObjectByElementId("target1")->AddAnnotatedRegions(regions1);
+  Vector<DraggableRegionValue> regions1;
+  GetLayoutObjectByElementId("target1")->AddDraggableRegions(regions1);
   ASSERT_EQ(1u, regions1.size());
   EXPECT_EQ(PhysicalRect(0, 10, 50, 20), regions1[0].bounds);
   EXPECT_TRUE(regions1[0].draggable);
 
-  Vector<AnnotatedRegionValue> regions2;
-  GetLayoutObjectByElementId("target2")->AddAnnotatedRegions(regions2);
+  Vector<DraggableRegionValue> regions2;
+  GetLayoutObjectByElementId("target2")->AddDraggableRegions(regions2);
   ASSERT_EQ(1u, regions2.size());
   EXPECT_EQ(PhysicalRect(0, 20, 70, 20), regions2[0].bounds);
   EXPECT_FALSE(regions2[0].draggable);
 
-  Vector<AnnotatedRegionValue> regions3;
-  GetLayoutObjectByElementId("target3")->AddAnnotatedRegions(regions3);
+  Vector<DraggableRegionValue> regions3;
+  GetLayoutObjectByElementId("target3")->AddDraggableRegions(regions3);
   EXPECT_TRUE(regions3.empty());
 }
 
-TEST_F(LayoutInlineTest, AddAnnotatedRegionsVerticalRL) {
+TEST_F(LayoutInlineTest, AddDraggableRegionsVerticalRL) {
   LoadAhem();
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -722,20 +623,20 @@ TEST_F(LayoutInlineTest, AddAnnotatedRegionsVerticalRL) {
     </div>
   )HTML");
 
-  Vector<AnnotatedRegionValue> regions1;
-  GetLayoutObjectByElementId("target1")->AddAnnotatedRegions(regions1);
+  Vector<DraggableRegionValue> regions1;
+  GetLayoutObjectByElementId("target1")->AddDraggableRegions(regions1);
   ASSERT_EQ(1u, regions1.size());
   EXPECT_EQ(PhysicalRect(570, 0, 20, 50), regions1[0].bounds);
   EXPECT_TRUE(regions1[0].draggable);
 
-  Vector<AnnotatedRegionValue> regions2;
-  GetLayoutObjectByElementId("target2")->AddAnnotatedRegions(regions2);
+  Vector<DraggableRegionValue> regions2;
+  GetLayoutObjectByElementId("target2")->AddDraggableRegions(regions2);
   ASSERT_EQ(1u, regions2.size());
   EXPECT_EQ(PhysicalRect(560, 0, 20, 70), regions2[0].bounds);
   EXPECT_FALSE(regions2[0].draggable);
 
-  Vector<AnnotatedRegionValue> regions3;
-  GetLayoutObjectByElementId("target3")->AddAnnotatedRegions(regions3);
+  Vector<DraggableRegionValue> regions3;
+  GetLayoutObjectByElementId("target3")->AddDraggableRegions(regions3);
   EXPECT_TRUE(regions3.empty());
 }
 
@@ -760,8 +661,8 @@ TEST_F(LayoutInlineTest, VisualOverflowRecalcLegacyLayout) {
   )HTML");
 
   auto* span = To<LayoutInline>(GetLayoutObjectByElementId("span"));
-  auto* span_element = GetDocument().getElementById(AtomicString("span"));
-  auto* span2_element = GetDocument().getElementById(AtomicString("span2"));
+  auto* span_element = GetElementById("span");
+  auto* span2_element = GetElementById("span2");
 
   span_element->setAttribute(html_names::kStyleAttr,
                              AtomicString("outline: 50px solid red"));
@@ -804,8 +705,8 @@ TEST_F(LayoutInlineTest, VisualOverflowRecalcLayoutNG) {
   )HTML");
 
   auto* span = To<LayoutInline>(GetLayoutObjectByElementId("span"));
-  auto* span_element = GetDocument().getElementById(AtomicString("span"));
-  auto* span2_element = GetDocument().getElementById(AtomicString("span2"));
+  auto* span_element = GetElementById("span");
+  auto* span2_element = GetElementById("span2");
 
   span_element->setAttribute(html_names::kStyleAttr,
                              AtomicString("outline: 50px solid red"));
@@ -845,7 +746,7 @@ TEST_F(LayoutInlineTest, VisualOverflowRecalcLegacyLayoutPositionRelative) {
   )HTML");
 
   auto* span = To<LayoutInline>(GetLayoutObjectByElementId("span"));
-  auto* span_element = GetDocument().getElementById(AtomicString("span"));
+  auto* span_element = GetElementById("span");
 
   span_element->setAttribute(html_names::kStyleAttr,
                              AtomicString("outline: 50px solid red"));

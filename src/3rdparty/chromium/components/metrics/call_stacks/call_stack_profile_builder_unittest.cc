@@ -14,7 +14,8 @@
 #include "base/test/mock_callback.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "components/metrics/call_stacks/call_stack_profile_params.h"
+#include "components/sampling_profiler/call_stack_profile_params.h"
+#include "components/sampling_profiler/process_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/sampled_profile.pb.h"
 
@@ -22,15 +23,15 @@ namespace metrics {
 
 namespace {
 
-constexpr CallStackProfileParams kProfileParams = {
-    CallStackProfileParams::Process::kBrowser,
-    CallStackProfileParams::Thread::kMain,
-    CallStackProfileParams::Trigger::kProcessStartup};
+constexpr sampling_profiler::CallStackProfileParams kProfileParams = {
+    sampling_profiler::ProfilerProcessType::kBrowser,
+    sampling_profiler::ProfilerThreadType::kMain,
+    sampling_profiler::CallStackProfileParams::Trigger::kProcessStartup};
 
 class TestingCallStackProfileBuilder : public CallStackProfileBuilder {
  public:
-  TestingCallStackProfileBuilder(
-      const CallStackProfileParams& profile_params,
+  explicit TestingCallStackProfileBuilder(
+      const sampling_profiler::CallStackProfileParams& profile_params,
       const WorkIdRecorder* work_id_recorder = nullptr,
       base::OnceClosure completed_callback = base::OnceClosure());
 
@@ -56,7 +57,7 @@ class TestingCallStackProfileBuilder : public CallStackProfileBuilder {
 };
 
 TestingCallStackProfileBuilder::TestingCallStackProfileBuilder(
-    const CallStackProfileParams& profile_params,
+    const sampling_profiler::CallStackProfileParams& profile_params,
     const WorkIdRecorder* work_id_recorder,
     base::OnceClosure completed_callback)
     : CallStackProfileBuilder(profile_params,
@@ -476,7 +477,7 @@ TEST(CallStackProfileBuilderTest, RecordMetadata) {
   base::TestModule module;
   base::Frame frame = {0x10, &module};
 
-  metadata_recorder.Set(100, absl::nullopt, absl::nullopt, 10);
+  metadata_recorder.Set(100, std::nullopt, std::nullopt, 10);
   profile_builder->RecordMetadata(base::MetadataRecorder::MetadataProvider(
       &metadata_recorder, base::PlatformThread::CurrentId()));
   profile_builder->OnSampleCompleted({frame}, base::TimeTicks());
@@ -537,7 +538,7 @@ TEST(CallStackProfileBuilderTest, ApplyMetadataRetrospectively_Basic) {
   profile_builder->ApplyMetadataRetrospectively(
       profile_start_time + sample_time_delta,
       profile_start_time + sample_time_delta * 2,
-      base::MetadataRecorder::Item(3, 30, absl::nullopt, 300));
+      base::MetadataRecorder::Item(3, 30, std::nullopt, 300));
 
   profile_builder->OnProfileCompleted(3 * sample_time_delta, sample_time_delta);
 
@@ -601,7 +602,7 @@ TEST(CallStackProfileBuilderTest,
   profile_builder->ApplyMetadataRetrospectively(
       profile_start_time - base::Microseconds(1),
       profile_start_time + sample_time_delta,
-      base::MetadataRecorder::Item(3, 30, absl::nullopt, 300));
+      base::MetadataRecorder::Item(3, 30, std::nullopt, 300));
 
   profile_builder->OnProfileCompleted(3 * sample_time_delta, sample_time_delta);
 
@@ -615,39 +616,6 @@ TEST(CallStackProfileBuilderTest,
 
   for (const CallStackProfile::StackSample& sample : profile.stack_sample())
     EXPECT_EQ(0, sample.metadata_size());
-}
-
-// Test that timestamps are correctly attached.
-TEST(CallStackProfileBuilderTest, AttachTimestamps) {
-  base::MetadataRecorder metadata_recorder;
-  auto profile_builder =
-      std::make_unique<TestingCallStackProfileBuilder>(kProfileParams, nullptr);
-
-  base::TestModule module;
-  base::Frame frame = {0x10, &module};
-
-  const base::TimeTicks profile_start = base::TimeTicks::Now();
-
-  profile_builder->OnSampleCompleted({frame}, profile_start);
-
-  profile_builder->OnSampleCompleted({frame},
-                                     profile_start + base::Milliseconds(500));
-
-  profile_builder->OnProfileCompleted(base::Milliseconds(500),
-                                      base::Milliseconds(100));
-
-  const SampledProfile& proto = profile_builder->test_sampled_profile();
-
-  ASSERT_TRUE(proto.has_call_stack_profile());
-  const CallStackProfile& profile = proto.call_stack_profile();
-  EXPECT_EQ(profile_start.since_origin().InMilliseconds(),
-            profile.profile_time_offset_ms());
-
-  ASSERT_EQ(2, profile.stack_sample_size());
-  auto sample0 = profile.stack_sample(0);
-  auto sample1 = profile.stack_sample(1);
-  EXPECT_EQ(0, sample0.sample_time_offset_ms());
-  EXPECT_EQ(500, sample1.sample_time_offset_ms());
 }
 
 }  // namespace metrics

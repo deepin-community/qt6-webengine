@@ -6,9 +6,10 @@
 #define CC_ANIMATION_WORKLET_ANIMATION_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
-#include <optional>
+#include "base/check.h"
 #include "base/gtest_prod_util.h"
 #include "base/time/time.h"
 #include "cc/animation/animation.h"
@@ -155,8 +156,13 @@ class CC_ANIMATION_EXPORT WorkletAnimation final : public Animation {
 };
 
 inline WorkletAnimation* ToWorkletAnimation(Animation* animation) {
-  DCHECK(animation->IsWorkletAnimation());
+  CHECK(animation->IsWorkletAnimation());
   return static_cast<WorkletAnimation*>(animation);
+}
+
+inline const WorkletAnimation* ToWorkletAnimation(const Animation* animation) {
+  CHECK(animation->IsWorkletAnimation());
+  return static_cast<const WorkletAnimation*>(animation);
 }
 
 }  // namespace cc

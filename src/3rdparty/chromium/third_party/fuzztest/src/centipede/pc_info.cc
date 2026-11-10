@@ -22,9 +22,9 @@
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "./centipede/defs.h"
+#include "./common/defs.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 bool PCInfo::operator==(const PCInfo &rhs) const {
   return this->pc == rhs.pc && this->flags == rhs.flags;
@@ -50,4 +50,4 @@ void WritePcTable(const PCTable &pc_table, std::ostream &out) {
   out.write(pc_infos_as_bytes.data(), pc_infos_as_bytes.size());
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

@@ -15,6 +15,7 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/notreached.h"
@@ -65,7 +66,6 @@ std::string SpoofCheckResultToString(IDNSpoofChecker::Result result) {
     default:
       NOTREACHED();
   };
-  return std::string();
 }
 
 // Returns the spoof check result as a string. |ascii_domain| must contain
@@ -127,7 +127,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (argc > 1) {
-    const std::string filename = argv[1];
+    const std::string filename = UNSAFE_TODO(argv[1]);
     std::ifstream input(filename);
     if (!input.good()) {
       LOG(ERROR) << "Could not open file " << filename;

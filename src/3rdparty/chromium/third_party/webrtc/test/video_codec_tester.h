@@ -11,21 +11,28 @@
 #ifndef TEST_VIDEO_CODEC_TESTER_H_
 #define TEST_VIDEO_CODEC_TESTER_H_
 
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "absl/types/optional.h"
+#include "absl/strings/string_view.h"
+#include "api/environment/environment.h"
 #include "api/numerics/samples_stats_counter.h"
-#include "api/test/metrics/metric.h"
 #include "api/test/metrics/metrics_logger.h"
 #include "api/units/data_rate.h"
 #include "api/units/data_size.h"
 #include "api/units/frequency.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
 #include "api/video/encoded_image.h"
 #include "api/video/resolution.h"
+#include "api/video_codecs/scalability_mode.h"
+#include "api/video_codecs/sdp_video_format.h"
+#include "api/video_codecs/video_codec.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_encoder_factory.h"
 
@@ -48,8 +55,11 @@ class VideoCodecTester {
   };
 
   struct EncodingSettings {
-    SdpVideoFormat sdp_video_format = SdpVideoFormat("VP8");
+    SdpVideoFormat sdp_video_format = SdpVideoFormat::VP8();
     ScalabilityMode scalability_mode = ScalabilityMode::kL1T1;
+    VideoCodecMode content_type = VideoCodecMode::kRealtimeVideo;
+    bool frame_drop = true;
+    bool keyframe = false;
 
     struct LayerSettings {
       Resolution resolution;
@@ -64,7 +74,7 @@ class VideoCodecTester {
     struct Filter {
       uint32_t min_timestamp_rtp = std::numeric_limits<uint32_t>::min();
       uint32_t max_timestamp_rtp = std::numeric_limits<uint32_t>::max();
-      absl::optional<LayerId> layer_id;
+      std::optional<LayerId> layer_id;
     };
 
     struct Frame {
@@ -76,20 +86,20 @@ class VideoCodecTester {
       int height = 0;
       DataSize frame_size = DataSize::Zero();
       bool keyframe = false;
-      absl::optional<int> qp;
+      std::optional<int> qp;
       Timestamp encode_start = Timestamp::Zero();
       TimeDelta encode_time = TimeDelta::Zero();
       Timestamp decode_start = Timestamp::Zero();
       TimeDelta decode_time = TimeDelta::Zero();
-      absl::optional<DataRate> target_bitrate;
-      absl::optional<Frequency> target_framerate;
+      std::optional<DataRate> target_bitrate;
+      std::optional<Frequency> target_framerate;
 
       struct Psnr {
         double y = 0.0;
         double u = 0.0;
         double v = 0.0;
       };
-      absl::optional<Psnr> psnr;
+      std::optional<Psnr> psnr;
     };
 
     struct Stream {
@@ -162,14 +172,14 @@ class VideoCodecTester {
 
   struct DecoderSettings {
     PacingSettings pacing_settings;
-    absl::optional<std::string> decoder_input_base_path;
-    absl::optional<std::string> decoder_output_base_path;
+    std::optional<std::string> decoder_input_base_path;
+    std::optional<std::string> decoder_output_base_path;
   };
 
   struct EncoderSettings {
     PacingSettings pacing_settings;
-    absl::optional<std::string> encoder_input_base_path;
-    absl::optional<std::string> encoder_output_base_path;
+    std::optional<std::string> encoder_input_base_path;
+    std::optional<std::string> encoder_output_base_path;
   };
 
   virtual ~VideoCodecTester() = default;
@@ -179,26 +189,37 @@ class VideoCodecTester {
    public:
     virtual ~CodedVideoSource() = default;
 
-    // Returns next frame. Returns `absl::nullopt` if the end-of-stream is
+    // Returns next frame. Returns `std::nullopt` if the end-of-stream is
     // reached. Frames should have RTP timestamps representing desired frame
     // rate.
-    virtual absl::optional<EncodedImage> PullFrame() = 0;
+    virtual std::optional<EncodedImage> PullFrame() = 0;
   };
 
-  // A helper function that creates `EncodingSettings` for `num_frames` frames,
-  // wraps the settings into RTP timestamp -> settings map and returns the map.
-  static std::map<uint32_t, EncodingSettings> CreateEncodingSettings(
-      std::string codec_type,
-      std::string scalability_name,
-      int width,
-      int height,
-      std::vector<int> bitrates_kbps,
-      double framerate_fps,
+  // A helper function that creates `EncodingSettings` from the given
+  // parameters. `bitrate` is either total, or per-spatial layer or per-spatial
+  // and per-temporal layer. If layer bitrates are not explicitly specified,
+  // then the codec-specific rate allocators used to distribute the total
+  // bitrate across spatial or/and temporal layers.
+  static EncodingSettings CreateEncodingSettings(const Environment& env,
+                                                 std::string codec_type,
+                                                 std::string scalability_name,
+                                                 int width,
+                                                 int height,
+                                                 std::vector<DataRate> bitrate,
+                                                 Frequency framerate,
+                                                 bool screencast = false,
+                                                 bool frame_drop = true);
+
+  // A helper function that creates a map of RTP timestamps to
+  // `EncodingSettings` for the given number of frames.
+  static std::map<uint32_t, EncodingSettings> CreateFrameSettings(
+      const EncodingSettings& encoding_settings,
       int num_frames,
       uint32_t first_timestamp_rtp = 90000);
 
   // Decodes video, collects and returns decode metrics.
   static std::unique_ptr<VideoCodecStats> RunDecodeTest(
+      const Environment& env,
       CodedVideoSource* video_source,
       VideoDecoderFactory* decoder_factory,
       const DecoderSettings& decoder_settings,
@@ -206,6 +227,7 @@ class VideoCodecTester {
 
   // Encodes video, collects and returns encode metrics.
   static std::unique_ptr<VideoCodecStats> RunEncodeTest(
+      const Environment& env,
       const VideoSourceSettings& source_settings,
       VideoEncoderFactory* encoder_factory,
       const EncoderSettings& encoder_settings,
@@ -213,6 +235,7 @@ class VideoCodecTester {
 
   // Encodes and decodes video, collects and returns encode and decode metrics.
   static std::unique_ptr<VideoCodecStats> RunEncodeDecodeTest(
+      const Environment& env,
       const VideoSourceSettings& source_settings,
       VideoEncoderFactory* encoder_factory,
       VideoDecoderFactory* decoder_factory,

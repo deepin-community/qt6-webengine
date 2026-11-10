@@ -4,6 +4,8 @@
 
 #include "quiche/quic/core/quic_default_packet_writer.h"
 
+#include <optional>
+
 #include "quiche/quic/core/quic_udp_socket.h"
 
 namespace quic {
@@ -22,6 +24,7 @@ WriteResult QuicDefaultPacketWriter::WritePacket(
   packet_info.SetPeerAddress(peer_address);
   packet_info.SetSelfIp(self_address);
   packet_info.SetEcnCodepoint(params.ecn_codepoint);
+  packet_info.SetFlowLabel(params.flow_label);
   WriteResult result =
       QuicUdpSocketApi().WritePacket(fd_, buffer, buf_len, packet_info);
   if (IsWriteBlockedStatus(result.status)) {

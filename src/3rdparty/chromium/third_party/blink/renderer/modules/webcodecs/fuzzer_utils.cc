@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <string>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
 #include "media/base/limits.h"
 #include "media/base/sample_format.h"
@@ -85,8 +87,8 @@ VideoDecoderConfig* MakeVideoDecoderConfig(
     const wc_fuzzer::ConfigureVideoDecoder& proto) {
   auto* config = VideoDecoderConfig::Create();
   config->setCodec(proto.codec().c_str());
-  DOMArrayBuffer* data_copy = DOMArrayBuffer::Create(
-      proto.description().data(), proto.description().size());
+  DOMArrayBuffer* data_copy =
+      DOMArrayBuffer::Create(base::as_byte_span(proto.description()));
   config->setDescription(
       MakeGarbageCollected<AllowSharedBufferSource>(data_copy));
   return config;
@@ -99,8 +101,8 @@ AudioDecoderConfig* MakeAudioDecoderConfig(
   config->setSampleRate(proto.sample_rate());
   config->setNumberOfChannels(proto.number_of_channels());
 
-  DOMArrayBuffer* data_copy = DOMArrayBuffer::Create(
-      proto.description().data(), proto.description().size());
+  DOMArrayBuffer* data_copy =
+      DOMArrayBuffer::Create(base::as_byte_span(proto.description()));
   config->setDescription(
       MakeGarbageCollected<AllowSharedBufferSource>(data_copy));
 
@@ -179,6 +181,12 @@ AudioEncoderConfig* MakeAudioEncoderConfig(
     }
     if (proto.opus().has_usedtx()) {
       opus->setUsedtx(proto.opus().usedtx());
+    }
+    if (proto.opus().has_signal()) {
+      opus->setSignal(ToOpusSignal(proto.opus().signal()));
+    }
+    if (proto.opus().has_application()) {
+      opus->setApplication(ToOpusApplication(proto.opus().application()));
     }
   }
 
@@ -270,6 +278,28 @@ String ToBitrateMode(wc_fuzzer::BitrateMode bitrate_mode) {
   }
 }
 
+String ToOpusSignal(wc_fuzzer::OpusSignal opus_signal) {
+  switch (opus_signal) {
+    case wc_fuzzer::AUTO:
+      return "auto";
+    case wc_fuzzer::MUSIC:
+      return "music";
+    case wc_fuzzer::VOICE:
+      return "voice";
+  }
+}
+
+String ToOpusApplication(wc_fuzzer::OpusApplication opus_application) {
+  switch (opus_application) {
+    case wc_fuzzer::VOIP:
+      return "voip";
+    case wc_fuzzer::AUDIO:
+      return "audio";
+    case wc_fuzzer::LOWDELAY:
+      return "lowdelay";
+  }
+}
+
 String ToChunkType(wc_fuzzer::EncodedChunkType type) {
   switch (type) {
     case wc_fuzzer::EncodedChunkType::KEY:
@@ -324,7 +354,7 @@ EncodedVideoChunk* MakeEncodedVideoChunk(
     ScriptState* script_state,
     const wc_fuzzer::EncodedVideoChunk& proto) {
   auto* data = MakeGarbageCollected<AllowSharedBufferSource>(
-      DOMArrayBuffer::Create(proto.data().data(), proto.data().size()));
+      DOMArrayBuffer::Create(base::as_byte_span(proto.data())));
 
   auto* init = EncodedVideoChunkInit::Create();
   init->setTimestamp(proto.timestamp());
@@ -342,7 +372,7 @@ EncodedAudioChunk* MakeEncodedAudioChunk(
     ScriptState* script_state,
     const wc_fuzzer::EncodedAudioChunk& proto) {
   auto* data = MakeGarbageCollected<AllowSharedBufferSource>(
-      DOMArrayBuffer::Create(proto.data().data(), proto.data().size()));
+      DOMArrayBuffer::Create(base::as_byte_span(proto.data())));
 
   auto* init = EncodedAudioChunkInit::Create();
   init->setTimestamp(proto.timestamp());
@@ -604,8 +634,7 @@ VideoFrame* MakeVideoFrame(ScriptState* script_state,
   if (proto.bitmap_width() > 0 && proto.bitmap_width() < bitmap_size)
     bitmap_size -= bitmap_size % (proto.bitmap_width() * kBytesPerPixel);
   NotShared<DOMUint8ClampedArray> data_u8(DOMUint8ClampedArray::Create(
-      reinterpret_cast<const unsigned char*>(proto.rgb_bitmap().data()),
-      bitmap_size));
+      base::as_byte_span(proto.rgb_bitmap()).first(bitmap_size)));
 
   ImageData* image_data = ImageData::Create(data_u8, proto.bitmap_width(),
                                             IGNORE_EXCEPTION_FOR_TESTING);
@@ -614,7 +643,7 @@ VideoFrame* MakeVideoFrame(ScriptState* script_state,
     return nullptr;
 
   ImageBitmap* image_bitmap = MakeGarbageCollected<ImageBitmap>(
-      image_data, absl::nullopt, ImageBitmapOptions::Create());
+      image_data, std::nullopt, ImageBitmapOptions::Create());
 
   VideoFrameInit* video_frame_init = VideoFrameInit::Create();
   video_frame_init->setTimestamp(proto.timestamp());
@@ -645,7 +674,7 @@ AudioData* MakeAudioData(ScriptState* script_state,
 
   auto* buffer = DOMArrayBuffer::Create(number_of_samples, size_per_sample);
 
-  memset(buffer->Data(), 0, number_of_samples * size_per_sample);
+  UNSAFE_TODO(memset(buffer->Data(), 0, number_of_samples * size_per_sample));
 
   for (int i = 0; i < proto.channels().size(); i++) {
     size_t max_plane_size = proto.length() * size_per_sample;
@@ -653,9 +682,9 @@ AudioData* MakeAudioData(ScriptState* script_state,
     auto* data = proto.channels().Get(i).data();
     auto size = std::min(proto.channels().Get(i).size(), max_plane_size);
 
-    void* plane_start =
-        reinterpret_cast<uint8_t*>(buffer->Data()) + i * max_plane_size;
-    memcpy(plane_start, data, size);
+    void* plane_start = UNSAFE_TODO(reinterpret_cast<uint8_t*>(buffer->Data()) +
+                                    i * max_plane_size);
+    UNSAFE_TODO(memcpy(plane_start, data, size));
   }
 
   auto* init = AudioDataInit::Create();

@@ -27,7 +27,7 @@
 
 #include "src/tint/lang/wgsl/ast/builtin_texture_helper_test.h"
 
-#include "src/tint/lang/core/texel_format.h"
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/multisampled_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
@@ -166,7 +166,6 @@ Type TextureOverloadCase::BuildResultVectorComponentType(ProgramBuilder* b) cons
     }
 
     TINT_UNREACHABLE();
-    return {};
 }
 
 const Variable* TextureOverloadCase::BuildTextureVariable(ProgramBuilder* b) const {
@@ -200,7 +199,6 @@ const Variable* TextureOverloadCase::BuildTextureVariable(ProgramBuilder* b) con
     }
 
     TINT_UNREACHABLE();
-    return nullptr;
 }
 
 const Variable* TextureOverloadCase::BuildSamplerVariable(ProgramBuilder* b) const {

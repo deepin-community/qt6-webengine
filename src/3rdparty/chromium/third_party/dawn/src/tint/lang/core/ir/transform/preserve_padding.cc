@@ -27,8 +27,6 @@
 
 #include "src/tint/lang/core/ir/transform/preserve_padding.h"
 
-#include <utility>
-
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/validator.h"
@@ -61,8 +59,8 @@ struct State {
     void Process() {
         // Find host-visible stores of types that contain padding bytes.
         Vector<Store*, 8> worklist;
-        for (auto inst : ir.instructions.Objects()) {
-            if (auto* store = inst->As<Store>(); store && store->Alive()) {
+        for (auto inst : ir.Instructions()) {
+            if (auto* store = inst->As<Store>()) {
                 auto* ptr = store->To()->Type()->As<core::type::Pointer>();
                 if (ptr->AddressSpace() == core::AddressSpace::kStorage &&
                     ContainsPadding(ptr->StoreType())) {
@@ -124,7 +122,7 @@ struct State {
         }
 
         // The type contains padding bytes, so call a helper function that decomposes the accesses.
-        auto* helper = helpers.GetOrCreate(store_type, [&] {
+        auto* helper = helpers.GetOrAdd(store_type, [&] {
             auto* func = b.Function("tint_store_and_preserve_padding", ty.void_());
             auto* target = b.FunctionParam("target", ty.ptr(storage, store_type));
             auto* value_param = b.FunctionParam("value_param", store_type);
@@ -139,15 +137,15 @@ struct State {
                                 auto* el_ptr =
                                     b.Access(ty.ptr(storage, arr->ElemType()), target, idx);
                                 auto* el_value = b.Access(arr->ElemType(), value_param, idx);
-                                MakeStore(el_ptr->Result(0), el_value->Result(0));
+                                MakeStore(el_ptr->Result(), el_value->Result());
                             });
                     },
                     [&](const type::Matrix* mat) {
-                        for (uint32_t i = 0; i < mat->columns(); i++) {
+                        for (uint32_t i = 0; i < mat->Columns(); i++) {
                             auto* col_ptr =
                                 b.Access(ty.ptr(storage, mat->ColumnType()), target, u32(i));
                             auto* col_value = b.Access(mat->ColumnType(), value_param, u32(i));
-                            MakeStore(col_ptr->Result(0), col_value->Result(0));
+                            MakeStore(col_ptr->Result(), col_value->Result());
                         }
                     },
                     [&](const type::Struct* str) {
@@ -156,7 +154,7 @@ struct State {
                                                      u32(member->Index()));
                             auto* sub_value =
                                 b.Access(member->Type(), value_param, u32(member->Index()));
-                            MakeStore(sub_ptr->Result(0), sub_value->Result(0));
+                            MakeStore(sub_ptr->Result(), sub_value->Result());
                         }
                     });
 
@@ -173,7 +171,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> PreservePadding(Module& ir) {
-    auto result = ValidateAndDumpIfNeeded(ir, "PreservePadding transform");
+    auto result = ValidateAndDumpIfNeeded(ir, "core.PreservePadding", kPreservePaddingCapabilities);
     if (result != Success) {
         return result;
     }

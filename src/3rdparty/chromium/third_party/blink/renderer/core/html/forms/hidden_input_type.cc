@@ -67,7 +67,6 @@ bool HiddenInputType::SupportsValidation() const {
 
 LayoutObject* HiddenInputType::CreateLayoutObject(const ComputedStyle&) const {
   NOTREACHED();
-  return nullptr;
 }
 
 void HiddenInputType::AccessKeyAction(SimulatedClickCreationScope) {}
@@ -91,7 +90,7 @@ void HiddenInputType::SetValue(const String& sanitized_value,
 void HiddenInputType::AppendToFormData(FormData& form_data) const {
   if (EqualIgnoringASCIICase(GetElement().GetName(), "_charset_")) {
     form_data.AppendFromElement(GetElement().GetName(),
-                                String(form_data.Encoding().GetName()));
+                                form_data.Encoding().GetName());
     return;
   }
   InputType::AppendToFormData(form_data);
@@ -102,16 +101,14 @@ bool HiddenInputType::ShouldRespectHeightAndWidthAttributes() {
 }
 
 bool HiddenInputType::IsAutoDirectionalityFormAssociated() const {
-  return RuntimeEnabledFeatures::DirnameMoreInputTypesEnabled();
+  return true;
 }
 
 void HiddenInputType::ValueAttributeChanged() {
   UpdateView();
   // Hidden input need to adjust directionality explicitly since it has no
   // descendant to propagate dir from.
-  if (RuntimeEnabledFeatures::CSSPseudoDirEnabled() &&
-      RuntimeEnabledFeatures::DirnameMoreInputTypesEnabled() &&
-      GetElement().HasDirectionAuto()) {
+  if (GetElement().HasDirectionAuto()) {
     GetElement().UpdateAncestorWithDirAuto(
         Element::UpdateAncestorTraversal::IncludeSelf);
   }

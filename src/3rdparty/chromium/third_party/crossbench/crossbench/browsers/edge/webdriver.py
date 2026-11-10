@@ -6,76 +6,60 @@ from __future__ import annotations
 
 import logging
 import os
-import pathlib
 import shutil
 import stat
 import tempfile
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from selenium import webdriver
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
+from typing_extensions import override
 
 import crossbench
 import crossbench.exception
-from crossbench.browsers.browser_helper import BROWSERS_CACHE
-from crossbench.browsers.chromium.webdriver import ChromiumWebDriver
+from crossbench import path as pth
+from crossbench.browsers.attributes import BrowserAttributes
+from crossbench.browsers.chromium.webdriver import ChromiumBasedWebDriver
+from crossbench.browsers.edge.base import EdgeBaseMixin
 
 if TYPE_CHECKING:
   from selenium.webdriver.chromium.webdriver import ChromiumDriver
 
-  import crossbench.flags
-  import crossbench.runner
   from crossbench import plt
-  from crossbench.browsers.splash_screen import SplashScreen
-  from crossbench.browsers.viewport import Viewport
-  from crossbench.network.base import Network
-
-  FlagsInitialDataType = crossbench.flags.Flags.InitialDataType
 
 
-class EdgeWebDriver(ChromiumWebDriver):
+class EdgeWebDriver(EdgeBaseMixin, ChromiumBasedWebDriver):
 
   WEB_DRIVER_OPTIONS = EdgeOptions
   WEB_DRIVER_SERVICE = EdgeService
 
-  def __init__(
-      self,
-      label: str,
-      path: pathlib.Path,
-      flags: FlagsInitialDataType = None,
-      js_flags: FlagsInitialDataType = None,
-      cache_dir: Optional[pathlib.Path] = None,
-      type: str = "edge",  # pylint: disable=redefined-builtin
-      network: Optional[Network] = None,
-      driver_path: Optional[pathlib.Path] = None,
-      viewport: Optional[Viewport] = None,
-      splash_screen: Optional[SplashScreen] = None,
-      platform: Optional[plt.Platform] = None):
-    super().__init__(
-        label,
-        path,
-        flags,
-        js_flags,
-        cache_dir,
-        type=type,
-        network=network,
-        driver_path=driver_path,
-        viewport=viewport,
-        splash_screen=splash_screen,
-        platform=platform)
+  @classmethod
+  @override
+  def type_name(cls) -> str:
+    return "edge"
 
-  def _find_driver(self) -> pathlib.Path:
+  @override
+  def _find_driver(self) -> pth.AnyPath:
     finder = EdgeWebDriverDownloader(self)
     return finder.download()
 
-  def _create_driver(self, options, service) -> ChromiumDriver:
-    return webdriver.Edge(  # pytype: disable=wrong-keyword-args
-        options=options, service=service)
+  @override
+  def _create_driver(
+      self,
+      options: EdgeOptions,  # type: ignore
+      service: EdgeService) -> ChromiumDriver:  # type: ignore
+    return webdriver.Edge(options=options, service=service)
+
+  @classmethod
+  @override
+  def attributes(cls) -> BrowserAttributes:
+    return (BrowserAttributes.EDGE | BrowserAttributes.CHROMIUM_BASED
+            | BrowserAttributes.WEBDRIVER)
 
 
 class EdgeWebDriverDownloader:
-  BASE_URL = "https://msedgedriver.azureedge.net"
+  BASE_URL = "https://msedgedriver.microsoft.com"
 
   def __init__(self, browser: EdgeWebDriver) -> None:
     self.browser = browser
@@ -85,11 +69,11 @@ class EdgeWebDriverDownloader:
     self.extension: str = ""
     if self.platform.is_win:
       self.extension = ".exe"
-    self.driver_path: pathlib.Path = (
-        BROWSERS_CACHE /
-        f"edgedriver-{self.browser.major_version}{self.extension}")
+    cache_dir = self.platform.host_platform.local_cache_dir("driver")
+    self.driver_path: pth.LocalPath = (
+        cache_dir / f"edgedriver-{self.browser.version.major}{self.extension}")
 
-  def download(self) -> pathlib.Path:
+  def download(self) -> pth.LocalPath:
     if not self.driver_path.exists():
       with crossbench.exception.annotate(
           f"Downloading edgedriver for {self.browser.version}"):
@@ -99,17 +83,16 @@ class EdgeWebDriverDownloader:
   def _download(self) -> None:
     arch = self._arch_identifier()
     archive_name = f"edgedriver_{arch}.zip"
-    url = self.BASE_URL + f"/{self.browser.version}/{archive_name}"
+    url = self.BASE_URL + f"/{self.browser.version.parts_str}/{archive_name}"
     logging.info("EDGEDRIVER downloading %s: %s", self.browser.version, url)
     with tempfile.TemporaryDirectory() as tmp_dir:
-      archive_file = pathlib.Path(tmp_dir) / archive_name
+      archive_file = pth.LocalPath(tmp_dir) / archive_name
       self.platform.download_to(url, archive_file)
-      unpack_dir = pathlib.Path(tmp_dir) / "extracted"
-      shutil.unpack_archive(archive_file, unpack_dir)
+      unpack_dir = pth.LocalPath(tmp_dir) / "extracted"
+      shutil.unpack_archive(os.fspath(archive_file), os.fspath(unpack_dir))
       driver = unpack_dir / f"msedgedriver{self.extension}"
       assert driver.is_file(), (f"Extracted driver at {driver} does not exist.")
-      BROWSERS_CACHE.mkdir(parents=True, exist_ok=True)
-      shutil.move(os.fspath(driver), self.driver_path)
+      shutil.move(os.fspath(driver), os.fspath(self.driver_path))
       self.driver_path.chmod(self.driver_path.stat().st_mode | stat.S_IEXEC)
 
   def _arch_identifier(self) -> str:
@@ -126,4 +109,6 @@ class EdgeWebDriverDownloader:
         return "win64"
       if self.platform.is_ia32:
         return "win32"
+      if self.platform.is_arm64:
+        return "arm64"
     raise ValueError(f"Unsupported edgedriver platform {self.platform}")

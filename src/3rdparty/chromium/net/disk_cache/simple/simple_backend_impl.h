@@ -56,9 +56,8 @@ class SimpleEntryImpl;
 class SimpleFileTracker;
 class SimpleIndex;
 
-class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
-    public SimpleIndexDelegate,
-    public base::SupportsWeakPtr<SimpleBackendImpl> {
+class NET_EXPORT_PRIVATE SimpleBackendImpl final : public Backend,
+                                                   public SimpleIndexDelegate {
  public:
   // Note: only pass non-nullptr for |file_tracker| if you don't want the global
   // one (which things other than tests would want). |file_tracker| must outlive
@@ -83,9 +82,6 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   // Finishes initialization. Always asynchronous.
   void Init(CompletionOnceCallback completion_callback);
 
-  // Sets the maximum size for the total amount of data stored by this instance.
-  bool SetMaxSize(int64_t max_bytes);
-
   // Returns the maximum file size permitted in this backend.
   int64_t MaxFileSize() const override;
 
@@ -101,7 +97,8 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
                    CompletionOnceCallback callback) override;
 
   // Backend:
-  int32_t GetEntryCount() const override;
+  int32_t GetEntryCount(
+      net::Int32CompletionOnceCallback callback) const override;
   EntryResult OpenEntry(const std::string& key,
                         net::RequestPriority request_priority,
                         EntryResultCallback callback) override;
@@ -151,11 +148,16 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   }
 #endif
 
+  base::WeakPtr<SimpleBackendImpl> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   class SimpleIterator;
   friend class SimpleIterator;
 
-  using EntryMap = std::unordered_map<uint64_t, SimpleEntryImpl*>;
+  using EntryMap =
+      std::unordered_map<uint64_t, raw_ptr<SimpleEntryImpl, CtnExperimental>>;
 
   class ActiveEntryProxy;
   friend class ActiveEntryProxy;
@@ -293,6 +295,8 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
 #if BUILDFLAG(IS_ANDROID)
   ApplicationStatusListenerGetter app_status_listener_getter_;
 #endif
+
+  base::WeakPtrFactory<SimpleBackendImpl> weak_ptr_factory_{this};
 };
 
 }  // namespace disk_cache

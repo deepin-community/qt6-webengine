@@ -32,7 +32,6 @@ class TestTypeAheadDataSource : public TypeAheadDataSource {
         return "bb";
     }
     NOTREACHED();
-    return "NOTREACHED";
   }
 
  private:

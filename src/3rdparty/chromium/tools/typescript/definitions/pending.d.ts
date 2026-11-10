@@ -66,3 +66,37 @@ interface DetectedBarcode {
 type BarcodeFormat =
     'aztec'|'codabar'|'code_39'|'code_93'|'code_128'|'data_matrix'|'ean_8'|
     'ean_13'|'itf'|'pdf417'|'qr_code'|'unknown'|'upc_a'|'upc_e';
+
+
+// TODO(b/338624981): This should be exported in mediapipe's vision.d.ts.
+/** A two-dimensional matrix. */
+declare interface Matrix {
+  /** The number of rows. */
+  rows: number;
+
+  /** The number of columns. */
+  columns: number;
+
+  /** The values as a flattened one-dimensional array. */
+  data: number[];
+}
+
+// https://github.com/w3c/csswg-drafts/issues/9452
+interface ScrollIntoViewOptions {
+  container?: ScrollIntoViewContainer;
+}
+
+type ScrollIntoViewContainer = 'all'|'nearest';
+
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set/
+interface Set<T> {
+  difference(other: Set<T>): Set<T>;
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array/fromBase64
+interface Uint8ArrayConstructor {
+  fromBase64(string: string, options?: {
+    alphabet?: string,
+    lastChunkHandling?: string
+  }): Uint8Array;
+}

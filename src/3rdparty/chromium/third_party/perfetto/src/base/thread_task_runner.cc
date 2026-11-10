@@ -27,7 +27,7 @@
 #include "perfetto/ext/base/thread_utils.h"
 #include "perfetto/ext/base/unix_task_runner.h"
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX_BUT_NOT_QNX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 #include <sys/prctl.h>
 #endif
@@ -112,6 +112,11 @@ uint64_t ThreadTaskRunner::GetThreadCPUTimeNsForTesting() {
     thread_time_ns = static_cast<uint64_t>(base::GetThreadCPUTimeNs().count());
   });
   return thread_time_ns;
+}
+PlatformThreadId ThreadTaskRunner::GetThreadIdForTesting() {
+  PlatformThreadId thread_id = static_cast<PlatformThreadId>(-1);
+  PostTaskAndWaitForTesting([&thread_id] { thread_id = GetThreadId(); });
+  return thread_id;
 }
 
 void ThreadTaskRunner::PostTask(std::function<void()> task) {

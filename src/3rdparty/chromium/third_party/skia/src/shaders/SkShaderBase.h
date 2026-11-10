@@ -117,8 +117,8 @@ public:
     SkMatrix totalMatrix() const { return SkMatrix::Concat(fCTM, fTotalLocalMatrix); }
 
     /** Gets the inverse of totalMatrix(), if invertible. */
-    [[nodiscard]] bool totalInverse(SkMatrix* out) const {
-        return this->totalMatrix().invert(out);
+    std::optional<SkMatrix> totalInverse() const {
+        return this->totalMatrix().invert();
     }
 
     /** Is there a transform that has not yet been applied by a parent shader? */
@@ -163,7 +163,6 @@ private:
     M(Blend)              \
     M(CTM)                \
     M(Color)              \
-    M(Color4)             \
     M(ColorFilter)        \
     M(CoordClamp)         \
     M(Empty)              \
@@ -191,10 +190,11 @@ public:
     sk_sp<SkShader> makeWithCTM(const SkMatrix&) const;  // owns its own ctm
 
     /**
-     *  Returns true if the shader is guaranteed to produce only a single color.
+     *  Returns true if the shader is guaranteed to produce only a single color
+     *  If the color parameter is non-null, it is filled in with that color.
      *  Subclasses can override this to allow loop-hoisting optimization.
      */
-    virtual bool isConstant() const { return false; }
+    virtual bool isConstant(SkColor4f* color = nullptr) const { return false; }
 
     enum class ShaderType {
 #define M(type) k##type,
@@ -238,13 +238,14 @@ public:
      *      fPoint[1] and fRadius[1] are the center and radius of the 2nd circle
      *  Sweep:
      *      fPoint[0] is the center of the sweep.
+     *      fPoint[1] x is the scale, y is the bias
      */
     struct GradientInfo {
         int         fColorCount    = 0;        //!< In-out parameter, specifies passed size
                                                //   of fColors/fColorOffsets on input, and
                                                //   actual number of colors/offsets on
                                                //   output.
-        SkColor*    fColors        = nullptr;  //!< The colors in the gradient.
+        SkColor4f*  fColors        = nullptr;  //!< The colors in the gradient.
         SkScalar*   fColorOffsets  = nullptr;  //!< The unit offset for color transitions.
         SkPoint     fPoint[2];                 //!< Type specific, see above.
         SkScalar    fRadius[2];                //!< Type specific, see above.
@@ -320,12 +321,10 @@ public:
         // Reference to shader, so we don't have to dupe information.
         const SkShaderBase& fShader;
 
-        uint8_t         getPaintAlpha() const { return fPaintAlpha; }
-        const SkMatrix& getTotalInverse() const { return fTotalInverse; }
+        uint8_t getPaintAlpha() const { return fPaintAlpha; }
 
     private:
-        SkMatrix    fTotalInverse;
-        uint8_t     fPaintAlpha;
+        uint8_t fPaintAlpha;
     };
 
     /**
@@ -343,7 +342,7 @@ public:
      *  Note: if this returns true, the returned color will always be opaque, as only the RGB
      *  components are used to compute luminance.
      */
-    bool asLuminanceColor(SkColor*) const;
+    bool asLuminanceColor(SkColor4f*) const;
 
     /**
      * If this returns false, then we draw nothing (do not fall back to shader context). This should
@@ -357,7 +356,7 @@ public:
      * in r,g MatrixRec::apply() must be called (unless the shader doesn't require it's input
      * coords). The default impl creates shadercontext and calls that (not very efficient).
      */
-    virtual bool appendStages(const SkStageRec&, const SkShaders::MatrixRec&) const;
+    virtual bool appendStages(const SkStageRec&, const SkShaders::MatrixRec&) const = 0;
 
     virtual SkImage* onIsAImage(SkMatrix*, SkTileMode[2]) const {
         return nullptr;
@@ -375,7 +374,7 @@ public:
     }
     static void RegisterFlattenables();
 
-    /** DEPRECATED. skbug.com/8941
+    /** DEPRECATED. skbug.com/40040221
      *  If this shader can be represented by another shader + a localMatrix, return that shader and
      *  the localMatrix. If not, return nullptr and ignore the localMatrix parameter.
      */
@@ -403,7 +402,7 @@ protected:
     }
 #endif
 
-    virtual bool onAsLuminanceColor(SkColor*) const {
+    virtual bool onAsLuminanceColor(SkColor4f*) const {
         return false;
     }
 
@@ -422,7 +421,6 @@ inline const SkShaderBase* as_SB(const sk_sp<SkShader>& shader) {
 }
 
 void SkRegisterBlendShaderFlattenable();
-void SkRegisterColor4ShaderFlattenable();
 void SkRegisterColorShaderFlattenable();
 void SkRegisterCoordClampShaderFlattenable();
 void SkRegisterEmptyShaderFlattenable();

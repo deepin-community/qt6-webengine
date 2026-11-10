@@ -32,7 +32,7 @@ class MockDomainConfirmedProvider : public MdnsDomainConfirmedProvider {
 
 class MockMdnsSender : public MdnsSender {
  public:
-  explicit MockMdnsSender(UdpSocket* socket) : MdnsSender(socket) {}
+  explicit MockMdnsSender(UdpSocket& socket) : MdnsSender(socket) {}
 
   MOCK_METHOD1(SendMulticast, Error(const MdnsMessage& message));
   MOCK_METHOD2(SendMessage,
@@ -99,10 +99,10 @@ class MdnsProbeManagerTests : public testing::Test {
  public:
   MdnsProbeManagerTests()
       : clock_(Clock::now()),
-        task_runner_(&clock_),
-        sender_(&socket_),
+        task_runner_(clock_),
+        sender_(socket_),
         receiver_(config_),
-        manager_(&sender_, &receiver_, &random_, task_runner_, FakeClock::now) {
+        manager_(sender_, receiver_, random_, task_runner_, FakeClock::now) {
     ExpectProbeStopped(name_);
     ExpectProbeStopped(name2_);
     ExpectProbeStopped(name_retry_);
@@ -271,7 +271,7 @@ TEST_F(MdnsProbeManagerTests, TiebreakProbeQueryWorksForMultiRecordQueries) {
   StrictMock<MockMdnsProbe>* ongoing_probe = ExpectProbeOngoing(name_);
 
   // For the below tests, note that if records A, B, C are generated from
-  // addresses |address_a_|, |address_b_|, and |address_c_| respectively,
+  // addresses `address_a_`, `address_b_`, and `address_c_` respectively,
   // then B < A < C.
   //
   // If the received records have one record less than the tested record, they
@@ -318,14 +318,14 @@ TEST_F(MdnsProbeManagerTests, ProbeFailureAfterProbeRemovalNoOp) {
 }
 
 TEST_F(MdnsProbeManagerTests, ProbeFailureCallsCallbackWhenAlreadyClaimed) {
-  // This test first starts a probe with domain |name_retry_| so that when
-  // probe with domain |name_| fails, the newly generated domain with equal
-  // |name_retry_|.
+  // This test first starts a probe with domain `name_retry_` so that when
+  // probe with domain `name_` fails, the newly generated domain with equal
+  // `name_retry_`.
   StrictMock<MockMdnsProbe>* ongoing_probe =
       SetUpCompletedProbe(name_retry_, address_a_);
 
-  // Because |name_retry_| has already succeeded, the retry logic should skip
-  // over re-querying for |name_retry_| and jump right to success.
+  // Because `name_retry_` has already succeeded, the retry logic should skip
+  // over re-querying for `name_retry_` and jump right to success.
   EXPECT_TRUE(manager_.StartProbe(&callback_, name_, address_a_).ok());
   ongoing_probe = ExpectProbeOngoing(name_);
   EXPECT_CALL(callback_, OnDomainFound(name_, name_retry_));

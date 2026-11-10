@@ -9,7 +9,6 @@ import android.os.Build;
 
 import androidx.test.filters.SmallTest;
 
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,9 +17,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ChildBindingState;
-import org.chromium.base.FeatureList;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.base.process_launcher.TestChildProcessConnection;
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -37,19 +34,16 @@ public class ChildProcessConnectionMetricsUnitTest {
 
     @Before
     public void setUp() {
-        UmaRecorderHolder.resetForTesting();
         LauncherThread.setCurrentThreadAsLauncherThread();
         mRanking = new LinkedList<ChildProcessConnection>();
         mBindingManager =
                 new BindingManager(
-                        RuntimeEnvironment.application, BindingManager.NO_MAX_SIZE, mRanking);
+                        RuntimeEnvironment.application,
+                        BindingManager.NO_MAX_SIZE,
+                        mRanking,
+                        /* onChangedImplicitly= */ null);
         mConnectionMetrics = new ChildProcessConnectionMetrics();
         mConnectionMetrics.setBindingManager(mBindingManager);
-    }
-
-    @After
-    public void tearDown() {
-        FeatureList.setTestValues(null);
     }
 
     @Test
@@ -297,7 +291,7 @@ public class ChildProcessConnectionMetricsUnitTest {
         ChildProcessConnection connection =
                 new TestChildProcessConnection(
                         new ComponentName("pkg", "cls"),
-                        /* bindToCallerCheck= */ false,
+                        /* bindToCaller= */ false,
                         /* bindAsExternalService= */ false,
                         /* serviceBundle= */ null);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
@@ -322,7 +316,7 @@ public class ChildProcessConnectionMetricsUnitTest {
         final boolean lowestRank = mRanking.size() == 1 && mRanking.get(0) == connection;
         final boolean needsVisibleBinding = contentBindingState == ChildBindingState.VISIBLE;
         final boolean hasContentVisibleBinding =
-                ((lowestRank || BindingManager.useNotPerceptibleBinding())
+                ((lowestRank || ChildProcessConnection.supportNotPerceptibleBinding())
                                 && connection.isVisibleBindingBound())
                         || connection.getVisibleBindingCount() == 2;
 
@@ -358,11 +352,11 @@ public class ChildProcessConnectionMetricsUnitTest {
     }
 
     private void setupBindingType(boolean useNotPerceptibleBinding) {
-        BindingManager.setUseNotPerceptibleBindingForTesting(useNotPerceptibleBinding);
+        ChildProcessConnection.setSupportNotPerceptibleBindingForTesting(useNotPerceptibleBinding);
         if (useNotPerceptibleBinding) {
-            Assert.assertTrue(BindingManager.useNotPerceptibleBinding());
+            Assert.assertTrue(ChildProcessConnection.supportNotPerceptibleBinding());
             return;
         }
-        Assert.assertFalse(BindingManager.useNotPerceptibleBinding());
+        Assert.assertFalse(ChildProcessConnection.supportNotPerceptibleBinding());
     }
 }

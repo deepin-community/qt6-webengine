@@ -19,18 +19,19 @@
 #include <cstdint>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "./centipede/binary_info.h"
-#include "./centipede/defs.h"
 #include "./centipede/execution_metadata.h"
 #include "./centipede/feature.h"
 #include "./centipede/feature_set.h"
 #include "./centipede/util.h"
+#include "./common/defs.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // WeightedDistribution maintains an array of integer weights.
 // It allows to compute a random number in range [0,size()) such that
@@ -140,8 +141,10 @@ class Corpus {
 
   // Logging.
 
-  // Prints corpus stats in JSON format to `out` using `fs` for frequencies.
-  void PrintStats(std::ostream &out, const FeatureSet &fs);
+  // Saves the corpus stats in JSON format to the `filepath` file, using `fs`
+  // for feature frequencies.
+  void DumpStatsToFile(const FeatureSet &fs, std::string_view filepath,
+                       std::string_view description);
   // Returns a string used for logging the corpus memory usage.
   std::string MemoryUsageString() const;
 
@@ -202,6 +205,6 @@ class CoverageFrontier {
   size_t num_functions_in_frontier_ = 0;
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_CORPUS_H_

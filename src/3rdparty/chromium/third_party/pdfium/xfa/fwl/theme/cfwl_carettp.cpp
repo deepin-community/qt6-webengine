@@ -13,6 +13,8 @@
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_widget.h"
 
+namespace pdfium {
+
 CFWL_CaretTP::CFWL_CaretTP() = default;
 
 CFWL_CaretTP::~CFWL_CaretTP() = default;
@@ -20,11 +22,12 @@ CFWL_CaretTP::~CFWL_CaretTP() = default;
 void CFWL_CaretTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   switch (pParams.GetPart()) {
     case CFWL_ThemePart::Part::kBackground: {
-      if (!(pParams.m_dwStates & CFWL_PartState::kHightLight))
+      if (!(pParams.states_ & CFWL_PartState::kHightLight)) {
         return;
+      }
 
-      DrawCaretBK(pParams.GetGraphics(), pParams.m_dwStates, pParams.m_PartRect,
-                  pParams.m_matrix);
+      DrawCaretBK(pParams.GetGraphics(), pParams.states_, pParams.part_rect_,
+                  pParams.matrix_);
       break;
     }
     default:
@@ -41,3 +44,5 @@ void CFWL_CaretTP::DrawCaretBK(CFGAS_GEGraphics* pGraphics,
   pGraphics->SetFillColor(CFGAS_GEColor(ArgbEncode(255, 0, 0, 0)));
   pGraphics->FillPath(path, CFX_FillRenderOptions::FillType::kWinding, matrix);
 }
+
+}  // namespace pdfium

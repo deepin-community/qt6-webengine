@@ -40,7 +40,7 @@ void JsonSanitizer::Sanitize(const std::string& json, Callback callback) {
             std::move(callback).Run(base::ok(std::move(safe_json)));
 #else
 
-                  std::move(callback).Run(parse_result.and_then(
+                  std::move(callback).Run(std::move(parse_result).and_then(
                       [](const base::Value& value) -> JsonSanitizer::Result {
                         if (value.type() != base::Value::Type::DICT &&
                             value.type() != base::Value::Type::LIST) {

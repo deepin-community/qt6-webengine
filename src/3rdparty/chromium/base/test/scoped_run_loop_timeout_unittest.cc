@@ -69,7 +69,7 @@ TEST(ScopedRunLoopTimeoutTest, TimesOutWithInheritedTimeoutValue) {
 
   static constexpr auto kArbitraryTimeout = Milliseconds(10);
   ScopedRunLoopTimeout run_timeout(FROM_HERE, kArbitraryTimeout);
-  ScopedRunLoopTimeout run_timeout2(FROM_HERE, absl::nullopt,
+  ScopedRunLoopTimeout run_timeout2(FROM_HERE, std::nullopt,
                                     log_callback.Get());
 
   // Since the delayed task will be posted only after the message pump starts
@@ -100,7 +100,7 @@ TEST(ScopedRunLoopTimeoutTest, RunTasksUntilTimeoutWithInheritedTimeoutValue) {
 
   static constexpr auto kArbitraryTimeout = Milliseconds(10);
   ScopedRunLoopTimeout run_timeout(FROM_HERE, kArbitraryTimeout);
-  ScopedRunLoopTimeout run_timeout2(FROM_HERE, absl::nullopt,
+  ScopedRunLoopTimeout run_timeout2(FROM_HERE, std::nullopt,
                                     log_callback.Get());
 
   // Posting a task with the same delay as our timeout, immediately before
@@ -177,7 +177,7 @@ TEST(ScopedRunLoopTimeoutTest, OverwriteTimeoutCallbackForTesting) {
   ScopedRunLoopTimeout::SetTimeoutCallbackForTesting(
       std::make_unique<ScopedRunLoopTimeout::TimeoutCallback>(
           std::move(cb).Then(BindLambdaForTesting(
-              [&custom_handler_called]() { custom_handler_called = true; }))));
+              [&custom_handler_called] { custom_handler_called = true; }))));
   static constexpr auto kArbitraryTimeout = Milliseconds(1);
   const auto location = FROM_HERE;
   ScopedRunLoopTimeout run_timeout(

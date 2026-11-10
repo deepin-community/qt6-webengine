@@ -4,7 +4,7 @@
 
 #include "media/mojo/clients/mojo_video_decoder.h"
 
-#include "base/command_line.h"
+#include "base/check.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -17,7 +17,6 @@
 #include "base/trace_event/trace_event.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_switches.h"
@@ -97,7 +96,7 @@ MojoVideoDecoder::MojoVideoDecoder(
     : task_runner_(task_runner),
       pending_remote_decoder_(std::move(pending_remote_decoder)),
       gpu_factories_(gpu_factories),
-      media_log_(media_log),
+      media_log_(media_log->Clone()),
       timestamps_(128),
       writer_capacity_(
           GetDefaultDecoderBufferConverterCapacity(DemuxerStream::VIDEO)),
@@ -122,12 +121,6 @@ bool MojoVideoDecoder::SupportsDecryption() const {
   // Currently only the Android backends and specific ChromeOS configurations
   // support decryption.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kLacrosUseChromeosProtectedMedia)) {
-    return false;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
   return true;
 #else
   return false;
@@ -160,13 +153,13 @@ void MojoVideoDecoder::Initialize(const VideoDecoderConfig& config,
   if (gpu_factories_ &&
       gpu_factories_->IsDecoderConfigSupported(config) ==
           GpuVideoAcceleratorFactories::Supported::kFalse &&
-      IsBuiltInVideoCodec(config.codec())) {
+      IsDecoderBuiltInVideoCodec(config.codec())) {
     FailInit(std::move(init_cb), DecoderStatus::Codes::kUnsupportedConfig);
     return;
   }
 
-  absl::optional<base::UnguessableToken> cdm_id =
-      cdm_context ? cdm_context->GetCdmId() : absl::nullopt;
+  std::optional<base::UnguessableToken> cdm_id =
+      cdm_context ? cdm_context->GetCdmId() : std::nullopt;
 
   // Fail immediately if the stream is encrypted but |cdm_id| is invalid.
   // This check is needed to avoid unnecessary IPC to the remote process.
@@ -198,7 +191,7 @@ void MojoVideoDecoder::Initialize(const VideoDecoderConfig& config,
 void MojoVideoDecoder::InitializeRemoteDecoder(
     const VideoDecoderConfig& config,
     bool low_delay,
-    absl::optional<base::UnguessableToken> cdm_id) {
+    std::optional<base::UnguessableToken> cdm_id) {
   if (has_connection_error_) {
     DCHECK(init_cb_);
     FailInit(std::move(init_cb_), DecoderStatus::Codes::kDisconnected);
@@ -206,7 +199,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
   }
 
   remote_decoder_->Initialize(
-      config, low_delay, cdm_id,
+      config, low_delay,
+      cdm_id ? mojom::Cdm::NewCdmId(cdm_id.value()) : nullptr,
       base::BindOnce(&MojoVideoDecoder::OnInitializeDone,
                      base::Unretained(this)));
 }
@@ -214,7 +208,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
 void MojoVideoDecoder::OnInitializeDone(const DecoderStatus& status,
                                         bool needs_bitstream_conversion,
                                         int32_t max_decode_requests,
-                                        VideoDecoderType decoder_type) {
+                                        VideoDecoderType decoder_type,
+                                        bool needs_transcryption) {
   DVLOG(1) << __func__ << ": status = " << status.group() << ":"
            << static_cast<int>(status.code());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -264,7 +259,7 @@ void MojoVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
 void MojoVideoDecoder::OnVideoFrameDecoded(
     const scoped_refptr<VideoFrame>& frame,
     bool can_read_without_stalling,
-    const absl::optional<base::UnguessableToken>& release_token) {
+    const std::optional<base::UnguessableToken>& release_token) {
   DVLOG(3) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TRACE_EVENT2("media", "MojoVideoDecoder::OnVideoFrameDecoded", "frame",
@@ -318,6 +313,7 @@ void MojoVideoDecoder::OnDecodeDone(uint64_t decode_id,
 void MojoVideoDecoder::Reset(base::OnceClosure reset_cb) {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!reset_cb_);
 
   if (has_connection_error_) {
     task_runner_->PostTask(FROM_HERE, std::move(reset_cb));
@@ -466,26 +462,33 @@ void MojoVideoDecoder::Stop() {
 
   // |init_cb_| is likely to reentrantly destruct |this|, so we check for that
   // using an on-stack WeakPtr.
-  // TODO(sandersd): Update the VideoDecoder API to be explicit about what
-  // reentrancy is allowed, and therefore which callbacks must be posted.
-  base::WeakPtr<MojoVideoDecoder> weak_this = weak_this_;
+  auto weak_this = weak_this_;
 
-  if (init_cb_)
+  if (init_cb_) {
     std::move(init_cb_).Run(DecoderStatus::Codes::kDisconnected);
-
-  if (!weak_this)
-    return;
+    if (!weak_this) {
+      return;
+    }
+  }
 
   for (auto& pending_decode : pending_decodes_) {
     // It would be ideal if we could get a reason for the interruption.
     std::move(pending_decode.second).Run(DecoderStatus::Codes::kDisconnected);
-    if (!weak_this)
+    if (!weak_this) {
       return;
+    }
   }
   pending_decodes_.clear();
 
-  if (reset_cb_)
+  if (reset_cb_) {
     std::move(reset_cb_).Run();
+    if (!weak_this) {
+      return;
+    }
+  }
+
+  // Drop any outstanding callbacks.
+  weak_factory_.InvalidateWeakPtrs();
 }
 
 }  // namespace media

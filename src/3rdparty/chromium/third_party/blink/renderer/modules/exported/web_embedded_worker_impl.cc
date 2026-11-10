@@ -61,6 +61,7 @@
 #include "third_party/blink/renderer/modules/service_worker/service_worker_installed_scripts_manager.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_thread.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
+#include "third_party/blink/renderer/platform/loader/fetch/policy_container_utils.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
@@ -75,7 +76,7 @@ namespace blink {
 
 WebServiceWorkerInstalledScriptsManagerParams::
     WebServiceWorkerInstalledScriptsManagerParams(
-        WebVector<WebURL> installed_scripts_urls,
+        std::vector<WebURL> installed_scripts_urls,
         CrossVariantMojoReceiver<
             mojom::blink::ServiceWorkerInstalledScriptsManagerInterfaceBase>
             manager_receiver,
@@ -116,7 +117,11 @@ void WebEmbeddedWorkerImpl::StartWorkerContext(
     CrossVariantMojoRemote<mojom::blink::BrowserInterfaceBrokerInterfaceBase>
         browser_interface_broker,
     InterfaceRegistry* interface_registry,
-    scoped_refptr<base::SingleThreadTaskRunner> initiator_thread_task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> initiator_thread_task_runner,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        coep_reporting_observer,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        dip_reporting_observer) {
   DCHECK(!asked_to_terminate_);
 
   std::unique_ptr<ServiceWorkerInstalledScriptsManager>
@@ -133,12 +138,14 @@ void WebEmbeddedWorkerImpl::StartWorkerContext(
       std::make_unique<ServiceWorkerContentSettingsProxy>(
           std::move(content_settings)),
       std::move(cache_storage), std::move(browser_interface_broker),
-      interface_registry, std::move(initiator_thread_task_runner));
+      interface_registry, std::move(initiator_thread_task_runner),
+      std::move(coep_reporting_observer), std::move(dip_reporting_observer));
 }
 
 void WebEmbeddedWorkerImpl::TerminateWorkerContext() {
-  if (asked_to_terminate_)
+  if (asked_to_terminate_) {
     return;
+  }
   asked_to_terminate_ = true;
   // StartWorkerThread() must be called before.
   DCHECK(worker_thread_);
@@ -154,7 +161,11 @@ void WebEmbeddedWorkerImpl::StartWorkerThread(
     mojo::PendingRemote<mojom::blink::BrowserInterfaceBroker>
         browser_interface_broker,
     InterfaceRegistry* interface_registry,
-    scoped_refptr<base::SingleThreadTaskRunner> initiator_thread_task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> initiator_thread_task_runner,
+    mojo::PendingReceiver<mojom::blink::ReportingObserver>
+        coep_reporting_observer,
+    mojo::PendingReceiver<mojom::blink::ReportingObserver>
+        dip_reporting_observer) {
   DCHECK(!asked_to_terminate_);
 
   // For now we don't use global scope name for service workers.
@@ -191,7 +202,6 @@ void WebEmbeddedWorkerImpl::StartWorkerThread(
       GenericFontFamilySettings());
 
   std::unique_ptr<GlobalScopeCreationParams> global_scope_creation_params;
-  String source_code;
   std::unique_ptr<Vector<uint8_t>> cached_meta_data;
 
   // We don't have to set ContentSecurityPolicy and ReferrerPolicy. They're
@@ -201,25 +211,36 @@ void WebEmbeddedWorkerImpl::StartWorkerThread(
       worker_start_data->script_url, worker_start_data->script_type,
       global_scope_name, worker_start_data->user_agent,
       worker_start_data->ua_metadata, std::move(web_worker_fetch_context),
-      Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
+      /*outside_content_security_policies=*/
+      ToVector(worker_start_data->outside_fetch_client_settings_object
+                   .policy_container_policies.content_security_policies,
+               FromWebContentSecurityPolicy),
+      /*response_content_security_policies=*/
       Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
       network::mojom::ReferrerPolicy::kDefault, starter_origin.get(),
-      starter_secure_context, starter_https_state, nullptr /* worker_clients */,
-      std::move(content_settings_proxy), nullptr /* inherited_trial_features */,
+      starter_secure_context, starter_https_state,
+      /*worker_clients=*/nullptr, std::move(content_settings_proxy),
+      /*inherited_trial_features=*/nullptr,
       worker_start_data->devtools_worker_token, std::move(worker_settings),
       // Generate the full code cache in the first execution of the script.
+      /*v8_cache_options=*/
       mojom::blink::V8CacheOptions::kFullCodeWithoutHeatCheck,
-      nullptr /* worklet_module_respones_map */,
-      std::move(browser_interface_broker),
-      mojo::NullRemote() /* code_cache_host_interface */,
-      mojo::NullRemote() /* blob_url_store */, BeginFrameProviderParams(),
-      nullptr /* parent_permissions_policy */,
-      base::UnguessableToken() /* agent_cluster_id */,
+      /*module_responses_map=*/nullptr, std::move(browser_interface_broker),
+      /*code_cache_host_interface=*/mojo::NullRemote(),
+      /*blob_url_store=*/mojo::NullRemote(), BeginFrameProviderParams(),
+      /*parent_permissions_policy=*/nullptr,
+      /*agent_cluster_id=*/base::UnguessableToken(),
       worker_start_data->ukm_source_id,
-      absl::nullopt, /* parent_context_token */
-      false,         /* parent_cross_origin_isolated_capability */
-      false,         /* parent_is_isolated_context */
-      interface_registry);
+      /*parent_context_token=*/std::nullopt,
+      /*cross_origin_isolated_capability=*/
+      false, /* parent_cross_origin_isolated_capability */
+      /*parent_is_isolated_context=*/false, interface_registry,
+      /*agent_group_scheduler_compositor_task_runner=*/nullptr,
+      /*top_level_frame_security_origin=*/nullptr,
+      /*parent_storage_access_api_status=*/net::StorageAccessApiStatus::kNone,
+      /*require_cross_site_request_for_cookies=*/false,
+      /*origin_to_use=*/nullptr, std::move(coep_reporting_observer),
+      std::move(dip_reporting_observer));
 
   worker_thread_ = std::make_unique<ServiceWorkerThread>(
       std::make_unique<ServiceWorkerGlobalScopeProxy>(
@@ -309,7 +330,9 @@ WebEmbeddedWorkerImpl::CreateFetchClientSettingsObjectData(
 
   return std::make_unique<CrossThreadFetchClientSettingsObjectData>(
       script_url /* global_object_url */, script_url /* base_url */,
-      security_origin->IsolatedCopy(), passed_settings_object.referrer_policy,
+      security_origin->IsolatedCopy(),
+      FromWebPolicyContainerPolicies(
+          passed_settings_object.policy_container_policies),
       KURL(passed_settings_object.outgoing_referrer.GetString()), https_state,
       AllowedByNosniff::MimeTypeCheck::kLaxForWorker, insecure_requests_policy,
       FetchClientSettingsObject::InsecureNavigationsSet());

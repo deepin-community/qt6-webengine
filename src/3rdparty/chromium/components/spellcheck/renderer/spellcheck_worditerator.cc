@@ -12,6 +12,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/i18n/break_iterator.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -41,7 +42,7 @@ bool SpellcheckCharAttribute::IsTextInSameScript(
   const size_t length = text.length();
   for (size_t index = 0; index < length; /* U16_NEXT post-increments */) {
     uint32_t code = 0;
-    U16_NEXT(data, index, length, code);
+    UNSAFE_TODO(U16_NEXT(data, index, length, code));
     UErrorCode error = U_ZERO_ERROR;
     UScriptCode script = uscript_getScript(code, &error);
     if (U_SUCCESS(error) && (script != USCRIPT_COMMON) &&
@@ -352,7 +353,6 @@ bool SpellcheckWordIterator::Initialize(
     // is if we fail to parse the rules. Since the rules are hardcoded,
     // that would be a bug in this class.
     NOTREACHED() << "failed to open iterator (broken rules)";
-    return false;
   }
   iterator_ = std::move(iterator);
 
@@ -419,7 +419,6 @@ SpellcheckWordIterator::WordIteratorStatus SpellcheckWordIterator::GetNextWord(
       // IS_LINE_OR_CHAR_BREAK.
       case base::i18n::BreakIterator::IS_LINE_OR_CHAR_BREAK: {
         NOTREACHED();
-        break;
       }
     }
   }
@@ -442,7 +441,7 @@ bool SpellcheckWordIterator::Normalize(size_t input_start,
   // spellchecker and we need manual normalization as well. The normalized
   // text does not have to be NUL-terminated since its characters are copied to
   // string16, which adds a NUL character when we need.
-  icu::UnicodeString input(false, &text_[input_start],
+  icu::UnicodeString input(false, &UNSAFE_TODO(text_[input_start]),
                            base::checked_cast<int32_t>(input_length));
   UErrorCode status = U_ZERO_ERROR;
   icu::UnicodeString output;

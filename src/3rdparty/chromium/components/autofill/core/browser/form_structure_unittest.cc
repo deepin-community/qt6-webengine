@@ -5,12 +5,11 @@
 #include "components/autofill/core/browser/form_structure.h"
 
 #include <stddef.h>
-#include <cstdint>
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,22 +23,25 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_form_test_utils.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/crowdsourcing/randomized_encoder.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_parsing/buildflags.h"
 #include "components/autofill/core/browser/form_parsing/form_field_parser.h"
+#include "components/autofill/core/browser/form_parsing/regex_patterns.h"
 #include "components/autofill/core/browser/form_structure_test_api.h"
+#include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/proto/api_v1.pb.h"
-#include "components/autofill/core/browser/randomized_encoder.h"
+#include "components/autofill/core/browser/studies/autofill_experiments.h"
+#include "components/autofill/core/browser/test_utils/autofill_form_test_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autocomplete_parsing_util.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/html_field_types.h"
 #include "components/autofill/core/common/signatures.h"
@@ -50,7 +52,6 @@
 #include "url/gurl.h"
 
 namespace autofill {
-
 namespace {
 
 using ::autofill::FormControlType;
@@ -65,18 +66,11 @@ using ::testing::ResultOf;
 using ::testing::Truly;
 using ::testing::UnorderedElementsAre;
 
-constexpr uint64_t kFieldMaxLength = 10000;
-
-constexpr DenseSet<PatternSource> kAllPatternSources {
-#if !BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
-  PatternSource::kLegacy
-#else
-    PatternSource::kDefault, PatternSource::kExperimental,
-    PatternSource::kNextGen
-#endif
-};
-
-}  // namespace
+size_t AutofillCount(const FormStructure& form) {
+  return std::ranges::count_if(form.fields(), [](const auto& field) {
+    return field->IsFieldFillable();
+  });
+}
 
 class FormStructureTestImpl : public test::FormStructureTest {
  public:
@@ -87,8 +81,7 @@ class FormStructureTestImpl : public test::FormStructureTest {
  protected:
   bool FormIsAutofillable(const FormData& form) {
     FormStructure form_structure(form);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
     return form_structure.IsAutofillable();
   }
 
@@ -96,8 +89,8 @@ class FormStructureTestImpl : public test::FormStructureTest {
     return FormStructure(form).ShouldRunHeuristics();
   }
 
-  bool FormShouldRunHeuristicsForSingleFieldForms(const FormData& form) {
-    return FormStructure(form).ShouldRunHeuristicsForSingleFieldForms();
+  bool FormShouldRunHeuristicsForSingleFields(const FormData& form) {
+    return FormStructure(form).ShouldRunHeuristicsForSingleFields();
   }
 
   bool FormShouldBeQueried(const FormData& form) {
@@ -108,49 +101,6 @@ class FormStructureTestImpl : public test::FormStructureTest {
   base::test::ScopedFeatureList scoped_feature_list_;
   test::AutofillUnitTestEnvironment autofill_test_environment_;
 };
-
-class FormStructureTest_ForPatternSource
-    : public FormStructureTestImpl,
-      public testing::WithParamInterface<PatternSource> {
- public:
-  FormStructureTest_ForPatternSource() {
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {base::test::FeatureRefAndParams(
-            features::kAutofillParsingPatternProvider,
-            {{"prediction_source", pattern_source_as_string()}})},
-        {});
-  }
-
-  PatternSource pattern_source() const { return GetParam(); }
-
-  std::string pattern_source_as_string() const {
-    switch (pattern_source()) {
-      case PatternSource::kLegacy:
-        return "legacy";
-#if BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
-      case PatternSource::kDefault:
-        return "default";
-      case PatternSource::kExperimental:
-        return "experimental";
-      case PatternSource::kNextGen:
-        return "nextgen";
-#endif
-    }
-  }
-
-  DenseSet<PatternSource> other_pattern_sources() const {
-    DenseSet<PatternSource> patterns = kAllPatternSources;
-    patterns.erase(pattern_source());
-    return patterns;
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(FormStructureTest,
-                         FormStructureTest_ForPatternSource,
-                         ::testing::ValuesIn(kAllPatternSources));
 
 TEST_F(FormStructureTestImpl, FieldCount) {
   CheckFormStructureTestData(
@@ -216,82 +166,82 @@ TEST_F(FormStructureTestImpl, AutofillCount) {
 
 TEST_F(FormStructureTestImpl, SourceURL) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
   FormStructure form_structure(form);
 
-  EXPECT_EQ(form.url, form_structure.source_url());
+  EXPECT_EQ(form.url(), form_structure.source_url());
 }
 
 TEST_F(FormStructureTestImpl, FullSourceURLWithHashAndParam) {
   FormData form;
-  form.full_url = GURL("https://www.foo.com/?login=asdf#hash");
+  form.set_full_url(GURL("https://www.foo.com/?login=asdf#hash"));
   FormStructure form_structure(form);
 
-  EXPECT_EQ(form.full_url, form_structure.full_source_url());
+  EXPECT_EQ(form.full_url(), form_structure.full_source_url());
 }
 
 TEST_F(FormStructureTestImpl, IsAutofillable) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
   FormFieldData field;
 
   // Start with a username field. It should be picked up by the password but
   // not by autofill.
-  field.label = u"username";
-  field.name = u"username";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"username");
+  field.set_name(u"username");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   // With min required fields enabled.
   EXPECT_FALSE(FormIsAutofillable(form));
 
   // Add a password field. The form should be picked up by the password but
   // not by autofill.
-  field.label = u"password";
-  field.name = u"password";
-  field.form_control_type = FormControlType::kInputPassword;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"password");
+  field.set_name(u"password");
+  field.set_form_control_type(FormControlType::kInputPassword);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_FALSE(FormIsAutofillable(form));
 
   // Add an auto-fillable fields. With just one auto-fillable field, this should
   // be picked up by autofill only if there is no minimum field enforcement.
-  field.label = u"Full Name";
-  field.name = u"fullname";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Full Name");
+  field.set_name(u"fullname");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_FALSE(FormIsAutofillable(form));
 
   // Add an auto-fillable fields. With just one auto-fillable field, this should
   // be picked up by autofill only if there is no minimum field enforcement.
-  field.label = u"Address Line 1";
-  field.name = u"address1";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line 1");
+  field.set_name(u"address1");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_FALSE(FormIsAutofillable(form));
 
   // We now have three auto-fillable fields. It's always autofillable.
-  field.label = u"Email";
-  field.name = u"email";
-  field.form_control_type = FormControlType::kInputEmail;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Email");
+  field.set_name(u"email");
+  field.set_form_control_type(FormControlType::kInputEmail);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_TRUE(FormIsAutofillable(form));
 
   // The target cannot include http(s)://*/search...
-  form.action = GURL("http://google.com/search?q=hello");
+  form.set_action(GURL("http://google.com/search?q=hello"));
 
   EXPECT_FALSE(FormIsAutofillable(form));
 
   // But search can be in the URL.
-  form.action = GURL("http://search.com/?q=hello");
+  form.set_action(GURL("http://search.com/?q=hello"));
 
   EXPECT_TRUE(FormIsAutofillable(form));
 }
@@ -299,33 +249,34 @@ TEST_F(FormStructureTestImpl, IsAutofillable) {
 class FormStructureTestImpl_ShouldBeParsed_Test : public FormStructureTestImpl {
  public:
   FormStructureTestImpl_ShouldBeParsed_Test() {
-    form_.url = GURL("http://www.foo.com/");
+    form_.set_url(GURL("http://www.foo.com/"));
     form_structure_ = std::make_unique<FormStructure>(form_);
   }
 
   ~FormStructureTestImpl_ShouldBeParsed_Test() override = default;
 
   void SetAction(GURL action) {
-    form_.action = action;
+    form_.set_action(action);
     form_structure_ = nullptr;
   }
 
   void AddField(FormFieldData field) {
-    field.unique_renderer_id = test::MakeFieldRendererId();
-    form_.fields.push_back(std::move(field));
+    field.set_renderer_id(test::MakeFieldRendererId());
+    test_api(form_).Append(std::move(field));
     form_structure_ = nullptr;
   }
 
   void AddTextField() {
     FormFieldData field;
-    field.form_control_type = FormControlType::kInputText;
+    field.set_form_control_type(FormControlType::kInputText);
     AddField(field);
   }
 
-  FormStructure* form_structure() {
-    if (!form_structure_)
+  FormStructure& form_structure() {
+    if (!form_structure_) {
       form_structure_ = std::make_unique<FormStructure>(form_);
-    return form_structure_.get();
+    }
+    return *form_structure_.get();
   }
 
  private:
@@ -345,8 +296,8 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, IgnoresCheckableFields) {
   // Start with a single checkable field.
   {
     FormFieldData field;
-    field.check_status = FormFieldData::CheckStatus::kCheckableButUnchecked;
-    field.form_control_type = FormControlType::kInputRadio;
+    field.set_check_status(FormFieldData::CheckStatus::kCheckableButUnchecked);
+    field.set_form_control_type(FormControlType::kInputRadio);
     AddField(field);
   }
   EXPECT_FALSE(test_api(form_structure()).ShouldBeParsed());
@@ -356,8 +307,8 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, IgnoresCheckableFields) {
   // Add a second checkable field.
   {
     FormFieldData field;
-    field.check_status = FormFieldData::CheckStatus::kCheckableButUnchecked;
-    field.form_control_type = FormControlType::kInputCheckbox;
+    field.set_check_status(FormFieldData::CheckStatus::kCheckableButUnchecked);
+    field.set_form_control_type(FormControlType::kInputCheckbox);
     AddField(field);
   }
   EXPECT_FALSE(test_api(form_structure()).ShouldBeParsed());
@@ -392,23 +343,7 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, TrueIfOneTextField) {
 TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, FalseIfOnlySelectField) {
   {
     FormFieldData field;
-    field.form_control_type = FormControlType::kSelectOne;
-    AddField(field);
-  }
-  EXPECT_FALSE(test_api(form_structure()).ShouldBeParsed());
-  EXPECT_FALSE(
-      test_api(form_structure()).ShouldBeParsed({.min_required_fields = 1}));
-
-  AddTextField();
-  EXPECT_TRUE(test_api(form_structure()).ShouldBeParsed());
-  EXPECT_TRUE(
-      test_api(form_structure()).ShouldBeParsed({.min_required_fields = 2}));
-}
-
-TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, FalseIfOnlySelectListField) {
-  {
-    FormFieldData field;
-    field.form_control_type = FormControlType::kSelectList;
+    field.set_form_control_type(FormControlType::kSelectOne);
     AddField(field);
   }
   EXPECT_FALSE(test_api(form_structure()).ShouldBeParsed());
@@ -447,7 +382,7 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, FalseIfSearchURL) {
 TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, TrueIfOnlyPasswordFields) {
   {
     FormFieldData field;
-    field.form_control_type = FormControlType::kInputPassword;
+    field.set_form_control_type(FormControlType::kInputPassword);
     AddField(field);
   }
   EXPECT_TRUE(test_api(form_structure()).ShouldBeParsed());
@@ -464,7 +399,7 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test, TrueIfOnlyPasswordFields) {
 
   {
     FormFieldData field;
-    field.form_control_type = FormControlType::kInputPassword;
+    field.set_form_control_type(FormControlType::kInputPassword);
     AddField(field);
   }
   EXPECT_TRUE(test_api(form_structure()).ShouldBeParsed());
@@ -493,9 +428,9 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test,
 
   {
     FormFieldData field;
-    field.parsed_autocomplete = AutocompleteParsingResult{
-        .section = "my-billing-section", .field_type = HtmlFieldType::kName};
-    field.form_control_type = FormControlType::kInputText;
+    field.set_parsed_autocomplete(AutocompleteParsingResult{
+        .section = "my-billing-section", .field_type = HtmlFieldType::kName});
+    field.set_form_control_type(FormControlType::kInputText);
     AddField(field);
   }
   EXPECT_TRUE(test_api(form_structure()).ShouldBeParsed());
@@ -508,16 +443,16 @@ TEST_F(FormStructureTestImpl_ShouldBeParsed_Test,
 TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.fields = {
-      CreateTestFormField("Name", "name", "", FormControlType::kInputText,
-                          "name"),
-      CreateTestFormField("Email", "email", "", FormControlType::kInputText,
-                          "email"),
-      CreateTestFormField("Address", "address", "", FormControlType::kInputText,
-                          "address-line1")};
+  form.set_fields(
+      {CreateTestFormField("Name", "name", "", FormControlType::kInputText,
+                           "name"),
+       CreateTestFormField("Email", "email", "", FormControlType::kInputText,
+                           "email"),
+       CreateTestFormField("Address", "address", "",
+                           FormControlType::kInputText, "address-line1")});
 
   // Baseline, HTTP should work.
-  form.url = GURL("http://wwww.foo.com/myform");
+  form.set_url(GURL("http://wwww.foo.com/myform"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_TRUE(form_structure->ShouldBeParsed());
   EXPECT_TRUE(form_structure->ShouldRunHeuristics());
@@ -525,7 +460,7 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   EXPECT_TRUE(form_structure->ShouldBeUploaded());
 
   // Baseline, HTTPS should work.
-  form.url = GURL("https://wwww.foo.com/myform");
+  form.set_url(GURL("https://wwww.foo.com/myform"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_TRUE(form_structure->ShouldBeParsed());
   EXPECT_TRUE(form_structure->ShouldRunHeuristics());
@@ -533,7 +468,7 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   EXPECT_TRUE(form_structure->ShouldBeUploaded());
 
   // Chrome internal urls shouldn't be parsed.
-  form.url = GURL("chrome://settings");
+  form.set_url(GURL("chrome://settings"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_FALSE(form_structure->ShouldBeParsed());
   EXPECT_FALSE(form_structure->ShouldRunHeuristics());
@@ -541,7 +476,7 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   EXPECT_FALSE(form_structure->ShouldBeUploaded());
 
   // FTP urls shouldn't be parsed.
-  form.url = GURL("ftp://ftp.foo.com/form.html");
+  form.set_url(GURL("ftp://ftp.foo.com/form.html"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_FALSE(form_structure->ShouldBeParsed());
   EXPECT_FALSE(form_structure->ShouldRunHeuristics());
@@ -549,7 +484,7 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   EXPECT_FALSE(form_structure->ShouldBeUploaded());
 
   // Blob urls shouldn't be parsed.
-  form.url = GURL("blob://blob.foo.com/form.html");
+  form.set_url(GURL("blob://blob.foo.com/form.html"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_FALSE(form_structure->ShouldBeParsed());
   EXPECT_FALSE(form_structure->ShouldRunHeuristics());
@@ -557,7 +492,7 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
   EXPECT_FALSE(form_structure->ShouldBeUploaded());
 
   // About urls shouldn't be parsed.
-  form.url = GURL("about://about.foo.com/form.html");
+  form.set_url(GURL("about://about.foo.com/form.html"));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_FALSE(form_structure->ShouldBeParsed());
   EXPECT_FALSE(form_structure->ShouldRunHeuristics());
@@ -570,28 +505,13 @@ TEST_F(FormStructureTestImpl, ShouldBeParsed_BadScheme) {
 TEST_F(FormStructureTestImpl, ShouldBeParsed_TwoFields_HasAutocomplete) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {CreateTestFormField("Name", "name", "",
-                                     FormControlType::kInputText, "name"),
-                 CreateTestFormField("Address", "Address", "",
-                                     FormControlType::kSelectOne, "")};
+  form.set_url(GURL("http://www.foo.com/"));
+  form.set_fields({CreateTestFormField("Name", "name", "",
+                                       FormControlType::kInputText, "name"),
+                   CreateTestFormField("Address", "Address", "",
+                                       FormControlType::kSelectOne, "")});
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_TRUE(form_structure->ShouldBeParsed());
-}
-
-// Tests that unmappable autocomplete values containing "address" are treated
-// as HtmlFieldType::kUnspecified instead of
-// HtmlFieldType::kUnrecognized.
-TEST_F(FormStructureTestImpl, IgnoreUnmappableAutocompleteValues) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      features::kAutofillIgnoreUnmappableAutocompleteValues);
-
-  CheckFormStructureTestData(
-      {{{.description_for_logging = "IgnoreUnmappableAutocompleteValues",
-         .fields = {{.autocomplete_attribute = "address-info"}}},
-        {.determine_heuristic_type = true},
-        {.expected_html_type = {HtmlFieldType::kUnspecified}}}});
 }
 
 // Tests that ShouldBeParsed returns true for a form containing less than three
@@ -621,10 +541,6 @@ TEST_F(FormStructureTestImpl, DetermineHeuristicTypes_AutocompleteFalse) {
 }
 
 TEST_F(FormStructureTestImpl, HeuristicsContactInfo) {
-  FieldType expected_phone_number =
-      base::FeatureList::IsEnabled(features::kAutofillDefaultToCityAndNumber)
-          ? PHONE_HOME_CITY_AND_NUMBER
-          : PHONE_HOME_WHOLE_NUMBER;
   CheckFormStructureTestData(
       {{{.description_for_logging = "HeuristicsContactInfo",
          .fields = {{.role = FieldType::NAME_FIRST},
@@ -644,7 +560,7 @@ TEST_F(FormStructureTestImpl, HeuristicsContactInfo) {
             .autofill_count = 8,
         },
         {.expected_heuristic_type = {
-             NAME_FIRST, NAME_LAST, EMAIL_ADDRESS, expected_phone_number,
+             NAME_FIRST, NAME_LAST, EMAIL_ADDRESS, PHONE_HOME_CITY_AND_NUMBER,
              PHONE_HOME_EXTENSION, ADDRESS_HOME_LINE1, ADDRESS_HOME_CITY,
              ADDRESS_HOME_ZIP, UNKNOWN_TYPE}}}});
 }
@@ -666,34 +582,24 @@ TEST_F(FormStructureTestImpl, HeuristicsAutocompleteAttribute) {
               {.label = u"",
                .name = u"field3",
                .autocomplete_attribute = "email",
-               .parsed_autocomplete = ParseAutocompleteAttribute("email")},
-              {.label = u"",
-               .name = u"field4",
-               .autocomplete_attribute = "upi-vpa",
-               .parsed_autocomplete = ParseAutocompleteAttribute("upi-vpa")}}},
+               .parsed_autocomplete = ParseAutocompleteAttribute("email")}}},
         {
             .determine_heuristic_type = true,
             .is_autofillable = true,
             .has_author_specified_types = true,
-            .has_author_specified_upi_vpa_hint = true,
-            .field_count = 4,
+            .field_count = 3,
             .autofill_count = 3,
         },
         {.expected_html_type = {HtmlFieldType::kGivenName,
                                 HtmlFieldType::kFamilyName,
-                                HtmlFieldType::kEmail,
-                                HtmlFieldType::kUnrecognized},
-         .expected_heuristic_type = {UNKNOWN_TYPE, UNKNOWN_TYPE, UNKNOWN_TYPE,
+                                HtmlFieldType::kEmail},
+         .expected_heuristic_type = {UNKNOWN_TYPE, UNKNOWN_TYPE,
                                      UNKNOWN_TYPE}}}});
 }
 
 // All fields share a common prefix which could confuse the heuristics. Test
 // that the common prefix is stripped out before running heuristics.
 TEST_F(FormStructureTestImpl, StripCommonNamePrefix) {
-  FieldType expected_phone_number =
-      base::FeatureList::IsEnabled(features::kAutofillDefaultToCityAndNumber)
-          ? PHONE_HOME_CITY_AND_NUMBER
-          : PHONE_HOME_WHOLE_NUMBER;
   CheckFormStructureTestData(
       {{{.description_for_logging = "StripCommonNamePrefix",
          .fields =
@@ -713,7 +619,8 @@ TEST_F(FormStructureTestImpl, StripCommonNamePrefix) {
          .field_count = 5,
          .autofill_count = 4},
         {.expected_heuristic_type = {NAME_FIRST, NAME_LAST, EMAIL_ADDRESS,
-                                     expected_phone_number, UNKNOWN_TYPE}}}});
+                                     PHONE_HOME_CITY_AND_NUMBER,
+                                     UNKNOWN_TYPE}}}});
 }
 
 // All fields share a common prefix which is small enough that it is not
@@ -735,54 +642,124 @@ TEST_F(FormStructureTestImpl, StripCommonNamePrefix_SmallPrefix) {
 TEST_F(FormStructureTestImpl, IsCompleteCreditCardForm_Minimal) {
   CheckFormStructureTestData(
       {{{.description_for_logging = "IsCompleteCreditCardForm_Minimal",
-         .fields = {{.role = FieldType::CREDIT_CARD_NUMBER},
-                    {.label = u"Expiration", .name = u"cc_exp"},
-                    {.role = FieldType::ADDRESS_HOME_ZIP}}},
+         .fields = {{.role = CREDIT_CARD_NUMBER},
+                    {.label = u"Expiration"},
+                    {.role = ADDRESS_HOME_ZIP}}},
         {.determine_heuristic_type = true,
-         .is_complete_credit_card_form = true},
+         .is_complete_credit_card_form = std::make_pair(
+             FormStructure::CreditCardFormCompleteness::kCompleteCreditCardForm,
+             true)},
         {}}});
 }
 
 TEST_F(FormStructureTestImpl, IsCompleteCreditCardForm_Full) {
   CheckFormStructureTestData(
       {{{.description_for_logging = "IsCompleteCreditCardForm_Full",
-         .fields = {{.label = u"Name on Card", .name = u"name_on_card"},
-                    {.role = FieldType::CREDIT_CARD_NUMBER},
-                    {.label = u"Exp Month", .name = u"ccmonth"},
-                    {.label = u"Exp Year", .name = u"ccyear"},
-                    {.label = u"Verification", .name = u"verification"},
-                    {.label = u"Submit",
-                     .name = u"submit",
-                     .form_control_type = FormControlType::kInputText}}},
+         .fields = {{.label = u"Name on Card"},
+                    {.role = CREDIT_CARD_NUMBER},
+                    {.label = u"Exp Month"},
+                    {.label = u"Exp Year"},
+                    {.label = u"Verification"}}},
         {.determine_heuristic_type = true,
-         .is_complete_credit_card_form = true},
-        {}}});
+         .is_complete_credit_card_form = std::make_pair(
+             FormStructure::CreditCardFormCompleteness::kCompleteCreditCardForm,
+             true)}}});
 }
 
 // A form with only the credit card number is not considered sufficient.
 TEST_F(FormStructureTestImpl, IsCompleteCreditCardForm_OnlyCCNumber) {
   CheckFormStructureTestData(
       {{{.description_for_logging = "IsCompleteCreditCardForm_OnlyCCNumber",
-         .fields = {{.role = FieldType::CREDIT_CARD_NUMBER}}},
+         .fields = {{.role = CREDIT_CARD_NUMBER}}},
         {.determine_heuristic_type = true,
-         .is_complete_credit_card_form = false},
+         .is_complete_credit_card_form = std::make_pair(
+             FormStructure::CreditCardFormCompleteness::kCompleteCreditCardForm,
+             false)},
         {}}});
 }
 
-// A form with only the credit card number is not considered sufficient.
 TEST_F(FormStructureTestImpl, IsCompleteCreditCardForm_AddressForm) {
   CheckFormStructureTestData(
       {{{.description_for_logging = "IsCompleteCreditCardForm_AddressForm",
-         .fields = {{.role = FieldType::NAME_FIRST, .name = u""},
-                    {.role = FieldType::NAME_LAST, .name = u""},
-                    {.role = FieldType::EMAIL_ADDRESS, .name = u""},
-                    {.role = FieldType::PHONE_HOME_NUMBER, .name = u""},
-                    {.label = u"Address", .name = u""},
-                    {.label = u"Address", .name = u""},
-                    {.role = FieldType::ADDRESS_HOME_ZIP, .name = u""}}},
+         .fields = {{.role = FieldType::NAME_FIRST},
+                    {.role = FieldType::NAME_LAST},
+                    {.role = FieldType::EMAIL_ADDRESS},
+                    {.role = FieldType::PHONE_HOME_NUMBER},
+                    {.label = u"Address"},
+                    {.label = u"Address"},
+                    {.role = FieldType::ADDRESS_HOME_ZIP}}},
         {.determine_heuristic_type = true,
-         .is_complete_credit_card_form = false},
+         .is_complete_credit_card_form = std::make_pair(
+             FormStructure::CreditCardFormCompleteness::kCompleteCreditCardForm,
+             false)},
         {}}});
+}
+
+TEST_F(FormStructureTestImpl,
+       IsCompleteCreditCardFormIncludingCvcAndName_CvcAndNameExist) {
+  CheckFormStructureTestData({{
+      {.description_for_logging =
+           "IsCompleteCreditCardFormIncludingCvcAndName_CvcAndNameExist",
+       .fields = {{.role = CREDIT_CARD_NUMBER},
+                  {.label = u"Expiration"},
+                  {.label = u"Verification"},
+                  {.label = u"Name on Card"}}},
+      {.determine_heuristic_type = true,
+       .is_complete_credit_card_form =
+           std::make_pair(FormStructure::CreditCardFormCompleteness::
+                              kCompleteCreditCardFormIncludingCvcAndName,
+                          true)},
+  }});
+}
+
+TEST_F(FormStructureTestImpl,
+       IsCompleteCreditCardFormIncludingCvcAndName_MissingCvc) {
+  CheckFormStructureTestData({{
+      {.description_for_logging =
+           "IsCompleteCreditCardFormIncludingCvcAndName_MissingCvc",
+       .fields = {{.role = CREDIT_CARD_NUMBER},
+                  {.label = u"Expiration"},
+                  {.label = u"Name on Card"}}},
+      {.determine_heuristic_type = true,
+       .is_complete_credit_card_form =
+           std::make_pair(FormStructure::CreditCardFormCompleteness::
+                              kCompleteCreditCardFormIncludingCvcAndName,
+                          false)},
+  }});
+}
+
+TEST_F(FormStructureTestImpl,
+       IsCompleteCreditCardFormIncludingCvcAndName_MissingName) {
+  CheckFormStructureTestData({{
+      {.description_for_logging =
+           "IsCompleteCreditCardFormIncludingCvcAndName_MissingName",
+       .fields = {{.role = CREDIT_CARD_NUMBER},
+                  {.label = u"Expiration"},
+                  {.label = u"Verification"}}},
+      {.determine_heuristic_type = true,
+       .is_complete_credit_card_form =
+           std::make_pair(FormStructure::CreditCardFormCompleteness::
+                              kCompleteCreditCardFormIncludingCvcAndName,
+                          false)},
+  }});
+}
+
+TEST_F(FormStructureTestImpl,
+       IsCompleteCreditCardFormIncludingCvcAndName_FirstAndLastNames) {
+  CheckFormStructureTestData({{
+      {.description_for_logging =
+           "IsCompleteCreditCardFormIncludingCvcAndName_FirstAndLastNames",
+       .fields = {{.role = CREDIT_CARD_NUMBER},
+                  {.label = u"Expiration"},
+                  {.label = u"Verification"},
+                  {.label = u"first name"},
+                  {.label = u"last name"}}},
+      {.determine_heuristic_type = true,
+       .is_complete_credit_card_form =
+           std::make_pair(FormStructure::CreditCardFormCompleteness::
+                              kCompleteCreditCardFormIncludingCvcAndName,
+                          true)},
+  }});
 }
 
 // Verify that we can correctly process the 'autocomplete' attribute for phone
@@ -886,20 +863,20 @@ TEST_F(FormStructureTestImpl,
 TEST_F(FormStructureTestImpl,
        HeuristicsAndServerPredictions_SmallForm_NoAutocompleteAttribute) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"First Name";
-  field.name = u"firstname";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"First Name");
+  field.set_name(u"firstname");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Last Name";
-  field.name = u"lastname";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Last Name");
+  field.set_name(u"lastname");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_FALSE(FormShouldRunHeuristics(form));
 
@@ -908,10 +885,9 @@ TEST_F(FormStructureTestImpl,
   // Default configuration.
   {
     FormStructure form_structure(form);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
     ASSERT_EQ(2U, form_structure.field_count());
-    ASSERT_EQ(0U, form_structure.autofill_count());
+    ASSERT_EQ(0U, AutofillCount(form_structure));
     EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(0)->heuristic_type());
     EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(1)->heuristic_type());
     EXPECT_EQ(NO_SERVER_DATA, form_structure.field(0)->server_type());
@@ -926,29 +902,30 @@ TEST_F(FormStructureTestImpl,
 TEST_F(FormStructureTestImpl,
        HeuristicsAndServerPredictions_SmallForm_ValidAutocompleteAttribute) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
   // Set a valid autocomplete attribute to the first field.
-  form.fields = {CreateTestFormField("First Name", "firstname", "",
-                                     FormControlType::kInputText, "given-name"),
-                 CreateTestFormField("Last Name", "lastname", "",
-                                     FormControlType::kInputText, "")};
+  form.set_fields(
+      {CreateTestFormField("First Name", "firstname", "",
+                           FormControlType::kInputText, "given-name"),
+       CreateTestFormField("Last Name", "lastname", "",
+                           FormControlType::kInputText, "")});
   EXPECT_FALSE(FormShouldRunHeuristics(form));
   EXPECT_TRUE(FormShouldBeQueried(form));
 
-  // As a side effect of parsing small forms (if any of the heuristics, query,
+  // As a side effect of parsing small forms, if any of the heuristics, query,
   // or upload minimums are disabled, we'll autofill fields with an
   // autocomplete attribute, even if its the only field in the form.
   {
     FormData form_copy = form;
-    form_copy.fields.pop_back();
+    test_api(form_copy).Remove(-1);
     FormStructure form_structure(form_copy);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
     ASSERT_EQ(1U, form_structure.field_count());
-    ASSERT_EQ(1U, form_structure.autofill_count());
+    ASSERT_EQ(1U, AutofillCount(form_structure));
     EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(0)->heuristic_type());
     EXPECT_EQ(NO_SERVER_DATA, form_structure.field(0)->server_type());
-    EXPECT_EQ(NAME_FIRST, form_structure.field(0)->Type().GetStorableType());
+    EXPECT_THAT(form_structure.field(0)->Type().GetTypes(),
+                ElementsAre(NAME_FIRST));
     EXPECT_TRUE(form_structure.IsAutofillable());
   }
 }
@@ -957,25 +934,24 @@ TEST_F(FormStructureTestImpl,
 // fewer than 3 fields.
 TEST_F(FormStructureTestImpl, PromoCodeHeuristics_SmallForm) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Promo Code";
-  field.name = u"promocode";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Promo Code");
+  field.set_name(u"promocode");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFieldForms(form));
+  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFields(form));
 
   // Default configuration.
   {
     FormStructure form_structure(form);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
     ASSERT_EQ(1U, form_structure.field_count());
-    ASSERT_EQ(1U, form_structure.autofill_count());
+    ASSERT_EQ(1U, AutofillCount(form_structure));
     EXPECT_EQ(MERCHANT_PROMO_CODE, form_structure.field(0)->heuristic_type());
     EXPECT_EQ(NO_SERVER_DATA, form_structure.field(0)->server_type());
     EXPECT_TRUE(form_structure.IsAutofillable());
@@ -988,83 +964,23 @@ TEST_F(FormStructureTestImpl, PromoCodeHeuristics_SmallForm) {
 // considered autofillable though.
 TEST_F(FormStructureTestImpl, PasswordFormShouldBeQueried) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {CreateTestFormField("First Name", "firstname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Last Name", "lastname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Email", "email", "",
-                                     FormControlType::kInputText, "username"),
-                 CreateTestFormField("Password", "Password", "",
-                                     FormControlType::kInputPassword)};
+  form.set_url(GURL("http://www.foo.com/"));
+  form.set_fields({CreateTestFormField("First Name", "firstname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Last Name", "lastname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Email", "email", "",
+                                       FormControlType::kInputText, "username"),
+                   CreateTestFormField("Password", "Password", "",
+                                       FormControlType::kInputPassword)});
   FormStructure form_structure(form);
-  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                         nullptr);
-  EXPECT_TRUE(form_structure.has_password_field());
+  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+  EXPECT_TRUE(
+      std::ranges::any_of(form_structure.fields(), [](const auto& field) {
+        return field->form_control_type() == FormControlType::kInputPassword;
+      }));
   EXPECT_TRUE(form_structure.ShouldBeQueried());
   EXPECT_TRUE(form_structure.ShouldBeUploaded());
-}
-
-// Verify that we can correctly process sections listed in the |autocomplete|
-// attribute.
-TEST_F(FormStructureTestImpl, HeuristicsAutocompleteAttributeWithSections) {
-  // This test tests whether credit card fields are implicitly in one, separate
-  // credit card section, independent of whether they have a valid autocomplete
-  // attribute section. With the new sectioning, credit card fields with a valid
-  // autocomplete attribute section S are in section S.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      features::kAutofillUseParameterizedSectioning);
-
-  FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {
-      // Some fields will have no section specified.  These fall into the
-      // default section.
-      CreateTestFormField("", "", "", FormControlType::kInputText, "email"),
-      // We allow arbitrary section names.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section-foo email"),
-      // "shipping" and "billing" are special section tokens that don't require
-      // the "section-" prefix.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "shipping email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "billing email"),
-      // "shipping" and "billing" can be combined with other section names.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section-foo shipping email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section-foo billing email"),
-      // We don't do anything clever to try to coalesce sections; it's up to
-      // site authors to avoid typos.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section--foo email"),
-      // "shipping email" and "section--shipping" email should be parsed as
-      // different sections.  This is only an interesting test due to how we
-      // implement implicit section names from attributes like "shipping email";
-      // see the implementation for more details.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section--shipping email"),
-      // Credit card fields are implicitly in one, separate credit card section.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section-foo cc-number")};
-  FormStructure form_structure(form);
-  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                         nullptr);
-  EXPECT_TRUE(form_structure.IsAutofillable());
-
-  // Expect the correct number of fields.
-  ASSERT_EQ(9U, form_structure.field_count());
-  EXPECT_EQ(9U, form_structure.autofill_count());
-
-  // All of the fields in this form should be parsed as belonging to different
-  // sections.
-  std::set<Section> section_names;
-  for (size_t i = 0; i < 9; ++i) {
-    section_names.insert(form_structure.field(i)->section);
-  }
-  EXPECT_EQ(9U, section_names.size());
 }
 
 // Verify that we can correctly process a degenerate section listed in the
@@ -1072,36 +988,35 @@ TEST_F(FormStructureTestImpl, HeuristicsAutocompleteAttributeWithSections) {
 TEST_F(FormStructureTestImpl,
        HeuristicsAutocompleteAttributeWithSectionsDegenerate) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {
-      // Some fields will have no section specified.  These fall into the
-      // default section.
-      CreateTestFormField("", "", "", FormControlType::kInputText, "email"),
-      // Specifying "section-" is equivalent to not specifying a section.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section- email"),
-      // Invalid tokens should prevent us from setting a section name.
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "garbage section-foo email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "garbage section-bar email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "garbage shipping email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "garbage billing email")};
+  form.set_url(GURL("http://www.foo.com/"));
+  form.set_fields(
+      {// Some fields will have no section specified.  These fall into the
+       // default section.
+       CreateTestFormField("", "", "", FormControlType::kInputText, "email"),
+       // Specifying "section-" is equivalent to not specifying a section.
+       CreateTestFormField("", "", "", FormControlType::kInputText,
+                           "section- email"),
+       // Invalid tokens should prevent us from setting a section name.
+       CreateTestFormField("", "", "", FormControlType::kInputText,
+                           "garbage section-foo email"),
+       CreateTestFormField("", "", "", FormControlType::kInputText,
+                           "garbage section-bar email"),
+       CreateTestFormField("", "", "", FormControlType::kInputText,
+                           "garbage shipping email"),
+       CreateTestFormField("", "", "", FormControlType::kInputText,
+                           "garbage billing email")});
   FormStructure form_structure(form);
-  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                         nullptr);
+  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
 
   // Expect the correct number of fields.
   ASSERT_EQ(6U, form_structure.field_count());
-  EXPECT_EQ(2U, form_structure.autofill_count());
+  EXPECT_EQ(2U, AutofillCount(form_structure));
 
   // All of the fields in this form should be parsed as belonging to the same
   // section.
   std::set<Section> section_names;
   for (size_t i = 0; i < 6; ++i) {
-    section_names.insert(form_structure.field(i)->section);
+    section_names.insert(form_structure.field(i)->section());
   }
   EXPECT_EQ(1U, section_names.size());
 }
@@ -1111,133 +1026,91 @@ TEST_F(FormStructureTestImpl,
 TEST_F(FormStructureTestImpl,
        HeuristicsAutocompleteAttributeWithSectionsRepeated) {
   FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {CreateTestFormField("", "", "", FormControlType::kInputText,
-                                     "section-foo email"),
-                 CreateTestFormField("", "", "", FormControlType::kInputText,
-                                     "section-foo address-line1")};
+  form.set_url(GURL("http://www.foo.com/"));
+  form.set_fields({CreateTestFormField("", "", "", FormControlType::kInputText,
+                                       "section-foo email"),
+                   CreateTestFormField("", "", "", FormControlType::kInputText,
+                                       "section-foo address-line1")});
   FormStructure form_structure(form);
-  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                         nullptr);
+  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
 
   // Expect the correct number of fields.
   ASSERT_EQ(2U, form_structure.field_count());
-  EXPECT_EQ(2U, form_structure.autofill_count());
+  EXPECT_EQ(2U, AutofillCount(form_structure));
 
   // All of the fields in this form should be parsed as belonging to the same
   // section.
   std::set<Section> section_names;
   for (size_t i = 0; i < 2; ++i) {
-    section_names.insert(form_structure.field(i)->section);
+    section_names.insert(form_structure.field(i)->section());
   }
   EXPECT_EQ(1U, section_names.size());
-}
-
-// Verify that we do not override the author-specified sections from a form with
-// local heuristics.
-TEST_F(FormStructureTestImpl,
-       HeuristicsDontOverrideAutocompleteAttributeSections) {
-  // With the new sectioning, fields with a valid autocomplete attribute section
-  // S are in section S. All other <input> fields that are focusable are
-  // partitioned into intervals, each of which is a section.
-  // This is different compared to the old behavior which assigns fields without
-  // an autocomplete attribute section to the empty, "-default" section if there
-  // is a field with a valid autocomplete attribute section in the form.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      features::kAutofillUseParameterizedSectioning);
-
-  FormData form;
-  form.url = GURL("http://www.foo.com/");
-  form.fields = {
-      CreateTestFormField("", "one", "", FormControlType::kInputText,
-                          "address-line1"),
-      CreateTestFormField("", "", "", FormControlType::kInputText,
-                          "section-foo email"),
-      CreateTestFormField("", "", "", FormControlType::kInputText, "name"),
-      CreateTestFormField("", "two", "", FormControlType::kInputText,
-                          "address-line1")};
-  FormStructure form_structure(form);
-  form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                         nullptr);
-
-  // Expect the correct number of fields.
-  ASSERT_EQ(4U, form_structure.field_count());
-  EXPECT_EQ(4U, form_structure.autofill_count());
-
-  // Normally, the two separate address fields would cause us to detect two
-  // separate sections; but because there is an author-specified section in this
-  // form, we do not apply these usual heuristics.
-  EXPECT_EQ(u"one", form_structure.field(0)->name);
-  EXPECT_EQ(u"two", form_structure.field(3)->name);
-  EXPECT_EQ(form_structure.field(0)->section, form_structure.field(3)->section);
 }
 
 TEST_F(FormStructureTestImpl, HeuristicsSample8) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Your First Name:";
-  field.name = u"bill.first";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Your First Name:");
+  field.set_name(u"bill.first");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Your Last Name:";
-  field.name = u"bill.last";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Your Last Name:");
+  field.set_name(u"bill.last");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Street Address Line 1:";
-  field.name = u"bill.street1";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Street Address Line 1:");
+  field.set_name(u"bill.street1");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Street Address Line 2:";
-  field.name = u"bill.street2";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Street Address Line 2:");
+  field.set_name(u"bill.street2");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City";
-  field.name = u"bill.city";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City");
+  field.set_name(u"bill.city");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"State (U.S.):";
-  field.name = u"bill.state";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"State (U.S.):");
+  field.set_name(u"bill.state");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Zip/Postal Code:";
-  field.name = u"BillTo.PostalCode";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Zip/Postal Code:");
+  field.set_name(u"BillTo.PostalCode");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Country:";
-  field.name = u"bill.country";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Country:");
+  field.set_name(u"bill.country");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Phone Number:";
-  field.name = u"BillTo.Phone";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone Number:");
+  field.set_name(u"BillTo.Phone");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(10U, form_structure->field_count());
-  ASSERT_EQ(9U, form_structure->autofill_count());
+  ASSERT_EQ(9U, AutofillCount(*form_structure));
 
   // First name.
   EXPECT_EQ(NAME_FIRST, form_structure->field(0)->heuristic_type());
@@ -1256,11 +1129,8 @@ TEST_F(FormStructureTestImpl, HeuristicsSample8) {
   // Country.
   EXPECT_EQ(ADDRESS_HOME_COUNTRY, form_structure->field(7)->heuristic_type());
   // Phone.
-  FieldType expected_phone_number =
-      base::FeatureList::IsEnabled(features::kAutofillDefaultToCityAndNumber)
-          ? PHONE_HOME_CITY_AND_NUMBER
-          : PHONE_HOME_WHOLE_NUMBER;
-  EXPECT_EQ(expected_phone_number, form_structure->field(8)->heuristic_type());
+  EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER,
+            form_structure->field(8)->heuristic_type());
   // Submit.
   EXPECT_EQ(UNKNOWN_TYPE, form_structure->field(9)->heuristic_type());
 }
@@ -1268,54 +1138,53 @@ TEST_F(FormStructureTestImpl, HeuristicsSample8) {
 TEST_F(FormStructureTestImpl, HeuristicsSample6) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"E-mail address";
-  field.name = u"email";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"E-mail address");
+  field.set_name(u"email");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Full name";
-  field.name = u"name";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Full name");
+  field.set_name(u"name");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Company";
-  field.name = u"company";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Company");
+  field.set_name(u"company");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address";
-  field.name = u"address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address");
+  field.set_name(u"address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City";
-  field.name = u"city";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City");
+  field.set_name(u"city");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Zip Code";
-  field.name = u"Home.PostalCode";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Zip Code");
+  field.set_name(u"Home.PostalCode");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.value = u"continue";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_value(u"continue");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(7U, form_structure->field_count());
-  ASSERT_EQ(6U, form_structure->autofill_count());
+  ASSERT_EQ(6U, AutofillCount(*form_structure));
 
   // Email.
   EXPECT_EQ(EMAIL_ADDRESS, form_structure->field(0)->heuristic_type());
@@ -1339,58 +1208,57 @@ TEST_F(FormStructureTestImpl, HeuristicsSample6) {
 TEST_F(FormStructureTestImpl, HeuristicsLabelsOnly) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"First Name";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"First Name");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Last Name";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Last Name");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Email";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Email");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Phone";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Zip code";
-  field.name = std::u16string();
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Zip code");
+  field.set_name(std::u16string());
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(8U, form_structure->field_count());
-  ASSERT_EQ(7U, form_structure->autofill_count());
+  ASSERT_EQ(7U, AutofillCount(*form_structure));
 
   // First name.
   EXPECT_EQ(NAME_FIRST, form_structure->field(0)->heuristic_type());
@@ -1399,11 +1267,8 @@ TEST_F(FormStructureTestImpl, HeuristicsLabelsOnly) {
   // Email.
   EXPECT_EQ(EMAIL_ADDRESS, form_structure->field(2)->heuristic_type());
   // Phone.
-  FieldType expected_phone_number =
-      base::FeatureList::IsEnabled(features::kAutofillDefaultToCityAndNumber)
-          ? PHONE_HOME_CITY_AND_NUMBER
-          : PHONE_HOME_WHOLE_NUMBER;
-  EXPECT_EQ(expected_phone_number, form_structure->field(3)->heuristic_type());
+  EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER,
+            form_structure->field(3)->heuristic_type());
   // Address.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(4)->heuristic_type());
   // Address Line 2.
@@ -1417,48 +1282,47 @@ TEST_F(FormStructureTestImpl, HeuristicsLabelsOnly) {
 TEST_F(FormStructureTestImpl, HeuristicsCreditCardInfo) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Name on Card";
-  field.name = u"name_on_card";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Name on Card");
+  field.set_name(u"name_on_card");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Card Number";
-  field.name = u"card_number";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card Number");
+  field.set_name(u"card_number");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Exp Month";
-  field.name = u"ccmonth";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Exp Month");
+  field.set_name(u"ccmonth");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Exp Year";
-  field.name = u"ccyear";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Exp Year");
+  field.set_name(u"ccyear");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Verification";
-  field.name = u"verification";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Verification");
+  field.set_name(u"verification");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(6U, form_structure->field_count());
-  ASSERT_EQ(5U, form_structure->autofill_count());
+  ASSERT_EQ(5U, AutofillCount(*form_structure));
 
   // Credit card name.
   EXPECT_EQ(CREDIT_CARD_NAME_FULL, form_structure->field(0)->heuristic_type());
@@ -1479,55 +1343,54 @@ TEST_F(FormStructureTestImpl, HeuristicsCreditCardInfo) {
 TEST_F(FormStructureTestImpl, HeuristicsCreditCardInfoWithUnknownCardField) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Name on Card";
-  field.name = u"name_on_card";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Name on Card");
+  field.set_name(u"name_on_card");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   // This is not a field we know how to process.  But we should skip over it
   // and process the other fields in the card block.
-  field.label = u"Card image";
-  field.name = u"card_image";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card image");
+  field.set_name(u"card_image");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Card Number";
-  field.name = u"card_number";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card Number");
+  field.set_name(u"card_number");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Exp Month";
-  field.name = u"ccmonth";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Exp Month");
+  field.set_name(u"ccmonth");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Exp Year";
-  field.name = u"ccyear";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Exp Year");
+  field.set_name(u"ccyear");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Verification";
-  field.name = u"verification";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Verification");
+  field.set_name(u"verification");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(7U, form_structure->field_count());
-  ASSERT_EQ(5U, form_structure->autofill_count());
+  ASSERT_EQ(5U, AutofillCount(*form_structure));
 
   // Credit card name.
   EXPECT_EQ(CREDIT_CARD_NAME_FULL, form_structure->field(0)->heuristic_type());
@@ -1550,37 +1413,36 @@ TEST_F(FormStructureTestImpl, HeuristicsCreditCardInfoWithUnknownCardField) {
 TEST_F(FormStructureTestImpl, ThreeAddressLines) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Address Line1";
-  field.name = u"Address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line1");
+  field.set_name(u"Address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line2";
-  field.name = u"Address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line2");
+  field.set_name(u"Address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line3";
-  field.name = u"Address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line3");
+  field.set_name(u"Address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City";
-  field.name = u"city";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City");
+  field.set_name(u"city");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(4U, form_structure->field_count());
-  ASSERT_EQ(4U, form_structure->autofill_count());
+  ASSERT_EQ(4U, AutofillCount(*form_structure));
 
   // Address Line 1.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
@@ -1596,36 +1458,35 @@ TEST_F(FormStructureTestImpl, ThreeAddressLines) {
 TEST_F(FormStructureTestImpl, SurplusAddressLinesIgnored) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Address Line1";
-  field.name = u"shipping.address.addressLine1";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line1");
+  field.set_name(u"shipping.address.addressLine1");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line2";
-  field.name = u"shipping.address.addressLine2";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line2");
+  field.set_name(u"shipping.address.addressLine2");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line3";
-  field.name = u"billing.address.addressLine3";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line3");
+  field.set_name(u"billing.address.addressLine3");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line4";
-  field.name = u"billing.address.addressLine4";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line4");
+  field.set_name(u"billing.address.addressLine4");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   ASSERT_EQ(4U, form_structure->field_count());
-  ASSERT_EQ(3U, form_structure->autofill_count());
+  ASSERT_EQ(3U, AutofillCount(*form_structure));
 
   // Address Line 1.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
@@ -1645,37 +1506,36 @@ TEST_F(FormStructureTestImpl, SurplusAddressLinesIgnored) {
 TEST_F(FormStructureTestImpl, ThreeAddressLinesExpedia) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Street:";
-  field.name = u"FOPIH_RgWebCC_0_IHAddress_ads1";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Street:");
+  field.set_name(u"FOPIH_RgWebCC_0_IHAddress_ads1");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Suite or Apt:";
-  field.name = u"FOPIH_RgWebCC_0_IHAddress_adap";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Suite or Apt:");
+  field.set_name(u"FOPIH_RgWebCC_0_IHAddress_adap");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Street address second line";
-  field.name = u"FOPIH_RgWebCC_0_IHAddress_ads2";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Street address second line");
+  field.set_name(u"FOPIH_RgWebCC_0_IHAddress_ads2");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City:";
-  field.name = u"FOPIH_RgWebCC_0_IHAddress_adct";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City:");
+  field.set_name(u"FOPIH_RgWebCC_0_IHAddress_adct");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(4U, form_structure->field_count());
-  EXPECT_EQ(4U, form_structure->autofill_count());
+  EXPECT_EQ(4U, AutofillCount(*form_structure));
 
   // Address Line 1.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
@@ -1693,32 +1553,31 @@ TEST_F(FormStructureTestImpl, ThreeAddressLinesExpedia) {
 TEST_F(FormStructureTestImpl, TwoAddressLinesEbay) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Address Line1";
-  field.name = u"address1";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line1");
+  field.set_name(u"address1");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Floor number, suite number, etc";
-  field.name = u"address2";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Floor number, suite number, etc");
+  field.set_name(u"address2");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City:";
-  field.name = u"city";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City:");
+  field.set_name(u"city");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(3U, form_structure->field_count());
-  ASSERT_EQ(3U, form_structure->autofill_count());
+  ASSERT_EQ(3U, AutofillCount(*form_structure));
 
   // Address Line 1.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
@@ -1731,32 +1590,31 @@ TEST_F(FormStructureTestImpl, TwoAddressLinesEbay) {
 TEST_F(FormStructureTestImpl, HeuristicsStateWithProvince) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Address Line1";
-  field.name = u"Address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line1");
+  field.set_name(u"Address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address Line2";
-  field.name = u"Address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address Line2");
+  field.set_name(u"Address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"State/Province/Region";
-  field.name = u"State";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"State/Province/Region");
+  field.set_name(u"State");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(3U, form_structure->field_count());
-  ASSERT_EQ(3U, form_structure->autofill_count());
+  ASSERT_EQ(3U, AutofillCount(*form_structure));
 
   // Address Line 1.
   EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
@@ -1770,72 +1628,71 @@ TEST_F(FormStructureTestImpl, HeuristicsStateWithProvince) {
 TEST_F(FormStructureTestImpl, HeuristicsWithBilling) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"First Name*:";
-  field.name = u"editBillingAddress$firstNameBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"First Name*:");
+  field.set_name(u"editBillingAddress$firstNameBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Last Name*:";
-  field.name = u"editBillingAddress$lastNameBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Last Name*:");
+  field.set_name(u"editBillingAddress$lastNameBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Company Name:";
-  field.name = u"editBillingAddress$companyBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Company Name:");
+  field.set_name(u"editBillingAddress$companyBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address*:";
-  field.name = u"editBillingAddress$addressLine1Box";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address*:");
+  field.set_name(u"editBillingAddress$addressLine1Box");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Apt/Suite :";
-  field.name = u"editBillingAddress$addressLine2Box";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Apt/Suite :");
+  field.set_name(u"editBillingAddress$addressLine2Box");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"City*:";
-  field.name = u"editBillingAddress$cityBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"City*:");
+  field.set_name(u"editBillingAddress$cityBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"State/Province*:";
-  field.name = u"editBillingAddress$stateDropDown";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"State/Province*:");
+  field.set_name(u"editBillingAddress$stateDropDown");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Country*:";
-  field.name = u"editBillingAddress$countryDropDown";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Country*:");
+  field.set_name(u"editBillingAddress$countryDropDown");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Postal Code*:";
-  field.name = u"editBillingAddress$zipCodeBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Postal Code*:");
+  field.set_name(u"editBillingAddress$zipCodeBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Phone*:";
-  field.name = u"editBillingAddress$phoneBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone*:");
+  field.set_name(u"editBillingAddress$phoneBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Email Address*:";
-  field.name = u"email$emailBox";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Email Address*:");
+  field.set_name(u"email$emailBox");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(11U, form_structure->field_count());
-  ASSERT_EQ(11U, form_structure->autofill_count());
+  ASSERT_EQ(11U, AutofillCount(*form_structure));
 
   EXPECT_EQ(NAME_FIRST, form_structure->field(0)->heuristic_type());
   EXPECT_EQ(NAME_LAST, form_structure->field(1)->heuristic_type());
@@ -1846,54 +1703,50 @@ TEST_F(FormStructureTestImpl, HeuristicsWithBilling) {
   EXPECT_EQ(ADDRESS_HOME_STATE, form_structure->field(6)->heuristic_type());
   EXPECT_EQ(ADDRESS_HOME_COUNTRY, form_structure->field(7)->heuristic_type());
   EXPECT_EQ(ADDRESS_HOME_ZIP, form_structure->field(8)->heuristic_type());
-  FieldType expected_phone_number =
-      base::FeatureList::IsEnabled(features::kAutofillDefaultToCityAndNumber)
-          ? PHONE_HOME_CITY_AND_NUMBER
-          : PHONE_HOME_WHOLE_NUMBER;
-  EXPECT_EQ(expected_phone_number, form_structure->field(9)->heuristic_type());
+  EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER,
+            form_structure->field(9)->heuristic_type());
   EXPECT_EQ(EMAIL_ADDRESS, form_structure->field(10)->heuristic_type());
 }
 
 TEST_F(FormStructureTestImpl, ThreePartPhoneNumber) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Phone:";
-  field.name = u"dayphone1";
-  field.max_length = 0;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone:");
+  field.set_name(u"dayphone1");
+  field.set_max_length(0);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"-";
-  field.name = u"dayphone2";
-  field.max_length = 3;  // Size of prefix is 3.
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"-");
+  field.set_name(u"dayphone2");
+  field.set_max_length(3);  // Size of prefix is 3.
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"-";
-  field.name = u"dayphone3";
-  field.max_length = 4;  // Size of suffix is 4.  If unlimited size is
-                         // passed, phone will be parsed as
-                         // <country code> - <area code> - <phone>.
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"-");
+  field.set_name(u"dayphone3");
+  field.set_max_length(4);  // Size of suffix is 4.  If unlimited size is
+                            // passed, phone will be parsed as
+                            // <country code> - <area code> - <phone>.
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"ext.:";
-  field.name = u"dayphone4";
-  field.max_length = 0;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"ext.:");
+  field.set_name(u"dayphone4");
+  field.set_max_length(0);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
   ASSERT_EQ(4U, form_structure->field_count());
-  ASSERT_EQ(4U, form_structure->autofill_count());
+  ASSERT_EQ(4U, AutofillCount(*form_structure));
 
   EXPECT_EQ(PHONE_HOME_CITY_CODE, form_structure->field(0)->heuristic_type());
   EXPECT_EQ(PHONE_HOME_NUMBER_PREFIX,
@@ -1906,44 +1759,43 @@ TEST_F(FormStructureTestImpl, ThreePartPhoneNumber) {
 TEST_F(FormStructureTestImpl, HeuristicsInfernoCC) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Name on Card";
-  field.name = u"name_on_card";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Name on Card");
+  field.set_name(u"name_on_card");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Address";
-  field.name = u"billing_address";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Address");
+  field.set_name(u"billing_address");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Card Number";
-  field.name = u"card_number";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card Number");
+  field.set_name(u"card_number");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Expiration Date";
-  field.name = u"expiration_month";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Expiration Date");
+  field.set_name(u"expiration_month");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Expiration Year";
-  field.name = u"expiration_year";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Expiration Year");
+  field.set_name(u"expiration_year");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
 
   // Expect the correct number of fields.
   ASSERT_EQ(5U, form_structure->field_count());
-  EXPECT_EQ(5U, form_structure->autofill_count());
+  EXPECT_EQ(5U, AutofillCount(*form_structure));
 
   // Name on Card.
   EXPECT_EQ(CREDIT_CARD_NAME_FULL, form_structure->field(0)->heuristic_type());
@@ -1963,49 +1815,48 @@ TEST_F(FormStructureTestImpl, HeuristicsInfernoCC) {
 TEST_F(FormStructureTestImpl, HeuristicsInferCCNames_NamesNotFirst) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Card number";
-  field.name = u"ccnumber";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card number");
+  field.set_name(u"ccnumber");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"First name";
-  field.name = u"first_name";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"First name");
+  field.set_name(u"first_name");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Last name";
-  field.name = u"last_name";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Last name");
+  field.set_name(u"last_name");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Expiration date";
-  field.name = u"ccexpiresmonth";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Expiration date");
+  field.set_name(u"ccexpiresmonth");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"ccexpiresyear";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"ccexpiresyear");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"cvc number";
-  field.name = u"csc";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"cvc number");
+  field.set_name(u"csc");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
 
   // Expect the correct number of fields.
   ASSERT_EQ(6U, form_structure->field_count());
-  ASSERT_EQ(6U, form_structure->autofill_count());
+  ASSERT_EQ(6U, AutofillCount(*form_structure));
 
   // Card Number.
   EXPECT_EQ(CREDIT_CARD_NUMBER, form_structure->field(0)->heuristic_type());
@@ -2029,49 +1880,48 @@ TEST_F(FormStructureTestImpl, HeuristicsInferCCNames_NamesNotFirst) {
 TEST_F(FormStructureTestImpl, HeuristicsInferCCNames_NamesFirst) {
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
-  form.url = GURL("http://www.foo.com/");
+  form.set_url(GURL("http://www.foo.com/"));
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"Cardholder Name";
-  field.name = u"cc_first_name";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Cardholder Name");
+  field.set_name(u"cc_first_name");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Last name";
-  field.name = u"last_name";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Last name");
+  field.set_name(u"last_name");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Card number";
-  field.name = u"ccnumber";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Card number");
+  field.set_name(u"ccnumber");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Expiration date";
-  field.name = u"ccexpiresmonth";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Expiration date");
+  field.set_name(u"ccexpiresmonth");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"ccexpiresyear";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"ccexpiresyear");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"cvc number";
-  field.name = u"csc";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"cvc number");
+  field.set_name(u"csc");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                          nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
   EXPECT_TRUE(form_structure->IsAutofillable());
 
   // Expect the correct number of fields.
   ASSERT_EQ(6U, form_structure->field_count());
-  ASSERT_EQ(6U, form_structure->autofill_count());
+  ASSERT_EQ(6U, AutofillCount(*form_structure));
 
   // First name.
   EXPECT_EQ(CREDIT_CARD_NAME_FIRST, form_structure->field(0)->heuristic_type());
@@ -2135,71 +1985,71 @@ TEST_F(FormStructureTestImpl, CheckFormSignature) {
   FormData form;
 
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
+  field.set_form_control_type(FormControlType::kInputText);
 
-  field.label = u"email";
-  field.name = u"email";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"email");
+  field.set_name(u"email");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"First Name";
-  field.name = u"first";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"First Name");
+  field.set_name(u"first");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   // Checkable fields shouldn't affect the signature.
-  field.label = u"Select";
-  field.name = u"Select";
-  field.form_control_type = FormControlType::kInputCheckbox;
-  field.check_status = FormFieldData::CheckStatus::kCheckableButUnchecked;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Select");
+  field.set_name(u"Select");
+  field.set_form_control_type(FormControlType::kInputCheckbox);
+  field.set_check_status(FormFieldData::CheckStatus::kCheckableButUnchecked);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
 
   EXPECT_EQ(FormStructureTestImpl::Hash64Bit(std::string("://&&email&first")),
             form_structure->FormSignatureAsStr());
 
-  form.url = GURL(std::string("http://www.facebook.com"));
+  form.set_url(GURL(std::string("http://www.facebook.com")));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_EQ(FormStructureTestImpl::Hash64Bit(
                 std::string("http://www.facebook.com&&email&first")),
             form_structure->FormSignatureAsStr());
 
-  form.action = GURL(std::string("https://login.facebook.com/path"));
+  form.set_action(GURL(std::string("https://login.facebook.com/path")));
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_EQ(FormStructureTestImpl::Hash64Bit(
                 std::string("https://login.facebook.com&&email&first")),
             form_structure->FormSignatureAsStr());
 
-  form.name = u"login_form";
+  form.set_name(u"login_form");
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_EQ(FormStructureTestImpl::Hash64Bit(std::string(
                 "https://login.facebook.com&login_form&email&first")),
             form_structure->FormSignatureAsStr());
 
   // Checks how digits are removed from field names.
-  field.check_status = FormFieldData::CheckStatus::kNotCheckable;
-  field.label = u"Random Field label";
-  field.name = u"random1234";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_check_status(FormFieldData::CheckStatus::kNotCheckable);
+  field.set_label(u"Random Field label");
+  field.set_name(u"random1234");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Random Field label2";
-  field.name = u"random12345";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Random Field label2");
+  field.set_name(u"random12345");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Random Field label3";
-  field.name = u"1ran12dom12345678";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Random Field label3");
+  field.set_name(u"1ran12dom12345678");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Random Field label3";
-  field.name = u"12345ran123456dom123";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Random Field label3");
+  field.set_name(u"12345ran123456dom123");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   form_structure = std::make_unique<FormStructure>(form);
   EXPECT_EQ(FormStructureTestImpl::Hash64Bit(
@@ -2210,23 +2060,23 @@ TEST_F(FormStructureTestImpl, CheckFormSignature) {
 
 TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureLarge) {
   FormData large_form;
-  large_form.url = GURL("http://foo.com/login?q=a#ref");
+  large_form.set_url(GURL("http://foo.com/login?q=a#ref"));
 
   FormFieldData field1;
-  field1.form_control_type = FormControlType::kInputText;
-  large_form.fields.push_back(field1);
+  field1.set_form_control_type(FormControlType::kInputText);
+  test_api(large_form).Append(field1);
 
   FormFieldData field2;
-  field2.form_control_type = FormControlType::kInputText;
-  large_form.fields.push_back(field2);
+  field2.set_form_control_type(FormControlType::kInputText);
+  test_api(large_form).Append(field2);
 
   FormFieldData field3;
-  field3.form_control_type = FormControlType::kInputEmail;
-  large_form.fields.push_back(field3);
+  field3.set_form_control_type(FormControlType::kInputEmail);
+  test_api(large_form).Append(field3);
 
   FormFieldData field4;
-  field4.form_control_type = FormControlType::kInputTelephone;
-  large_form.fields.push_back(field4);
+  field4.set_form_control_type(FormControlType::kInputTelephone);
+  test_api(large_form).Append(field4);
 
   // Alternative form signature string of a form with more than two fields
   // should only concatenate scheme, host, and field types.
@@ -2238,15 +2088,15 @@ TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureLarge) {
 
 TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallPath) {
   FormData small_form_path;
-  small_form_path.url = GURL("http://foo.com/login?q=a#ref");
+  small_form_path.set_url(GURL("http://foo.com/login?q=a#ref"));
 
   FormFieldData field1;
-  field1.form_control_type = FormControlType::kInputText;
-  small_form_path.fields.push_back(field1);
+  field1.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_path).Append(field1);
 
   FormFieldData field2;
-  field2.form_control_type = FormControlType::kInputText;
-  small_form_path.fields.push_back(field2);
+  field2.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_path).Append(field2);
 
   // Alternative form signature string of a form with 2 fields or less should
   // concatenate scheme, host, field types, and path if it is non-empty.
@@ -2258,15 +2108,15 @@ TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallPath) {
 
 TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallRef) {
   FormData small_form_ref;
-  small_form_ref.url = GURL("http://foo.com?q=a#ref");
+  small_form_ref.set_url(GURL("http://foo.com?q=a#ref"));
 
   FormFieldData field1;
-  field1.form_control_type = FormControlType::kInputText;
-  small_form_ref.fields.push_back(field1);
+  field1.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_ref).Append(field1);
 
   FormFieldData field2;
-  field2.form_control_type = FormControlType::kInputText;
-  small_form_ref.fields.push_back(field2);
+  field2.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_ref).Append(field2);
 
   // Alternative form signature string of a form with 2 fields or less and
   // without a path should concatenate scheme, host, field types, and reference
@@ -2279,15 +2129,15 @@ TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallRef) {
 
 TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallQuery) {
   FormData small_form_query;
-  small_form_query.url = GURL("http://foo.com?q=a");
+  small_form_query.set_url(GURL("http://foo.com?q=a"));
 
   FormFieldData field1;
-  field1.form_control_type = FormControlType::kInputText;
-  small_form_query.fields.push_back(field1);
+  field1.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_query).Append(field1);
 
   FormFieldData field2;
-  field2.form_control_type = FormControlType::kInputText;
-  small_form_query.fields.push_back(field2);
+  field2.set_form_control_type(FormControlType::kInputText);
+  test_api(small_form_query).Append(field2);
 
   // Alternative form signature string of a form with 2 fields or less and
   // without a path or reference should concatenate scheme, host, field types,
@@ -2300,30 +2150,31 @@ TEST_F(FormStructureTestImpl, CheckAlternativeFormSignatureSmallQuery) {
 
 TEST_F(FormStructureTestImpl, ToFormData) {
   FormData form;
-  form.name = u"the-name";
-  form.url = GURL("http://cool.com");
-  form.action = form.url.Resolve("/login");
+  form.set_name(u"the-name");
+  form.set_url(GURL("http://cool.com"));
+  form.set_action(form.url().Resolve("/login"));
+  form.set_child_frames({FrameTokenWithPredecessor()});
 
   FormFieldData field;
-  field.label = u"username";
-  field.name = u"username";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"username");
+  field.set_name(u"username");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"password";
-  field.name = u"password";
-  field.form_control_type = FormControlType::kInputPassword;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"password");
+  field.set_name(u"password");
+  field.set_form_control_type(FormControlType::kInputPassword);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = std::u16string();
-  field.name = u"Submit";
-  field.form_control_type = FormControlType::kInputText;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(std::u16string());
+  field.set_name(u"Submit");
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  EXPECT_TRUE(form.SameFormAs(FormStructure(form).ToFormData()));
+  EXPECT_TRUE(FormData::DeepEqual(form, FormStructure(form).ToFormData()));
 }
 
 // Tests that an Autofill upload for password form with 1 field should not be
@@ -2331,10 +2182,10 @@ TEST_F(FormStructureTestImpl, ToFormData) {
 TEST_F(FormStructureTestImpl, OneFieldPasswordFormShouldNotBeUpload) {
   FormData form;
   FormFieldData field;
-  field.name = u"Password";
-  field.form_control_type = FormControlType::kInputPassword;
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_name(u"Password");
+  field.set_form_control_type(FormControlType::kInputPassword);
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   EXPECT_FALSE(FormStructure(form).ShouldBeUploaded());
 }
@@ -2344,40 +2195,40 @@ TEST_F(FormStructureTestImpl, OneFieldPasswordFormShouldNotBeUpload) {
 // of type |FieldTypeGroup::kName|.
 TEST_F(FormStructureTestImpl, NoAutocompleteSectionNames) {
   FormData form;
-  form.url = GURL("http://foo.com");
+  form.set_url(GURL("http://foo.com"));
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
-  field.max_length = 10000;
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_max_length(10000);
 
-  field.label = u"Full Name";
-  field.name = u"fullName";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Full Name");
+  field.set_name(u"fullName");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Country";
-  field.name = u"country";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Country");
+  field.set_name(u"country");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Phone";
-  field.name = u"phone";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone");
+  field.set_name(u"phone");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Full Name";
-  field.name = u"fullName";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Full Name");
+  field.set_name(u"fullName");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Country";
-  field.name = u"country";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Country");
+  field.set_name(u"country");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Phone";
-  field.name = u"phone";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Phone");
+  field.set_name(u"phone");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
   FormStructure form_structure(form);
   test_api(form_structure)
@@ -2387,342 +2238,79 @@ TEST_F(FormStructureTestImpl, NoAutocompleteSectionNames) {
   std::vector<FormStructure*> forms;
   forms.push_back(&form_structure);
 
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
+  test_api(form_structure).AssignSections();
 
   // Assert the correct number of fields.
   ASSERT_EQ(6U, form_structure.field_count());
-  EXPECT_EQ("fullName_0_11", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("fullName_0_11", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("fullName_0_11", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("fullName_0_14", form_structure.field(3)->section.ToString());
-  EXPECT_EQ("fullName_0_14", form_structure.field(4)->section.ToString());
-  EXPECT_EQ("fullName_0_14", form_structure.field(5)->section.ToString());
-}
-
-// Tests that the immediate recurrence of the |PHONE_HOME_NUMBER| type does not
-// lead to a section split.
-TEST_F(FormStructureTestImpl, NoSplitByRecurringPhoneFieldType) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseNewSectioningMethod);
-
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText, "", kFieldMaxLength),
-      CreateTestFormField("Phone", "phone", "", FormControlType::kInputText, "",
-                          kFieldMaxLength),
-      CreateTestFormField("Mobile Number", "mobileNumber", "",
-                          FormControlType::kInputText, "", kFieldMaxLength),
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue billing name", kFieldMaxLength),
-      CreateTestFormField("Phone", "phone", "", FormControlType::kInputText,
-                          "section-blue billing tel", kFieldMaxLength),
-      CreateTestFormField("Mobile Number", "mobileNumber", "",
-                          FormControlType::kInputText,
-                          "section-blue billing tel", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "", kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes({NAME_FULL, PHONE_HOME_NUMBER, PHONE_HOME_NUMBER,
-                      NAME_FULL, PHONE_HOME_NUMBER, PHONE_HOME_NUMBER,
-                      ADDRESS_HOME_COUNTRY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(7U, form_structure.field_count());
-
-  EXPECT_EQ("blue-billing", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(3)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(4)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(5)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(6)->section.ToString());
+  EXPECT_EQ("fullName_0_11", form_structure.field(0)->section().ToString());
+  EXPECT_EQ("fullName_0_11", form_structure.field(1)->section().ToString());
+  EXPECT_EQ("fullName_0_11", form_structure.field(2)->section().ToString());
+  EXPECT_EQ("fullName_0_14", form_structure.field(3)->section().ToString());
+  EXPECT_EQ("fullName_0_14", form_structure.field(4)->section().ToString());
+  EXPECT_EQ("fullName_0_14", form_structure.field(5)->section().ToString());
 }
 
 // Tests that adjacent name field types are not split into different sections.
 TEST_F(FormStructureTestImpl, NoSplitAdjacentNameFieldType) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseParameterizedSectioning);
-
   FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {CreateTestFormField("First Name", "firstname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Last Name", "lastname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Phonetic First Name", "firstname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Phonetic Last Name", "lastname", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("Country", "country", "",
-                                     FormControlType::kInputText),
-                 CreateTestFormField("First Name", "firstname", "",
-                                     FormControlType::kInputText)};
+  form.set_url(GURL("http://foo.com"));
+  form.set_fields({CreateTestFormField("First Name", "firstname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Last Name", "lastname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Phonetic First Name", "firstname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Phonetic Last Name", "lastname", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("Country", "country", "",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("First Name", "firstname", "",
+                                       FormControlType::kInputText)});
   FormStructure form_structure(form);
   test_api(form_structure)
       .SetFieldTypes({NAME_FIRST, NAME_LAST, NAME_FIRST, NAME_LAST,
                       ADDRESS_HOME_COUNTRY, NAME_FIRST});
 
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
+  test_api(form_structure).AssignSections();
 
   // Assert the correct number of fields.
   ASSERT_EQ(6U, form_structure.field_count());
 
-  EXPECT_EQ(form_structure.field(0)->section, form_structure.field(1)->section);
-  EXPECT_EQ(form_structure.field(0)->section, form_structure.field(2)->section);
-  EXPECT_EQ(form_structure.field(0)->section, form_structure.field(3)->section);
-  EXPECT_EQ(form_structure.field(0)->section, form_structure.field(4)->section);
+  EXPECT_EQ(form_structure.field(0)->section(),
+            form_structure.field(1)->section());
+  EXPECT_EQ(form_structure.field(0)->section(),
+            form_structure.field(2)->section());
+  EXPECT_EQ(form_structure.field(0)->section(),
+            form_structure.field(3)->section());
+  EXPECT_EQ(form_structure.field(0)->section(),
+            form_structure.field(4)->section());
   // The non-adjacent name field should be split into a different section.
-  EXPECT_NE(form_structure.field(0)->section, form_structure.field(5)->section);
-}
-
-// Tests if a new logical form is started with the second appearance of a field
-// of type |ADDRESS_HOME_COUNTRY|.
-TEST_F(FormStructureTestImpl, SplitByRecurringFieldType) {
-  base::test::ScopedFeatureList scoped_features;
-  scoped_features.InitAndEnableFeature(
-      features::kAutofillUseNewSectioningMethod);
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue shipping name", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "section-blue shipping country", kFieldMaxLength),
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue shipping name", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "", kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes(
-          {NAME_FULL, ADDRESS_HOME_COUNTRY, NAME_FULL, ADDRESS_HOME_COUNTRY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(4U, form_structure.field_count());
-
-  EXPECT_EQ("blue-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-shipping", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("blue-shipping", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("country_2_14", form_structure.field(3)->section.ToString());
-}
-
-// Tests if a new logical form is started with the second appearance of a field
-// of type |NAME_FULL| and another with the second appearance of a field of
-// type |ADDRESS_HOME_COUNTRY|.
-TEST_F(FormStructureTestImpl,
-       SplitByNewAutocompleteSectionNameAndRecurringType) {
-  base::test::ScopedFeatureList scoped_features;
-  scoped_features.InitAndEnableFeature(
-      features::kAutofillUseNewSectioningMethod);
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue shipping name", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "section-blue billing country", kFieldMaxLength),
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText, "", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "", kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes(
-          {NAME_FULL, ADDRESS_HOME_COUNTRY, NAME_FULL, ADDRESS_HOME_COUNTRY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(4U, form_structure.field_count());
-
-  EXPECT_EQ("blue-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("country_2_14", form_structure.field(3)->section.ToString());
-}  // namespace autofill
-
-// Tests if a new logical form is started with the second appearance of a field
-// of type |NAME_FULL|.
-TEST_F(FormStructureTestImpl, SplitByNewAutocompleteSectionName) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseNewSectioningMethod);
-
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue shipping name", kFieldMaxLength),
-      CreateTestFormField("City", "city", "", FormControlType::kInputText, "",
-                          kFieldMaxLength),
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue billing name", kFieldMaxLength),
-      CreateTestFormField("City", "city", "", FormControlType::kInputText, "",
-                          kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes(
-          {NAME_FULL, ADDRESS_HOME_CITY, NAME_FULL, ADDRESS_HOME_CITY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(4U, form_structure.field_count());
-
-  EXPECT_EQ("blue-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-shipping", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(3)->section.ToString());
-}
-
-// Tests if a new logical form is started with the second appearance of a field
-// of type |NAME_FULL|.
-TEST_F(
-    FormStructureTestImpl,
-    FromEmptyAutocompleteSectionToDefinedOneWithSplitByNewAutocompleteSectionName) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseNewSectioningMethod);
-
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText, "", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "section-blue shipping country", kFieldMaxLength),
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText,
-                          "section-blue billing name", kFieldMaxLength),
-      CreateTestFormField("City", "city", "", FormControlType::kInputText, "",
-                          kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes(
-          {NAME_FULL, ADDRESS_HOME_COUNTRY, NAME_FULL, ADDRESS_HOME_CITY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(4U, form_structure.field_count());
-
-  EXPECT_EQ("blue-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-shipping", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(2)->section.ToString());
-  EXPECT_EQ("blue-billing", form_structure.field(3)->section.ToString());
-}
-
-// Tests if all the fields in the form belong to the same section when the
-// second field has the autocomplete-section attribute set.
-TEST_F(FormStructureTestImpl, FromEmptyAutocompleteSectionToDefinedOne) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseNewSectioningMethod);
-
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields = {
-      CreateTestFormField("Full Name", "fullName", "",
-                          FormControlType::kInputText, "", kFieldMaxLength),
-      CreateTestFormField("Country", "country", "", FormControlType::kInputText,
-                          "section-blue shipping country", kFieldMaxLength)};
-  FormStructure form_structure(form);
-  test_api(form_structure).SetFieldTypes({NAME_FULL, ADDRESS_HOME_COUNTRY});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(2U, form_structure.field_count());
-
-  EXPECT_EQ("blue-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("blue-shipping", form_structure.field(1)->section.ToString());
-}
-
-// Tests if all the fields in the form belong to the same section when one of
-// the field is ignored.
-TEST_F(FormStructureTestImpl,
-       FromEmptyAutocompleteSectionToDefinedOneWithIgnoredField) {
-  base::test::ScopedFeatureList enabled;
-  enabled.InitAndEnableFeature(features::kAutofillUseNewSectioningMethod);
-
-  FormData form;
-  form.url = GURL("http://foo.com");
-  form.fields.push_back(CreateTestFormField("Full Name", "fullName", "",
-                                            FormControlType::kInputText, "",
-                                            kFieldMaxLength));
-  form.fields.push_back(CreateTestFormField(
-      "Phone", "phone", "", FormControlType::kInputText, "", kFieldMaxLength));
-  form.fields.back().is_focusable = false;  // hidden
-  form.fields.push_back(CreateTestFormField("Full Name", "fullName", "",
-                                            FormControlType::kInputText,
-                                            "shipping name", kFieldMaxLength));
-  FormStructure form_structure(form);
-  test_api(form_structure)
-      .SetFieldTypes({NAME_FULL, PHONE_HOME_NUMBER, NAME_FULL});
-
-  std::vector<FormStructure*> forms;
-  forms.push_back(&form_structure);
-
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
-
-  // Assert the correct number of fields.
-  ASSERT_EQ(3U, form_structure.field_count());
-
-  EXPECT_EQ("-shipping", form_structure.field(0)->section.ToString());
-  EXPECT_EQ("-shipping", form_structure.field(1)->section.ToString());
-  EXPECT_EQ("-shipping", form_structure.field(2)->section.ToString());
+  EXPECT_NE(form_structure.field(0)->section(),
+            form_structure.field(5)->section());
 }
 
 TEST_F(FormStructureTestImpl, FindFieldsEligibleForManualFilling) {
   FormData form;
-  form.url = GURL("http://foo.com");
+  form.set_url(GURL("http://foo.com"));
   FormFieldData field;
-  field.form_control_type = FormControlType::kInputText;
-  field.max_length = 10000;
+  field.set_form_control_type(FormControlType::kInputText);
+  field.set_max_length(10000);
 
-  field.label = u"Full Name";
-  field.name = u"fullName";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Full Name");
+  field.set_name(u"fullName");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
   FieldGlobalId full_name_id = field.global_id();
 
-  field.label = u"Country";
-  field.name = u"country";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Country");
+  field.set_name(u"country");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
 
-  field.label = u"Unknown";
-  field.name = u"unknown";
-  field.unique_renderer_id = test::MakeFieldRendererId();
-  form.fields.push_back(field);
+  field.set_label(u"Unknown");
+  field.set_name(u"unknown");
+  field.set_renderer_id(test::MakeFieldRendererId());
+  test_api(form).Append(field);
   FieldGlobalId unknown_id = field.global_id();
 
   FormStructure form_structure(form);
@@ -2734,7 +2322,7 @@ TEST_F(FormStructureTestImpl, FindFieldsEligibleForManualFilling) {
   std::vector<raw_ptr<FormStructure, VectorExperimental>> forms;
   forms.push_back(&form_structure);
 
-  test_api(form_structure).IdentifySections(/*ignore_autocomplete=*/false);
+  test_api(form_structure).AssignSections();
   std::vector<FieldGlobalId> expected_result;
   // Only credit card related and unknown fields are eligible for manual
   // filling.
@@ -2745,50 +2333,20 @@ TEST_F(FormStructureTestImpl, FindFieldsEligibleForManualFilling) {
             FormStructure::FindFieldsEligibleForManualFilling(forms));
 }
 
-// Tests that ParseFieldTypesWithPatterns() sets (only) the PatternSource.
-TEST_P(FormStructureTest_ForPatternSource, ParseFieldTypesWithPatterns) {
-  FormData form = test::CreateTestAddressFormData();
-  FormStructure form_structure(form);
-  ParsingContext context(GeoIpCountryCode(""), LanguageCode(""),
-                         pattern_source());
-  test_api(form_structure).ParseFieldTypesWithPatterns(context);
-  ASSERT_THAT(form_structure.fields(), Not(IsEmpty()));
-
-  auto get_heuristic_type = [&](const AutofillField& field) {
-    return field.heuristic_type(
-        PatternSourceToHeuristicSource(pattern_source()));
-  };
-  EXPECT_THAT(
-      form_structure.fields(),
-      Each(Pointee(ResultOf(get_heuristic_type,
-                            AllOf(Not(NO_SERVER_DATA), Not(UNKNOWN_TYPE))))));
-
-  for (PatternSource other_pattern_source : other_pattern_sources()) {
-    auto get_other_pattern_heuristic_type = [&](const AutofillField& field) {
-      return field.heuristic_type(
-          PatternSourceToHeuristicSource(other_pattern_source));
-    };
-    EXPECT_THAT(form_structure.fields(),
-                Each(Pointee(ResultOf(get_other_pattern_heuristic_type,
-                                      NO_SERVER_DATA))))
-        << "PatternSource = " << static_cast<int>(other_pattern_source);
-  }
-}
-
 TEST_F(FormStructureTestImpl, DetermineRanks) {
   FormData form;
-  form.url = GURL("http://foo.com");
+  form.set_url(GURL("http://foo.com"));
 
   auto add_field = [&form](const std::u16string& name,
                            LocalFrameToken frame_token,
                            FormRendererId host_form_id) {
     FormFieldData field;
-    field.form_control_type = FormControlType::kInputText;
-    field.name = name;
-    field.unique_renderer_id = test::MakeFieldRendererId();
-    field.host_frame = frame_token;
-    field.host_form_id = host_form_id;
-    form.fields.push_back(field);
+    field.set_form_control_type(FormControlType::kInputText);
+    field.set_name(name);
+    field.set_renderer_id(test::MakeFieldRendererId());
+    field.set_host_frame(frame_token);
+    field.set_host_form_id(host_form_id);
+    test_api(form).Append(field);
   };
 
   LocalFrameToken frame_1(base::UnguessableToken::Create());
@@ -2823,62 +2381,165 @@ TEST_F(FormStructureTestImpl, DetermineRanks) {
 // classified as address forms.
 TEST_F(FormStructureTestImpl, GetFormTypes_AutocompleteUnrecognized) {
   FormData form = test::CreateTestAddressFormData();
-  for (FormFieldData& field : form.fields) {
-    field.parsed_autocomplete =
-        AutocompleteParsingResult{.field_type = HtmlFieldType::kUnrecognized};
+  for (FormFieldData& field : test_api(form).fields()) {
+    field.set_parsed_autocomplete(
+        AutocompleteParsingResult{.field_type = HtmlFieldType::kUnrecognized});
   }
   FormStructure form_structure(form);
   EXPECT_THAT(form_structure.GetFormTypes(),
               UnorderedElementsAre(FormType::kUnknownFormType));
 }
 
-// By default, the single field email heuristics are off. Although applying
-// heuristics in this case appears to have been intended behavior, the rollout
-// must be managed with care. This test is intended to ensure the default
-// experience does not change unintentionally.
-TEST_F(FormStructureTestImpl, SingleFieldEmailHeuristicsDefaultBehavior) {
+// The test ensures that single field email forms are correctly parsed via
+// `FormShouldRunHeuristicsForSingleFields`.
+TEST_F(FormStructureTestImpl, SingleFieldEmailHeuristicsBehavior) {
   FormData form = test::GetFormData({.fields = {{.role = EMAIL_ADDRESS}}});
 
   // The form has too few fields; it should not run heuristics, falling back to
   // the single field parsing.
   EXPECT_FALSE(FormShouldRunHeuristics(form));
-  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFieldForms(form));
+  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFields(form));
 
   {
     FormStructure form_structure(form);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
     ASSERT_EQ(1U, form_structure.field_count());
-    ASSERT_EQ(0U, form_structure.autofill_count());
-    EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(0)->heuristic_type());
-    EXPECT_FALSE(form_structure.IsAutofillable());
-  }
-}
-
-// When the single field email heuristics feature is enabled, a single field
-// email form should be parsed accordingly.
-TEST_F(FormStructureTestImpl, SingleFieldEmailHeuristicsEnabled) {
-  base::test::ScopedFeatureList enabled{
-      features::kAutofillEnableEmailHeuristicOnlyAddressForms};
-
-  FormData form = test::GetFormData({.fields = {{.role = EMAIL_ADDRESS}}});
-
-  // The form has too few fields; it should not run heuristics, falling back to
-  // the single field parsing.
-  EXPECT_FALSE(FormShouldRunHeuristics(form));
-  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFieldForms(form));
-
-  {
-    FormStructure form_structure(form);
-    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                           nullptr);
-    ASSERT_EQ(1U, form_structure.field_count());
-    // However, because the email field is in a form and matches the heuristics,
-    // it should be autofillable when the feature is enabled.
-    ASSERT_EQ(1U, form_structure.autofill_count());
+    ASSERT_EQ(1U, AutofillCount(form_structure));
     EXPECT_EQ(EMAIL_ADDRESS, form_structure.field(0)->heuristic_type());
     EXPECT_TRUE(form_structure.IsAutofillable());
   }
 }
 
+// The test ensures that email fields are correctly parsed (via
+// `FormShouldRunHeuristicsForSingleFields`) on small forms with two fields.
+TEST_F(FormStructureTestImpl, TwoFieldFormEmailHeuristicsBehavior) {
+  FormData form = test::GetFormData(
+      {.fields = {{.role = NAME_FULL}, {.role = EMAIL_ADDRESS}}});
+
+  // The form has too few fields; it should not run heuristics, falling back to
+  // the single field parsing.
+  EXPECT_FALSE(FormShouldRunHeuristics(form));
+  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFields(form));
+
+  {
+    FormStructure form_structure(form);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+    ASSERT_EQ(2U, form_structure.field_count());
+    ASSERT_EQ(1U, AutofillCount(form_structure));
+    EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(0)->heuristic_type());
+    EXPECT_EQ(EMAIL_ADDRESS, form_structure.field(1)->heuristic_type());
+    EXPECT_TRUE(form_structure.IsAutofillable());
+  }
+}
+
+// Verifies that fields with autocomplete=off are not parsed as email fields.
+TEST_F(FormStructureTestImpl,
+       SingleFieldEmailHeuristicsEnabledAutocompleteEmail) {
+  FormData form = test::GetFormData(
+      {.fields = {{.role = EMAIL_ADDRESS, .autocomplete_attribute = "off"},
+                  {.role = EMAIL_ADDRESS, .autocomplete_attribute = "email"}}});
+
+  // The form has too few fields; it should not run heuristics, falling back to
+  // the single field parsing.
+  EXPECT_FALSE(FormShouldRunHeuristics(form));
+  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFields(form));
+
+  {
+    FormStructure form_structure(form);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+    ASSERT_EQ(2U, form_structure.field_count());
+    ASSERT_EQ(1U, AutofillCount(form_structure));
+    EXPECT_EQ(UNKNOWN_TYPE, form_structure.field(0)->heuristic_type());
+    EXPECT_EQ(EMAIL_ADDRESS, form_structure.field(1)->heuristic_type());
+    EXPECT_TRUE(form_structure.IsAutofillable());
+  }
+}
+
+// Tests the support for email fields outside of form tags.
+TEST_F(FormStructureTestImpl,
+       SingleFieldEmailHeuristicsSupportedOutsideFormTag) {
+  FormData form = test::GetFormData({.fields = {{.role = EMAIL_ADDRESS}}});
+  // Set the form to simulate a field outside a <form> tag.
+  form.set_renderer_id(FormRendererId());
+
+  // The form has too few fields; it should not run heuristics, falling back to
+  // the single field parsing.
+  EXPECT_FALSE(FormShouldRunHeuristics(form));
+  EXPECT_TRUE(FormShouldRunHeuristicsForSingleFields(form));
+  {
+    FormStructure form_structure(form);
+    form_structure.DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+    ASSERT_EQ(1U, form_structure.field_count());
+    // However, because the email field is in a form and matches the heuristics,
+    // it should be autofillable when the feature is enabled.
+    ASSERT_EQ(1U, AutofillCount(form_structure));
+    EXPECT_EQ(EMAIL_ADDRESS, form_structure.field(0)->heuristic_type());
+    EXPECT_TRUE(form_structure.IsAutofillable());
+  }
+}
+
+// Tests that password manager classifier predictions are returned correctly.
+TEST_F(FormStructureTestImpl, GetHeuristicPredictions) {
+  FormData form =
+      test::GetFormData({.fields = {{.role = USERNAME}, {.role = PASSWORD}}});
+
+  FormStructure form_structure(form);
+  form_structure.fields()[0]->set_heuristic_type(
+      HeuristicSource::kPasswordManagerMachineLearning, USERNAME);
+  form_structure.fields()[1]->set_heuristic_type(
+      HeuristicSource::kPasswordManagerMachineLearning, PASSWORD);
+
+  // Fetch model predictions for one field from the form and one field not
+  // present in the form.
+  FormFieldData mystery_field = test::CreateTestFormField(
+      /*label=*/"mystery", /*name=*/"secret",
+      /*value=*/"unknown", FormControlType::kInputText);
+  EXPECT_THAT(form_structure.GetHeuristicPredictions(
+                  HeuristicSource::kPasswordManagerMachineLearning,
+                  {form.fields()[1].global_id(), mystery_field.global_id()}),
+              UnorderedElementsAre(
+                  testing::Pair(form.fields()[1].global_id(), PASSWORD),
+                  testing::Pair(mystery_field.global_id(), NO_SERVER_DATA)));
+}
+
+// Tests that loyalty card fields are classified on big forms.
+TEST_F(FormStructureTestImpl, LoyaltyCardsHeuristics_BigForms) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillEnableLoyaltyCardsFilling};
+  std::unique_ptr<FormStructure> form_structure;
+  FormData form;
+  form.set_url(GURL("http://www.foo.com/"));
+  form.set_renderer_id(test::MakeFormRendererId());
+  form.set_fields(
+      {CreateTestFormField("First Name", "firstname", "",
+                           FormControlType::kInputText, "given-name"),
+       CreateTestFormField("Last Name", "lastname", "",
+                           FormControlType::kInputText, "family-name"),
+       CreateTestFormField("Email", "email", "", FormControlType::kInputEmail,
+                           "email"),
+       CreateTestFormField("Frequent Flyer Number", "frequent-flyer-number", "",
+                           FormControlType::kInputText, "flyer-number"),
+       CreateTestFormField("Phone Number", "BillTo.Phone", "",
+                           FormControlType::kInputText, "phone")});
+
+  form_structure = std::make_unique<FormStructure>(form);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+  EXPECT_TRUE(form_structure->IsAutofillable());
+  ASSERT_EQ(5U, form_structure->field_count());
+  ASSERT_EQ(5U, AutofillCount(*form_structure));
+
+  // First name.
+  EXPECT_EQ(NAME_FIRST, form_structure->field(0)->heuristic_type());
+  // Last name.
+  EXPECT_EQ(NAME_LAST, form_structure->field(1)->heuristic_type());
+  // Email.
+  EXPECT_EQ(EMAIL_ADDRESS, form_structure->field(2)->heuristic_type());
+  // Loyalty Card.
+  EXPECT_EQ(LOYALTY_MEMBERSHIP_ID, form_structure->field(3)->heuristic_type());
+  // Phone number.
+  EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER,
+            form_structure->field(4)->heuristic_type());
+}
+
+}  // namespace
 }  // namespace autofill

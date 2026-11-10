@@ -26,6 +26,7 @@ component("public") {
     "download_destination_observer.h",
     "download_features.cc",
     "download_features.h",
+    "download_file.cc",
     "download_file.h",
     "download_file_factory.h",
     "download_file_impl.h",
@@ -38,6 +39,7 @@ component("public") {
     "download_item_factory.h",
     "download_item_impl.h",
     "download_item_impl_delegate.h",
+    "download_item_rename_handler.h",
     "download_job.h",
     "download_job_factory.h",
     "download_path_reservation_tracker.h",
@@ -55,7 +57,6 @@ component("public") {
     "download_ukm_helper.h",
     "download_url_parameters.cc",
     "download_url_parameters.h",
-    "download_utils.cc",
     "download_utils.h",
     "in_progress_download_manager.h",
     "input_stream.cc",
@@ -82,8 +83,10 @@ component("public") {
     "//base",
     "//components/download/network",
     "//components/download/public/background_service:public",
+    "//components/keyed_service/core",
     "//components/services/quarantine/public/mojom",
     "//mojo/public/cpp/bindings",
+    "//services/device/public/mojom",
     "//services/network/public/cpp",
     "//services/network/public/mojom:url_loader_base",
   ]
@@ -91,13 +94,12 @@ component("public") {
   deps = [
     "//components/download/database",
     "//components/download/internal/common:internal",
-    "//components/services/quarantine:quarantine",
+    "//components/services/quarantine",
     "//crypto",
     "//mojo/public/c/system",
     "//net",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/network/public/cpp",
-    "//storage/browser",
     "//ui/base",
   ]
 
@@ -117,12 +119,11 @@ component("public") {
     ]
   }
 
-  if (is_chromeos) {
+  if (is_win || is_mac) {
     sources += [
-      "download_item_utils.cc",
-      "download_item_utils.h",
+      "desktop/desktop_auto_resumption_handler.cc",
+      "desktop/desktop_auto_resumption_handler.h",
     ]
-    deps += [ "//chromeos/crosapi/mojom" ]
   }
 }
 
@@ -138,6 +139,7 @@ if (is_android) {
 
   java_cpp_enum("jni_enums") {
     sources = [
+      "download_danger_type.h",
       "download_item.h",
       "resume_mode.h",
     ]
@@ -173,14 +175,10 @@ source_set("test_support") {
     "//base",
     "//components/download/database",
     "//net",
-    "//services/service_manager/public/cpp:cpp",
+    "//services/service_manager/public/cpp",
     "//testing/gmock",
     "//url",
   ]
-
-  if (is_android) {
-    deps = [ "//components/download/internal/common:internal_java" ]
-  }
 }
 
 source_set("unit_tests") {
@@ -190,6 +188,10 @@ source_set("unit_tests") {
 
   if (is_android) {
     sources += [ "android/auto_resumption_handler_unittest.cc" ]
+  }
+
+  if (is_win || is_mac) {
+    sources += [ "desktop/desktop_auto_resumption_handler_unittest.cc" ]
   }
 
   deps = [

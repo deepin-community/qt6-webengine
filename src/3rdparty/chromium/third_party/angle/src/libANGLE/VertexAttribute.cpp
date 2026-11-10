@@ -35,15 +35,8 @@ VertexBinding &VertexBinding::operator=(VertexBinding &&binding)
         mDivisor             = binding.mDivisor;
         mOffset              = binding.mOffset;
         mBoundAttributesMask = binding.mBoundAttributesMask;
-        std::swap(binding.mBuffer, mBuffer);
     }
     return *this;
-}
-
-void VertexBinding::onContainerBindingChanged(const Context *context, int incr) const
-{
-    if (mBuffer.get())
-        mBuffer->onNonTFBindingChanged(incr);
 }
 
 VertexAttribute::VertexAttribute(GLuint bindingIndex)
@@ -81,26 +74,32 @@ VertexAttribute &VertexAttribute::operator=(VertexAttribute &&attrib)
     return *this;
 }
 
-void VertexAttribute::updateCachedElementLimit(const VertexBinding &binding)
+void VertexAttribute::updateCachedElementLimit(const VertexBinding &binding, const Buffer *buffer)
 {
-    Buffer *buffer = binding.getBuffer().get();
     if (!buffer)
     {
         mCachedElementLimit = 0;
         return;
     }
 
-    angle::CheckedNumeric<GLint64> bufferSize(buffer->getSize());
     angle::CheckedNumeric<GLint64> bufferOffset(binding.getOffset());
+    angle::CheckedNumeric<GLint64> bufferSize(buffer->getSize());
     angle::CheckedNumeric<GLint64> attribOffset(relativeOffset);
     angle::CheckedNumeric<GLint64> attribSize(ComputeVertexAttributeTypeSize(*this));
+
+    // Disallow referencing data before the start of the buffer with negative offsets
+    angle::CheckedNumeric<GLint64> offset = bufferOffset + attribOffset;
+    if (!offset.IsValid() || offset.ValueOrDie() < 0)
+    {
+        mCachedElementLimit = kIntegerOverflow;
+        return;
+    }
 
     // The element limit is (exclusive) end of the accessible range for the vertex.  For example, if
     // N attributes can be accessed, the following calculates N.
     //
     // (buffer.size - buffer.offset - attrib.relativeOffset - attrib.size) / binding.stride + 1
-    angle::CheckedNumeric<GLint64> elementLimit =
-        (bufferSize - bufferOffset - attribOffset - attribSize);
+    angle::CheckedNumeric<GLint64> elementLimit = (bufferSize - offset - attribSize);
 
     // Use the special integer overflow value if there was a math error.
     if (!elementLimit.IsValid())
@@ -135,12 +134,12 @@ size_t ComputeVertexAttributeStride(const VertexAttribute &attrib, const VertexB
 }
 
 // Warning: you should ensure binding really matches attrib.bindingIndex before using this function.
-GLintptr ComputeVertexAttributeOffset(const VertexAttribute &attrib, const VertexBinding &binding)
+uintptr_t ComputeVertexAttributeOffset(const VertexAttribute &attrib, const VertexBinding &binding)
 {
     return attrib.relativeOffset + binding.getOffset();
 }
 
-size_t ComputeVertexBindingElementCount(GLuint divisor, size_t drawCount, size_t instanceCount)
+size_t ComputeVertexBindingElementCount(GLuint divisor, uint64_t drawCount, size_t instanceCount)
 {
     // For instanced rendering, we draw "instanceDrawCount" sets of "vertexDrawCount" vertices.
     //
@@ -155,7 +154,9 @@ size_t ComputeVertexBindingElementCount(GLuint divisor, size_t drawCount, size_t
         return (instanceCount + divisor - 1u) / divisor;
     }
 
-    return drawCount;
+    // Ensure that drawCount can always fit into a size_t. This should also be validated by
+    // maxElementIndex.
+    return angle::CheckedNumeric<size_t>(drawCount).ValueOrDie();
 }
 
 }  // namespace gl

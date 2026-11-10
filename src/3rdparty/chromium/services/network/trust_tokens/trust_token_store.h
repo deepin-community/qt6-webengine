@@ -5,7 +5,9 @@
 #ifndef SERVICES_NETWORK_TRUST_TOKENS_TRUST_TOKEN_STORE_H_
 #define SERVICES_NETWORK_TRUST_TOKENS_TRUST_TOKEN_STORE_H_
 
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,13 +15,12 @@
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
-#include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/trust_tokens/proto/public.pb.h"
 #include "services/network/trust_tokens/suitable_trust_token_origin.h"
 #include "services/network/trust_tokens/trust_token_persister.h"
 #include "services/network/trust_tokens/types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 
@@ -88,7 +89,7 @@ class TrustTokenStore {
   // of, for instance, corruption or clock skew).
   //
   // |issuer| must not be opaque.
-  [[nodiscard]] virtual absl::optional<base::TimeDelta> TimeSinceLastIssuance(
+  [[nodiscard]] virtual std::optional<base::TimeDelta> TimeSinceLastIssuance(
       const SuitableTrustTokenOrigin& issuer);
 
   // Returns the time elapsed since the last redemption recorded by
@@ -98,7 +99,7 @@ class TrustTokenStore {
   // top-level origin) pair.
   // 2. the time since the last redepmption is negative (because
   // of, for instance, corruption or clock skew).
-  [[nodiscard]] virtual absl::optional<base::TimeDelta> TimeSinceLastRedemption(
+  [[nodiscard]] virtual std::optional<base::TimeDelta> TimeSinceLastRedemption(
       const SuitableTrustTokenOrigin& issuer,
       const SuitableTrustTokenOrigin& top_level);
 
@@ -111,7 +112,7 @@ class TrustTokenStore {
   // of issuers allowed to be associated with a given top-level origin, returns
   // false. Otherwise, associates |issuer| with |top_level| and returns true.
   //
-  // TODO(crbug.com/1060716): As part of adding solid support for multiple
+  // TODO(crbug.com/40679190): As part of adding solid support for multiple
   // issuers, it'd be good to make these associations expire after some
   // reasonably long amount of time, so that top-level origins can change their
   // minds about their associated issuers.
@@ -173,11 +174,14 @@ class TrustTokenStore {
                                    const SuitableTrustTokenOrigin& top_level,
                                    const TrustTokenRedemptionRecord& record);
 
+  // Return redemption records per issuer/toplevel origin
+  [[nodiscard]] virtual IssuerRedemptionRecordMap GetRedemptionRecords();
+
   // Attempts to retrieve the stored RR for the given pair of (issuer,
   // top-level) origins.
   // - If the pair has a current (i.e., non-expired) RR, returns that RR.
   // - Otherwise, returns nullopt.
-  [[nodiscard]] virtual absl::optional<TrustTokenRedemptionRecord>
+  [[nodiscard]] virtual std::optional<TrustTokenRedemptionRecord>
   RetrieveNonstaleRedemptionRecord(const SuitableTrustTokenOrigin& issuer,
                                    const SuitableTrustTokenOrigin& top_level);
 

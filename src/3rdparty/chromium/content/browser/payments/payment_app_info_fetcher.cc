@@ -5,7 +5,7 @@
 #include "content/browser/payments/payment_app_info_fetcher.h"
 
 #include <limits>
-#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -155,6 +155,7 @@ void PaymentAppInfoFetcher::SelfDeleteFetcher::RunCallbackAndDestroy() {
 }
 
 void PaymentAppInfoFetcher::SelfDeleteFetcher::FetchPaymentAppManifestCallback(
+    blink::mojom::ManifestRequestResult result,
     const GURL& url,
     blink::mojom::ManifestPtr manifest) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -171,7 +172,8 @@ void PaymentAppInfoFetcher::SelfDeleteFetcher::FetchPaymentAppManifestCallback(
     return;
   }
 
-  if (blink::IsEmptyManifest(manifest)) {
+  if (blink::IsEmptyManifest(manifest) ||
+      result != blink::mojom::ManifestRequestResult::kSuccess) {
     WarnIfPossible(
         "Unable to download a valid payment handler web app manifest from \"" +
         manifest_url_.spec() +
@@ -286,13 +288,9 @@ void PaymentAppInfoFetcher::SelfDeleteFetcher::OnIconFetched(
     return;
   }
 
-  std::vector<unsigned char> bitmap_data;
-  bool success = gfx::PNGCodec::EncodeBGRASkBitmap(icon, false, &bitmap_data);
-  DCHECK(success);
-  base::Base64Encode(
-      base::StringPiece(reinterpret_cast<const char*>(&bitmap_data[0]),
-                        bitmap_data.size()),
-      &(fetched_payment_app_info_->icon));
+  std::optional<std::vector<uint8_t>> bitmap_data =
+      gfx::PNGCodec::EncodeBGRASkBitmap(icon, /*discard_transparency=*/false);
+  fetched_payment_app_info_->icon = base::Base64Encode(bitmap_data.value());
   RunCallbackAndDestroy();
 }
 

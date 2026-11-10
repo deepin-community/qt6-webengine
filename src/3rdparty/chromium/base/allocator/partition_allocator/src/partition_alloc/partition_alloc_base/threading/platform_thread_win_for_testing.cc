@@ -2,20 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <windows.h>
 
 #include <cstddef>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/oom.h"
 #include "partition_alloc/partition_alloc_base/check.h"
 #include "partition_alloc/partition_alloc_base/debug/alias.h"
 #include "partition_alloc/partition_alloc_base/threading/platform_thread_for_testing.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-#include "partition_alloc/starscan/pcscan.h"
-#include "partition_alloc/starscan/stack/stack.h"
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "partition_alloc/stack/stack.h"
 #endif
 
 namespace partition_alloc::internal::base {
@@ -63,8 +67,8 @@ DWORD __stdcall ThreadFunc(void* params) {
                                  GetCurrentProcess(), &platform_handle, 0,
                                  FALSE, DUPLICATE_SAME_ACCESS);
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-  PCScan::NotifyThreadCreated(GetStackPointer());
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  StackTopRegistry::Get().NotifyThreadCreated();
 #endif
 
   ScopedHandle scoped_platform_handle;
@@ -75,8 +79,8 @@ DWORD __stdcall ThreadFunc(void* params) {
   delete thread_params;
   delegate->ThreadMain();
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-  PCScan::NotifyThreadDestroyed();
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  StackTopRegistry::Get().NotifyThreadDestroyed();
 #endif
   return 0;
 }
@@ -90,7 +94,7 @@ bool CreateThreadInternal(size_t stack_size,
   unsigned int flags = 0;
   if (stack_size > 0) {
     flags = STACK_SIZE_PARAM_IS_A_RESERVATION;
-#if defined(ARCH_CPU_32_BITS)
+#if PA_BUILDFLAG(PA_ARCH_CPU_32_BITS)
   } else {
     // The process stack size is increased to give spaces to |RendererMain| in
     // |chrome/BUILD.gn|, but keep the default stack size of other threads to
@@ -133,7 +137,6 @@ bool CreateThreadInternal(size_t stack_size,
       case ERROR_COMMITMENT_LIMIT:
       case ERROR_COMMITMENT_MINIMUM:
         TerminateBecauseOutOfMemory(stack_size);
-        break;
 
       default:
         break;

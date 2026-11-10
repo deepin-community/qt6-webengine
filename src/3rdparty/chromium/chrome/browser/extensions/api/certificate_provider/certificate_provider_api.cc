@@ -51,7 +51,6 @@ PinErrorLabel GetErrorLabelForDialog(api_cp::PinRequestErrorType error_type) {
   }
 
   NOTREACHED();
-  return PinErrorLabel::kNone;
 }
 
 }  // namespace
@@ -167,9 +166,6 @@ scoped_refptr<net::X509Certificate> ParseCertificateDer(
       *out_error_message = kCertificateProviderErrorECDSANotSupported;
       return nullptr;
     case net::X509Certificate::kPublicKeyTypeUnknown:
-    case net::X509Certificate::kPublicKeyTypeDSA:
-    case net::X509Certificate::kPublicKeyTypeDH:
-    case net::X509Certificate::kPublicKeyTypeECDH:
       *out_error_message = kCertificateProviderErrorUnknownKeyType;
       return nullptr;
   }
@@ -206,7 +202,6 @@ bool ParseCertificateInfo(
         break;
       case api_cp::Hash::kNone:
         NOTREACHED();
-        return false;
     }
   }
   if (out_info->supported_algorithms.empty()) {
@@ -225,7 +220,7 @@ bool ParseClientCertificateInfo(
     return false;
   }
   if (info.certificate_chain.size() > 1) {
-    // TODO(crbug.com/1101854): Support passing certificate chains.
+    // TODO(crbug.com/40703788): Support passing certificate chains.
     *out_error_message = kCertificateProviderErrorChainTooLong;
     return false;
   }
@@ -264,7 +259,6 @@ bool ParseClientCertificateInfo(
         break;
       case api_cp::Algorithm::kNone:
         NOTREACHED();
-        return false;
     }
   }
   if (out_info->supported_algorithms.empty()) {
@@ -280,7 +274,7 @@ const int api::certificate_provider::kMaxClosedDialogsPerMinute = 10;
 const int api::certificate_provider::kMaxClosedDialogsPer10Minutes = 30;
 
 CertificateProviderInternalReportCertificatesFunction::
-    ~CertificateProviderInternalReportCertificatesFunction() {}
+    ~CertificateProviderInternalReportCertificatesFunction() = default;
 
 ExtensionFunction::ResponseAction
 CertificateProviderInternalReportCertificatesFunction::Run() {
@@ -314,7 +308,7 @@ CertificateProviderInternalReportCertificatesFunction::Run() {
     }
   }
 
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "Certificates provided by extension " << extension()->id()
                << ": " << cert_infos.size() << ", rejected "
                << rejected_certificates.size();
@@ -341,7 +335,7 @@ CertificateProviderStopPinRequestFunction::Run() {
       api_cp::StopPinRequest::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "Handling PIN stop request from extension "
                << extension()->id() << " error "
                << api_cp::ToString(params->details.error_type);
@@ -356,13 +350,13 @@ CertificateProviderStopPinRequestFunction::Run() {
     if (!dialog_closed) {
       // This might happen if the user closed the dialog while extension was
       // processing the input.
-      // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+      // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
       LOG(WARNING) << "PIN stop request failed: "
                    << kCertificateProviderNoActiveDialog;
       return RespondNow(Error(kCertificateProviderNoActiveDialog));
     }
 
-    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
     LOG(WARNING) << "PIN stop request succeeded";
     return RespondNow(NoArguments());
   }
@@ -388,19 +382,19 @@ CertificateProviderStopPinRequestFunction::Run() {
     case StopPinRequestResult::kSuccess:
       return RespondLater();
   }
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "PIN stop request failed: " << error_result;
   return RespondNow(Error(std::move(error_result)));
 }
 
 void CertificateProviderStopPinRequestFunction::OnPinRequestStopped() {
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "PIN stop request succeeded";
   Respond(NoArguments());
 }
 
 CertificateProviderRequestPinFunction::
-    ~CertificateProviderRequestPinFunction() {}
+    ~CertificateProviderRequestPinFunction() = default;
 
 bool CertificateProviderRequestPinFunction::ShouldSkipQuotaLimiting() const {
   chromeos::CertificateProviderService* const service =
@@ -465,7 +459,7 @@ ExtensionFunction::ResponseAction CertificateProviderRequestPinFunction::Run() {
     attempts_left = *params->details.attempts_left;
   }
 
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "Starting PIN request from extension " << extension()->id()
                << " signRequestId " << params->details.sign_request_id
                << " type " << api_cp::ToString(params->details.request_type)
@@ -491,7 +485,7 @@ ExtensionFunction::ResponseAction CertificateProviderRequestPinFunction::Run() {
       error_result = kCertificateProviderPreviousDialogActive;
       break;
   }
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "PIN request failed: " << error_result;
   return RespondNow(Error(std::move(error_result)));
 }
@@ -504,13 +498,13 @@ void CertificateProviderRequestPinFunction::OnInputReceived(
           browser_context());
   DCHECK(service);
   if (!value.empty()) {
-    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
     LOG(WARNING) << "PIN request succeeded";
     api::certificate_provider::PinResponseDetails details;
     details.user_input = value;
     create_results.Append(details.ToValue());
   } else {
-    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
     LOG(WARNING) << "PIN request canceled";
   }
 
@@ -547,7 +541,7 @@ CertificateProviderSetCertificatesFunction::Run() {
     }
   }
 
-  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  // TODO(crbug.com/40671053): Remove logging after stabilizing the feature.
   LOG(WARNING) << "Certificates provided by extension " << extension()->id()
                << ": " << accepted_certificates.size() << ", rejected "
                << rejected_certificates_count;
@@ -571,7 +565,7 @@ CertificateProviderSetCertificatesFunction::Run() {
 }
 
 CertificateProviderInternalReportSignatureFunction::
-    ~CertificateProviderInternalReportSignatureFunction() {}
+    ~CertificateProviderInternalReportSignatureFunction() = default;
 
 ExtensionFunction::ResponseAction
 CertificateProviderInternalReportSignatureFunction::Run() {

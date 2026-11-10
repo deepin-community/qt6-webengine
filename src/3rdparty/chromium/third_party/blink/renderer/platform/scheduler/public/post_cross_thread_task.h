@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_PUBLIC_POST_CROSS_THREAD_TASK_H_
 
 #include <utility>
+
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
@@ -27,6 +28,15 @@ inline bool PostDelayedCrossThreadTask(base::SequencedTaskRunner& task_runner,
                                        base::TimeDelta delay) {
   return task_runner.PostDelayedTask(
       location, ConvertToBaseOnceCallback(std::move(task)), delay);
+}
+
+inline bool PostCrossThreadTaskAndReply(base::SequencedTaskRunner& task_runner,
+                                        const base::Location& location,
+                                        WTF::CrossThreadOnceClosure task,
+                                        WTF::CrossThreadOnceClosure reply) {
+  return task_runner.PostTaskAndReply(
+      location, ConvertToBaseOnceCallback(std::move(task)),
+      ConvertToBaseOnceCallback(std::move(reply)));
 }
 
 }  // namespace blink

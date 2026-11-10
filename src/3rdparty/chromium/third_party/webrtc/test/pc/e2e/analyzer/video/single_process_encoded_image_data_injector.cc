@@ -10,12 +10,16 @@
 
 #include "test/pc/e2e/analyzer/video/single_process_encoded_image_data_injector.h"
 
-#include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <optional>
+#include <vector>
 
-#include "absl/memory/memory.h"
 #include "api/video/encoded_image.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/synchronization/mutex.h"
+#include "test/pc/e2e/analyzer/video/encoded_image_data_injector.h"
 
 namespace webrtc {
 namespace webrtc_pc_e2e {
@@ -100,7 +104,7 @@ EncodedImageExtractionResult SingleProcessEncodedImageDataInjector::ExtractData(
   }
 
   size_t prev_frames_size = 0;
-  absl::optional<uint16_t> id = absl::nullopt;
+  std::optional<uint16_t> id = std::nullopt;
   bool discard = true;
   std::vector<ExtractionInfo> extraction_infos;
   for (size_t frame_size : frame_sizes) {

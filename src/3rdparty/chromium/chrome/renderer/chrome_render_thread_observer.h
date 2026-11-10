@@ -9,7 +9,8 @@
 
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
+#include "chrome/common/privacy_budget/identifiability_study_configurator.mojom.h"
 #include "chrome/common/renderer_configuration.mojom.h"
 #include "components/content_settings/common/content_settings_manager.mojom.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -20,9 +21,9 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/renderer/chromeos_delayed_callback_group.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 class BoundSessionRequestThrottledInRendererManager;
@@ -37,10 +38,12 @@ class VisitedLinkReader;
 // a RenderView) for Chrome specific messages that the content layer doesn't
 // happen.  If a few messages are related, they should probably have their own
 // observer.
-class ChromeRenderThreadObserver : public content::RenderThreadObserver,
-                                   public chrome::mojom::RendererConfiguration {
+class ChromeRenderThreadObserver
+    : public content::RenderThreadObserver,
+      public chrome::mojom::RendererConfiguration,
+      public chrome::mojom::IdentifiabilityStudyConfigurator {
  public:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // A helper class to handle Mojo calls that need to be dispatched to the IO
   // thread instead of the main thread as is the norm.
   // This class is thread-safe.
@@ -82,7 +85,7 @@ class ChromeRenderThreadObserver : public content::RenderThreadObserver,
     mutable base::Lock lock_;
     mojo::Receiver<chrome::mojom::ChromeOSListener> receiver_{this};
   };
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   ChromeRenderThreadObserver();
 
@@ -91,8 +94,6 @@ class ChromeRenderThreadObserver : public content::RenderThreadObserver,
       delete;
 
   ~ChromeRenderThreadObserver() override;
-
-  static bool is_incognito_process() { return is_incognito_process_; }
 
   // Return a copy of the dynamic parameters - those that may change while the
   // render process is running.
@@ -107,11 +108,11 @@ class ChromeRenderThreadObserver : public content::RenderThreadObserver,
     return visited_link_reader_.get();
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   scoped_refptr<ChromeOSListener> chromeos_listener() const {
     return chromeos_listener_;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   content_settings::mojom::ContentSettingsManager* content_settings_manager() {
     if (content_settings_manager_)
@@ -140,11 +141,19 @@ class ChromeRenderThreadObserver : public content::RenderThreadObserver,
       mojo::PendingAssociatedReceiver<chrome::mojom::RendererConfiguration>
           receiver);
 
-  static bool is_incognito_process_;
+  // chrome::mojom::IdentifiabilityStudyConfigurator:
+  void ConfigureIdentifiabilityStudy(bool meta_experiment_active) override;
+  void OnIdentifiabilityStudyConfiguratorAssociatedRequest(
+      mojo::PendingAssociatedReceiver<
+          chrome::mojom::IdentifiabilityStudyConfigurator> receiver);
+
   mojo::Remote<content_settings::mojom::ContentSettingsManager>
       content_settings_manager_;
 
   std::unique_ptr<visitedlink::VisitedLinkReader> visited_link_reader_;
+
+  mojo::AssociatedReceiverSet<chrome::mojom::IdentifiabilityStudyConfigurator>
+      identifiability_study_configurator_receivers_;
 
   mojo::AssociatedReceiverSet<chrome::mojom::RendererConfiguration>
       renderer_configuration_receivers_;
@@ -153,11 +162,11 @@ class ChromeRenderThreadObserver : public content::RenderThreadObserver,
       GUARDED_BY(dynamic_params_lock_);
   mutable base::Lock dynamic_params_lock_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Only set if the Chrome OS merge session was running when the renderer
+#if BUILDFLAG(IS_CHROMEOS)
+  // Only set if the ChromeOS merge session was running when the renderer
   // was started.
   scoped_refptr<ChromeOSListener> chromeos_listener_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   scoped_refptr<BoundSessionRequestThrottledInRendererManager>

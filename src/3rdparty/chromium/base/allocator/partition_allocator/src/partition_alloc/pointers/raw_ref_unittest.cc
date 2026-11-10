@@ -2,22 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/pointers/raw_ref.h"
 
 #include <functional>
 #include <type_traits>
 
-#include "base/memory/raw_ptr.h"
 #include "base/test/gtest_util.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
+#include "partition_alloc/buildflags.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 #include "partition_alloc/pointers/raw_ptr_counting_impl_for_test.h"
 #include "partition_alloc/pointers/raw_ptr_test_support.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#if BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
+#if PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
 #include "base/debug/asan_service.h"
 #include "base/memory/raw_ptr_asan_service.h"
-#endif  // BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
+#endif  // PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
 
 namespace {
 
@@ -553,54 +557,67 @@ TEST(RawRef, GreaterThanOrEqual) {
 }
 
 // Death Tests: If we're only using the no-op version of `raw_ptr` and
-// have `!BUILDFLAG(PA_DCHECK_IS_ON)`, the `PA_RAW_PTR_CHECK()`s used in
+// have `!PA_BUILDFLAG(DCHECKS_ARE_ON)`, the `PA_RAW_PTR_CHECK()`s used in
 // `raw_ref` evaluate to nothing. Therefore, death tests relying on
 // these CHECKs firing are disabled in their absence.
 
-#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) || \
-    BUILDFLAG(USE_ASAN_BACKUP_REF_PTR) || BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) || \
+    PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR) || PA_BUILDFLAG(DCHECKS_ARE_ON)
 
 TEST(RawRefDeathTest, CopyConstructAfterMove) {
   int i = 1;
   auto r = raw_ref<int>(i);
   auto r2 = std::move(r);
-  EXPECT_CHECK_DEATH({ [[maybe_unused]] auto r3 = r; });
+  EXPECT_CHECK_DEATH({
+    [[maybe_unused]] auto r3 = r;  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, MoveConstructAfterMove) {
   int i = 1;
   auto r = raw_ref<int>(i);
   auto r2 = std::move(r);
-  EXPECT_CHECK_DEATH({ [[maybe_unused]] auto r3 = std::move(r); });
+  EXPECT_CHECK_DEATH({
+    [[maybe_unused]] auto r3 = std::move(r);  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, CopyAssignAfterMove) {
   int i = 1;
   auto r = raw_ref<int>(i);
   auto r2 = std::move(r);
-  EXPECT_CHECK_DEATH({ r2 = r; });
+  EXPECT_CHECK_DEATH({
+    r2 = r;  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, MoveAssignAfterMove) {
   int i = 1;
   auto r = raw_ref<int>(i);
   auto r2 = std::move(r);
-  EXPECT_CHECK_DEATH({ r2 = std::move(r); });
+  EXPECT_CHECK_DEATH({
+    r2 = std::move(r);  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, CopyConstructAfterMoveUpCast) {
   auto s = SubClass();
   auto r = raw_ref<SubClass>(s);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH({ [[maybe_unused]] auto r2 = raw_ref<BaseClass>(r); });
+  EXPECT_CHECK_DEATH({
+    [[maybe_unused]] auto r2 =
+        raw_ref<BaseClass>(r);  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, MoveConstructAfterMoveUpCast) {
   auto s = SubClass();
   auto r = raw_ref<SubClass>(s);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH(
-      { [[maybe_unused]] auto r2 = raw_ref<BaseClass>(std::move(r)); });
+  EXPECT_CHECK_DEATH({
+    [[maybe_unused]] auto r2 =
+        raw_ref<BaseClass>(std::move(r));  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, FromPtrWithNullptr) {
@@ -613,7 +630,9 @@ TEST(RawRefDeathTest, CopyAssignAfterMoveUpCast) {
   auto t = BaseClass();
   auto rt = raw_ref<const BaseClass>(t);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH({ rt = r; });
+  EXPECT_CHECK_DEATH({
+    rt = r;  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, MoveAssignAfterMoveUpCast) {
@@ -622,21 +641,27 @@ TEST(RawRefDeathTest, MoveAssignAfterMoveUpCast) {
   auto t = BaseClass();
   auto rt = raw_ref<const BaseClass>(t);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH({ rt = std::move(r); });
+  EXPECT_CHECK_DEATH({
+    rt = std::move(r);  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, DerefAfterMove) {
   int i;
   auto r = raw_ref<int>(i);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH({ r.operator*(); });
+  EXPECT_CHECK_DEATH({
+    r.operator*();  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, ArrowAfterMove) {
   int i;
   auto r = raw_ref<int>(i);
   auto moved = std::move(r);
-  EXPECT_CHECK_DEATH({ r.operator->(); });
+  EXPECT_CHECK_DEATH({
+    r.operator->();  // NOLINT(bugprone-use-after-move)
+  });
 }
 
 TEST(RawRefDeathTest, SwapAfterMove) {
@@ -647,7 +672,9 @@ TEST(RawRefDeathTest, SwapAfterMove) {
     auto rj = raw_ref<int>(j);
 
     auto moved = std::move(ri);
-    EXPECT_CHECK_DEATH({ swap(ri, rj); });
+    EXPECT_CHECK_DEATH({
+      swap(ri, rj);  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i;
@@ -656,7 +683,9 @@ TEST(RawRefDeathTest, SwapAfterMove) {
     auto rj = raw_ref<int>(j);
 
     auto moved = std::move(rj);
-    EXPECT_CHECK_DEATH({ swap(ri, rj); });
+    EXPECT_CHECK_DEATH({
+      swap(ri, rj);  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -666,20 +695,26 @@ TEST(RawRefDeathTest, EqualsAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 == r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 == r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 == r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 == r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 == r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 == r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -689,20 +724,26 @@ TEST(RawRefDeathTest, NotEqualsAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 != r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 != r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 != r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 != r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 != r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 != r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -712,20 +753,26 @@ TEST(RawRefDeathTest, LessThanAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 < r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 < r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 < r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 < r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 < r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 < r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -735,20 +782,26 @@ TEST(RawRefDeathTest, GreaterThanAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 > r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 > r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 > r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 > r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 > r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 > r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -758,20 +811,26 @@ TEST(RawRefDeathTest, LessThanOrEqualAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 <= r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 <= r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 <= r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 <= r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 <= r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 <= r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
@@ -781,26 +840,32 @@ TEST(RawRefDeathTest, GreaterThanOrEqualAfterMove) {
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 >= r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 >= r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto r2 = raw_ref<int>(i);
     auto moved = std::move(r2);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 >= r2; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 >= r2;  // NOLINT(bugprone-use-after-move)
+    });
   }
   {
     int i = 1;
     auto r1 = raw_ref<int>(i);
     auto moved = std::move(r1);
-    EXPECT_CHECK_DEATH({ [[maybe_unused]] bool b = r1 >= r1; });
+    EXPECT_CHECK_DEATH({
+      [[maybe_unused]] bool b = r1 >= r1;  // NOLINT(bugprone-use-after-move)
+    });
   }
 }
 
-#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) ||
-        // BUILDFLAG(USE_ASAN_BACKUP_REF_PTR) ||
-        // BUILDFLAG(PA_DCHECK_IS_ON)
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) ||
+        // PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR) ||
+        // PA_BUILDFLAG(DCHECKS_ARE_ON)
 
 TEST(RawRef, CTAD) {
   int i = 1;
@@ -958,7 +1023,7 @@ TEST(RawRef, CrossKindAssignment) {
               CountersMatch());
 }
 
-#if BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
+#if PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
 
 TEST(AsanBackupRefPtrImpl, RawRefGet) {
   base::debug::AsanService::GetInstance()->Initialize();
@@ -1012,6 +1077,6 @@ TEST(AsanBackupRefPtrImpl, RawRefOperatorStar) {
   [[maybe_unused]] volatile int& ref = *safe_ref;
 }
 
-#endif  // BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
+#endif  // PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
 
 }  // namespace

@@ -10,21 +10,33 @@
 
 #include "audio/voip/audio_egress.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <utility>
-#include <vector>
 
+#include "api/array_view.h"
+#include "api/audio/audio_frame.h"
+#include "api/audio_codecs/audio_encoder.h"
+#include "api/audio_codecs/audio_format.h"
+#include "api/environment/environment.h"
 #include "api/sequence_checker.h"
+#include "api/task_queue/task_queue_factory.h"
+#include "audio/utility/audio_frame_operations.h"
+#include "modules/audio_coding/include/audio_coding_module.h"
+#include "modules/audio_coding/include/audio_coding_module_typedefs.h"
+#include "modules/rtp_rtcp/source/rtp_rtcp_interface.h"
+#include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/numerics/safe_conversions.h"
 
 namespace webrtc {
 
-AudioEgress::AudioEgress(RtpRtcpInterface* rtp_rtcp,
-                         Clock* clock,
-                         TaskQueueFactory* task_queue_factory)
+AudioEgress::AudioEgress(const Environment& env, RtpRtcpInterface* rtp_rtcp)
     : rtp_rtcp_(rtp_rtcp),
-      rtp_sender_audio_(clock, rtp_rtcp_->RtpSender()),
+      rtp_sender_audio_(&env.clock(), rtp_rtcp_->RtpSender()),
       audio_coding_(AudioCodingModule::Create()),
-      encoder_queue_(task_queue_factory->CreateTaskQueue(
+      encoder_queue_(env.task_queue_factory().CreateTaskQueue(
           "AudioEncoder",
           TaskQueueFactory::Priority::NORMAL)),
       encoder_queue_checker_(encoder_queue_.get()) {
@@ -109,7 +121,7 @@ void AudioEgress::SendAudioData(std::unique_ptr<AudioFrame> audio_frame) {
         }
 
         encoder_context_.frame_rtp_timestamp_ +=
-            rtc::dchecked_cast<uint32_t>(audio_frame->samples_per_channel_);
+            dchecked_cast<uint32_t>(audio_frame->samples_per_channel_);
       });
 }
 
@@ -120,7 +132,7 @@ int32_t AudioEgress::SendData(AudioFrameType frame_type,
                               size_t payload_size) {
   RTC_DCHECK_RUN_ON(&encoder_queue_checker_);
 
-  rtc::ArrayView<const uint8_t> payload(payload_data, payload_size);
+  ArrayView<const uint8_t> payload(payload_data, payload_size);
 
   // Currently we don't get a capture time from downstream modules (ADM,
   // AudioTransportImpl).

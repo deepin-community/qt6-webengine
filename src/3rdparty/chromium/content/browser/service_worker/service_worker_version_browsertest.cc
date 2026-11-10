@@ -28,7 +28,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/browser/service_worker/embedded_worker_instance.h"
-#include "content/browser/service_worker/service_worker_container_host.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
@@ -124,10 +124,11 @@ void ExpectRegisterResultAndRun(blink::ServiceWorkerStatusCode expected,
   continuation.Run();
 }
 
-void ExpectUnregisterResultAndRun(bool expected,
-                                  base::RepeatingClosure continuation,
-                                  bool actual) {
-  EXPECT_EQ(expected, actual);
+void ExpectUnregisterResultAndRun(
+    blink::ServiceWorkerStatusCode expected_status,
+    base::RepeatingClosure continuation,
+    blink::ServiceWorkerStatusCode actual_status) {
+  EXPECT_EQ(expected_status, actual_status);
   continuation.Run();
 }
 
@@ -343,7 +344,10 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
         partition->GetServiceWorkerContext()));
   }
 
-  void TearDownOnMainThread() override { wrapper_.reset(); }
+  void TearDownOnMainThread() override {
+    wrapper_.reset();
+    service_worker_client_keep_alive_.clear();
+  }
 
   blink::ServiceWorkerStatusCode Install(
       const std::string& worker_url,
@@ -444,7 +448,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
         wrapper()->context()->registry(), registration_.get(),
         embedded_test_server()->GetURL(worker_url), script_type);
     // Make the registration findable via storage functions.
-    wrapper()->context()->registry()->NotifyInstallingRegistration(
+    wrapper()->context()->registry().NotifyInstallingRegistration(
         registration_.get());
   }
 
@@ -456,19 +460,13 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
 
   void AddControllee() {
     ASSERT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
-    remote_endpoints_.emplace_back();
-    base::WeakPtr<ServiceWorkerContainerHost> container_host =
-        CreateContainerHostForWindow(
-            GlobalRenderFrameHostId(/*mock process_id=*/33,
-                                    /*mock frame_routing_id=*/1),
-            /*is_parent_frame_secure=*/true, wrapper()->context()->AsWeakPtr(),
-            &remote_endpoints_.back());
     const GURL url = embedded_test_server()->GetURL("/service_worker/host");
-    container_host->UpdateUrls(
-        url, url::Origin::Create(url),
-        blink::StorageKey::CreateFirstParty(url::Origin::Create(url)));
-    container_host->SetControllerRegistration(
+    ScopedServiceWorkerClient service_worker_client =
+        CreateServiceWorkerClient(wrapper()->context(), url);
+    service_worker_client->SetControllerRegistration(
         registration_, false /* notify_controllerchange */);
+    service_worker_client_keep_alive_.push_back(
+        std::move(service_worker_client));
   }
 
   void AddWaitingWorker(const std::string& worker_url) {
@@ -511,7 +509,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
     blink::ServiceWorkerStatusCode status;
     ServiceWorkerVersion* version =
         wrapper()->context()->GetLiveVersion(version_id);
-    wrapper()->context()->registry()->StoreRegistration(
+    wrapper()->context()->registry().StoreRegistration(
         registration_.get(), version,
         base::BindLambdaForTesting(
             [&](blink::ServiceWorkerStatusCode actual_status) {
@@ -521,7 +519,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
             }));
     run_loop.Run();
 
-    wrapper()->context()->registry()->NotifyDoneInstallingRegistration(
+    wrapper()->context()->registry().NotifyDoneInstallingRegistration(
         registration_.get(), version_.get(), status);
   }
 
@@ -557,7 +555,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
     blink::ServiceWorkerStatusCode status =
         blink::ServiceWorkerStatusCode::kErrorFailed;
     base::RunLoop run_loop;
-    wrapper()->context()->registry()->FindRegistrationForId(
+    wrapper()->context()->registry().FindRegistrationForId(
         id, key,
         base::BindLambdaForTesting(
             [&](blink::ServiceWorkerStatusCode actual_status,
@@ -628,7 +626,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
     // Using CreateSimpleEventCallback() causes `callback` to be
     // called when the event finishes successfully, even though
     // it is called the "error callback" to StartRequest().
-    // TODO(https://crbug.com/1251834): Clean up the callback handling for
+    // TODO(crbug.com/40792768): Clean up the callback handling for
     // StartRequest().
     int request_id = version_->StartRequest(
         ServiceWorkerMetrics::EventType::ACTIVATE, std::move(callback));
@@ -657,8 +655,8 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
     }
     fetch_dispatcher_ = std::make_unique<ServiceWorkerFetchDispatcher>(
         std::move(request), destination, std::string() /* client_id */,
-        version_, std::move(prepare_callback), std::move(fetch_callback),
-        /*is_offline_cpability_check=*/false);
+        std::string() /* resulting_client_id */, version_,
+        std::move(prepare_callback), std::move(fetch_callback));
     fetch_dispatcher_->Run();
   }
 
@@ -750,7 +748,7 @@ class ServiceWorkerVersionBrowserTest : public ContentBrowserTest {
   scoped_refptr<ServiceWorkerVersion> version_;
   scoped_refptr<ServiceWorkerContextWrapper> wrapper_;
   std::unique_ptr<ServiceWorkerFetchDispatcher> fetch_dispatcher_;
-  std::vector<ServiceWorkerRemoteContainerEndpoint> remote_endpoints_;
+  std::vector<ScopedServiceWorkerClient> service_worker_client_keep_alive_;
 };
 
 class WaitForLoaded : public EmbeddedWorkerInstance::Listener {
@@ -780,8 +778,9 @@ class MockContentBrowserClient : public ContentBrowserTestContentBrowserClient {
     return data_saver_enabled_;
   }
 
-  void OverrideWebkitPrefs(WebContents* web_contents,
-                           blink::web_pref::WebPreferences* prefs) override {
+  void OverrideWebPreferences(WebContents* web_contents,
+                              SiteInstance& main_frame_site,
+                              blink::web_pref::WebPreferences* prefs) override {
     prefs->data_saver_enabled = data_saver_enabled_;
   }
 
@@ -1375,7 +1374,8 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   base::RunLoop run_loop;
   public_context()->UnregisterServiceWorker(
       embedded_test_server()->GetURL(kScope), key,
-      base::BindOnce(&ExpectUnregisterResultAndRun, true,
+      base::BindOnce(&ExpectUnregisterResultAndRun,
+                     blink::ServiceWorkerStatusCode::kOk,
                      run_loop.QuitClosure()));
   run_loop.Run();
 }
@@ -1421,7 +1421,8 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   base::RunLoop run_loop;
   public_context()->UnregisterServiceWorker(
       embedded_test_server()->GetURL(kScope), key,
-      base::BindOnce(&ExpectUnregisterResultAndRun, true,
+      base::BindOnce(&ExpectUnregisterResultAndRun,
+                     blink::ServiceWorkerStatusCode::kOk,
                      run_loop.QuitClosure()));
   run_loop.Run();
 }

@@ -6,9 +6,11 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <limits>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
@@ -46,7 +48,8 @@ std::unique_ptr<SessionCommand> CreateCommandFromData(const TestData& data) {
       data.command_id,
       static_cast<SessionCommand::size_type>(data.data.size()));
   if (!data.data.empty())
-    memcpy(command->contents(), data.data.c_str(), data.data.size());
+    UNSAFE_TODO(
+        memcpy(command->contents(), data.data.c_str(), data.data.size()));
   return command;
 }
 
@@ -67,8 +70,8 @@ class CommandStorageBackendTest : public testing::Test {
                                const SessionCommand* command) {
     EXPECT_EQ(data.command_id, command->id());
     EXPECT_EQ(data.data.size(), command->size());
-    EXPECT_TRUE(
-        memcmp(command->contents(), data.data.c_str(), command->size()) == 0);
+    UNSAFE_TODO(EXPECT_TRUE(
+        memcmp(command->contents(), data.data.c_str(), command->size()) == 0));
   }
 
   void AssertCommandsEqualsData(
@@ -77,8 +80,8 @@ class CommandStorageBackendTest : public testing::Test {
       const std::vector<std::unique_ptr<SessionCommand>>& commands) {
     ASSERT_EQ(data_length, commands.size());
     for (size_t i = 0; i < data_length; ++i)
-      EXPECT_NO_FATAL_FAILURE(
-          AssertCommandEqualsData(data[i], commands[i].get()));
+      UNSAFE_TODO(EXPECT_NO_FATAL_FAILURE(
+          AssertCommandEqualsData(data[i], commands[i].get())));
   }
 
   scoped_refptr<CommandStorageBackend> CreateBackend(
@@ -97,7 +100,7 @@ class CommandStorageBackendTest : public testing::Test {
   }
 
   // Functions that call into private members of CommandStorageBackend.
-  absl::optional<CommandStorageBackend::SessionInfo> GetLastSessionInfo(
+  std::optional<CommandStorageBackend::SessionInfo> GetLastSessionInfo(
       CommandStorageBackend* backend) {
     // Force `last_session_info_` to be updated.
     backend->InitIfNecessary();
@@ -197,7 +200,7 @@ TEST_F(CommandStorageBackendTest, SimpleReadWriteEncrypted) {
 }
 
 TEST_F(CommandStorageBackendTest, RandomDataEncrypted) {
-  struct TestData data[] = {
+  auto data = std::to_array<TestData>({
       {1, "a"},
       {2, "ab"},
       {3, "abc"},
@@ -211,7 +214,7 @@ TEST_F(CommandStorageBackendTest, RandomDataEncrypted) {
       {11, "abcdefghijk"},
       {12, "abcdefghijkl"},
       {13, "abcdefghijklm"},
-  };
+  });
 
   const std::vector<uint8_t> key = CommandStorageManager::CreateCryptoKey();
   for (size_t i = 0; i < std::size(data); ++i) {
@@ -235,10 +238,10 @@ TEST_F(CommandStorageBackendTest, RandomDataEncrypted) {
 }
 
 TEST_F(CommandStorageBackendTest, BigDataEncrypted) {
-  struct TestData data[] = {
+  auto data = std::to_array<TestData>({
       {1, "a"},
       {2, "ab"},
-  };
+  });
 
   const std::vector<uint8_t> key = CommandStorageManager::CreateCryptoKey();
   scoped_refptr<CommandStorageBackend> backend = CreateBackend();
@@ -251,7 +254,8 @@ TEST_F(CommandStorageBackendTest, BigDataEncrypted) {
   std::unique_ptr<SessionCommand> big_command =
       std::make_unique<SessionCommand>(big_id, big_size);
   reinterpret_cast<char*>(big_command->contents())[0] = 'a';
-  reinterpret_cast<char*>(big_command->contents())[big_size - 1] = 'z';
+  UNSAFE_TODO(reinterpret_cast<char*>(big_command->contents())[big_size - 1]) =
+      'z';
   commands.push_back(std::move(big_command));
   commands.push_back(CreateCommandFromData(data[1]));
   backend->AppendCommands(std::move(commands), true, base::DoNothing(), key);
@@ -267,8 +271,8 @@ TEST_F(CommandStorageBackendTest, BigDataEncrypted) {
   EXPECT_EQ(big_id, commands[1]->id());
   ASSERT_EQ(big_size, commands[1]->size());
   EXPECT_EQ('a', reinterpret_cast<char*>(commands[1]->contents())[0]);
-  EXPECT_EQ('z',
-            reinterpret_cast<char*>(commands[1]->contents())[big_size - 1]);
+  UNSAFE_TODO(EXPECT_EQ(
+      'z', reinterpret_cast<char*>(commands[1]->contents())[big_size - 1]));
 }
 
 TEST_F(CommandStorageBackendTest, MarkerOnlyEncrypted) {
@@ -318,7 +322,7 @@ std::unique_ptr<SessionCommand> CreateCommandWithMaxSize() {
   std::unique_ptr<SessionCommand> command =
       std::make_unique<SessionCommand>(11, max_size_value);
   for (int i = 0; i <= max_size_value; ++i)
-    (command->contents())[i] = i;
+    UNSAFE_TODO((command->contents())[i]) = i;
   return command;
 }
 
@@ -344,8 +348,9 @@ TEST_F(CommandStorageBackendTest, MaxSizeTypeEncrypted) {
       CommandStorageBackend::kEncryptionOverheadInBytes -
       sizeof(SessionCommand::id_type);
   ASSERT_EQ(expected_size, (commands[0])->size());
-  EXPECT_TRUE(memcmp(commands[0]->contents(), expected_command->contents(),
-                     expected_size) == 0);
+  UNSAFE_TODO(
+      EXPECT_TRUE(memcmp(commands[0]->contents(), expected_command->contents(),
+                         expected_size) == 0));
 }
 
 TEST_F(CommandStorageBackendTest, MaxSizeType) {
@@ -366,8 +371,9 @@ TEST_F(CommandStorageBackendTest, MaxSizeType) {
   const size_type expected_size =
       expected_command->size() - sizeof(SessionCommand::id_type);
   ASSERT_EQ(expected_size, (commands[0])->size());
-  EXPECT_TRUE(memcmp(commands[0]->contents(), expected_command->contents(),
-                     expected_size) == 0);
+  UNSAFE_TODO(
+      EXPECT_TRUE(memcmp(commands[0]->contents(), expected_command->contents(),
+                         expected_size) == 0));
 }
 
 TEST_F(CommandStorageBackendTest, IsValidFileWithInvalidFiles) {
@@ -417,7 +423,7 @@ TEST_F(CommandStorageBackendTest, SimpleReadWriteWithRestoreType) {
 }
 
 TEST_F(CommandStorageBackendTest, RandomDataWithRestoreType) {
-  struct TestData data[] = {
+  auto data = std::to_array<TestData>({
       {1, "a"},
       {2, "ab"},
       {3, "abc"},
@@ -431,7 +437,7 @@ TEST_F(CommandStorageBackendTest, RandomDataWithRestoreType) {
       {11, "abcdefghijk"},
       {12, "abcdefghijkl"},
       {13, "abcdefghijklm"},
-  };
+  });
 
   for (size_t i = 0; i < std::size(data); ++i) {
     scoped_refptr<CommandStorageBackend> backend =
@@ -454,10 +460,10 @@ TEST_F(CommandStorageBackendTest, RandomDataWithRestoreType) {
 }
 
 TEST_F(CommandStorageBackendTest, BigDataWithRestoreType) {
-  struct TestData data[] = {
+  auto data = std::to_array<TestData>({
       {1, "a"},
       {2, "ab"},
-  };
+  });
 
   scoped_refptr<CommandStorageBackend> backend = CreateBackendWithRestoreType();
   std::vector<std::unique_ptr<SessionCommand>> commands;
@@ -469,7 +475,8 @@ TEST_F(CommandStorageBackendTest, BigDataWithRestoreType) {
   std::unique_ptr<SessionCommand> big_command =
       std::make_unique<SessionCommand>(big_id, big_size);
   reinterpret_cast<char*>(big_command->contents())[0] = 'a';
-  reinterpret_cast<char*>(big_command->contents())[big_size - 1] = 'z';
+  UNSAFE_TODO(reinterpret_cast<char*>(big_command->contents())[big_size - 1]) =
+      'z';
   commands.push_back(std::move(big_command));
   commands.push_back(CreateCommandFromData(data[1]));
   backend->AppendCommands(std::move(commands), true, base::DoNothing());
@@ -485,8 +492,8 @@ TEST_F(CommandStorageBackendTest, BigDataWithRestoreType) {
   EXPECT_EQ(big_id, commands[1]->id());
   ASSERT_EQ(big_size, commands[1]->size());
   EXPECT_EQ('a', reinterpret_cast<char*>(commands[1]->contents())[0]);
-  EXPECT_EQ('z',
-            reinterpret_cast<char*>(commands[1]->contents())[big_size - 1]);
+  UNSAFE_TODO(EXPECT_EQ(
+      'z', reinterpret_cast<char*>(commands[1]->contents())[big_size - 1]));
 }
 
 TEST_F(CommandStorageBackendTest, CommandWithRestoreType) {

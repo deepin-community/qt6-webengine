@@ -9,10 +9,8 @@ import * as SDK from '../../core/sdk/sdk.js';
 let contrastCheckTriggerInstance: ContrastCheckTrigger|null = null;
 
 export class ContrastCheckTrigger {
-  #pageLoadListeners: WeakMap<SDK.ResourceTreeModel.ResourceTreeModel, Common.EventTarget.EventDescriptor> =
-      new WeakMap();
-  #frameAddedListeners: WeakMap<SDK.ResourceTreeModel.ResourceTreeModel, Common.EventTarget.EventDescriptor> =
-      new WeakMap();
+  #pageLoadListeners = new WeakMap<SDK.ResourceTreeModel.ResourceTreeModel, Common.EventTarget.EventDescriptor>();
+  #frameAddedListeners = new WeakMap<SDK.ResourceTreeModel.ResourceTreeModel, Common.EventTarget.EventDescriptor>();
 
   constructor() {
     SDK.TargetManager.TargetManager.instance().observeModels(SDK.ResourceTreeModel.ResourceTreeModel, this);
@@ -47,7 +45,7 @@ export class ContrastCheckTrigger {
   }
 
   #checkContrast(resourceTreeModel: SDK.ResourceTreeModel.ResourceTreeModel): void {
-    if (!Root.Runtime.experiments.isEnabled('contrastIssues')) {
+    if (!Root.Runtime.experiments.isEnabled('contrast-issues')) {
       return;
     }
     void resourceTreeModel.target().auditsAgent().invoke_checkContrast({});
@@ -62,7 +60,7 @@ export class ContrastCheckTrigger {
 
   async #frameAdded(event: Common.EventTarget.EventTargetEvent<SDK.ResourceTreeModel.ResourceTreeFrame>):
       Promise<void> {
-    if (!Root.Runtime.experiments.isEnabled('contrastIssues')) {
+    if (!Root.Runtime.experiments.isEnabled('contrast-issues')) {
       return;
     }
     const frame = event.data;

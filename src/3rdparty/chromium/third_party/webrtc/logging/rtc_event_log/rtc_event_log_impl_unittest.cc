@@ -10,9 +10,20 @@
 
 #include "logging/rtc_event_log/rtc_event_log_impl.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <string>
 #include <utility>
-#include <vector>
 
+#include "absl/strings/string_view.h"
+#include "api/rtc_event_log/rtc_event.h"
+#include "api/rtc_event_log_output.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
+#include "logging/rtc_event_log/encoder/rtc_event_log_encoder.h"
+#include "rtc_base/checks.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 #include "test/time_controller/simulated_time_controller.h"
@@ -27,7 +38,6 @@ using ::testing::Mock;
 using ::testing::Property;
 using ::testing::Ref;
 using ::testing::Return;
-using ::testing::StrEq;
 
 class MockEventEncoder : public RtcEventLogEncoder {
  public:
@@ -56,7 +66,7 @@ class FakeOutput : public RtcEventLogOutput {
  public:
   explicit FakeOutput(std::string& written_data)
       : written_data_(written_data) {}
-  bool IsActive() const { return is_active_; }
+  bool IsActive() const override { return is_active_; }
   bool Write(absl::string_view data) override {
     RTC_DCHECK(is_active_);
     if (fails_write_) {

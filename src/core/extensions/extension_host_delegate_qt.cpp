@@ -1,5 +1,6 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "extension_host_delegate_qt.h"
 
@@ -27,17 +28,6 @@ ExtensionHostDelegateQt::ExtensionHostDelegateQt()
 void ExtensionHostDelegateQt::OnExtensionHostCreated(content::WebContents *web_contents)
 {
     extensions::ExtensionWebContentsObserverQt::CreateForWebContents(web_contents);
-}
-
-void ExtensionHostDelegateQt::OnMainFrameCreatedForBackgroundPage(ExtensionHost *host)
-{
-    Q_UNUSED(host);
-}
-
-content::JavaScriptDialogManager *ExtensionHostDelegateQt::GetJavaScriptDialogManager()
-{
-    Q_UNREACHABLE();
-    return nullptr;
 }
 
 void ExtensionHostDelegateQt::CreateTab(std::unique_ptr<content::WebContents> web_contents,
@@ -95,16 +85,14 @@ bool ExtensionHostDelegateQt::CheckMediaAccessPermission(
     Q_UNUSED(type);
     Q_UNUSED(extension);
 
-    Q_UNREACHABLE();
-    return false;
+    Q_UNREACHABLE_RETURN(false);
 }
 
 content::PictureInPictureResult ExtensionHostDelegateQt::EnterPictureInPicture(content::WebContents *web_contents)
 {
     Q_UNUSED(web_contents);
 
-    Q_UNREACHABLE();
-    return content::PictureInPictureResult::kNotSupported;
+    Q_UNREACHABLE_RETURN(content::PictureInPictureResult::kNotSupported);
 }
 
 void ExtensionHostDelegateQt::ExitPictureInPicture()

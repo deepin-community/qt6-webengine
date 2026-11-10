@@ -15,7 +15,6 @@
 #include "components/viz/service/display/delegated_ink_point_pixel_test_helper.h"
 #include "components/viz/service/display/surface_aggregator.h"
 #include "components/viz/service/display/viz_pixel_test.h"
-#include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/surfaces/surface.h"
@@ -38,13 +37,13 @@ constexpr bool kIsChildRoot = false;
 class SurfaceAggregatorPixelTest : public VizPixelTestWithParam {
  public:
   SurfaceAggregatorPixelTest()
-      : manager_(FrameSinkManagerImpl::InitParams(&shared_bitmap_manager_)),
+      : manager_(FrameSinkManagerImpl::InitParams()),
         support_(std::make_unique<CompositorFrameSinkSupport>(
             nullptr,
             &manager_,
             kArbitraryRootFrameSinkId,
             kIsRoot)) {}
-  ~SurfaceAggregatorPixelTest() override {}
+  ~SurfaceAggregatorPixelTest() override = default;
 
   base::TimeTicks GetNextDisplayTime() {
     base::TimeTicks display_time = next_display_time_;
@@ -53,7 +52,6 @@ class SurfaceAggregatorPixelTest : public VizPixelTestWithParam {
   }
 
  protected:
-  ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;
   ParentLocalSurfaceIdAllocator root_allocator_;
   std::unique_ptr<CompositorFrameSinkSupport> support_;
@@ -80,7 +78,7 @@ SharedQuadState* CreateAndAppendTestSharedQuadState(
   const SkBlendMode blend_mode = SkBlendMode::kSrcOver;
   auto* shared_state = render_pass->CreateAndAppendSharedQuadState();
   shared_state->SetAll(transform, layer_rect, visible_layer_rect,
-                       mask_filter_info, /*clip=*/absl::nullopt,
+                       mask_filter_info, /*clip=*/std::nullopt,
                        are_contents_opaque, opacity, blend_mode,
                        /*sorting_context=*/0,
                        /*layer_id=*/0u, /*fast_rounded_corner=*/false);
@@ -112,7 +110,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawSimpleFrame) {
       this->root_allocator_.GetCurrentLocalSurfaceId(), std::move(root_frame));
 
   SurfaceAggregator aggregator(this->manager_.surface_manager(),
-                               this->resource_provider_.get(), true, false);
+                               this->resource_provider_.get(), false);
   auto aggregated_frame = aggregator.Aggregate(
       root_surface_id, this->GetNextDisplayTime(), gfx::OVERLAY_TRANSFORM_NONE);
 
@@ -153,7 +151,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawSimpleAggregatedFrame) {
     auto* surface_quad = pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     surface_quad->SetNew(
         pass->shared_quad_state_list.back(), gfx::Rect(child_size),
-        gfx::Rect(child_size), SurfaceRange(absl::nullopt, child_surface_id),
+        gfx::Rect(child_size), SurfaceRange(std::nullopt, child_surface_id),
         SkColors::kWhite, /*stretch_content_to_fill_bounds=*/false);
 
     auto* color_quad = pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
@@ -190,7 +188,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawSimpleAggregatedFrame) {
   }
 
   SurfaceAggregator aggregator(this->manager_.surface_manager(),
-                               this->resource_provider_.get(), true, false);
+                               this->resource_provider_.get(), false);
   auto aggregated_frame = aggregator.Aggregate(
       root_surface_id, this->GetNextDisplayTime(), gfx::OVERLAY_TRANSFORM_NONE);
 
@@ -246,7 +244,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
     auto* left_surface_quad = pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     left_surface_quad->SetNew(
         pass->shared_quad_state_list.back(), gfx::Rect(child_size),
-        gfx::Rect(child_size), SurfaceRange(absl::nullopt, left_child_id),
+        gfx::Rect(child_size), SurfaceRange(std::nullopt, left_child_id),
         SkColors::kWhite, /*stretch_content_to_fill_bounds=*/false);
 
     surface_transform.Translate(100, 0);
@@ -256,7 +254,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
     auto* right_surface_quad = pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     right_surface_quad->SetNew(
         pass->shared_quad_state_list.back(), gfx::Rect(child_size),
-        gfx::Rect(child_size), SurfaceRange(absl::nullopt, right_child_id),
+        gfx::Rect(child_size), SurfaceRange(std::nullopt, right_child_id),
         SkColors::kWhite, /*stretch_content_to_fill_bounds=*/false);
 
     auto root_frame =
@@ -323,7 +321,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
   }
 
   SurfaceAggregator aggregator(this->manager_.surface_manager(),
-                               this->resource_provider_.get(), true, false);
+                               this->resource_provider_.get(), false);
   auto aggregated_frame = aggregator.Aggregate(
       root_surface_id, this->GetNextDisplayTime(), gfx::OVERLAY_TRANSFORM_NONE);
 
@@ -350,7 +348,8 @@ TEST_P(SurfaceAggregatorPixelTest, DrawAndEraseDelegatedInkTrail) {
 
   delegated_ink_helper.CreateAndSendMetadata(kFirstPoint, 7.7f,
                                              SkColors::kWhite, kFirstTimestamp,
-                                             gfx::RectF(0, 0, 200, 200));
+                                             gfx::RectF(0, 0, 200, 200),
+                                             /*render_pass_id=*/1);
 
   gfx::Rect rect(this->device_viewport_size_);
   CompositorRenderPassId id{1};
@@ -375,7 +374,7 @@ TEST_P(SurfaceAggregatorPixelTest, DrawAndEraseDelegatedInkTrail) {
       this->root_allocator_.GetCurrentLocalSurfaceId(), std::move(root_frame));
 
   SurfaceAggregator aggregator(this->manager_.surface_manager(),
-                               this->resource_provider_.get(), true, false);
+                               this->resource_provider_.get(), false);
   auto aggregated_frame = aggregator.Aggregate(
       root_surface_id, this->GetNextDisplayTime(), gfx::OVERLAY_TRANSFORM_NONE);
 

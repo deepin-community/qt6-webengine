@@ -28,23 +28,26 @@
 #define SRC_DAWN_NATIVE_METAL_COMMANDRECORDINGCONTEXT_H_
 
 #include "dawn/common/NSRef.h"
-#include "dawn/common/NonCopyable.h"
+#include "dawn/common/NonMovable.h"
 #include "dawn/native/Error.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 #import <Metal/Metal.h>
 
 namespace dawn::native::metal {
 
+class Queue;
+
 struct MTLSharedEventAndSignalValue {
-    NSPRef<id> sharedEvent;
-    uint64_t signaledValue;
+    NSPRef<id> sharedEvent = nullptr;
+    uint64_t signaledValue = 0;
 };
 
 // This class wraps a MTLCommandBuffer and tracks which Metal encoder is open.
 // Only one encoder may be open at a time.
 class CommandRecordingContext : NonMovable {
   public:
-    CommandRecordingContext();
+    explicit CommandRecordingContext(const Queue* queue);
     ~CommandRecordingContext();
 
     id<MTLCommandBuffer> GetCommands();
@@ -57,8 +60,7 @@ class CommandRecordingContext : NonMovable {
     NSPRef<id<MTLCommandBuffer>> AcquireCommands();
 
     // Create blit pass encoder from blit pass descriptor
-    id<MTLBlitCommandEncoder> BeginBlit(MTLBlitPassDescriptor* descriptor)
-        API_AVAILABLE(macos(11.0), ios(14.0));
+    id<MTLBlitCommandEncoder> BeginBlit(MTLBlitPassDescriptor* descriptor);
     id<MTLBlitCommandEncoder> EnsureBlit();
     void EndBlit();
 
@@ -66,18 +68,27 @@ class CommandRecordingContext : NonMovable {
     id<MTLComputeCommandEncoder> BeginCompute();
     // Create configurable compute pass from a descriptor with serial dispatch type which commands
     // are executed sequentially.
-    id<MTLComputeCommandEncoder> BeginCompute(MTLComputePassDescriptor* descriptor)
-        API_AVAILABLE(macos(11.0), ios(14.0));
+    id<MTLComputeCommandEncoder> BeginCompute(MTLComputePassDescriptor* descriptor);
     void EndCompute();
 
     id<MTLRenderCommandEncoder> BeginRender(MTLRenderPassDescriptor* descriptor);
     void EndRender();
 
+    void WaitForSharedEvent(id<MTLSharedEvent> sharedEvent, uint64_t signaledValue);
+
+    MaybeError EncodeSharedEventWorkaround();
+
   private:
+    const raw_ptr<const Queue> mQueue;
     NSPRef<id<MTLCommandBuffer>> mCommands;
     NSPRef<id<MTLBlitCommandEncoder>> mBlit;
     NSPRef<id<MTLComputeCommandEncoder>> mCompute;
     NSPRef<id<MTLRenderCommandEncoder>> mRender;
+
+    // Shared event and signal used to serialize command buffer passes with an immediate signal and
+    // wait for workarounds such as the one needed in crbug.com/372698905.
+    MTLSharedEventAndSignalValue mSerializeWorkaround;
+
     bool mInEncoder = false;
     bool mNeedsSubmit = false;
     bool mUsed = false;

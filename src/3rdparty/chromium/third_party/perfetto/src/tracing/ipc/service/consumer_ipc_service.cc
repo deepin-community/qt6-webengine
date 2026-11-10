@@ -186,7 +186,7 @@ void ConsumerIPCService::ObserveEvents(
 
 // Called by the IPC layer.
 void ConsumerIPCService::QueryServiceState(
-    const protos::gen::QueryServiceStateRequest&,
+    const protos::gen::QueryServiceStateRequest& req,
     DeferredQueryServiceStateResponse resp) {
   RemoteConsumer* remote_consumer = GetConsumerForCurrentRequest();
   auto it = pending_query_service_responses_.insert(
@@ -197,7 +197,9 @@ void ConsumerIPCService::QueryServiceState(
     if (weak_this)
       weak_this->OnQueryServiceCallback(success, svc_state, std::move(it));
   };
-  remote_consumer->service_endpoint->QueryServiceState(callback);
+  ConsumerEndpoint::QueryServiceStateArgs args;
+  args.sessions_only = req.sessions_only();
+  remote_consumer->service_endpoint->QueryServiceState(args, callback);
 }
 
 // Called by the service in response to service_endpoint->QueryServiceState().
@@ -328,7 +330,32 @@ void ConsumerIPCService::CloneSession(
     DeferredCloneSessionResponse resp) {
   RemoteConsumer* remote_consumer = GetConsumerForCurrentRequest();
   remote_consumer->clone_session_response = std::move(resp);
-  remote_consumer->service_endpoint->CloneSession(req.session_id());
+  ConsumerEndpoint::CloneSessionArgs args;
+  args.skip_trace_filter = req.skip_trace_filter();
+  args.for_bugreport = req.for_bugreport();
+  if (req.has_session_id()) {
+    args.tsid = req.session_id();
+  }
+  if (req.has_unique_session_name()) {
+    args.unique_session_name = req.unique_session_name();
+  }
+  if (req.has_clone_trigger_name()) {
+    args.clone_trigger_name = req.clone_trigger_name();
+  }
+  if (req.has_clone_trigger_producer_name()) {
+    args.clone_trigger_producer_name = req.clone_trigger_producer_name();
+  }
+  if (req.has_clone_trigger_trusted_producer_uid()) {
+    args.clone_trigger_trusted_producer_uid =
+        static_cast<uid_t>(req.clone_trigger_trusted_producer_uid());
+  }
+  if (req.has_clone_trigger_boot_time_ns()) {
+    args.clone_trigger_boot_time_ns = req.clone_trigger_boot_time_ns();
+  }
+  if (req.has_clone_trigger_delay_ms()) {
+    args.clone_trigger_delay_ms = req.clone_trigger_delay_ms();
+  }
+  remote_consumer->service_endpoint->CloneSession(std::move(args));
 }
 
 // Called by the service in response to

@@ -48,6 +48,24 @@ tools/xngen src/f32-vrnd/neonv8.c.in -D OP=RNDU  -D BATCH_TILE=8 -o src/f32-vrnd
 tools/xngen src/f32-vrnd/neonv8.c.in -D OP=RNDD  -D BATCH_TILE=4 -o src/f32-vrnd/gen/f32-vrndd-neonv8-u4.c &
 tools/xngen src/f32-vrnd/neonv8.c.in -D OP=RNDD  -D BATCH_TILE=8 -o src/f32-vrnd/gen/f32-vrndd-neonv8-u8.c &
 
+################################ RISC-V Vector ################################
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDNE -D LMUL=1 -o src/f32-vrnd/gen/f32-vrndne-rvv-u1v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDNE -D LMUL=2 -o src/f32-vrnd/gen/f32-vrndne-rvv-u2v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDNE -D LMUL=4 -o src/f32-vrnd/gen/f32-vrndne-rvv-u4v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDNE -D LMUL=8 -o src/f32-vrnd/gen/f32-vrndne-rvv-u8v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDZ  -D LMUL=1 -o src/f32-vrnd/gen/f32-vrndz-rvv-u1v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDZ  -D LMUL=2 -o src/f32-vrnd/gen/f32-vrndz-rvv-u2v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDZ  -D LMUL=4 -o src/f32-vrnd/gen/f32-vrndz-rvv-u4v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDZ  -D LMUL=8 -o src/f32-vrnd/gen/f32-vrndz-rvv-u8v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDU  -D LMUL=1 -o src/f32-vrnd/gen/f32-vrndu-rvv-u1v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDU  -D LMUL=2 -o src/f32-vrnd/gen/f32-vrndu-rvv-u2v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDU  -D LMUL=4 -o src/f32-vrnd/gen/f32-vrndu-rvv-u4v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDU  -D LMUL=8 -o src/f32-vrnd/gen/f32-vrndu-rvv-u8v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDD  -D LMUL=1 -o src/f32-vrnd/gen/f32-vrndd-rvv-u1v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDD  -D LMUL=2 -o src/f32-vrnd/gen/f32-vrndd-rvv-u2v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDD  -D LMUL=4 -o src/f32-vrnd/gen/f32-vrndd-rvv-u4v.c &
+tools/xngen src/f32-vrnd/rvv.c.in -D OP=RNDD  -D LMUL=8 -o src/f32-vrnd/gen/f32-vrndd-rvv-u8v.c &
+
 ################################# x86 128-bit #################################
 tools/xngen src/f32-vrnd/vrndne-sse2.c.in -D BATCH_TILE=4 -o src/f32-vrnd/gen/f32-vrndne-sse2-u4.c &
 tools/xngen src/f32-vrnd/vrndne-sse2.c.in -D BATCH_TILE=8 -o src/f32-vrnd/gen/f32-vrndne-sse2-u8.c &
@@ -86,5 +104,19 @@ tools/xngen src/f32-vrnd/avx512f.c.in -D OP=RNDU  -D BATCH_TILE=16 -o src/f32-vr
 tools/xngen src/f32-vrnd/avx512f.c.in -D OP=RNDU  -D BATCH_TILE=32 -o src/f32-vrnd/gen/f32-vrndu-avx512f-u32.c &
 tools/xngen src/f32-vrnd/avx512f.c.in -D OP=RNDD  -D BATCH_TILE=16 -o src/f32-vrnd/gen/f32-vrndd-avx512f-u16.c &
 tools/xngen src/f32-vrnd/avx512f.c.in -D OP=RNDD  -D BATCH_TILE=32 -o src/f32-vrnd/gen/f32-vrndd-avx512f-u32.c &
+
+################################## Hexagon HVX ##################################
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=32  -D OP=RNDNE -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndne-hvx-u32.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=64  -D OP=RNDNE -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndne-hvx-u64.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=128  -D OP=RNDNE -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndne-hvx-u128.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=32  -D OP=RNDZ  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndz-hvx-u32.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=64  -D OP=RNDZ  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndz-hvx-u64.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=128  -D OP=RNDZ  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndz-hvx-u128.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=32  -D OP=RNDU  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndu-hvx-u32.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=64  -D OP=RNDU  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndu-hvx-u64.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=128  -D OP=RNDU  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndu-hvx-u128.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=32  -D OP=RNDD  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndd-hvx-u32.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=64  -D OP=RNDD  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndd-hvx-u64.c &
+tools/xngen src/f32-vrnd/simd.c.in -D BATCH_TILE=128  -D OP=RNDD  -D ARCH=hvx -o src/f32-vrnd/gen/f32-vrndd-hvx-u128.c &
 
 wait

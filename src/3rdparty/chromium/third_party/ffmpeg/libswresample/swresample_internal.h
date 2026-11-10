@@ -37,10 +37,10 @@ typedef int64_t integer;
 typedef int integer;
 #endif
 
-typedef void (mix_1_1_func_type)(void *out, const void *in, void *coeffp, integer index, integer len);
-typedef void (mix_2_1_func_type)(void *out, const void *in1, const void *in2, void *coeffp, integer index1, integer index2, integer len);
+typedef void (mix_1_1_func_type)(void *out, const void *in, const void *coeffp, integer index, integer len);
+typedef void (mix_2_1_func_type)(void *out, const void *in1, const void *in2, const void *coeffp, integer index1, integer index2, integer len);
 
-typedef void (mix_any_func_type)(uint8_t **out, const uint8_t **in1, void *coeffp, integer len);
+typedef void (mix_any_func_type)(uint8_t *const *out, const uint8_t *const *in1, const void *coeffp, integer len);
 
 typedef struct AudioData{
     uint8_t *ch[SWR_CH_MAX];    ///< samples buffer per channel
@@ -114,13 +114,6 @@ struct SwrContext {
     const int *channel_map;                         ///< channel index (or -1 if muted channel) map
     int engine;
 
-#if FF_API_OLD_CHANNEL_LAYOUT
-    int user_used_ch_count;                         ///< User set used channel count
-    int user_in_ch_count;                           ///< User set input channel count
-    int user_out_ch_count;                          ///< User set output channel count
-    int64_t user_in_ch_layout;                      ///< User set input channel layout
-    int64_t user_out_ch_layout;                     ///< User set output channel layout
-#endif
     AVChannelLayout user_used_chlayout;             ///< User set used channel layout
     AVChannelLayout user_in_chlayout;               ///< User set input channel layout
     AVChannelLayout user_out_chlayout;              ///< User set output channel layout

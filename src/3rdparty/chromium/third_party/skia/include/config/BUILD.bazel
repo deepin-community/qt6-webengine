@@ -1,6 +1,7 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 licenses(["notice"])
 
-# aka exports_files_legacy()
 exports_files(
     ["SkUserConfig.h"],
     visibility = ["//visibility:public"],

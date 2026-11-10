@@ -6,6 +6,7 @@
 
 #include <sysinfoapi.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <set>
@@ -23,15 +24,16 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/sequence_checker.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
+#include "base/types/expected.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_types.h"
@@ -96,7 +98,7 @@ ReadAdapterUnicastAddresses() {
   for (unsigned tries = 0; (tries < 3) && (rv == ERROR_BUFFER_OVERFLOW);
        tries++) {
     out.reset(static_cast<PIP_ADAPTER_ADDRESSES>(malloc(len)));
-    memset(out.get(), 0, len);
+    UNSAFE_TODO(memset(out.get(), 0, len));
     rv = GetAdaptersAddresses(AF_UNSPEC,
                               GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_DNS_SERVER |
                               GAA_FLAG_SKIP_MULTICAST |
@@ -115,10 +117,10 @@ bool AddLocalhostEntriesTo(DnsHosts& in_out_hosts) {
   IPAddress loopback_ipv6 = IPAddress::IPv6Localhost();
 
   // This does not override any pre-existing entries from the HOSTS file.
-  in_out_hosts.insert(std::make_pair(
-      DnsHostsKey("localhost", ADDRESS_FAMILY_IPV4), loopback_ipv4));
-  in_out_hosts.insert(std::make_pair(
-      DnsHostsKey("localhost", ADDRESS_FAMILY_IPV6), loopback_ipv6));
+  in_out_hosts.emplace(DnsHostsKey("localhost", ADDRESS_FAMILY_IPV4),
+                       loopback_ipv4);
+  in_out_hosts.emplace(DnsHostsKey("localhost", ADDRESS_FAMILY_IPV6),
+                       loopback_ipv6);
 
   wchar_t buffer[MAX_PATH];
   DWORD size = MAX_PATH;
@@ -302,7 +304,7 @@ void ConfigureSuffixSearch(const WinDnsSystemSettings& settings,
   // behavior (see also ParseSearchList). If a suffix is not valid, it will be
   // discarded when the fully-qualified name is converted to DNS format.
 
-  unsigned num_dots = base::ranges::count(primary_suffix, '.');
+  unsigned num_dots = std::ranges::count(primary_suffix, '.');
 
   for (size_t offset = 0; num_dots >= devolution.level.value(); --num_dots) {
     offset = primary_suffix.find('.', offset + 1);
@@ -403,8 +405,14 @@ std::vector<std::string> ParseSearchList(std::wstring_view value) {
   return output;
 }
 
-std::optional<DnsConfig> ConvertSettingsToDnsConfig(
-    const WinDnsSystemSettings& settings) {
+base::expected<DnsConfig, ReadWinSystemDnsSettingsError>
+ConvertSettingsToDnsConfig(
+    const base::expected<WinDnsSystemSettings, ReadWinSystemDnsSettingsError>&
+        settings_or_error) {
+  if (!settings_or_error.has_value()) {
+    return base::unexpected(settings_or_error.error());
+  }
+  const WinDnsSystemSettings& settings = *settings_or_error;
   bool uses_vpn = false;
   bool has_adapter_specific_nameservers = false;
 
@@ -426,8 +434,10 @@ std::optional<DnsConfig> ConvertSettingsToDnsConfig(
 
     std::optional<std::vector<IPEndPoint>> nameservers =
         GetNameServers(adapter);
-    if (!nameservers)
-      return std::nullopt;
+    if (!nameservers) {
+      return base::unexpected(
+          ReadWinSystemDnsSettingsError::kGetNameServersFailed);
+    }
 
     if (!nameservers->empty() && (adapter->OperStatus == IfOperStatusUp)) {
       // Check if the |adapter| has adapter specific nameservers.
@@ -459,8 +469,9 @@ std::optional<DnsConfig> ConvertSettingsToDnsConfig(
       dns_config.search.push_back(std::move(dns_suffix));
   }
 
-  if (dns_config.nameservers.empty())
-    return std::nullopt;  // No point continuing.
+  if (dns_config.nameservers.empty()) {
+    return base::unexpected(ReadWinSystemDnsSettingsError::kNoNameServerFound);
+  }
 
   // Windows always tries a multi-label name "as is" before using suffixes.
   dns_config.ndots = 1;
@@ -579,8 +590,16 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
     DCHECK(!IsCancelled());
 
     WorkItem* work_item = static_cast<WorkItem*>(serial_worker_work_item.get());
-    if (work_item->dns_config_.has_value()) {
-      service_->OnConfigRead(std::move(work_item->dns_config_).value());
+    base::UmaHistogramEnumeration(
+        base::StrCat({"Net.DNS.DnsConfig.Windows.ReadSystemSettings",
+                      base::NumberToString(GetFailureCount())}),
+        work_item->dns_config_or_error_.has_value()
+            ? ReadWinSystemDnsSettingsError::kOk
+            : work_item->dns_config_or_error_.error());
+
+    if (work_item->dns_config_or_error_.has_value()) {
+      service_->OnConfigRead(
+          std::move(work_item->dns_config_or_error_).value());
       return true;
     } else {
       LOG(WARNING) << "Failed to read DnsConfig.";
@@ -594,14 +613,14 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
     ~WorkItem() override = default;
 
     void DoWork() override {
-      std::optional<WinDnsSystemSettings> settings = ReadWinSystemDnsSettings();
-      if (settings.has_value())
-        dns_config_ = ConvertSettingsToDnsConfig(settings.value());
+      dns_config_or_error_ =
+          ConvertSettingsToDnsConfig(ReadWinSystemDnsSettings());
     }
 
    private:
     friend DnsConfigServiceWin::ConfigReader;
-    std::optional<DnsConfig> dns_config_;
+    base::expected<DnsConfig, ReadWinSystemDnsSettingsError>
+        dns_config_or_error_;
   };
 
   raw_ptr<DnsConfigServiceWin> service_;

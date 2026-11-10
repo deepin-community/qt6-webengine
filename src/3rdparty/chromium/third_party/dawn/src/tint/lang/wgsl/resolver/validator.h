@@ -28,13 +28,16 @@
 #ifndef SRC_TINT_LANG_WGSL_RESOLVER_VALIDATOR_H_
 #define SRC_TINT_LANG_WGSL_RESOLVER_VALIDATOR_H_
 
+#include <cstdint>
 #include <set>
 #include <string>
 #include <utility>
 
 #include "src/tint/lang/core/evaluation_stage.h"
+#include "src/tint/lang/core/type/input_attachment.h"
+#include "src/tint/lang/wgsl/allowed_features.h"
+#include "src/tint/lang/wgsl/ast/input_attachment_index_attribute.h"
 #include "src/tint/lang/wgsl/ast/pipeline_stage.h"
-#include "src/tint/lang/wgsl/common/allowed_features.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/resolver/sem_helper.h"
 #include "src/tint/utils/containers/hashmap.h"
@@ -42,6 +45,7 @@
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/diagnostic/source.h"
 #include "src/tint/utils/math/hash.h"
+#include "src/tint/utils/text/styled_text.h"
 
 // Forward declarations
 namespace tint::ast {
@@ -98,11 +102,19 @@ struct TypeAndAddressSpace {
     }
 
     /// @returns the hash value of this object
-    std::size_t HashCode() const { return Hash(type, address_space); }
+    tint::HashCode HashCode() const { return Hash(type, address_space); }
 };
 
 /// DiagnosticFilterStack is a scoped stack of diagnostic filters.
 using DiagnosticFilterStack = ScopeStack<wgsl::DiagnosticRule, wgsl::DiagnosticSeverity>;
+
+/// Enumerator of duplication behavior for diagnostics.
+enum class DiagnosticDuplicates : uint8_t {
+    // Diagnostic duplicates are allowed.
+    kAllowed,
+    // Diagnostic duplicates are not allowed.
+    kDenied,
+};
 
 /// Validation logic for various ast nodes. The validations in general should
 /// be shallow and depend on the resolver to call on children. The validations
@@ -125,29 +137,23 @@ class Validator {
               Hashset<TypeAndAddressSpace, 8>& valid_type_storage_layouts);
     ~Validator();
 
-    /// Adds the given error message to the diagnostics
-    /// @param msg the error message
+    /// @returns an error diagnostic
     /// @param source the error source
-    void AddError(const std::string& msg, const Source& source) const;
+    diag::Diagnostic& AddError(const Source& source) const;
 
-    /// Adds the given warning message to the diagnostics
-    /// @param msg the warning message
+    /// @returns an warning diagnostic
     /// @param source the warning source
-    void AddWarning(const std::string& msg, const Source& source) const;
+    diag::Diagnostic& AddWarning(const Source& source) const;
 
-    /// Adds the given note message to the diagnostics
-    /// @param msg the note message
+    /// @returns an note diagnostic
     /// @param source the note source
-    void AddNote(const std::string& msg, const Source& source) const;
+    diag::Diagnostic& AddNote(const Source& source) const;
 
-    /// Adds the given message to the diagnostics with current severity for the given rule.
+    /// Adds a diagnostic with current severity for the given rule.
     /// @param rule the diagnostic trigger rule
-    /// @param msg the diagnostic message
     /// @param source the diagnostic source
-    /// @returns false if the diagnostic is an error for the given trigger rule
-    bool AddDiagnostic(wgsl::DiagnosticRule rule,
-                       const std::string& msg,
-                       const Source& source) const;
+    /// @returns the diagnostic, if the diagnostic level isn't disabled
+    diag::Diagnostic* MaybeAddDiagnostic(wgsl::DiagnosticRule rule, const Source& source) const;
 
     /// @returns the diagnostic filter stack
     DiagnosticFilterStack& DiagnosticFilters() { return diagnostic_filters_; }
@@ -157,16 +163,8 @@ class Validator {
     bool IsPlain(const core::type::Type* type) const;
 
     /// @param type the given type
-    /// @returns true if the given type is a fixed-footprint type
-    bool IsFixedFootprint(const core::type::Type* type) const;
-
-    /// @param type the given type
     /// @returns true if the given type is storable
     bool IsStorable(const core::type::Type* type) const;
-
-    /// @param type the given type
-    /// @returns true if the given type is host-shareable
-    bool IsHostShareable(const core::type::Type* type) const;
 
     /// Validates the enabled extensions
     /// @param enables the extension enables
@@ -223,11 +221,16 @@ class Validator {
     /// @returns true on success, false otherwise.
     bool Assignment(const ast::Statement* a, const core::type::Type* rhs_ty) const;
 
-    /// Validates a bitcase
-    /// @param cast the bitcast expression
-    /// @param to the destination type
-    /// @returns true on success, false otherwise
-    bool Bitcast(const ast::BitcastExpression* cast, const core::type::Type* to) const;
+    /// Validates a binary expression
+    /// @param node the ast binary expression or compound assignment node
+    /// @param op the binary operator
+    /// @param lhs the left hand side sem node
+    /// @param rhs the right hand side sem node
+    /// @returns true on success, false otherwise.
+    bool BinaryExpression(const ast::Node* node,
+                          const core::BinaryOp op,
+                          const tint::sem::ValueExpression* lhs,
+                          const tint::sem::ValueExpression* rhs) const;
 
     /// Validates a break statement
     /// @param stmt the break statement to validate
@@ -370,15 +373,15 @@ class Validator {
                         const Source& source,
                         const std::optional<bool> is_input = std::nullopt) const;
 
-    /// Validates a index attribute
-    /// @param index_attr the index attribute to validate
+    /// Validates a blend_src attribute
+    /// @param blend_src_attr the blend_src attribute to validate
     /// @param stage the current pipeline stage
     /// @param is_input true if is an input variable, false if output variable, std::nullopt is
     /// unknown.
     /// @returns true on success, false otherwise.
-    bool IndexAttribute(const ast::IndexAttribute* index_attr,
-                        ast::PipelineStage stage,
-                        const std::optional<bool> is_input = std::nullopt) const;
+    bool BlendSrcAttribute(const ast::BlendSrcAttribute* blend_src_attr,
+                           ast::PipelineStage stage,
+                           const std::optional<bool> is_input = std::nullopt) const;
 
     /// Validates a loop statement
     /// @param stmt the loop statement
@@ -427,6 +430,12 @@ class Validator {
     /// @returns true on success, false otherwise
     bool StorageTexture(const core::type::StorageTexture* t, const Source& source) const;
 
+    /// Validates a texel buffer
+    /// @param t the texel buffer to validate
+    /// @param source the source of the texel buffer
+    /// @returns true on success, false otherwise
+    bool TexelBuffer(const core::type::TexelBuffer* t, const Source& source) const;
+
     /// Validates a sampled texture
     /// @param t the texture to validate
     /// @param source the source of the texture
@@ -438,6 +447,33 @@ class Validator {
     /// @param source the source of the texture
     /// @returns true on success, false otherwise
     bool MultisampledTexture(const core::type::MultisampledTexture* t, const Source& source) const;
+
+    /// Validates a input attachment
+    /// @param t the input attachment to validate
+    /// @param source the source of the input attachment
+    /// @returns true on success, false otherwise
+    bool InputAttachment(const core::type::InputAttachment* t, const Source& source) const;
+
+    /// Validates a input attachment index attribute
+    /// @param attr the input attachment index attribute to validate
+    /// @param type the variable type
+    /// @param source the source of declaration using the attribute
+    /// @returns true on success, false otherwise.
+    bool InputAttachmentIndexAttribute(const ast::InputAttachmentIndexAttribute* attr,
+                                       const core::type::Type* type,
+                                       const Source& source) const;
+
+    /// Validates a binding array type
+    /// @param t the binding array to validate
+    /// @param source the source of the binding array type
+    /// @returns true on success, false otherwise
+    bool BindingArray(const core::type::BindingArray* t, const Source& source) const;
+
+    /// Validates a subgroup matrix type
+    /// @param t the subgroup matrix type to validate
+    /// @param source the source of the subgroup matrix type
+    /// @returns true on success, false otherwise
+    bool SubgroupMatrix(const core::type::SubgroupMatrix* t, const Source& source) const;
 
     /// Validates a structure
     /// @param str the structure to validate
@@ -495,25 +531,38 @@ class Validator {
     bool Vector(const core::type::Type* el_ty, const Source& source) const;
 
     /// Validates an array constructor
-    /// @param ctor the call expresion to validate
+    /// @param ctor the call expression to validate
     /// @param arr_type the type of the array
     /// @returns true on success, false otherwise
     bool ArrayConstructor(const ast::CallExpression* ctor, const sem::Array* arr_type) const;
+
+    /// Validates a subgroup matrix constructor
+    /// @param ctor the call expression to validate
+    /// @param subgroup_matrix_type the type of the subgroup matrix
+    /// @returns true on success, false otherwise
+    bool SubgroupMatrixConstructor(const ast::CallExpression* ctor,
+                                   const core::type::SubgroupMatrix* subgroup_matrix_type) const;
+
+    /// Validates a subgroupShuffle builtin functions including Up,Down, and Xor.
+    /// @param fn the builtin call type
+    /// @param call the builtin call to validate
+    /// @returns true on success, false otherwise
+    bool SubgroupShuffleFunction(wgsl::BuiltinFn fn, const sem::Call* call) const;
 
     /// Validates a texture builtin function
     /// @param call the builtin call to validate
     /// @returns true on success, false otherwise
     bool TextureBuiltinFn(const sem::Call* call) const;
 
-    /// Validates a workgroupUniformLoad builtin function
-    /// @param call the builtin call to validate
-    /// @returns true on success, false otherwise
-    bool WorkgroupUniformLoad(const sem::Call* call) const;
-
     /// Validates a subgroupBroadcast builtin function
     /// @param call the builtin call to validate
     /// @returns true on success, false otherwise
     bool SubgroupBroadcast(const sem::Call* call) const;
+
+    /// Validates a quadBroadcast builtin function
+    /// @param call the builtin call to validate
+    /// @returns true on success, false otherwise
+    bool QuadBroadcast(const sem::Call* call) const;
 
     /// Validates an optional builtin function and its required extensions and language features.
     /// @param call the builtin call to validate
@@ -525,6 +574,18 @@ class Validator {
     /// @returns true on success, false otherwise
     bool CheckF16Enabled(const Source& source) const;
 
+    /// Validates that 'chromium_experimental_subgroup_matrix' extension is enabled for i8 usage at
+    /// @p source
+    /// @param source the source of the i8 usage
+    /// @returns true on success, false otherwise
+    bool CheckI8Enabled(const Source& source) const;
+
+    /// Validates that 'chromium_experimental_subgroup_matrix' extension is enabled for u8 usage at
+    /// @p source
+    /// @param source the source of the u8 usage
+    /// @returns true on success, false otherwise
+    bool CheckU8Enabled(const Source& source) const;
+
     /// Validates there are no duplicate attributes
     /// @param attributes the list of attributes to validate
     /// @returns true on success, false otherwise.
@@ -533,9 +594,11 @@ class Validator {
     /// Validates a set of diagnostic controls.
     /// @param controls the diagnostic controls to validate
     /// @param use the place where the controls are being used ("directive" or "attribute")
+    /// @param allow_duplicates if same name same severity diagnostics are allowed
     /// @returns true on success, false otherwise.
     bool DiagnosticControls(VectorRef<const ast::DiagnosticControl*> controls,
-                            const char* use) const;
+                            const char* use,
+                            DiagnosticDuplicates allow_duplicates) const;
 
     /// Validates a address space layout
     /// @param type the type to validate
@@ -579,8 +642,11 @@ class Validator {
     /// (transitively) owns the current statement.
     /// @param stop_at_loop if true then the function will return nullptr if a
     /// loop or for-loop was found before the continuing.
+    /// @param stop_at_switch if true then the function will return nullptr if a switch was found
+    /// before continuing.
     /// @param current_statement the current statement being resolved
     const ast::Statement* ClosestContinuing(bool stop_at_loop,
+                                            bool stop_at_switch,
                                             sem::Statement* current_statement) const;
 
     /// Returns a human-readable string representation of the vector type name
@@ -600,7 +666,6 @@ class Validator {
     bool CheckTypeAccessAddressSpace(const core::type::Type* store_ty,
                                      core::Access access,
                                      core::AddressSpace address_space,
-                                     VectorRef<const tint::ast::Attribute*> attributes,
                                      const Source& source) const;
 
     /// Raises an error if the entry_point @p entry_point uses two or more module-scope 'var's with

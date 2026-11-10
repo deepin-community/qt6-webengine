@@ -9,16 +9,16 @@
 
 #include "base/feature_list.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/attribution_reporting/features.h"
-#include "services/network/public/cpp/attribution_reporting_runtime_features.h"
 #include "services/network/public/cpp/features.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/origin_trials/origin_trials.h"
 #include "third_party/blink/public/common/origin_trials/trial_token.h"
 #include "third_party/blink/public/common/origin_trials/trial_token_result.h"
 #include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
-#include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
-#include "third_party/blink/public/mojom/origin_trial_feature/origin_trial_feature.mojom-shared.h"
+#include "third_party/blink/public/mojom/origin_trials/origin_trial_feature.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
@@ -27,13 +27,13 @@
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/attribution_src_loader.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/origin_trial_features.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/resource_coordinator/document_resource_coordinator.h"
 #include "third_party/blink/renderer/platform/runtime_feature_state/runtime_feature_state_override_context.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -130,7 +130,6 @@ std::ostream& operator<<(std::ostream& stream, OriginTrialTokenStatus status) {
       return stream << "kUnknownTrial";
   }
   NOTREACHED();
-  return stream;
 #else
   return stream << (static_cast<int>(status));
 #endif  // ifndef NDEBUG
@@ -166,7 +165,7 @@ OriginTrialStatus MergeOriginTrialStatus(OriginTrialStatus s1,
 OriginTrialTokenResult::OriginTrialTokenResult(
     const String& raw_token,
     OriginTrialTokenStatus status,
-    const absl::optional<TrialToken>& parsed_token)
+    const std::optional<TrialToken>& parsed_token)
     : raw_token(raw_token), status(status), parsed_token(parsed_token) {}
 
 OriginTrialContext::OriginTrialContext(ExecutionContext* context)
@@ -411,24 +410,45 @@ bool OriginTrialContext::InstallFeatures(
     ScriptState* script_state) {
   bool added_binding_features = false;
   for (mojom::blink::OriginTrialFeature enabled_feature : features) {
+    // TODO(https://crbug.com/40243430): add support for workers/non-frames that
+    // are enabling origin trials to send their information to the browser too.
+    if (context_->IsWindow() && feature_to_tokens_.Contains(enabled_feature)) {
+      // Note that, as we support third-party origin trials, the tokens must be
+      // sent anytime there is an update. We cannot depend on sending once as
+      // not all tokens activate the feature for the same scope.
+      context_->GetRuntimeFeatureStateOverrideContext()
+          ->ApplyOriginTrialOverride(
+              enabled_feature, feature_to_tokens_.find(enabled_feature)->value);
+    }
+
     if (installed_features_.Contains(enabled_feature))
       continue;
 
     installed_features_.insert(enabled_feature);
+
+    if (enabled_feature ==
+        mojom::blink::OriginTrialFeature::kBackgroundPageFreezeOptOut) {
+      if (auto* rc = document.GetResourceCoordinator()) {
+        UseCounter::Count(document.GetExecutionContext(),
+                          WebFeature::kPageFreezeOptOut);
+
+        // Inform the browser process that the document is opted-out from
+        // freezing via origin trial. This state prevents the browser process
+        // from freezing any document in the same "browsing context group" as
+        // this one and is displayed at chrome://discards for debugging.
+        //
+        // Note: The browser process cannot determine whether a document is
+        // opted-out from freezing via origin trial without participation from
+        // the renderer (crbug.com/40189223).
+        rc->OnFreezingOriginTrialOptOut();
+      }
+    }
 
     if (InstallSettingFeature(document, enabled_feature))
       continue;
 
     InstallPropertiesPerFeature(script_state, enabled_feature);
     added_binding_features = true;
-
-    // TODO(https://crbug.com/1410817): add support for workers/non-frames that
-    // are enabling origin trials to send their information to the browser too.
-    if (context_->IsWindow() && feature_to_tokens_.Contains(enabled_feature)) {
-      context_->GetRuntimeFeatureStateOverrideContext()
-          ->ApplyOriginTrialOverride(
-              enabled_feature, feature_to_tokens_.find(enabled_feature)->value);
-    }
   }
 
   return added_binding_features;
@@ -442,24 +462,6 @@ bool OriginTrialContext::InstallSettingFeature(
       if (document.GetSettings())
         document.GetSettings()->SetForceDarkModeEnabled(true);
       return true;
-    case mojom::blink::OriginTrialFeature::kAttributionReportingCrossAppWeb:
-      static_assert(
-          network::AttributionReportingRuntimeFeature::kMaxValue ==
-              network::AttributionReportingRuntimeFeature::kCrossAppWeb,
-          "Any new attribution reporting runtime features with an associated "
-          "origin trial feature need to be able to update the browser when the "
-          "OT feature is installed. If your new runtime feature also has an OT "
-          "feature, please add a switch case for the new feature.");
-      // Tell the browser about this change, but return false so the feature can
-      // still be installed using the default method.
-      document.GetFrame()
-          ->GetLocalFrameHostRemote()
-          .SetAttributionReportingRuntimeFeatures(
-              document.GetFrame()
-                  ->GetAttributionSrcLoader()
-                  ->GetRuntimeFeatures());
-      return false;
-
     default:
       return false;
   }
@@ -511,11 +513,9 @@ void OriginTrialContext::AddForceEnabledTrials(
 }
 
 bool OriginTrialContext::CanEnableTrialFromName(const StringView& trial_name) {
-  if (trial_name == "PrivacySandboxAdsAPIs")
-    return base::FeatureList::IsEnabled(features::kPrivacySandboxAdsAPIs);
-
   if (trial_name == "FledgeBiddingAndAuctionServer") {
-    return base::FeatureList::IsEnabled(features::kInterestGroupStorage) &&
+    return base::FeatureList::IsEnabled(
+               network::features::kInterestGroupStorage) &&
            base::FeatureList::IsEnabled(
                features::kFledgeBiddingAndAuctionServer);
   }
@@ -523,19 +523,9 @@ bool OriginTrialContext::CanEnableTrialFromName(const StringView& trial_name) {
   if (trial_name == "FencedFrames")
     return base::FeatureList::IsEnabled(features::kFencedFrames);
 
-  if (trial_name == "AdInterestGroupAPI")
-    return base::FeatureList::IsEnabled(features::kInterestGroupStorage);
-
-  if (trial_name == "TrustTokens")
-    return base::FeatureList::IsEnabled(network::features::kFledgePst);
-
-  if (trial_name == "SpeculationRulesPrefetchFuture") {
+  if (trial_name == "AdInterestGroupAPI") {
     return base::FeatureList::IsEnabled(
-        features::kSpeculationRulesPrefetchFuture);
-  }
-
-  if (trial_name == "PendingBeaconAPI") {
-    return base::FeatureList::IsEnabled(features::kPendingBeaconAPI);
+        network::features::kInterestGroupStorage);
   }
 
   if (trial_name == "BackForwardCacheSendNotRestoredReasons") {
@@ -548,88 +538,62 @@ bool OriginTrialContext::CanEnableTrialFromName(const StringView& trial_name) {
         network::features::kCompressionDictionaryTransportBackend);
   }
 
-  if (trial_name == "AttributionReportingCrossAppWeb") {
-    return base::FeatureList::IsEnabled(
-               attribution_reporting::features::kConversionMeasurement) &&
-           base::FeatureList::IsEnabled(
-               network::features::kAttributionReportingCrossAppWeb);
-  }
-
-  if (trial_name == "ComputePressure_v2") {
-    return base::FeatureList::IsEnabled(features::kComputePressure);
-  }
-
   if (trial_name == "SoftNavigationHeuristics") {
     return base::FeatureList::IsEnabled(features::kSoftNavigationDetection);
+  }
+
+  if (trial_name == "PermissionElement") {
+    return base::FeatureList::IsEnabled(blink::features::kPermissionElement);
+  }
+
+  // TODO(crbug.com/362675965): remove after origin trial.
+  if (trial_name == "AISummarizationAPI") {
+    return base::FeatureList::IsEnabled(features::kAISummarizationAPI);
+  }
+
+  if (trial_name == "AIRewriterAPI") {
+    return base::FeatureList::IsEnabled(features::kAIRewriterAPI);
+  }
+
+  if (trial_name == "AIWriterAPI") {
+    return base::FeatureList::IsEnabled(features::kAIRewriterAPI);
+  }
+
+  if (trial_name == "LanguageDetectionAPI") {
+    return base::FeatureList::IsEnabled(features::kLanguageDetectionAPI);
+  }
+
+  if (trial_name == "SpeculationRulesTargetHint") {
+    return base::FeatureList::IsEnabled(features::kPrerender2InNewTab);
+  }
+
+  if (trial_name == "TranslationAPI") {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+    return base::FeatureList::IsEnabled(features::kTranslationAPI);
+#else
+    return false;
+#endif
   }
 
   return true;
 }
 
-Vector<mojom::blink::OriginTrialFeature>
-OriginTrialContext::RestrictedFeaturesForTrial(const String& trial_name) {
-  if (trial_name == "PrivacySandboxAdsAPIs") {
-    Vector<mojom::blink::OriginTrialFeature> restricted;
-    if (!base::FeatureList::IsEnabled(features::kInterestGroupStorage)) {
-      restricted.push_back(mojom::blink::OriginTrialFeature::kFledge);
-    }
-    if (!base::FeatureList::IsEnabled(features::kBrowsingTopics)) {
-      restricted.push_back(mojom::blink::OriginTrialFeature::kTopicsAPI);
-    }
-    if (!base::FeatureList::IsEnabled(features::kBrowsingTopics) ||
-        !base::FeatureList::IsEnabled(features::kBrowsingTopicsDocumentAPI)) {
-      restricted.push_back(
-          mojom::blink::OriginTrialFeature::kTopicsDocumentAPI);
-    }
-    if (!base::FeatureList::IsEnabled(
-            attribution_reporting::features::kConversionMeasurement)) {
-      restricted.push_back(
-          mojom::blink::OriginTrialFeature::kAttributionReporting);
-    }
-    if (!base::FeatureList::IsEnabled(features::kFencedFrames)) {
-      restricted.push_back(mojom::blink::OriginTrialFeature::kFencedFrames);
-    }
-    if (!base::FeatureList::IsEnabled(features::kSharedStorageAPI)) {
-      restricted.push_back(mojom::blink::OriginTrialFeature::kSharedStorageAPI);
-    }
-    if (!base::FeatureList::IsEnabled(features::kFencedFramesAPIChanges)) {
-      restricted.push_back(
-          mojom::blink::OriginTrialFeature::kFencedFramesAPIChanges);
-    }
-    return restricted;
-  }
-
-  return {};
-}
-
 OriginTrialFeaturesEnabled OriginTrialContext::EnableTrialFromName(
     const String& trial_name,
     base::Time expiry_time) {
-  Vector<mojom::blink::OriginTrialFeature> origin_trial_features =
-      Vector<mojom::blink::OriginTrialFeature>();
   if (!CanEnableTrialFromName(trial_name)) {
     DVLOG(1) << "EnableTrialFromName: cannot enable trial " << trial_name;
-    OriginTrialFeaturesEnabled result = {OriginTrialStatus::kTrialNotAllowed,
-                                         origin_trial_features};
-    return result;
+    return {OriginTrialStatus::kTrialNotAllowed,
+            Vector<mojom::blink::OriginTrialFeature>()};
   }
 
-  Vector<mojom::blink::OriginTrialFeature> restricted =
-      RestrictedFeaturesForTrial(trial_name);
-
   bool did_enable_feature = false;
+  Vector<mojom::blink::OriginTrialFeature> origin_trial_features;
   for (mojom::blink::OriginTrialFeature feature :
        origin_trials::FeaturesForTrial(trial_name.Utf8())) {
     if (!origin_trials::FeatureEnabledForOS(feature)) {
       DVLOG(1) << "EnableTrialFromName: feature " << static_cast<int>(feature)
                << " is disabled on current OS.";
-      continue;
-    }
-
-    if (restricted.Contains(feature)) {
-      DVLOG(1) << "EnableTrialFromName: feature " << static_cast<int>(feature)
-               << " is restricted from being enabled via the trial: "
-               << trial_name << ".";
       continue;
     }
 
@@ -652,11 +616,10 @@ OriginTrialFeaturesEnabled OriginTrialContext::EnableTrialFromName(
         feature_expiry_times_.Set(implied_feature, expiry_time);
     }
   }
-  OriginTrialFeaturesEnabled result = {
-      (did_enable_feature ? OriginTrialStatus::kEnabled
-                          : OriginTrialStatus::kOSNotSupported),
-      origin_trial_features};
-  return result;
+  OriginTrialStatus status = did_enable_feature
+                                 ? OriginTrialStatus::kEnabled
+                                 : OriginTrialStatus::kOSNotSupported;
+  return {status, std::move(origin_trial_features)};
 }
 
 bool OriginTrialContext::EnableTrialFromToken(const String& token,
@@ -670,7 +633,7 @@ bool OriginTrialContext::EnableTrialFromToken(
     const Vector<OriginInfo>* script_origins) {
   DCHECK(!token.empty());
   OriginTrialStatus trial_status = OriginTrialStatus::kValidTokenNotProvided;
-  StringUTF8Adaptor token_string(token);
+  StringUtf8Adaptor token_string(token);
   // TODO(https://crbug.com/1153336): Remove explicit validator.
   // Since |blink::SecurityOrigin::IsPotentiallyTrustworthy| is the source of
   // security information in this context, use that explicitly, instead of
@@ -685,7 +648,7 @@ bool OriginTrialContext::EnableTrialFromToken(
 
   TrialTokenResult token_result =
       trial_token_validator_->ValidateTokenAndTrialWithOriginInfo(
-          token_string.AsStringPiece(),
+          token_string.AsStringView(),
           TrialTokenValidator::OriginInfo(origin_info.origin->ToUrlOrigin(),
                                           origin_info.is_secure),
           script_url_origins, base::Time::Now());
@@ -694,8 +657,7 @@ bool OriginTrialContext::EnableTrialFromToken(
 
   if (token_result.Status() == OriginTrialTokenStatus::kSuccess) {
     String trial_name =
-        String::FromUTF8(token_result.ParsedToken()->feature_name().data(),
-                         token_result.ParsedToken()->feature_name().size());
+        String::FromUTF8(token_result.ParsedToken()->feature_name());
     OriginTrialFeaturesEnabled result = EnableTrialFromName(
         trial_name, token_result.ParsedToken()->expiry_time());
     trial_status = result.status;
@@ -731,8 +693,7 @@ void OriginTrialContext::CacheToken(const String& raw_token,
   String trial_name =
       token_result.ParsedToken() &&
               token_result.Status() != OriginTrialTokenStatus::kUnknownTrial
-          ? String::FromUTF8(token_result.ParsedToken()->feature_name().data(),
-                             token_result.ParsedToken()->feature_name().size())
+          ? String::FromUTF8(token_result.ParsedToken()->feature_name())
           : kDefaultTrialName;
 
   // Does nothing if key already exists.
@@ -751,8 +712,8 @@ void OriginTrialContext::CacheToken(const String& raw_token,
   trial_result.token_results.push_back(OriginTrialTokenResult{
       raw_token, token_result.Status(),
       token_result.ParsedToken()
-          ? absl::make_optional(*token_result.ParsedToken())
-          : absl::nullopt});
+          ? std::make_optional(*token_result.ParsedToken())
+          : std::nullopt});
 }
 
 void OriginTrialContext::Trace(Visitor* visitor) const {

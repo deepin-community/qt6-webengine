@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_DISPATCHER_TAGGING_H_
-#define BASE_ALLOCATOR_DISPATCHER_TAGGING_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "base/allocator/partition_allocator/src/partition_alloc/tagging.h"
+#ifndef BASE_ALLOCATOR_DISPATCHER_MEMORY_TAGGING_H_
+#define BASE_ALLOCATOR_DISPATCHER_MEMORY_TAGGING_H_
+
+#include "partition_alloc/tagging.h"
 
 namespace base::allocator::dispatcher {
 // The various modes of Arm's MTE extension. The enum values should match their
@@ -39,4 +44,4 @@ constexpr MTEMode ConvertToMTEMode(
 
 }  // namespace base::allocator::dispatcher
 
-#endif  // BASE_ALLOCATOR_DISPATCHER_TAGGING_H_
+#endif  // BASE_ALLOCATOR_DISPATCHER_MEMORY_TAGGING_H_

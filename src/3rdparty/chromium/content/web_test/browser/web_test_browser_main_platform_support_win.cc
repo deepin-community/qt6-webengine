@@ -4,8 +4,9 @@
 
 #include "content/web_test/browser/web_test_browser_main_platform_support.h"
 
-#include <stddef.h>
 #include <windows.h>
+
+#include <stddef.h>
 
 #include <iostream>
 #include <list>
@@ -34,6 +35,7 @@ void SetupFonts() {
       base_path.Append(FILE_PATH_LITERAL("/test_fonts/Ahem.ttf"));
 
   DWriteFontProxyImpl::SideLoadFontForTesting(font_path);
+  gfx::win::SideLoadFontForTesting(font_path);
 }
 
 }  // namespace
@@ -57,13 +59,15 @@ bool WebTestBrowserCheckLayoutSystemDeps() {
   bool success = !!::SystemParametersInfo(SPI_GETNONCLIENTMETRICS,
                                           metrics.cbSize, &metrics, 0);
   PCHECK(success);
-  LOGFONTW* system_fonts[] = {&metrics.lfStatusFont, &metrics.lfMenuFont,
-                              &metrics.lfSmCaptionFont};
-  const wchar_t required_font[] = L"Segoe UI";
+  const std::wstring_view required_font = L"Segoe UI";
   int required_font_size = -12;
-  for (size_t i = 0; i < std::size(system_fonts); ++i) {
-    if (system_fonts[i]->lfHeight != required_font_size ||
-        wcscmp(required_font, system_fonts[i]->lfFaceName)) {
+  for (const LOGFONTW* font : {
+           &metrics.lfStatusFont,
+           &metrics.lfMenuFont,
+           &metrics.lfSmCaptionFont,
+       }) {
+    if (font->lfHeight != required_font_size ||
+        font->lfFaceName != required_font) {
       errors.push_back(
           "Must use either the Aero or Basic theme. Or change display language "
           "to English.");

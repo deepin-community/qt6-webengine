@@ -8,8 +8,6 @@
 
 #include <new>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/shim/allocator_shim.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -17,9 +15,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
+#include "partition_alloc/buildflags.h"
 
-#if !BUILDFLAG(USE_ALLOCATOR_SHIM) && \
-    !defined(MEMORY_TOOL_REPLACES_ALLOCATOR) && defined(LIBC_GLIBC)
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
+#include "partition_alloc/shim/allocator_shim.h"  // nogncheck
+#elif !defined(MEMORY_TOOL_REPLACES_ALLOCATOR) && defined(LIBC_GLIBC)
 extern "C" {
 void* __libc_malloc(size_t);
 void __libc_free(void*);
@@ -31,8 +31,9 @@ namespace base {
 namespace {
 
 void ReleaseReservationOrTerminate() {
-  if (internal::ReleaseAddressSpaceReservation())
+  if (internal::ReleaseAddressSpaceReservation()) {
     return;
+  }
   TerminateBecauseOutOfMemory(0);
 }
 
@@ -48,7 +49,7 @@ void EnableTerminationOnOutOfMemory() {
   // If we're using glibc's allocator, the above functions will override
   // malloc and friends and make them die on out of memory.
 
-#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
   allocator_shim::SetCallNewHandlerOnMallocFailure(true);
 #endif
 }
@@ -70,8 +71,9 @@ class AdjustOOMScoreHelper {
 
 // static.
 bool AdjustOOMScoreHelper::AdjustOOMScore(ProcessId process, int score) {
-  if (score < 0 || score > kMaxOomScore)
+  if (score < 0 || score > kMaxOomScore) {
     return false;
+  }
 
   FilePath oom_path(internal::GetProcPidDir(process));
 
@@ -82,10 +84,8 @@ bool AdjustOOMScoreHelper::AdjustOOMScore(ProcessId process, int score) {
   FilePath oom_file = oom_path.AppendASCII("oom_score_adj");
   if (PathExists(oom_file)) {
     std::string score_str = NumberToString(score);
-    DVLOG(1) << "Adjusting oom_score_adj of " << process << " to "
-             << score_str;
-    int score_len = static_cast<int>(score_str.length());
-    return (score_len == WriteFile(oom_file, score_str.c_str(), score_len));
+    DVLOG(1) << "Adjusting oom_score_adj of " << process << " to " << score_str;
+    return WriteFile(oom_file, as_byte_span(score_str));
   }
 
   // If the oom_score_adj file doesn't exist, then we write the old
@@ -99,8 +99,7 @@ bool AdjustOOMScoreHelper::AdjustOOMScore(ProcessId process, int score) {
     int converted_score = score * kMaxOldOomScore / kMaxOomScore;
     std::string score_str = NumberToString(converted_score);
     DVLOG(1) << "Adjusting oom_adj of " << process << " to " << score_str;
-    int score_len = static_cast<int>(score_str.length());
-    return (score_len == WriteFile(oom_file, score_str.c_str(), score_len));
+    return WriteFile(oom_file, as_byte_span(score_str));
   }
 
   return false;
@@ -114,9 +113,9 @@ bool AdjustOOMScore(ProcessId process, int score) {
 }
 
 bool UncheckedMalloc(size_t size, void** result) {
-#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
   *result = allocator_shim::UncheckedAlloc(size);
-#elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || !defined(LIBC_GLIBC) || defined(TOOLKIT_QT)
+#elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || !defined(LIBC_GLIBC) || BUILDFLAG(IS_QTWEBENGINE)
   *result = malloc(size);
 #elif defined(LIBC_GLIBC)
   *result = __libc_malloc(size);
@@ -125,9 +124,9 @@ bool UncheckedMalloc(size_t size, void** result) {
 }
 
 void UncheckedFree(void* ptr) {
-#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
   allocator_shim::UncheckedFree(ptr);
-#elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || !defined(LIBC_GLIBC) || defined(TOOLKIT_QT)
+#elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || !defined(LIBC_GLIBC) || BUILDFLAG(IS_QTWEBENGINE)
   free(ptr);
 #elif defined(LIBC_GLIBC)
   __libc_free(ptr);

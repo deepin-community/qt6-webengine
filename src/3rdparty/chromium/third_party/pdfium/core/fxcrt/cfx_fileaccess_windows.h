@@ -30,17 +30,14 @@ class CFX_FileAccess_Windows final : public FileAccessIface {
   FX_FILESIZE GetSize() const override;
   FX_FILESIZE GetPosition() const override;
   FX_FILESIZE SetPosition(FX_FILESIZE pos) override;
-  size_t Read(void* pBuffer, size_t szBuffer) override;
-  size_t Write(const void* pBuffer, size_t szBuffer) override;
-  size_t ReadPos(void* pBuffer, size_t szBuffer, FX_FILESIZE pos) override;
-  size_t WritePos(const void* pBuffer,
-                  size_t szBuffer,
-                  FX_FILESIZE pos) override;
+  size_t Read(pdfium::span<uint8_t> buffer) override;
+  size_t Write(pdfium::span<const uint8_t> buffer) override;
+  size_t ReadPos(pdfium::span<uint8_t> buffer, FX_FILESIZE pos) override;
   bool Flush() override;
   bool Truncate(FX_FILESIZE szFile) override;
 
  private:
-  UNOWNED_PTR_EXCLUSION void* m_hFile = nullptr;  // void type incompatible.
+  UNOWNED_PTR_EXCLUSION void* file_ = nullptr;  // void type incompatible.
 };
 
 #endif  // CORE_FXCRT_CFX_FILEACCESS_WINDOWS_H_

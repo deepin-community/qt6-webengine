@@ -24,7 +24,6 @@
 
 #include "absl/random/bit_gen_ref.h"
 #include "absl/random/distributions.h"
-#include "absl/strings/str_format.h"
 #include "./fuzztest/internal/domains/domain_base.h"
 #include "./fuzztest/internal/domains/serialization_helpers.h"
 #include "./fuzztest/internal/meta.h"
@@ -46,7 +45,7 @@ using AggregateOfImplCorpusType =
 
 template <typename T, RequireCustomCorpusType require_custom, typename... Inner>
 class AggregateOfImpl
-    : public DomainBase<
+    : public domain_implementor::DomainBase<
           AggregateOfImpl<T, require_custom, Inner...>, T,
           AggregateOfImplCorpusType<T, require_custom, Inner...>> {
  public:
@@ -65,7 +64,9 @@ class AggregateOfImpl
         inner_);
   }
 
-  void Mutate(corpus_type& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(corpus_type& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
     std::integral_constant<int, sizeof...(Inner)> size;
     auto bound = internal::BindAggregate(val, size);
     // Filter the tuple to only the mutable fields.
@@ -80,12 +81,14 @@ class AggregateOfImpl
       int offset = absl::Uniform<int>(prng, 0, actual_size);
       Switch<actual_size>(offset, [&](auto I) {
         std::get<to_mutate[I]>(inner_).Mutate(std::get<to_mutate[I]>(bound),
-                                              prng, only_shrink);
+                                              prng, metadata, only_shrink);
       });
     }
   }
 
-  void UpdateMemoryDictionary(const corpus_type& val) {
+  void UpdateMemoryDictionary(
+      const corpus_type& val,
+      domain_implementor::ConstCmpTablesPtr cmp_tables) {
     // Copy codes from Mutate that does the mutable domain filtering things.
     std::integral_constant<int, sizeof...(Inner)> size;
     auto bound = internal::BindAggregate(val, size);
@@ -98,32 +101,16 @@ class AggregateOfImpl
     if constexpr (actual_size > 0) {
       ApplyIndex<actual_size>([&](auto... I) {
         (std::get<to_mutate[I]>(inner_).UpdateMemoryDictionary(
-             std::get<to_mutate[I]>(bound)),
+             std::get<to_mutate[I]>(bound), cmp_tables),
          ...);
       });
     }
   }
 
-  int UntypedPrintCorpusValue(const GenericDomainCorpusType& val,
-                              absl::FormatRawSink out, internal::PrintMode mode,
-                              std::optional<int> tuple_elem) const final {
-    if (tuple_elem.has_value()) {
-      if constexpr (sizeof...(Inner) != 0) {
-        if (*tuple_elem >= 0 && *tuple_elem < sizeof...(Inner)) {
-          Switch<sizeof...(Inner)>(*tuple_elem, [&](auto I) {
-            PrintValue(std::get<I>(inner_),
-                       std::get<I>(val.GetAs<corpus_type>()), out, mode);
-          });
-        }
-      }
-    } else {
-      AggregateOfImpl::DomainBase::UntypedPrintCorpusValue(val, out, mode,
-                                                           std::nullopt);
-    }
-    return sizeof...(Inner);
+  auto GetPrinter() const {
+    return AggregatePrinter<AggregateOfImpl, Inner...>{
+        *this, inner_, GetTypeNameIfUserDefined<T>()};
   }
-
-  auto GetPrinter() const { return AggregatePrinter<Inner...>{inner_}; }
 
   value_type GetValue(const corpus_type& value) const {
     if constexpr (has_custom_corpus_type) {
@@ -153,7 +140,7 @@ class AggregateOfImpl
             value, std::integral_constant<int, sizeof...(Inner)>{});
         return [](auto... optional_values) -> std::optional<corpus_type> {
           if ((optional_values.has_value() && ...)) {
-            return std::tuple(*std::move(optional_values)...);
+            return corpus_type(*std::move(optional_values)...);
           } else {
             return std::nullopt;
           }

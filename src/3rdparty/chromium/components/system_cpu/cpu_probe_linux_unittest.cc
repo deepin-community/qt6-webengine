@@ -5,8 +5,10 @@
 #include "components/system_cpu/cpu_probe_linux.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -15,11 +17,10 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "components/system_cpu/cpu_probe.h"
-#include "components/system_cpu/pressure_sample.h"
+#include "components/system_cpu/cpu_sample.h"
 #include "components/system_cpu/pressure_test_support.h"
 #include "components/system_cpu/procfs_stat_cpu_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace system_cpu {
 
@@ -47,7 +48,7 @@ class CpuProbeLinuxTest : public testing::Test {
       return false;
     }
     if (contents.size() > 0) {
-      if (!stat_file_.Write(0, contents.data(), contents.size())) {
+      if (!UNSAFE_TODO(stat_file_.Write(0, contents.data(), contents.size()))) {
         return false;
       }
     }
@@ -66,12 +67,12 @@ TEST_F(CpuProbeLinuxTest, ProductionDataNoCrash) {
   // Overwrite the fake probe with one that reads the production stat path.
   probe_ = std::make_unique<FakePlatformCpuProbe<CpuProbeLinux>>(
       base::FilePath(ProcfsStatCpuParser::kProcfsStatPath));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
 
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_GE(sample->cpu_utilization, 0.0);
   EXPECT_LE(sample->cpu_utilization, 1.0);
@@ -89,7 +90,7 @@ procs_running 700
 procs_blocked 600
 softirq 900 901 902 903 904 905 906 907 908 909 910
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // user = 100, sys = 0, idle = 300
@@ -105,7 +106,7 @@ procs_running 700
 procs_blocked 600
 softirq 900 901 902 903 904 905 906 907 908 909 910
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.25);
 }
@@ -115,7 +116,7 @@ TEST_F(CpuProbeLinuxTest, RepeatedSamples) {
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 0 0 0 0 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // user = 100, sys = 0, idle = 300
@@ -124,7 +125,7 @@ cpu0 0 0 0 0 0 0 0 0 0 0
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 100 0 0 300 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.25);
 
@@ -135,7 +136,7 @@ cpu0 100 0 0 300 0 0 0 0 0 0
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 200 100 0 500 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample2 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample2 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample2.has_value());
   EXPECT_EQ(sample2->cpu_utilization, 0.5);
 }
@@ -153,7 +154,7 @@ procs_running 700
 procs_blocked 600
 softirq 900 901 902 903 904 905 906 907 908 909 910
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // cpu0: user = 100, sys = 0, idle = 300
@@ -173,7 +174,7 @@ procs_running 700
 procs_blocked 600
 softirq 900 901 902 903 904 905 906 907 908 909 910
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.375);
 }
@@ -184,7 +185,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 30 0 0 0 0 0 0
 cpu1 40 50 0 60 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // cpu0 delta: user = 100, sys = 0, idle = 300
@@ -197,7 +198,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 110 20 0 330 0 0 0 0 0 0
 cpu1 140 150 0 260 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.375);
 }
@@ -215,7 +216,7 @@ procs_running 700
 procs_blocked 600
 softirq 900 901 902 903 904 905 906 907 908 909 910
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // cpu0 delta: user = 100, sys = 0, idle = 300
@@ -224,7 +225,7 @@ softirq 900 901 902 903 904 905 906 907 908 909 910
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 110 20 0 330 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.25);
 
@@ -239,7 +240,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 210 20 0 630 0 0 0 0 0 0
 cpu1 140 150 0 260 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample2 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample2 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample2.has_value());
   EXPECT_EQ(sample2->cpu_utilization, 0.375);
 }
@@ -249,7 +250,7 @@ TEST_F(CpuProbeLinuxTest, TwoCoresSecondCoreAddedStat) {
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 30 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // cpu0 delta: user = 100, sys = 0, idle = 300
@@ -263,7 +264,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 110 20 0 330 0 0 0 0 0 0
 cpu1 100 100 0 200 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.25);
 
@@ -278,7 +279,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 210 120 0 530 0 0 0 0 0 0
 cpu1 200 100 0 500 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample2 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample2 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample2.has_value());
   EXPECT_EQ(sample2->cpu_utilization, 0.375);
 }
@@ -287,7 +288,7 @@ TEST_F(CpuProbeLinuxTest, ParseErrorInBaseline) {
   ASSERT_TRUE(WriteFakeStat(R"(
 parse error
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // Update should be ignored as baseline is unreliable.
@@ -295,7 +296,7 @@ parse error
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 100 0 0 300 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt);
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt);
 
   // Next update can use the last update as a baseline.
   // cpu0 delta: user = 100, sys = 0, idle = 300
@@ -304,7 +305,7 @@ cpu0 100 0 0 300 0 0 0 0 0 0
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 200 0 0 600 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.25);
 }
@@ -314,7 +315,7 @@ TEST_F(CpuProbeLinuxTest, ParseErrorInSample) {
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 30 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   ASSERT_TRUE(WriteFakeStat(R"(
@@ -330,7 +331,7 @@ bad stat file
 cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 110 120 0 230 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample2 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample2 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample2.has_value());
   EXPECT_EQ(sample2->cpu_utilization, 0.5);
 }
@@ -341,7 +342,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 30 0 0 0 0 0 0
 cpu1 40 50 0 60 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt)
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt)
       << "No baseline on first Update()";
 
   // cpu0: active delta 0, idle delta 100 (0% usage)
@@ -351,7 +352,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 130 0 0 0 0 0 0
 cpu1 140 50 0 60 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample.has_value());
   EXPECT_EQ(sample->cpu_utilization, 0.5);
 
@@ -362,7 +363,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 230 0 0 0 0 0 0
 cpu1 140 50 0 60 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample2 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample2 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample2.has_value());
   EXPECT_EQ(sample2->cpu_utilization, 0.0);
 
@@ -372,7 +373,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 10 20 0 230 0 0 0 0 0 0
 cpu1 140 50 0 60 0 0 0 0 0 0
 )"));
-  EXPECT_EQ(probe_->UpdateAndWaitForSample(), absl::nullopt);
+  EXPECT_EQ(probe_->UpdateAndWaitForSample(), std::nullopt);
 
   // cpu0: user time increases, sys decreases - ignore only the decreasing
   // values, include the others.
@@ -384,7 +385,7 @@ cpu 0 0 0 0 0 0 0 0 0 0
 cpu0 110 10 0 530 0 0 0 0 0 0
 cpu1 130 40 0 50 0 0 0 0 0 0
 )"));
-  absl::optional<PressureSample> sample3 = probe_->UpdateAndWaitForSample();
+  std::optional<CpuSample> sample3 = probe_->UpdateAndWaitForSample();
   ASSERT_TRUE(sample3.has_value());
   EXPECT_EQ(sample3->cpu_utilization, 0.25);
 }

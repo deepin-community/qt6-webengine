@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef BASE_ALLOCATOR_DISPATCHER_NOTIFICATION_DATA_H_
 #define BASE_ALLOCATOR_DISPATCHER_NOTIFICATION_DATA_H_
 
@@ -9,8 +14,8 @@
 
 #include "base/allocator/dispatcher/memory_tagging.h"
 #include "base/allocator/dispatcher/subsystem.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
 #include "base/base_export.h"
+#include "partition_alloc/buildflags.h"
 
 namespace base::allocator::dispatcher {
 
@@ -42,28 +47,28 @@ class BASE_EXPORT AllocationNotificationData {
 
   // In the allocation observer path, it's interesting which reporting mode is
   // enabled.
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   constexpr AllocationNotificationData& SetMteReportingMode(MTEMode mode) {
     mte_reporting_mode_ = mode;
     return *this;
   }
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
 
   constexpr MTEMode mte_reporting_mode() const {
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
     return mte_reporting_mode_;
 #else
     return MTEMode::kUndefined;
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   }
 
  private:
   void* address_ = nullptr;
   size_t size_ = 0;
   const char* type_name_ = nullptr;
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   MTEMode mte_reporting_mode_ = MTEMode::kUndefined;
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   AllocationSubsystem allocation_subsystem_;
 };
 
@@ -83,26 +88,26 @@ class BASE_EXPORT FreeNotificationData {
 
   // In the free observer path, it's interesting which reporting mode is
   // enabled.
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   constexpr FreeNotificationData& SetMteReportingMode(MTEMode mode) {
     mte_reporting_mode_ = mode;
     return *this;
   }
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
 
   constexpr MTEMode mte_reporting_mode() const {
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
     return mte_reporting_mode_;
 #else
     return MTEMode::kUndefined;
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   }
 
  private:
   void* address_ = nullptr;
-#if BUILDFLAG(HAS_MEMORY_TAGGING)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   MTEMode mte_reporting_mode_ = MTEMode::kUndefined;
-#endif  // BUILDFLAG(HAS_MEMORY_TAGGING)
+#endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   AllocationSubsystem allocation_subsystem_;
 };
 

@@ -1,5 +1,5 @@
 project('openh264', ['c', 'cpp'],
-  version : '2.3.0',
+  version : '2.6.0',
   meson_version : '>= 0.52',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
@@ -41,7 +41,7 @@ cpu_family = host_machine.cpu_family()
 
 supported_arguments = cpp.get_supported_arguments([
   '-Wno-non-virtual-dtor',
-  '-Wno-class-memaccess',
+  '-Wunused-but-set-variable',
   '-Wno-strict-aliasing'])
 
 add_project_arguments(supported_arguments, language: 'cpp')
@@ -66,7 +66,7 @@ if ['linux', 'android', 'ios', 'darwin'].contains(system)
   endif
   if cpu_family == 'x86'
     asm_format = asm_format32
-    asm_args += ['-DX86_32', '-DHAVE_AVX2']
+    asm_args += ['-DX86_32', '-DX86_32_PICASM', '-DHAVE_AVX2']
     add_project_arguments('-DHAVE_AVX2', language: 'cpp')
     add_project_arguments('-DHAVE_AVX2', '-DX86_ASM', '-DX86_32_ASM', language: 'c')
     asm_inc = join_paths(meson.current_source_dir(), 'codec', 'common', 'x86', '')
@@ -83,19 +83,28 @@ if ['linux', 'android', 'ios', 'darwin'].contains(system)
     casm_inc = include_directories(join_paths('codec', 'common', 'arm'))
   elif cpu_family == 'aarch64'
     asm_format = asm_format64
-    add_project_arguments('-DHAVE_NEON_ARM64', language: 'c')
-    add_project_arguments('-DHAVE_NEON_ARM64', language: 'cpp')
+    add_project_arguments('-DHAVE_NEON_AARCH64', language: 'c')
+    add_project_arguments('-DHAVE_NEON_AARCH64', language: 'cpp')
     casm_inc = include_directories(join_paths('codec', 'common', 'arm64'))
   elif cpu_family == 'loongarch32'
     asm_format = asm_format32
-    add_project_arguments('-mlsx', '-mlasx', language: 'c')
+    add_project_arguments('-mlsx', '-DHAVE_LSX', '-mlasx', '-DHAVE_LASX', language: 'c')
     add_project_arguments('-DHAVE_LSX', '-DHAVE_LASX', language: 'cpp')
     casm_inc = include_directories(join_paths('codec', 'common', 'loongarch'))
   elif cpu_family == 'loongarch64'
     asm_format = asm_format64
-    add_project_arguments('-mlsx', '-mlasx', language: 'c')
-    add_project_arguments('-mlsx', '-DHAVE_LSX', '-mlasx', '-DHAVE_LASX', language: 'cpp')
+    add_project_arguments('-mlsx', '-DHAVE_LSX', '-mlasx', '-DHAVE_LASX', language: 'c')
+    add_project_arguments('-DHAVE_LSX', '-DHAVE_LASX', language: 'cpp')
     casm_inc = include_directories(join_paths('codec', 'common', 'loongarch'))
+  elif cpu_family == 'riscv64'
+    # We don't have riscv64-specific optimization for now.
+    asm_format = asm_format64
+  elif cpu_family == 'ppc'
+    # We don't have powerpc-specific optimization for now.
+    asm_format = asm_format32
+  elif cpu_family == 'ppc64'
+    # We don't have powerpc64-specific optimization for now.
+    asm_format = asm_format64
   else
     error('FIXME: unhandled CPU family @0@ for @1@'.format(cpu_family, system))
   endif

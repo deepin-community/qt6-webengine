@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "third_party/blink/renderer/platform/graphics/parkable_image.h"
+
+#include "base/containers/heap_array.h"
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/test/bind.h"
@@ -105,11 +108,11 @@ class ParkableImageBaseTest : public ::testing::Test {
     return pi->impl_->is_frozen();
   }
 
-  scoped_refptr<ParkableImage> MakeParkableImageForTesting(const char* buffer,
-                                                           size_t length) {
+  scoped_refptr<ParkableImage> MakeParkableImageForTesting(
+      base::span<const uint8_t> buffer) {
     auto pi = ParkableImage::Create();
 
-    pi->Append(WTF::SharedBuffer::Create(buffer, length).get(), 0);
+    pi->Append(SharedBuffer::Create(buffer).get(), 0);
 
     return pi;
   }
@@ -117,9 +120,8 @@ class ParkableImageBaseTest : public ::testing::Test {
   // Checks content matches the ParkableImage returned from
   // |MakeParkableImageForTesting|.
   static bool IsSameContent(scoped_refptr<ParkableImage> pi,
-                            const char* buffer,
-                            size_t length) {
-    if (pi->size() != length) {
+                            base::span<const uint8_t> buffer) {
+    if (pi->size() != buffer.size()) {
       return false;
     }
 
@@ -129,11 +131,13 @@ class ParkableImageBaseTest : public ::testing::Test {
     auto ro_buffer = pi->impl_->rw_buffer_->MakeROBufferSnapshot();
     ROBuffer::Iter iter(ro_buffer.get());
     do {
-      if (memcmp(iter.data(), buffer, iter.size()) != 0) {
+      auto iter_data = *iter;
+      auto [buffer_slice, rest] = buffer.split_at(iter_data.size());
+      if (iter_data != buffer_slice) {
         pi->UnlockData();
         return false;
       }
-      buffer += iter.size();
+      buffer = rest;
     } while (iter.Next());
 
     pi->UnlockData();
@@ -147,8 +151,8 @@ class ParkableImageBaseTest : public ::testing::Test {
   //
   // Checks the counts for all 3 metrics, but only checks the value for
   // "Memory.ParkableImage.Write.Size", since the others can't be easily tested.
-  void ExpectWriteStatistics(base::HistogramBase::Sample sample,
-                             base::HistogramBase::Count expected_count) {
+  void ExpectWriteStatistics(base::HistogramBase::Sample32 sample,
+                             base::HistogramBase::Count32 expected_count) {
     histogram_tester_.ExpectTotalCount("Memory.ParkableImage.Write.Latency",
                                        expected_count);
     histogram_tester_.ExpectBucketCount("Memory.ParkableImage.Write.Size",
@@ -162,8 +166,8 @@ class ParkableImageBaseTest : public ::testing::Test {
   //
   // Checks the counts for both metrics, but not their values, since they can't
   // be easily tested.
-  void ExpectReadStatistics(base::HistogramBase::Sample sample,
-                            base::HistogramBase::Count expected_count) {
+  void ExpectReadStatistics(base::HistogramBase::Sample32 sample,
+                            base::HistogramBase::Count32 expected_count) {
     histogram_tester_.ExpectTotalCount("Memory.ParkableImage.Read.Latency",
                                        expected_count);
     histogram_tester_.ExpectTotalCount("Memory.ParkableImage.Read.Throughput",
@@ -174,16 +178,13 @@ class ParkableImageBaseTest : public ::testing::Test {
 
  private:
   base::test::TaskEnvironment task_env_;
-  raw_ptr<InMemoryDataAllocator, ExperimentalRenderer> allocator_for_testing_;
+  raw_ptr<InMemoryDataAllocator> allocator_for_testing_;
 };
 
 // Parking is enabled for these tests.
 class ParkableImageTest : public ParkableImageBaseTest {
  public:
-  ParkableImageTest() {
-    fl_.InitWithFeatures({features::kParkableImagesToDisk},
-                         {kDelayParkingImages});
-  }
+  ParkableImageTest() { fl_.InitWithFeatures({}, {kDelayParkingImages}); }
 
  private:
   base::test::ScopedFeatureList fl_;
@@ -193,19 +194,7 @@ class ParkableImageTest : public ParkableImageBaseTest {
 class ParkableImageDelayedTest : public ParkableImageBaseTest {
  public:
   ParkableImageDelayedTest() {
-    fl_.InitWithFeatures({features::kParkableImagesToDisk, kDelayParkingImages},
-                         {});
-  }
-
- private:
-  base::test::ScopedFeatureList fl_;
-};
-
-// Parking is disabled for these tests.
-class ParkableImageNoParkingTest : public ParkableImageBaseTest {
- public:
-  ParkableImageNoParkingTest() {
-    fl_.InitAndDisableFeature(features::kParkableImagesToDisk);
+    fl_.InitWithFeatures({kDelayParkingImages}, {});
   }
 
  private:
@@ -216,7 +205,6 @@ class ParkableImageWithLimitedDiskCapacityTest : public ParkableImageBaseTest {
  public:
   ParkableImageWithLimitedDiskCapacityTest() {
     const std::vector<base::test::FeatureRefAndParams> enabled_features = {
-        {features::kParkableImagesToDisk, {}},
         {features::kCompressParkableStrings, {{"max_disk_capacity_mb", "1"}}}};
     fl_.InitWithFeaturesAndParameters(enabled_features, {kDelayParkingImages});
   }
@@ -281,34 +269,34 @@ TEST_F(ParkableImageTest, LockAndUnlock) {
 // Tests that |Append|ing to a ParkableImage correctly adds data to it.
 TEST_F(ParkableImageTest, Append) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto pi = ParkableImage::Create();
   ASSERT_EQ(pi->size(), 0u);  // Should be empty when created.
 
-  pi->Append(WTF::SharedBuffer::Create(data, kDataSize).get(), 0);
+  pi->Append(SharedBuffer::Create(data).get(), 0);
 
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 }
 
 // Tests that multiple |Append|s correctly add data to the end of ParkableImage.
 TEST_F(ParkableImageTest, AppendMultiple) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto pi = ParkableImage::Create();
   ASSERT_EQ(pi->size(), 0u);  // Should be empty when created.
 
-  auto sb = WTF::SharedBuffer::Create(data, kDataSize);
+  auto sb = SharedBuffer::Create(data);
   ASSERT_EQ(sb->size(), kDataSize);
 
   pi->Append(sb.get(), 0);
 
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
-  sb->Append(data, kDataSize);
+  sb->Append(data);
   ASSERT_EQ(sb->size(), 2 * kDataSize);
 
   pi->Append(sb.get(), pi->size());
@@ -319,13 +307,13 @@ TEST_F(ParkableImageTest, AppendMultiple) {
 // Tests that we can read/write to disk correctly, preserving the data.
 TEST_F(ParkableImageTest, ParkAndUnpark) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   // We have no images currently.
   ASSERT_EQ(0u, ParkableImageManager::Instance().Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // We now have 1 image.
   ASSERT_EQ(1u, ParkableImageManager::Instance().Size());
@@ -354,7 +342,7 @@ TEST_F(ParkableImageTest, ParkAndUnpark) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same after unparking.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   ExpectWriteStatistics(kDataSize / 1024, 1);
   ExpectReadStatistics(kDataSize / 1024, 1);
@@ -363,13 +351,13 @@ TEST_F(ParkableImageTest, ParkAndUnpark) {
 // Tests that trying to park multiple times doesn't add any extra tasks.
 TEST_F(ParkableImageTest, ParkTwiceAndUnpark) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   // We have no images currently.
   ASSERT_EQ(0u, ParkableImageManager::Instance().Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // We now have 1 image.
   ASSERT_EQ(1u, ParkableImageManager::Instance().Size());
@@ -393,7 +381,7 @@ TEST_F(ParkableImageTest, ParkTwiceAndUnpark) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same after unparking.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   ExpectWriteStatistics(kDataSize / 1024, 1);
   ExpectReadStatistics(kDataSize / 1024, 1);
@@ -403,13 +391,13 @@ TEST_F(ParkableImageTest, ParkTwiceAndUnpark) {
 // disk the first time.
 TEST_F(ParkableImageTest, ParkAndUnparkSync) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   // We have no images currently.
   ASSERT_EQ(0u, ParkableImageManager::Instance().Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // We now have 1 image.
   ASSERT_EQ(1u, ParkableImageManager::Instance().Size());
@@ -445,7 +433,7 @@ TEST_F(ParkableImageTest, ParkAndUnparkSync) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same after unparking.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   // Try to park a second time.
   EXPECT_TRUE(MaybePark(pi));
@@ -461,7 +449,7 @@ TEST_F(ParkableImageTest, ParkAndUnparkSync) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same after unparking.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   // One extra read than write. We discard the data twice, but we only need to
   // write to disk once. Because we've discarded it twice, we need to do two
@@ -474,13 +462,13 @@ TEST_F(ParkableImageTest, ParkAndUnparkSync) {
 // discarding the data.
 TEST_F(ParkableImageTest, ParkAndUnparkAborted) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   // We have no images currently.
   ASSERT_EQ(0u, ParkableImageManager::Instance().Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // We now have 1 image.
   ASSERT_EQ(1u, ParkableImageManager::Instance().Size());
@@ -508,7 +496,7 @@ TEST_F(ParkableImageTest, ParkAndUnparkAborted) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   // We still expect a write to be done in this case, since the only thing
   // preventing it from being parked is the snapshot. However, the data is not
@@ -539,7 +527,7 @@ TEST_F(ParkableImageTest, ParkAndUnparkAborted) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   ExpectWriteStatistics(kDataSize / 1024, 1);
   ExpectReadStatistics(kDataSize / 1024, 1);
@@ -548,13 +536,13 @@ TEST_F(ParkableImageTest, ParkAndUnparkAborted) {
 // Tests that a frozen image will be written to disk by the manager.
 TEST_F(ParkableImageTest, ManagerSimple) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   pi->Freeze();
 
   EXPECT_EQ(1u, manager.Size());
@@ -585,13 +573,13 @@ TEST_F(ParkableImageTest, ManagerSimple) {
 // Tests that a small image is not kept in the manager.
 TEST_F(ParkableImageTest, ManagerSmall) {
   const size_t kDataSize = ParkableImageImpl::kMinSizeToPark - 10;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   EXPECT_EQ(1u, manager.Size());
 
   pi->Freeze();
@@ -614,13 +602,13 @@ TEST_F(ParkableImageTest, ManagerSmall) {
 // created at once.
 TEST_F(ParkableImageTest, ManagerTwo) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   pi->Freeze();
 
   EXPECT_EQ(1u, manager.Size());
@@ -651,13 +639,13 @@ TEST_F(ParkableImageTest, ManagerTwo) {
 // Test that a non-frozen image will not be written to disk.
 TEST_F(ParkableImageTest, ManagerNonFrozen) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   EXPECT_EQ(1u, manager.Size());
 
@@ -677,37 +665,14 @@ TEST_F(ParkableImageTest, ManagerNonFrozen) {
   ExpectReadStatistics(0, 0);
 }
 
-// Check that trying to unpark a ParkableImage when parking is disabled has no
-// effect.
-TEST_F(ParkableImageNoParkingTest, Unpark) {
-  const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
-
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
-
-  pi->Freeze();
-
-  ASSERT_FALSE(is_on_disk(pi));
-
-  // This is a no-op when parking is disabled.
-  Unpark(pi);
-
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
-
-  // No data should be written or read when parking is disabled.
-  ExpectWriteStatistics(kDataSize / 1024, 0);
-  ExpectReadStatistics(kDataSize / 1024, 0);
-}
-
 // Tests that the ParkableImageManager is correctly recording statistics after 5
 // minutes.
 TEST_F(ParkableImageTest, ManagerStatistics5min) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   pi->Freeze();
 
   Wait5MinForStatistics();
@@ -727,74 +692,16 @@ TEST_F(ParkableImageTest, ManagerStatistics5min) {
                                      1);
 }
 
-// Tests that the ParkableImageManager is correctly recording statistics after 5
-// minutes, even when parking is disabled. Only bookkeeping metrics should be
-// recorded in this case, since no reads/writes will happen.
-TEST_F(ParkableImageNoParkingTest, ManagerStatistics5min) {
-  const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
-
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
-  pi->Freeze();
-
-  Wait5MinForStatistics();
-
-  // Note that we expect 0 counts of some of these metrics.
-  histogram_tester_.ExpectTotalCount(
-      "Memory.ParkableImage.OnDiskFootprintKb.5min", 0);
-  histogram_tester_.ExpectTotalCount("Memory.ParkableImage.OnDiskSize.5min", 1);
-  histogram_tester_.ExpectTotalCount("Memory.ParkableImage.TotalReadTime.5min",
-                                     0);
-  histogram_tester_.ExpectTotalCount("Memory.ParkableImage.TotalSize.5min", 1);
-  histogram_tester_.ExpectTotalCount("Memory.ParkableImage.TotalWriteTime.5min",
-                                     0);
-  histogram_tester_.ExpectTotalCount("Memory.ParkableImage.UnparkedSize.5min",
-                                     1);
-}
-
-// Tests that the manager doesn't try to park any images when parking is
-// disabled.
-TEST_F(ParkableImageNoParkingTest, ManagerSimple) {
-  const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
-
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
-
-  auto& manager = ParkableImageManager::Instance();
-  // The manager still keeps track of all images when parking is disabled, but
-  // should not park them.
-  EXPECT_EQ(1u, manager.Size());
-
-  pi->Freeze();
-
-  // This is the delayed
-  // accounting task |ParkableImageManager::RecordStatisticsAfter5Minutes|.
-  EXPECT_EQ(1u, GetPendingMainThreadTaskCount());
-
-  // This should not do anything, since parking is disabled.
-  WaitForParking();
-
-  EXPECT_FALSE(is_on_disk(pi));
-
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
-
-  // No data should be written or read when parking is disabled.
-  ExpectWriteStatistics(kDataSize / 1024, 0);
-  ExpectReadStatistics(kDataSize / 1024, 0);
-}
-
 // Test a locked image will not be written to disk.
 TEST_F(ParkableImageTest, ManagerNotUnlocked) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   EXPECT_EQ(1u, manager.Size());
 
@@ -815,13 +722,13 @@ TEST_F(ParkableImageTest, ManagerNotUnlocked) {
 // unfrozen ParkableImages.
 TEST_F(ParkableImageTest, ManagerRescheduleUnfrozen) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // This is the delayed
   // accounting task |ParkableImageManager::RecordStatisticsAfter5Minutes|, and
@@ -857,13 +764,13 @@ TEST_F(ParkableImageTest, ManagerRescheduleUnfrozen) {
 // inefficient, but the safest way to do it.
 TEST_F(ParkableImageTest, DestroyOnSeparateThread) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   EXPECT_EQ(1u, manager.Size());
 
   Wait5MinForStatistics();
@@ -905,15 +812,15 @@ TEST_F(ParkableImageTest, FailedWrite) {
   set_may_write(false);
 
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   EXPECT_EQ(0u, manager.Size());
 
   WaitForParking();
 
   {
-    auto pi = MakeParkableImageForTesting(data, kDataSize);
+    auto pi = MakeParkableImageForTesting(data);
     pi->Freeze();
     manager.MaybeParkImagesForTesting();
     EXPECT_EQ(1u, manager.Size());
@@ -927,13 +834,13 @@ TEST_F(ParkableImageTest, FailedWrite) {
 // Test that we park only after 30 seconds, not immediately after freezing.
 TEST_F(ParkableImageDelayedTest, Simple) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   EXPECT_EQ(1u, manager.Size());
 
   Wait5MinForStatistics();
@@ -961,13 +868,13 @@ TEST_F(ParkableImageDelayedTest, Simple) {
 // immediately after freezing.
 TEST_F(ParkableImageDelayedTest, Read) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   auto& manager = ParkableImageManager::Instance();
   EXPECT_EQ(0u, manager.Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   EXPECT_EQ(1u, manager.Size());
 
   Wait5MinForStatistics();
@@ -997,13 +904,13 @@ TEST_F(ParkableImageDelayedTest, Read) {
 // parking/unparking.
 TEST_F(ParkableImageDelayedTest, ParkAndUnpark) {
   const size_t kDataSize = 3.5 * 4096;
-  char data[kDataSize];
-  PrepareReferenceData(data, kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
   // We have no images currently.
   ASSERT_EQ(0u, ParkableImageManager::Instance().Size());
 
-  auto pi = MakeParkableImageForTesting(data, kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
 
   // We now have 1 image.
   ASSERT_EQ(1u, ParkableImageManager::Instance().Size());
@@ -1025,7 +932,7 @@ TEST_F(ParkableImageDelayedTest, ParkAndUnpark) {
   EXPECT_FALSE(is_on_disk(pi));
 
   // Make sure content is the same after unparking.
-  EXPECT_TRUE(IsSameContent(pi, data, kDataSize));
+  EXPECT_TRUE(IsSameContent(pi, data));
 
   WaitForParking();
 
@@ -1036,17 +943,17 @@ TEST_F(ParkableImageDelayedTest, ParkAndUnpark) {
 TEST_F(ParkableImageWithLimitedDiskCapacityTest, ParkWithLimitedDiskCapacity) {
   constexpr size_t kMB = 1024 * 1024;
   constexpr size_t kDataSize = kMB;
-  std::unique_ptr<char[]> data(new char[kDataSize]);
-  PrepareReferenceData(data.get(), kDataSize);
+  auto data = base::HeapArray<uint8_t>::Uninit(kDataSize);
+  PrepareReferenceData(data);
 
-  auto pi = MakeParkableImageForTesting(data.get(), kDataSize);
+  auto pi = MakeParkableImageForTesting(data);
   pi->Freeze();
   EXPECT_TRUE(MaybePark(pi));
   RunPostedTasks();
   EXPECT_TRUE(is_on_disk(pi));
 
   // Create another parkable image and attempt to write to disk.
-  auto pi2 = MakeParkableImageForTesting(data.get(), kDataSize);
+  auto pi2 = MakeParkableImageForTesting(data);
   pi2->Freeze();
   // Should be false because there is no free space.
   EXPECT_FALSE(MaybePark(pi2));

@@ -17,19 +17,19 @@
 namespace blink {
 
 v8::Local<v8::Value> NodeV8Value(v8::Local<v8::Context> context, Node* node) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   if (!node ||
       !BindingSecurity::ShouldAllowAccessTo(CurrentDOMWindow(isolate), node)) {
     return v8::Null(isolate);
   }
-  return ToV8Traits<Node>::ToV8(ScriptState::From(context), node);
+  return ToV8Traits<Node>::ToV8(ScriptState::From(isolate, context), node);
 }
 
 std::unique_ptr<v8_inspector::protocol::Runtime::API::RemoteObject> ResolveNode(
     v8_inspector::V8InspectorSession* v8_session,
     Node* node,
     const String& object_group,
-    protocol::Maybe<int> v8_execution_context_id) {
+    std::optional<int> v8_execution_context_id) {
   if (!node)
     return nullptr;
 

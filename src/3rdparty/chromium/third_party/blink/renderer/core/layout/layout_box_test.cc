@@ -711,8 +711,8 @@ TEST_F(LayoutBoxTest, HitTestOverflowClipMargin) {
     </div>
   )HTML");
 
-  auto* container = GetDocument().getElementById(AtomicString("container"));
-  auto* child = GetDocument().getElementById(AtomicString("child"));
+  auto* container = GetElementById("container");
+  auto* child = GetElementById("child");
   // In child overflowing container but within the overflow clip.
   EXPECT_EQ(child, HitTest(230, 50));
   // Outside of the overflow clip, would be in child without the clip.
@@ -730,7 +730,7 @@ TEST_F(LayoutBoxTest, HitTestContainPaint) {
     </div>
   )HTML");
 
-  auto* child = GetDocument().getElementById(AtomicString("child"));
+  auto* child = GetElementById("child");
   EXPECT_EQ(GetDocument().documentElement(), HitTest(1, 1));
   EXPECT_EQ(child, HitTest(10, 10));
   EXPECT_EQ(GetDocument().FirstBodyElement(), HitTest(150, 10));
@@ -874,7 +874,7 @@ TEST_F(LayoutBoxTest, DelayedInvalidationLayoutViewScrolled) {
   EXPECT_TRUE(layout_view->MayNeedPaintInvalidationAnimatedBackgroundImage());
 
   // Scroll down at least by a viewport height.
-  GetDocument().domWindow()->scrollBy(0, 10000);
+  GetDocument().domWindow()->scrollByForTesting(0, 10000);
   GetDocument().View()->UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(layout_view->ShouldDelayFullPaintInvalidation());
@@ -1694,7 +1694,7 @@ TEST_F(LayoutBoxTest, HasReflection) {
   check_has_layer_and_reflection("svg-text", false);
 }
 
-TEST_F(LayoutBoxTest, PhysicalVisualOverflowRectIncludingFilters) {
+TEST_F(LayoutBoxTest, VisualOverflowRectIncludingFilters) {
   SetBodyInnerHTML(R"HTML(
     <div style="zoom: 2">
       <div id="target" style="filter: blur(2px); width: 100px; height: 100px">
@@ -1786,10 +1786,9 @@ TEST_F(LayoutBoxTest, HitTestResizerWithTextAreaChild) {
     </div>
   )HTML");
 
-  EXPECT_EQ(GetDocument().getElementById(AtomicString("target")),
-            HitTest(99, 99));
+  EXPECT_EQ(GetElementById("target"), HitTest(99, 99));
   EXPECT_TRUE(HitTest(1, 1)->IsDescendantOrShadowDescendantOf(
-      GetDocument().getElementById(AtomicString("textarea"))));
+      GetElementById("textarea")));
 }
 
 TEST_F(LayoutBoxTest, HitTestResizerStackedWithTextAreaChild) {
@@ -1802,15 +1801,12 @@ TEST_F(LayoutBoxTest, HitTestResizerStackedWithTextAreaChild) {
     </div>
   )HTML");
 
-  EXPECT_EQ(GetDocument().getElementById(AtomicString("target")),
-            HitTest(99, 99));
+  EXPECT_EQ(GetElementById("target"), HitTest(99, 99));
   EXPECT_TRUE(HitTest(1, 1)->IsDescendantOrShadowDescendantOf(
-      GetDocument().getElementById(AtomicString("textarea"))));
+      GetElementById("textarea")));
 }
 
 TEST_F(LayoutBoxTest, AnchorInFragmentedContainingBlock) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   // Create a 3-column multicol layout with a fragmented containing block,
   // and a fragmented anchor element that starts from the second fragment.
   InsertStyleElement(R"CSS(
@@ -1855,8 +1851,6 @@ TEST_F(LayoutBoxTest, AnchorInFragmentedContainingBlock) {
 }
 
 TEST_F(LayoutBoxTest, AnchorInInlineContainingBlock) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <div>
       <span id="not-implicit-anchor">not implicit anchor</span>
@@ -1877,8 +1871,6 @@ TEST_F(LayoutBoxTest, AnchorInInlineContainingBlock) {
 }
 
 TEST_F(LayoutBoxTest, AnchorInInlineContainingBlockWithNameConflicts) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <div>
       <span style="position: relative">
@@ -1925,7 +1917,7 @@ TEST_F(LayoutBoxTest, IsUserScrollable) {
     </div>
   )HTML");
 
-  auto* target_element = GetDocument().getElementById(AtomicString("target"));
+  auto* target_element = GetElementById("target");
   auto* target = target_element->GetLayoutBox();
   EXPECT_TRUE(target->ScrollsOverflow());
   EXPECT_TRUE(target->IsUserScrollable());
@@ -1966,7 +1958,7 @@ TEST_F(LayoutBoxTest, IsUserScrollableLayoutView) {
   EXPECT_FALSE(GetLayoutView().IsUserScrollable());
 }
 
-TEST_F(LayoutBoxTest, LogicalTopLogicalLeft) {
+TEST_F(LayoutBoxTest, LogicalRectInContainer) {
   SetBodyInnerHTML(R"HTML("
     <style>
     .c { contain: layout; }
@@ -1988,40 +1980,58 @@ TEST_F(LayoutBoxTest, LogicalTopLogicalLeft) {
   constexpr LayoutUnit kTopMargin(3);
   constexpr LayoutUnit kRightMargin(5);
   constexpr LayoutUnit kLeftMargin(11);
+  constexpr LayoutUnit kSize(1);
 
   // Target DIVs are placed at (3, 11) from its container top-left.
-  LayoutBox* target = GetLayoutBoxByElementId("htb-htb");
-  EXPECT_EQ(kTopMargin, target->LogicalTop());
-  EXPECT_EQ(kLeftMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("htb-vrl");
-  EXPECT_EQ(kLeftMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("htb-vlr");
-  EXPECT_EQ(kLeftMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
+  EXPECT_EQ(LogicalRect(kLeftMargin, kTopMargin, kSize, kSize),
+            GetLayoutBoxByElementId("htb-htb")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kLeftMargin, kTopMargin, kSize, kSize),
+            GetLayoutBoxByElementId("htb-vrl")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kLeftMargin, kTopMargin, kSize, kSize),
+            GetLayoutBoxByElementId("htb-vlr")->LogicalRectInContainer());
 
-  // Container's writing-mode doesn't matter if it is vertical-lr.
-  target = GetLayoutBoxByElementId("vlr-htb");
-  EXPECT_EQ(kTopMargin, target->LogicalTop());
-  EXPECT_EQ(kLeftMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("vlr-vrl");
-  EXPECT_EQ(kLeftMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("vlr-vlr");
-  EXPECT_EQ(kLeftMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
+  // Target DIVs are placed at (3, 11) in the vertical-lr container too.
+  EXPECT_EQ(LogicalRect(kTopMargin, kLeftMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vlr-htb")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kTopMargin, kLeftMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vlr-vrl")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kTopMargin, kLeftMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vlr-vlr")->LogicalRectInContainer());
 
-  // In a vertical-rl container, LogicalTop() and LogicalLeft() return
-  // flipped-block offsets.
-  target = GetLayoutBoxByElementId("vrl-htb");
-  EXPECT_EQ(kTopMargin, target->LogicalTop());
-  EXPECT_EQ(kRightMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("vrl-vrl");
-  EXPECT_EQ(kRightMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
-  target = GetLayoutBoxByElementId("vrl-vlr");
-  EXPECT_EQ(kRightMargin, target->LogicalTop());
-  EXPECT_EQ(kTopMargin, target->LogicalLeft());
+  // In the vertical-rl container.
+  EXPECT_EQ(LogicalRect(kTopMargin, kRightMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vrl-htb")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kTopMargin, kRightMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vrl-vrl")->LogicalRectInContainer());
+  EXPECT_EQ(LogicalRect(kTopMargin, kRightMargin, kSize, kSize),
+            GetLayoutBoxByElementId("vrl-vlr")->LogicalRectInContainer());
+}
+
+TEST_F(LayoutBoxTest,
+       VisualOverflowRectWithEmptyInlineChildAndReflectAndOutline) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      body {
+        margin: 0;
+      }
+      #box {
+        -webkit-box-reflect: above;
+        contain: size;
+        outline: 6px solid black;
+      }
+      #span {
+        outline: 2px solid black;
+      }
+    </style>
+    <div id="box">
+      <span id="span"></span>
+    </div>
+  )HTML");
+  const auto* box = GetLayoutBoxByElementId("box");
+  const auto* span = To<LayoutInline>(GetLayoutObjectByElementId("span"));
+  EXPECT_EQ(PhysicalRect(-6, -6, 812, 12), box->SelfVisualOverflowRect());
+  EXPECT_EQ(PhysicalRect(-6, -6, 812, 12), box->VisualOverflowRect());
+  EXPECT_EQ(PhysicalRect(-2, -2, 4, 4), span->VisualOverflowRect());
 }
 
 class LayoutBoxBackgroundPaintLocationTest : public RenderingTest,

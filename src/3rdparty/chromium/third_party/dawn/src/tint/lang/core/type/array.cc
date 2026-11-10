@@ -58,6 +58,9 @@ core::type::Flags FlagsFrom(const Type* element, const ArrayCount* count) {
             flags.Add(Flag::kFixedFootprint);
         }
     }
+    if (element->IsHostShareable()) {
+        flags.Add(Flag::kHostShareable);
+    }
     return flags;
 }
 
@@ -73,7 +76,7 @@ Array::Array(const Type* element,
              uint32_t size,
              uint32_t stride,
              uint32_t implicit_stride)
-    : Base(Hash(tint::TypeInfo::Of<Array>().full_hashcode, count, align, size, stride),
+    : Base(Hash(tint::TypeCode::Of<Array>().bits, count, align, size, stride),
            FlagsFrom(element, count)),
       element_(element),
       count_(count),
@@ -81,6 +84,24 @@ Array::Array(const Type* element,
       size_(size),
       stride_(stride),
       implicit_stride_(implicit_stride) {
+    TINT_ASSERT(count_);
+    TINT_ASSERT(element_);
+}
+
+Array::Array(size_t hash,
+             const Type* element,
+             const ArrayCount* count,
+             uint32_t align,
+             uint32_t size,
+             uint32_t stride)
+    : Base(hash, FlagsFrom(element, count)),
+      element_(element),
+      count_(count),
+      align_(align),
+      size_(size),
+      stride_(stride),
+      implicit_stride_(tint::RoundUp(element->Align(), element->Size())) {
+    TINT_ASSERT(count_);
     TINT_ASSERT(element_);
 }
 

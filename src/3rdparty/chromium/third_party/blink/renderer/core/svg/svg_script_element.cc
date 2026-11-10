@@ -49,15 +49,34 @@ void SVGScriptElement::ParseAttribute(
         JSEventHandlerForContentAttribute::Create(
             GetExecutionContext(), params.name, params.new_value,
             JSEventHandler::HandlerType::kOnErrorEventHandler));
+  } else if (params.name == svg_names::kAsyncAttr &&
+             RuntimeEnabledFeatures::SvgScriptElementAsyncAttributeEnabled()) {
+    // https://html.spec.whatwg.org/C/#non-blocking
+    // "In addition, whenever a script element whose |non-blocking|
+    // flag is set has an async content attribute added, the element's
+    // |non-blocking| flag must be unset."
+    loader_->HandleAsyncAttribute();
   } else {
     SVGElement::ParseAttribute(params);
   }
 }
 
+void SVGScriptElement::setAsync(bool async) {
+  CHECK(RuntimeEnabledFeatures::SvgScriptElementAsyncAttributeEnabled());
+
+  SetBooleanAttribute(svg_names::kAsyncAttr, async);
+  loader_->HandleAsyncAttribute();
+}
+
+bool SVGScriptElement::async() const {
+  CHECK(RuntimeEnabledFeatures::SvgScriptElementAsyncAttributeEnabled());
+
+  return FastHasAttribute(svg_names::kAsyncAttr) || loader_->IsForceAsync();
+}
+
 void SVGScriptElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   if (SVGURIReference::IsKnownAttribute(params.name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     loader_->HandleSourceAttribute(LegacyHrefString(*this));
     return;
   }
@@ -80,7 +99,13 @@ void SVGScriptElement::DidNotifySubtreeInsertionsToDocument() {
 
 void SVGScriptElement::ChildrenChanged(const ChildrenChange& change) {
   SVGElement::ChildrenChanged(change);
-  loader_->ChildrenChanged();
+  if (!GetDocument().StatePreservingAtomicMoveInProgress()) {
+    loader_->ChildrenChanged(change);
+  }
+
+  // We'll record whether the script element children were ever changed by
+  // the API (as opposed to the parser).
+  children_changed_by_api_ |= !change.ByParser();
 }
 
 bool SVGScriptElement::IsURLAttribute(const Attribute& attribute) const {
@@ -90,12 +115,36 @@ bool SVGScriptElement::IsURLAttribute(const Attribute& attribute) const {
 void SVGScriptElement::FinishParsingChildren() {
   SVGElement::FinishParsingChildren();
   have_fired_load_ = true;
-  DCHECK(!script_text_internal_slot_.length());
-  script_text_internal_slot_ = ParkableString(TextFromChildren().Impl());
+
+  // We normally expect the parser to finish parsing before any script gets
+  // a chance to manipulate the script. However, if script parsing gets
+  // deferred (or similar; see crbug.com/1033101) then a script might get
+  // access to the script element before. In this case, we cannot blindly
+  // accept the current TextFromChildren as a parser result.
+  // This matches the logic in HTMLScriptElement.
+  DCHECK(children_changed_by_api_ || !script_text_internal_slot_.length());
+  if (!children_changed_by_api_) {
+    script_text_internal_slot_ = ParkableString(TextFromChildren().Impl());
+  }
 }
 
 bool SVGScriptElement::HaveLoadedRequiredResources() {
   return have_fired_load_;
+}
+
+String SVGScriptElement::IntegrityAttributeValue() const {
+  return FastGetAttribute(html_names::kIntegrityAttr);
+}
+
+String SVGScriptElement::SignatureAttributeValue() const {
+  return FastGetAttribute(html_names::kSignatureAttr);
+}
+
+bool SVGScriptElement::AsyncAttributeValue() const {
+  if (RuntimeEnabledFeatures::SvgScriptElementAsyncAttributeEnabled()) {
+    return FastHasAttribute(svg_names::kAsyncAttr);
+  }
+  return false;
 }
 
 String SVGScriptElement::SourceAttributeValue() const {
@@ -133,7 +182,7 @@ const AtomicString& SVGScriptElement::GetNonceForElement() const {
 
 bool SVGScriptElement::AllowInlineScriptForCSP(
     const AtomicString& nonce,
-    const WTF::OrdinalNumber& context_line,
+    const OrdinalNumber& context_line,
     const String& script_content) {
   return GetExecutionContext()
       ->GetContentSecurityPolicyForCurrentWorld()
@@ -154,7 +203,8 @@ Element& SVGScriptElement::CloneWithoutAttributesAndChildren(
   CreateElementFlags flags =
       CreateElementFlags::ByCloneNode().SetAlreadyStarted(
           loader_->AlreadyStarted());
-  return *factory.CreateElement(TagQName(), flags, IsValue());
+  return *factory.CreateElement(TagQName(), flags, IsValue(),
+                                /*registry*/ nullptr);
 }
 
 void SVGScriptElement::DispatchLoadEvent() {
@@ -181,11 +231,9 @@ bool SVGScriptElement::IsAnimatableAttribute(const QualifiedName& name) const {
 
 const AttrNameToTrustedType& SVGScriptElement::GetCheckedAttributeTypes()
     const {
-  DEFINE_STATIC_LOCAL(
-      AttrNameToTrustedType, attribute_map,
-      ({
-          {svg_names::kHrefAttr.LocalName(), SpecificTrustedType::kScriptURL},
-      }));
+  DEFINE_STATIC_LOCAL(AttrNameToTrustedType, attribute_map,
+                      ({{"href", std::pair{SpecificTrustedType::kScriptURL,
+                                           "SVGScriptElement"}}}));
   return attribute_map;
 }
 

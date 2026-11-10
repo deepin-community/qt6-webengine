@@ -30,15 +30,13 @@
 #include <algorithm>
 #include <array>
 
-#include "src/tint/lang/core/builtin_fn.h"
-#include "src/tint/lang/core/builtin_value.h"
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
 #include "src/tint/lang/spirv/reader/ast_lower/atomics.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
-#include "src/tint/lang/wgsl/ast/bitcast_expression.h"
 #include "src/tint/lang/wgsl/ast/break_statement.h"
 #include "src/tint/lang/wgsl/ast/builtin_attribute.h"
 #include "src/tint/lang/wgsl/ast/call_statement.h"
@@ -159,10 +157,11 @@ using namespace tint::core::number_suffixes;  // NOLINT
 using namespace tint::core::fluent_types;     // NOLINT
 
 namespace tint::spirv::reader::ast_parser {
-
 namespace {
 
 constexpr uint32_t kMaxVectorLen = 4;
+
+static constexpr std::array<const char*, 4> kComponentNames = {"x", "y", "z", "w"};
 
 /// @param inst a SPIR-V instruction
 /// @returns Returns the opcode for an instruciton
@@ -887,7 +886,7 @@ void FunctionEmitter::PushGuard(const std::string& guard_name, uint32_t end_id) 
     auto* cond = builder_.Expr(Source{}, guard_name);
     auto* builder = AddStatementBuilder<IfStatementBuilder>(cond);
 
-    PushNewStatementBlock(top.GetConstruct(), end_id, [=](const StatementList& stmts) {
+    PushNewStatementBlock(top.GetConstruct(), end_id, [builder, this](const StatementList& stmts) {
         builder->body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
     });
 }
@@ -899,7 +898,7 @@ void FunctionEmitter::PushTrueGuard(uint32_t end_id) {
     auto* cond = MakeTrue(Source{});
     auto* builder = AddStatementBuilder<IfStatementBuilder>(cond);
 
-    PushNewStatementBlock(top.GetConstruct(), end_id, [=](const StatementList& stmts) {
+    PushNewStatementBlock(top.GetConstruct(), end_id, [builder, this](const StatementList& stmts) {
         builder->body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
     });
 }
@@ -1164,6 +1163,19 @@ bool FunctionEmitter::EmitPipelineOutput(std::string var_name,
             if (array_type->size == 0) {
                 return Fail() << "runtime-size array not allowed on pipeline IO";
             }
+
+            const ast::BuiltinAttribute* builtin_attribute = attrs.Get<ast::BuiltinAttribute>();
+            if (builtin_attribute != nullptr &&
+                builtin_attribute->builtin == core::BuiltinValue::kClipDistances) {
+                const Type* member_type = forced_member_type;
+                const auto member_name = namer_.MakeDerivedName(var_name);
+                return_members.Push(
+                    builder_.Member(member_name, member_type->Build(builder_), attrs.list));
+                const ast::Expression* load_source = builder_.Expr(var_name);
+                return_exprs.Push(load_source);
+                return success();
+            }
+
             index_prefix.Push(0);
             const Type* elem_ty = array_type->type;
             for (int i = 0; i < static_cast<int>(array_type->size); i++) {
@@ -1468,8 +1480,8 @@ bool FunctionEmitter::IsHandleObj(const spvtools::opt::Instruction& obj) {
     TINT_ASSERT(obj.type_id() != 0u);
     auto* spirv_type = type_mgr_->GetType(obj.type_id());
     TINT_ASSERT(spirv_type);
-    return spirv_type->AsImage() || spirv_type->AsSampler() ||
-           (spirv_type->AsPointer() &&
+    return (spirv_type->AsImage() != nullptr) || (spirv_type->AsSampler() != nullptr) ||
+           ((spirv_type->AsPointer() != nullptr) &&
             (static_cast<spv::StorageClass>(spirv_type->AsPointer()->storage_class()) ==
              spv::StorageClass::UniformConstant));
 }
@@ -1778,7 +1790,7 @@ bool FunctionEmitter::LabelControlFlowConstructs() {
     //
     //      In the same scan, mark each basic block with the nearest enclosing
     //      header: the most recent header for which we haven't reached its merge
-    //      block. Also mark the the most recent continue target for which we
+    //      block. Also mark the most recent continue target for which we
     //      haven't reached the backedge block.
 
     TINT_ASSERT(block_order_.size() > 0);
@@ -2302,7 +2314,7 @@ bool FunctionEmitter::ClassifyCFGEdges() {
                     return Fail() << "Fallthrough not permitted in WGSL";
                 }
             }  // end forward edge
-        }      // end successor
+        }  // end successor
 
         if (num_backedges > 1) {
             return Fail() << "Block " << src << " has too many backedges: " << num_backedges;
@@ -2523,8 +2535,7 @@ bool FunctionEmitter::EmitFunctionVariables() {
             }
         }
         auto* var = parser_impl_.MakeVar(inst.result_id(), core::AddressSpace::kUndefined,
-                                         core::Access::kUndefined, var_store_type, initializer,
-                                         Attributes{});
+                                         var_store_type, initializer, Attributes{});
         auto* var_decl_stmt = create<ast::VariableDeclStatement>(Source{}, var);
         AddStatement(var_decl_stmt);
         auto* var_type = ty_.Reference(core::AddressSpace::kUndefined, var_store_type);
@@ -2916,7 +2927,7 @@ bool FunctionEmitter::EmitIfStart(const BlockInfo& block_info) {
     // But make sure we do it in the right order.
     auto push_else = [this, builder, else_end, construct, false_is_break, false_is_continue] {
         // Push the else clause onto the stack first.
-        PushNewStatementBlock(construct, else_end, [=](const StatementList& stmts) {
+        PushNewStatementBlock(construct, else_end, [builder, this](const StatementList& stmts) {
             // Only set the else-clause if there are statements to fill it.
             if (!stmts.IsEmpty()) {
                 // The "else" consists of the statement list from the top of
@@ -2967,7 +2978,7 @@ bool FunctionEmitter::EmitIfStart(const BlockInfo& block_info) {
         }
 
         // Push the then clause onto the stack.
-        PushNewStatementBlock(construct, then_end, [=](const StatementList& stmts) {
+        PushNewStatementBlock(construct, then_end, [builder, this](const StatementList& stmts) {
             builder->body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
         });
         if (true_is_break) {
@@ -3080,10 +3091,11 @@ bool FunctionEmitter::EmitSwitchStart(const BlockInfo& block_info) {
         // for the case, and fill the case clause once the block is generated.
         auto case_idx = swch->cases.Length();
         swch->cases.Push(nullptr);
-        PushNewStatementBlock(construct, end_id, [=](const StatementList& stmts) {
-            auto* body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
-            swch->cases[case_idx] = create<ast::CaseStatement>(Source{}, selectors, body);
-        });
+        PushNewStatementBlock(
+            construct, end_id, [swch, case_idx, selectors, this](const StatementList& stmts) {
+                auto* body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
+                swch->cases[case_idx] = create<ast::CaseStatement>(Source{}, selectors, body);
+            });
 
         if (i == 0) {
             break;
@@ -3095,9 +3107,10 @@ bool FunctionEmitter::EmitSwitchStart(const BlockInfo& block_info) {
 
 bool FunctionEmitter::EmitLoopStart(const Construct* construct) {
     auto* builder = AddStatementBuilder<LoopStatementBuilder>();
-    PushNewStatementBlock(construct, construct->end_id, [=](const StatementList& stmts) {
-        builder->body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
-    });
+    PushNewStatementBlock(
+        construct, construct->end_id, [builder, this](const StatementList& stmts) {
+            builder->body = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
+        });
     return success();
 }
 
@@ -3110,7 +3123,7 @@ bool FunctionEmitter::EmitContinuingStart(const Construct* construct) {
         return Fail() << "internal error: starting continue construct, "
                          "expected loop on top of stack";
     }
-    PushNewStatementBlock(construct, construct->end_id, [=](const StatementList& stmts) {
+    PushNewStatementBlock(construct, construct->end_id, [loop, this](const StatementList& stmts) {
         loop->continuing = create<ast::BlockStatement>(Source{}, stmts, tint::Empty);
     });
 
@@ -3370,9 +3383,8 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
         // no need to remap pointer properties.
         auto* store_type = parser_impl_.ConvertType(def_inst->type_id());
         AddStatement(create<ast::VariableDeclStatement>(
-            Source{},
-            parser_impl_.MakeVar(id, core::AddressSpace::kUndefined, core::Access::kUndefined,
-                                 store_type, nullptr, Attributes{})));
+            Source{}, parser_impl_.MakeVar(id, core::AddressSpace::kUndefined, store_type, nullptr,
+                                           Attributes{})));
         auto* type = ty_.Reference(core::AddressSpace::kUndefined, store_type);
         identifier_types_.emplace(id, type);
     }
@@ -3428,7 +3440,7 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
                 auto copy_name = namer_.MakeDerivedName(namer_.Name(phi_id) + "_c" +
                                                         std::to_string(block_info.id));
                 auto copy_sym = builder_.Symbols().Register(copy_name);
-                copied_phis.GetOrCreate(phi_id, [copy_sym] { return copy_sym; });
+                copied_phis.GetOrAdd(phi_id, [copy_sym] { return copy_sym; });
                 AddStatement(builder_.WrapInStatement(
                     builder_.Let(copy_sym, builder_.Expr(namer_.Name(phi_id)))));
             }
@@ -3439,7 +3451,7 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
             const auto phi_id = assignment.phi_id;
             auto* const lhs_expr = builder_.Expr(namer_.Name(phi_id));
             // If RHS value is actually a phi we just cpatured, then use it.
-            auto copy_sym = copied_phis.Find(assignment.value_id);
+            auto copy_sym = copied_phis.Get(assignment.value_id);
             auto* const rhs_expr =
                 copy_sym ? builder_.Expr(*copy_sym) : MakeExpression(assignment.value_id).expr;
             AddStatement(builder_.Assign(lhs_expr, rhs_expr));
@@ -3950,7 +3962,7 @@ TypedExpression FunctionEmitter::MaybeEmitCombinatorialValue(
     }
 
     if (op == spv::Op::OpConvertSToF || op == spv::Op::OpConvertUToF ||
-        op == spv::Op::OpConvertFToS || op == spv::Op::OpConvertFToU) {
+        op == spv::Op::OpConvertFToS || op == spv::Op::OpConvertFToU || op == spv::Op::OpFConvert) {
         return MakeNumericConversion(inst);
     }
 
@@ -3975,7 +3987,6 @@ TypedExpression FunctionEmitter::MaybeEmitCombinatorialValue(
     //    OpSatConvertUToS // Only in Kernel (OpenCL), not in WebGPU
     //    OpUConvert // Only needed when multiple widths supported
     //    OpSConvert // Only needed when multiple widths supported
-    //    OpFConvert // Only needed when multiple widths supported
     //    OpConvertPtrToU // Not in WebGPU
     //    OpConvertUToPtr // Not in WebGPU
     //    OpPtrCastToGeneric // Not in Vulkan
@@ -4317,8 +4328,7 @@ const ast::Identifier* FunctionEmitter::Swizzle(uint32_t i) {
         Fail() << "vector component index is larger than " << kMaxVectorLen - 1 << ": " << i;
         return nullptr;
     }
-    const char* names[] = {"x", "y", "z", "w"};
-    return builder_.Ident(names[i & 3]);
+    return builder_.Ident(kComponentNames[i & 3]);
 }
 
 const ast::Identifier* FunctionEmitter::PrefixSwizzle(uint32_t n) {
@@ -4588,7 +4598,7 @@ TypedExpression FunctionEmitter::MakeCompositeValueDecomposition(
     // A SPIR-V composite extract is a single instruction with multiple
     // literal indices walking down into composites.
     // A SPIR-V composite insert is similar but also tells you what component
-    // to inject. This function is responsible for the the walking-into part
+    // to inject. This function is responsible for the walking-into part
     // of composite-insert.
     //
     // The Tint AST represents this as ever-deeper nested indexing expressions.
@@ -4726,9 +4736,8 @@ TypedExpression FunctionEmitter::MakeVectorShuffle(const spvtools::opt::Instruct
 
     // Helper to get the name for the component index `i`.
     auto component_name = [](uint32_t i) {
-        constexpr const char* names[] = {"x", "y", "z", "w"};
         TINT_ASSERT(i < 4);
-        return names[i];
+        return kComponentNames[i];
     };
 
     // Build a swizzle for each consecutive set of indices that fall within the same vector.
@@ -4920,7 +4929,6 @@ DefInfo::Pointer FunctionEmitter::GetPointerInfo(uint32_t id) {
                 break;
         }
         TINT_UNREACHABLE() << "expected a memory object declaration";
-        return {};
     };
 
     auto where = def_info_.find(id);
@@ -5216,6 +5224,14 @@ TypedExpression FunctionEmitter::MakeNumericConversion(const spvtools::opt::Inst
                       "point scalar or vector: "
                    << inst.PrettyPrint();
         }
+    } else if (op == spv::Op::OpFConvert) {
+        if (arg_expr.type->IsFloatScalarOrVector()) {
+            expr_type = requested_type;
+        } else {
+            Fail() << "operand for conversion to float 16 must be floating "
+                      "point scalar or vector: "
+                   << inst.PrettyPrint();
+        }
     }
     if (expr_type == nullptr) {
         // The diagnostic has already been emitted.
@@ -5284,7 +5300,7 @@ bool FunctionEmitter::EmitFunctionCall(const spvtools::opt::Instruction& inst) {
 }
 
 bool FunctionEmitter::EmitControlBarrier(const spvtools::opt::Instruction& inst) {
-    uint32_t operands[3];
+    std::array<uint32_t, 3> operands;
     for (uint32_t i = 0; i < 3; i++) {
         auto id = inst.GetSingleWordInOperand(i);
         if (auto* constant = constant_mgr_->FindDeclaredConstant(id)) {
@@ -5836,7 +5852,9 @@ bool FunctionEmitter::EmitImageQuery(const spvtools::opt::Instruction& inst) {
                     : exprs[0],
             };
 
-            expr = ToSignedIfUnsigned(expr);
+            if (result_type->IsSignedScalarOrVector()) {
+                expr = ToSignedIfUnsigned(expr);
+            }
 
             return EmitConstDefOrWriteToHoistedVar(inst, expr);
         }

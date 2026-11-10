@@ -47,16 +47,14 @@ class LayoutSVGModelObject : public LayoutObject {
 
   bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
 
-  PhysicalRect VisualRectInDocument(
-      VisualRectFlags = kDefaultVisualRectFlags) const override;
-
   gfx::RectF VisualRectInLocalSVGCoordinates() const override {
     NOT_DESTROYED();
     return DecoratedBoundingBox();
   }
 
-  void AbsoluteQuads(Vector<gfx::QuadF>&,
-                     MapCoordinatesFlags mode = 0) const override;
+  void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
+                               const LayoutBoxModelObject* ancestor,
+                               MapCoordinatesFlags) const override;
   gfx::RectF LocalBoundingBoxRectForAccessibility() const final;
 
   void MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
@@ -84,7 +82,8 @@ class LayoutSVGModelObject : public LayoutObject {
   void InsertedIntoTree() override;
   void WillBeRemovedFromTree() override;
 
-  bool CheckForImplicitTransformChange(bool bbox_changed) const;
+  bool CheckForImplicitTransformChange(const SVGLayoutInfo&,
+                                       bool bbox_changed) const;
 
  private:
   // LayoutSVGModelObject subclasses should use GetElement() instead.

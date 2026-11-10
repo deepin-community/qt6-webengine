@@ -23,7 +23,6 @@
 
 #include "third_party/blink/renderer/core/html/forms/base_text_input_type.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/script_regexp.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
@@ -31,8 +30,9 @@
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/platform/bindings/script_regexp.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -115,14 +115,14 @@ bool BaseTextInputType::PatternMismatchPerValue(const String& value) const {
           MakeGarbageCollected<ConsoleMessage>(
               mojom::blink::ConsoleMessageSource::kRendering,
               mojom::blink::ConsoleMessageLevel::kError,
-              "Pattern attribute value " + raw_pattern +
-                  " is not a valid regular expression: " +
-                  raw_regexp->ExceptionMessage()));
+              StrCat({"Pattern attribute value ", raw_pattern,
+                      " is not a valid regular expression: ",
+                      raw_regexp->ExceptionMessage()})));
       regexp_ = raw_regexp;
       pattern_for_regexp_ = raw_pattern;
       return false;
     }
-    String pattern = "^(?:" + raw_pattern + ")$";
+    String pattern = StrCat({"^(?:", raw_pattern, ")$"});
     regexp_ = MakeGarbageCollected<ScriptRegexp>(
         isolate, pattern, kTextCaseSensitive, MultilineMode::kMultilineDisabled,
         unicode_mode);

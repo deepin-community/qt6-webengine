@@ -7,23 +7,24 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
 
-#include <optional>
 #include "base/check_op.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/hash/hash.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "base/sequence_checker.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
@@ -38,9 +39,11 @@
 #include "base/trace_event/typed_macros.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/urgent_message_observer.h"
+#include "mojo/public/c/system/types.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
 #include "mojo/public/cpp/bindings/associated_group_controller.h"
 #include "mojo/public/cpp/bindings/connector.h"
+#include "mojo/public/cpp/bindings/features.h"
 #include "mojo/public/cpp/bindings/interface_endpoint_client.h"
 #include "mojo/public/cpp/bindings/interface_endpoint_controller.h"
 #include "mojo/public/cpp/bindings/interface_id.h"
@@ -50,9 +53,9 @@
 #include "mojo/public/cpp/bindings/pipe_control_message_handler.h"
 #include "mojo/public/cpp/bindings/pipe_control_message_handler_delegate.h"
 #include "mojo/public/cpp/bindings/pipe_control_message_proxy.h"
+#include "mojo/public/cpp/bindings/scoped_message_error_crash_key.h"
 #include "mojo/public/cpp/bindings/sequence_local_sync_event_watcher.h"
 #include "mojo/public/cpp/bindings/tracing_helpers.h"
-#include "third_party/abseil-cpp/absl/base/attributes.h"
 
 namespace IPC {
 
@@ -60,7 +63,7 @@ class ChannelAssociatedGroupController;
 
 namespace {
 
-ABSL_CONST_INIT thread_local bool off_sequence_binding_allowed = false;
+constinit thread_local bool off_sequence_binding_allowed = false;
 
 BASE_FEATURE(kMojoChannelAssociatedSendUsesRunOrPostTask,
              "MojoChannelAssociatedSendUsesRunOrPostTask",
@@ -68,7 +71,7 @@ BASE_FEATURE(kMojoChannelAssociatedSendUsesRunOrPostTask,
 
 // Used to track some internal Channel state in pursuit of message leaks.
 //
-// TODO(https://crbug.com/813045): Remove this.
+// TODO(crbug.com/40563310): Remove this.
 class ControllerMemoryDumpProvider
     : public base::trace_event::MemoryDumpProvider {
  public:
@@ -102,7 +105,8 @@ class ControllerMemoryDumpProvider
 
  private:
   base::Lock lock_;
-  std::set<ChannelAssociatedGroupController*> controllers_;
+  std::set<raw_ptr<ChannelAssociatedGroupController, SetExperimental>>
+      controllers_;
 };
 
 ControllerMemoryDumpProvider& GetMemoryDumpProvider() {
@@ -404,6 +408,17 @@ class ChannelAssociatedGroupController
 
     if (!mojo::IsPrimaryInterfaceId(id) || reason)
       control_message_proxy_.NotifyPeerEndpointClosed(id, reason);
+  }
+
+  void NotifyLocalEndpointOfPeerClosure(mojo::InterfaceId id) override {
+    if (!task_runner_->RunsTasksInCurrentSequence()) {
+      task_runner_->PostTask(
+          FROM_HERE, base::BindOnce(&ChannelAssociatedGroupController::
+                                        NotifyLocalEndpointOfPeerClosure,
+                                    base::WrapRefCounted(this), id));
+      return;
+    }
+    OnPeerAssociatedEndpointClosed(id, std::nullopt);
   }
 
   mojo::InterfaceEndpointController* AttachEndpointClient(
@@ -900,7 +915,14 @@ class ChannelAssociatedGroupController
       }
       return true;
     }
-    return connector_->Accept(message);
+
+    MojoResult result = connector_->AcceptAndGetResult(message);
+    if (result == MOJO_RESULT_OK) {
+      return true;
+    }
+
+    CHECK(connector_->encountered_error());
+    return false;
   }
 
   void SendMessageOnSequenceViaTask(mojo::Message message) {
@@ -1302,7 +1324,7 @@ bool ControllerMemoryDumpProvider::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
   base::AutoLock lock(lock_);
-  for (auto* controller : controllers_) {
+  for (ChannelAssociatedGroupController* controller : controllers_) {
     base::trace_event::MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(
         base::StringPrintf("mojo/queued_ipc_channel_message/0x%" PRIxPTR,
                            reinterpret_cast<uintptr_t>(controller)));

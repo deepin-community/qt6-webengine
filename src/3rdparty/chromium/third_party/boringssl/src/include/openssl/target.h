@@ -1,16 +1,16 @@
-/* Copyright (c) 2023, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright 2023 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef OPENSSL_HEADER_TARGET_H
 #define OPENSSL_HEADER_TARGET_H
@@ -84,18 +84,18 @@
 
 // Trusty and Android baremetal aren't Linux but currently define __linux__.
 // As a workaround, we exclude them here.
-// We also exclude nanolibc/CrOS EC/Zephyr. nanolibc/CrOS EC/Zephyr
-// sometimes build for a non-Linux target (which should not define __linux__),
-// but also sometimes build for Linux. Although technically running in Linux
-// userspace, this lacks all the libc APIs we'd normally expect on Linux, so we
-// treat it as a non-Linux target.
+// We also exclude nanolibc/CrOS EC. nanolibc/CrOS EC sometimes build for a
+// non-Linux target (which should not define __linux__), but also sometimes
+// build for Linux. Although technically running in Linux userspace, this lacks
+// all the libc APIs we'd normally expect on Linux, so we treat it as a
+// non-Linux target.
 //
 // TODO(b/169780122): Remove this workaround once Trusty no longer defines it.
 // TODO(b/291101350): Remove this workaround once Android baremetal no longer
 // defines it.
 #if defined(__linux__) && !defined(__TRUSTY__) && \
     !defined(ANDROID_BAREMETAL) && !defined(OPENSSL_NANOLIBC) && \
-    !defined(CROS_EC) && !defined(CROS_ZEPHYR)
+    !defined(CROS_EC)
 #define OPENSSL_LINUX
 #endif
 
@@ -148,16 +148,19 @@
 #define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 
-// CROS_ZEPHYR is an embedded target for ChromeOS Zephyr Embedded Controller.
+// Zephyr is an open source RTOS, optimized for embedded devices.
 // Defining this on any other platform is not supported. Other embedded
 // platforms must introduce their own defines.
 //
-// https://chromium.googlesource.com/chromiumos/platform/ec/+/HEAD/docs/zephyr/README.md
-#if defined(CROS_ZEPHYR)
+// Zephyr supports multithreading with cooperative and preemptive scheduling.
+// It also implements POSIX Threads (pthread) API, so it's not necessary to
+// implement BoringSSL internal threading API using some custom API.
+//
+// https://www.zephyrproject.org/
+#if defined(__ZEPHYR__)
 #define OPENSSL_NO_FILESYSTEM
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
-#define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 
 #if defined(__ANDROID_API__)
@@ -189,11 +192,6 @@
 #define OPENSSL_THREADS
 #endif
 
-#if defined(BORINGSSL_UNSAFE_FUZZER_MODE) && \
-    !defined(BORINGSSL_UNSAFE_DETERMINISTIC_MODE)
-#define BORINGSSL_UNSAFE_DETERMINISTIC_MODE
-#endif
-
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define OPENSSL_ASAN
@@ -222,5 +220,15 @@
 #define OPENSSL_NO_ASM
 #endif
 #endif  // OPENSSL_ASM_INCOMPATIBLE
+
+// We do not detect any features at runtime on several 32-bit Arm platforms.
+// Apple platforms and OpenBSD require NEON and moved to 64-bit to pick up Armv8
+// extensions. Android baremetal does not aim to support 32-bit Arm at all, but
+// it simplifies things to make it build.
+#if defined(OPENSSL_ARM) && !defined(OPENSSL_STATIC_ARMCAP) && \
+    (defined(OPENSSL_APPLE) || defined(OPENSSL_OPENBSD) ||     \
+     defined(ANDROID_BAREMETAL))
+#define OPENSSL_STATIC_ARMCAP
+#endif
 
 #endif  // OPENSSL_HEADER_TARGET_H

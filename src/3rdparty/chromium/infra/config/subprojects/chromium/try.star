@@ -2,16 +2,17 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/branches.star", "branches")
-load("//lib/builders.star", "cpu")
-load("//lib/consoles.star", "consoles")
-load("//lib/try.star", "try_")
-load("//project.star", "ACTIVE_MILESTONES", "settings")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builders.star", "builders", "cpu")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//try.star", "try_")
 load("./fallback-cq.star", "fallback_cq")
+load("//project.star", "ACTIVE_MILESTONES", "settings")
 
 try_.defaults.set(
     bucket = "try",
     cpu = cpu.X86_64,
+    free_space = builders.free_space.standard,
     build_numbers = True,
     cq_group = "cq",
     # Max. pending time for builds. CQ considers builds pending >2h as timed
@@ -40,19 +41,16 @@ luci.bucket(
             users = [
                 "dawn-automated-expectations@chops-service-accounts.iam.gserviceaccount.com",
                 "findit-for-me@appspot.gserviceaccount.com",
-                "tricium-prod@appspot.gserviceaccount.com",
             ],
             projects = [p for p in [
                 branches.value(branch_selector = branches.selector.MAIN, value = "angle"),
+                branches.value(branch_selector = branches.selector.MAIN, value = "boringssl"),
                 branches.value(branch_selector = branches.selector.DESKTOP_BRANCHES, value = "dawn"),
+                branches.value(branch_selector = branches.selector.MAIN, value = "infra"),
                 branches.value(branch_selector = branches.selector.MAIN, value = "skia"),
                 branches.value(branch_selector = branches.selector.MAIN, value = "swiftshader"),
                 branches.value(branch_selector = branches.selector.MAIN, value = "v8"),
             ] if p != None],
-        ),
-        acl.entry(
-            roles = acl.BUILDBUCKET_OWNER,
-            groups = "service-account-chromium-tryserver",
         ),
     ],
 )
@@ -62,7 +60,11 @@ luci.bucket(
     name = "try.shadow",
     shadows = "try",
     constraints = luci.bucket_constraints(
-        pools = ["luci.chromium.try", "luci.chromium.try.orchestrator"],
+        pools = [
+            "luci.chromium.gpu.try",
+            "luci.chromium.try",
+            "luci.chromium.try.orchestrator",
+        ],
         service_accounts = [
             "chromium-cipd-try-builder@chops-service-accounts.iam.gserviceaccount.com",
             "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
@@ -80,10 +82,17 @@ luci.bucket(
             ],
             users = [
                 "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
+                "chromium-try-builder@chops-service-accounts.iam.gserviceaccount.com",
                 "infra-try-recipes-tester@chops-service-accounts.iam.gserviceaccount.com",
             ],
         ),
-        # TODO(crbug.com/1501383): Remove this binding after shadow bucket
+        luci.binding(
+            roles = "role/buildbucket.triggerer",
+            users = [
+                "chromium-try-builder@chops-service-accounts.iam.gserviceaccount.com",
+            ],
+        ),
+        # TODO(crbug.com/40941662): Remove this binding after shadow bucket
         # could inherit the view permission from the actual bucket.
         luci.binding(
             roles = "role/buildbucket.reader",
@@ -116,10 +125,14 @@ luci.cq_group(
     acls = [
         acl.entry(
             acl.CQ_COMMITTER,
-            groups = "project-chromium-committers",
+            groups = "project-chromium-submit-access",
         ),
         acl.entry(
             acl.CQ_DRY_RUNNER,
+            groups = "project-chromium-tryjob-access",
+        ),
+        acl.entry(
+            acl.CQ_NEW_PATCHSET_RUN_TRIGGERER,
             groups = "project-chromium-tryjob-access",
         ),
     ],
@@ -138,6 +151,24 @@ luci.cq_group(
         ),
     ],
     tree_status_host = "chromium-status.appspot.com" if settings.is_main else None,
+    user_limit_default = cq.user_limit(
+        name = "default-limit",
+        run = cq.run_limits(max_active = 10),
+    ),
+    user_limits = [
+        cq.user_limit(
+            name = "chromium-src-emergency-quota",
+            groups = ["chromium-src-emergency-quota"],
+            run = cq.run_limits(max_active = None),
+        ),
+        cq.user_limit(
+            name = "bots",
+            users = [
+                "chromium-autoroll@skia-public.iam.gserviceaccount.com",
+            ],
+            run = cq.run_limits(max_active = None),
+        ),
+    ],
 )
 
 # Declare a CQ group that watches all branch heads, excluding the active
@@ -160,10 +191,14 @@ branches.cq_group(
     acls = [
         acl.entry(
             acl.CQ_COMMITTER,
-            groups = "project-chromium-committers",
+            groups = "project-chromium-submit-access",
         ),
         acl.entry(
             acl.CQ_DRY_RUNNER,
+            groups = "project-chromium-tryjob-access",
+        ),
+        acl.entry(
+            acl.CQ_NEW_PATCHSET_RUN_TRIGGERER,
             groups = "project-chromium-tryjob-access",
         ),
     ],
@@ -185,10 +220,12 @@ exec("./try/tryserver.blink.star")
 exec("./try/tryserver.chromium.star")
 exec("./try/tryserver.chromium.accessibility.star")
 exec("./try/tryserver.chromium.android.star")
+exec("./try/tryserver.chromium.android.desktop.star")
 exec("./try/tryserver.chromium.angle.star")
 exec("./try/tryserver.chromium.chromiumos.star")
 exec("./try/tryserver.chromium.cft.star")
 exec("./try/tryserver.chromium.dawn.star")
+exec("./try/tryserver.chromium.enterprise_companion.star")
 exec("./try/tryserver.chromium.fuchsia.star")
 exec("./try/tryserver.chromium.fuzz.star")
 exec("./try/tryserver.chromium.infra.star")

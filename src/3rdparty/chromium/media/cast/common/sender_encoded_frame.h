@@ -5,9 +5,10 @@
 #ifndef MEDIA_CAST_COMMON_SENDER_ENCODED_FRAME_H_
 #define MEDIA_CAST_COMMON_SENDER_ENCODED_FRAME_H_
 
+#include <optional>
+
 #include "base/time/time.h"
 #include "media/cast/common/encoded_frame.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 namespace cast {
@@ -29,9 +30,6 @@ struct SenderEncodedFrame final : public EncodedFrame {
   // field was not computed.
   double encoder_utilization = -1.0;
 
-  // The bitrate the encoder used for encoding this frame.
-  int encoder_bitrate = 0;
-
   // The amount of "lossiness" needed to encode the frame within the targeted
   // bandwidth.  More-complex frame content and/or lower target encode bitrates
   // will cause this value to rise.
@@ -48,10 +46,10 @@ struct SenderEncodedFrame final : public EncodedFrame {
   base::TimeTicks encode_completion_time;
 
   // The time at which capture of the frame started.
-  absl::optional<base::TimeTicks> capture_begin_time;
+  std::optional<base::TimeTicks> capture_begin_time;
 
   // The time at which capture of the frame ended.
-  absl::optional<base::TimeTicks> capture_end_time;
+  std::optional<base::TimeTicks> capture_end_time;
 };
 
 }  // namespace cast

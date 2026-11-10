@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "cc/paint/skottie_transfer_cache_entry.h"
+
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
-#include "cc/paint/skottie_transfer_cache_entry.h"
 #include "cc/paint/skottie_wrapper.h"
 #include "cc/test/lottie_test_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,11 +22,12 @@ TEST(SkottieTransferCacheEntryTest, SerializationDeserialization) {
   std::vector<uint8_t> a_data(kLottieDataWithoutAssets1.length());
   a_data.assign(
       reinterpret_cast<const uint8_t*>(kLottieDataWithoutAssets1.data()),
-      reinterpret_cast<const uint8_t*>(kLottieDataWithoutAssets1.data()) +
-          kLottieDataWithoutAssets1.length());
+      UNSAFE_TODO(
+          reinterpret_cast<const uint8_t*>(kLottieDataWithoutAssets1.data()) +
+          kLottieDataWithoutAssets1.length()));
 
   scoped_refptr<SkottieWrapper> skottie =
-      SkottieWrapper::CreateSerializable(std::move(a_data));
+      SkottieWrapper::UnsafeCreateSerializable(std::move(a_data));
 
   // Serialize
   auto client_entry(std::make_unique<ClientSkottieTransferCacheEntry>(skottie));

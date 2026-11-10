@@ -27,11 +27,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_STYLE_BUILDER_CONVERTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_STYLE_BUILDER_CONVERTER_H_
 
+#include <optional>
+
 #include "base/check_op.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "cc/input/scroll_snap_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_function_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
@@ -44,15 +46,24 @@
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/style/basic_shapes.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/style/grid_area.h"
+#include "third_party/blink/renderer/core/style/item_tolerance.h"
 #include "third_party/blink/renderer/core/style/named_grid_lines_map.h"
 #include "third_party/blink/renderer/core/style/ordered_named_grid_lines.h"
+#include "third_party/blink/renderer/core/style/scroll_marker_group.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
+#include "third_party/blink/renderer/core/style/style_anchor_scope.h"
+#include "third_party/blink/renderer/core/style/style_border_shape.h"
 #include "third_party/blink/renderer/core/style/style_offset_rotation.h"
 #include "third_party/blink/renderer/core/style/style_overflow_clip_margin.h"
 #include "third_party/blink/renderer/core/style/style_reflection.h"
+#include "third_party/blink/renderer/core/style/style_view_transition_group.h"
+#include "third_party/blink/renderer/core/style/style_view_transition_name.h"
+#include "third_party/blink/renderer/core/style/text_overflow_data.h"
 #include "third_party/blink/renderer/core/style/transform_origin.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
+#include "third_party/blink/renderer/platform/fonts/font_variant_emoji.h"
 #include "third_party/blink/renderer/platform/geometry/length_size.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/text/quotes_data.h"
@@ -64,6 +75,7 @@
 namespace blink {
 
 class ClipPathOperation;
+class ComputedGridTrackList;
 class CSSToLengthConversionData;
 class Font;
 class FontBuilder;
@@ -78,15 +90,17 @@ class StyleSVGResource;
 class TextSizeAdjust;
 class TranslateTransformOperation;
 class UnzoomedLength;
-struct ComputedGridTrackList;
 
 class StyleBuilderConverterBase {
   STATIC_ONLY(StyleBuilderConverterBase);
 
  public:
-  static FontSelectionValue ConvertFontStretch(const CSSValue&);
-  static FontSelectionValue ConvertFontStyle(const CSSValue&);
-  static FontSelectionValue ConvertFontWeight(const CSSValue&,
+  static FontSelectionValue ConvertFontStretch(const CSSLengthResolver&,
+                                               const CSSValue&);
+  static FontSelectionValue ConvertFontStyle(const CSSLengthResolver&,
+                                             const CSSValue&);
+  static FontSelectionValue ConvertFontWeight(const CSSLengthResolver&,
+                                              const CSSValue&,
                                               FontSelectionValue);
   static FontDescription::FontVariantCaps ConvertFontVariantCaps(
       const CSSValue&);
@@ -99,11 +113,15 @@ class StyleBuilderConverterBase {
       const CSSToLengthConversionData&,
       FontDescription::Size parent_size,
       const Document*);
-  static DynamicRangeLimit ConvertDynamicRangeLimit(const CSSValue&);
   static FontSizeAdjust ConvertFontSizeAdjust(const StyleResolverState&,
                                               const CSSValue&);
-  static scoped_refptr<FontPalette> ConvertFontPalette(const CSSValue&);
-  static scoped_refptr<FontPalette> ConvertPaletteMix(const CSSValue&);
+  static scoped_refptr<FontPalette> ConvertFontPalette(const CSSLengthResolver&,
+                                                       const CSSValue&);
+  static scoped_refptr<FontPalette> ConvertPaletteMix(const CSSLengthResolver&,
+                                                      const CSSValue&);
+  static scoped_refptr<FontFeatureSettings> ConvertFontFeatureSettings(
+      const CSSLengthResolver&,
+      const CSSValue&);
 };
 
 // Note that we assume the parser only allows valid CSSValue types.
@@ -111,26 +129,31 @@ class StyleBuilderConverter {
   STATIC_ONLY(StyleBuilderConverter);
 
  public:
-  static scoped_refptr<StyleReflection> ConvertBoxReflect(StyleResolverState&,
-                                                          const CSSValue&);
+  static StyleBorderShape* ConvertBorderShape(StyleResolverState&,
+                                              const CSSValue&);
+  static StyleReflection* ConvertBoxReflect(StyleResolverState&,
+                                            const CSSValue&);
   template <typename T>
   static T ConvertComputedLength(const StyleResolverState&, const CSSValue&);
   static LengthBox ConvertClip(StyleResolverState&, const CSSValue&);
   static ClipPathOperation* ConvertClipPath(StyleResolverState&,
                                             const CSSValue&);
-  static DynamicRangeLimit ConvertDynamicRangeLimit(StyleResolverState&,
+  static DynamicRangeLimit ConvertDynamicRangeLimit(const StyleResolverState&,
                                                     const CSSValue&);
   static StyleSVGResource* ConvertElementReference(StyleResolverState&,
-                                                   const CSSValue&);
+                                                   const CSSValue&,
+                                                   CSSPropertyID);
   static FilterOperations ConvertFilterOperations(StyleResolverState&,
                                                   const CSSValue&,
                                                   CSSPropertyID);
   static FilterOperations ConvertOffscreenFilterOperations(const CSSValue&,
-                                                           const Font&);
+                                                           const Font*);
   // The template parameter ZeroValue indicates which CSSValueID should be
   // converted to zero.
   template <typename T, CSSValueID ZeroValue = CSSValueID::kNone>
   static T ConvertFlags(StyleResolverState&, const CSSValue&);
+  static StyleFlexWrapData ConvertFlexWrapData(StyleResolverState&,
+                                               const CSSValue&);
   static FontDescription::FamilyDescription ConvertFontFamily(
       StyleResolverState&,
       const CSSValue&);
@@ -148,6 +171,8 @@ class StyleBuilderConverter {
   static FontSizeAdjust ConvertFontSizeAdjust(StyleResolverState&,
                                               const CSSValue&);
 
+  static std::optional<FontSelectionValue> ConvertFontStretchKeyword(
+      const CSSValue&);
   static FontSelectionValue ConvertFontStretch(StyleResolverState&,
                                                const CSSValue&);
   static FontSelectionValue ConvertFontStyle(StyleResolverState&,
@@ -171,6 +196,8 @@ class StyleBuilderConverter {
   static FontDescription::FontVariantPosition ConvertFontVariantPosition(
       StyleResolverState&,
       const CSSValue&);
+  static FontVariantEmoji ConvertFontVariantEmoji(StyleResolverState&,
+                                                  const CSSValue&);
   static FontDescription::Kerning ConvertFontKerning(StyleResolverState&,
                                                      const CSSValue&);
   static OpticalSizing ConvertFontOpticalSizing(StyleResolverState&,
@@ -188,19 +215,23 @@ class StyleBuilderConverter {
       const CSSValue&);
   static GridTrackSize ConvertGridTrackSize(StyleResolverState&,
                                             const CSSValue&);
-  static NGGridTrackList ConvertGridTrackSizeList(StyleResolverState&,
-                                                  const CSSValue&);
+  static GridTrackList ConvertGridTrackSizeList(StyleResolverState&,
+                                                const CSSValue&);
+  static ItemTolerance ConvertItemTolerance(const StyleResolverState&,
+                                            const CSSValue&);
   static StyleHyphenateLimitChars ConvertHyphenateLimitChars(
       StyleResolverState&,
       const CSSValue&);
   template <typename T>
   static T ConvertLineWidth(StyleResolverState&, const CSSValue&);
-  static LayoutUnit ConvertBorderWidth(StyleResolverState&, const CSSValue&);
+  static int ConvertBorderWidth(StyleResolverState&, const CSSValue&);
   static uint16_t ConvertColumnRuleWidth(StyleResolverState&, const CSSValue&);
+  static Superellipse ConvertCornerShape(const StyleResolverState&,
+                                         const CSSValue&);
   static LayoutUnit ConvertLayoutUnit(const StyleResolverState&,
                                       const CSSValue&);
-  static absl::optional<Length> ConvertGapLength(const StyleResolverState&,
-                                                 const CSSValue&);
+  static std::optional<Length> ConvertGapLength(const StyleResolverState&,
+                                                const CSSValue&);
   static Length ConvertLength(const StyleResolverState&, const CSSValue&);
   static UnzoomedLength ConvertUnzoomedLength(StyleResolverState&,
                                               const CSSValue&);
@@ -214,6 +245,8 @@ class StyleBuilderConverter {
   static Length ConvertLineHeight(StyleResolverState&, const CSSValue&);
   static float ConvertNumberOrPercentage(StyleResolverState&, const CSSValue&);
   static int ConvertInteger(StyleResolverState&, const CSSValue&);
+  template <int NoneValue = 0>
+  static int ConvertIntegerOrNone(StyleResolverState&, const CSSValue&);
   static ScrollStartData ConvertScrollStart(const StyleResolverState&,
                                             const CSSValue&);
   static float ConvertAlpha(StyleResolverState&,
@@ -224,15 +257,20 @@ class StyleBuilderConverter {
                                                    const CSSValue&);
   static ScopedCSSName* ConvertCustomIdent(StyleResolverState&,
                                            const CSSValue&);
-  static ScopedCSSName* ConvertAnchorDefault(StyleResolverState&,
-                                             const CSSValue&);
+  static ScopedCSSName* ConvertPositionAnchor(StyleResolverState&,
+                                              const CSSValue&);
+  static PositionVisibility ConvertPositionVisibility(StyleResolverState& state,
+                                                      const CSSValue& value);
   static ScopedCSSNameList* ConvertAnchorName(StyleResolverState&,
                                               const CSSValue&);
+  static StyleAnchorScope ConvertAnchorScope(StyleResolverState&,
+                                             const CSSValue&);
   static StyleInitialLetter ConvertInitialLetter(StyleResolverState&,
                                                  const CSSValue&);
   static StyleOffsetRotation ConvertOffsetRotate(StyleResolverState&,
                                                  const CSSValue&);
-  static LengthPoint ConvertPosition(StyleResolverState&, const CSSValue&);
+  static LengthPoint ConvertPosition(const StyleResolverState&,
+                                     const CSSValue&);
   static LengthPoint ConvertPositionOrAuto(StyleResolverState&,
                                            const CSSValue&);
   static LengthPoint ConvertOffsetPosition(StyleResolverState&,
@@ -241,19 +279,27 @@ class StyleBuilderConverter {
   static Length ConvertQuirkyLength(StyleResolverState&, const CSSValue&);
   static scoped_refptr<QuotesData> ConvertQuotes(StyleResolverState&,
                                                  const CSSValue&);
-  static LengthSize ConvertRadius(StyleResolverState&, const CSSValue&);
+  static LengthSize ConvertRadius(const StyleResolverState&, const CSSValue&);
   static EPaintOrder ConvertPaintOrder(StyleResolverState&, const CSSValue&);
+  static GapDataList<StyleColor> ConvertGapDecorationColorDataList(
+      StyleResolverState&,
+      const CSSValue&,
+      bool for_visited_link = false);
+  static GapDataList<int> ConvertGapDecorationWidthDataList(StyleResolverState&,
+                                                            const CSSValue&);
+  static GapDataList<EBorderStyle> ConvertGapDecorationStyleDataList(
+      StyleResolverState&,
+      const CSSValue&);
   static ShadowData ConvertShadow(const CSSToLengthConversionData&,
                                   StyleResolverState*,
                                   const CSSValue&);
-  static scoped_refptr<ShadowList> ConvertShadowList(StyleResolverState&,
-                                                     const CSSValue&);
+  static ShadowList* ConvertShadowList(StyleResolverState&, const CSSValue&);
   static ShapeValue* ConvertShapeValue(StyleResolverState&, const CSSValue&);
-  static float ConvertSpacing(StyleResolverState&, const CSSValue&);
+  static Length ConvertSpacing(StyleResolverState&, const CSSValue&);
   template <CSSValueID IdForNone>
   static AtomicString ConvertString(StyleResolverState&, const CSSValue&);
-  static scoped_refptr<SVGDashArray> ConvertStrokeDasharray(StyleResolverState&,
-                                                            const CSSValue&);
+  static SVGDashArray* ConvertStrokeDasharray(StyleResolverState&,
+                                              const CSSValue&);
   static StyleColor ConvertStyleColor(StyleResolverState&,
                                       const CSSValue&,
                                       bool for_visited_link = false);
@@ -262,7 +308,9 @@ class StyleBuilderConverter {
                                               bool for_visited_link = false);
   static SVGPaint ConvertSVGPaint(StyleResolverState&,
                                   const CSSValue&,
-                                  bool for_visited_link);
+                                  bool for_visited_link,
+                                  CSSPropertyID = CSSPropertyID::kInvalid);
+  static TextBoxEdge ConvertTextBoxEdge(StyleResolverState&, const CSSValue&);
   static TextDecorationThickness ConvertTextDecorationThickness(
       StyleResolverState&,
       const CSSValue&);
@@ -282,36 +330,34 @@ class StyleBuilderConverter {
   static TransformOrigin ConvertTransformOrigin(StyleResolverState&,
                                                 const CSSValue&);
 
-  static void ConvertGridTrackList(const CSSValue&,
-                                   ComputedGridTrackList&,
-                                   StyleResolverState&);
+  static ComputedGridTrackList* ConvertGridTrackList(StyleResolverState&,
+                                                     const CSSValue&);
+  static ScrollMarkerGroup* ConvertScrollMarkerGroup(StyleResolverState&,
+                                                     const CSSValue&);
 
   static cc::ScrollSnapType ConvertSnapType(StyleResolverState&,
                                             const CSSValue&);
   static cc::ScrollSnapAlign ConvertSnapAlign(StyleResolverState&,
                                               const CSSValue&);
-  static scoped_refptr<TranslateTransformOperation> ConvertTranslate(
-      StyleResolverState&,
-      const CSSValue&);
-  static scoped_refptr<RotateTransformOperation> ConvertRotate(
-      StyleResolverState&,
-      const CSSValue&);
-  static scoped_refptr<ScaleTransformOperation> ConvertScale(
-      StyleResolverState&,
-      const CSSValue&);
+  static TranslateTransformOperation* ConvertTranslate(StyleResolverState&,
+                                                       const CSSValue&);
+  static RotateTransformOperation* ConvertRotate(StyleResolverState&,
+                                                 const CSSValue&);
+  static ScaleTransformOperation* ConvertScale(StyleResolverState&,
+                                               const CSSValue&);
   static RespectImageOrientationEnum ConvertImageOrientation(
       StyleResolverState&,
       const CSSValue&);
-  static scoped_refptr<StylePath> ConvertPathOrNone(StyleResolverState&,
-                                                    const CSSValue&);
-  static scoped_refptr<BasicShape> ConvertObjectViewBox(StyleResolverState&,
-                                                        const CSSValue&);
+  static StylePath* ConvertPathOrNone(StyleResolverState&, const CSSValue&);
+  static BasicShape* ConvertObjectViewBox(StyleResolverState&, const CSSValue&);
   static OffsetPathOperation* ConvertOffsetPath(StyleResolverState&,
                                                 const CSSValue&);
-  static StyleOffsetRotation ConvertOffsetRotate(const CSSValue&);
+  static StyleOffsetRotation ConvertOffsetRotate(const CSSLengthResolver&,
+                                                 const CSSValue&);
   template <CSSValueID cssValueFor0, CSSValueID cssValueFor100>
-  static Length ConvertPositionLength(StyleResolverState&, const CSSValue&);
-  static Rotation ConvertRotation(const CSSValue&);
+  static Length ConvertPositionLength(const StyleResolverState&,
+                                      const CSSValue&);
+  static Rotation ConvertRotation(const CSSLengthResolver&, const CSSValue&);
 
   static const CSSValue& ConvertRegisteredPropertyInitialValue(Document&,
                                                                const CSSValue&);
@@ -320,9 +366,10 @@ class StyleBuilderConverter {
       const CSSValue&,
       const CSSParserContext*);
 
-  static scoped_refptr<CSSVariableData> ConvertRegisteredPropertyVariableData(
+  static CSSVariableData* ConvertRegisteredPropertyVariableData(
       const CSSValue&,
-      bool is_animation_tainted);
+      bool is_animation_tainted,
+      bool is_attr_tainted);
 
   static StyleAspectRatio ConvertAspectRatio(const StyleResolverState&,
                                              const CSSValue&);
@@ -337,9 +384,8 @@ class StyleBuilderConverter {
   static RubyPosition ConvertRubyPosition(StyleResolverState& state,
                                           const CSSValue& value);
 
-  static absl::optional<StyleScrollbarColor> ConvertScrollbarColor(
-      StyleResolverState& state,
-      const CSSValue& value);
+  static StyleScrollbarColor* ConvertScrollbarColor(StyleResolverState& state,
+                                                    const CSSValue& value);
 
   static ScrollbarGutter ConvertScrollbarGutter(StyleResolverState& state,
                                                 const CSSValue& value);
@@ -351,8 +397,13 @@ class StyleBuilderConverter {
       const StyleResolverState&,
       const CSSValue&);
 
-  static AtomicString ConvertViewTransitionName(StyleResolverState&,
-                                                const CSSValue&);
+  static StyleViewTransitionName* ConvertViewTransitionName(StyleResolverState&,
+                                                            const CSSValue&);
+  static ScopedCSSNameList* ConvertViewTransitionClass(StyleResolverState&,
+                                                       const CSSValue&);
+  static StyleViewTransitionGroup ConvertViewTransitionGroup(
+      StyleResolverState&,
+      const CSSValue&);
 
   // Take a list value for a specified color-scheme, extract flags for known
   // color-schemes and the 'only' modifier, and push the list items into a
@@ -366,7 +417,7 @@ class StyleBuilderConverter {
   static double ConvertTimeValue(const StyleResolverState& state,
                                  const CSSValue& value);
 
-  static absl::optional<StyleOverflowClipMargin> ConvertOverflowClipMargin(
+  static std::optional<StyleOverflowClipMargin> ConvertOverflowClipMargin(
       StyleResolverState&,
       const CSSValue&);
 
@@ -379,7 +430,16 @@ class StyleBuilderConverter {
   static ScopedCSSNameList* ConvertTimelineScope(StyleResolverState&,
                                                  const CSSValue&);
 
-  static InsetArea ConvertInsetArea(StyleResolverState&, const CSSValue&);
+  static PositionArea ConvertPositionArea(StyleResolverState&, const CSSValue&);
+  static PositionTryFallback ConvertSinglePositionTryFallback(
+      StyleResolverState&,
+      const CSSValue&);
+  static FitText ConvertFitText(StyleResolverState&, const CSSValue&);
+  static TextOverflowData ConvertTextOverflow(StyleResolverState&,
+                                              const CSSValue&);
+
+  static ScopedCSSNameList* ConvertTimelineTriggerName(StyleResolverState&,
+                                                       const CSSValue&);
 };
 
 template <typename T>
@@ -420,7 +480,6 @@ T StyleBuilderConverter::ConvertLineWidth(StyleResolverState& state,
         break;
       default:
         NOTREACHED();
-        break;
     }
     result = state.CssToLengthConversionData().ZoomedComputedPixels(
         result, CSSPrimitiveValue::UnitType::kPixels);
@@ -443,8 +502,9 @@ T StyleBuilderConverter::ConvertLineWidth(StyleResolverState& state,
 }
 
 template <CSSValueID cssValueFor0, CSSValueID cssValueFor100>
-Length StyleBuilderConverter::ConvertPositionLength(StyleResolverState& state,
-                                                    const CSSValue& value) {
+Length StyleBuilderConverter::ConvertPositionLength(
+    const StyleResolverState& state,
+    const CSSValue& value) {
   if (const auto* pair = DynamicTo<CSSValuePair>(value)) {
     Length length = StyleBuilderConverter::ConvertLength(state, pair->Second());
     if (To<CSSIdentifierValue>(pair->First()).GetValueID() == cssValueFor0) {
@@ -482,6 +542,38 @@ AtomicString StyleBuilderConverter::ConvertString(StyleResolverState&,
   return g_null_atom;
 }
 
+template <int NoneValue>
+int StyleBuilderConverter::ConvertIntegerOrNone(StyleResolverState& state,
+                                                const CSSValue& value) {
+  if (IsA<CSSPrimitiveValue>(value)) {
+    return ConvertInteger(state, value);
+  }
+  DCHECK_EQ(To<CSSIdentifierValue>(value).GetValueID(), CSSValueID::kNone);
+  return NoneValue;
+}
+
+// Parameter bag for `ResolveColorValue()`. Typical usage will be to construct
+// an instance from a Document just prior to calling that function. Not intended
+// for other uses.
+struct ResolveColorValueContext {
+  STACK_ALLOCATED();
+
+ public:
+  const CSSToLengthConversionData& conversion_data;
+  const TextLinkColors& text_link_colors;
+  const mojom::blink::ColorScheme used_color_scheme =
+      mojom::blink::ColorScheme::kLight;
+  const ui::ColorProvider* color_provider = nullptr;
+  const bool is_in_web_app_scope = false;
+  const bool for_visited_link = false;
+};
+
+// Returns the computed <color> value for `value`. Note that it's expected that
+// `value` is the result of parsing a <color> value.
+// See: https://drafts.csswg.org/css-color/#resolving-color-values
+CORE_EXPORT StyleColor
+ResolveColorValue(const CSSValue& value,
+                  const ResolveColorValueContext& context);
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_STYLE_BUILDER_CONVERTER_H_

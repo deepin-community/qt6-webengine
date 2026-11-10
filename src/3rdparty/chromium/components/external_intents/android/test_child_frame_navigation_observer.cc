@@ -5,9 +5,11 @@
 #include "components/external_intents/android/test_child_frame_navigation_observer.h"
 
 #include "base/android/jni_android.h"
-#include "components/external_intents/android/test_support_java_jni_headers/TestChildFrameNavigationObserver_jni.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/external_intents/android/test_support_java_jni_headers/TestChildFrameNavigationObserver_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -19,7 +21,7 @@ namespace external_intents {
 TestChildFrameNavigationObserver::TestChildFrameNavigationObserver(
     WebContents* web_contents,
     JNIEnv* env,
-    jobject java_test_observer)
+    const JavaParamRef<jobject>& java_test_observer)
     : WebContentsObserver(web_contents),
       WebContentsUserData<TestChildFrameNavigationObserver>(*web_contents) {
   DCHECK(java_test_observer);
@@ -32,7 +34,7 @@ TestChildFrameNavigationObserver::~TestChildFrameNavigationObserver() = default;
 void TestChildFrameNavigationObserver::CreateForWebContents(
     WebContents* web_contents,
     JNIEnv* env,
-    jobject java_test_observer) {
+    const JavaParamRef<jobject>& java_test_observer) {
   WebContentsUserData<TestChildFrameNavigationObserver>::CreateForWebContents(
       web_contents, env, java_test_observer);
 }

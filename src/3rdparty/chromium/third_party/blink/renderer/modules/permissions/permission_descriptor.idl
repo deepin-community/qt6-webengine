@@ -26,7 +26,6 @@ enum PermissionName {
     "display-capture",
 
     // Non-standard:
-    "accessibility-events",
     "clipboard-read",
     "clipboard-write",
     "payment-handler",
@@ -35,11 +34,15 @@ enum PermissionName {
     "system-wake-lock",
     "storage-access",
     "window-management",
-    // Alias for 'window-management' (crbug.com/1328581).
-    "window-placement",
     "local-fonts",
     "top-level-storage-access",
     "captured-surface-control",
+    "speaker-selection",
+    "keyboard-lock",
+    "pointer-lock",
+    "fullscreen",
+    "web-app-installation",
+    "local-network-access",
 };
 
 // The PermissionDescriptor dictionary is a base to describe permissions. Some

@@ -8,18 +8,20 @@
 
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_parser.h"
-#include "third_party/base/check_op.h"
-#include "third_party/base/containers/contains.h"
+#include "core/fxcrt/check_op.h"
+#include "core/fxcrt/containers/contains.h"
 
 // static
 std::unique_ptr<CPDF_CrossRefTable> CPDF_CrossRefTable::MergeUp(
     std::unique_ptr<CPDF_CrossRefTable> current,
     std::unique_ptr<CPDF_CrossRefTable> top) {
-  if (!current)
+  if (!current) {
     return top;
+  }
 
-  if (!top)
+  if (!top) {
     return current;
+  }
 
   current->Update(std::move(top));
   return current;
@@ -41,8 +43,9 @@ void CPDF_CrossRefTable::AddCompressed(uint32_t obj_num,
   CHECK_LT(archive_obj_num, CPDF_Parser::kMaxObjectNumber);
 
   auto& info = objects_info_[obj_num];
-  if (info.gennum > 0)
+  if (info.gennum > 0) {
     return;
+  }
 
   // Don't add known object streams to object streams.
   if (info.is_object_stream_flag) {
@@ -64,11 +67,9 @@ void CPDF_CrossRefTable::AddNormal(uint32_t obj_num,
   CHECK_LT(obj_num, CPDF_Parser::kMaxObjectNumber);
 
   auto& info = objects_info_[obj_num];
-  if (info.gennum > gen_num)
+  if (info.gennum > gen_num) {
     return;
-
-  if (info.type == ObjectType::kCompressed && gen_num == 0)
-    return;
+  }
 
   info.type = ObjectType::kNormal;
   info.is_object_stream_flag |= is_object_stream;
@@ -76,12 +77,12 @@ void CPDF_CrossRefTable::AddNormal(uint32_t obj_num,
   info.pos = pos;
 }
 
-void CPDF_CrossRefTable::SetFree(uint32_t obj_num) {
+void CPDF_CrossRefTable::SetFree(uint32_t obj_num, uint16_t gen_num) {
   CHECK_LT(obj_num, CPDF_Parser::kMaxObjectNumber);
 
   auto& info = objects_info_[obj_num];
   info.type = ObjectType::kFree;
-  info.gennum = 0xFFFF;
+  info.gennum = gen_num;
   info.pos = 0;
 }
 
@@ -152,8 +153,9 @@ void CPDF_CrossRefTable::UpdateInfo(
 }
 
 void CPDF_CrossRefTable::UpdateTrailer(RetainPtr<CPDF_Dictionary> new_trailer) {
-  if (!new_trailer)
+  if (!new_trailer) {
     return;
+  }
 
   if (!trailer_) {
     trailer_ = std::move(new_trailer);
@@ -163,6 +165,7 @@ void CPDF_CrossRefTable::UpdateTrailer(RetainPtr<CPDF_Dictionary> new_trailer) {
   new_trailer->SetFor("XRefStm", trailer_->RemoveFor("XRefStm"));
   new_trailer->SetFor("Prev", trailer_->RemoveFor("Prev"));
 
-  for (const auto& key : new_trailer->GetKeys())
+  for (const auto& key : new_trailer->GetKeys()) {
     trailer_->SetFor(key, new_trailer->RemoveFor(key.AsStringView()));
+  }
 }

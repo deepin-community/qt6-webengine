@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -215,7 +214,7 @@ TEST_F(UseCounterImplTest, CSSSelectorPseudoWhere) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorPseudoWhere;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>.a+:where(.b, .c+.d) { color: red; }</style>");
   EXPECT_TRUE(document.IsUseCounted(feature));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSSelectorPseudoIs));
@@ -239,7 +238,7 @@ TEST_F(UseCounterImplTest, CSSSelectorPseudoAnyLink) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorPseudoAnyLink;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>:any-link { color: red; }</style>");
   EXPECT_TRUE(document.IsUseCounted(feature));
 }
@@ -251,7 +250,7 @@ TEST_F(UseCounterImplTest, CSSSelectorPseudoWebkitAnyLink) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorPseudoWebkitAnyLink;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>:-webkit-any-link { color: red; }</style>");
   EXPECT_TRUE(document.IsUseCounted(feature));
 }
@@ -271,7 +270,7 @@ TEST_F(UseCounterImplTest, CSSSelectorPseudoIs) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorPseudoIs;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>.a+:is(.b, .c+.d) { color: red; }</style>");
   EXPECT_TRUE(document.IsUseCounted(feature));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSSelectorPseudoWhere));
@@ -284,8 +283,23 @@ TEST_F(UseCounterImplTest, CSSSelectorPseudoDir) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorPseudoDir;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>:dir(ltr) { color: red; }</style>");
+  EXPECT_TRUE(document.IsUseCounted(feature));
+}
+
+TEST_F(UseCounterImplTest, CSSSelectorNthChildOfSelector) {
+  auto dummy_page_holder =
+      std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
+  Page::InsertOrdinaryPageForTesting(&dummy_page_holder->GetPage());
+  Document& document = dummy_page_holder->GetDocument();
+  WebFeature feature = WebFeature::kCSSSelectorNthChildOfSelector;
+  EXPECT_FALSE(document.IsUseCounted(feature));
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<style>.a:nth-child(3) { color: red; }</style>");
+  EXPECT_FALSE(document.IsUseCounted(feature));
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<style>.a:nth-child(3 of .b) { color: red; }</style>");
   EXPECT_TRUE(document.IsUseCounted(feature));
 }
 
@@ -296,7 +310,7 @@ TEST_F(UseCounterImplTest, CSSGridLayoutPercentageColumnIndefiniteWidth) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kGridRowTrackPercentIndefiniteHeight;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<div style='display: inline-grid; grid-template-columns: 50%;'>"
       "</div>");
   UpdateAllLifecyclePhases(document);
@@ -310,7 +324,7 @@ TEST_F(UseCounterImplTest, CSSFlexibleBox) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSFlexibleBox;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<div style='display: flex;'>flexbox</div>");
   UpdateAllLifecyclePhases(document);
   EXPECT_TRUE(document.IsUseCounted(feature));
@@ -323,7 +337,7 @@ TEST_F(UseCounterImplTest, CSSFlexibleBoxInline) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSFlexibleBox;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<div style='display: inline-flex;'>flexbox</div>");
   UpdateAllLifecyclePhases(document);
   EXPECT_TRUE(document.IsUseCounted(feature));
@@ -338,7 +352,8 @@ TEST_F(UseCounterImplTest, CSSFlexibleBoxButton) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSFlexibleBox;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.documentElement()->setInnerHTML("<button>button</button>");
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<button>button</button>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(feature));
 }
@@ -386,9 +401,12 @@ class DeprecationTest : public testing::Test {
  public:
   DeprecationTest()
       : dummy_(std::make_unique<DummyPageHolder>()),
-        deprecation_(dummy_->GetPage().GetDeprecation()),
-        use_counter_(dummy_->GetDocument().Loader()->GetUseCounter()) {
+        deprecation_(dummy_->GetPage().GetDeprecation()) {
     Page::InsertOrdinaryPageForTesting(&dummy_->GetPage());
+  }
+
+  UseCounterImpl& use_counter() {
+    return dummy_->GetDocument().Loader()->GetUseCounter();
   }
 
  protected:
@@ -397,7 +415,6 @@ class DeprecationTest : public testing::Test {
   test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_;
   Deprecation& deprecation_;
-  UseCounterImpl& use_counter_;
 };
 
 TEST_F(DeprecationTest, InspectorDisablesDeprecation) {
@@ -407,19 +424,19 @@ TEST_F(DeprecationTest, InspectorDisablesDeprecation) {
 
   deprecation_.MuteForInspector();
   Deprecation::CountDeprecation(GetFrame()->DomWindow(), feature);
-  EXPECT_FALSE(use_counter_.IsCounted(feature));
+  EXPECT_FALSE(use_counter().IsCounted(feature));
 
   deprecation_.MuteForInspector();
   Deprecation::CountDeprecation(GetFrame()->DomWindow(), feature);
-  EXPECT_FALSE(use_counter_.IsCounted(feature));
+  EXPECT_FALSE(use_counter().IsCounted(feature));
 
   deprecation_.UnmuteForInspector();
   Deprecation::CountDeprecation(GetFrame()->DomWindow(), feature);
-  EXPECT_FALSE(use_counter_.IsCounted(feature));
+  EXPECT_FALSE(use_counter().IsCounted(feature));
 
   deprecation_.UnmuteForInspector();
   Deprecation::CountDeprecation(GetFrame()->DomWindow(), feature);
-  EXPECT_TRUE(use_counter_.IsCounted(feature));
+  EXPECT_TRUE(use_counter().IsCounted(feature));
 }
 
 TEST_F(UseCounterImplTest, CSSUnknownNamespacePrefixInSelector) {
@@ -430,7 +447,7 @@ TEST_F(UseCounterImplTest, CSSUnknownNamespacePrefixInSelector) {
   WebFeature feature = WebFeature::kCSSUnknownNamespacePrefixInSelector;
   EXPECT_FALSE(document.IsUseCounted(feature));
 
-  document.documentElement()->setInnerHTML(R"HTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @namespace svg url(http://www.w3.org/2000/svg);
       svg|a {}
@@ -440,7 +457,8 @@ TEST_F(UseCounterImplTest, CSSUnknownNamespacePrefixInSelector) {
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(feature));
 
-  document.documentElement()->setInnerHTML("<style>foo|a {}</style>");
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<style>foo|a {}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_TRUE(document.IsUseCounted(feature));
 }
@@ -452,7 +470,7 @@ TEST_F(UseCounterImplTest, CSSSelectorHostContextInLiveProfile) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorHostContextInLiveProfile;
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="parent">
       <div id="host"></div>
     </div>
@@ -461,11 +479,11 @@ TEST_F(UseCounterImplTest, CSSSelectorHostContextInLiveProfile) {
   Element* host = document.getElementById(AtomicString("host"));
   ASSERT_TRUE(host);
   ShadowRoot& shadow_root =
-      host->AttachShadowRootInternal(ShadowRootType::kOpen);
+      host->AttachShadowRootForTesting(ShadowRootMode::kOpen);
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(feature));
 
-  shadow_root.setInnerHTML(R"HTML(
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <style>
         :host-context(#parent) span {
           color: green
@@ -485,7 +503,7 @@ TEST_F(UseCounterImplTest, CSSSelectorHostContextInSnapshotProfile) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kCSSSelectorHostContextInSnapshotProfile;
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="parent">
       <div id="host"></div>
     </div>
@@ -494,11 +512,11 @@ TEST_F(UseCounterImplTest, CSSSelectorHostContextInSnapshotProfile) {
   Element* host = document.getElementById(AtomicString("host"));
   ASSERT_TRUE(host);
   ShadowRoot& shadow_root =
-      host->AttachShadowRootInternal(ShadowRootType::kOpen);
+      host->AttachShadowRootForTesting(ShadowRootMode::kOpen);
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(feature));
 
-  shadow_root.setInnerHTML("<span></span>");
+  shadow_root.SetInnerHTMLWithoutTrustedTypes("<span></span>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(feature));
 
@@ -563,7 +581,7 @@ TEST_F(UseCounterImplTest, CSSMarkerPseudoElementUA) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kHasMarkerPseudoElement;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       li::before {
         content: "[before]";
@@ -595,7 +613,7 @@ TEST_F(UseCounterImplTest, CSSMarkerPseudoElementAuthor) {
   Document& document = dummy_page_holder->GetDocument();
   WebFeature feature = WebFeature::kHasMarkerPseudoElement;
   EXPECT_FALSE(document.IsUseCounted(feature));
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       li::marker {
         color: blue;
@@ -619,49 +637,49 @@ TEST_F(UseCounterImplTest, BackgroundClip) {
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{background-clip: border-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{background-clip: content-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{background-clip: padding-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: border-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: content-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: padding-box;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipContent));
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: text;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
@@ -669,7 +687,7 @@ TEST_F(UseCounterImplTest, BackgroundClip) {
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
   // We dropped the support for keywords without suffix.
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: border;}</style>");
   UpdateAllLifecyclePhases(document);
   if (RuntimeEnabledFeatures::CSSBackgroundClipUnprefixEnabled()) {
@@ -681,7 +699,7 @@ TEST_F(UseCounterImplTest, BackgroundClip) {
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
   document.ClearUseCounterForTesting(WebFeature::kCSSBackgroundClipBorder);
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: content;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
@@ -693,7 +711,7 @@ TEST_F(UseCounterImplTest, BackgroundClip) {
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
 
   document.ClearUseCounterForTesting(WebFeature::kCSSBackgroundClipContent);
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<style>html{-webkit-background-clip: padding;}</style>");
   UpdateAllLifecyclePhases(document);
   EXPECT_FALSE(document.IsUseCounted(WebFeature::kCSSBackgroundClipBorder));
@@ -703,35 +721,6 @@ TEST_F(UseCounterImplTest, BackgroundClip) {
   } else {
     EXPECT_TRUE(document.IsUseCounted(WebFeature::kCSSBackgroundClipPadding));
   }
-}
-
-TEST_F(UseCounterImplTest, H1UserAgentFontSizeInSectionApplied) {
-  auto dummy_page_holder =
-      std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
-  Page::InsertOrdinaryPageForTesting(&dummy_page_holder->GetPage());
-  Document& document = dummy_page_holder->GetDocument();
-  WebFeature feature = WebFeature::kH1UserAgentFontSizeInSectionApplied;
-
-  EXPECT_FALSE(document.IsUseCounted(feature));
-
-  document.documentElement()->setInnerHTML("<h1></h1>");
-  UpdateAllLifecyclePhases(document);
-  EXPECT_FALSE(document.IsUseCounted(feature))
-      << "Not inside sectioning element";
-
-  document.documentElement()->setInnerHTML(R"HTML(
-      <article><h1 style="font-size: 10px"></h1></article>
-  )HTML");
-  UpdateAllLifecyclePhases(document);
-  EXPECT_FALSE(document.IsUseCounted(feature))
-      << "Inside sectioning element with author font-size";
-
-  document.documentElement()->setInnerHTML(R"HTML(
-      <article><h1></h1></article>
-  )HTML");
-  UpdateAllLifecyclePhases(document);
-  EXPECT_TRUE(document.IsUseCounted(feature))
-      << "Inside sectioning element with UA font-size";
 }
 
 }  // namespace blink

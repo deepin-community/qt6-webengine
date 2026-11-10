@@ -1,32 +1,41 @@
 // Copyright (c) 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
+
+/* The following disable is needed until all the partial view functions are part of one view function */
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import '../../ui/legacy/legacy.js';
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import * as Protocol from '../../generated/protocol.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as Lit from '../../ui/lit/lit.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {AnimationGroupPreviewUI} from './AnimationGroupPreviewUI.js';
 import animationTimelineStyles from './animationTimeline.css.js';
-
-import {
-  AnimationModel,
-  Events,
-  type AnimationEffect,
-  type AnimationGroup,
-  type AnimationImpl,
-} from './AnimationModel.js';
-import {AnimationScreenshotPopover} from './AnimationScreenshotPopover.js';
 import {AnimationUI} from './AnimationUI.js';
 
 const UIStrings = {
   /**
-   *@description Timeline hint text content in Animation Timeline of the Animation Inspector
+   *@description Timeline hint text content in Animation Timeline of the Animation Inspector if no effect
+   * is shown.
+   * Animation effects are the visual effects of an animation on the page.
    */
-  selectAnEffectAboveToInspectAnd: 'Select an effect above to inspect and modify.',
+  noEffectSelected: 'No animation effect selected',
+  /**
+   *@description Timeline hint text content in Animation Timeline of the Animation Inspector that instructs
+   * users to select an effect.
+   * Animation effects are the visual effects of an animation on the page.
+   */
+  selectAnEffectAboveToInspectAnd: 'Select an effect above to inspect and modify',
   /**
    *@description Text to clear everything
    */
@@ -58,9 +67,13 @@ const UIStrings = {
    */
   animationPreviews: 'Animation previews',
   /**
-   *@description Empty buffer hint text content in Animation Timeline of the Animation Inspector
+   *@description Empty buffer hint text content in Animation Timeline of the Animation Inspector.
    */
-  waitingForAnimations: 'Waiting for animations...',
+  waitingForAnimations: 'Currently waiting for animations',
+  /**
+   *@description Empty buffer hint text content in Animation Timeline of the Animation Inspector that explains the panel.
+   */
+  animationDescription: 'On this page you can inspect and modify animations.',
   /**
    *@description Tooltip text that appears when hovering over largeicon replay animation button in Animation Timeline of the Animation Inspector
    */
@@ -82,44 +95,155 @@ const UIStrings = {
    *@example {1} PH1
    */
   animationPreviewS: 'Animation Preview {PH1}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/animation/AnimationTimeline.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
-const nodeUIsByNode = new WeakMap<SDK.DOMModel.DOMNode, NodeUI>();
 
-const playbackRates = new WeakMap<HTMLElement, number>();
+const {render, html, Directives: {classMap}} = Lit;
+const nodeUIsByNode = new WeakMap<SDK.DOMModel.DOMNode, NodeUI>();
 
 const MIN_TIMELINE_CONTROLS_WIDTH = 120;
 const DEFAULT_TIMELINE_CONTROLS_WIDTH = 150;
 const MAX_TIMELINE_CONTROLS_WIDTH = 720;
 
-let animationTimelineInstance: AnimationTimeline;
+const ANIMATION_EXPLANATION_URL =
+    'https://developer.chrome.com/docs/devtools/css/animations' as Platform.DevToolsPath.UrlString;
 
-export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManager.SDKModelObserver<AnimationModel> {
+interface ToolbarViewInput {
+  selectedPlaybackRate: number;
+  playbackRateButtonsDisabled: boolean;
+  allPaused: boolean;
+  onClearClick: () => void;
+  onTogglePauseAllClick: () => void;
+  onSetPlaybackRateClick: (playbackRate: number) => void;
+}
+
+type ToolbarView = (input: ToolbarViewInput, output: undefined, target: HTMLElement) => void;
+// clang-format off
+const DEFAULT_TOOLBAR_VIEW: ToolbarView = (input: ToolbarViewInput, output: undefined, target: HTMLElement): void => {
+  const renderPlaybackRateControl = (): Lit.LitTemplate => {
+    const focusNextPlaybackRateButton = (eventTarget: EventTarget|null, focusPrevious?: boolean): void => {
+      const currentPlaybackRateButton = (eventTarget as HTMLElement);
+      const currentPlaybackRate = Number(currentPlaybackRateButton.dataset.playbackRate);
+      if (Number.isNaN(currentPlaybackRate)) {
+        return;
+      }
+
+      const currentIndex = GlobalPlaybackRates.indexOf(currentPlaybackRate);
+      const nextIndex = focusPrevious ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= GlobalPlaybackRates.length) {
+        return;
+      }
+      const nextPlaybackRate = GlobalPlaybackRates[nextIndex];
+      const nextPlaybackRateButton = target.querySelector(`[data-playback-rate="${nextPlaybackRate}"]`) as HTMLButtonElement | undefined;
+      if (!nextPlaybackRateButton) {
+        return;
+      }
+
+      currentPlaybackRateButton.tabIndex = -1;
+      nextPlaybackRateButton.tabIndex = 0;
+      nextPlaybackRateButton.focus();
+    };
+
+    const handleKeyDown = (event: Event): void => {
+      const keyboardEvent = (event as KeyboardEvent);
+      switch (keyboardEvent.key) {
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          focusNextPlaybackRateButton(event.target, /* focusPrevious */ true);
+          break;
+        case 'ArrowRight':
+        case 'ArrowDown':
+          focusNextPlaybackRateButton(event.target);
+          break;
+      }
+    };
+
+    return html`
+      <div class="animation-playback-rate-control" role="listbox" aria-label=${i18nString(UIStrings.playbackRates)} @keydown=${handleKeyDown}>
+        ${GlobalPlaybackRates.map(playbackRate => {
+          const isSelected = input.selectedPlaybackRate === playbackRate;
+          const textContent = playbackRate ? i18nString(UIStrings.playbackRatePlaceholder, {PH1: playbackRate * 100}) : i18nString(UIStrings.pause);
+          return html`
+            <button class="animation-playback-rate-button" jslog=${VisualLogging.action().context(`animations.playback-rate-${playbackRate * 100}`).track({
+              click: true,
+              keydown: 'ArrowUp|ArrowDown|ArrowLeft|ArrowRight',
+            })}
+            data-playback-rate=${playbackRate}
+            .disabled=${input.playbackRateButtonsDisabled}
+            class=${classMap({
+              'animation-playback-rate-button': true,
+              selected: isSelected,
+            })}
+            tabindex=${isSelected ? 0 : -1}
+            role="option"
+            title=${i18nString(UIStrings.setSpeedToS, {PH1: textContent})}
+            @click=${() => input.onSetPlaybackRateClick(playbackRate)}>
+            ${textContent}
+          </button>
+          `;
+        })}
+      </div>
+    `;
+  };
+  render(html`
+    <div class="animation-timeline-toolbar-container" role="toolbar" jslog=${VisualLogging.toolbar()}>
+      <devtools-toolbar class="animation-timeline-toolbar" role="presentation">
+        <devtools-button
+          title=${i18nString(UIStrings.clearAll)}
+          aria-label=${i18nString(UIStrings.clearAll)}
+          .iconName=${'clear'}
+          .jslogContext=${'animations.clear'}
+          .variant=${Buttons.Button.Variant.TOOLBAR}
+          @click=${input.onClearClick}>
+        </devtools-button>
+        <div class="toolbar-divider"></div>
+        <devtools-button
+          title=${i18nString(UIStrings.pauseAll)}
+          aria-label=${i18nString(UIStrings.pauseAll)}
+          jslog=${
+            /* Do not use `.jslogContext` here because we want this to be reported as Toggle */
+            VisualLogging.toggle().track({click: true}).context('animations.pause-resume-all')
+          }
+          .iconName=${'pause'}
+          .toggledIconName=${'resume'}
+          .variant=${Buttons.Button.Variant.ICON_TOGGLE}
+          .toggleType=${Buttons.Button.ToggleType.PRIMARY}
+          .toggled=${input.allPaused}
+          @click=${input.onTogglePauseAllClick}>
+        </devtools-button>
+      </devtools-toolbar>
+      ${renderPlaybackRateControl()}
+    </div>
+  `, target, {host: target});
+};
+// clang-format on
+
+let animationTimelineInstance: AnimationTimeline;
+export class AnimationTimeline extends UI.Widget.VBox implements
+    SDK.TargetManager.SDKModelObserver<SDK.AnimationModel.AnimationModel> {
   #gridWrapper: HTMLElement;
   #grid: Element;
   #playbackRate: number;
   #allPaused: boolean;
-  #screenshotPopovers: AnimationScreenshotPopover[] = [];
   #animationsContainer: HTMLElement;
-  #playbackRateButtons!: HTMLElement[];
   #previewContainer!: HTMLElement;
   #timelineScrubber!: HTMLElement;
   #currentTime!: HTMLElement;
   #clearButton!: UI.Toolbar.ToolbarButton;
-  #selectedGroup!: AnimationGroup|null;
+  #selectedGroup!: SDK.AnimationModel.AnimationGroup|null;
   #renderQueue!: AnimationUI[];
   #defaultDuration: number;
   #durationInternal: number;
   #timelineControlsWidth: number;
   readonly #nodesMap: Map<number, NodeUI>;
   #uiAnimations: AnimationUI[];
-  #groupBuffer: AnimationGroup[];
-  readonly #previewMap: Map<AnimationGroup, AnimationGroupPreviewUI>;
-  readonly #animationsMap: Map<string, AnimationImpl>;
+  #groupBuffer: SDK.AnimationModel.AnimationGroup[];
+  readonly #previewMap: Map<SDK.AnimationModel.AnimationGroup, AnimationGroupPreviewUI>;
+  readonly #animationsMap: Map<string, SDK.AnimationModel.AnimationImpl>;
   #timelineScrubberLine?: HTMLElement;
   #pauseButton?: UI.Toolbar.ToolbarToggle;
-  #controlButton?: UI.Toolbar.ToolbarToggle;
+  #controlButton?: UI.Toolbar.ToolbarButton;
   #controlState?: ControlState;
   #redrawing?: boolean;
   #cachedTimelineWidth?: number;
@@ -130,29 +254,52 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   #originalMousePosition?: number;
   #timelineControlsResizer: HTMLElement;
   #gridHeader!: HTMLElement;
+  #scrollListenerId?: number|null;
+  #collectedGroups: SDK.AnimationModel.AnimationGroup[];
+  #createPreviewForCollectedGroupsThrottler = new Common.Throttler.Throttler(10);
+  #animationGroupUpdatedThrottler = new Common.Throttler.Throttler(10);
 
-  private constructor() {
-    super(true);
+  /** Container & state for rendering `toolbarView` */
+  #toolbarViewContainer: HTMLElement;
+  #toolbarView: ToolbarView;
+  #playbackRateButtonsDisabled = false;
 
+  constructor(toolbarView: ToolbarView = DEFAULT_TOOLBAR_VIEW) {
+    super({jslog: `${VisualLogging.panel('animations').track({resize: true})}`, useShadowDom: true});
+    this.registerRequiredCSS(animationTimelineStyles);
+
+    this.#toolbarView = toolbarView;
     this.element.classList.add('animations-timeline');
 
     this.#timelineControlsResizer = this.contentElement.createChild('div', 'timeline-controls-resizer');
+
     this.#gridWrapper = this.contentElement.createChild('div', 'grid-overflow-wrapper');
     this.#grid = UI.UIUtils.createSVGChild(this.#gridWrapper, 'svg', 'animation-timeline-grid');
 
     this.#playbackRate = 1;
     this.#allPaused = false;
     this.#animationGroupPausedBeforeScrub = false;
+    this.#toolbarViewContainer = this.contentElement.createChild('div');
     this.createHeader();
     this.#animationsContainer = this.contentElement.createChild('div', 'animation-timeline-rows');
-    const timelineHint = this.contentElement.createChild('div', 'animation-timeline-rows-hint');
-    timelineHint.textContent = i18nString(UIStrings.selectAnEffectAboveToInspectAnd);
+    this.#animationsContainer.setAttribute('jslog', `${VisualLogging.section('animations')}`);
+    const emptyBufferHint = this.contentElement.createChild('div', 'animation-timeline-buffer-hint');
+    const noAnimationsPlaceholder = new UI.EmptyWidget.EmptyWidget(
+        i18nString(UIStrings.waitingForAnimations), i18nString(UIStrings.animationDescription));
+    noAnimationsPlaceholder.link = ANIMATION_EXPLANATION_URL;
+    noAnimationsPlaceholder.show(emptyBufferHint);
 
-    /** @const */ this.#defaultDuration = 100;
+    const timelineHint = this.contentElement.createChild('div', 'animation-timeline-rows-hint');
+    const noEffectSelectedPlaceholder = new UI.EmptyWidget.EmptyWidget(
+        i18nString(UIStrings.noEffectSelected), i18nString(UIStrings.selectAnEffectAboveToInspectAnd));
+    noEffectSelectedPlaceholder.show(timelineHint);
+
+    /** @constant */ this.#defaultDuration = 100;
     this.#durationInternal = this.#defaultDuration;
     this.#nodesMap = new Map();
     this.#uiAnimations = [];
     this.#groupBuffer = [];
+    this.#collectedGroups = [];
     this.#previewMap = new Map();
     this.#animationsMap = new Map();
 
@@ -162,10 +309,11 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     SDK.TargetManager.TargetManager.instance().addModelListener(
         SDK.DOMModel.DOMModel, SDK.DOMModel.Events.NodeRemoved, ev => this.markNodeAsRemoved(ev.data.node), this,
         {scoped: true});
-    SDK.TargetManager.TargetManager.instance().observeModels(AnimationModel, this, {scoped: true});
+    SDK.TargetManager.TargetManager.instance().observeModels(SDK.AnimationModel.AnimationModel, this, {scoped: true});
     UI.Context.Context.instance().addFlavorChangeListener(SDK.DOMModel.DOMNode, this.nodeChanged, this);
 
     this.#setupTimelineControlsResizer();
+    this.performToolbarViewUpdate();
   }
 
   static instance(opts?: {forceNew: boolean}): AnimationTimeline {
@@ -201,7 +349,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
         'ew-resize');
   }
 
-  get previewMap(): Map<AnimationGroup, AnimationGroupPreviewUI> {
+  get previewMap(): Map<SDK.AnimationModel.AnimationGroup, AnimationGroupPreviewUI> {
     return this.#previewMap;
   }
 
@@ -209,43 +357,75 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     return this.#uiAnimations;
   }
 
-  get groupBuffer(): AnimationGroup[] {
+  get groupBuffer(): SDK.AnimationModel.AnimationGroup[] {
     return this.#groupBuffer;
   }
 
   override wasShown(): void {
-    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(AnimationModel, {scoped: true})) {
+    super.wasShown();
+    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(
+             SDK.AnimationModel.AnimationModel, {scoped: true})) {
+      this.#addExistingAnimationGroups(animationModel);
       this.addEventListeners(animationModel);
     }
-    this.registerCSSFiles([animationTimelineStyles]);
   }
 
   override willHide(): void {
-    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(AnimationModel, {scoped: true})) {
+    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(
+             SDK.AnimationModel.AnimationModel, {scoped: true})) {
       this.removeEventListeners(animationModel);
     }
-
   }
 
-  modelAdded(animationModel: AnimationModel): void {
+  #addExistingAnimationGroups(animationModel: SDK.AnimationModel.AnimationModel): void {
+    for (const animationGroup of animationModel.animationGroups.values()) {
+      if (this.#previewMap.has(animationGroup)) {
+        continue;
+      }
+
+      void this.addAnimationGroup(animationGroup);
+    }
+  }
+
+  #showPanelInDrawer(): void {
+    const viewManager = UI.ViewManager.ViewManager.instance();
+    viewManager.moveView('animations', 'drawer-view', {
+      shouldSelectTab: true,
+      overrideSaving: true,
+    });
+  }
+
+  async revealAnimationGroup(animationGroup: SDK.AnimationModel.AnimationGroup): Promise<void> {
+    if (!this.#previewMap.has(animationGroup)) {
+      await this.addAnimationGroup(animationGroup);
+    }
+
+    this.#showPanelInDrawer();
+    return await this.selectAnimationGroup(animationGroup);
+  }
+
+  modelAdded(animationModel: SDK.AnimationModel.AnimationModel): void {
     if (this.isShowing()) {
       this.addEventListeners(animationModel);
     }
   }
 
-  modelRemoved(animationModel: AnimationModel): void {
+  modelRemoved(animationModel: SDK.AnimationModel.AnimationModel): void {
     this.removeEventListeners(animationModel);
   }
 
-  private addEventListeners(animationModel: AnimationModel): void {
-    void animationModel.ensureEnabled();
-    animationModel.addEventListener(Events.AnimationGroupStarted, this.animationGroupStarted, this);
-    animationModel.addEventListener(Events.ModelReset, this.reset, this);
+  private addEventListeners(animationModel: SDK.AnimationModel.AnimationModel): void {
+    animationModel.addEventListener(SDK.AnimationModel.Events.AnimationGroupStarted, this.animationGroupStarted, this);
+    animationModel.addEventListener(SDK.AnimationModel.Events.AnimationGroupUpdated, this.animationGroupUpdated, this);
+    animationModel.addEventListener(SDK.AnimationModel.Events.ModelReset, this.reset, this);
   }
 
-  private removeEventListeners(animationModel: AnimationModel): void {
-    animationModel.removeEventListener(Events.AnimationGroupStarted, this.animationGroupStarted, this);
-    animationModel.removeEventListener(Events.ModelReset, this.reset, this);
+  private removeEventListeners(animationModel: SDK.AnimationModel.AnimationModel): void {
+    animationModel.removeEventListener(
+        SDK.AnimationModel.Events.AnimationGroupStarted, this.animationGroupStarted, this);
+    animationModel.removeEventListener(
+        SDK.AnimationModel.Events.AnimationGroupUpdated, this.animationGroupUpdated, this);
+    animationModel.removeEventListener(SDK.AnimationModel.Events.ModelReset, this.reset, this);
   }
 
   private nodeChanged(): void {
@@ -264,122 +444,76 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     return this.#timelineScrubber;
   }
 
+  private performToolbarViewUpdate(): void {
+    this.#toolbarView(
+        {
+          selectedPlaybackRate: this.#playbackRate,
+          playbackRateButtonsDisabled: this.#playbackRateButtonsDisabled,
+          allPaused: this.#allPaused,
+          onClearClick: () => {
+            Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationGroupsCleared);
+            this.reset();
+          },
+          onTogglePauseAllClick: () => {
+            this.#allPaused = !this.#allPaused;
+            Host.userMetrics.actionTaken(
+                this.#allPaused ? Host.UserMetrics.Action.AnimationsPaused : Host.UserMetrics.Action.AnimationsResumed,
+            );
+            this.setPlaybackRate(this.#playbackRate);
+            if (this.#pauseButton) {
+              this.#pauseButton.setTitle(
+                  this.#allPaused ? i18nString(UIStrings.resumeAll) : i18nString(UIStrings.pauseAll));
+            }
+          },
+          onSetPlaybackRateClick: (playbackRate: number) => {
+            this.setPlaybackRate(playbackRate);
+          }
+        },
+        undefined, this.#toolbarViewContainer);
+  }
+
   private createHeader(): HTMLElement {
-    const toolbarContainer = this.contentElement.createChild('div', 'animation-timeline-toolbar-container');
-    const topToolbar = new UI.Toolbar.Toolbar('animation-timeline-toolbar', toolbarContainer);
-    this.#clearButton = new UI.Toolbar.ToolbarButton(i18nString(UIStrings.clearAll), 'clear');
-    this.#clearButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, () => {
-      Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationGroupsCleared);
-      this.reset();
-    });
-    topToolbar.appendToolbarItem(this.#clearButton);
-    topToolbar.appendSeparator();
-
-    this.#pauseButton = new UI.Toolbar.ToolbarToggle(i18nString(UIStrings.pauseAll), 'pause', 'resume');
-    this.#pauseButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, () => {
-      this.togglePauseAll();
-    });
-    topToolbar.appendToolbarItem(this.#pauseButton);
-
-    const playbackRateControl = toolbarContainer.createChild('div', 'animation-playback-rate-control');
-    playbackRateControl.addEventListener('keydown', this.handlePlaybackRateControlKeyDown.bind(this));
-    UI.ARIAUtils.markAsListBox(playbackRateControl);
-    UI.ARIAUtils.setLabel(playbackRateControl, i18nString(UIStrings.playbackRates));
-
-    this.#playbackRateButtons = [];
-    for (const playbackRate of GlobalPlaybackRates) {
-      const button = (playbackRateControl.createChild('button', 'animation-playback-rate-button') as HTMLElement);
-      button.textContent = playbackRate ? i18nString(UIStrings.playbackRatePlaceholder, {PH1: playbackRate * 100}) :
-                                          i18nString(UIStrings.pause);
-      playbackRates.set(button, playbackRate);
-      button.addEventListener('click', this.setPlaybackRate.bind(this, playbackRate));
-      UI.ARIAUtils.markAsOption(button);
-      UI.Tooltip.Tooltip.install(button, i18nString(UIStrings.setSpeedToS, {PH1: button.textContent}));
-      button.tabIndex = -1;
-      this.#playbackRateButtons.push(button);
-    }
-    this.updatePlaybackControls();
-    this.#previewContainer = (this.contentElement.createChild('div', 'animation-timeline-buffer') as HTMLElement);
+    this.#previewContainer = this.contentElement.createChild('div', 'animation-timeline-buffer');
+    this.#previewContainer.setAttribute('jslog', `${VisualLogging.section('film-strip')}`);
     UI.ARIAUtils.markAsListBox(this.#previewContainer);
     UI.ARIAUtils.setLabel(this.#previewContainer, i18nString(UIStrings.animationPreviews));
-    const emptyBufferHint = this.contentElement.createChild('div', 'animation-timeline-buffer-hint');
-    emptyBufferHint.textContent = i18nString(UIStrings.waitingForAnimations);
     const container = this.contentElement.createChild('div', 'animation-timeline-header');
     const controls = container.createChild('div', 'animation-controls');
-    this.#currentTime = (controls.createChild('div', 'animation-timeline-current-time monospace') as HTMLElement);
+    this.#currentTime = controls.createChild('div', 'animation-timeline-current-time monospace');
 
-    const toolbar = new UI.Toolbar.Toolbar('animation-controls-toolbar', controls);
-    this.#controlButton = new UI.Toolbar.ToolbarToggle(i18nString(UIStrings.replayTimeline), 'replay');
-    this.#controlState = ControlState.Replay;
-    this.#controlButton.setToggled(true);
-    this.#controlButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this.controlButtonToggle.bind(this));
+    const toolbar = controls.createChild('devtools-toolbar', 'animation-controls-toolbar');
+    this.#controlButton = new UI.Toolbar.ToolbarButton(
+        i18nString(UIStrings.replayTimeline), 'replay', undefined, 'animations.play-replay-pause-animation-group');
+    this.#controlButton.element.classList.add('toolbar-state-on');
+    this.#controlState = ControlState.REPLAY;
+    this.#controlButton.addEventListener(UI.Toolbar.ToolbarButton.Events.CLICK, this.controlButtonToggle.bind(this));
     toolbar.appendToolbarItem(this.#controlButton);
 
     this.#gridHeader = container.createChild('div', 'animation-grid-header');
+    this.#gridHeader.setAttribute(
+        'jslog', `${VisualLogging.timeline('animations.grid-header').track({drag: true, click: true})}`);
     UI.UIUtils.installDragHandle(
         this.#gridHeader, this.scrubberDragStart.bind(this), this.scrubberDragMove.bind(this),
         this.scrubberDragEnd.bind(this), null);
     this.#gridWrapper.appendChild(this.createScrubber());
 
-    this.#currentTime.textContent = '';
+    this.clearCurrentTimeText();
 
     return container;
-  }
-
-  private handlePlaybackRateControlKeyDown(event: Event): void {
-    const keyboardEvent = (event as KeyboardEvent);
-    switch (keyboardEvent.key) {
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        this.focusNextPlaybackRateButton(event.target, /* focusPrevious */ true);
-        break;
-      case 'ArrowRight':
-      case 'ArrowDown':
-        this.focusNextPlaybackRateButton(event.target);
-        break;
-    }
-  }
-
-  private focusNextPlaybackRateButton(target: EventTarget|null, focusPrevious?: boolean): void {
-    const button = (target as HTMLElement);
-    const currentIndex = this.#playbackRateButtons.indexOf(button);
-    const nextIndex = focusPrevious ? currentIndex - 1 : currentIndex + 1;
-    if (nextIndex < 0 || nextIndex >= this.#playbackRateButtons.length) {
-      return;
-    }
-    const nextButton = this.#playbackRateButtons[nextIndex];
-    nextButton.tabIndex = 0;
-    nextButton.focus();
-    if (target) {
-      (target as HTMLElement).tabIndex = -1;
-    }
-  }
-
-  private togglePauseAll(): void {
-    this.#allPaused = !this.#allPaused;
-    Host.userMetrics.actionTaken(
-        this.#allPaused ? Host.UserMetrics.Action.AnimationsPaused : Host.UserMetrics.Action.AnimationsResumed,
-    );
-    if (this.#pauseButton) {
-      this.#pauseButton.setToggled(this.#allPaused);
-    }
-    this.setPlaybackRate(this.#playbackRate);
-    if (this.#pauseButton) {
-      this.#pauseButton.setTitle(this.#allPaused ? i18nString(UIStrings.resumeAll) : i18nString(UIStrings.pauseAll));
-    }
   }
 
   private setPlaybackRate(playbackRate: number): void {
     if (playbackRate !== this.#playbackRate) {
       Host.userMetrics.animationPlaybackRateChanged(
-          playbackRate === 0.1      ? Host.UserMetrics.AnimationsPlaybackRate.Percent10 :
-              playbackRate === 0.25 ? Host.UserMetrics.AnimationsPlaybackRate.Percent25 :
-              playbackRate === 1    ? Host.UserMetrics.AnimationsPlaybackRate.Percent100 :
-                                      Host.UserMetrics.AnimationsPlaybackRate.Other);
+          playbackRate === 0.1      ? Host.UserMetrics.AnimationsPlaybackRate.PERCENT_10 :
+              playbackRate === 0.25 ? Host.UserMetrics.AnimationsPlaybackRate.PERCENT_25 :
+              playbackRate === 1    ? Host.UserMetrics.AnimationsPlaybackRate.PERCENT_100 :
+                                      Host.UserMetrics.AnimationsPlaybackRate.OTHER);
     }
 
     this.#playbackRate = playbackRate;
-    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(AnimationModel, {scoped: true})) {
+    for (const animationModel of SDK.TargetManager.TargetManager.instance().models(
+             SDK.AnimationModel.AnimationModel, {scoped: true})) {
       animationModel.setPlaybackRate(this.#allPaused ? 0 : this.#playbackRate);
     }
     Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationsPlaybackRateChanged);
@@ -387,21 +521,13 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#scrubberPlayer.playbackRate = this.effectivePlaybackRate();
     }
 
-    this.updatePlaybackControls();
-  }
-
-  private updatePlaybackControls(): void {
-    for (const button of this.#playbackRateButtons) {
-      const selected = this.#playbackRate === playbackRates.get(button);
-      button.classList.toggle('selected', selected);
-      button.tabIndex = selected ? 0 : -1;
-    }
+    this.performToolbarViewUpdate();
   }
 
   private controlButtonToggle(): void {
-    if (this.#controlState === ControlState.Play) {
+    if (this.#controlState === ControlState.PLAY) {
       this.togglePause(false);
-    } else if (this.#controlState === ControlState.Replay) {
+    } else if (this.#controlState === ControlState.REPLAY) {
       Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationGroupReplayed);
       this.replay();
     } else {
@@ -414,22 +540,23 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       return;
     }
 
-    this.#controlButton.setEnabled(Boolean(this.#selectedGroup) && this.hasAnimationGroupActiveNodes());
+    this.#controlButton.setEnabled(
+        Boolean(this.#selectedGroup) && this.hasAnimationGroupActiveNodes() && !this.#selectedGroup?.isScrollDriven());
     if (this.#selectedGroup && this.#selectedGroup.paused()) {
-      this.#controlState = ControlState.Play;
-      this.#controlButton.setToggled(true);
+      this.#controlState = ControlState.PLAY;
+      this.#controlButton.element.classList.toggle('toolbar-state-on', true);
       this.#controlButton.setTitle(i18nString(UIStrings.playTimeline));
       this.#controlButton.setGlyph('play');
     } else if (
         !this.#scrubberPlayer || !this.#scrubberPlayer.currentTime ||
         typeof this.#scrubberPlayer.currentTime !== 'number' || this.#scrubberPlayer.currentTime >= this.duration()) {
-      this.#controlState = ControlState.Replay;
-      this.#controlButton.setToggled(true);
+      this.#controlState = ControlState.REPLAY;
+      this.#controlButton.element.classList.toggle('toolbar-state-on', true);
       this.#controlButton.setTitle(i18nString(UIStrings.replayTimeline));
       this.#controlButton.setGlyph('replay');
     } else {
-      this.#controlState = ControlState.Pause;
-      this.#controlButton.setToggled(false);
+      this.#controlState = ControlState.PAUSE;
+      this.#controlButton.element.classList.toggle('toolbar-state-on', false);
       this.#controlButton.setTitle(i18nString(UIStrings.pauseTimeline));
       this.#controlButton.setGlyph('pause');
     }
@@ -444,7 +571,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#selectedGroup.togglePause(pause);
       const preview = this.#previewMap.get(this.#selectedGroup);
       if (preview) {
-        preview.element.classList.toggle('paused', pause);
+        preview.setPaused(pause);
       }
     }
     if (this.#scrubberPlayer) {
@@ -454,7 +581,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   }
 
   private replay(): void {
-    if (!this.#selectedGroup || !this.hasAnimationGroupActiveNodes()) {
+    if (!this.#selectedGroup || !this.hasAnimationGroupActiveNodes() || this.#selectedGroup.isScrollDriven()) {
       return;
     }
     this.#selectedGroup.seekTo(0);
@@ -472,6 +599,13 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   }
 
   private clearTimeline(): void {
+    if (this.#selectedGroup && this.#scrollListenerId) {
+      void this.#selectedGroup.scrollNode().then((node: SDK.AnimationModel.AnimationDOMNode|null) => {
+        void node?.removeScrollEventListener(this.#scrollListenerId as number);
+        this.#scrollListenerId = undefined;
+      });
+    }
+
     this.#uiAnimations = [];
     this.#nodesMap.clear();
     this.#animationsMap.clear();
@@ -484,7 +618,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#scrubberPlayer.cancel();
     }
     this.#scrubberPlayer = undefined;
-    this.#currentTime.textContent = '';
+    this.clearCurrentTimeText();
     this.updateControlButton();
   }
 
@@ -500,85 +634,132 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     this.renderGrid();
   }
 
-  private animationGroupStarted({data}: Common.EventTarget.EventTargetEvent<AnimationGroup>): void {
-    this.addAnimationGroup(data);
+  private animationGroupStarted({data}: Common.EventTarget.EventTargetEvent<SDK.AnimationModel.AnimationGroup>): void {
+    void this.addAnimationGroup(data);
+  }
+
+  scheduledRedrawAfterAnimationGroupUpdatedForTest(): void {
+  }
+
+  private animationGroupUpdated({
+    data: group,
+  }: Common.EventTarget.EventTargetEvent<SDK.AnimationModel.AnimationGroup>): void {
+    void this.#animationGroupUpdatedThrottler.schedule(async () => {
+      const preview = this.#previewMap.get(group);
+      if (preview) {
+        preview.replay();
+      }
+
+      if (this.#selectedGroup !== group) {
+        return;
+      }
+
+      if (group.isScrollDriven()) {
+        const animationNode = await group.scrollNode();
+        if (animationNode) {
+          const scrollRange = group.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical ?
+              await animationNode.verticalScrollRange() :
+              await animationNode.horizontalScrollRange();
+          const scrollOffset = group.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical ?
+              await animationNode.scrollTop() :
+              await animationNode.scrollLeft();
+          if (scrollRange !== null) {
+            this.setDuration(scrollRange);
+          }
+
+          if (scrollOffset !== null) {
+            this.setCurrentTimeText(scrollOffset);
+            this.setTimelineScrubberPosition(scrollOffset);
+          }
+        }
+      } else {
+        this.setDuration(group.finiteDuration());
+      }
+
+      this.updateControlButton();
+      this.scheduleRedraw();
+
+      this.scheduledRedrawAfterAnimationGroupUpdatedForTest();
+    });
   }
 
   private clearPreviews(): void {
     this.#previewMap.clear();
-    this.#screenshotPopovers.forEach(popover => {
-      popover.detach();
-    });
     this.#previewContainer.removeChildren();
-    this.#screenshotPopovers = [];
   }
 
-  private createPreview(group: AnimationGroup): void {
-    const preview = new AnimationGroupPreviewUI(group);
+  private createPreview(group: SDK.AnimationModel.AnimationGroup): void {
+    const preview = new AnimationGroupPreviewUI({
+      animationGroup: group,
+      label: i18nString(UIStrings.animationPreviewS, {PH1: this.#groupBuffer.length + 1}),
+      onRemoveAnimationGroup: () => {
+        this.removeAnimationGroup(group);
+      },
+      onSelectAnimationGroup: () => {
+        void this.selectAnimationGroup(group);
+      },
+      onFocusNextGroup: () => {
+        this.focusNextGroup(group);
+      },
+      onFocusPreviousGroup: () => {
+        this.focusNextGroup(group, /* focusPrevious */ true);
+      }
+    });
 
     const previewUiContainer = document.createElement('div');
     previewUiContainer.classList.add('preview-ui-container');
-    previewUiContainer.appendChild(preview.element);
-
-    const screenshotsContainer = document.createElement('div');
-    screenshotsContainer.classList.add('screenshots-container', 'no-screenshots');
-    screenshotsContainer.createChild('span', 'screenshot-arrow');
-    // After the view is shown on hover, position it if it is out of bounds.
-    screenshotsContainer.addEventListener('animationend', () => {
-      const {right, left, width} = screenshotsContainer.getBoundingClientRect();
-      // Render to the left if it is not getting out of bounds when rendered on the left.
-      if (right > window.innerWidth && (left - width) >= 0) {
-        screenshotsContainer.classList.add('to-the-left');
-      }
-    });
-    previewUiContainer.appendChild(screenshotsContainer);
+    preview.markAsRoot();
+    preview.show(previewUiContainer);
 
     this.#groupBuffer.push(group);
     this.#previewMap.set(group, preview);
     this.#previewContainer.appendChild(previewUiContainer);
-    preview.removeButton().addEventListener('click', this.removeAnimationGroup.bind(this, group));
-    preview.element.addEventListener('click', this.selectAnimationGroup.bind(this, group));
-    preview.element.addEventListener('keydown', this.handleAnimationGroupKeyDown.bind(this, group));
-    preview.element.addEventListener('mouseover', () => {
-      const screenshots = group.screenshots();
-      if (!screenshots.length) {
-        return;
-      }
 
-      screenshotsContainer.classList.remove('no-screenshots');
-      const createAndShowScreenshotPopover = (): void => {
-        const screenshotPopover = new AnimationScreenshotPopover(screenshots);
-        // This is needed for clearing out the widgets
-        this.#screenshotPopovers.push(screenshotPopover);
-        screenshotPopover.show(screenshotsContainer);
-      };
-
-      if (!screenshots[0].complete) {
-        screenshots[0].onload = createAndShowScreenshotPopover;
-      } else {
-        createAndShowScreenshotPopover();
-      }
-    }, {once: true});
-    UI.ARIAUtils.setLabel(
-        preview.element, i18nString(UIStrings.animationPreviewS, {PH1: this.#groupBuffer.indexOf(group) + 1}));
-    UI.ARIAUtils.markAsOption(preview.element);
-
+    // If this is the first preview attached, we want it to be focusable directly.
+    // Otherwise, we don't want the previews to be focusable via Tabbing and manage
+    // their focus via arrow keys.
     if (this.#previewMap.size === 1) {
       const preview = this.#previewMap.get(this.#groupBuffer[0]);
       if (preview) {
-        preview.element.tabIndex = 0;
+        preview.setFocusable(true);
       }
     }
   }
 
-  private addAnimationGroup(group: AnimationGroup): void {
-    function startTimeComparator(left: AnimationGroup, right: AnimationGroup): 0|1|- 1 {
-      if (left.startTime() === right.startTime()) {
-        return 0;
+  previewsCreatedForTest(): void {
+  }
+
+  scrubberOnFinishForTest(): void {
+  }
+
+  private createPreviewForCollectedGroups(): void {
+    this.#collectedGroups.sort((a, b) => {
+      // Scroll driven animations are rendered first.
+      if (a.isScrollDriven() && !b.isScrollDriven()) {
+        return -1;
       }
-      return left.startTime() > right.startTime() ? 1 : -1;
+      if (!a.isScrollDriven() && b.isScrollDriven()) {
+        return 1;
+      }
+
+      // Then compare the start times for the same type of animations.
+      if (a.startTime() !== b.startTime()) {
+        return a.startTime() - b.startTime();
+      }
+
+      // If the start times are the same, the one with the more animations take precedence.
+      return a.animations.length - b.animations.length;
+    });
+
+    for (const group of this.#collectedGroups) {
+      this.createPreview(group);
     }
 
+    this.#collectedGroups = [];
+    this.previewsCreatedForTest();
+  }
+
+  private addAnimationGroup(group: SDK.AnimationModel.AnimationGroup): Promise<void> {
     const previewGroup = this.#previewMap.get(group);
     if (previewGroup) {
       if (this.#selectedGroup === group) {
@@ -586,9 +767,11 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       } else {
         previewGroup.replay();
       }
-      return;
+      return Promise.resolve();
     }
-    this.#groupBuffer.sort(startTimeComparator);
+
+    this.#groupBuffer.sort((left, right) => left.startTime() - right.startTime());
+
     // Discard oldest groups from buffer if necessary
     const groupsToDiscard = [];
     const bufferSize = this.width() / 50;
@@ -601,34 +784,19 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       if (!discardGroup) {
         continue;
       }
-      discardGroup.element.remove();
+      discardGroup.detach();
       this.#previewMap.delete(g);
       g.release();
     }
-    this.createPreview(group);
+
+    // Batch creating preview for arrivals happening closely together to ensure
+    // stable UI sorting in the preview container.
+    this.#collectedGroups.push(group);
+    return this.#createPreviewForCollectedGroupsThrottler.schedule(
+        () => Promise.resolve(this.createPreviewForCollectedGroups()));
   }
 
-  private handleAnimationGroupKeyDown(group: AnimationGroup, event: KeyboardEvent): void {
-    switch (event.key) {
-      case ' ':
-      case 'Enter':
-        void this.selectAnimationGroup(group);
-        break;
-      case 'Backspace':
-      case 'Delete':
-        this.removeAnimationGroup(group, event);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        this.focusNextGroup(group, /* target */ event.target, /* focusPrevious */ true);
-        break;
-      case 'ArrowRight':
-      case 'ArrowDown':
-        this.focusNextGroup(group, /* target */ event.target);
-    }
-  }
-
-  private focusNextGroup(group: AnimationGroup, target: EventTarget|null, focusPrevious?: boolean): void {
+  private focusNextGroup(group: SDK.AnimationModel.AnimationGroup, focusPrevious?: boolean): void {
     const currentGroupIndex = this.#groupBuffer.indexOf(group);
     const nextIndex = focusPrevious ? currentGroupIndex - 1 : currentGroupIndex + 1;
     if (nextIndex < 0 || nextIndex >= this.#groupBuffer.length) {
@@ -636,27 +804,26 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     }
     const preview = this.#previewMap.get(this.#groupBuffer[nextIndex]);
     if (preview) {
-      preview.element.tabIndex = 0;
-      preview.element.focus();
+      preview.setFocusable(true);
+      preview.focus();
     }
 
-    if (target) {
-      (target as HTMLElement).tabIndex = -1;
+    const previousPreview = this.#previewMap.get(group);
+    if (previousPreview) {
+      previousPreview.setFocusable(false);
     }
   }
 
-  private removeAnimationGroup(group: AnimationGroup, event: Event): void {
+  private removeAnimationGroup(group: SDK.AnimationModel.AnimationGroup): void {
     const currentGroupIndex = this.#groupBuffer.indexOf(group);
 
     Platform.ArrayUtilities.removeElement(this.#groupBuffer, group);
     const previewGroup = this.#previewMap.get(group);
     if (previewGroup) {
-      previewGroup.element.remove();
+      previewGroup.detach();
     }
     this.#previewMap.delete(group);
     group.release();
-    event.consume(true);
-
     if (this.#selectedGroup === group) {
       this.clearTimeline();
       this.renderGrid();
@@ -672,12 +839,25 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
         this.#previewMap.get(this.#groupBuffer[currentGroupIndex]);
 
     if (nextGroup) {
-      nextGroup.element.tabIndex = 0;
-      nextGroup.element.focus();
+      nextGroup.setFocusable(true);
+      nextGroup.focus();
     }
   }
 
-  private async selectAnimationGroup(group: AnimationGroup): Promise<void> {
+  private clearCurrentTimeText(): void {
+    this.#currentTime.textContent = '';
+  }
+
+  private setCurrentTimeText(time: number): void {
+    if (!this.#selectedGroup) {
+      return;
+    }
+
+    this.#currentTime.textContent =
+        this.#selectedGroup?.isScrollDriven() ? `${time.toFixed(0)}px` : i18n.TimeUtilities.millisToString(time);
+  }
+
+  private async selectAnimationGroup(group: SDK.AnimationModel.AnimationGroup): Promise<void> {
     if (this.#selectedGroup === group) {
       this.togglePause(false);
       this.replay();
@@ -685,10 +865,48 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     }
     this.clearTimeline();
     this.#selectedGroup = group;
-    this.#previewMap.forEach((previewUI: AnimationGroupPreviewUI, group: AnimationGroup) => {
-      previewUI.element.classList.toggle('selected', this.#selectedGroup === group);
+    this.#previewMap.forEach((previewUI: AnimationGroupPreviewUI, group: SDK.AnimationModel.AnimationGroup) => {
+      previewUI.setSelected(this.#selectedGroup === group);
     });
-    this.setDuration(Math.max(500, group.finiteDuration() + 100));
+
+    if (group.isScrollDriven()) {
+      const animationNode = await group.scrollNode();
+      if (!animationNode) {
+        throw new Error('Scroll container is not found for the scroll driven animation');
+      }
+
+      const scrollRange = group.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical ?
+          await animationNode.verticalScrollRange() :
+          await animationNode.horizontalScrollRange();
+      const scrollOffset = group.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical ?
+          await animationNode.scrollTop() :
+          await animationNode.scrollLeft();
+      if (typeof scrollRange !== 'number' || typeof scrollOffset !== 'number') {
+        throw new Error('Scroll range or scroll offset is not resolved for the scroll driven animation');
+      }
+
+      this.#scrollListenerId = await animationNode.addScrollEventListener(({scrollTop, scrollLeft}) => {
+        const offset = group.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical ? scrollTop : scrollLeft;
+        this.setCurrentTimeText(offset);
+        this.setTimelineScrubberPosition(offset);
+      });
+      this.setDuration(scrollRange);
+      this.setCurrentTimeText(scrollOffset);
+      this.setTimelineScrubberPosition(scrollOffset);
+      if (this.#pauseButton) {
+        this.#pauseButton.setEnabled(false);
+      }
+      this.#playbackRateButtonsDisabled = true;
+      this.performToolbarViewUpdate();
+    } else {
+      this.setDuration(group.finiteDuration());
+      if (this.#pauseButton) {
+        this.#pauseButton.setEnabled(true);
+      }
+      this.#playbackRateButtonsDisabled = false;
+      this.performToolbarViewUpdate();
+    }
+
     // Wait for all animations to be added and nodes to be resolved
     // until we schedule a redraw.
     await Promise.all(group.animations().map(anim => this.addAnimation(anim)));
@@ -700,13 +918,17 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#gridHeader.classList.add('scrubber-enabled');
     }
 
+    Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationGroupSelected);
+    if (this.#selectedGroup.isScrollDriven()) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.ScrollDrivenAnimationGroupSelected);
+    }
     this.animationGroupSelectedForTest();
   }
 
   animationGroupSelectedForTest(): void {
   }
 
-  private async addAnimation(animation: AnimationImpl): Promise<void> {
+  private async addAnimation(animation: SDK.AnimationModel.AnimationImpl): Promise<void> {
     let nodeUI = this.#nodesMap.get(animation.source().backendNodeId());
     if (!nodeUI) {
       nodeUI = new NodeUI(animation.source());
@@ -747,7 +969,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#timelineScrubber.classList.add('hidden');
       this.#scrubberPlayer?.cancel();
       this.#scrubberPlayer = undefined;
-      this.#currentTime.textContent = '';
+      this.clearCurrentTimeText();
       this.updateControlButton();
     }
   }
@@ -763,29 +985,33 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   }
 
   private renderGrid(): void {
-    /** @const */ const gridSize = 250;
+    const isScrollDriven = this.#selectedGroup?.isScrollDriven();
+    // For scroll driven animations, show divider lines for each 10% progres.
+    // For time based animations, show divider lines for each 250ms progress.
+    const gridSize = isScrollDriven ? this.duration() / 10 : 250;
     this.#grid.removeChildren();
     let lastDraw: number|undefined = undefined;
     for (let time = 0; time < this.duration(); time += gridSize) {
       const line = UI.UIUtils.createSVGChild(this.#grid, 'rect', 'animation-timeline-grid-line');
-      line.setAttribute('x', (time * this.pixelMsRatio() + 10).toString());
+      line.setAttribute('x', (time * this.pixelTimeRatio() + 10).toString());
       line.setAttribute('y', '23');
       line.setAttribute('height', '100%');
       line.setAttribute('width', '1');
     }
     for (let time = 0; time < this.duration(); time += gridSize) {
-      const gridWidth = time * this.pixelMsRatio();
+      const gridWidth = time * this.pixelTimeRatio();
       if (lastDraw === undefined || gridWidth - lastDraw > 50) {
         lastDraw = gridWidth;
         const label = UI.UIUtils.createSVGChild(this.#grid, 'text', 'animation-timeline-grid-label');
-        label.textContent = i18n.TimeUtilities.millisToString(time);
-        label.setAttribute('x', (gridWidth + 10).toString());
+        label.textContent = isScrollDriven ? `${time.toFixed(0)}px` : i18n.TimeUtilities.millisToString(time);
+        label.setAttribute('x', (gridWidth + 12).toString());
         label.setAttribute('y', '16');
       }
     }
   }
 
   scheduleRedraw(): void {
+    this.renderGrid();
     this.#renderQueue = [];
     for (const ui of this.#uiAnimations) {
       this.#renderQueue.push(ui);
@@ -794,7 +1020,6 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       return;
     }
     this.#redrawing = true;
-    this.renderGrid();
     this.#animationsContainer.window().requestAnimationFrame(this.render.bind(this));
   }
 
@@ -813,7 +1038,7 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   }
 
   override onResize(): void {
-    this.#cachedTimelineWidth = Math.max(0, this.#animationsContainer.offsetWidth - this.#timelineControlsWidth) || 0;
+    this.#cachedTimelineWidth = Math.max(0, this.contentElement.offsetWidth - this.#timelineControlsWidth) || 0;
     this.scheduleRedraw();
     if (this.#scrubberPlayer) {
       this.syncScrubber();
@@ -835,6 +1060,12 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
   }
 
   private animateTime(currentTime: number): void {
+    // Scroll driven animations are bound to the scroll position of the scroll container
+    // thus we don't animate the scrubber based on time for scroll driven animations.
+    if (this.#selectedGroup?.isScrollDriven()) {
+      return;
+    }
+
     if (this.#scrubberPlayer) {
       this.#scrubberPlayer.cancel();
     }
@@ -843,12 +1074,15 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
         [{transform: 'translateX(0px)'}, {transform: 'translateX(' + this.width() + 'px)'}],
         {duration: this.duration(), fill: 'forwards'});
     this.#scrubberPlayer.playbackRate = this.effectivePlaybackRate();
-    this.#scrubberPlayer.onfinish = this.updateControlButton.bind(this);
+    this.#scrubberPlayer.onfinish = () => {
+      this.updateControlButton();
+      this.scrubberOnFinishForTest();
+    };
     this.#scrubberPlayer.currentTime = currentTime;
     this.element.window().requestAnimationFrame(this.updateScrubber.bind(this));
   }
 
-  pixelMsRatio(): number {
+  pixelTimeRatio(): number {
     return this.width() / this.duration() || 0;
   }
 
@@ -856,15 +1090,14 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
     if (!this.#scrubberPlayer) {
       return;
     }
-    this.#currentTime.textContent = i18n.TimeUtilities.millisToString(this.#scrubberCurrentTime());
+
+    this.setCurrentTimeText(this.#scrubberCurrentTime());
     if (this.#scrubberPlayer.playState.toString() === 'pending' || this.#scrubberPlayer.playState === 'running') {
       this.element.window().requestAnimationFrame(this.updateScrubber.bind(this));
-    } else if (this.#scrubberPlayer.playState === 'finished') {
-      this.#currentTime.textContent = '';
     }
   }
 
-  private scrubberDragStart(event: Event): boolean {
+  private scrubberDragStart(event: MouseEvent): boolean {
     if (!this.#selectedGroup || !this.hasAnimationGroupActiveNodes()) {
       return false;
     }
@@ -874,33 +1107,59 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#gridOffsetLeft = this.#grid.getBoundingClientRect().left + 10;
     }
 
-    const currentTime = this.#scrubberPlayer?.currentTime;
-    this.#animationGroupPausedBeforeScrub =
-        this.#selectedGroup.paused() || typeof currentTime === 'number' && currentTime >= this.duration();
-
-    const {x} = (event as any);  // eslint-disable-line @typescript-eslint/no-explicit-any
-    const seekTime = Math.max(0, x - this.#gridOffsetLeft) / this.pixelMsRatio();
-    this.#selectedGroup.seekTo(seekTime);
-    this.togglePause(true);
-    this.animateTime(seekTime);
-
+    const {x} = event;
+    const seekTime = Math.max(0, x - this.#gridOffsetLeft) / this.pixelTimeRatio();
     // Interface with scrubber drag.
     this.#originalScrubberTime = seekTime;
     this.#originalMousePosition = x;
+    this.setCurrentTimeText(seekTime);
+
+    if (this.#selectedGroup.isScrollDriven()) {
+      this.setTimelineScrubberPosition(seekTime);
+      void this.updateScrollOffsetOnPage(seekTime);
+    } else {
+      const currentTime = this.#scrubberPlayer?.currentTime;
+      this.#animationGroupPausedBeforeScrub =
+          this.#selectedGroup.paused() || typeof currentTime === 'number' && currentTime >= this.duration();
+
+      this.#selectedGroup.seekTo(seekTime);
+      this.togglePause(true);
+      this.animateTime(seekTime);
+    }
+
     return true;
   }
 
-  private scrubberDragMove(event: Event): void {
-    const {x} = (event as any);  // eslint-disable-line @typescript-eslint/no-explicit-any
+  private async updateScrollOffsetOnPage(offset: number): Promise<void> {
+    const node = await this.#selectedGroup?.scrollNode();
+    if (!node) {
+      return;
+    }
+
+    if (this.#selectedGroup?.scrollOrientation() === Protocol.DOM.ScrollOrientation.Vertical) {
+      return await node.setScrollTop(offset);
+    }
+    return await node.setScrollLeft(offset);
+  }
+
+  private setTimelineScrubberPosition(time: number): void {
+    this.#timelineScrubber.style.transform = `translateX(${time * this.pixelTimeRatio()}px)`;
+  }
+
+  private scrubberDragMove(event: MouseEvent): void {
+    const {x} = event;
     const delta = x - (this.#originalMousePosition || 0);
     const currentTime =
-        Math.max(0, Math.min((this.#originalScrubberTime || 0) + delta / this.pixelMsRatio(), this.duration()));
+        Math.max(0, Math.min((this.#originalScrubberTime || 0) + delta / this.pixelTimeRatio(), this.duration()));
     if (this.#scrubberPlayer) {
       this.#scrubberPlayer.currentTime = currentTime;
+    } else {
+      this.setTimelineScrubberPosition(currentTime);
+      void this.updateScrollOffsetOnPage(currentTime);
     }
-    this.#currentTime.textContent = i18n.TimeUtilities.millisToString(Math.round(currentTime));
 
-    if (this.#selectedGroup) {
+    this.setCurrentTimeText(currentTime);
+    if (this.#selectedGroup && !this.#selectedGroup.isScrollDriven()) {
       this.#selectedGroup.seekTo(currentTime);
     }
   }
@@ -916,6 +1175,9 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
       this.#scrubberPlayer.currentTime = currentTime;
     }
     Host.userMetrics.actionTaken(Host.UserMetrics.Action.AnimationGroupScrubbed);
+    if (this.#selectedGroup?.isScrollDriven()) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.ScrollDrivenAnimationGroupScrubbed);
+    }
     this.#currentTime.window().requestAnimationFrame(this.updateScrubber.bind(this));
 
     if (!this.#animationGroupPausedBeforeScrub) {
@@ -927,9 +1189,9 @@ export class AnimationTimeline extends UI.Widget.VBox implements SDK.TargetManag
 export const GlobalPlaybackRates = [1, 0.25, 0.1];
 
 const enum ControlState {
-  Play = 'play-outline',
-  Replay = 'replay-outline',
-  Pause = 'pause-outline',
+  PLAY = 'play-outline',
+  REPLAY = 'replay-outline',
+  PAUSE = 'pause-outline',
 }
 
 export class NodeUI {
@@ -939,11 +1201,13 @@ export class NodeUI {
   #overlayElement?: HTMLElement;
   #node?: SDK.DOMModel.DOMNode|null;
 
-  constructor(_animationEffect: AnimationEffect) {
+  constructor(_animationEffect: SDK.AnimationModel.AnimationEffect) {
     this.element = document.createElement('div');
     this.element.classList.add('animation-node-row');
     this.#description = this.element.createChild('div', 'animation-node-description');
+    this.#description.setAttribute('jslog', `${VisualLogging.tableCell('description').track({resize: true})}`);
     this.#timelineElement = this.element.createChild('div', 'animation-node-timeline');
+    this.#timelineElement.setAttribute('jslog', `${VisualLogging.tableCell('timeline').track({resize: true})}`);
     UI.ARIAUtils.markAsApplication(this.#timelineElement);
   }
 
@@ -1012,5 +1276,11 @@ export class StepTimingFunction {
       return new StepTimingFunction(parseInt(match[1], 10), 'end');
     }
     return null;
+  }
+}
+
+export class AnimationGroupRevealer implements Common.Revealer.Revealer<SDK.AnimationModel.AnimationGroup> {
+  async reveal(animationGroup: SDK.AnimationModel.AnimationGroup): Promise<void> {
+    await AnimationTimeline.instance().revealAnimationGroup(animationGroup);
   }
 }

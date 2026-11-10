@@ -31,6 +31,7 @@ android_library("java") {
     "//base:base_java",
     "//base/version_info/android:version_constants_java",
     "//build/android:build_java",
+    "//chrome/browser/first_run/android:java",
     "//chrome/browser/flags:java",
     "//chrome/browser/preferences:java",
     "//chrome/browser/profiles/android:java",
@@ -41,16 +42,23 @@ android_library("java") {
     "//components/signin/public/android:java",
     "//components/sync/android:sync_java",
     "//components/variations/android:variations_java",
+    "//google_apis/gaia/android:java",
     "//third_party/androidx:androidx_annotation_annotation_java",
     "//third_party/androidx:androidx_appcompat_appcompat_resources_java",
     "//third_party/jni_zero:jni_zero_java",
   ]
-  srcjar_deps = [ ":jni_headers" ]
+  srcjar_deps = [
+    ":jni_headers",
+    "//components/signin/public/browser:java_enums",
+  ]
   resources_package = "org.chromium.chrome.browser.signin.services"
 }
 
 android_resources("java_resources") {
-  sources = [ "java/res/values/dimens.xml" ]
+  sources = [
+    "java/res/drawable/ic_error_badge_16dp.xml",
+    "java/res/values/dimens.xml",
+  ]
   deps = [
     "//chrome/browser/ui/android/strings:ui_strings_grd",
     "//components/signin/public/android:java_resources",
@@ -74,6 +82,7 @@ android_library("unit_device_javatests") {
     "//components/signin/public/android:java",
     "//components/signin/public/android:signin_java_test_support",
     "//content/public/test/android:content_java_test_support",
+    "//google_apis/gaia/android:java",
     "//third_party/androidx:androidx_annotation_annotation_java",
     "//third_party/androidx:androidx_test_runner_java",
     "//third_party/jni_zero:jni_zero_java",
@@ -95,12 +104,14 @@ robolectric_library("junit") {
     ":java_resources",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
+    "//base:callback_java",
     "//chrome/android:chrome_app_java_resources",
     "//chrome/browser/flags:java",
     "//chrome/browser/profiles/android:java",
     "//chrome/test/android:chrome_java_unit_test_support",
     "//components/signin/public/android:java",
     "//components/signin/public/android:signin_java_test_support",
+    "//google_apis/gaia/android:java",
     "//third_party/jni_zero:jni_zero_java",
     "//third_party/junit",
     "//third_party/mockito:mockito_java",

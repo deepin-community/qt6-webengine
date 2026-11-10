@@ -8,7 +8,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorFilter.h"
-#include "include/core/SkColorPriv.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkGraphics.h"
 #include "include/core/SkPathBuilder.h"
@@ -21,6 +20,7 @@
 #include "include/utils/SkParsePath.h"
 #include "src/base/SkTime.h"
 #include "src/base/SkUTF.h"
+#include "src/core/SkColorPriv.h"
 #include "src/core/SkGeometry.h"
 #include "tools/fonts/FontToolUtils.h"
 #include "tools/timer/TimeUtils.h"
@@ -61,7 +61,7 @@ static void test_cubic2() {
         SkDebugf("[%g %g %g %g] [%x %x %x %x]\n",
                 SkScalarToDouble(r.fLeft), SkScalarToDouble(r.fTop),
                 SkScalarToDouble(r.fRight), SkScalarToDouble(r.fBottom),
-                ir.fLeft, ir.fTop, ir.fRight, ir.fBottom);
+                (uint32_t)ir.fLeft, (uint32_t)ir.fTop, (uint32_t)ir.fRight, (uint32_t)ir.fBottom);
     }
 
     SkBitmap bitmap;
@@ -132,9 +132,7 @@ public:
         paint.setStrokeWidth(fStroke);
 
         if (fShowHairline) {
-            SkPath fill;
-
-            skpathutils::FillPathWithPaint(path, paint, &fill);
+            SkPath fill = skpathutils::FillPathWithPaint(path, paint);
             paint.setStrokeWidth(0);
             canvas->drawPath(fill, paint);
         } else {
@@ -241,7 +239,7 @@ public:
             return false;
     }
     void draw(SkCanvas* canvas) override {
-        canvas->drawPoints(SkCanvas::kPoints_PointMode, N, fPts, fPtsPaint);
+        canvas->drawPoints(SkCanvas::kPoints_PointMode, fPts, fPtsPaint);
 
         SkPath path;
         this->makePath(&path);
@@ -363,14 +361,13 @@ public:
             canvas->drawPath(path, fStrokePaint);
         }
         if (fShowHidden) {
-            SkPath hidden;
-            skpathutils::FillPathWithPaint(path, fStrokePaint, &hidden);
+            SkPath hidden = skpathutils::FillPathWithPaint(path, fStrokePaint);
             canvas->drawPath(hidden, fHiddenPaint);
         }
         if (fShowSkeleton) {
             canvas->drawPath(path, fSkeletonPaint);
         }
-        canvas->drawPoints(SkCanvas::kPoints_PointMode, N, fPts, fPtsPaint);
+        canvas->drawPoints(SkCanvas::kPoints_PointMode, fPts, fPtsPaint);
     }
 
 protected:
@@ -625,8 +622,8 @@ public:
 
         paint.setColor(SK_ColorGRAY);
         paint.setStroke(true);
-        canvas->drawPath(SkPathBuilder().addPolygon(fPts, 4, false).detach(), paint);
-        canvas->drawPath(SkPathBuilder().addPolygon(fQuad, 3, false).detach(), paint);
+        canvas->drawPath(SkPathBuilder().addPolygon({fPts, 4}, false).detach(), paint);
+        canvas->drawPath(SkPathBuilder().addPolygon({fQuad, 3}, false).detach(), paint);
 
         for (SkPoint p : fPts) {
             Dot(canvas, p, 7, SK_ColorBLACK);

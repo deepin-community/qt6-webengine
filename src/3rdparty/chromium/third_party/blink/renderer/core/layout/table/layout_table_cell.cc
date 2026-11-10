@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/html/html_table_cell_element.h"
 #include "third_party/blink/renderer/core/html/table_constants.h"
 #include "third_party/blink/renderer/core/layout/constraint_space.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/oof_positioned_node.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
@@ -19,8 +20,7 @@
 
 namespace blink {
 
-LayoutTableCell::LayoutTableCell(Element* element)
-    : LayoutNGBlockFlow(element) {
+LayoutTableCell::LayoutTableCell(Element* element) : LayoutBlockFlow(element) {
   UpdateColAndRowSpanFlags();
 }
 
@@ -57,7 +57,7 @@ LayoutUnit LayoutTableCell::BorderTop() const {
   if (Table()->HasCollapsedBorders() && PhysicalFragmentCount() > 0) {
     return GetPhysicalFragment(0)->Borders().top;
   }
-  return LayoutNGBlockFlow::BorderTop();
+  return LayoutBlockFlow::BorderTop();
 }
 
 LayoutUnit LayoutTableCell::BorderBottom() const {
@@ -66,7 +66,7 @@ LayoutUnit LayoutTableCell::BorderBottom() const {
   if (Table()->HasCollapsedBorders() && PhysicalFragmentCount() > 0) {
     return GetPhysicalFragment(0)->Borders().bottom;
   }
-  return LayoutNGBlockFlow::BorderBottom();
+  return LayoutBlockFlow::BorderBottom();
 }
 
 LayoutUnit LayoutTableCell::BorderLeft() const {
@@ -75,7 +75,7 @@ LayoutUnit LayoutTableCell::BorderLeft() const {
   if (Table()->HasCollapsedBorders() && PhysicalFragmentCount() > 0) {
     return GetPhysicalFragment(0)->Borders().left;
   }
-  return LayoutNGBlockFlow::BorderLeft();
+  return LayoutBlockFlow::BorderLeft();
 }
 
 LayoutUnit LayoutTableCell::BorderRight() const {
@@ -84,7 +84,7 @@ LayoutUnit LayoutTableCell::BorderRight() const {
   if (Table()->HasCollapsedBorders() && PhysicalFragmentCount() > 0) {
     return GetPhysicalFragment(0)->Borders().right;
   }
-  return LayoutNGBlockFlow::BorderRight();
+  return LayoutBlockFlow::BorderRight();
 }
 
 LayoutTableCell* LayoutTableCell::NextCell() const {
@@ -127,7 +127,7 @@ void LayoutTableCell::StyleDidChange(StyleDifference diff,
       table->GridBordersChanged();
     }
   }
-  LayoutNGBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::StyleDidChange(diff, old_style);
 }
 
 void LayoutTableCell::WillBeRemovedFromTree() {
@@ -135,7 +135,7 @@ void LayoutTableCell::WillBeRemovedFromTree() {
   if (LayoutTable* table = Table()) {
     table->TableGridStructureChanged();
   }
-  LayoutNGBlockFlow::WillBeRemovedFromTree();
+  LayoutBlockFlow::WillBeRemovedFromTree();
 }
 
 void LayoutTableCell::ColSpanOrRowSpanChanged() {
@@ -174,7 +174,7 @@ bool LayoutTableCell::BackgroundIsKnownToBeOpaqueInRect(
   if (HasLayer() && Table()->HasCollapsedBorders()) {
     return false;
   }
-  return LayoutNGBlockFlow::BackgroundIsKnownToBeOpaqueInRect(local_rect);
+  return LayoutBlockFlow::BackgroundIsKnownToBeOpaqueInRect(local_rect);
 }
 
 // TODO(crbug.com/1079133): Used by AXLayoutObject::RowIndex,
@@ -197,7 +197,6 @@ unsigned LayoutTableCell::AbsoluteColumnIndex() const {
     return GetPhysicalFragment(0)->TableCellColumnIndex();
   }
   NOTREACHED() << "AbsoluteColumnIndex did not find cell";
-  return 0;
 }
 
 unsigned LayoutTableCell::ColSpan() const {

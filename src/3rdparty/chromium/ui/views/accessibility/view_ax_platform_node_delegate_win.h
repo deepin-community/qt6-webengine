@@ -32,9 +32,7 @@ class ViewAXPlatformNodeDelegateWin : public ViewAXPlatformNodeDelegate {
       const ui::AXCoordinateSystem coordinate_system,
       const ui::AXClippingBehavior clipping_behavior,
       ui::AXOffscreenResult* offscreen_result) const override;
-
-  // ViewAccessibility overrides.
-  void EnsureAtomicViewAXTreeManager() override;
+  gfx::Point ScreenToDIPPoint(const gfx::Point& screen_point) const override;
 };
 
 }  // namespace views

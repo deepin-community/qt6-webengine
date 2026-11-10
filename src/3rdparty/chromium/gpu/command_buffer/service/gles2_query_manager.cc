@@ -174,9 +174,8 @@ void SummedIntegerQuery::Process(bool did_finish) {
   MarkAsCompleted(summed_result);
 }
 
-class AsyncReadPixelsCompletedQuery
-    : public GLES2QueryManager::GLES2Query,
-      public base::SupportsWeakPtr<AsyncReadPixelsCompletedQuery> {
+class AsyncReadPixelsCompletedQuery final
+    : public GLES2QueryManager::GLES2Query {
  public:
   AsyncReadPixelsCompletedQuery(GLES2QueryManager* manager,
                                 GLenum target,
@@ -194,6 +193,7 @@ class AsyncReadPixelsCompletedQuery
  protected:
   void Complete();
   ~AsyncReadPixelsCompletedQuery() override;
+  base::WeakPtrFactory<AsyncReadPixelsCompletedQuery> weak_ptr_factory_{this};
 };
 
 AsyncReadPixelsCompletedQuery::AsyncReadPixelsCompletedQuery(
@@ -218,7 +218,8 @@ void AsyncReadPixelsCompletedQuery::Resume() {
 void AsyncReadPixelsCompletedQuery::End(base::subtle::Atomic32 submit_count) {
   MarkAsPending(submit_count);
   gles2_query_manager()->decoder()->WaitForReadPixels(
-      base::BindOnce(&AsyncReadPixelsCompletedQuery::Complete, AsWeakPtr()));
+      base::BindOnce(&AsyncReadPixelsCompletedQuery::Complete,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AsyncReadPixelsCompletedQuery::QueryCounter(
@@ -476,18 +477,10 @@ GLES2QueryManager::GLES2Query::~GLES2Query() = default;
 GLES2QueryManager::GLES2QueryManager(GLES2Decoder* decoder,
                                      FeatureInfo* feature_info)
     : decoder_(decoder),
-      use_arb_occlusion_query2_for_occlusion_query_boolean_(
-          feature_info->feature_flags()
-              .use_arb_occlusion_query2_for_occlusion_query_boolean),
-      use_arb_occlusion_query_for_occlusion_query_boolean_(
-          feature_info->feature_flags()
-              .use_arb_occlusion_query_for_occlusion_query_boolean),
       update_disjoints_continually_(false),
       disjoint_notify_shm_id_(-1),
       disjoint_notify_shm_offset_(0),
       disjoints_notified_(0) {
-  DCHECK(!(use_arb_occlusion_query_for_occlusion_query_boolean_ &&
-           use_arb_occlusion_query2_for_occlusion_query_boolean_));
   DCHECK(decoder);
   gl::GLContext* context = decoder_->GetGLContext();
   if (context) {
@@ -513,10 +506,10 @@ QueryManager::Query* GLES2QueryManager::CreateQuery(
     case GL_GET_ERROR_QUERY_CHROMIUM:
       query = new GetErrorQuery(this, target, std::move(buffer), sync);
       break;
-    case GL_TIME_ELAPSED:
+    case GL_TIME_ELAPSED_EXT:
       query = new TimeElapsedQuery(this, target, std::move(buffer), sync);
       break;
-    case GL_TIMESTAMP:
+    case GL_TIMESTAMP_EXT:
       query = new TimeStampQuery(this, target, std::move(buffer), sync);
       break;
     case GL_ANY_SAMPLES_PASSED:
@@ -526,7 +519,7 @@ QueryManager::Query* GLES2QueryManager::CreateQuery(
     case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
       query = new SummedIntegerQuery(this, target, std::move(buffer), sync);
       break;
-    case GL_SAMPLES_PASSED:
+    case GL_SAMPLES_PASSED_ARB:
       query = new SummedIntegerQuery(this, target, std::move(buffer), sync);
       break;
     default:
@@ -570,28 +563,6 @@ bool GLES2QueryManager::GPUTimingAvailable() {
   return gpu_timing_client_->IsAvailable();
 }
 
-GLenum GLES2QueryManager::AdjustTargetForEmulation(GLenum target) {
-  switch (target) {
-    case GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT:
-    case GL_ANY_SAMPLES_PASSED_EXT:
-      if (use_arb_occlusion_query2_for_occlusion_query_boolean_) {
-        // ARB_occlusion_query2 does not have a
-        // GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT
-        // target.
-        target = GL_ANY_SAMPLES_PASSED_EXT;
-      } else if (use_arb_occlusion_query_for_occlusion_query_boolean_) {
-        // ARB_occlusion_query does not have a
-        // GL_ANY_SAMPLES_PASSED_EXT
-        // target.
-        target = GL_SAMPLES_PASSED_ARB;
-      }
-      break;
-    default:
-      break;
-  }
-  return target;
-}
-
 void GLES2QueryManager::UpdateDisjointValue() {
   if (disjoint_notify_shm_id_ != -1) {
     if (gpu_timing_client_->CheckAndResetTimerErrors()) {
@@ -613,7 +584,7 @@ void GLES2QueryManager::UpdateDisjointValue() {
 void GLES2QueryManager::SafelyResetDisjointValue() {
   // It is only safe to reset the disjoint value is there is no active
   // elapsed timer and we are not continually updating the disjoint value.
-  if (!update_disjoints_continually_ && !GetActiveQuery(GL_TIME_ELAPSED)) {
+  if (!update_disjoints_continually_ && !GetActiveQuery(GL_TIME_ELAPSED_EXT)) {
     // Reset the error state without storing the result.
     gpu_timing_client_->CheckAndResetTimerErrors();
   }

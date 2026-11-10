@@ -8,6 +8,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -24,12 +25,13 @@
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accelerated_widget_mac/ca_transaction_observer.h"
 #include "ui/accelerated_widget_mac/display_ca_layer_tree.h"
 #include "ui/base/cocoa/command_dispatcher.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
+#include "ui/color/color_provider_key.h"
 #include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -78,8 +80,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   // Retrieve a NativeWidgetNSWindowBridge* from its id or window.
   static NativeWidgetNSWindowBridge* GetFromId(
       uint64_t bridged_native_widget_id);
-  static NativeWidgetNSWindowBridge* GetFromNativeWindow(
-      gfx::NativeWindow window);
+  static NativeWidgetNSWindowBridge* GetFromNSWindow(NSWindow* window);
 
   // Create an NSWindow for the specified parameters.
   static NativeWidgetMacNSWindow* CreateNSWindow(
@@ -135,10 +136,33 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   // changed.
   void OnPositionChanged();
 
+  // Called when the user will start resizing the window.
+  void OnWindowWillStartLiveResize();
+
+  // Called when the user ended resizing the window.
+  void OnWindowDidEndLiveResize();
+
   // Called by the NSWindowDelegate when the visibility of the window may have
   // changed. For example, due to a (de)miniaturize operation, or the window
   // being reordered in (or out of) the screen list.
   void OnVisibilityChanged();
+
+  // Called when -[NSWindow isOnActiveSpace] may have changed.
+  //
+  // This value can change in two main scenarios,
+  //   1. The user switches the active space.
+  //      - Detected using NSWorkspaceActiveSpaceDidChangeNotification.
+  //   2. The user moves the window to a different space (e.g., via Mission
+  //   Control).
+  //      - Detected using -windowDidChangeOcclusionState:.
+  //
+  // Relying solely on windowDidChangeOcclusionState: is insufficient. It
+  // appears that during space switch this notification is sent before
+  // isOnActiveSpace is updated.
+  //
+  // Note that although `onActiveSpace` is a property, it cannot be KVO
+  // observed, thus this callback.
+  void OnSpaceActivationMayHaveChanged();
 
   // Called by the NSWindowDelegate when the system colors change.
   void OnSystemColorsChanged();
@@ -159,7 +183,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   remote_cocoa::mojom::TextInputHost* text_input_host() const {
     return text_input_host_;
   }
-  NSWindow* ns_window();
+  NativeWidgetMacNSWindow* ns_window();
 
   remote_cocoa::DragDropClient* drag_drop_client();
   bool is_translucent_window() const { return is_translucent_window_; }
@@ -197,7 +221,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
 
   // display::DisplayObserver:
   void OnDisplayAdded(const display::Display& new_display) override;
-  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplaysRemoved(const display::Displays& removed_displays) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
@@ -232,16 +256,17 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   void InitWindow(
       remote_cocoa::mojom::NativeWidgetNSWindowInitParamsPtr params) override;
   void InitCompositorView(InitCompositorViewCallback callback) override;
-  void CreateContentView(uint64_t ns_view_id, const gfx::Rect& bounds) override;
+  void CreateContentView(uint64_t ns_view_id,
+                         const gfx::Rect& bounds,
+                         std::optional<int> corner_radius) override;
   void DestroyContentView() override;
   void CloseWindow() override;
   void CloseWindowNow() override;
   void SetInitialBounds(const gfx::Rect& new_bounds,
                         const gfx::Size& minimum_content_size) override;
-  void SetBounds(
-      const gfx::Rect& new_bounds,
-      const gfx::Size& minimum_content_size,
-      const absl::optional<gfx::Size>& maximum_content_size) override;
+  void SetBounds(const gfx::Rect& new_bounds,
+                 const gfx::Size& minimum_content_size,
+                 const std::optional<gfx::Size>& maximum_content_size) override;
   void SetSize(const gfx::Size& new_size,
                const gfx::Size& minimum_content_size) override;
   void SetSizeAndCenter(const gfx::Size& content_size,
@@ -264,6 +289,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
                           bool is_maximizable) override;
   void SetOpacity(float opacity) override;
   void SetWindowLevel(int32_t level) override;
+  void SetActivationIndependence(bool independence) override;
   void SetAspectRatio(const gfx::SizeF& aspect_ratio,
                       const gfx::Size& excluded_margin) override;
   void SetCALayerParams(const gfx::CALayerParams& ca_layer_params) override;
@@ -290,6 +316,11 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   void ImmersiveFullscreenRevealUnlock() override;
   void SetCanGoBack(bool can_go_back) override;
   void SetCanGoForward(bool can_go_back) override;
+  void DisplayContextMenu(mojom::ContextMenuPtr menu,
+                          mojo::PendingRemote<mojom::MenuHost> host,
+                          mojo::PendingReceiver<mojom::Menu> receiver) override;
+  void SetAllowScreenshots(bool allow) override;
+  void SetColorMode(ui::ColorProviderKey::ColorMode color_mode) override;
 
   // Return true if [NSApp updateWindows] needs to be called after updating the
   // TextInputClient.
@@ -317,6 +348,8 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   // Called by the ImmersiveModeController at the end of fullscreen transition
   // with the height of the menu bar if it autohides, or 0 if it doesn't.
   void OnAutohidingMenuBarHeightChanged(int menu_bar_height);
+
+  base::WeakPtr<NativeWidgetNSWindowBridge> GetWeakPtr();
 
  private:
   friend class views::test::BridgedNativeWidgetTestApi;
@@ -376,9 +409,9 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   ModalShowAnimationWithLayer* __strong show_animation_;
   std::unique_ptr<CocoaMouseCapture> mouse_capture_;
   std::unique_ptr<CocoaWindowMoveLoop> window_move_loop_;
-  ui::ModalType modal_type_ = ui::MODAL_TYPE_NONE;
+  ui::mojom::ModalType modal_type_ = ui::mojom::ModalType::kNone;
   bool is_translucent_window_ = false;
-  id __strong key_down_event_monitor_;
+  id __strong local_event_monitor_;
 
   raw_ptr<NativeWidgetNSWindowBridge> parent_ =
       nullptr;  // Weak. If non-null, owns this.
@@ -412,6 +445,9 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   // changes.
   bool window_visible_ = false;
 
+  // Stores the value last read from -[NSWindow isOnActiveSpace].
+  bool window_on_active_space_ = false;
+
   // Stores the value last read from -[NSWindow isZoomed], to detect zoomed
   // state changes.
   bool window_zoomed_ = false;
@@ -444,7 +480,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT NativeWidgetNSWindowBridge
   };
 
   // This is present iff the window has been created in headless mode.
-  absl::optional<HeadlessModeWindow> headless_mode_window_;
+  std::optional<HeadlessModeWindow> headless_mode_window_;
 
   // This tracks whether current window can go back or go forward.
   bool can_go_back_ = false;

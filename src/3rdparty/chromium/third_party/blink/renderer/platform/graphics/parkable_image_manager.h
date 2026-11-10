@@ -15,7 +15,6 @@
 #include "third_party/blink/renderer/platform/graphics/parkable_image.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 
 namespace blink {
 
@@ -37,10 +36,6 @@ class PLATFORM_EXPORT ParkableImageManager
 
   // Number of parked and unparked images.
   size_t Size() const LOCKS_EXCLUDED(lock_);
-
-  static bool IsParkableImagesToDiskEnabled() {
-    return base::FeatureList::IsEnabled(features::kParkableImagesToDisk);
-  }
 
   void MaybeParkImagesForTesting() { MaybeParkImages(); }
 

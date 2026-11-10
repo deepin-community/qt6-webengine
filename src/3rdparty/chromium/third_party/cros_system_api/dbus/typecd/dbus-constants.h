@@ -14,8 +14,15 @@ constexpr char kTypecdServicePath[] = "/org/chromium/typecd";
 // Signals.
 constexpr char kTypecdDeviceConnected[] = "DeviceConnected";
 constexpr char kTypecdCableWarning[] = "CableWarning";
+constexpr char kTypecdUsbLimit[] = "UsbLimit";
 
 // Methods.
+constexpr char kTypecdGetAltModesMethod[] = "GetAltModes";
+constexpr char kTypecdGetCurrentModeMethod[] = "GetCurrentMode";
+constexpr char kTypecdGetIdentityMethod[] = "GetIdentity";
+constexpr char kTypecdGetPLDMethod[] = "GetPLD";
+constexpr char kTypecdGetPortCountMethod[] = "GetPortCount";
+constexpr char kTypecdGetRevisionMethod[] = "GetRevision";
 constexpr char kTypecdSetPeripheralDataAccessMethod[] =
     "SetPeripheralDataAccess";
 constexpr char kTypecdSetPortsUsingDisplaysMethod[] = "SetPortsUsingDisplays";
@@ -39,6 +46,31 @@ enum class CableWarningType {
   kInvalidTBTCable = 4,
   // USB speed is limited by the cable.
   kSpeedLimitingCable = 5,
+};
+
+enum class UsbLimitType {
+  // Reserved for generic USB limitations.
+  kOther = 0,
+  // Device has reached the maximum number of supported USB devices.
+  kDeviceLimit = 1,
+  // Device has reached the maximum number of supported USB endpoints.
+  kEndpointLimit = 2,
+};
+
+// USB-C modes supported by ChromeOS.
+enum class USBCMode {
+  kDisconnected = 0,
+  kNone = 1,
+  kDP = 2,
+  kTBT = 3,
+  kUSB4 = 4,
+};
+
+// Recipient options for Type-C daemon data requests.
+enum class Recipient {
+  kPort = 0,
+  kPartner = 1,
+  kCable = 2,
 };
 
 }  // namespace typecd

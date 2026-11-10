@@ -17,12 +17,11 @@
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
 namespace base {
+class SingleThreadTaskRunner;
 class TickClock;
 }
 
 namespace blink {
-
-class SingleThreadTaskRunner;
 
 // WebSocketMessageChunkAccumulator stores chunks for one WebSocket message. A
 // user can call Append() to append bytes, and call GetView() to get a list of
@@ -67,11 +66,11 @@ class MODULES_EXPORT WebSocketMessageChunkAccumulator final
 
  private:
   struct SegmentDeleter {
-    void operator()(char* p) const { WTF::Partitions::FastFree(p); }
+    void operator()(char* p) const { Partitions::FastFree(p); }
   };
   using SegmentPtr = std::unique_ptr<char[], SegmentDeleter>;
   static SegmentPtr CreateSegment() {
-    return SegmentPtr(static_cast<char*>(WTF::Partitions::FastMalloc(
+    return SegmentPtr(static_cast<char*>(Partitions::FastMalloc(
         kSegmentSize, "blink::WebSocketMessageChunkAccumulator::Segment")));
   }
 

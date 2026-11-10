@@ -44,6 +44,11 @@ struct FtraceCpuStats {
   void Write(protos::pbzero::FtraceCpuStats*) const;
 };
 
+struct FtraceKprobeStats {
+  int64_t hits;
+  int64_t misses;
+};
+
 struct FtraceSetupErrors {
   std::string atrace_errors;
   std::vector<std::string> unknown_ftrace_events;
@@ -55,6 +60,7 @@ struct FtraceStats {
   FtraceSetupErrors setup_errors;
   uint32_t kernel_symbols_parsed = 0;
   uint32_t kernel_symbols_mem_kb = 0;
+  FtraceKprobeStats kprobe_stats = {};
 
   void Write(protos::pbzero::FtraceStats*) const;
 };

@@ -30,14 +30,17 @@
 
 #include <vector>
 
-#include "dawn/native/SwapChain.h"
-
 #include "dawn/common/vulkan_platform.h"
+#include "dawn/native/IntegerTypes.h"
+#include "dawn/native/SwapChain.h"
+#include "dawn/native/vulkan/UniqueVkHandle.h"
 
 namespace dawn::native::vulkan {
 
 class Device;
+class SwapChainTexture;
 class Texture;
+class PhysicalDevice;
 struct VulkanSurfaceInfo;
 
 class SwapChain : public SwapChainBase {
@@ -45,17 +48,13 @@ class SwapChain : public SwapChainBase {
     static ResultOrError<Ref<SwapChain>> Create(Device* device,
                                                 Surface* surface,
                                                 SwapChainBase* previousSwapChain,
-                                                const SwapChainDescriptor* descriptor);
-
-    static ResultOrError<wgpu::TextureUsage> GetSupportedSurfaceUsage(const Device* device,
-                                                                      const Surface* surface);
+                                                const SurfaceConfiguration* config);
 
     ~SwapChain() override;
 
   private:
     using SwapChainBase::SwapChainBase;
     MaybeError Initialize(SwapChainBase* previousSwapChain);
-    void DestroyImpl() override;
 
     struct Config {
         // Information that's passed to vulkan swapchain creation.
@@ -77,24 +76,36 @@ class SwapChain : public SwapChainBase {
         bool needsBlit = false;
     };
     ResultOrError<Config> ChooseConfig(const VulkanSurfaceInfo& surfaceInfo) const;
-    ResultOrError<Ref<TextureBase>> GetCurrentTextureInternal(bool isReentrant = false);
+    ResultOrError<SwapChainTextureInfo> GetCurrentTextureInternal(bool isReentrant = false);
 
     // SwapChainBase implementation
     MaybeError PresentImpl() override;
-    ResultOrError<Ref<TextureBase>> GetCurrentTextureImpl() override;
+    ResultOrError<SwapChainTextureInfo> GetCurrentTextureImpl() override;
     void DetachFromSurfaceImpl() override;
 
     Config mConfig;
 
     VkSurfaceKHR mVkSurface = VK_NULL_HANDLE;
     VkSwapchainKHR mSwapChain = VK_NULL_HANDLE;
-    std::vector<VkImage> mSwapChainImages;
-    std::vector<VkSemaphore> mSwapChainSemaphores;
+
+    struct PerImage {
+        VkImage image;
+        // Used for the rendering -> present dependency, we need one semaphore per image because a
+        // present may technically not be started when we signal the semaphore for the next frame.
+        UniqueVkHandle<VkSemaphore> renderingDoneSemaphore;
+        // Used for the last time acquired -> CPU wait for frame pacing.
+        UniqueVkHandle<VkFence> lastAcquireDoneFence;
+    };
+    std::vector<PerImage> mImages;
     uint32_t mLastImageIndex = 0;
 
     Ref<Texture> mBlitTexture;
     Ref<Texture> mTexture;
 };
+
+ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
+                                                const PhysicalDevice* physicalDevice,
+                                                const Surface* surface);
 
 }  // namespace dawn::native::vulkan
 

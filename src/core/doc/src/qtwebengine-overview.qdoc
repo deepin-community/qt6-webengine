@@ -6,8 +6,8 @@
     \title Qt WebEngine Overview
     \ingroup explanations-webtechnologies
 
-    The \QWE module provides a web browser engine that makes it easy to embed content from
-    the World Wide Web into your Qt application on platforms that do not have a native web engine.
+    The \QWE module provides APIs for rendering and embedding content from
+    the World Wide Web into Qt-based applications.
 
     \QWE provides C++ classes and QML types for rendering HTML, XHTML, and SVG documents,
     styled using Cascading Style Sheets (CSS) and scripted with JavaScript. HTML documents can be
@@ -16,7 +16,9 @@
 
     \section1 Qt WebEngine Architecture
 
-    \image qtwebengine-architecture.png
+    \image qtwebengine-architecture.png {A block diagram of the Qt WebEngine architecture showing how
+           Qt WebEngine Widgets, Qt WebEngine, and Qt WebEngine Process interact with Qt WebEngine
+           Core, which is built on top of the Chromium engine}
 
     The functionality in \QWE is divided into the following modules:
 
@@ -32,7 +34,8 @@
 
     \section2 Qt WebEngine Widgets Module
 
-    \image qtwebenginewidgets-model.png
+    \image qtwebenginewidgets-model.png {Diagram showing the class relationship structure of the Qt
+           WebEngine Widgets module and how the main classes interact and depend on each other}
 
     A \e {web engine view} is the main widget component of the \QWE module. It can be used
     in various applications to load web content. Within a view, a \e {web engine page} holds a main
@@ -54,7 +57,9 @@
 
     \section2 Qt WebEngine Module
 
-    \image qtwebengine-model.png
+    \image qtwebengine-model.png {Diagram showing the class relationships in the Qt
+           WebEngine module. The View class connects to Action, History, and Profile.
+           The Profile class links to Settings, Script, and Cookie}
 
     The \QWE QML implementation contains the same elements as the \QWE Widgets
     implementation, except that there is no separately accessible web engine page.
@@ -88,12 +93,6 @@
     \l qWebEngineChromiumVersion() method, and \l qWebEngineChromiumSecurityPatchVersion()
     to read the current security patch level. You can also find the versions in the \QWE
     sources in the CHROMIUM_VERSION file.
-
-    \section2 Qt WebEngine Process
-
-    The \QWE Process is a separate executable that is used to render web pages and
-    execute JavaScript. This mitigates security issues and isolates crashes caused by specific
-    content.
 
     \section1 Embedding Web Content into Widget Based Applications
 
@@ -188,7 +187,7 @@
     script to run, the injection point, and the world where the script is run. This enables
     accessing the DOM to manipulate it within a world.
 
-    Since Qt 5.8, \QWE supports augmenting a script by using the
+    \QWE also supports augmenting a script by using the
     following \l{Metadata Block}{Greasemonkey-like attributes}:
 
     \list
@@ -222,7 +221,7 @@
     open SSL connections. Instead, \QWE uses the root CA certificates from the operating
     system to validate the peer's certificate.
 
-    The \l{WebEngineCertificateError::type} and \l{QWebEngineCertificateError::Type} enumerations
+    The \l{webEngineCertificateError::type} and \l{QWebEngineCertificateError::Type} enumerations
     provide information about the types of certificate errors that might occur. The errors can be
     handled by using the WebEngineView::certificateError QML method or by connecting to the
     QWebEnginePage::certificateError signal.
@@ -249,28 +248,8 @@
 
     \section1 High DPI Support
 
-    To support High DPI devices, it is recommended that the application attribute
-    Qt::AA_EnableHighDpiScaling is set to enable automatic scaling based on the
-    pixel density of the monitor. In \QWE applications, the scaling
-    affects the default zooming factor and scrollbar size.
-
-    For example:
-
-    \code
-    int main(int argc, char *argv[])
-    {
-      QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-      QApplication app(argc, argv);
-      // ...
-    }
-    \endcode
-
-    \QWE bundles images for normal and high-dpi resolutions into
-    \e qtwebengine_resources_100p.pak and \e qtwebengine_resources_200p.pak
-    files. Depending on the target resolutions, one or both of these files need
-    to be deployed.
-
-    For more information, see \l{High DPI}.
+    High DPI support is always enabled in Qt 6, and this also applies to \QWE. For more information,
+    see \l{High DPI}.
 
     \section1 Using WebEngine Core
 
@@ -289,6 +268,66 @@
     The functions can be used to synchronize cookies with QNetworkAccessManager, as well as to set,
     delete, and intercept cookies during navigation.
 
+    \section1 Process Models
+
+    The \QWE Process is a separate executable that is used to render web pages and
+    execute JavaScript. This mitigates security issues and isolates crashes caused by specific
+    content.
+
+    \QWE uses multiple OS processes to isolate web sites from each other
+    and from the client application, improving security and robustness. The
+    following process models, or ways to divide web sites between OS processes,
+    are supported:
+
+    \list
+      \li \l{Process per Site Instance}
+      \li \l{Process per Site}
+      \li \l{Single Process}
+    \endlist
+
+    \section2 Process per Site Instance
+
+    This is the default model. Pages from separate sites are put into separate
+    processes and separate visits to the same site are also isolated.
+
+    Two web pages are considered as belonging to the same site if they originate
+    from the same registered domain name (for example, \c wikipedia.org) and
+    scheme (for example, \c https). This is similar to the same-origin policy
+    but subdomains are ignored. For example, both \c{https://en.wikipedia.org/}
+    and \c{https://de.wikipedia.org/} would belong to the same site.
+
+    A site instance is a collection of web pages belonging to the same site.
+    When the application explicitly loads a URL into \QWE (via \l
+    QWebEnginePage::setUrl, for example), a new site instance is created for the
+    page. However, when the user clicks same-site links on the page, the
+    existing site instance is merely extended with more pages.
+
+    For instance, in the \l{WebEngine Widgets Simple Browser Example}{Simple
+    Browser} example, when a user opens two tabs and explicitly enters
+    \c{https://en.wikipedia.org/} into the URL bars, both tabs will have their
+    own separate OS processes (because explicitly entering a URL creates a new
+    site instance). However, when the user then middle-clicks some same-site
+    links to open more tabs, these new tabs will share the same OS process
+    (because user interaction extends the existing site instance).
+
+    \section2 Process per Site
+
+    Pages from separate sites are put into separate processes. Unlike Process
+    per Site Instance, all visits to the same site will share an OS process.
+
+    The benefit of this model is reduced memory consumption, because more web
+    pages will share processes. The drawbacks include reduced security,
+    robustness, and responsiveness.
+
+    To enable this model, use the command-line argument \c{--process-per-site}.
+    See \l{Using Command-Line Arguments}.
+
+    \section2 Single Process
+
+    For debugging purposes only, a single process mode can be enabled using the
+    command-line argument \c{--single-process}. See \l{Using Command-Line
+    Arguments} and \l{Qt WebEngine Debugging and Profiling}.
+
     \section1 Platform Notes
 
     \QWE currently supports only Windows, Linux, and \macos. Due to Chromium build
@@ -297,16 +336,15 @@
 
     \section1 Related Modules
 
-    \QWE supersedes the \l{http://doc.qt.io/archives/qt-5.3/qtwebkit-index.html}{Qt WebKit}
-    module, which is based on the
-    WebKit project, but has not been actively synchronized with the upstream WebKit code since
-    Qt 5.2 and has been deprecated in Qt 5.5. For tips on how to change a Qt \WebKit widgets
-    application to use \QWE widgets, see \l{Porting from Qt WebKit to Qt WebEngine}.
+    You can use the \l{https://doc.qt.io/qt-6/qtpdf-index.html}{Qt PDF} module to render PDF files.
+    Internally, the module is powered by \l{https://pdfium.googlesource.com/pdfium/}{PDFium},
+    which is also used in Chromium.
 
-    The \l{Qt WebView} module allows to use a native web browser on platforms where one is
-    available.
+    With the \l{Qt WebView} module, you can use the OS-provided web content APIs, on platforms where
+    those are available, to embed web content into your application without needing
+    to ship the entire Chromium runtime. On platforms where native APIs are not available,
+    it can also act as a wrapper around WebEngine.
 
     The \l{Qt WebChannel} module can be used to create a bi-directional communication channel
     between QObject objects on the C++ side and JavaScript on the QML side.
-
 */

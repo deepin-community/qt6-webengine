@@ -2,12 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/clipboard/clipboard_ios.h"
 
 #import <UIKit/UIKit.h>
 
+#include <string_view>
+
 #include "base/apple/foundation_util.h"
 #include "base/containers/span.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "skia/ext/skia_utils_base.h"
@@ -54,11 +62,11 @@ ClipboardIOS::~ClipboardIOS() {
 void ClipboardIOS::OnPreShutdown() {}
 
 // DataTransferEndpoint is not used on this platform.
-absl::optional<DataTransferEndpoint> ClipboardIOS::GetSource(
+std::optional<DataTransferEndpoint> ClipboardIOS::GetSource(
     ClipboardBuffer buffer) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 const ClipboardSequenceNumberToken& ClipboardIOS::GetSequenceNumber(
@@ -82,20 +90,20 @@ std::vector<std::u16string> ClipboardIOS::GetStandardFormats(
   std::vector<std::u16string> types;
   if (IsFormatAvailable(ClipboardFormatType::PlainTextType(), buffer,
                         data_dst)) {
-    types.push_back(base::UTF8ToUTF16(kMimeTypeText));
+    types.push_back(kMimeTypePlainText16);
   }
   if (IsFormatAvailable(ClipboardFormatType::HtmlType(), buffer, data_dst)) {
-    types.push_back(base::UTF8ToUTF16(kMimeTypeHTML));
+    types.push_back(kMimeTypeHtml16);
   }
   if (IsFormatAvailable(ClipboardFormatType::SvgType(), buffer, data_dst)) {
-    types.push_back(base::UTF8ToUTF16(kMimeTypeSvg));
+    types.push_back(kMimeTypeSvg16);
   }
   if (IsFormatAvailable(ClipboardFormatType::RtfType(), buffer, data_dst)) {
-    types.push_back(base::UTF8ToUTF16(kMimeTypeRTF));
+    types.push_back(kMimeTypeRtf16);
   }
   if (IsFormatAvailable(ClipboardFormatType::FilenamesType(), buffer,
                         data_dst)) {
-    types.push_back(base::UTF8ToUTF16(kMimeTypeURIList));
+    types.push_back(kMimeTypeUriList16);
   }
   return types;
 }
@@ -133,12 +141,9 @@ void ClipboardIOS::ReadAvailableTypes(
   *types = GetStandardFormats(buffer, data_dst);
 
   NSData* data = GetDataWithTypeFromPasteboard(
-      GetPasteboard(), (NSString*)kUTTypeChromiumWebCustomData);
+      GetPasteboard(), (NSString*)kUTTypeChromiumDataTransferCustomData);
   if (data) {
-    ReadCustomDataTypes(
-        base::span(reinterpret_cast<const uint8_t*>([data bytes]),
-                   [data length]),
-        types);
+    ReadCustomDataTypes(base::apple::NSDataToSpan(data), types);
   }
 }
 
@@ -260,21 +265,20 @@ void ClipboardIOS::ReadPng(ClipboardBuffer buffer,
 
 // |data_dst| is not used. It's only passed to be consistent with other
 // platforms.
-void ClipboardIOS::ReadCustomData(ClipboardBuffer buffer,
-                                  const std::u16string& type,
-                                  const DataTransferEndpoint* data_dst,
-                                  std::u16string* result) const {
+void ClipboardIOS::ReadDataTransferCustomData(
+    ClipboardBuffer buffer,
+    const std::u16string& type,
+    const DataTransferEndpoint* data_dst,
+    std::u16string* result) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   RecordRead(ClipboardFormatMetric::kCustomData);
 
   NSData* data = GetDataWithTypeFromPasteboard(
-      GetPasteboard(), (NSString*)kUTTypeChromiumWebCustomData);
+      GetPasteboard(), (NSString*)kUTTypeChromiumDataTransferCustomData);
   if (data) {
-    if (absl::optional<std::u16string> maybe_result = ReadCustomDataForType(
-            base::span(reinterpret_cast<const uint8_t*>([data bytes]),
-                       [data length]),
-            type);
+    if (std::optional<std::u16string> maybe_result =
+            ReadCustomDataForType(base::apple::NSDataToSpan(data), type);
         maybe_result) {
       *result = std::move(*maybe_result);
     }
@@ -308,7 +312,7 @@ void ClipboardIOS::ReadFilenames(ClipboardBuffer buffer,
           base::apple::NSStringToFilePath(file_url.lastPathComponent));
     }
   }
-  base::ranges::move(files, std::back_inserter(*result));
+  std::ranges::move(files, std::back_inserter(*result));
 }
 
 // |data_dst| is not used. It's only passed to be consistent with other
@@ -328,7 +332,7 @@ void ClipboardIOS::ReadBookmark(const DataTransferEndpoint* data_dst,
   }
 
   NSData* title_data =
-      GetDataWithTypeFromPasteboard(GetPasteboard(), kUTTypeURLName);
+      GetDataWithTypeFromPasteboard(GetPasteboard(), kUTTypeUrlName);
   if (title_data) {
     NSString* contents = [[NSString alloc] initWithData:title_data
                                                encoding:NSUTF8StringEncoding];
@@ -347,7 +351,7 @@ void ClipboardIOS::ReadData(const ClipboardFormatType& format,
   NSData* data =
       GetDataWithTypeFromPasteboard(GetPasteboard(), format.ToNSString());
   if (data) {
-    result->assign(static_cast<const char*>([data bytes]), [data length]);
+    result->assign(base::as_string_view(base::apple::NSDataToSpan(data)));
   }
 }
 
@@ -356,8 +360,10 @@ void ClipboardIOS::ReadData(const ClipboardFormatType& format,
 void ClipboardIOS::WritePortableAndPlatformRepresentations(
     ClipboardBuffer buffer,
     const ObjectMap& objects,
+    const std::vector<RawData>& raw_objects,
     std::vector<Clipboard::PlatformRepresentation> platform_representations,
-    std::unique_ptr<DataTransferEndpoint> data_src) {
+    std::unique_ptr<DataTransferEndpoint> data_src,
+    uint32_t privacy_types) {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
 
@@ -367,9 +373,12 @@ void ClipboardIOS::WritePortableAndPlatformRepresentations(
   for (const auto& object : objects) {
     DispatchPortableRepresentation(object.second);
   }
+  for (const auto& raw_object : raw_objects) {
+    DispatchPortableRepresentation(raw_object);
+  }
 }
 
-void ClipboardIOS::WriteText(base::StringPiece text) {
+void ClipboardIOS::WriteText(std::string_view text) {
   NSDictionary<NSString*, id>* text_item = @{
     ClipboardFormatType::PlainTextType().ToNSString() :
         base::SysUTF8ToNSString(text)
@@ -377,10 +386,9 @@ void ClipboardIOS::WriteText(base::StringPiece text) {
   [GetPasteboard() addItems:@[ text_item ]];
 }
 
-void ClipboardIOS::WriteHTML(base::StringPiece markup,
-                             absl::optional<base::StringPiece> /* source_url */,
-                             ClipboardContentType /* content_type */) {
-  // We need to mark it as utf-8. (see crbug.com/11957)
+void ClipboardIOS::WriteHTML(std::string_view markup,
+                             std::optional<std::string_view> /* source_url */) {
+  // We need to mark it as utf-8. (see crbug.com/40759159)
   std::string html_fragment_str("<meta charset='utf-8'>");
   html_fragment_str += markup;
   NSString* html = base::SysUTF8ToNSString(html_fragment_str);
@@ -390,7 +398,7 @@ void ClipboardIOS::WriteHTML(base::StringPiece markup,
   [GetPasteboard() addItems:@[ html_item ]];
 }
 
-void ClipboardIOS::WriteSvg(base::StringPiece markup) {
+void ClipboardIOS::WriteSvg(std::string_view markup) {
   NSDictionary<NSString*, id>* svg_item = @{
     ClipboardFormatType::SvgType().ToNSString() :
         base::SysUTF8ToNSString(markup)
@@ -398,9 +406,8 @@ void ClipboardIOS::WriteSvg(base::StringPiece markup) {
   [GetPasteboard() addItems:@[ svg_item ]];
 }
 
-void ClipboardIOS::WriteRTF(base::StringPiece rtf) {
-  WriteData(ClipboardFormatType::RtfType(),
-            base::as_bytes(base::make_span(rtf)));
+void ClipboardIOS::WriteRTF(std::string_view rtf) {
+  WriteData(ClipboardFormatType::RtfType(), base::as_byte_span(rtf));
 }
 
 void ClipboardIOS::WriteFilenames(std::vector<ui::FileInfo> filenames) {
@@ -420,11 +427,10 @@ void ClipboardIOS::WriteFilenames(std::vector<ui::FileInfo> filenames) {
   [GetPasteboard() addItems:items];
 }
 
-void ClipboardIOS::WriteBookmark(base::StringPiece title,
-                                 base::StringPiece url) {
+void ClipboardIOS::WriteBookmark(std::string_view title, std::string_view url) {
   NSDictionary<NSString*, id>* bookmarkItem = @{
     ClipboardFormatType::UrlType().ToNSString() : base::SysUTF8ToNSString(url),
-    kUTTypeURLName : base::SysUTF8ToNSString(title),
+    kUTTypeUrlName : base::SysUTF8ToNSString(title),
   };
 
   [GetPasteboard() addItems:@[ bookmarkItem ]];
@@ -449,10 +455,7 @@ void ClipboardIOS::WriteBitmap(const SkBitmap& bitmap) {
       CGColorSpaceCreateDeviceRGB());
   UIImage* image =
       skia::SkBitmapToUIImageWithColorSpace(bitmap, 1.0f, color_space.get());
-  if (!image) {
-    NOTREACHED() << "SkBitmapToUIImageWithColorSpace failed";
-    return;
-  }
+  CHECK(image) << "SkBitmapToUIImageWithColorSpace failed";
 
   [GetPasteboard() setImage:image];
 }
@@ -482,9 +485,8 @@ std::vector<uint8_t> ClipboardIOS::ReadPngInternal(
     return std::vector<uint8_t>();
   }
 
-  const uint8_t* bytes = (const uint8_t*)png_data.bytes;
-  std::vector<uint8_t> png(bytes, bytes + png_data.length);
-  return png;
+  auto png_span = base::apple::NSDataToSpan(png_data);
+  return std::vector<uint8_t>(png_span.begin(), png_span.end());
 }
 
 }  // namespace ui

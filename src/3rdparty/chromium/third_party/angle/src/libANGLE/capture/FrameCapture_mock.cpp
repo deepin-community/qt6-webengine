@@ -20,6 +20,10 @@ ParamBuffer::~ParamBuffer() {}
 ParamCapture::~ParamCapture() {}
 ResourceTracker::ResourceTracker() {}
 ResourceTracker::~ResourceTracker() {}
+#ifdef ANGLE_ENABLE_CL
+ResourceTrackerCL::ResourceTrackerCL() {}
+ResourceTrackerCL::~ResourceTrackerCL() {}
+#endif
 TrackedResource::TrackedResource() {}
 TrackedResource::~TrackedResource() {}
 StateResetHelper::StateResetHelper() {}
@@ -39,7 +43,10 @@ FrameCapture::~FrameCapture() {}
 FrameCaptureShared::FrameCaptureShared() : mEnabled(false) {}
 FrameCaptureShared::~FrameCaptureShared() {}
 void FrameCaptureShared::onEndFrame(gl::Context *context) {}
-void FrameCaptureShared::onMakeCurrent(const gl::Context *context, const egl::Surface *drawSurface)
+void FrameCaptureShared::onMakeCurrent(const gl::Context *context,
+                                       const egl::Surface *drawSurface,
+                                       EGLint surfaceWidth,
+                                       EGLint surfaceHeight)
 {}
 void FrameCaptureShared::onDestroyContext(const gl::Context *context) {}
 void *FrameCaptureShared::maybeGetShadowMemoryPointer(gl::Buffer *buffer,

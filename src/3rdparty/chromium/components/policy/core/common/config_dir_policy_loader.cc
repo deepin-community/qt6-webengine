@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <string>
 
@@ -46,7 +47,7 @@ ConfigDirPolicyLoader::ConfigDirPolicyLoader(
       config_dir_(config_dir),
       scope_(scope) {}
 
-ConfigDirPolicyLoader::~ConfigDirPolicyLoader() {}
+ConfigDirPolicyLoader::~ConfigDirPolicyLoader() = default;
 
 void ConfigDirPolicyLoader::InitOnBackgroundThread() {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
@@ -70,9 +71,11 @@ PolicyBundle ConfigDirPolicyLoader::Load() {
 }
 
 base::Time ConfigDirPolicyLoader::LastModificationTime() {
-  static constexpr const base::FilePath::CharType* kConfigDirSuffixes[] = {
-      kMandatoryConfigDir, kRecommendedConfigDir,
-  };
+  constexpr static const auto kConfigDirSuffixes =
+      std::to_array<const base::FilePath::CharType*>({
+          kMandatoryConfigDir,
+          kRecommendedConfigDir,
+      });
 
   base::Time last_modification = base::Time();
   base::File::Info info;
@@ -110,12 +113,12 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
   for (base::FilePath config_file_path = file_enumerator.Next();
        !config_file_path.empty(); config_file_path = file_enumerator.Next()) {
     files.insert(config_file_path);
-    LOG_POLICY(INFO, POLICY_FETCHING)
+    VLOG_POLICY(1, POLICY_FETCHING)
         << "Found " << policy_level << " policy file: " << config_file_path;
   }
 
   if (files.empty()) {
-    LOG_POLICY(INFO, POLICY_FETCHING)
+    VLOG_POLICY(1, POLICY_FETCHING)
         << "Skipping " << policy_level
         << " platform policies because no policy file was found at: " << path;
     return;
@@ -145,7 +148,7 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
     }
 
     // Detach the "3rdparty" node.
-    absl::optional<base::Value> third_party =
+    std::optional<base::Value> third_party =
         dictionary_value->Extract("3rdparty");
     if (third_party.has_value()) {
       Merge3rdPartyPolicy(&*third_party, level, bundle,

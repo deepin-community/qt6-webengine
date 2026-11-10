@@ -4,7 +4,10 @@
 
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import {Directives, html, render} from '../../ui/lit/lit.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import dialogStyles from './dialog.css.js';
 
@@ -21,50 +24,77 @@ const UIStrings = {
    *@description Text to add something
    */
   add: 'Add',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/sources/AddSourceMapURLDialog.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
+const {ref} = Directives;
+
+interface ViewInput {
+  label: Platform.UIString.LocalizedString;
+  onKeyDown: (event: KeyboardEvent) => void;
+  apply: () => void;
+}
+
+interface ViewOutput {
+  input: HTMLInputElement;
+}
+
+type View = (input: ViewInput, output: ViewOutput, target: HTMLElement) => void;
+
+export const DEFAULT_VIEW: View = (input, output, target) => {
+  // clang-format off
+  render(html`
+    <style>${dialogStyles}</style>
+    <label>${input.label}</label>
+    <input class="harmony-input add-source-map" spellcheck="false" type="text"
+        jslog=${VisualLogging.textField('url').track({keydown: 'Enter', change: true})}
+        @keydown=${input.onKeyDown} ${ref(e => { output.input = e as HTMLInputElement; })}>
+    <devtools-button @click=${input.apply} .jslogContext=${'add'}
+        .variant=${Buttons.Button.Variant.OUTLINED}>${i18nString(UIStrings.add)}</devtools-button>`,
+    target);
+  // clang-format on
+};
+
 export class AddDebugInfoURLDialog extends UI.Widget.HBox {
-  private readonly input: HTMLInputElement;
+  private input!: HTMLInputElement;
   private readonly dialog: UI.Dialog.Dialog;
   private readonly callback: (arg0: Platform.DevToolsPath.UrlString) => void;
   private constructor(
-      label: Platform.UIString.LocalizedString, callback: (arg0: Platform.DevToolsPath.UrlString) => void) {
-    super(/* isWebComponent */ true);
+      label: Platform.UIString.LocalizedString, jslogContext: string,
+      callback: (arg0: Platform.DevToolsPath.UrlString) => void, view = DEFAULT_VIEW) {
+    super({useShadowDom: true});
 
-    this.contentElement.createChild('label').textContent = label;
+    const viewInput = {
+      label,
+      onKeyDown: this.onKeyDown.bind(this),
+      apply: this.apply.bind(this),
+    };
+    const that = this;
+    const viewOutput = {
+      set input(input: HTMLInputElement) {
+        that.input = input;
+      },
+    };
+    view(viewInput, viewOutput, this.contentElement);
 
-    this.input = UI.UIUtils.createInput('add-source-map', 'text');
-    this.input.addEventListener('keydown', this.onKeyDown.bind(this), false);
-    this.contentElement.appendChild(this.input);
-
-    const addButton = UI.UIUtils.createTextButton(i18nString(UIStrings.add), this.apply.bind(this), {
-      jslogContext: 'sources.add-source-map-url',
-    });
-    this.contentElement.appendChild(addButton);
-
-    this.dialog = new UI.Dialog.Dialog();
-    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.MeasureContent);
+    this.dialog = new UI.Dialog.Dialog(jslogContext);
+    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.MEASURE_CONTENT);
     this.dialog.setDefaultFocusedElement(this.input);
 
     this.callback = callback;
   }
 
   static createAddSourceMapURLDialog(callback: (arg0: Platform.DevToolsPath.UrlString) => void): AddDebugInfoURLDialog {
-    return new AddDebugInfoURLDialog(i18nString(UIStrings.sourceMapUrl), callback);
+    return new AddDebugInfoURLDialog(i18nString(UIStrings.sourceMapUrl), 'add-source-map-url', callback);
   }
 
   static createAddDWARFSymbolsURLDialog(callback: (arg0: Platform.DevToolsPath.UrlString) => void):
       AddDebugInfoURLDialog {
-    return new AddDebugInfoURLDialog(i18nString(UIStrings.debugInfoUrl), callback);
+    return new AddDebugInfoURLDialog(i18nString(UIStrings.debugInfoUrl), 'add-debug-info-url', callback);
   }
 
   override show(): void {
     super.show(this.dialog.contentElement);
-    // UI.Dialog extends GlassPane and overrides the `show` method with a wider
-    // accepted type. However, TypeScript uses the supertype declaration to
-    // determine the full type, which requires a `!Document`.
-    // @ts-ignore
     this.dialog.show();
   }
 
@@ -82,9 +112,5 @@ export class AddDebugInfoURLDialog extends UI.Widget.HBox {
       event.consume(true);
       this.apply();
     }
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([dialogStyles]);
   }
 }

@@ -6,35 +6,36 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/compiler_specific.h"
 #include "ui/events/event.h"
 
 namespace ui {
 
 const char kForwardBackMouseButtonPropertyName[] = "ForwardBackMouseButtonCode";
 
-absl::optional<uint32_t> GetForwardBackMouseButtonProperty(const Event& event) {
+std::optional<uint32_t> GetForwardBackMouseButtonProperty(const Event& event) {
   auto* properties = event.properties();
   if (!properties) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   auto iter = properties->find(kForwardBackMouseButtonPropertyName);
   if (iter == properties->end()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   CHECK_LE(iter->second.size(), sizeof(uint32_t));
   uint32_t result = 0;
-  std::memcpy(&result, iter->second.data(), iter->second.size());
+  UNSAFE_TODO(std::memcpy(&result, iter->second.data(), iter->second.size()));
   return result;
 }
 
 void SetForwardBackMouseButtonProperty(Event& event, uint32_t button) {
   std::vector<uint8_t> buffer;
   buffer.resize(sizeof(uint32_t));
-  std::memcpy(buffer.data(), &button, buffer.size());
+  UNSAFE_TODO(std::memcpy(buffer.data(), &button, buffer.size()));
   Event::Properties properties =
       event.properties() ? *event.properties() : Event::Properties();
   properties.emplace(kForwardBackMouseButtonPropertyName, std::move(buffer));

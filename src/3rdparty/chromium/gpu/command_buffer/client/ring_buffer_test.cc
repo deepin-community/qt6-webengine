@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 // This file contains the tests for the RingBuffer class.
 
 #include "gpu/command_buffer/client/ring_buffer.h"
@@ -78,15 +80,14 @@ class BaseRingBufferTest : public testing::Test {
 
   int32_t GetToken() { return command_buffer_->GetLastState().token; }
 
-  std::unique_ptr<CommandBufferDirect> command_buffer_;
-  std::unique_ptr<AsyncAPIMock> api_mock_;
-  std::unique_ptr<CommandBufferHelper> helper_;
   std::vector<raw_ptr<const volatile void, VectorExperimental>>
       set_token_arguments_;
   bool delay_set_token_;
+  std::unique_ptr<CommandBufferDirect> command_buffer_;
+  std::unique_ptr<AsyncAPIMock> api_mock_;
+  std::unique_ptr<CommandBufferHelper> helper_;
 
-  std::unique_ptr<int8_t[]> buffer_;
-  raw_ptr<int8_t> buffer_start_ = nullptr;
+  scoped_refptr<gpu::Buffer> buffer_;
   base::test::SingleThreadTaskEnvironment task_environment_;
 };
 
@@ -102,10 +103,10 @@ class RingBufferTest : public BaseRingBufferTest {
   void SetUp() override {
     BaseRingBufferTest::SetUp();
 
-    buffer_.reset(new int8_t[kBufferSize + kBaseOffset]);
-    buffer_start_ = buffer_.get() + kBaseOffset;
-    allocator_.reset(new RingBuffer(kAlignment, kBaseOffset, kBufferSize,
-                                    helper_.get(), buffer_start_));
+    buffer_ = base::MakeRefCounted<gpu::Buffer>(
+        std::make_unique<MemoryBufferBacking>(kBufferSize + kBaseOffset));
+    allocator_.reset(
+        new RingBuffer(buffer_, kAlignment, kBaseOffset, helper_.get()));
   }
 
   void TearDown() override {
@@ -139,15 +140,11 @@ TEST_F(RingBufferTest, TestBasic) {
 // unaligned buffer could cause an alloc using the value returned by
 // GetLargestFreeOrPendingSize to try to allocate more memory than was allowed.
 TEST_F(RingBufferTest, TestCanAllocGetLargestFreeOrPendingSize) {
-  // Nullifying |buffer_start_| here, to prevent dangling this raw_ptr when
-  // buffer_ is subsequently reset.
-  buffer_start_ = nullptr;
-
   // Make sure we aren't actually aligned
-  buffer_.reset(new int8_t[kBufferSize + 2 + kBaseOffset]);
-  buffer_start_ = buffer_.get() + kBaseOffset;
-  allocator_.reset(new RingBuffer(kAlignment, kBaseOffset, kBufferSize + 2,
-                                  helper_.get(), buffer_start_));
+  buffer_ = base::MakeRefCounted<gpu::Buffer>(
+      std::make_unique<MemoryBufferBacking>(kBufferSize + 2 + kBaseOffset));
+  allocator_.reset(
+      new RingBuffer(buffer_, kAlignment, kBaseOffset, helper_.get()));
   void* pointer = allocator_->Alloc(allocator_->GetLargestFreeOrPendingSize());
   allocator_->FreePendingToken(pointer, helper_->InsertToken());
 }
@@ -160,7 +157,7 @@ TEST_F(RingBufferTest, TestFreePendingToken) {
 
   delay_set_token_ = true;
   // Allocate several buffers to fill in the memory.
-  int32_t tokens[kAllocCount];
+  std::array<int32_t, kAllocCount> tokens;
   for (unsigned int ii = 0; ii < kAllocCount; ++ii) {
     void* pointer = allocator_->Alloc(kSize);
     EXPECT_GE(kBufferSize,
@@ -232,16 +229,16 @@ TEST_F(RingBufferTest, DiscardFrontTest) {
   EXPECT_EQ(allocator_->NumUsedBlocks(), 0u);
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
   EXPECT_EQ(allocator_->NumUsedBlocks(), 0u);
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
   EXPECT_EQ(allocator_->NumUsedBlocks(), 1u);
 
@@ -263,15 +260,15 @@ TEST_F(RingBufferTest, DiscardMiddleTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
   EXPECT_EQ(allocator_->NumUsedBlocks(), 1u);
 
@@ -293,15 +290,15 @@ TEST_F(RingBufferTest, DiscardEndTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
   EXPECT_EQ(allocator_->NumUsedBlocks(), 1u);
 
@@ -321,15 +318,15 @@ TEST_F(RingBufferTest, DiscardLoopedEndTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr3, helper_.get()->InsertToken());
 
@@ -360,15 +357,15 @@ TEST_F(RingBufferTest, DiscardEndWithPaddingTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(kPadding, allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr3, helper_.get()->InsertToken());
 
@@ -402,15 +399,15 @@ TEST_F(RingBufferTest, DiscardAllPaddingFromEndTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
 
   // Discarding the middle allocation should turn it into padding.
@@ -434,15 +431,15 @@ TEST_F(RingBufferTest, DiscardAllPaddingFromBeginningTest) {
   allocator_->FreePendingToken(ptr1, helper_.get()->InsertToken());
 
   void* ptr2 = allocator_->Alloc(kAlloc2);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
-            static_cast<uint8_t*>(ptr2));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr1) + kAlloc1,
+                        static_cast<uint8_t*>(ptr2)));
   EXPECT_EQ(kBufferSize - kAlloc1 - kAlloc2,
             allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr2, helper_.get()->InsertToken());
 
   void* ptr3 = allocator_->Alloc(kAlloc3);
-  EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
-            static_cast<uint8_t*>(ptr3));
+  UNSAFE_TODO(EXPECT_EQ(static_cast<uint8_t*>(ptr2) + kAlloc2,
+                        static_cast<uint8_t*>(ptr3)));
   EXPECT_EQ(0u, allocator_->GetLargestFreeSizeNoWaiting());
   allocator_->FreePendingToken(ptr3, helper_.get()->InsertToken());
   EXPECT_EQ(allocator_->NumUsedBlocks(), 0u);

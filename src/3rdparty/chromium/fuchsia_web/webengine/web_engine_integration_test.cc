@@ -8,9 +8,10 @@
 #include <zircon/rights.h>
 #include <zircon/types.h>
 
-#include <string>
-
 #include <optional>
+#include <string>
+#include <vector>
+
 #include "base/containers/contains.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/mem_buffer_util.h"
@@ -347,6 +348,69 @@ TEST_F(WebEngineIntegrationTest, ContentDirectoryProvider) {
   navigation_listener()->RunUntilUrlAndTitleEquals(kUrl, kTitle);
 }
 
+class WebEngineIntegrationReduceAcceptLanguageTest
+    : public WebEngineIntegrationTest {
+ protected:
+  GURL GetEchoAcceptLanguageUrl() {
+    static std::string echo_accept_language_header_path =
+        std::string("/echoheader?") + net::HttpRequestHeaders::kAcceptLanguage;
+    return embedded_test_server_.GetURL(echo_accept_language_header_path);
+  }
+  std::vector<std::string> GetNavigatorLanguages() {
+    std::optional<base::Value> value =
+        ExecuteJavaScript(frame_.get(), "navigator.languages;");
+    std::vector<std::string> accept_languages;
+    if (!value) {
+      return accept_languages;
+    }
+    for (const auto& language : value->GetList()) {
+      accept_languages.push_back(language.GetString());
+    }
+    return accept_languages;
+  }
+};
+
+TEST_F(WebEngineIntegrationReduceAcceptLanguageTest,
+       DisableReduceAcceptLanguage) {
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitchASCII("disable-features", "ReduceAcceptLanguage");
+  StartWebEngine(std::move(command_line));
+
+  // Create a Context with no values specified.
+  fuchsia::web::CreateContextParams create_params = TestContextParams();
+  CreateContextAndFrameAndLoadUrl(std::move(create_params),
+                                  GetEchoAcceptLanguageUrl());
+
+  // Query & verify that the header echoed into the document body is as
+  // expected.
+  std::string result =
+      ExecuteJavaScriptWithStringResult("document.body.innerText;");
+  EXPECT_EQ(result, "en-US,en;q=0.9");
+
+  // Query & verify that the navigator.languages is as expected.
+  EXPECT_THAT(GetNavigatorLanguages(), testing::ElementsAre("en-US"));
+}
+
+TEST_F(WebEngineIntegrationReduceAcceptLanguageTest, ReduceAcceptLanguage) {
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitchASCII("enable-features", "ReduceAcceptLanguage");
+  StartWebEngine(std::move(command_line));
+
+  // Create a Context with no values specified.
+  fuchsia::web::CreateContextParams create_params = TestContextParams();
+  CreateContextAndFrameAndLoadUrl(std::move(create_params),
+                                  GetEchoAcceptLanguageUrl());
+
+  // Query & verify that the header echoed into the document body is as
+  // expected.
+  std::string result =
+      ExecuteJavaScriptWithStringResult("document.body.innerText;");
+  EXPECT_EQ(result, "en-US,en;q=0.9");
+
+  // Query & verify that the navigator.languages is as expected.
+  EXPECT_THAT(GetNavigatorLanguages(), testing::ElementsAre("en-US"));
+}
+
 class FakeAudioRenderer
     : public fuchsia::media::testing::AudioRenderer_TestBase {
  public:
@@ -513,8 +577,19 @@ TEST_F(WebEngineIntegrationMediaTest, PlayAudioToAudioConsumer) {
   ASSERT_EQ(fake_audio_consumer_service_.num_instances(), 1U);
 
   auto pos = fake_audio_consumer_service_.instance(0)->GetMediaPosition();
-  EXPECT_GT(pos, base::Seconds(2.0));
-  EXPECT_LT(pos, base::Seconds(2.5));
+  // TODO(crbug.com/432628104): Tests the media position against the wall time
+  // is less reliable. Looking for a better solution.
+  // Total time of two videos playing back to back is roughly 2.821s,
+  // FakeAudioConsumerService sets 100-500 ms of buffering time. But the buffer
+  // time controls when the renderer starts sending extra data, not the length
+  // of the buffer. So the length of the buffer is always slightly larger than
+  // 100ms to 500ms, roughly 100ms + length of the data being sent from the
+  // renderer (call it chunk length later) to 500ms + chunk length. And the
+  // GetMediaPosition() when EOS is emitted should be between 2.321s - chunk
+  // length to 2.721s - chunk length. Since GetMediaPosition uses wall time and
+  // it needs extra time to process, so also loosen the upper limit to 2.8s.
+  EXPECT_GT(pos, base::Seconds(2.2));
+  EXPECT_LT(pos, base::Seconds(2.8));
 
   EXPECT_EQ(fake_audio_consumer_service_.instance(0)->session_id(),
             kTestMediaSessionId);
@@ -580,7 +655,7 @@ TEST_F(WebEngineIntegrationTest, PermissionGranted) {
   RunPermissionTest(true);
 }
 
-// TODO(crbug.com/1299352): Flaky.
+// TODO(crbug.com/40823475): Flaky.
 TEST_F(WebEngineIntegrationMediaTest,
        DISABLED_MicrophoneAccess_WithPermission) {
   StartWebEngine(base::CommandLine(base::CommandLine::NO_PROGRAM));
@@ -673,7 +748,7 @@ TEST_F(WebEngineIntegrationTest, WebGLContextAbsentWithoutVulkanFeature) {
 }
 
 #if defined(ARCH_CPU_ARM_FAMILY)
-// TODO(crbug.com/1377994): Enable on ARM64 when bots support Vulkan.
+// TODO(crbug.com/42050537): Enable on ARM64 when bots support Vulkan.
 #define MAYBE_VulkanWebEngineIntegrationTest \
   DISABLED_VulkanWebEngineIntegrationTest
 #else

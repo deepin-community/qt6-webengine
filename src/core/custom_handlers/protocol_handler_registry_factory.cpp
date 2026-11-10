@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // based on chrome/browser/custom_handlers/protocol_handler_registry_factory.cc
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
@@ -60,11 +61,10 @@ bool ProtocolHandlerRegistryFactory::ServiceIsNULLWhileTesting() const
     return true;
 }
 
-KeyedService *ProtocolHandlerRegistryFactory::BuildServiceInstanceFor(content::BrowserContext *context) const
+std::unique_ptr<KeyedService> ProtocolHandlerRegistryFactory::BuildServiceInstanceForBrowserContext(content::BrowserContext *profile) const
 {
-    custom_handlers::ProtocolHandlerRegistry *registry =
-        new custom_handlers::ProtocolHandlerRegistry(/*prefs*/ nullptr,
-                                                     std::make_unique<ProtocolHandlerRegistryDelegateQt>());
+    auto registry = std::make_unique<custom_handlers::ProtocolHandlerRegistry>(/*prefs*/ nullptr,
+                                                                               std::make_unique<ProtocolHandlerRegistryDelegateQt>());
 
     // Must be called as a part of the creation process.
     registry->InitProtocolSettings();

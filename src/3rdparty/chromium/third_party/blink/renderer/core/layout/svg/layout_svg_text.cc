@@ -11,9 +11,11 @@
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/inline/fragment_item.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
+#include "third_party/blink/renderer/core/layout/svg/layout_svg_inline.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_inline_text.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/transform_helper.h"
@@ -185,7 +187,8 @@ void LayoutSVGText::Paint(const PaintInfo& paint_info) const {
     return;
   }
 
-  PaintInfo block_info(paint_info);
+  ScopedSVGTransformState transform_state(paint_info, *this);
+  PaintInfo& block_info = transform_state.ContentPaintInfo();
   if (const auto* properties = FirstFragment().PaintProperties()) {
     // TODO(https://crbug.com/1278452): Also consider Translate, Rotate,
     // Scale, and Offset, probably via a single transform operation to
@@ -194,7 +197,6 @@ void LayoutSVGText::Paint(const PaintInfo& paint_info) const {
       block_info.TransformCullRect(*transform);
     }
   }
-  ScopedSVGTransformState transform_state(block_info, *this);
 
   if (block_info.phase == PaintPhase::kForeground) {
     SVGModelObjectPainter::RecordHitTestData(*this, block_info);
@@ -212,8 +214,14 @@ void LayoutSVGText::Paint(const PaintInfo& paint_info) const {
   }
 }
 
-void LayoutSVGText::UpdateLayout() {
+SVGLayoutResult LayoutSVGText::UpdateSVGLayout(
+    const SVGLayoutInfo& layout_info) {
   NOT_DESTROYED();
+  // If the screen scaling factor changed we need to update the text
+  // metrics. Ditto for a viewport change (see below).
+  if (layout_info.scale_factor_changed || layout_info.viewport_changed) {
+    SetNeedsTextMetricsUpdate();
+  }
 
   // If the root layout size changed (eg. window size changes), or the screen
   // scale factor has changed, then recompute the on-screen font size. Since
@@ -243,24 +251,22 @@ void LayoutSVGText::UpdateLayout() {
   BlockNode(this).Layout(builder.ToConstraintSpace());
 
   needs_update_bounding_box_ = true;
+  InvalidateDescendantObjectBoundingBoxes();
 
   const gfx::RectF boundaries = ObjectBoundingBox();
-  const bool bounds_changed = old_boundaries != boundaries;
-  bool update_parent_boundaries = false;
-  if (bounds_changed) {
-    update_parent_boundaries = true;
-  }
-  if (UpdateAfterSvgLayout(bounds_changed)) {
-    update_parent_boundaries = true;
+  bool bounds_changed = old_boundaries != boundaries;
+  if (UpdateAfterSVGLayout(layout_info, bounds_changed)) {
+    bounds_changed = true;
   }
 
-  // If our bounds changed, notify the parents.
-  if (update_parent_boundaries) {
-    SetNeedsBoundariesUpdate();
-  }
+  // Any element of the <text> subtree is advertised as having a viewport
+  // dependence. On any viewport size change, we have to relayout the text
+  // subtree, as the effective 'on-screen' font size may change.
+  return SVGLayoutResult(bounds_changed, /*has_viewport_dependence=*/true);
 }
 
-bool LayoutSVGText::UpdateAfterSvgLayout(bool bounds_changed) {
+bool LayoutSVGText::UpdateAfterSVGLayout(const SVGLayoutInfo& layout_info,
+                                         bool bounds_changed) {
   if (bounds_changed) {
     // Invalidate all resources of this client if our reference box changed.
     SVGResourceInvalidator resource_invalidator(*this);
@@ -269,7 +275,7 @@ bool LayoutSVGText::UpdateAfterSvgLayout(bool bounds_changed) {
   }
 
   UpdateTransformAffectsVectorEffect();
-  return UpdateTransformAfterLayout(bounds_changed);
+  return UpdateTransformAfterLayout(layout_info, bounds_changed);
 }
 
 bool LayoutSVGText::IsObjectBoundingBoxValid() const {
@@ -328,11 +334,13 @@ gfx::RectF LayoutSVGText::VisualRectInLocalSVGCoordinates() const {
   return SVGLayoutSupport::ComputeVisualRectForText(*this, box);
 }
 
-void LayoutSVGText::AbsoluteQuads(Vector<gfx::QuadF>& quads,
-                                  MapCoordinatesFlags mode) const {
+void LayoutSVGText::QuadsInAncestorInternal(
+    Vector<gfx::QuadF>& quads,
+    const LayoutBoxModelObject* ancestor,
+    MapCoordinatesFlags mode) const {
   NOT_DESTROYED();
   quads.push_back(
-      LocalToAbsoluteQuad(gfx::QuadF(DecoratedBoundingBox()), mode));
+      LocalToAncestorQuad(gfx::QuadF(DecoratedBoundingBox()), ancestor, mode));
 }
 
 gfx::RectF LayoutSVGText::LocalBoundingBoxRectForAccessibility() const {
@@ -402,6 +410,16 @@ void LayoutSVGText::SetNeedsTextMetricsUpdate() {
 bool LayoutSVGText::NeedsTextMetricsUpdate() const {
   NOT_DESTROYED();
   return needs_text_metrics_update_;
+}
+
+void LayoutSVGText::InvalidateDescendantObjectBoundingBoxes() {
+  NOT_DESTROYED();
+  for (LayoutObject* object = NextInPreOrder(this); object;
+       object = object->NextInPreOrder(this)) {
+    if (auto* svg_inline = DynamicTo<LayoutSVGInline>(object)) {
+      svg_inline->InvalidateObjectBoundingBox();
+    }
+  }
 }
 
 LayoutSVGText* LayoutSVGText::LocateLayoutSVGTextAncestor(LayoutObject* start) {

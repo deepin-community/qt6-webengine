@@ -7,6 +7,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/base64.h"
@@ -16,6 +17,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/token.h"
 #include "content/browser/devtools/devtools_background_services_context_impl.h"
 #include "content/browser/payments/payment_app_context_impl.h"
@@ -78,16 +80,12 @@ void AddModifiersToMap(const std::vector<PaymentDetailsModifierPtr>& modifiers,
 }
 
 std::string EncodeIcon(const SkBitmap& app_icon) {
-  std::string string_encoded_icon;
   if (app_icon.empty())
-    return string_encoded_icon;
+    return "";
 
   gfx::Image decoded_image = gfx::Image::CreateFrom1xBitmap(app_icon);
   scoped_refptr<base::RefCountedMemory> raw_data = decoded_image.As1xPNGBytes();
-  base::Base64Encode(
-      base::StringPiece(raw_data->front_as<char>(), raw_data->size()),
-      &string_encoded_icon);
-  return string_encoded_icon;
+  return base::Base64Encode(*raw_data);
 }
 
 void CheckRegistrationSuccess(base::OnceCallback<void(bool success)> callback,
@@ -100,20 +98,8 @@ void CheckRegistrationSuccess(base::OnceCallback<void(bool success)> callback,
 // static
 PaymentAppProvider* PaymentAppProvider::GetOrCreateForWebContents(
     WebContents* payment_request_web_contents) {
-  return PaymentAppProviderImpl::GetOrCreateForWebContents(
+  return WebContentsUserData<PaymentAppProviderImpl>::GetOrCreateForWebContents(
       payment_request_web_contents);
-}
-
-// static
-PaymentAppProviderImpl* PaymentAppProviderImpl::GetOrCreateForWebContents(
-    WebContents* payment_request_web_contents) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  auto* data =
-      PaymentAppProviderImpl::FromWebContents(payment_request_web_contents);
-  if (!data)
-    PaymentAppProviderImpl::CreateForWebContents(payment_request_web_contents);
-
-  return PaymentAppProviderImpl::FromWebContents(payment_request_web_contents);
 }
 
 void PaymentAppProviderImpl::InvokePaymentApp(
@@ -188,7 +174,7 @@ void PaymentAppProviderImpl::InstallAndInvokePaymentApp(
         {"Payment Handler Name", app_name},
         {"Service Worker JavaScript File URL", sw_js_url.spec()},
         {"Service Worker Scope", sw_scope.spec()},
-        {"Service Worker Uses Cache", sw_use_cache ? "true" : "false"},
+        {"Service Worker Uses Cache", base::ToString(sw_use_cache)},
     };
     dev_tools->LogBackgroundServiceEvent(
         /*service_worker_registration_id=*/-1,
@@ -206,14 +192,14 @@ void PaymentAppProviderImpl::InstallAndInvokePaymentApp(
                      std::move(callback)));
 }
 
-void PaymentAppProviderImpl::UpdatePaymentAppIcon(
+void PaymentAppProviderImpl::UpdatePaymentAppMetadata(
     int64_t registration_id,
     const std::string& instrument_key,
     const std::string& name,
     const std::string& string_encoded_icon,
     const std::string& method_name,
     const SupportedDelegations& supported_delegations,
-    PaymentAppProvider::UpdatePaymentAppIconCallback callback) {
+    PaymentAppProvider::UpdatePaymentAppMetadataCallback callback) {
   StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
       payment_request_web_contents_->GetBrowserContext()
           ->GetDefaultStoragePartition());
@@ -380,7 +366,7 @@ void PaymentAppProviderImpl::OnInstallPaymentApp(
           GetDevTools(sw_origin)) {
     std::map<std::string, std::string> data = {
         {"Payment Handler Install Success",
-         registration_id >= 0 ? "true" : "false"},
+         base::ToString(registration_id >= 0)},
     };
     dev_tools->LogBackgroundServiceEvent(
         registration_id, blink::StorageKey::CreateFirstParty(sw_origin),

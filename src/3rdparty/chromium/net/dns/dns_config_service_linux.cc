@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/dns/dns_config_service_linux.h"
 
 #include <netdb.h>
@@ -212,7 +217,8 @@ void RecordIncompatibleNsswitchReason(
 }
 
 bool IsNsswitchConfigCompatible(
-    const std::vector<NsswitchReader::ServiceSpecification>& nsswitch_hosts) {
+    const std::vector<NsswitchReader::ServiceSpecification>& nsswitch_hosts,
+    ResolvReader& resolv_reader) {
   bool files_found = false;
   for (const NsswitchReader::ServiceSpecification& specification :
        nsswitch_hosts) {
@@ -248,6 +254,20 @@ bool IsNsswitchConfigCompatible(
         }
         break;
 
+      case NsswitchReader::Service::kResolve:
+        // If /etc/resolv.conf points to systemd-resolved then treat nss-resolve
+        // the same as nss-dns. If it's not then consider the nsswitch
+        // configuration incompatible.
+        if (!resolv_reader.IsLikelySystemdResolved()) {
+          RecordIncompatibleNsswitchReason(
+              IncompatibleNsswitchReason::kIncompatibleService,
+              specification.service);
+          return false;
+        }
+        // systemd-resolved also supports looking up records from /etc/hosts.
+        files_found = true;
+        [[fallthrough]];
+
       case NsswitchReader::Service::kDns:
         if (!files_found) {
           RecordIncompatibleNsswitchReason(
@@ -275,7 +295,6 @@ bool IsNsswitchConfigCompatible(
       case NsswitchReader::Service::kMdns:
       case NsswitchReader::Service::kMdns4:
       case NsswitchReader::Service::kMdns6:
-      case NsswitchReader::Service::kResolve:
       case NsswitchReader::Service::kNis:
         RecordIncompatibleNsswitchReason(
             IncompatibleNsswitchReason::kIncompatibleService,
@@ -370,12 +389,10 @@ class DnsConfigServiceLinux::Watcher : public DnsConfigService::Watcher {
 
  private:
   void OnResolvFilePathWatcherChange(const base::FilePath& path, bool error) {
-    base::UmaHistogramBoolean("Net.DNS.DnsConfig.Resolv.FileChange", true);
     OnConfigChanged(!error);
   }
 
   void OnNsswitchFilePathWatcherChange(const base::FilePath& path, bool error) {
-    base::UmaHistogramBoolean("Net.DNS.DnsConfig.Nsswitch.FileChange", true);
     OnConfigChanged(!error);
   }
 
@@ -452,12 +469,8 @@ class DnsConfigServiceLinux::ConfigReader : public SerialWorker {
         }
       }
 
-      base::UmaHistogramBoolean("Net.DNS.DnsConfig.Resolv.Read",
-                                dns_config_.has_value());
       if (!dns_config_.has_value())
         return;
-      base::UmaHistogramBoolean("Net.DNS.DnsConfig.Resolv.Valid",
-                                dns_config_->IsValid());
       base::UmaHistogramBoolean("Net.DNS.DnsConfig.Resolv.Compatible",
                                 !dns_config_->unhandled_options);
 
@@ -469,7 +482,7 @@ class DnsConfigServiceLinux::ConfigReader : public SerialWorker {
         std::vector<NsswitchReader::ServiceSpecification> nsswitch_hosts =
             nsswitch_reader_->ReadAndParseHosts();
         dns_config_->unhandled_options =
-            !IsNsswitchConfigCompatible(nsswitch_hosts);
+            !IsNsswitchConfigCompatible(nsswitch_hosts, *resolv_reader_);
         base::UmaHistogramBoolean("Net.DNS.DnsConfig.Nsswitch.Compatible",
                                   !dns_config_->unhandled_options);
       }

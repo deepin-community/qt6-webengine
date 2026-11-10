@@ -15,6 +15,7 @@
 #include "base/values.h"
 #include "net/base/auth.h"
 #include "net/base/url_util.h"
+#include "net/cert/x509_certificate.h"
 #include "net/dns/host_resolver.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
@@ -22,15 +23,28 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_headers.h"
+#include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_source_type.h"
 #include "net/log/net_log_with_source.h"
+#include "net/ssl/ssl_info.h"
 #include "url/scheme_host_port.h"
 
 namespace net {
 
 namespace {
+
+bool ServerCertMatches(const X509Certificate* handler_cert,
+                       const X509Certificate* challenge_cert) {
+  if (handler_cert == challenge_cert) {
+    return true;
+  }
+  if (!handler_cert || !challenge_cert) {
+    return false;
+  }
+  return handler_cert->EqualsExcludingChain(challenge_cert);
+}
 
 enum AuthEvent {
   AUTH_EVENT_START = 0,
@@ -61,7 +75,7 @@ AuthTarget DetermineAuthTarget(const HttpAuthHandler* handler) {
         return AUTH_TARGET_SERVER;
       }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -131,10 +145,11 @@ void HistogramAuthEvent(HttpAuthHandler* handler, AuthEvent auth_event) {
 }
 
 base::Value::Dict ControllerParamsToValue(HttpAuth::Target target,
-                                          const GURL& url) {
+                                          const GURL& url,
+                                          NetLogCaptureMode capture_mode) {
   base::Value::Dict params;
   params.Set("target", HttpAuth::GetAuthTargetString(target));
-  params.Set("url", url.spec());
+  params.Set("url", SanitizeUrlForNetLog(url, capture_mode));
   return params;
 }
 
@@ -170,9 +185,10 @@ void HttpAuthController::BindToCallingNetLog(
   if (!net_log_.source().IsValid()) {
     net_log_ = NetLogWithSource::Make(caller_net_log.net_log(),
                                       NetLogSourceType::HTTP_AUTH_CONTROLLER);
-    net_log_.BeginEvent(NetLogEventType::AUTH_CONTROLLER, [&] {
-      return ControllerParamsToValue(target_, auth_url_);
-    });
+    net_log_.BeginEvent(
+        NetLogEventType::AUTH_CONTROLLER, [&](NetLogCaptureMode capture_mode) {
+          return ControllerParamsToValue(target_, auth_url_, capture_mode);
+        });
   }
   caller_net_log.AddEventReferencingSource(
       NetLogEventType::AUTH_BOUND_TO_CONTROLLER, net_log_.source());
@@ -245,6 +261,7 @@ bool HttpAuthController::SelectPreemptiveAuth(
   identity_.invalid = false;
   identity_.credentials = entry->credentials();
   handler_.swap(handler_preemptive);
+  handler_server_cert_.reset();
   return true;
 }
 
@@ -275,6 +292,16 @@ int HttpAuthController::HandleAuthChallenge(
   BindToCallingNetLog(caller_net_log);
   net_log_.BeginEventReferencingSource(NetLogEventType::AUTH_HANDLE_CHALLENGE,
                                        caller_net_log.source());
+
+  // A connection-based handler derives channel bindings from the server
+  // certificate at creation time. If the underlying connection has been
+  // replaced with one that presents a different certificate, that state is
+  // no longer valid for the current connection, so drop the handler and
+  // start the scheme over.
+  if (handler_ && handler_->is_connection_based() &&
+      !ServerCertMatches(handler_server_cert_.get(), ssl_info.cert.get())) {
+    InvalidateCurrentHandler(INVALIDATE_HANDLER);
+  }
 
   // Give the existing auth handler first try at the authentication headers.
   // This will also evict the entry in the HttpAuthCache if the previous
@@ -320,7 +347,6 @@ int HttpAuthController::HandleAuthChallenge(
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
 
@@ -336,6 +362,7 @@ int HttpAuthController::HandleAuthChallenge(
           network_anonymization_key_, target_, auth_scheme_host_port_,
           disabled_schemes_, net_log_, host_resolver_, &handler_);
       if (handler_.get()) {
+        handler_server_cert_ = ssl_info.cert;
         HistogramAuthEvent(handler_.get(), AUTH_EVENT_START);
       }
     }
@@ -401,7 +428,7 @@ void HttpAuthController::ResetAuth(const AuthCredentials& credentials) {
     identity_.credentials = credentials;
 
     // auth_info_ is no longer necessary.
-    auth_info_ = absl::nullopt;
+    auth_info_ = std::nullopt;
   }
 
   DCHECK(identity_.source != HttpAuth::IDENT_SRC_PATH_LOOKUP);
@@ -465,6 +492,7 @@ void HttpAuthController::InvalidateCurrentHandler(
   }
 
   handler_.reset();
+  handler_server_cert_.reset();
   identity_ = HttpAuth::Identity();
 }
 
@@ -636,8 +664,7 @@ void HttpAuthController::OnGenerateAuthTokenDone(int result) {
   }
 }
 
-void HttpAuthController::TakeAuthInfo(
-    absl::optional<AuthChallengeInfo>* other) {
+void HttpAuthController::TakeAuthInfo(std::optional<AuthChallengeInfo>* other) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   auth_info_.swap(*other);
 }

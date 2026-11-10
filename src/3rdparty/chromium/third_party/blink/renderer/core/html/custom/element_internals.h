@@ -22,6 +22,9 @@ class CustomStateSet;
 class HTMLElement;
 class ValidityStateFlags;
 
+template <typename IDLType>
+class FrozenArray;
+
 class CORE_EXPORT ElementInternals : public ScriptWrappable,
                                      public ListedElement,
                                      public ElementRareDataField {
@@ -41,7 +44,7 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
   void setFormValue(const V8ControlValue* value,
                     const V8ControlValue* state,
                     ExceptionState& exception_state);
-  HTMLFormElement* form(ExceptionState& exception_state) const;
+  HTMLElement* formForBinding(ExceptionState& exception_state) const;
   void setValidity(ValidityStateFlags* flags, ExceptionState& exception_state);
   void setValidity(ValidityStateFlags* flags,
                    const String& message,
@@ -58,6 +61,10 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
   LabelsNodeList* labels(ExceptionState& exception_state);
   CustomStateSet* states();
 
+  // Type attribute accessors
+  String type() const;
+  void setType(const String& value);
+
   bool HasState(const AtomicString& state) const;
 
   ShadowRoot* shadowRoot() const;
@@ -67,47 +74,42 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
   const AtomicString& FastGetAttribute(const QualifiedName&) const;
   void setAttribute(const QualifiedName& attribute, const AtomicString& value);
 
-  void SetElementAttribute(const QualifiedName& name, Element* element);
-  Element* GetElementAttribute(const QualifiedName& name);
-  ScriptValue GetElementArrayAttribute(ScriptState* script_state,
-                                       const QualifiedName& name);
-  HeapVector<Member<Element>>* GetAttrAssociatedElements(
-      const QualifiedName& name) const;
-  void SetElementArrayAttribute(ScriptState* script_state,
-                                const QualifiedName& name,
-                                const ScriptValue given_value,
-                                const char* const property_name);
+  // These methods are used in the implementation of the DOM API setters/getters
+  // for Element/FrozenArray<Element> attributes.
+  void SetElementAttribute(const QualifiedName& attribute, Element* element);
+  Element* GetElementAttribute(const QualifiedName& attribute) const;
+  void SetElementArrayAttribute(
+      const QualifiedName& attribute,
+      const GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* GetElementArrayAttribute(
+      const QualifiedName& attribute) const;
 
-  ScriptValue ariaControlsElements(ScriptState* script_state);
-  void setAriaControlsElements(ScriptState* script_state,
-                               ScriptValue given_elements);
-  ScriptValue ariaDescribedByElements(ScriptState* script_state);
-  void setAriaDescribedByElements(ScriptState* script_state,
-                                  ScriptValue given_elements);
-  ScriptValue ariaDetailsElements(ScriptState* script_state);
-  void setAriaDetailsElements(ScriptState* script_state,
-                              ScriptValue given_elements);
-  ScriptValue ariaErrorMessageElements(ScriptState* script_state);
-  void setAriaErrorMessageElements(ScriptState* script_state,
-                                   ScriptValue given_elements);
-  ScriptValue ariaFlowToElements(ScriptState* script_state);
-  void setAriaFlowToElements(ScriptState* script_state,
-                             ScriptValue given_elements);
-  ScriptValue ariaLabelledByElements(ScriptState* script_state);
-  void setAriaLabelledByElements(ScriptState* script_state,
-                                 ScriptValue given_elements);
-  ScriptValue ariaOwnsElements(ScriptState* script_state);
-  void setAriaOwnsElements(ScriptState* script_state,
-                           ScriptValue given_elements);
+  const FrozenArray<Element>* ariaControlsElements() const;
+  void setAriaControlsElements(GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaDescribedByElements() const;
+  void setAriaDescribedByElements(
+      GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaDetailsElements() const;
+  void setAriaDetailsElements(GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaErrorMessageElements() const;
+  void setAriaErrorMessageElements(
+      GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaFlowToElements() const;
+  void setAriaFlowToElements(GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaLabelledByElements() const;
+  void setAriaLabelledByElements(
+      GCedHeapVector<Member<Element>>* given_elements);
+  const FrozenArray<Element>* ariaOwnsElements() const;
+  void setAriaOwnsElements(GCedHeapVector<Member<Element>>* given_elements);
 
   bool HasAttribute(const QualifiedName& attribute) const;
+  bool HasAnyAttribute() const { return !accessibility_semantics_map_.empty(); }
   const HashMap<QualifiedName, AtomicString>& GetAttributes() const;
 
  private:
   bool IsTargetFormAssociated() const;
 
   // ListedElement overrides:
-  bool IsFormControlElement() const override;
   bool IsElementInternals() const override;
   bool IsEnumeratable() const override;
   void AppendToFormData(FormData& form_data) override;
@@ -138,14 +140,14 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
   bool is_disabled_ = false;
   Member<ValidityStateFlags> validity_flags_;
   Member<Element> validation_anchor_;
-
+  String type_;
   Member<CustomStateSet> custom_states_;
 
   HashMap<QualifiedName, AtomicString> accessibility_semantics_map_;
 
   // See
   // https://whatpr.org/html/3917/common-dom-interfaces.html#reflecting-content-attributes-in-idl-attributes:element
-  HeapHashMap<QualifiedName, Member<HeapLinkedHashSet<WeakMember<Element>>>>
+  HeapHashMap<QualifiedName, Member<FrozenArray<Element>>>
       explicitly_set_attr_elements_map_;
 };
 

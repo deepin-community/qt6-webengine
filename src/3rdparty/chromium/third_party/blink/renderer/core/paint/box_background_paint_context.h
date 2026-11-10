@@ -5,8 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_BOX_BACKGROUND_PAINT_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_BOX_BACKGROUND_PAINT_CONTEXT_H_
 
+#include "third_party/blink/renderer/core/layout/geometry/box_strut.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/paint/paint_phase.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/core/style/fill_layer.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -35,6 +38,7 @@ class BoxBackgroundPaintContext {
   // Constructor for LayoutView where the coordinate space is different.
   BoxBackgroundPaintContext(
       const LayoutView&,
+      const PhysicalBoxFragment*,
       const PhysicalOffset& element_positioning_area_offset);
 
   // Generic constructor for all other elements.
@@ -58,6 +62,15 @@ class BoxBackgroundPaintContext {
   // The positioning area for a background layer with background-attachment:
   // fixed.
   PhysicalRect FixedAttachmentPositioningArea(const PaintInfo&) const;
+
+  EFillBox EffectiveClip(const FillLayer& fill_layer) const {
+    if (painting_view_) {
+      // The root background should cover everything and therefore the
+      // background-clip property has no effect.
+      return EFillBox::kBorder;
+    }
+    return fill_layer.Clip();
+  }
 
   PhysicalBoxStrut BorderOutsets() const;
   PhysicalBoxStrut PaddingOutsets() const;
@@ -88,6 +101,8 @@ class BoxBackgroundPaintContext {
   const ImageResourceObserver& ImageClient() const;
   const ComputedStyle& ImageStyle(const ComputedStyle& fragment_style) const;
 
+  bool ShouldSkipBackgroundIfWhite() const;
+
   static bool HasBackgroundFixedToViewport(const LayoutBoxModelObject&);
 
  private:
@@ -104,12 +119,14 @@ class BoxBackgroundPaintContext {
   // - ImageClient() uses box_ if painting view, otherwise positioning_box_;
   // - ImageStyle() uses positioning_box_;
   // - FillLayers come from box_ if painting view, otherwise positioning_box_.
-  const LayoutBoxModelObject* const box_;
+  const LayoutBoxModelObject* box_;
 
   // The positioning box is the source of geometric information for positioning
   // and sizing the background. It also provides the information listed in the
   // comment for box_.
-  const LayoutBoxModelObject* const positioning_box_;
+  const LayoutBoxModelObject* positioning_box_;
+
+  const PhysicalBoxFragment* box_fragment_ = nullptr;
 
   // When painting table cells or the view, the positioning area
   // differs from the requested paint rect.

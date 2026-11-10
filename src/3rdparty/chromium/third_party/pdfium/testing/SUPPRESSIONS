@@ -622,6 +622,9 @@ bug_1098.in * * * *
 # TODO(chromium:1131694): Remove after associated bug is fixed
 bug_1131694.in * * * *
 
+# TODO(thestig): Remove after fixing inline image parsing.
+bug_1236805.in * * * *
+
 # TODO(pdfium:1747): Remove after associated bug is fixed
 bug_1258634.in * * * *
 
@@ -661,6 +664,12 @@ bug_2001.pdf * * * *
 
 # TODO(chromium:237527): Remove after associated bug is fixed
 bug_237527_1.in * * * *
+
+# TODO(crbug.com/346766787): Remove after associated bug is fixed
+bug_346766787.in * * * *
+
+# TODO(crbug.com/394767650): Remove after associated bug is fixed
+bug_394767650.in * * * *
 
 # TODO(chromium:451366): Remove after associated bug is fixed
 bug_451366.in * * * agg
@@ -759,3 +768,6 @@ bug_632.in * * * gdi
 bug_660850.in * * * gdi
 long_dashed_line.in * * * gdi
 matte.in * * * gdi
+
+# TODO(crbug.com/361002664): Remove after associated bug is fixed
+smask_blend.in * * * gdi

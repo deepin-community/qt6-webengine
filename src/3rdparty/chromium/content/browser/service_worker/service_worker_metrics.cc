@@ -30,7 +30,6 @@ const char* StartSituationToSuffix(
   switch (situation) {
     case ServiceWorkerMetrics::StartSituation::UNKNOWN:
       NOTREACHED();
-      return ".Unknown";
     case ServiceWorkerMetrics::StartSituation::DURING_STARTUP:
       return ".DuringStartup";
     case ServiceWorkerMetrics::StartSituation::NEW_PROCESS:
@@ -41,7 +40,6 @@ const char* StartSituationToSuffix(
       return ".ExistingReadyProcess";
   }
   NOTREACHED() << static_cast<int>(situation);
-  return ".Unknown";
 }
 
 // TODO(falken): Remove this when the associated UMA are removed.
@@ -52,7 +50,6 @@ const char* StartSituationToDeprecatedSuffix(
   switch (situation) {
     case ServiceWorkerMetrics::StartSituation::UNKNOWN:
       NOTREACHED();
-      return "_Unknown";
     case ServiceWorkerMetrics::StartSituation::DURING_STARTUP:
       return "_DuringStartup";
     case ServiceWorkerMetrics::StartSituation::NEW_PROCESS:
@@ -63,7 +60,6 @@ const char* StartSituationToDeprecatedSuffix(
       return "_ExistingReadyProcess";
   }
   NOTREACHED() << static_cast<int>(situation);
-  return "_Unknown";
 }
 
 const char* EventTypeToSuffix(ServiceWorkerMetrics::EventType event_type) {
@@ -210,7 +206,6 @@ const char* ServiceWorkerMetrics::EventTypeToString(EventType event_type) {
       return "Static Routing";
   }
   NOTREACHED() << "Got unexpected event type: " << static_cast<int>(event_type);
-  return "error";
 }
 
 const char* ServiceWorkerMetrics::StartSituationToString(
@@ -229,7 +224,6 @@ const char* ServiceWorkerMetrics::StartSituationToString(
   }
   NOTREACHED() << "Got unexpected start situation: "
                << static_cast<int>(start_situation);
-  return "error";
 }
 
 void ServiceWorkerMetrics::CountReadResponseResult(
@@ -276,7 +270,8 @@ void ServiceWorkerMetrics::RecordStartWorkerTime(base::TimeDelta time,
                                                  StartSituation start_situation,
                                                  EventType purpose) {
   if (is_installed) {
-    UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartWorker.Time", time);
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartWorker.Time",
+                                          time);
     base::UmaHistogramMediumTimes(
         base::StrCat({"ServiceWorker.StartWorker.Time",
                       StartSituationToDeprecatedSuffix(start_situation)}),
@@ -291,7 +286,8 @@ void ServiceWorkerMetrics::RecordStartWorkerTime(base::TimeDelta time,
             {"ServiceWorker.StartWorker.Time_Any", EventTypeToSuffix(purpose)}),
         time);
   } else {
-    UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartNewWorker.Time", time);
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartNewWorker.Time",
+                                          time);
   }
 }
 
@@ -327,7 +323,7 @@ void ServiceWorkerMetrics::RecordEventDuration(EventType event,
                                                uint32_t fetch_count) {
   switch (event) {
     case EventType::ACTIVATE:
-      UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.ActivateEvent.Time", time);
+      base::UmaHistogramMediumTimes("ServiceWorker.ActivateEvent.Time2", time);
       break;
     case EventType::INSTALL:
       base::UmaHistogramMediumTimes("ServiceWorker.InstallEvent.All.Time",
@@ -338,8 +334,8 @@ void ServiceWorkerMetrics::RecordEventDuration(EventType event,
       }
       break;
     case EventType::MESSAGE:
-      UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.ExtendableMessageEvent.Time",
-                                 time);
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+          "ServiceWorker.ExtendableMessageEvent.Time", time);
       break;
     case EventType::FETCH_MAIN_FRAME:
     case EventType::FETCH_SUB_FRAME:
@@ -347,26 +343,27 @@ void ServiceWorkerMetrics::RecordEventDuration(EventType event,
     case EventType::FETCH_SUB_RESOURCE:
     case EventType::FETCH_FENCED_FRAME:
       if (was_handled) {
-        UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.FetchEvent.HasResponse.Time",
-                                   time);
+        DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+            "ServiceWorker.FetchEvent.HasResponse.Time", time);
       } else {
-        UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.FetchEvent.Fallback.Time",
-                                   time);
+        DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+            "ServiceWorker.FetchEvent.Fallback.Time", time);
       }
       break;
     case EventType::PAYMENT_REQUEST:
-      UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.PaymentRequestEvent.Time",
-                                 time);
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+          "ServiceWorker.PaymentRequestEvent.Time", time);
       break;
     case EventType::CAN_MAKE_PAYMENT:
-      UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.CanMakePaymentEvent.Time",
-                                 time);
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+          "ServiceWorker.CanMakePaymentEvent.Time", time);
       break;
     case EventType::ABORT_PAYMENT:
-      UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.AbortPaymentEvent.Time", time);
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+          "ServiceWorker.AbortPaymentEvent.Time", time);
       break;
     case EventType::PERIODIC_SYNC:
-      UMA_HISTOGRAM_MEDIUM_TIMES(
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
           "ServiceWorker.PeriodicBackgroundSyncEvent.Time", time);
       break;
     case EventType::SYNC:
@@ -398,7 +395,6 @@ void ServiceWorkerMetrics::RecordEventDuration(EventType event,
     // Static Routing should not be sent as an event.
     case EventType::UNKNOWN:
       NOTREACHED() << "Invalid event type";
-      break;
   }
 }
 
@@ -431,45 +427,46 @@ void ServiceWorkerMetrics::RecordStartWorkerTiming(const StartTimes& times,
   RecordStartWorkerTimingClockConsistency(CrossProcessTimeDelta::NORMAL);
 
   // Total duration.
-  UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartTiming.Duration",
-                             times.local_end - times.local_start);
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartTiming.Duration",
+                                        times.local_end - times.local_start);
   base::UmaHistogramMediumTimes(
       base::StrCat({"ServiceWorker.StartTiming.Duration",
                     StartSituationToSuffix(situation)}),
       times.local_end - times.local_start);
 
   // SentStartWorker milestone.
-  UMA_HISTOGRAM_MEDIUM_TIMES("ServiceWorker.StartTiming.StartToSentStartWorker",
-                             times.local_start_worker_sent - times.local_start);
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+      "ServiceWorker.StartTiming.StartToSentStartWorker",
+      times.local_start_worker_sent - times.local_start);
 
   // ReceivedStartWorker milestone.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.StartToReceivedStartWorker",
       times.remote_start_worker_received - times.local_start);
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.SentStartWorkerToReceivedStartWorker",
       times.remote_start_worker_received - times.local_start_worker_sent);
 
   // ScriptEvaluationStart milestone.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.StartToScriptEvaluationStart",
       times.remote_script_evaluation_start - times.local_start);
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.ReceivedStartWorkerToScriptEvaluationStart",
       times.remote_script_evaluation_start -
           times.remote_start_worker_received);
 
   // ScriptEvaluationEnd milestone.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.StartToScriptEvaluationEnd",
       times.remote_script_evaluation_end - times.local_start);
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.ScriptEvaluationStartToScriptEvaluationEnd",
       times.remote_script_evaluation_end -
           times.remote_script_evaluation_start);
 
   // End milestone.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "ServiceWorker.StartTiming.ScriptEvaluationEndToEnd",
       times.local_end - times.remote_script_evaluation_end);
 }

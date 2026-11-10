@@ -75,7 +75,7 @@ bool V8Assign(v8::Local<v8::Context> context,
 bool CanonicalizeCssSelectors(v8::Local<v8::Context> context,
                               v8::Local<v8::Object> object,
                               std::string* error) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::String> key =
       gin::StringToSymbol(isolate, declarative_content_constants::kCss);
   v8::Maybe<bool> has_css = object->HasOwnProperty(context, key);
@@ -137,7 +137,7 @@ bool Validate(const ArgumentSpec* spec,
     return false;
   }
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Maybe<bool> set_result = this_object->CreateDataProperty(
       context,
       gin::StringToSymbol(isolate,
@@ -223,7 +223,6 @@ void DeclarativeContentHooksDelegate::HandleCall(
   if (this_object.IsEmpty()) {
     // Crazy script (e.g. declarativeContent.Foo.apply(null, args);).
     NOTREACHED();
-    return;
   }
 
   // TODO(devlin): Find a way to use APISignature here? It's a little awkward

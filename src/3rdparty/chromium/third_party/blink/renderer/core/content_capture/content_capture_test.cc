@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/core/content_capture/content_capture_manager.h"
 
+#include <array>
+
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/web/web_content_capture_client.h"
 #include "third_party/blink/public/web/web_content_holder.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
+#include "third_party/blink/renderer/core/content_capture/content_capture_manager.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/node.h"
@@ -17,7 +21,7 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
-#include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -29,7 +33,7 @@ namespace blink {
 namespace {
 
 gfx::Rect GetRect(LayoutObject* layout_object) {
-  return ToEnclosingRect(layout_object->VisualRectInDocument());
+  return ToEnclosingRect(VisualRectInDocument(*layout_object));
 }
 
 void FindNodeVectorsDiff(const Vector<Persistent<Node>>& a,
@@ -82,7 +86,9 @@ class WebContentCaptureClientTestHelper : public WebContentCaptureClient {
     return base::Milliseconds(500);
   }
 
-  void DidCaptureContent(const WebVector<WebContentHolder>& data,
+  void DidCompleteBatchCaptureContent() override {}
+
+  void DidCaptureContent(const std::vector<WebContentHolder>& data,
                          bool first_data) override {
     data_ = data;
     first_data_ = first_data;
@@ -93,21 +99,21 @@ class WebContentCaptureClientTestHelper : public WebContentCaptureClient {
     }
   }
 
-  void DidUpdateContent(const WebVector<WebContentHolder>& data) override {
+  void DidUpdateContent(const std::vector<WebContentHolder>& data) override {
     updated_data_ = data;
     for (auto& d : data)
       updated_text_.push_back(d.GetValue());
   }
 
-  void DidRemoveContent(WebVector<int64_t> data) override {
+  void DidRemoveContent(std::vector<int64_t> data) override {
     removed_data_ = data;
   }
 
   bool FirstData() const { return first_data_; }
 
-  const WebVector<WebContentHolder>& Data() const { return data_; }
+  const std::vector<WebContentHolder>& Data() const { return data_; }
 
-  const WebVector<WebContentHolder>& UpdatedData() const {
+  const std::vector<WebContentHolder>& UpdatedData() const {
     return updated_data_;
   }
 
@@ -117,7 +123,7 @@ class WebContentCaptureClientTestHelper : public WebContentCaptureClient {
 
   const Vector<String>& UpdatedText() const { return updated_text_; }
 
-  const WebVector<int64_t>& RemovedData() const { return removed_data_; }
+  const std::vector<int64_t>& RemovedData() const { return removed_data_; }
 
   void ResetResults() {
     first_data_ = false;
@@ -129,9 +135,9 @@ class WebContentCaptureClientTestHelper : public WebContentCaptureClient {
 
  private:
   bool first_data_ = false;
-  WebVector<WebContentHolder> data_;
-  WebVector<WebContentHolder> updated_data_;
-  WebVector<int64_t> removed_data_;
+  std::vector<WebContentHolder> data_;
+  std::vector<WebContentHolder> updated_data_;
+  std::vector<int64_t> removed_data_;
   Vector<String> all_text_;
   Vector<String> updated_text_;
   Vector<String> captured_text_;
@@ -198,6 +204,23 @@ class ContentCaptureTest : public PageTestBase,
     GetOrResetContentCaptureManager()->OnScrollPositionChanged();
   }
 
+  void CreateTextNodeAndNotifyManager() {
+    Document& doc = GetDocument();
+    Node* node = doc.createTextNode("New Text");
+    Element* element = MakeGarbageCollected<Element>(html_names::kPTag, &doc);
+    element->appendChild(node);
+    Element* div_element = GetElementById("d1");
+    div_element->appendChild(element);
+    UpdateAllLifecyclePhasesForTest();
+    GetOrResetContentCaptureManager()->ScheduleTaskIfNeeded(*node);
+    created_node_id_ = DOMNodeIds::IdForNode(node);
+    Vector<cc::NodeInfo> captured_content{
+        cc::NodeInfo(created_node_id_, GetRect(node->GetLayoutObject()))};
+    GetOrResetContentCaptureManager()
+        ->GetContentCaptureTaskForTesting()
+        ->SetCapturedContentForTesting(captured_content);
+  }
+
   ContentCaptureManager* GetOrResetContentCaptureManager() {
     if (content_capture_manager_ == nullptr)
       content_capture_manager_ = GetFrame().GetOrResetContentCaptureManager();
@@ -229,7 +252,7 @@ class ContentCaptureTest : public PageTestBase,
     GetOrResetContentCaptureManager()->OnLayoutTextWillBeDestroyed(*node);
   }
 
-  void RemoveUnsentNode(const WebVector<WebContentHolder>& sent_nodes) {
+  void RemoveUnsentNode(const std::vector<WebContentHolder>& sent_nodes) {
     // Find a node isn't in sent_nodes
     for (auto node : nodes_) {
       bool found_in_sent = false;
@@ -340,6 +363,7 @@ class ContentCaptureTest : public PageTestBase,
   std::unique_ptr<WebContentCaptureClientTestHelper> content_capture_client_;
   Persistent<ContentCaptureManager> content_capture_manager_;
   Persistent<ContentCaptureLocalFrameClientHelper> local_frame_client_;
+  DOMNodeId created_node_id_ = kInvalidDOMNodeId;
   base::test::ScopedFeatureList feature_list_;
 };
 
@@ -536,6 +560,72 @@ TEST_P(ContentCaptureTest, RemoveNodeAfterSendingOut) {
   RunContentCaptureTask();
   EXPECT_EQ(0u, GetWebContentCaptureClient()->Data().size());
   EXPECT_EQ(1u, GetWebContentCaptureClient()->RemovedData().size());
+}
+
+TEST_P(ContentCaptureTest, TaskHistogramReporter) {
+  // This performs gc for all DocumentSession, flushes the existing
+  // SentContentCount and give a clean baseline for histograms.
+  // We are not sure if it always work, maybe still be the source of flaky.
+  ThreadState::Current()->CollectAllGarbageForTesting();
+  base::HistogramTester histograms;
+
+  // The task stops before captures content.
+  GetContentCaptureTask()->SetTaskStopForTesting(
+      ContentCaptureTask::TaskState::kCaptureContent);
+  RunContentCaptureTask();
+  // Verify no histogram reported yet.
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 0u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 0u);
+
+  // The task stops before sends the captured content out.
+  GetContentCaptureTask()->SetTaskStopForTesting(
+      ContentCaptureTask::TaskState::kProcessCurrentSession);
+  RunContentCaptureTask();
+  // Verify has one CaptureContentTime record.
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 1u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 0u);
+
+  // The task stops at kProcessRetryTask because the captured content
+  // needs to be sent with 2 batch.
+  GetContentCaptureTask()->SetTaskStopForTesting(
+      ContentCaptureTask::TaskState::kProcessRetryTask);
+  RunContentCaptureTask();
+  // Verify has one CaptureContentTime record.
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 1u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 0u);
+
+  // Run task until it stops, task will not capture content, because there is no
+  // content change.
+  GetContentCaptureTask()->SetTaskStopForTesting(
+      ContentCaptureTask::TaskState::kStop);
+  RunContentCaptureTask();
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 1u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 0u);
+
+  // Create a node and run task until it stops.
+  CreateTextNodeAndNotifyManager();
+  GetContentCaptureTask()->SetTaskStopForTesting(
+      ContentCaptureTask::TaskState::kStop);
+  RunNextContentCaptureTask();
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 2u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 0u);
+
+  GetContentCaptureTask()->ClearDocumentSessionsForTesting();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kCaptureContentTime, 2u);
+  histograms.ExpectTotalCount(
+      ContentCaptureTaskHistogramReporter::kSentContentCount, 1u);
 }
 
 TEST_P(ContentCaptureTest, RescheduleTask) {
@@ -955,10 +1045,17 @@ TEST_F(ContentCaptureSimTest, DeleteNodeContent) {
 }
 
 TEST_F(ContentCaptureSimTest, UserActivatedDelay) {
-  base::TimeDelta expected_delays[] = {
-      base::Milliseconds(500), base::Seconds(1),  base::Seconds(2),
-      base::Seconds(4),        base::Seconds(8),  base::Seconds(16),
-      base::Seconds(32),       base::Seconds(64), base::Seconds(128)};
+  auto expected_delays = std::to_array<base::TimeDelta>({
+      base::Milliseconds(500),
+      base::Seconds(1),
+      base::Seconds(2),
+      base::Seconds(4),
+      base::Seconds(8),
+      base::Seconds(16),
+      base::Seconds(32),
+      base::Seconds(64),
+      base::Seconds(128),
+  });
   size_t expected_delays_size = std::size(expected_delays);
   // The first task has been scheduled but not run yet, the delay will be
   // increased until current task starts to run. Verifies the value is

@@ -1,9 +1,11 @@
 // Copyright (C) 2019 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:network-protocol
 
 #include "net/client_cert_store_data.h"
 
 #if QT_CONFIG(ssl)
+#include "base/containers/span.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_platform_key_util.h"
@@ -92,13 +94,13 @@ namespace QtWebEngineCore {
 
 void ClientCertificateStoreData::add(const QSslCertificate &certificate, const QSslKey &privateKey)
 {
-    QByteArray sslKeyInBytes = privateKey.toPem();
-    QByteArray certInBytes = certificate.toDer();
+    const QByteArray sslKeyInBytes = privateKey.toPem();
+    const QByteArray certInBytes = certificate.toDer();
 
     Entry *data = new Entry;
     data->keyPtr = wrapOpenSSLPrivateKey(sslKeyInBytes);
-    data->certPtr = net::X509Certificate::CreateFromBytes(base::make_span((const unsigned char *)certInBytes.data(),
-                                                                          (unsigned long)certInBytes.length()));
+    data->certPtr = net::X509Certificate::CreateFromBytes(base::span<const unsigned char>((const unsigned char *)certInBytes.data(),
+                                                                                          (unsigned long)certInBytes.length()));
     data->key = privateKey;
     data->certificate = certificate;
     extraCerts.append(data);

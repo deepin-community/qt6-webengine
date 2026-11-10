@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/raw_ptr.h"
-
 #import <Cocoa/Cocoa.h>
 
 #import "base/apple/foundation_util.h"
 #import "base/mac/mac_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #import "testing/gtest_mac.h"
 #include "ui/gfx/geometry/point.h"
@@ -29,7 +28,7 @@ int IdToInt(id value) {
   return base::apple::ObjCCastStrict<NSNumber>(value).intValue;
 }
 
-// TODO(https://crbug.com/936990): NSTabItemView is not an NSView (despite the
+// TODO(crbug.com/41444230): NSTabItemView is not an NSView (despite the
 // name) and doesn't conform to NSAccessibility, so we have to fall back to the
 // legacy NSObject accessibility API to get its accessibility properties.
 id GetLegacyA11yAttributeValue(id obj, NSString* attribute) {
@@ -56,7 +55,7 @@ class TabbedPaneAccessibilityMacTest : public WidgetTest {
     // Create two tabs and position/size them.
     tabbed_pane->AddTab(u"Tab 1", std::make_unique<View>());
     tabbed_pane->AddTab(u"Tab 2", std::make_unique<View>());
-    tabbed_pane->Layout();
+    tabbed_pane->DeprecatedLayoutImmediately();
     tabbed_pane->SetID(kTabbedPaneID);
 
     widget_->GetContentsView()->AddChildView(std::move(tabbed_pane));
@@ -112,17 +111,11 @@ TEST_F(TabbedPaneAccessibilityMacTest, AttributesMatchAppKit) {
       GetLegacyA11yAttributeValue(cocoa_tabs[0], NSAccessibilityRoleAttribute),
       A11yElementAtPoint(TabCenterPoint(0)).accessibilityRole);
 
-  // Older versions of Cocoa expose browser tabs with the accessible role
-  // description of "radio button." We match the user experience of more recent
-  // versions of Cocoa by exposing the role description of "tab" even in older
-  // versions of macOS. Doing so causes a mismatch between native Cocoa and our
-  // tabs.
-  if (base::mac::MacOSMajorVersion() >= 12) {
-    EXPECT_NSEQ(
-        GetLegacyA11yAttributeValue(cocoa_tabs[0],
-                                    NSAccessibilityRoleDescriptionAttribute),
-        A11yElementAtPoint(TabCenterPoint(0)).accessibilityRoleDescription);
-  }
+  EXPECT_NSEQ(
+      GetLegacyA11yAttributeValue(cocoa_tabs[0],
+                                  NSAccessibilityRoleDescriptionAttribute),
+      A11yElementAtPoint(TabCenterPoint(0)).accessibilityRoleDescription);
+
   EXPECT_NSEQ(
       GetLegacyA11yAttributeValue(cocoa_tabs[0], NSAccessibilityTitleAttribute),
       A11yElementAtPoint(TabCenterPoint(0)).accessibilityTitle);

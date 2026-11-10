@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "build/build_config.h"
-#include "partition_alloc/partition_alloc_base/component_export.h"
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_
 
 #include <cstddef>
 
-#if !BUILDFLAG(IS_WIN)
-#include <unistd.h>
-#endif
+#include "partition_alloc/partition_alloc_base/component_export.h"
 
 namespace partition_alloc::internal::base::strings {
 
@@ -59,4 +59,4 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC_BASE) CStringBuilder {
 
 }  // namespace partition_alloc::internal::base::strings
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_STRINGS_CSTRING_BUILDER_H_

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2018, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -38,6 +38,7 @@
  *    --auto-alt-ref=2 --bit-depth=8 --film-grain-table=film_grain.tbl \
  *    -o denoised_with_grain_params.ivf denoised.854_480.yuv
  */
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

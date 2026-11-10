@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -22,7 +23,7 @@ namespace content {
 // database. Beyond the notification's own data, its id and attribution need
 // to be available for users of the database as well.
 // Note: There are extra properties being stored for UKM logging purposes.
-// TODO(https://crbug.com/842622): Add the UKM that will use these properties.
+// TODO(crbug.com/40576162): Add the UKM that will use these properties.
 struct CONTENT_EXPORT NotificationDatabaseData {
   NotificationDatabaseData();
   NotificationDatabaseData(const NotificationDatabaseData& other);
@@ -47,7 +48,7 @@ struct CONTENT_EXPORT NotificationDatabaseData {
   std::string notification_id;
 
   // Origin of the website this notification is associated with.
-  // TODO(https://crbug.com/1095896): Consider making |origin| a url::Origin
+  // TODO(crbug.com/40135949): Consider making |origin| a url::Origin
   // field.
   GURL origin;
 
@@ -97,6 +98,9 @@ struct CONTENT_EXPORT NotificationDatabaseData {
   // Flag for notifications shown by the browser that should not be visible to
   // the origin when requesting a list of notifications.
   bool is_shown_by_browser = false;
+
+  // Serialized dictionary of notification metadata.
+  std::map<std::string, std::string> serialized_metadata;
 };
 
 }  // namespace content

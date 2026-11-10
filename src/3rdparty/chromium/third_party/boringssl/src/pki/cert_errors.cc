@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "cert_errors.h"
 
@@ -10,7 +20,7 @@
 
 #include <sstream>
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -92,13 +102,18 @@ std::string CertErrors::ToDebugString() const {
   return result;
 }
 
-bool CertErrors::ContainsError(CertErrorId id) const {
+bool CertErrors::ContainsErrorWithSeverity(CertErrorId id,
+                                           CertError::Severity severity) const {
   for (const CertError &node : nodes_) {
-    if (node.id == id) {
+    if (node.id == id && node.severity == severity) {
       return true;
     }
   }
   return false;
+}
+
+bool CertErrors::ContainsError(CertErrorId id) const {
+  return ContainsErrorWithSeverity(id, CertError::SEVERITY_HIGH);
 }
 
 bool CertErrors::ContainsAnyErrorWithSeverity(
@@ -134,6 +149,10 @@ const CertErrors *CertPathErrors::GetErrorsForCert(size_t cert_index) const {
 
 CertErrors *CertPathErrors::GetOtherErrors() { return &other_errors_; }
 
+const CertErrors *CertPathErrors::GetOtherErrors() const {
+  return &other_errors_;
+}
+
 bool CertPathErrors::ContainsError(CertErrorId id) const {
   for (const CertErrors &errors : cert_errors_) {
     if (errors.ContainsError(id)) {
@@ -161,6 +180,28 @@ bool CertPathErrors::ContainsAnyErrorWithSeverity(
   }
 
   return false;
+}
+
+std::optional<CertErrorId> CertPathErrors::FindSingleHighSeverityError(
+    ptrdiff_t &out_depth) const {
+  std::optional<CertErrorId> id_seen;
+  for (ptrdiff_t i = -1; i < (ptrdiff_t)cert_errors_.size(); ++i) {
+    const CertErrors *errors =
+        (i < 0) ? GetOtherErrors() : GetErrorsForCert(i);
+    for (const CertError &node : errors->nodes_) {
+      if (node.severity == CertError::SEVERITY_HIGH) {
+        if (!id_seen.has_value()) {
+          id_seen = node.id;
+          out_depth = i;
+        } else {
+          if (id_seen.value() != node.id) {
+            return {};
+          }
+        }
+      }
+    }
+  }
+  return id_seen;
 }
 
 std::string CertPathErrors::ToDebugString(
@@ -201,4 +242,4 @@ std::string CertPathErrors::ToDebugString(
   return result.str();
 }
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

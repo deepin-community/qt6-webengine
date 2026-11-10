@@ -123,7 +123,7 @@ AlternateSignedExchangeResourceInfo::AlternateSignedExchangeResourceInfo(
 AlternateSignedExchangeResourceInfo::Entry*
 AlternateSignedExchangeResourceInfo::FindMatchingEntry(
     const KURL& url,
-    absl::optional<ResourceType> resource_type,
+    std::optional<ResourceType> resource_type,
     const Vector<String>& languages) const {
   return FindMatchingEntry(
       url,
@@ -176,8 +176,7 @@ AlternateSignedExchangeResourceInfo::FindMatchingEntry(
       matcher.FindBestMatchingVariantKey(variants, variant_keys_list);
   if (variant_keys_list_it == variant_keys_list.end())
     return nullptr;
-  return (entries.begin() + (variant_keys_list_it - variant_keys_list.begin()))
-      ->get();
+  return entries[variant_keys_list_it - variant_keys_list.begin()].get();
 }
 
 }  // namespace blink

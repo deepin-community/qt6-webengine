@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-igemm/sse-load1.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <xmmintrin.h>
 
-#include <xnnpack/igemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/igemm.h"
 
 
 void xnn_f32_igemm_minmax_ukernel_3x8__sse_load1(
@@ -26,7 +31,7 @@ void xnn_f32_igemm_minmax_ukernel_3x8__sse_load1(
     size_t cn_stride,
     size_t a_offset,
     const float* zero,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 3);
@@ -49,6 +54,11 @@ void xnn_f32_igemm_minmax_ukernel_3x8__sse_load1(
   if XNN_UNPREDICTABLE(mr <= 2) {
     c2 = c1;
   }
+
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   do {
     __m128 vacc0x0123 = _mm_load_ps(w);
@@ -102,7 +112,6 @@ void xnn_f32_igemm_minmax_ukernel_3x8__sse_load1(
       p -= 3 * sizeof(void*);
     } while (p != 0);
 
-    const __m128 vmax = _mm_load_ps(params->sse.max);
     vacc0x0123 = _mm_min_ps(vacc0x0123, vmax);
     vacc1x0123 = _mm_min_ps(vacc1x0123, vmax);
     vacc2x0123 = _mm_min_ps(vacc2x0123, vmax);
@@ -110,7 +119,6 @@ void xnn_f32_igemm_minmax_ukernel_3x8__sse_load1(
     vacc1x4567 = _mm_min_ps(vacc1x4567, vmax);
     vacc2x4567 = _mm_min_ps(vacc2x4567, vmax);
 
-    const __m128 vmin = _mm_load_ps(params->sse.min);
     vacc0x0123 = _mm_max_ps(vacc0x0123, vmin);
     vacc1x0123 = _mm_max_ps(vacc1x0123, vmin);
     vacc2x0123 = _mm_max_ps(vacc2x0123, vmin);

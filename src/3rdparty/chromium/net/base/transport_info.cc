@@ -29,7 +29,6 @@ std::string_view TransportTypeToString(TransportType type) {
   // a compiler error if a new value is added to the enum and this method is
   // not updated to reflect it.
   NOTREACHED();
-  return "<invalid transport type>";
 }
 
 TransportInfo::TransportInfo() = default;

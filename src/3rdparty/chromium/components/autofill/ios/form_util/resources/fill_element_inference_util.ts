@@ -2,20 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
+import {gCrWebLegacy} from '//ios/web/public/js_messaging/resources/gcrweb.js';
+import {isTextField} from '//ios/web/public/js_messaging/resources/utils.js';
 
 /**
  * Returns is the tag of an `element` is tag.
  *
- * It is based on the logic in
- *     bool HasTagName(const WebNode& node, const blink::WebString& tag)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
+ * It is based on the logic in HasTagName() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
  *
  * @param node Node to examine.
  * @param tag Tag name.
  * @return Whether the tag of node is tag.
  */
-gCrWeb.fill.hasTagName = function(node: Element, tag: string): boolean {
+gCrWebLegacy.fill.hasTagName = function(node: Element, tag: string): boolean {
   return node.nodeType === Node.ELEMENT_NODE &&
       (node).tagName === tag.toUpperCase();
 };
@@ -23,17 +23,16 @@ gCrWeb.fill.hasTagName = function(node: Element, tag: string): boolean {
 /**
  * Checks if an element is autofillable.
  *
- * It is based on the logic in
- *     bool IsAutofillableElement(const WebFormControlElement& element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
+ * It is based on the logic in IsAutofillableElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
  *
  * @param element An element to examine.
  * @return Whether element is one of the element types that can be
  *     autofilled.
  */
-gCrWeb.fill.isAutofillableElement = function(element: Element): boolean {
-  return gCrWeb.fill.isAutofillableInputElement(element) ||
-      gCrWeb.fill.isSelectElement(element) || isTextAreaElement(element);
+gCrWebLegacy.fill.isAutofillableElement = function(element: Element): boolean {
+  return gCrWebLegacy.fill.isAutofillableInputElement(element) ||
+      gCrWebLegacy.fill.isSelectElement(element) || isTextAreaElement(element);
 };
 
 /**
@@ -73,17 +72,16 @@ function trimWhitespaceTrailing(input: string): string {
  *     CombineAndCollapseWhitespace(' foo', 'bar ', false)     -> ' foobar '
  *     CombineAndCollapseWhitespace(' foo', 'bar ', true)      -> ' foo bar '
  *
- * It is based on the logic in
- * const string16 CombineAndCollapseWhitespace(const string16& prefix,
- *                                             const string16& suffix,
- *                                             bool force_whitespace)
+ * It is based on the logic in CombineAndCollapseWhitespace() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
+ *
  * @param prefix The prefix string in the string combination.
  * @param suffix The suffix string in the string combination.
  * @param forceWhitespace A boolean indicating if whitespace should
  *     be added as separator in the combination.
  * @return The combined string.
  */
-gCrWeb.fill.combineAndCollapseWhitespace = function(
+gCrWebLegacy.fill.combineAndCollapseWhitespace = function(
     prefix: string, suffix: string, forceWhitespace: boolean): string {
   const prefixTrimmed = trimWhitespaceTrailing(prefix);
   const prefixTrailingWhitespace = prefixTrimmed !== prefix;
@@ -107,7 +105,7 @@ gCrWeb.fill.combineAndCollapseWhitespace = function(
  * @param divsToSkip List of <div> tags to ignore if encountered.
  * @return The discovered and adapted string.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
 function findChildTextInner(
     node: any, depth: number, divsToSkip: Node[]):string {
   if (depth <= 0 || !node) {
@@ -129,13 +127,14 @@ function findChildTextInner(
     if (node.tagName === 'OPTION') {
       return '';
     }
-    if (gCrWeb.form.isFormControlElement(/** @type {Element} */ (node))) {
+    if (gCrWebLegacy.form.isFormControlElement(/** @type {Element} */ (node))) {
       const input = /** @type {FormControlElement} */ (node);
-      if (gCrWeb.fill.isAutofillableElement(input)) {
+      if (gCrWebLegacy.fill.isAutofillableElement(input)) {
         return '';
       }
     }
-    skipNode = node.tagName === 'SCRIPT' || node.tagName === 'NOSCRIPT';
+    skipNode = node.tagName === 'SCRIPT' || node.tagName === 'NOSCRIPT' ||
+        node.tagName === 'STYLE';
   }
 
   if (node.tagName === 'DIV') {
@@ -164,7 +163,7 @@ function findChildTextInner(
     // Emulate apparently incorrect Chromium behavior tracked in
     // https://crbug.com/239819.
     addSpace = false;
-    nodeText = gCrWeb.fill.combineAndCollapseWhitespace(
+    nodeText = gCrWebLegacy.fill.combineAndCollapseWhitespace(
         nodeText, childText, addSpace);
   }
 
@@ -176,7 +175,7 @@ function findChildTextInner(
   // Emulate apparently incorrect Chromium behavior tracked in
   // https://crbug.com/239819.
   addSpace = false;
-  nodeText = gCrWeb.fill.combineAndCollapseWhitespace(
+  nodeText = gCrWebLegacy.fill.combineAndCollapseWhitespace(
       nodeText, siblingText, addSpace);
 
   return nodeText;
@@ -185,10 +184,7 @@ function findChildTextInner(
 /**
  * Same as findChildText() below, but with a list of div nodes to skip.
  *
- * It is based on the logic in
- *    string16 FindChildTextWithIgnoreList(
- *        const WebNode& node,
- *        const std::set<WebNode>& divs_to_skip)
+ * It is based on the logic in FindChildTextWithIgnoreList() in
  * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
  *
  * @param node A node of which the child text will be return.
@@ -211,8 +207,7 @@ function findChildTextWithIgnoreList(node: Node, divsToSkip: Node[]): string {
  * Returns the aggregated values of the descendants of `element` that are
  * non-empty text nodes.
  *
- * It is based on the logic in
- *    string16 FindChildText(const WebNode& node)
+ * It is based on the logic in FindChildText() in
  * chromium/src/components/autofill/content/renderer/form_autofill_util.cc,
  * which is a faster alternative to `innerText()` for performance critical
  * operations.
@@ -228,14 +223,13 @@ function findChildText(node: Node): string {
  * Returns true if `node` is an element and it is a container type that
  * inferLabelForElement() can traverse.
  *
- * It is based on the logic in
- *     bool IsTraversableContainerElement(const WebNode& node);
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
+ * It is based on the logic in IsTraversableContainerElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
  *
  * @param {!Node} node The node to be examined.
  * @return Whether it can be traversed.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
 function isTraversableContainerElement(node: any): boolean {
   if (node.nodeType !== Node.ELEMENT_NODE) {
     return false;
@@ -251,15 +245,10 @@ function isTraversableContainerElement(node: any): boolean {
  * Returns the element type for all ancestor nodes in CAPS, starting with the
  * parent node.
  *
- * It is based on the logic in
- *    std::vector<std::string> AncestorTagNames(
- *        const WebFormControlElement& element);
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
- *
  * @param {FormControlElement} element An element to examine.
  * @return The element types for all ancestors.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
 function ancestorTagNames(element: any): string[] {
   const tagNames: string[] = [];
   let parentNode = element.parentNode;
@@ -273,34 +262,16 @@ function ancestorTagNames(element: any): string[] {
 }
 
 /**
- * Returns true if `element` is a text input element.
- *
- * It is based on the logic in
- *     bool IsTextInput(const blink::WebInputElement* element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.h.
- *
- * @param element An element to examine.
- * @return Whether element is a text input field.
- */
-gCrWeb.fill.isTextInput = function(element: Element): boolean {
-  if (!element) {
-    return false;
-  }
-  return gCrWeb.common.isTextField(element);
-};
-
-/**
  * Returns true if `element` is a 'select' element.
  *
- * It is based on the logic in
- *     bool IsSelectElement(const blink::WebFormControlElement& element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.h.
+ * It is based on the logic in IsSelectElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.h.
  *
  * @param {FormControlElement|HTMLOptionElement} element An element to examine.
  * @return Whether element is a 'select' element.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
-gCrWeb.fill.isSelectElement = function(element: any): boolean {
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
+gCrWebLegacy.fill.isSelectElement = function(element: any): boolean {
   if (!element) {
     return false;
   }
@@ -310,14 +281,13 @@ gCrWeb.fill.isSelectElement = function(element: any): boolean {
 /**
  * Returns true if `element` is a 'textarea' element.
  *
- * It is based on the logic in
- *     bool IsTextAreaElement(const blink::WebFormControlElement& element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.h.
+ * It is based on the logic in IsTextAreaElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.h.
  *
  * @param {FormControlElement} element An element to examine.
  * @return Whether element is a 'textarea' element.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
 function isTextAreaElement(element: any): boolean {
   if (!element) {
     return false;
@@ -328,15 +298,14 @@ function isTextAreaElement(element: any): boolean {
 /**
  * Returns true if `element` is a checkbox or a radio button element.
  *
- * It is based on the logic in
- *     bool IsCheckableElement(const blink::WebInputElement* element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.h.
+ * It is based on the logic in IsCheckableElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.h.
  *
  * @param {FormControlElement} element An element to examine.
  * @return Whether element is a checkbox or a radio button.
  */
-// TODO(crbug.com/1492539): Replace all `any` types with a specific type.
-gCrWeb.fill.isCheckableElement = function(element: any): boolean {
+// TODO(crbug.com/40285548): Replace all `any` types with a specific type.
+gCrWebLegacy.fill.isCheckableElement = function(element: any): boolean {
   if (!element) {
     return false;
   }
@@ -347,35 +316,48 @@ gCrWeb.fill.isCheckableElement = function(element: any): boolean {
  * Returns true if `element` is one of the input element types that can be
  * autofilled. {Text, Radiobutton, Checkbox}.
  *
- * It is based on the logic in
- *    bool IsAutofillableInputElement(const blink::WebInputElement* element)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.h.
+ * It is based on the logic in IsAutofillableInputElement() in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.h.
  *
  * @param element An element to examine.
  * @return Whether element is one of the input element types that
  *     can be autofilled.
  */
-gCrWeb.fill.isAutofillableInputElement = function(element: Element): boolean {
-  return gCrWeb.fill.isTextInput(element) ||
-      gCrWeb.fill.isCheckableElement(element);
+gCrWebLegacy.fill.isAutofillableInputElement = function(element: Element): boolean {
+  return isTextField(element) ||
+      (gCrWebLegacy.fill.isCheckableElement(element) &&
+       !gCrWebLegacy.autofill_form_features
+            .isAutofillIgnoreCheckableElementsEnabled());
 };
 
 /**
- * Helper for `InferLabelForElement()` that tests if an inferred label is valid
- * or not. A valid label is a label that does not only contains special
- * characters.
+ * Represents an inferred label. Should only be constructed by
+ * buildInferredLabelIfValid().
  *
- * It is based on the logic in
- *     bool isLabelValid(base::StringPiece16 inferred_label,
- *         const std::vector<char16_t>& stop_words)
- * in chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
- * The list of characters that are considered special is hard-coded in a regexp.
- *
- * @param label An element to examine.
- * @return Whether the label contains not special characters.
+ * It is based on `InferredLabel` in
+ * chromium/src/components/autofill/content/renderer/form_autofill_util.cc.
  */
-function isLabelValid(label: string): boolean {
-  return label.search(/[^ *:()\u2013-]/) >= 0;
+interface InferredLabel {
+  /** A non-empty string. */
+  label: string;
+  // TODO(crbug.com/337179781): Add label source to match C++.
+}
+
+/**
+ * Constructs an `InferredLabel` with a non-empty label if `label` contains at
+ * least one character that is neither whitespace nor "*:-–()".
+ *
+ * @param label A label to example.
+ * @return An inferred label or null.
+ */
+function buildInferredLabelIfValid(label: string): InferredLabel | null {
+  // LINT.IfChange(InvalidLabelCriteria)
+  const isValid = label.search(/[^\s*:()\/\.\u2013-]/) >= 0;
+  // LINT.ThenChange(/components/autofill/content/renderer/form_autofill_util.cc:InvalidLabelCriteria)
+  if (isValid) {
+    return {label: label.trim()};
+  }
+  return null;
 }
 
 /**
@@ -396,6 +378,6 @@ export {
   isTraversableContainerElement,
   ancestorTagNames,
   isTextAreaElement,
-  isLabelValid,
-  nodeValue,
+  InferredLabel,
+  buildInferredLabelIfValid,
 };

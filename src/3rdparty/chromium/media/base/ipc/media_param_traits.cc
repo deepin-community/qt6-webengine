@@ -8,9 +8,9 @@
 #include "ipc/ipc_message_utils.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_point.h"
-#include "media/base/encryption_pattern.h"
 #include "media/base/encryption_scheme.h"
 #include "media/base/limits.h"
+#include "media/base/media_switches.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
 
@@ -41,7 +41,7 @@ bool ParamTraits<AudioParameters>::Read(const base::Pickle* m,
   int sample_rate, frames_per_buffer, channels, effects;
   std::vector<media::Point> mic_positions;
   AudioLatency::Type latency_tag;
-  absl::optional<media::AudioParameters::HardwareCapabilities>
+  std::optional<media::AudioParameters::HardwareCapabilities>
       hardware_capabilities;
 
   if (!ReadParam(m, iter, &format) || !ReadParam(m, iter, &channel_layout) ||
@@ -81,6 +81,7 @@ void ParamTraits<AudioParameters::HardwareCapabilities>::Write(
   WriteParam(m, p.max_frames_per_buffer);
   WriteParam(m, p.bitstream_formats);
   WriteParam(m, p.require_encapsulation);
+  WriteParam(m, p.require_audio_offload);
 }
 
 bool ParamTraits<AudioParameters::HardwareCapabilities>::Read(
@@ -91,16 +92,25 @@ bool ParamTraits<AudioParameters::HardwareCapabilities>::Read(
   bool require_encapsulation;
   int max_frames_per_buffer;
   int min_frames_per_buffer;
+  bool require_audio_offload;
   if (!ReadParam(m, iter, &min_frames_per_buffer) ||
       !ReadParam(m, iter, &max_frames_per_buffer) ||
       !ReadParam(m, iter, &bitstream_formats) ||
-      !ReadParam(m, iter, &require_encapsulation)) {
+      !ReadParam(m, iter, &require_encapsulation) ||
+      !ReadParam(m, iter, &require_audio_offload)) {
     return false;
   }
+#if BUILDFLAG(IS_WIN)
+  if (require_audio_offload &&
+      !base::FeatureList::IsEnabled(media::kAudioOffload)) {
+    return false;
+  }
+#endif
   r->min_frames_per_buffer = min_frames_per_buffer;
   r->max_frames_per_buffer = max_frames_per_buffer;
   r->bitstream_formats = bitstream_formats;
   r->require_encapsulation = require_encapsulation;
+  r->require_audio_offload = require_audio_offload;
   return true;
 }
 
@@ -109,41 +119,6 @@ void ParamTraits<AudioParameters::HardwareCapabilities>::Log(
     std::string* l) {
   l->append(base::StringPrintf("<AudioParameters::HardwareCapabilities>"));
 }
-
-template <>
-struct ParamTraits<media::EncryptionPattern> {
-  typedef media::EncryptionPattern param_type;
-  static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* r);
-  static void Log(const param_type& p, std::string* l);
-};
-
-void ParamTraits<media::EncryptionPattern>::Write(base::Pickle* m,
-                                                  const param_type& p) {
-  WriteParam(m, p.crypt_byte_block());
-  WriteParam(m, p.skip_byte_block());
-}
-
-bool ParamTraits<media::EncryptionPattern>::Read(const base::Pickle* m,
-                                                 base::PickleIterator* iter,
-                                                 param_type* r) {
-  uint32_t crypt_byte_block, skip_byte_block;
-  if (!ReadParam(m, iter, &crypt_byte_block) ||
-      !ReadParam(m, iter, &skip_byte_block)) {
-    return false;
-  }
-
-  *r = media::EncryptionPattern(crypt_byte_block, skip_byte_block);
-  return true;
-}
-
-void ParamTraits<media::EncryptionPattern>::Log(const param_type& p,
-                                                std::string* l) {
-  l->append(base::StringPrintf("<EncryptionPattern>"));
-}
-
 }  // namespace IPC
 
 // Generate param traits write methods.

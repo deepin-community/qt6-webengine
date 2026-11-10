@@ -20,7 +20,6 @@ mojom::RunLocation ConvertRunLocation(api::extension_types::RunAt run_at) {
   }
 
   NOTREACHED();
-  return mojom::RunLocation::kDocumentIdle;
 }
 
 api::extension_types::RunAt ConvertRunLocationForAPI(
@@ -41,7 +40,6 @@ api::extension_types::RunAt ConvertRunLocationForAPI(
   }
 
   NOTREACHED();
-  return api::extension_types::RunAt::kDocumentIdle;
 }
 
 mojom::ExecutionWorld ConvertExecutionWorld(
@@ -73,7 +71,6 @@ api::extension_types::ExecutionWorld ConvertExecutionWorldForAPI(
   }
 
   NOTREACHED();
-  return api::extension_types::ExecutionWorld::kIsolated;
 }
 
 }  // namespace extensions

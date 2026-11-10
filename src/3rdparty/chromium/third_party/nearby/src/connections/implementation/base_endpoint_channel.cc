@@ -15,22 +15,37 @@
 #include "connections/implementation/base_endpoint_channel.h"
 
 #include <cassert>
+#include <climits>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/time/time.h"
+#include "connections/implementation/analytics/analytics_recorder.h"
+#include "connections/implementation/endpoint_channel_manager.h"
+#include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "connections/implementation/offline_frames.h"
+#include "internal/flags/nearby_flags.h"
 #include "internal/platform/byte_array.h"
 #include "internal/platform/exception.h"
+#include "internal/platform/implementation/system_clock.h"
+#include "internal/platform/input_stream.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/mutex.h"
 #include "internal/platform/mutex_lock.h"
+#include "internal/platform/output_stream.h"
 
 namespace nearby {
 namespace connections {
 
 namespace {
+using ::location::nearby::analytics::proto::ConnectionsLog;
+using DisconnectionReason =
+    ::location::nearby::proto::connections::DisconnectionReason;
 
 std::int32_t BytesToInt(const ByteArray& bytes) {
   const char* int_bytes = bytes.data();
@@ -76,7 +91,7 @@ BaseEndpointChannel::BaseEndpointChannel(const std::string& service_id,
           service_id, channel_name, reader, writer,
           // TODO(edwinwu): Below values should be retrieved from a base socket,
           // the #MediumSocket in Android counterpart, from which all the
-          // derived medium sockets should dervied, and implement the supported
+          // derived medium sockets should derived, and implement the supported
           // values and leave the default values in base #MediumSocket.
           /*ConnectionTechnology*/
           location::nearby::proto::connections::
@@ -94,6 +109,8 @@ BaseEndpointChannel::BaseEndpointChannel(
     int try_count)
     : service_id_(service_id),
       channel_name_(channel_name),
+      max_allowed_read_bytes_(GetMaxAllowedReadBytes()),
+      default_max_transmit_packet_size_(GetDefaultMaxTransmitPacketSize()),
       reader_(reader),
       writer_(writer),
       technology_(technology),
@@ -118,7 +135,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read(
       return ExceptionOr<ByteArray>(read_int.exception());
     }
 
-    if (read_int.result() < 0 || read_int.result() > kMaxAllowedReadBytes) {
+    if (read_int.result() < 0 || read_int.result() > max_allowed_read_bytes_) {
       NEARBY_LOGS(WARNING) << __func__ << ": Read an invalid number of bytes: "
                            << read_int.result();
       return ExceptionOr<ByteArray>(Exception::kIo);
@@ -135,6 +152,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read(
 
   {
     MutexLock crypto_lock(&crypto_mutex_);
+    Exception message_exception{Exception::kInvalidProtocolBuffer};
     if (IsEncryptionEnabledLocked()) {
       // If encryption is enabled, decode the message.
       std::string input(std::move(result));
@@ -165,6 +183,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read(
                 << parser::GetFrameType(parsed.result());
           }
         } else {
+          message_exception.value = parsed.exception();
           NEARBY_LOGS(WARNING)
               << __func__ << ": Unable to parse data as unencrypted message.";
         }
@@ -172,7 +191,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read(
       packet_meta_data.StopEncryption();
       if (result.Empty()) {
         NEARBY_LOGS(WARNING) << __func__ << ": Unable to parse read result.";
-        return ExceptionOr<ByteArray>(Exception::kInvalidProtocolBuffer);
+        return ExceptionOr<ByteArray>(message_exception);
       }
     }
   }
@@ -224,7 +243,7 @@ Exception BaseEndpointChannel::Write(const ByteArray& data,
     }
 
     size_t data_size = data_to_write->size();
-    if (data_size < 0 || data_size > kMaxAllowedReadBytes) {
+    if (data_size < 0 || data_size > max_allowed_read_bytes_) {
       NEARBY_LOGS(WARNING) << __func__ << ": Write an invalid number of bytes: "
                            << data_size;
       return {Exception::kIo};
@@ -266,7 +285,7 @@ void BaseEndpointChannel::Close() {
     // In case channel is paused, resume it first thing.
     MutexLock lock(&is_paused_mutex_);
     if (is_closed_) {
-      NEARBY_LOGS(VERBOSE) << "EndpointChannel already closed";
+      NEARBY_VLOG(1) << "EndpointChannel already closed";
       return;
     }
     is_closed_ = true;
@@ -300,6 +319,11 @@ void BaseEndpointChannel::CloseIo() {
   }
 }
 
+uint32_t BaseEndpointChannel::GetNextKeepAliveSeqNo() const {
+  MutexLock lock(&keep_alive_mutex_);
+  return next_keep_alive_seq_no_++;
+}
+
 void BaseEndpointChannel::SetAnalyticsRecorder(
     analytics::AnalyticsRecorder* analytics_recorder,
     const std::string& endpoint_id) {
@@ -309,13 +333,25 @@ void BaseEndpointChannel::SetAnalyticsRecorder(
 
 void BaseEndpointChannel::Close(
     location::nearby::proto::connections::DisconnectionReason reason) {
+  Close(reason, ConnectionsLog::EstablishedConnection::SAFE_DISCONNECTION);
+}
+
+void BaseEndpointChannel::Close(
+    location::nearby::proto::connections::DisconnectionReason reason,
+    SafeDisconnectionResult result) {
   NEARBY_LOGS(INFO) << __func__
                     << ": Closing endpoint channel, reason: " << reason;
   Close();
 
   if (analytics_recorder_ != nullptr && !endpoint_id_.empty()) {
-    analytics_recorder_->OnConnectionClosed(endpoint_id_, GetMedium(), reason);
+    analytics_recorder_->OnConnectionClosed(endpoint_id_, GetMedium(), reason,
+                                            result);
   }
+}
+
+bool BaseEndpointChannel::IsClosed() const {
+  MutexLock lock(&is_paused_mutex_);
+  return is_closed_;
 }
 
 std::string BaseEndpointChannel::GetType() const {
@@ -339,7 +375,7 @@ std::string BaseEndpointChannel::GetName() const { return channel_name_; }
 
 int BaseEndpointChannel::GetMaxTransmitPacketSize() const {
   // Return default value if the medium never define it's chunk size.
-  return kDefaultMaxTransmitPacketSize;
+  return default_max_transmit_packet_size_;
 }
 
 void BaseEndpointChannel::EnableEncryption(
@@ -413,6 +449,23 @@ int BaseEndpointChannel::GetFrequency() const { return frequency_; }
 
 // Returns the try count of this EndpointChannel.
 int BaseEndpointChannel::GetTryCount() const { return try_count_; }
+
+int BaseEndpointChannel::GetMaxAllowedReadBytes() const {
+  int64_t max_allowed_read_bytes = NearbyFlags::GetInstance().GetInt64Flag(
+      config_package_nearby::nearby_connections_feature::
+          kMediumMaxAllowedReadBytes);
+  return max_allowed_read_bytes >= INT_MAX ? INT_MAX : max_allowed_read_bytes;
+}
+
+int BaseEndpointChannel::GetDefaultMaxTransmitPacketSize() const {
+  int32_t default_max_transmit_packet_size =
+      NearbyFlags::GetInstance().GetInt64Flag(
+          config_package_nearby::nearby_connections_feature::
+              kMediumDefaultMaxTransmitPacketSize);
+  return default_max_transmit_packet_size >= INT_MAX
+             ? INT_MAX
+             : default_max_transmit_packet_size;
+}
 
 bool BaseEndpointChannel::IsEncryptionEnabledLocked() const {
   return crypto_context_ != nullptr;

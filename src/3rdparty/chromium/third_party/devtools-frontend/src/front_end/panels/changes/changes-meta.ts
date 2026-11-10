@@ -18,15 +18,7 @@ const UIStrings = {
    * @description Command for showing the 'Changes' tool in the bottom drawer
    */
   showChanges: 'Show Changes',
-  /**
-   *@description Title for action in the Changes tool that reverts all changes to the currently open file.
-   */
-  revertAllChangesToCurrentFile: 'Revert all changes to current file',
-  /**
-   *@description Title for action in the Changes tool that copies all changes from the currently open file.
-   */
-  copyAllChangesFromCurrentFile: 'Copy all changes from current file',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/changes/changes-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
 
@@ -35,13 +27,6 @@ async function loadChangesModule(): Promise<typeof Changes> {
     loadedChangesModule = await import('./changes.js');
   }
   return loadedChangesModule;
-}
-
-function maybeRetrieveContextTypes<T = unknown>(getClassCallBack: (changesModule: typeof Changes) => T[]): T[] {
-  if (loadedChangesModule === undefined) {
-    return [];
-  }
-  return getClassCallBack(loadedChangesModule);
 }
 
 UI.ViewManager.registerViewExtension({
@@ -53,33 +38,5 @@ UI.ViewManager.registerViewExtension({
   async loadView() {
     const Changes = await loadChangesModule();
     return new Changes.ChangesView.ChangesView();
-  },
-});
-
-UI.ActionRegistration.registerActionExtension({
-  actionId: 'changes.revert',
-  category: UI.ActionRegistration.ActionCategory.CHANGES,
-  title: i18nLazyString(UIStrings.revertAllChangesToCurrentFile),
-  iconClass: UI.ActionRegistration.IconClass.UNDO,
-  async loadActionDelegate() {
-    const Changes = await loadChangesModule();
-    return new Changes.ChangesView.ActionDelegate();
-  },
-  contextTypes() {
-    return maybeRetrieveContextTypes(Changes => [Changes.ChangesView.ChangesView]);
-  },
-});
-
-UI.ActionRegistration.registerActionExtension({
-  actionId: 'changes.copy',
-  category: UI.ActionRegistration.ActionCategory.CHANGES,
-  title: i18nLazyString(UIStrings.copyAllChangesFromCurrentFile),
-  iconClass: UI.ActionRegistration.IconClass.COPY,
-  async loadActionDelegate() {
-    const Changes = await loadChangesModule();
-    return new Changes.ChangesView.ActionDelegate();
-  },
-  contextTypes() {
-    return maybeRetrieveContextTypes(Changes => [Changes.ChangesView.ChangesView]);
   },
 });

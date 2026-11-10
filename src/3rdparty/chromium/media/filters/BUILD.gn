@@ -6,6 +6,20 @@ import("//build/config/jumbo.gni")
 import("//media/gpu/args.gni")
 import("//media/media_options.gni")
 
+if (media_use_symphonia) {
+  rust_static_library("symphonia_glue") {
+    # Needed because CXX generates unsafe code, for example using export_name
+    # is inherently unsafe.
+    allow_unsafe = true
+
+    crate_root = "symphonia_glue.rs"
+    sources = [ "symphonia_glue.rs" ]
+    cxx_bindings = [ "symphonia_glue.rs" ]
+    visibility = [ ":filters" ]
+    deps = [ "//third_party/rust/symphonia/v0_5:lib" ]
+  }
+}
+
 jumbo_source_set("filters") {
   # Do not expand the visibility here without double-checking with OWNERS, this
   # is a roll-up target which is part of the //media component. Most other DEPs
@@ -45,6 +59,8 @@ jumbo_source_set("filters") {
     "file_data_source.h",
     "frame_processor.cc",
     "frame_processor.h",
+    "h26x_annex_b_bitstream_builder.cc",
+    "h26x_annex_b_bitstream_builder.h",
     "memory_data_source.cc",
     "memory_data_source.h",
     "offloading_video_decoder.cc",
@@ -64,16 +80,6 @@ jumbo_source_set("filters") {
     "video_cadence_estimator.h",
     "video_renderer_algorithm.cc",
     "video_renderer_algorithm.h",
-    "vp9_bool_decoder.cc",
-    "vp9_bool_decoder.h",
-    "vp9_compressed_header_parser.cc",
-    "vp9_compressed_header_parser.h",
-    "vp9_parser.cc",
-    "vp9_parser.h",
-    "vp9_raw_bits_reader.cc",
-    "vp9_raw_bits_reader.h",
-    "vp9_uncompressed_header_parser.cc",
-    "vp9_uncompressed_header_parser.h",
     "wsola_internals.cc",
     "wsola_internals.h",
   ]
@@ -82,15 +88,16 @@ jumbo_source_set("filters") {
 
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
     "//cc/base",  # For MathUtil.
     "//media:media_buildflags",
     "//media/base",
     "//media/cdm",
     "//media/formats",
+    "//media/parsers",
     "//media/video",
+    "//net",
     "//third_party/libyuv",
-    "//ui/gfx/geometry:geometry",
+    "//ui/gfx/geometry",
   ]
 
   libs = []
@@ -135,6 +142,14 @@ jumbo_source_set("filters") {
       "media_file_checker.cc",
       "media_file_checker.h",
     ]
+  }
+
+  if (media_use_symphonia) {
+    sources += [
+      "symphonia_audio_decoder.cc",
+      "symphonia_audio_decoder.h",
+    ]
+    deps += [ ":symphonia_glue" ]
   }
 
   if (media_use_libvpx) {
@@ -234,17 +249,8 @@ jumbo_source_set("filters") {
     }
   }
 
-  if (use_vaapi) {
-    sources += [
-      "h264_bitstream_buffer.cc",
-      "h264_bitstream_buffer.h",
-    ]
-  }
-
   if (enable_hls_demuxer) {
     sources += [
-      "hls_codec_detector.cc",
-      "hls_codec_detector.h",
       "hls_data_source_provider.cc",
       "hls_data_source_provider.h",
       "hls_data_source_provider_impl.cc",
@@ -252,6 +258,10 @@ jumbo_source_set("filters") {
       "hls_demuxer_status.h",
       "hls_manifest_demuxer_engine.cc",
       "hls_manifest_demuxer_engine.h",
+      "hls_network_access.cc",
+      "hls_network_access.h",
+      "hls_network_access_impl.cc",
+      "hls_network_access_impl.h",
       "hls_rendition.cc",
       "hls_rendition.h",
       "hls_rendition_impl.cc",
@@ -288,8 +298,6 @@ static_library("test_support") {
   sources = [
     "fake_video_decoder.cc",
     "fake_video_decoder.h",
-    "ivf_parser.cc",
-    "ivf_parser.h",
   ]
 
   deps = [
@@ -314,24 +322,19 @@ source_set("unit_tests") {
     "fake_video_decoder_unittest.cc",
     "file_data_source_unittest.cc",
     "frame_processor_unittest.cc",
-    "ivf_parser_unittest.cc",
     "memory_data_source_unittest.cc",
     "offloading_video_decoder_unittest.cc",
     "pipeline_controller_unittest.cc",
     "source_buffer_state_unittest.cc",
     "source_buffer_stream_unittest.cc",
-    "stream_parser_factory_unittest.cc",
     "video_cadence_estimator_unittest.cc",
     "video_decoder_stream_unittest.cc",
     "video_renderer_algorithm_unittest.cc",
-    "vp9_parser_unittest.cc",
-    "vp9_raw_bits_reader_unittest.cc",
-    "vp9_uncompressed_header_parser_unittest.cc",
   ]
 
   deps = [
     "//base/test:test_support",
-    "//build:chromeos_buildflags",
+    "//crypto",
     "//media:test_support",
     "//testing/gmock",
     "//testing/gtest",
@@ -391,8 +394,8 @@ source_set("unit_tests") {
     sources += [ "dav1d_video_decoder_unittest.cc" ]
   }
 
-  if (use_vaapi) {
-    sources += [ "h264_bitstream_buffer_unittest.cc" ]
+  if (is_win || use_vaapi) {
+    sources += [ "h26x_annex_b_bitstream_builder_unittest.cc" ]
   }
 
   if (proprietary_codecs) {
@@ -412,15 +415,20 @@ source_set("unit_tests") {
 
   if (enable_hls_demuxer) {
     sources += [
-      "hls_codec_detector_unittest.cc",
       "hls_data_source_provider_impl_unittest.cc",
       "hls_data_source_provider_unittest.cc",
       "hls_manifest_demuxer_engine_unittest.cc",
+      "hls_network_access_impl_unittest.cc",
       "hls_rendition_impl_unittest.cc",
       "hls_test_helpers.cc",
       "hls_test_helpers.h",
       "manifest_demuxer_unittest.cc",
+      "stream_parser_factory_unittest.cc",
     ]
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 
   if (media_use_ffmpeg) {

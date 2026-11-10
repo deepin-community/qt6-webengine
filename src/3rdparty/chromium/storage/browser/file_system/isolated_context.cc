@@ -25,6 +25,16 @@ namespace storage {
 
 namespace {
 
+// The given path should not contain any '..' and should be absolute.
+bool IsPathValid(const base::FilePath& path) {
+#if BUILDFLAG(IS_ANDROID)
+  if (path.IsContentUri()) {
+    return true;
+  }
+#endif
+  return !path.ReferencesParent() && path.IsAbsolute();
+}
+
 base::FilePath::StringType GetRegisterNameForPath(const base::FilePath& path) {
   // If it's not a root path simply return a base name.
   if (path.DirName() != path)
@@ -64,9 +74,9 @@ IsolatedContext::FileInfoSet::~FileInfoSet() = default;
 
 bool IsolatedContext::FileInfoSet::AddPath(const base::FilePath& path,
                                            std::string* registered_name) {
-  // The given path should not contain any '..' and should be absolute.
-  if (path.ReferencesParent() || !path.IsAbsolute())
+  if (!IsPathValid(path)) {
     return false;
+  }
   base::FilePath::StringType name = GetRegisterNameForPath(path);
   std::string utf8name = base::FilePath(name).AsUTF8Unsafe();
   base::FilePath normalized_path = path.NormalizePathSeparators();
@@ -93,9 +103,9 @@ bool IsolatedContext::FileInfoSet::AddPath(const base::FilePath& path,
 
 bool IsolatedContext::FileInfoSet::AddPathWithName(const base::FilePath& path,
                                                    const std::string& name) {
-  // The given path should not contain any '..' and should be absolute.
-  if (path.ReferencesParent() || !path.IsAbsolute())
+  if (!IsPathValid(path)) {
     return false;
+  }
   return fileset_.insert(MountPointInfo(name, path.NormalizePathSeparators()))
       .second;
 }
@@ -273,8 +283,9 @@ IsolatedContext::ScopedFSHandle IsolatedContext::RegisterFileSystemForPath(
     const base::FilePath& path_in,
     std::string* register_name) {
   base::FilePath path(path_in.NormalizePathSeparators());
-  if (path.ReferencesParent() || !path.IsAbsolute())
+  if (!IsPathValid(path)) {
     return ScopedFSHandle();
+  }
   std::string name;
   if (register_name && !register_name->empty()) {
     name = *register_name;
@@ -495,7 +506,7 @@ bool IsolatedContext::UnregisterFileSystem(const std::string& filesystem_id) {
   Instance* instance = found->second.get();
   if (instance->IsSinglePathInstance()) {
     auto ids_iter = path_to_id_map_.find(instance->file_info().path);
-    DCHECK(ids_iter != path_to_id_map_.end());
+    CHECK(ids_iter != path_to_id_map_.end());
     ids_iter->second.erase(filesystem_id);
     if (ids_iter->second.empty())
       path_to_id_map_.erase(ids_iter);
@@ -507,11 +518,11 @@ bool IsolatedContext::UnregisterFileSystem(const std::string& filesystem_id) {
 std::string IsolatedContext::GetNewFileSystemId() const {
   // Returns an arbitrary random string which must be unique in the map.
   lock_.AssertAcquired();
-  uint32_t random_data[4];
+  uint8_t random_data[16];
   std::string id;
   do {
-    base::RandBytes(random_data, sizeof(random_data));
-    id = base::HexEncode(random_data, sizeof(random_data));
+    base::RandBytes(random_data);
+    id = base::HexEncode(random_data);
   } while (base::Contains(instance_map_, id));
   return id;
 }

@@ -139,7 +139,8 @@ egl::Error DisplayGL::makeCurrent(egl::Display *display,
         return egl::NoError();
     }
 
-    // Pause transform feedback before making a new surface current, to workaround anglebug.com/1426
+    // Pause transform feedback before making a new surface current, to workaround
+    // anglebug.com/42260421
     ContextGL *glContext = GetImplAs<ContextGL>(context);
     glContext->getStateManager()->pauseTransformFeedback();
 
@@ -157,16 +158,14 @@ gl::Version DisplayGL::getMaxConformantESVersion() const
     return std::min(getMaxSupportedESVersion(), gl::Version(3, 0));
 }
 
-Optional<gl::Version> DisplayGL::getMaxSupportedDesktopVersion() const
-{
-    return Optional<gl::Version>::Invalid();
-}
-
 void DisplayGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
 {
     // Advertise robust resource initialization on all OpenGL backends for testing even though it is
     // not fully implemented.
     outExtensions->robustResourceInitializationANGLE = true;
+
+    outExtensions->createContextPassthroughShadersANGLE =
+        getRenderer()->getFunctions()->standard == STANDARD_GL_ES;
 }
 
 egl::Error DisplayGL::makeCurrentSurfaceless(gl::Context *context)

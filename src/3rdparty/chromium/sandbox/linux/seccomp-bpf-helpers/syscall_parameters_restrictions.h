@@ -5,6 +5,7 @@
 #ifndef SANDBOX_LINUX_SECCOMP_BPF_HELPERS_SYSCALL_PARAMETERS_RESTRICTIONS_H_
 #define SANDBOX_LINUX_SECCOMP_BPF_HELPERS_SYSCALL_PARAMETERS_RESTRICTIONS_H_
 
+#include <stdint.h>
 #include <unistd.h>
 
 #include "build/build_config.h"
@@ -38,7 +39,12 @@ SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictIoctl();
 // Only allow: MAP_SHARED | MAP_PRIVATE | MAP_ANONYMOUS |
 // MAP_STACK | MAP_NORESERVE | MAP_FIXED | MAP_DENYWRITE.
 // Crash if any other flag is used.
-SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMmapFlags();
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMmapFlags(
+    uint64_t extra_allowed_mask = 0);
+
+// Restrict the flags argument in mremap(2).
+// Crash if any flags are used.
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMremapFlagsForODML();
 
 // Restrict the prot argument in mprotect(2).
 // Only allow: PROT_READ | PROT_WRITE | PROT_EXEC.
@@ -126,6 +132,14 @@ SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictGoogle3Threading(int sysno);
 // Restrict the flags of pipe2().
 SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictPipe2();
 
+// Restrict the flags of send(), sendfrom(), sendmsg(), and sendmmsg(), syscalls
+// that send a message to a socket. The flags are allowlisted, but in
+// particular, this denies MSG_OOB.
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictSockSendFlags(int sysno);
+
+// Restrict the flags of memfd_create(). The flags are allowlistred, but in
+// particular, this denies MFD_HUGETLB.
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMemfdCreate();
 }  // namespace sandbox.
 
 #endif  // SANDBOX_LINUX_SECCOMP_BPF_HELPERS_SYSCALL_PARAMETERS_RESTRICTIONS_H_

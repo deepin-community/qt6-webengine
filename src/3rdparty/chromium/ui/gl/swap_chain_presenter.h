@@ -5,12 +5,15 @@
 #ifndef UI_GL_SWAP_CHAIN_PRESENTER_H_
 #define UI_GL_SWAP_CHAIN_PRESENTER_H_
 
+#include <windows.h>
+
 #include <d3d11.h>
 #include <dcomp.h>
-#include <windows.h>
 #include <wrl/client.h>
 
+#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/time/time.h"
@@ -18,8 +21,12 @@
 #include "ui/gfx/color_space.h"
 #include "ui/gl/dc_layer_overlay_params.h"
 #include "ui/gl/dc_layer_tree.h"
+#include "ui/gl/gl_export.h"
 
 namespace gl {
+
+// Get the size of the monitor on which the window handle is displayed.
+gfx::Size GetMonitorSizeForWindow(HWND window);
 
 // SwapChainPresenter holds a swap chain, direct composition visuals, and other
 // associated resources for a single overlay layer.  It is updated by calling
@@ -28,7 +35,7 @@ class SwapChainPresenter : public base::PowerStateObserver {
  public:
   SwapChainPresenter(DCLayerTree* layer_tree,
                      Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device,
-                     Microsoft::WRL::ComPtr<IDCompositionDevice2> dcomp_device);
+                     Microsoft::WRL::ComPtr<IDCompositionDevice3> dcomp_device);
 
   SwapChainPresenter(const SwapChainPresenter&) = delete;
   SwapChainPresenter& operator=(const SwapChainPresenter&) = delete;
@@ -44,15 +51,41 @@ class SwapChainPresenter : public base::PowerStateObserver {
                           gfx::Transform* visual_transform,
                           gfx::Rect* visual_clip_rect);
 
+  // Attempt to disable the desktop primary plane by expanding the video swap
+  // chain to fill `monitor_size`, fully occluding any content behind it with
+  // solid black.
+  bool TryDisablePrimaryPlane(const gfx::Size& monitor_size,
+                              const DCLayerOverlayParams& overlay);
+
+  // Finalize the presentation and return the DComp visual content representing
+  // the swap chain.
+  Microsoft::WRL::ComPtr<IUnknown> FinishPresentToSwapChain();
+
   const Microsoft::WRL::ComPtr<IDXGISwapChain1>& swap_chain() const {
     return swap_chain_;
   }
 
-  const Microsoft::WRL::ComPtr<IUnknown>& content() const { return content_; }
+  const Microsoft::WRL::ComPtr<IUnknown>& content_for_testing() const {
+    return content_;
+  }
 
   const gfx::Size& content_size() const { return content_size_; }
 
-  void SetFrameRate(float frame_rate);
+  // Valid HANDLE is needed for testing to create an IDCompositionSurface with
+  // `CreateSurfaceFromHandle`.
+  GL_EXPORT static bool CreateSurfaceHandleHelperForTesting(HANDLE* handle);
+
+  // This only differs from `VideoPresentationMode` because that does not
+  // include MF surface proxy.
+  enum class PresentationMode {
+    kDecodeSwapChain,
+    kVpBlt,
+    kVpBltWithStagingTexture,
+    kMfSurfaceProxy,
+  };
+
+  // Get the presentation mode of the last successfully presented frame.
+  PresentationMode GetLastPresentationMode() const;
 
  private:
   // Mapped to DirectCompositonVideoPresentationMode UMA enum.  Do not remove or
@@ -90,9 +123,9 @@ class SwapChainPresenter : public base::PowerStateObserver {
 
   // Upload given YUV buffers to an NV12 texture that can be used to create
   // video processor input view.  Returns nullptr on failure.
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> UploadVideoImage(
+  UNSAFE_BUFFER_USAGE Microsoft::WRL::ComPtr<ID3D11Texture2D> UploadVideoImage(
       const gfx::Size& size,
-      const uint8_t* nv12_pixmap,
+      base::span<const uint8_t> shm_video_pixmap,
       size_t stride);
 
   // Releases resources that might hold indirect references to the swap chain.
@@ -108,7 +141,8 @@ class SwapChainPresenter : public base::PowerStateObserver {
   // Returns DXGI format that swap chain uses.
   // This changes over time based on stats recorded in |presentation_history|.
   DXGI_FORMAT GetSwapChainFormat(gfx::ProtectedVideoType protected_video_type,
-                                 bool content_is_hdr);
+                                 bool use_hdr_swap_chain,
+                                 bool use_p010_for_sdr_swap_chain);
 
   // Perform a blit using video processor from given input texture to swap chain
   // backbuffer. |input_texture| is the input texture (array), and |input_level|
@@ -120,7 +154,7 @@ class SwapChainPresenter : public base::PowerStateObserver {
       UINT input_level,
       const gfx::Rect& content_rect,
       const gfx::ColorSpace& src_color_space,
-      absl::optional<DXGI_HDR_METADATA_HDR10> stream_hdr_metadata,
+      std::optional<DXGI_HDR_METADATA_HDR10> stream_hdr_metadata,
       bool use_vp_auto_hdr);
 
   // Get the size of the monitor on which the window handle is displayed.
@@ -132,7 +166,7 @@ class SwapChainPresenter : public base::PowerStateObserver {
   // and DWM will take care of the letterboxing info setup automatically.
   void SetTargetToFullScreen(gfx::Transform* visual_transform,
                              gfx::Rect* visual_clip_rect,
-                             const absl::optional<gfx::Rect>& target_rect);
+                             const std::optional<gfx::Rect>& target_rect);
 
   // Takes in input DC layer params and the video overlay quad. The swap chain
   // backbuffer size will be rounded to the monitor size if it is within a close
@@ -144,34 +178,17 @@ class SwapChainPresenter : public base::PowerStateObserver {
   // as in AdjustTargetForFullScreenLetterboxing.
   void AdjustTargetToOptimalSizeIfNeeded(
       const DCLayerOverlayParams& params,
-      const gfx::Rect& overlay_onscreen_rect,
-      gfx::Size* swap_chain_size,
-      gfx::Transform* visual_transform,
-      gfx::Rect* visual_clip_rect,
-      absl::optional<gfx::Size>* dest_size,
-      absl::optional<gfx::Rect>* target_rect) const;
-
-  void AdjustTargetToOptimalSizeIfNeededF(
-      const DCLayerOverlayParams& params,
       const gfx::RectF& overlay_onscreen_rect,
       gfx::SizeF* swap_chain_size,
       gfx::Transform* visual_transform,
       gfx::RectF* visual_clip_rect,
-      absl::optional<gfx::SizeF>* dest_size,
-      absl::optional<gfx::RectF>* target_rect) const;
+      std::optional<gfx::SizeF>* dest_size,
+      std::optional<gfx::RectF>* target_rect) const;
 
   // If the swap chain size is very close to the screen size but not exactly the
   // same, the swap chain should be adjusted to fit the screen size in order to
   // get the full screen DWM optimizations.
   bool AdjustTargetToFullScreenSizeIfNeeded(
-      const gfx::Size& monitor_size,
-      const DCLayerOverlayParams& params,
-      const gfx::Rect& overlay_onscreen_rect,
-      gfx::Size* swap_chain_size,
-      gfx::Transform* visual_transform,
-      gfx::Rect* visual_clip_rect) const;
-
-  bool AdjustTargetToFullScreenSizeIfNeededF(
       const gfx::SizeF& monitor_size,
       const DCLayerOverlayParams& params,
       const gfx::RectF& overlay_onscreen_rect,
@@ -188,39 +205,21 @@ class SwapChainPresenter : public base::PowerStateObserver {
   // Desktop Window Manager(DWM) take over the letterboxing/positioning job, and
   // turn off the topmost desktop plane at the same time.
   void AdjustTargetForFullScreenLetterboxing(
-      const gfx::Size& monitor_size,
-      const DCLayerOverlayParams& params,
-      const gfx::Rect& overlay_onscreen_rect,
-      gfx::Size* swap_chain_size,
-      gfx::Transform* visual_transform,
-      gfx::Rect* visual_clip_rect,
-      absl::optional<gfx::Size>* dest_size,
-      absl::optional<gfx::Rect>* target_rect) const;
-
-  void AdjustTargetForFullScreenLetterboxingF(
       const gfx::SizeF& monitor_size,
       const DCLayerOverlayParams& params,
       const gfx::RectF& overlay_onscreen_rect,
       gfx::SizeF* swap_chain_size,
       gfx::Transform* visual_transform,
       gfx::RectF* visual_clip_rect,
-      absl::optional<gfx::SizeF>* dest_size,
-      absl::optional<gfx::RectF>* target_rect) const;
+      std::optional<gfx::SizeF>* dest_size,
+      std::optional<gfx::RectF>* target_rect) const;
 
   // Returns optimal swap chain size for given layer.
-  gfx::Size CalculateSwapChainSize(
-      const DCLayerOverlayParams& params,
-      gfx::Transform* visual_transform,
-      gfx::Rect* visual_clip_rect,
-      absl::optional<gfx::Size>* dest_size,
-      absl::optional<gfx::Rect>* target_rect) const;
-
-  gfx::Size CalculateSwapChainSizeF(
-      const DCLayerOverlayParams& params,
-      gfx::Transform* visual_transform,
-      gfx::Rect* visual_clip_rect,
-      absl::optional<gfx::Size>* dest_size,
-      absl::optional<gfx::Rect>* target_rect) const;
+  gfx::Size CalculateSwapChainSize(const DCLayerOverlayParams& params,
+                                   gfx::Transform* visual_transform,
+                                   gfx::Rect* visual_clip_rect,
+                                   std::optional<gfx::Size>* dest_size,
+                                   std::optional<gfx::Rect>* target_rect) const;
 
   // Try presenting to a decode swap chain based on various conditions such as
   // global state (e.g. finch, NV12 support), texture flags, and transform.
@@ -233,11 +232,11 @@ class SwapChainPresenter : public base::PowerStateObserver {
       const gfx::Size& swap_chain_size,
       DXGI_FORMAT swap_chain_format,
       const gfx::Transform& transform_to_root,
-      const absl::optional<gfx::Size> dest_size,
-      const absl::optional<gfx::Rect> target_rect);
+      const std::optional<gfx::Size> dest_size,
+      const std::optional<gfx::Rect> target_rect);
 
   // Present to a decode swap chain created from compatible video decoder
-  // buffers using given |nv12_image|.
+  // buffers using given |texture|.
   // Use |dest_size| for destination size and |target_rect| for target rectangle
   // if valid. Otherwise, |swap_chain_size| would be used instead.
   // Returns true on success.
@@ -246,8 +245,8 @@ class SwapChainPresenter : public base::PowerStateObserver {
                                 const gfx::ColorSpace& color_space,
                                 const gfx::Rect& content_rect,
                                 const gfx::Size& swap_chain_size,
-                                const absl::optional<gfx::Size> dest_size,
-                                const absl::optional<gfx::Rect> target_rect);
+                                const std::optional<gfx::Size> dest_size,
+                                const std::optional<gfx::Rect> target_rect);
 
   // Records presentation statistics in UMA and traces (for pixel tests) for the
   // current swap chain which could either be a regular flip swap chain or a
@@ -255,7 +254,8 @@ class SwapChainPresenter : public base::PowerStateObserver {
   void RecordPresentationStatistics();
 
   // base::PowerStateObserver
-  void OnPowerStateChange(bool on_battery_power) override;
+  void OnBatteryPowerStatusChange(
+      PowerStateObserver::BatteryPowerStatus battery_power_status) override;
 
   // If connected with a power source, let the Intel video processor to do
   // the upscaling because it produces better results.
@@ -286,8 +286,18 @@ class SwapChainPresenter : public base::PowerStateObserver {
       Microsoft::WRL::ComPtr<ID3D11VideoContext1> context1,
       const gfx::ColorSpace& input_color_space);
 
+  // Returns `true` if the last successfully presented frame was a Media
+  // Foundation surface proxy.
+  bool IsMediaFoundationSurfaceProxy() const;
+
   // The Direct Composition surface handle from MediaFoundationRenderer.
   HANDLE dcomp_surface_handle_ = INVALID_HANDLE_VALUE;
+
+  // If set, represents the pending rect meant to be passed to
+  // `DCOMPSurfaceProxy::SetRect` when we finalize the current commit. This is
+  // needed because the full screen optimization can possibly adjust this rect,
+  // but still only want to call `SetRect` once per frame.
+  std::optional<gfx::Rect> pending_dcomp_surface_rect_in_window_;
 
   // Layer tree instance that owns this swap chain presenter.
   raw_ptr<DCLayerTree> layer_tree_ = nullptr;
@@ -332,7 +342,7 @@ class SwapChainPresenter : public base::PowerStateObserver {
   gfx::Size content_size_;
 
   // Overlay image that was presented in the last frame.
-  absl::optional<DCLayerOverlayImage> last_overlay_image_;
+  std::optional<DCLayerOverlayImage> last_overlay_image_;
   // Desktop plane removal status from the presentation of last frame.
   bool last_desktop_plane_removed_ = false;
 
@@ -344,7 +354,7 @@ class SwapChainPresenter : public base::PowerStateObserver {
   gfx::Size staging_texture_size_;
 
   Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device_;
-  Microsoft::WRL::ComPtr<IDCompositionDevice2> dcomp_device_;
+  Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> dcomp_device_;
   Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain_;
 
   // Handle returned by DCompositionCreateSurfaceHandle() used to create YUV
@@ -365,9 +375,6 @@ class SwapChainPresenter : public base::PowerStateObserver {
   bool enable_vp_super_resolution_ = false;
 
   UINT gpu_vendor_id_ = 0;
-
-  // Number of frames per second.
-  float frame_rate_ = 0.f;
 };
 
 }  // namespace gl

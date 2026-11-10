@@ -44,12 +44,16 @@
 
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 
+#include <optional>
 #include <utility>
 
 #include "base/numerics/checked_math.h"
 #include "base/task/single_thread_task_runner.h"
 #include "cc/animation/animation_timeline.h"
+#include "cc/base/features.h"
 #include "cc/input/main_thread_scrolling_reason.h"
+#include "cc/input/scroll_snap_data.h"
+#include "cc/input/scroll_utils.h"
 #include "cc/input/snap_selection_strategy.h"
 #include "cc/layers/picture_layer.h"
 #include "third_party/blink/public/common/features.h"
@@ -60,11 +64,14 @@
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 #include "third_party/blink/renderer/core/content_capture/content_capture_manager.h"
+#include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/css/color_scheme_flags.h"
+#include "third_party/blink/renderer/core/css/container_query_evaluator.h"
+#include "third_party/blink/renderer/core/css/snapped_query_scroll_snapshot.h"
 #include "third_party/blink/renderer/core/css/style_request.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/node.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
+#include "third_party/blink/renderer/core/dom/scroll_marker_group_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
@@ -76,6 +83,8 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
+#include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
@@ -83,11 +92,13 @@
 #include "third_party/blink/renderer/core/layout/custom_scrollbar.h"
 #include "third_party/blink/renderer/core/layout/layout_custom_scrollbar_part.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/legacy_layout_tree_walking.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/page/autoscroll_controller.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -102,21 +113,30 @@
 #include "third_party/blink/renderer/core/paint/paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_fragment.h"
+#include "third_party/blink/renderer/core/scroll/programmatic_scroll_animator.h"
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/core/scroll/scroll_animator_base.h"
+#include "third_party/blink/renderer/core/scroll/scroll_into_view_util.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
-#include "third_party/blink/renderer/core/scroll/smooth_scroll_sequencer.h"
+#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/event_timing.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace blink {
 
 PaintLayerScrollableAreaRareData::PaintLayerScrollableAreaRareData() = default;
+
+void PaintLayerScrollableAreaRareData::Trace(Visitor* visitor) const {
+  visitor->Trace(snapped_query_snapshot_);
+}
 
 const int kResizerControlExpandRatioForTouch = 2;
 
@@ -138,7 +158,6 @@ PaintLayerScrollableArea::PaintLayerScrollableArea(PaintLayer& layer)
       is_scrollbar_freeze_root_(false),
       is_horizontal_scrollbar_frozen_(false),
       is_vertical_scrollbar_frozen_(false),
-      should_scroll_on_main_thread_(true),
       scrollbar_manager_(*this),
       has_last_committed_scroll_offset_(false),
       scroll_corner_(nullptr),
@@ -151,6 +170,10 @@ PaintLayerScrollableArea::PaintLayerScrollableArea(PaintLayer& layer)
     if (!scroll_offset_.IsZero())
       GetScrollAnimator().SetCurrentOffset(scroll_offset_);
     element->SetSavedLayerScrollOffset(ScrollOffset());
+  }
+
+  if (LocalFrameView* frame_view = GetLayoutBox()->GetFrameView()) {
+    frame_view->AddScrollableArea(*this);
   }
 }
 
@@ -173,18 +196,20 @@ void PaintLayerScrollableArea::DidCompositorScroll(
 void PaintLayerScrollableArea::DisposeImpl() {
   rare_data_.Clear();
 
+  for (ScrollMarkerGroupData* scroll_marker_group :
+       scroll_marker_group_data_set_) {
+    scroll_marker_group->SetNeedsScrollersMapUpdate();
+    GetLayoutBox()->GetDocument().SetNeedsScrollTargetGroupsMapUpdate();
+  }
   if (InResizeMode() && !GetLayoutBox()->DocumentBeingDestroyed()) {
     if (LocalFrame* frame = GetLayoutBox()->GetFrame())
       frame->GetEventHandler().ResizeScrollableAreaDestroyed();
   }
 
-  if (LocalFrame* frame = GetLayoutBox()->GetFrame()) {
-    if (LocalFrameView* frame_view = frame->View()) {
-      frame_view->RemoveScrollAnchoringScrollableArea(this);
-      frame_view->RemoveUserScrollableArea(this);
-      frame_view->RemoveAnimatingScrollableArea(this);
-      frame_view->RemovePendingSnapUpdate(this);
-    }
+  if (LocalFrameView* frame_view = GetLayoutBox()->GetFrameView()) {
+    frame_view->RemoveScrollableArea(*this);
+    frame_view->RemovePendingStickyUpdate(this);
+    probe::UpdateScrollableFlag(GetLayoutBox()->GetNode(), false);
   }
 
   if (!GetLayoutBox()->DocumentBeingDestroyed()) {
@@ -213,9 +238,6 @@ void PaintLayerScrollableArea::DisposeImpl() {
 
   ClearScrollableArea();
 
-  if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer())
-    sequencer->DidDisposeScrollableArea(*this);
-
   RunScrollCompleteCallbacks(ScrollableArea::ScrollCompletionMode::kFinished);
 
   layer_ = nullptr;
@@ -228,13 +250,11 @@ void PaintLayerScrollableArea::ApplyPendingHistoryRestoreScrollOffset() {
   // TODO(pnoland): attempt to restore the anchor in more places than this.
   // Anchor-based restore should allow for earlier restoration.
   bool did_restore = RestoreScrollAnchor(
-      {pending_view_state_->scroll_anchor_data_.selector_,
-       LayoutPoint(pending_view_state_->scroll_anchor_data_.offset_),
-       pending_view_state_->scroll_anchor_data_.simhash_});
+      {pending_view_state_->state.scroll_anchor_data_, *this});
   if (!did_restore) {
-    SetScrollOffset(pending_view_state_->scroll_offset_,
+    SetScrollOffset(pending_view_state_->state.scroll_offset_,
                     mojom::blink::ScrollType::kProgrammatic,
-                    mojom::blink::ScrollBehavior::kAuto);
+                    pending_view_state_->scroll_behavior);
   }
 
   pending_view_state_.reset();
@@ -254,6 +274,7 @@ void PaintLayerScrollableArea::Trace(Visitor* visitor) const {
   visitor->Trace(scroll_corner_display_item_client_);
   visitor->Trace(layer_);
   visitor->Trace(rare_data_);
+  visitor->Trace(scroll_marker_group_data_set_);
   ScrollableArea::Trace(visitor);
 }
 
@@ -267,14 +288,6 @@ ChromeClient* PaintLayerScrollableArea::GetChromeClient() const {
   if (Page* page = GetLayoutBox()->GetFrame()->GetPage())
     return &page->GetChromeClient();
   return nullptr;
-}
-
-SmoothScrollSequencer* PaintLayerScrollableArea::GetSmoothScrollSequencer()
-    const {
-  if (HasBeenDisposed())
-    return nullptr;
-
-  return GetLayoutBox()->GetFrame()->GetSmoothScrollSequencer();
 }
 
 bool PaintLayerScrollableArea::IsActive() const {
@@ -291,8 +304,8 @@ static int CornerStart(const LayoutBox& box,
                        int max_x,
                        int thickness) {
   if (box.ShouldPlaceBlockDirectionScrollbarOnLogicalLeft())
-    return min_x + box.StyleRef().BorderLeftWidth().ToFloat();
-  return max_x - thickness - box.StyleRef().BorderRightWidth().ToFloat();
+    return min_x + box.StyleRef().BorderLeftWidth();
+  return max_x - thickness - box.StyleRef().BorderRightWidth();
 }
 
 gfx::Rect PaintLayerScrollableArea::CornerRect() const {
@@ -318,7 +331,7 @@ gfx::Rect PaintLayerScrollableArea::CornerRect() const {
   return gfx::Rect(CornerStart(*GetLayoutBox(), 0, border_box_size.width(),
                                horizontal_thickness),
                    border_box_size.height() - vertical_thickness -
-                       GetLayoutBox()->StyleRef().BorderBottomWidth().ToFloat(),
+                       GetLayoutBox()->StyleRef().BorderBottomWidth(),
                    horizontal_thickness, vertical_thickness);
 }
 
@@ -425,10 +438,7 @@ void PaintLayerScrollableArea::UpdateScrollOffset(
 
   // The ScrollOffsetTranslation paint property depends on the scroll offset.
   // (see: PaintPropertyTreeBuilder::UpdateScrollAndScrollTranslation).
-  // Intersection observation cached rects affected by the scroll are not
-  // invalidated because it's hard to find all of them. Validity of cached
-  // rects is checked in IntersectionGeometry::PrepareComputeGeometry().
-  GetLayoutBox()->SetNeedsPaintPropertyUpdatePreservingCachedRects();
+  GetLayoutBox()->SetNeedsPaintPropertyUpdate();
   frame_view->UpdateIntersectionObservationStateOnScroll(new_offset -
                                                          scroll_offset_);
 
@@ -446,7 +456,7 @@ void PaintLayerScrollableArea::UpdateScrollOffset(
   // should be impacted by a scroll).
   if (!frame_view->IsInPerformLayout()) {
     // Update regions, scrolling may change the clip of a particular region.
-    frame_view->UpdateDocumentAnnotatedRegions();
+    frame_view->UpdateDocumentDraggableRegions();
 
     // As a performance optimization, the scroll offset of the root layer is
     // not included in EmbeddedContentView's stored frame rect, so there is no
@@ -490,6 +500,12 @@ void PaintLayerScrollableArea::UpdateScrollOffset(
   }
 
   GetLayoutBox()->View()->ClearHitTestCache();
+
+  if (LocalDOMWindow* current_window = frame->DomWindow()) {
+    WindowPerformance* window_performance =
+        DOMWindowPerformance::performance(*current_window);
+    window_performance->OnPageScroll();
+  }
 
   // Inform the FrameLoader of the new scroll position, so it can be restored
   // when navigating back.
@@ -575,7 +591,7 @@ bool PaintLayerScrollableArea::BackgroundNeedsRepaintOnScroll() const {
 }
 
 gfx::Vector2d PaintLayerScrollableArea::ScrollOffsetInt() const {
-  return gfx::ToFlooredVector2d(scroll_offset_);
+  return SnapScrollOffsetToPhysicalPixels(scroll_offset_);
 }
 
 ScrollOffset PaintLayerScrollableArea::GetScrollOffset() const {
@@ -714,6 +730,8 @@ void PaintLayerScrollableArea::ContentsResized() {
   // Need to update the bounds of the scroll property.
   GetLayoutBox()->SetNeedsPaintPropertyUpdate();
   Layer()->SetNeedsCompositingInputsUpdate();
+  GetLayoutBox()->GetFrameView()->SetIntersectionObservationState(
+      LocalFrameView::kDesired);
 }
 
 gfx::Point PaintLayerScrollableArea::LastKnownMousePosition() const {
@@ -812,9 +830,6 @@ bool PaintLayerScrollableArea::UserInputScrollable(
     return false;
   }
 
-  if (GetLayoutBox()->IsIntrinsicallyScrollable(orientation))
-    return true;
-
   if (IsA<LayoutView>(GetLayoutBox())) {
     Document& document = GetLayoutBox()->GetDocument();
     Element* fullscreen_element = Fullscreen::FullscreenElementFrom(document);
@@ -840,20 +855,6 @@ bool PaintLayerScrollableArea::UserInputScrollable(
 
 bool PaintLayerScrollableArea::ShouldPlaceVerticalScrollbarOnLeft() const {
   return GetLayoutBox()->ShouldPlaceBlockDirectionScrollbarOnLogicalLeft();
-}
-
-int PaintLayerScrollableArea::PageStep(ScrollbarOrientation orientation) const {
-  // Paging scroll operations should take scroll-padding into account [1]. So we
-  // use the snapport rect to calculate the page step instead of the visible
-  // rect.
-  // [1] https://drafts.csswg.org/css-scroll-snap/#scroll-padding
-  gfx::Size snapport_size = VisibleScrollSnapportRect().PixelSnappedSize();
-  int length = (orientation == kHorizontalScrollbar) ? snapport_size.width()
-                                                     : snapport_size.height();
-  int min_page_step = static_cast<float>(length) *
-                      ScrollableArea::MinFractionToStepWhenPaging();
-  int page_step = max(min_page_step, length - MaxOverlapBetweenPages());
-  return max(page_step, 1);
 }
 
 bool PaintLayerScrollableArea::IsRootFrameLayoutViewport() const {
@@ -891,11 +892,42 @@ LayoutUnit PaintLayerScrollableArea::ScrollHeight() const {
   return overflow_rect_.Height();
 }
 
+gfx::Transform PaintLayerScrollableArea::InitializeResizeTransform(
+    const gfx::Point& absolute_drag_start_point) {
+  // Here we set up a transform that represents the conversion from a
+  // mouse coordinate to the resulting size of the resized element.  We
+  // want to cache this transform now since size changes to the element
+  // that we're resizing could cause its position to change in arbitrary
+  // ways, but we want the size changes to be predictable results from
+  // the size of a drag (even if the mouse position no longer matches
+  // the position of the drag corner).
+  gfx::Transform resize_transform = GetLayoutBox()->LocalToAbsoluteTransform();
+
+  if (GetLayoutBox()->ShouldPlaceBlockDirectionScrollbarOnLogicalLeft()) {
+    // The size is relative to the original right edge of the box,
+    // rather than its original left edge.
+    resize_transform.Translate(PixelSnappedBorderBoxSize().width(), 0);
+    // The size grows rightward rather than growing leftward.
+    resize_transform.Scale(-1.0, 1.0);
+  }
+
+  resize_transform = resize_transform.InverseOrIdentity();
+
+  // We need to account for the distance that the drag start position is away
+  // from the point that represents the border-box size of the box.
+  //
+  // TODO(dbaron): This probably shouldn't round in element space (which
+  // could be multiple pixels in physical space, given transforms).  (Removing
+  // that rounding does require rebaselining some tests.)
+  gfx::Point drag_start_position = ToRoundedPoint(
+      resize_transform.ProjectPoint(gfx::PointF(absolute_drag_start_point)));
+  PhysicalSize current_size = GetLayoutBox()->Size();
+  resize_transform.PostTranslate(current_size.width - drag_start_position.x(),
+                                 current_size.height - drag_start_position.y());
+  return resize_transform;
+}
+
 void PaintLayerScrollableArea::UpdateScrollOrigin() {
-  // This should do nothing prior to first layout; the if-clause will catch
-  // that.
-  if (overflow_rect_.IsEmpty())
-    return;
   PhysicalRect scrollable_overflow = overflow_rect_;
   scrollable_overflow.Move(-PhysicalOffset(GetLayoutBox()->BorderLeft(),
                                            GetLayoutBox()->BorderTop()));
@@ -1011,6 +1043,7 @@ void PaintLayerScrollableArea::UpdateAfterLayout() {
   if (scrollbars_will_change) {
     SetHasHorizontalScrollbar(needs_horizontal_scrollbar);
     SetHasVerticalScrollbar(needs_vertical_scrollbar);
+    UpdateScrollOrigin();
 
     // If we change scrollbars on the layout viewport, the visual viewport
     // needs to update paint properties to account for the correct
@@ -1029,8 +1062,9 @@ void PaintLayerScrollableArea::UpdateAfterLayout() {
     Layer()->UpdateSelfPaintingLayer();
 
     // Force an update since we know the scrollbars have changed things.
-    if (GetLayoutBox()->GetDocument().HasAnnotatedRegions())
-      GetLayoutBox()->GetDocument().SetAnnotatedRegionsDirty(true);
+    if (GetLayoutBox()->GetDocument().HasDraggableRegions()) {
+      GetLayoutBox()->GetDocument().SetDraggableRegionsDirty(true);
+    }
 
     // Our proprietary overflow: overlay value doesn't trigger a layout.
     if (((horizontal_scrollbar_should_change &&
@@ -1077,11 +1111,11 @@ void PaintLayerScrollableArea::UpdateAfterLayout() {
 
   PositionOverflowControls();
 
-  if (RuntimeEnabledFeatures::CSSScrollStartEnabled()) {
-    if (IsApplyingScrollStart()) {
-      ApplyScrollStart();
-    }
+  if (IsApplyingScrollStart()) {
+    ApplyScrollStart();
   }
+
+  UpdateScrollMarkers();
 }
 
 Element* PaintLayerScrollableArea::GetElementForScrollStart() const {
@@ -1124,10 +1158,12 @@ bool PaintLayerScrollableArea::IsApplyingScrollStart() const {
     if (element->HasBeenExplicitlyScrolled()) {
       return false;
     }
-    if (GetScrollStartTargets()) {
+    if (RuntimeEnabledFeatures::CSSScrollInitialTargetEnabled() &&
+        GetScrollInitialTarget()) {
       return true;
     }
-    return !ScrollStartIsDefault();
+    return RuntimeEnabledFeatures::CSSScrollStartEnabled() &&
+           !ScrollStartIsDefault();
   }
   return false;
 }
@@ -1177,8 +1213,15 @@ void PaintLayerScrollableArea::ClampScrollOffsetAfterOverflowChangeInternal() {
   if (ScrollOriginChanged()) {
     SetScrollOffsetUnconditionally(ClampScrollOffset(GetScrollOffset()));
   } else {
+    // Avoid unpinning the associated scroll-marker group's selected marker by
+    // indicating that this is a |targeted_scroll| if the group's selected
+    // marker is currently pinned.
+    ScrollMarkerGroupPseudoElement* group = GetScrollMarkerGroup();
+    bool targeted_scroll = group && group->SelectedMarkerIsPinned();
     ScrollableArea::SetScrollOffset(GetScrollOffset(),
-                                    mojom::blink::ScrollType::kClamping);
+                                    mojom::blink::ScrollType::kClamping,
+                                    mojom::blink::ScrollBehavior::kInstant,
+                                    ScrollCallback(), targeted_scroll);
   }
 
   SetNeedsScrollOffsetClamp(false);
@@ -1205,6 +1248,7 @@ void PaintLayerScrollableArea::DidChangeGlobalRootScroller() {
                               needs_vertical_scrollbar);
     SetHasHorizontalScrollbar(needs_horizontal_scrollbar);
     SetHasVerticalScrollbar(needs_vertical_scrollbar);
+    UpdateScrollOrigin();
   }
 
   // Recalculate the snap container data since the scrolling behaviour for this
@@ -1251,11 +1295,27 @@ mojom::blink::ScrollBehavior PaintLayerScrollableArea::ScrollBehaviorStyle()
 
 mojom::blink::ColorScheme PaintLayerScrollableArea::UsedColorSchemeScrollbars()
     const {
+  const auto* layout_box = GetLayoutBox();
+  CHECK(layout_box);
+
+  // Use dark color scheme for root non-overlay scrollbars if all of the
+  // following conditions are met:
+  //   - color scheme flags are normal (including cases when flags are not
+  //     specified),
+  //   - the preferred color scheme is dark (OS-based),
+  //   - the browser preferred color scheme is dark (based on the lightness of
+  //     the toolbar's color).
   if (IsGlobalRootNonOverlayScroller() &&
-      GetLayoutBox()->StyleRef().ColorSchemeFlagsIsNormal() &&
-      GetLayoutBox()->GetDocument().GetPreferredColorScheme() ==
-          mojom::blink::PreferredColorScheme::kDark) {
-    return mojom::blink::ColorScheme::kDark;
+      layout_box->StyleRef().ColorSchemeFlagsIsNormal()) {
+    const auto& document = layout_box->GetDocument();
+    if (document.GetPreferredColorScheme() ==
+            mojom::blink::PreferredColorScheme::kDark &&
+        document.GetSettings()->GetPreferredRootScrollbarColorScheme() ==
+            mojom::blink::PreferredColorScheme::kDark) {
+      UseCounter::Count(GetLayoutBox()->GetDocument(),
+                        WebFeature::kUsedColorSchemeRootScrollbarsDark);
+      return mojom::blink::ColorScheme::kDark;
+    }
   }
 
   return GetLayoutBox()->StyleRef().UsedColorScheme();
@@ -1284,8 +1344,7 @@ bool PaintLayerScrollableArea::UsedColorSchemeScrollbarsChanged(
 }
 
 bool PaintLayerScrollableArea::IsGlobalRootNonOverlayScroller() const {
-  return RuntimeEnabledFeatures::UsedColorSchemeRootScrollbarsEnabled() &&
-         GetLayoutBox()->IsGlobalRootScroller() &&
+  return GetLayoutBox()->IsGlobalRootScroller() &&
          !GetPageScrollbarTheme().UsesOverlayScrollbars();
 }
 
@@ -1312,6 +1371,24 @@ bool PaintLayerScrollableArea::HasVerticalOverflow() const {
   return ScrollHeight().Round() > client_height.Round();
 }
 
+bool PaintLayerScrollableArea::CanPropagateScroll() const {
+  if (!base::FeatureList::IsEnabled(
+          ::features::kOverscrollBehaviorRespectedOnAllScrollContainers)) {
+    return true;
+  }
+  auto* box = GetLayoutBox();
+  // TODO(crbug.com/425353152): Remove the visibility check.
+  if (!box || !box->IsScrollContainer() ||
+      box->StyleRef().Visibility() != EVisibility::kVisible) {
+    return true;
+  }
+  if (box->StyleRef().OverscrollBehaviorX() != EOverscrollBehavior::kAuto ||
+      box->StyleRef().OverscrollBehaviorY() != EOverscrollBehavior::kAuto) {
+    return false;
+  }
+  return true;
+}
+
 // This function returns true if the given box requires overflow scrollbars (as
 // opposed to the viewport scrollbars managed by VisualViewport).
 static bool CanHaveOverflowScrollbars(const LayoutBox& box) {
@@ -1328,7 +1405,7 @@ void PaintLayerScrollableArea::UpdateAfterStyleChange(
 
   // The scrollbar overlay color theme depends on styles such as the background
   // color and the used color scheme.
-  RecalculateScrollbarOverlayColorTheme();
+  RecalculateOverlayScrollbarColorScheme();
 
   if (NeedsScrollbarReconstruction()) {
     RemoveScrollbarsForReconstruction();
@@ -1456,7 +1533,6 @@ gfx::Vector2d PaintLayerScrollableArea::ScrollbarOffset(
   }
 
   NOTREACHED();
-  return gfx::Vector2d();
 }
 
 static inline const LayoutObject& ScrollbarStyleSource(
@@ -1490,13 +1566,15 @@ static inline const LayoutObject& ScrollbarStyleSource(
     // can scroll.
     Element* body = doc.body();
     if (body && body->GetLayoutObject() && body->GetLayoutObject()->IsBox() &&
-        body->GetLayoutObject()->StyleRef().HasCustomScrollbarStyle())
+        body->GetLayoutObject()->StyleRef().HasCustomScrollbarStyle(body)) {
       return *body->GetLayoutObject();
+    }
 
     // If the <body> didn't have a custom style, then the root element might.
     Element* doc_element = doc.documentElement();
     if (doc_element && doc_element->GetLayoutObject() &&
-        doc_element->GetLayoutObject()->StyleRef().HasCustomScrollbarStyle() &&
+        doc_element->GetLayoutObject()->StyleRef().HasCustomScrollbarStyle(
+            doc_element) &&
         !layout_box.StyleRef().UsesStandardScrollbarStyle()) {
       return *doc_element->GetLayoutObject();
     }
@@ -1543,7 +1621,8 @@ int PaintLayerScrollableArea::ComputeHypotheticalScrollbarThickness(
     return scrollbar->ScrollbarThickness();
 
   const LayoutObject& style_source = ScrollbarStyleSource(*GetLayoutBox());
-  if (style_source.StyleRef().HasCustomScrollbarStyle()) {
+  if (style_source.StyleRef().HasCustomScrollbarStyle(
+          GetElementForScrollStart())) {
     return CustomScrollbar::HypotheticalScrollbarThickness(this, orientation,
                                                            &style_source);
   }
@@ -1552,7 +1631,7 @@ int PaintLayerScrollableArea::ComputeHypotheticalScrollbarThickness(
   if (theme.UsesOverlayScrollbars() && !should_include_overlay_thickness)
     return 0;
   return theme.ScrollbarThickness(ScaleFromDIP(),
-                                  style_source.StyleRef().ScrollbarWidth());
+                                  style_source.StyleRef().UsedScrollbarWidth());
 }
 
 bool PaintLayerScrollableArea::NeedsScrollbarReconstruction() const {
@@ -1561,7 +1640,8 @@ bool PaintLayerScrollableArea::NeedsScrollbarReconstruction() const {
 
   const LayoutObject& style_source = ScrollbarStyleSource(*GetLayoutBox());
   bool needs_custom =
-      style_source.IsBox() && style_source.StyleRef().HasCustomScrollbarStyle();
+      style_source.IsBox() && style_source.StyleRef().HasCustomScrollbarStyle(
+                                  GetElementForScrollStart());
 
   Scrollbar* scrollbars[] = {HorizontalScrollbar(), VerticalScrollbar()};
 
@@ -1592,7 +1672,7 @@ bool PaintLayerScrollableArea::NeedsScrollbarReconstruction() const {
       return true;
 
     EScrollbarWidth current_width = scrollbar->CSSScrollbarWidth();
-    if (current_width != style_source.StyleRef().ScrollbarWidth()) {
+    if (current_width != style_source.StyleRef().UsedScrollbarWidth()) {
       return true;
     }
   }
@@ -1609,7 +1689,8 @@ void PaintLayerScrollableArea::ComputeScrollbarExistence(
       !CanHaveOverflowScrollbars(*GetLayoutBox()) ||
       GetLayoutBox()->GetFrame()->GetSettings()->GetHideScrollbars() ||
       GetLayoutBox()->IsFieldset() || GetLayoutBox()->IsFrameSet() ||
-      GetLayoutBox()->StyleRef().ScrollbarWidth() == EScrollbarWidth::kNone) {
+      GetLayoutBox()->StyleRef().UsedScrollbarWidth() ==
+          EScrollbarWidth::kNone) {
     needs_horizontal_scrollbar = false;
     needs_vertical_scrollbar = false;
     return;
@@ -1646,9 +1727,10 @@ void PaintLayerScrollableArea::ComputeScrollbarExistence(
     // only appear when scrolling, we don't create them if there isn't overflow
     // to scroll. Thus, overlay scrollbars can't be "always on". i.e.
     // |overlay:scroll| behaves like |overlay:auto|.
-    bool has_custom_scrollbar_style = ScrollbarStyleSource(*GetLayoutBox())
-                                          .StyleRef()
-                                          .HasCustomScrollbarStyle();
+    bool has_custom_scrollbar_style =
+        ScrollbarStyleSource(*GetLayoutBox())
+            .StyleRef()
+            .HasCustomScrollbarStyle(GetElementForScrollStart());
     bool will_be_overlay = GetPageScrollbarTheme().UsesOverlayScrollbars() &&
                            !has_custom_scrollbar_style;
     if (will_be_overlay) {
@@ -1748,11 +1830,11 @@ void PaintLayerScrollableArea::RemoveScrollbarsForReconstruction() {
     scrollbar_manager_.SetHasVerticalScrollbar(false);
   }
   UpdateScrollCornerStyle();
-  UpdateScrollOrigin();
 
   // Force an update since we know the scrollbars have changed things.
-  if (GetLayoutBox()->GetDocument().HasAnnotatedRegions())
-    GetLayoutBox()->GetDocument().SetAnnotatedRegionsDirty(true);
+  if (GetLayoutBox()->GetDocument().HasDraggableRegions()) {
+    GetLayoutBox()->GetDocument().SetDraggableRegionsDirty(true);
+  }
 }
 
 CompositorElementId PaintLayerScrollableArea::GetScrollCornerElementId() const {
@@ -1773,8 +1855,6 @@ void PaintLayerScrollableArea::SetHasHorizontalScrollbar(bool has_scrollbar) {
 
   scrollbar_manager_.SetHasHorizontalScrollbar(has_scrollbar);
 
-  UpdateScrollOrigin();
-
   // Destroying or creating one bar can cause our scrollbar corner to come and
   // go. We need to update the opposite scrollbar's style.
   if (HasHorizontalScrollbar())
@@ -1785,8 +1865,9 @@ void PaintLayerScrollableArea::SetHasHorizontalScrollbar(bool has_scrollbar) {
   SetScrollCornerNeedsPaintInvalidation();
 
   // Force an update since we know the scrollbars have changed things.
-  if (GetLayoutBox()->GetDocument().HasAnnotatedRegions())
-    GetLayoutBox()->GetDocument().SetAnnotatedRegionsDirty(true);
+  if (GetLayoutBox()->GetDocument().HasDraggableRegions()) {
+    GetLayoutBox()->GetDocument().SetDraggableRegionsDirty(true);
+  }
 }
 
 void PaintLayerScrollableArea::SetHasVerticalScrollbar(bool has_scrollbar) {
@@ -1807,8 +1888,6 @@ void PaintLayerScrollableArea::SetHasVerticalScrollbar(bool has_scrollbar) {
 
   scrollbar_manager_.SetHasVerticalScrollbar(has_scrollbar);
 
-  UpdateScrollOrigin();
-
   // Destroying or creating one bar can cause our scrollbar corner to come and
   // go. We need to update the opposite scrollbar's style.
   if (HasHorizontalScrollbar())
@@ -1819,8 +1898,9 @@ void PaintLayerScrollableArea::SetHasVerticalScrollbar(bool has_scrollbar) {
   SetScrollCornerNeedsPaintInvalidation();
 
   // Force an update since we know the scrollbars have changed things.
-  if (GetLayoutBox()->GetDocument().HasAnnotatedRegions())
-    GetLayoutBox()->GetDocument().SetAnnotatedRegionsDirty(true);
+  if (GetLayoutBox()->GetDocument().HasDraggableRegions()) {
+    GetLayoutBox()->GetDocument().SetDraggableRegionsDirty(true);
+  }
 }
 
 int PaintLayerScrollableArea::VerticalScrollbarWidth(
@@ -1863,7 +1943,7 @@ const cc::SnapContainerData* PaintLayerScrollableArea::GetSnapContainerData()
 }
 
 void PaintLayerScrollableArea::SetSnapContainerData(
-    absl::optional<cc::SnapContainerData> data) {
+    std::optional<cc::SnapContainerData> data) {
   EnsureRareData().snap_container_data_ = data;
 }
 
@@ -1879,23 +1959,36 @@ bool PaintLayerScrollableArea::SetTargetSnapAreaElementIds(
   return false;
 }
 
-const cc::SnappedTargetData* PaintLayerScrollableArea::GetSnappedTargetData()
-    const {
-  return RareData() && RareData()->snapped_target_data_
-             ? &RareData()->snapped_target_data_.value()
-             : nullptr;
+void PaintLayerScrollableArea::UpdateFocusDataForSnapAreas() {
+  LayoutBox* layout_box = GetLayoutBox();
+  if (!layout_box) {
+    return;
+  }
+  if (!RareData() || !RareData()->snap_container_data_) {
+    return;
+  }
+  std::optional<cc::SnapContainerData>& container_data =
+      RareData()->snap_container_data_;
+  std::map<cc::ElementId, size_t> id_to_index;
+  for (size_t i = 0; i < container_data->size(); i++) {
+    id_to_index.emplace(container_data->at(i).element_id, i);
+  }
+
+  for (auto& fragment : layout_box->PhysicalFragments()) {
+    if (auto* snap_areas = fragment.SnapAreas()) {
+      for (Element* snap_area : *snap_areas) {
+        cc::ElementId element_id =
+            CompositorElementIdFromDOMNodeId(snap_area->GetDomNodeId());
+        container_data->UpdateSnapAreaFocus(id_to_index.at(element_id),
+                                            snap_area->HasFocusWithin());
+      }
+    }
+  }
 }
 
-void PaintLayerScrollableArea::SetSnappedTargetData(
-    absl::optional<cc::SnappedTargetData> data) {
-  EnsureRareData().snapped_target_data_ = data;
-}
-
-const cc::SnappedTargetData*
-PaintLayerScrollableArea::GetSnapChangingTargetData() const {
-  return RareData() && RareData()->snapchanging_target_data_
-             ? &RareData()->snapchanging_target_data_.value()
-             : nullptr;
+std::optional<cc::TargetSnapAreaElementIds>
+PaintLayerScrollableArea::GetScrollsnapchangingTargetIds() const {
+  return RareData() ? RareData()->scrollsnapchanging_target_ids_ : std::nullopt;
 }
 
 const cc::SnapSelectionStrategy* PaintLayerScrollableArea::GetImplSnapStrategy()
@@ -1908,40 +2001,39 @@ void PaintLayerScrollableArea::SetImplSnapStrategy(
   EnsureRareData().impl_snap_strategy_ = std::move(strategy);
 }
 
-absl::optional<gfx::PointF>
+std::optional<cc::SnapPositionData> PaintLayerScrollableArea::GetSnapPosition(
+    const cc::SnapSelectionStrategy& strategy) const {
+  if (!RareData() || !RareData()->snap_container_data_)
+    return std::nullopt;
+
+  const cc::SnapContainerData& data = RareData()->snap_container_data_.value();
+  if (!data.size())
+    return std::nullopt;
+
+  cc::SnapPositionData snap = data.FindSnapPosition(strategy);
+  return std::make_optional(snap);
+}
+
+std::optional<gfx::PointF>
 PaintLayerScrollableArea::GetSnapPositionAndSetTarget(
     const cc::SnapSelectionStrategy& strategy) {
-  if (!RareData() || !RareData()->snap_container_data_)
-    return absl::nullopt;
+  std::optional<cc::SnapPositionData> snap = GetSnapPosition(strategy);
+  if (!snap.has_value()) {
+    return std::nullopt;
+  }
 
+  // Update the target element ids whether we found a snap position or not -
+  // as we may have to clear them if we are no longer snapped.
   cc::SnapContainerData& data = RareData()->snap_container_data_.value();
-  if (!data.size())
-    return absl::nullopt;
-
-  // If the document has a focused element that is coincident with the snap
-  // target, update the snap target to point to the focused element. This
-  // ensures that we stay snapped to the focused element after a relayout.
-  // TODO(crbug.com/1199911): If the focused element is not a snap target but
-  // has an ancestor that is, perhaps the rule should be applied for the
-  // ancestor element.
-  CompositorElementId active_element_id = CompositorElementId();
-  if (auto* active_element = GetDocument()->ActiveElement()) {
-    active_element_id =
-        CompositorElementIdFromDOMNodeId(active_element->GetDomNodeId());
-  }
-
-  absl::optional<gfx::PointF> snap_point;
-  cc::SnapPositionData snap =
-      data.FindSnapPosition(strategy, active_element_id);
-  if (snap.type != cc::SnapPositionData::Type::kNone) {
-    snap_point = gfx::PointF(snap.position.x(), snap.position.y());
-  }
-
-  if (data.SetTargetSnapAreaElementIds(snap.target_element_ids)) {
+  if (data.SetTargetSnapAreaElementIds(snap->target_element_ids)) {
     GetLayoutBox()->SetNeedsPaintPropertyUpdate();
   }
 
-  return snap_point;
+  if (snap->type == cc::SnapPositionData::Type::kNone) {
+    return std::nullopt;
+  }
+
+  return std::make_optional<gfx::PointF>(snap->position);
 }
 
 bool PaintLayerScrollableArea::HasOverflowControls() const {
@@ -2099,6 +2191,12 @@ bool PaintLayerScrollableArea::HitTestOverflowControls(
   }
 
   if (scroll_corner_ && ScrollCornerRect().Contains(local_point)) {
+    if (GetLayoutBox() && GetLayoutBox()->GetFrame()) {
+      base::debug::CrashKeyString* crash_key =
+          GetLayoutBox()->GetFrame()->GetEventHandler().CrashKeyForBug1519197();
+      base::debug::SetCrashKeyString(crash_key,
+                                     GetLayoutBox()->DebugName().Utf8());
+    }
     result.SetIsOverScrollCorner(true);
     return true;
   }
@@ -2137,8 +2235,9 @@ bool PaintLayerScrollableArea::IsAbsolutePointInResizeControl(
     const gfx::Point& absolute_point,
     ResizerHitTestType resizer_hit_test_type) const {
   if (GetLayoutBox()->StyleRef().Visibility() != EVisibility::kVisible ||
-      !GetLayoutBox()->CanResize())
+      !GetLayoutBox()->CanResize()) {
     return false;
+  }
 
   gfx::Point local_point = ToRoundedPoint(
       GetLayoutBox()->AbsoluteToLocalPoint(PhysicalOffset(absolute_point)));
@@ -2149,8 +2248,9 @@ bool PaintLayerScrollableArea::IsLocalPointInResizeControl(
     const gfx::Point& local_point,
     ResizerHitTestType resizer_hit_test_type) const {
   if (GetLayoutBox()->StyleRef().Visibility() != EVisibility::kVisible ||
-      !GetLayoutBox()->CanResize())
+      !GetLayoutBox()->CanResize()) {
     return false;
+  }
 
   return ResizerCornerRect(resizer_hit_test_type).Contains(local_point);
 }
@@ -2252,23 +2352,9 @@ void PaintLayerScrollableArea::InvalidatePaintForStickyDescendants() {
   }
 }
 
-gfx::Vector2d PaintLayerScrollableArea::OffsetFromResizeCorner(
-    const gfx::Point& absolute_point) const {
-  // Currently the resize corner is either the bottom right corner or the bottom
-  // left corner.
-  // FIXME: This assumes the location is 0, 0. Is this guaranteed to always be
-  // the case?
-  gfx::Size element_size = PixelSnappedBorderBoxSize();
-  if (GetLayoutBox()->ShouldPlaceBlockDirectionScrollbarOnLogicalLeft())
-    element_size.set_width(0);
-  gfx::Point local_point = ToRoundedPoint(
-      GetLayoutBox()->AbsoluteToLocalPoint(PhysicalOffset(absolute_point)));
-  return gfx::Vector2d(local_point.x() - element_size.width(),
-                       local_point.y() - element_size.height());
-}
-
-void PaintLayerScrollableArea::Resize(const gfx::Point& pos,
-                                      const gfx::Vector2d& old_offset) {
+void PaintLayerScrollableArea::Resize(
+    const gfx::Point& pos,
+    const gfx::Transform& position_to_size_transform) {
   // FIXME: This should be possible on generated content but is not right now.
   if (!InResizeMode() || !GetLayoutBox()->CanResize() ||
       !GetLayoutBox()->GetNode())
@@ -2281,26 +2367,25 @@ void PaintLayerScrollableArea::Resize(const gfx::Point& pos,
 
   float zoom_factor = GetLayoutBox()->StyleRef().EffectiveZoom();
 
-  gfx::Vector2d new_offset =
-      OffsetFromResizeCorner(document.View()->ConvertFromRootFrame(pos));
-  new_offset.set_x(new_offset.x() / zoom_factor);
-  new_offset.set_y(new_offset.y() / zoom_factor);
-
   PhysicalSize current_size = GetLayoutBox()->Size();
   current_size.Scale(1 / zoom_factor);
 
-  PhysicalOffset adjusted_old_offset(old_offset);
-  adjusted_old_offset.Scale(1.f / zoom_factor);
-  if (GetLayoutBox()->ShouldPlaceBlockDirectionScrollbarOnLogicalLeft()) {
-    new_offset.set_x(-new_offset.x());
-    adjusted_old_offset.left = -adjusted_old_offset.left;
-  }
+  // TODO(dbaron): We should probably be caching the offset to the
+  // root frame as part of the transform, rather than repositioning
+  // relative to later adjustments to it.
+  gfx::Point frame_point = document.View()->ConvertFromRootFrame(pos);
 
-  PhysicalOffset offset = PhysicalOffset(new_offset) - adjusted_old_offset;
-  PhysicalSize new_size(current_size.width + offset.left,
-                        current_size.height + offset.top);
+  gfx::Point local_point = ToRoundedPoint(
+      position_to_size_transform.ProjectPoint(gfx::PointF(frame_point)));
+
+  PhysicalSize new_size(
+      LayoutUnit(static_cast<int>(local_point.x() / zoom_factor)),
+      LayoutUnit(static_cast<int>(local_point.y() / zoom_factor)));
 
   // Ensure the new size is at least as large as the resize corner.
+  //
+  // TODO(dbaron): This should also account for the border and padding around
+  // the resize corner.
   gfx::SizeF corner_rect(CornerRect().size());
   corner_rect.InvScale(zoom_factor);
   new_size.width = std::max(new_size.width, LayoutUnit(corner_rect.width()));
@@ -2340,8 +2425,22 @@ void PaintLayerScrollableArea::Resize(const gfx::Point& pos,
   // keep the point under the cursor in view.
 }
 
+PhysicalOffset PaintLayerScrollableArea::LocalToScrollOriginOffset() const {
+  PhysicalOffset border_origin_to_scroll_origin(-GetLayoutBox()->BorderLeft(),
+                                                -GetLayoutBox()->BorderTop());
+  // There might be scroll bar between border_origin and scroll_origin.
+  gfx::Vector2d scroll_bar_adjustment =
+      GetLayoutBox()->OriginAdjustmentForScrollbars();
+  border_origin_to_scroll_origin.left -= scroll_bar_adjustment.x();
+  border_origin_to_scroll_origin.top -= scroll_bar_adjustment.y();
+  border_origin_to_scroll_origin +=
+      PhysicalOffset::FromVector2dFFloor(GetScrollOffset());
+  return border_origin_to_scroll_origin;
+}
+
 PhysicalRect PaintLayerScrollableArea::ScrollIntoView(
     const PhysicalRect& absolute_rect,
+    const PhysicalBoxStrut& scroll_margin,
     const mojom::blink::ScrollIntoViewParamsPtr& params) {
   // Ignore sticky position offsets for the purposes of scrolling elements into
   // view. See https://www.w3.org/TR/css-position-3/#stickypos-scroll for
@@ -2352,23 +2451,10 @@ PhysicalRect PaintLayerScrollableArea::ScrollIntoView(
           : 0;
 
   PhysicalRect local_expose_rect =
-      GetLayoutBox()->AbsoluteToLocalRect(absolute_rect, flag);
-  PhysicalOffset border_origin_to_scroll_origin(-GetLayoutBox()->BorderLeft(),
-                                                -GetLayoutBox()->BorderTop());
-  // There might be scroll bar between border_origin and scroll_origin.
-  gfx::Vector2d scroll_bar_adjustment =
-      GetLayoutBox()->OriginAdjustmentForScrollbars();
-  border_origin_to_scroll_origin.left -= scroll_bar_adjustment.x();
-  border_origin_to_scroll_origin.top -= scroll_bar_adjustment.y();
-  border_origin_to_scroll_origin +=
-      PhysicalOffset::FromVector2dFFloor(GetScrollOffset());
-  // Represent the rect in the container's scroll-origin coordinate.
-  local_expose_rect.Move(border_origin_to_scroll_origin);
-  PhysicalRect scroll_snapport_rect = VisibleScrollSnapportRect();
-
-  ScrollOffset target_offset = ScrollAlignment::GetScrollOffsetToExpose(
-      scroll_snapport_rect, local_expose_rect, *params->align_x.get(),
-      *params->align_y.get(), GetScrollOffset());
+      GetLayoutBox()->AbsoluteToLocalRect(absolute_rect);
+  ScrollOffset target_offset = scroll_into_view_util::GetScrollOffsetToExpose(
+      *this, local_expose_rect, scroll_margin, *params->align_x.get(),
+      *params->align_y.get());
   ScrollOffset new_scroll_offset(
       ClampScrollOffset(gfx::ToRoundedVector2d(target_offset)));
 
@@ -2387,18 +2473,15 @@ PhysicalRect PaintLayerScrollableArea::ScrollIntoView(
   new_scroll_offset = ScrollPositionToOffset(end_point);
 
   if (params->is_for_scroll_sequence) {
-    CHECK(GetSmoothScrollSequencer());
-    DCHECK(params->type == mojom::blink::ScrollType::kProgrammatic ||
-           params->type == mojom::blink::ScrollType::kUser);
     mojom::blink::ScrollBehavior behavior = DetermineScrollBehavior(
         params->behavior, GetLayoutBox()->StyleRef().GetScrollBehavior());
-    GetSmoothScrollSequencer()->QueueAnimation(this, new_scroll_offset,
-                                               behavior);
+    SetScrollOffset(new_scroll_offset, params->type, behavior, ScrollCallback(),
+                    true);
   } else {
     SetScrollOffset(new_scroll_offset, params->type,
-                    mojom::blink::ScrollBehavior::kInstant);
+                    mojom::blink::ScrollBehavior::kInstant, ScrollCallback(),
+                    true);
   }
-
   ScrollOffset scroll_offset_difference = new_scroll_offset - old_scroll_offset;
   // The container hasn't performed the scroll yet if it's for scroll sequence.
   // To calculate the result from the scroll, we move the |local_expose_rect| to
@@ -2407,8 +2490,8 @@ PhysicalRect PaintLayerScrollableArea::ScrollIntoView(
       -PhysicalOffset::FromVector2dFRound(scroll_offset_difference));
 
   // Represent the rects in the container's border-box coordinate.
-  local_expose_rect.Move(-border_origin_to_scroll_origin);
-  scroll_snapport_rect.Move(-border_origin_to_scroll_origin);
+  PhysicalRect scroll_snapport_rect =
+      VisibleScrollSnapportRect() - LocalToScrollOriginOffset();
   PhysicalRect intersect =
       Intersection(scroll_snapport_rect, local_expose_rect);
 
@@ -2448,6 +2531,8 @@ void PaintLayerScrollableArea::UpdateScrollableAreaSet() {
     frame_view->RemoveScrollAnchoringScrollableArea(this);
   }
 
+  // TODO(crbug.com/425353152): Should be able to scroll invisible scroll
+  // containers.
   bool is_visible =
       GetLayoutBox()->StyleRef().Visibility() == EVisibility::kVisible;
   bool did_scroll_overflow = scrolls_overflow_;
@@ -2461,6 +2546,17 @@ void PaintLayerScrollableArea::UpdateScrollableAreaSet() {
   }
 
   scrolls_overflow_ = has_overflow && is_visible;
+
+  if (GetLayoutBox()->IsScrollContainer() && !scrolls_overflow_ &&
+      (GetLayoutBox()->StyleRef().OverscrollBehaviorX() !=
+           EOverscrollBehavior::kAuto ||
+       GetLayoutBox()->StyleRef().OverscrollBehaviorY() !=
+           EOverscrollBehavior::kAuto)) {
+    UseCounter::Count(
+        GetLayoutBox()->GetDocument(),
+        WebFeature::kOverscrollBehaviorOnNonScrollableScrollContainer);
+  }
+
   if (did_scroll_overflow == ScrollsOverflow())
     return;
 
@@ -2502,14 +2598,14 @@ void PaintLayerScrollableArea::UpdateScrollableAreaSet() {
   // (see: BoxPainter::PaintBoxDecorationBackground).
   GetLayoutBox()->SetBackgroundNeedsFullPaintInvalidation();
 
-  if (scrolls_overflow_) {
-    DCHECK(CanHaveOverflowScrollbars(*GetLayoutBox()));
-    frame_view->AddUserScrollableArea(this);
-  } else {
-    frame_view->RemoveUserScrollableArea(this);
-  }
+  probe::UpdateScrollableFlag(GetLayoutBox()->GetNode(), std::nullopt);
 
   layer_->DidUpdateScrollsOverflow();
+
+  if (AXObjectCache* cache =
+          GetLayoutBox()->GetDocument().ExistingAXObjectCache()) {
+    cache->MarkElementDirty(GetLayoutBox()->GetNode());
+  }
 }
 
 ScrollingCoordinator* PaintLayerScrollableArea::GetScrollingCoordinator()
@@ -2528,17 +2624,28 @@ ScrollingCoordinator* PaintLayerScrollableArea::GetScrollingCoordinator()
 bool PaintLayerScrollableArea::ShouldScrollOnMainThread() const {
   DCHECK_GE(GetDocument()->Lifecycle().GetState(),
             DocumentLifecycle::kPaintClean);
-  return HasBeenDisposed() || should_scroll_on_main_thread_;
-}
-
-void PaintLayerScrollableArea::SetShouldScrollOnMainThread(
-    bool scroll_on_main_thread) {
-  DCHECK_EQ(GetDocument()->Lifecycle().GetState(),
-            DocumentLifecycle::kPaintClean);
-  if (scroll_on_main_thread != should_scroll_on_main_thread_) {
-    should_scroll_on_main_thread_ = scroll_on_main_thread;
-    MainThreadScrollingDidChange();
+  if (HasBeenDisposed()) {
+    return true;
   }
+
+  if (!GetLayoutBox()->GetFrame()->Client()->GetWebFrame()) {
+    // If there's no WebFrame, then there's no WebFrameWidget, and we can't do
+    // threaded scrolling. This currently only happens in a WebPagePopup.
+    return true;
+  }
+
+  if (const auto* paint_artifact_compositor =
+          GetLayoutBox()->GetFrameView()->GetPaintArtifactCompositor()) {
+    if (const auto* properties =
+            GetLayoutBox()->FirstFragment().PaintProperties()) {
+      if (const auto* scroll = properties->Scroll()) {
+        return paint_artifact_compositor->GetMainThreadRepaintReasons(
+                   *scroll) !=
+               cc::MainThreadScrollingReason::kNotScrollingOnMain;
+      }
+    }
+  }
+  return true;
 }
 
 bool PaintLayerScrollableArea::PrefersNonCompositedScrolling() const {
@@ -2559,7 +2666,15 @@ bool PaintLayerScrollableArea::PrefersNonCompositedScrolling() const {
 }
 
 bool PaintLayerScrollableArea::UsesCompositedScrolling() const {
-  return GetLayoutBox()->UsesCompositedScrolling();
+  const auto* properties = GetLayoutBox()->FirstFragment().PaintProperties();
+  if (!properties || !properties->Scroll()) {
+    return false;
+  }
+  const auto* paint_artifact_compositor =
+      GetLayoutBox()->GetFrameView()->GetPaintArtifactCompositor();
+  return paint_artifact_compositor &&
+         paint_artifact_compositor->UsesCompositedScrolling(
+             *properties->Scroll());
 }
 
 bool PaintLayerScrollableArea::VisualViewportSuppliesScrollbars() const {
@@ -2651,10 +2766,14 @@ Scrollbar* PaintLayerScrollableArea::ScrollbarManager::CreateScrollbar(
   DCHECK(orientation == kHorizontalScrollbar ? !h_bar_is_attached_
                                              : !v_bar_is_attached_);
   Scrollbar* scrollbar = nullptr;
+  Element* element = nullptr;
   const LayoutObject& style_source =
       ScrollbarStyleSource(*ScrollableArea()->GetLayoutBox());
-  if (style_source.StyleRef().HasCustomScrollbarStyle()) {
-    DCHECK(style_source.GetNode() && style_source.GetNode()->IsElementNode());
+  if (style_source.GetNode() && style_source.GetNode()->IsElementNode()) {
+    element = To<Element>(style_source.GetNode());
+  }
+  if (style_source.StyleRef().HasCustomScrollbarStyle(element)) {
+    DCHECK(element);
     scrollbar = MakeGarbageCollected<CustomScrollbar>(
         ScrollableArea(), orientation, &style_source);
   } else {
@@ -2765,11 +2884,11 @@ void PaintLayerScrollableArea::DelayScrollOffsetClampScope::
 
 HeapVector<Member<PaintLayerScrollableArea>>&
 PaintLayerScrollableArea::DelayScrollOffsetClampScope::NeedsClampList() {
-  DEFINE_STATIC_LOCAL(
-      Persistent<HeapVector<Member<PaintLayerScrollableArea>>>,
-      needs_clamp_list,
-      (MakeGarbageCollected<HeapVector<Member<PaintLayerScrollableArea>>>()));
-  return *needs_clamp_list;
+  using Holder =
+      DisallowNewWrapper<HeapVector<Member<PaintLayerScrollableArea>>>;
+  DEFINE_STATIC_LOCAL(Persistent<Holder>, needs_clamp_list,
+                      (MakeGarbageCollected<Holder>()));
+  return needs_clamp_list->Value();
 }
 
 ScrollbarTheme& PaintLayerScrollableArea::GetPageScrollbarTheme() const {
@@ -2892,7 +3011,7 @@ void PaintLayerScrollableArea::InvalidatePaintOfScrollbarIfNeeded(
   if (!previously_was_overlay)
     previous_scrollbar_used_space_in_box = visual_rect.size();
 
-  // The IsEmpty() check avoids invalidaiton in cases when the visual rect
+  // The IsEmpty() check avoids invalidation in cases when the visual rect
   // changes from (0,0 0x0) to (0,0 0x100).
   if (!(new_scrollbar_used_space_in_box.IsEmpty() &&
         previous_scrollbar_used_space_in_box.IsEmpty()) &&
@@ -2910,7 +3029,9 @@ void PaintLayerScrollableArea::InvalidatePaintOfScrollbarIfNeeded(
     if (may_be_composited != previously_might_be_composited) {
       needs_paint_invalidation = true;
       previously_might_be_composited = may_be_composited;
-    } else if (may_be_composited && UsesCompositedScrolling()) {
+    } else if (may_be_composited &&
+               (RuntimeEnabledFeatures::RasterInducingScrollEnabled() ||
+                UsesCompositedScrolling())) {
       // Don't invalidate composited scrollbar if the change is only inside of
       // the scrollbar. ScrollbarDisplayItem will handle such change.
       // TODO(crbug.com/1505560): Avoid paint invalidation for non-composited
@@ -3043,8 +3164,20 @@ gfx::Size PaintLayerScrollableArea::PixelSnappedBorderBoxSize() const {
   // This can be fixed only after we support subpixels in overflow control
   // geometry. For now we ensure correct pixel snapping of overflow controls by
   // calling PositionOverflowControls() again when paint offset is updated.
-  return GetLayoutBox()->PixelSnappedBorderBoxSize(
-      GetLayoutBox()->FirstFragment().PaintOffset());
+  // TODO(crbug.com/962299): Only correct if the paint offset is correct.
+  return PhysicalRect(GetLayoutBox()->FirstFragment().PaintOffset(),
+                      GetLayoutBox()->Size())
+      .PixelSnappedSize();
+}
+
+void PaintLayerScrollableArea::DropCompositorScrollDeltaNextCommit() {
+  auto* frame_view = GetLayoutBox()->GetFrameView();
+  CHECK(frame_view);
+  if (auto* paint_artifact_compositor =
+          frame_view->GetPaintArtifactCompositor()) {
+    paint_artifact_compositor->DropCompositorScrollDeltaNextCommit(
+        GetScrollElementId());
+  }
 }
 
 gfx::Rect PaintLayerScrollableArea::ScrollingBackgroundVisualRect(
@@ -3055,36 +3188,7 @@ gfx::Rect PaintLayerScrollableArea::ScrollingBackgroundVisualRect(
   auto scroll_size = PixelSnappedContentsSize(clip_rect.offset);
   // Ensure scrolling contents are at least as large as the scroll clip
   scroll_size.SetToMax(overflow_clip_rect.size());
-  gfx::Rect result(overflow_clip_rect.origin(), scroll_size);
-
-  // The HTML element of a document is special, in that it can have a transform,
-  // but the bounds of the painted area of the element still extends beyond
-  // its actual size to encompass the entire viewport canvas. This is
-  // accomplished in ViewPainter by starting with a rect in viewport canvas
-  // space that is equal to the size of the viewport canvas, then mapping it
-  // into the local border box space of the HTML element, and painting a rect
-  // equal to the bounding box of the result. We need to add in that mapped rect
-  // in such cases.
-  const Document& document = box->GetDocument();
-  if (IsA<LayoutView>(box) &&
-      (document.IsXMLDocument() || document.IsHTMLDocument())) {
-    if (const auto* document_element = document.documentElement()) {
-      if (const auto* document_element_object =
-              document_element->GetLayoutObject()) {
-        const auto& document_element_state =
-            document_element_object->FirstFragment().LocalBorderBoxProperties();
-        const auto& view_contents_state =
-            box->FirstFragment().ContentsProperties();
-        gfx::Rect result_in_view = result;
-        GeometryMapper::SourceToDestinationRect(
-            view_contents_state.Transform(), document_element_state.Transform(),
-            result_in_view);
-        result.Union(result_in_view);
-      }
-    }
-  }
-
-  return result;
+  return gfx::Rect(overflow_clip_rect.origin(), scroll_size);
 }
 
 String
@@ -3095,10 +3199,10 @@ PaintLayerScrollableArea::ScrollingBackgroundDisplayItemClient::DebugName()
 }
 
 DOMNodeId
-PaintLayerScrollableArea::ScrollingBackgroundDisplayItemClient::OwnerNodeId()
-    const {
+PaintLayerScrollableArea::ScrollingBackgroundDisplayItemClient::OwnerNodeId(
+    bool) const {
   return static_cast<const DisplayItemClient*>(scrollable_area_->GetLayoutBox())
-      ->OwnerNodeId();
+      ->OwnerNodeId(false);
 }
 
 String PaintLayerScrollableArea::ScrollCornerDisplayItemClient::DebugName()
@@ -3106,74 +3210,69 @@ String PaintLayerScrollableArea::ScrollCornerDisplayItemClient::DebugName()
   return "Scroll corner of " + scrollable_area_->GetLayoutBox()->DebugName();
 }
 
-DOMNodeId PaintLayerScrollableArea::ScrollCornerDisplayItemClient::OwnerNodeId()
-    const {
+DOMNodeId PaintLayerScrollableArea::ScrollCornerDisplayItemClient::OwnerNodeId(
+    bool) const {
   return static_cast<const DisplayItemClient*>(scrollable_area_->GetLayoutBox())
-      ->OwnerNodeId();
+      ->OwnerNodeId(false);
 }
 
-void PaintLayerScrollableArea::UpdateSnappedTargetsAndEnqueueSnapChanged() {
-  if (!RuntimeEnabledFeatures::CSSSnapChangedEventEnabled()) {
+void PaintLayerScrollableArea::
+    UpdateSnappedTargetsAndEnqueueScrollSnapChange() {
+  const cc::SnapContainerData* container_data = GetSnapContainerData();
+  if (!container_data) {
+    return;
+  }
+
+  cc::TargetSnapAreaElementIds new_target_ids =
+      container_data->GetTargetSnapAreaElementIds();
+
+  CreateAndSetSnappedQueryScrollSnapshotIfNeeded(new_target_ids);
+
+  auto& rare_data = EnsureRareData();
+  bool scrollsnapchange =
+      !rare_data.scrollsnapchange_target_ids_ ||
+      new_target_ids.x != rare_data.scrollsnapchange_target_ids_->x ||
+      new_target_ids.y != rare_data.scrollsnapchange_target_ids_->y;
+  if (scrollsnapchange) {
+    rare_data.scrollsnapchange_target_ids_ = new_target_ids;
+    rare_data.snapped_query_target_ids_ = new_target_ids;
+    EnqueueScrollSnapChangeEvent();
+  }
+}
+
+void PaintLayerScrollableArea::SetScrollsnapchangingTargetIds(
+    std::optional<cc::TargetSnapAreaElementIds> ids) {
+  EnsureRareData().scrollsnapchanging_target_ids_ = ids;
+}
+
+void PaintLayerScrollableArea::
+    UpdateScrollSnapChangingTargetsAndEnqueueScrollSnapChanging(
+        const cc::TargetSnapAreaElementIds& new_target_ids) {
+  if (!RuntimeEnabledFeatures::CSSScrollSnapChangingEventEnabled()) {
     return;
   }
   const cc::SnapContainerData* container_data = GetSnapContainerData();
   if (!container_data) {
     return;
   }
-  const cc::SnappedTargetData* snapped_target_data = GetSnappedTargetData();
-  std::set<cc::ElementId> new_targets =
-      cc::SnapContainerData::FindSnappedTargetsAtScrollOffset(container_data,
-                                                              ScrollPosition());
-  bool snapchanged =
-      snapped_target_data
-          ? snapped_target_data->GetSnappedTargetIds() != new_targets
-          : new_targets.size();
 
-  if (snapchanged) {
-    if (!EnsureRareData().snapped_target_data_) {
-      RareData()->snapped_target_data_ = cc::SnappedTargetData();
-    }
-    RareData()->snapped_target_data_->SetSnappedTargetIds(
-        std::move(new_targets));
-    EnqueueSnapChangedEvent();
+  CreateAndSetSnappedQueryScrollSnapshotIfNeeded(new_target_ids);
+
+  auto& rare_data = EnsureRareData();
+  bool scrollsnapchanging =
+      (rare_data.scrollsnapchanging_target_ids_
+           ? (new_target_ids.x != rare_data.scrollsnapchanging_target_ids_->x ||
+              new_target_ids.y != rare_data.scrollsnapchanging_target_ids_->y)
+           : true);
+  if (scrollsnapchanging) {
+    rare_data.scrollsnapchanging_target_ids_ = new_target_ids;
+    rare_data.snapped_query_target_ids_ = new_target_ids;
+    EnqueueScrollSnapChangingEvent();
   }
 }
 
-void PaintLayerScrollableArea::SetSnapChangingTargetData(
-    absl::optional<cc::SnappedTargetData> data) {
-  EnsureRareData().snapchanging_target_data_ = data;
-}
-
-void PaintLayerScrollableArea::UpdateSnapChangingTargetsAndEnqueueSnapChanging(
-    const gfx::PointF& scroll_offset) {
-  if (!RuntimeEnabledFeatures::CSSSnapChangingEventEnabled()) {
-    return;
-  }
-  const cc::SnapContainerData* container_data = GetSnapContainerData();
-  if (!container_data) {
-    return;
-  }
-  const cc::SnappedTargetData* snapchanging_target_data =
-      GetSnapChangingTargetData();
-  if (!snapchanging_target_data) {
-    return;
-  }
-
-  const std::set<cc::ElementId> new_snapchanging_targets =
-      cc::SnapContainerData::FindSnappedTargetsAtScrollOffset(container_data,
-                                                              scroll_offset);
-  if (snapchanging_target_data->GetSnappedTargetIds() !=
-      new_snapchanging_targets) {
-    if (!EnsureRareData().snapchanging_target_data_) {
-      RareData()->snapchanging_target_data_ = cc::SnappedTargetData();
-    }
-    RareData()->snapchanging_target_data_->SetSnappedTargetIds(
-        std::move(new_snapchanging_targets));
-    EnqueueSnapChangingEvent();
-  }
-}
-
-void PaintLayerScrollableArea::EnqueueSnapChangingEventFromImplIfNeeded() {
+void PaintLayerScrollableArea::
+    EnqueueScrollSnapChangingEventFromImplIfNeeded() {
   const cc::SnapContainerData* container_data = GetSnapContainerData();
   if (!container_data) {
     return;
@@ -3183,7 +3282,156 @@ void PaintLayerScrollableArea::EnqueueSnapChangingEventFromImplIfNeeded() {
     return;
   }
   cc::SnapPositionData snap = container_data->FindSnapPosition(*strategy);
-  UpdateSnapChangingTargetsAndEnqueueSnapChanging(snap.position);
+  UpdateScrollSnapChangingTargetsAndEnqueueScrollSnapChanging(
+      snap.target_element_ids);
+}
+
+Node* PaintLayerScrollableArea::GetSnapTargetAlongAxis(
+    cc::TargetSnapAreaElementIds ids,
+    cc::SnapAxis axis) const {
+  if (!GetLayoutBox() || !GetLayoutBox()->Style()) {
+    return nullptr;
+  }
+  bool horiz = GetLayoutBox()->Style()->GetWritingDirection().IsHorizontal();
+  if (ids.y &&
+      (axis == cc::SnapAxis::kY || (axis == cc::SnapAxis::kBlock && horiz) ||
+       (axis == cc::SnapAxis::kInline && !horiz))) {
+    return DOMNodeIds::NodeForId(DOMNodeIdFromCompositorElementId(ids.y));
+  }
+  if (ids.x &&
+      (axis == cc::SnapAxis::kX || (axis == cc::SnapAxis::kInline && horiz) ||
+       (axis == cc::SnapAxis::kBlock && !horiz))) {
+    return DOMNodeIds::NodeForId(DOMNodeIdFromCompositorElementId(ids.x));
+  }
+  return nullptr;
+}
+
+Node* PaintLayerScrollableArea::GetSnapEventTargetAlongAxis(
+    const AtomicString& event_type,
+    cc::SnapAxis axis) const {
+  std::optional<cc::TargetSnapAreaElementIds> ids;
+  if (event_type == event_type_names::kScrollsnapchange) {
+    ids = RareData()->scrollsnapchange_target_ids_;
+  } else {
+    ids = RareData()->scrollsnapchanging_target_ids_;
+  }
+  if (!ids) {
+    return nullptr;
+  }
+  Node* node = GetSnapTargetAlongAxis(ids.value(), axis);
+  if (node && node->IsPseudoElement()) {
+    node = node->parentElement();
+  }
+  return node;
+}
+
+Element* PaintLayerScrollableArea::GetSnappedQueryTargetAlongAxis(
+    cc::SnapAxis axis) const {
+  if (RareData()) {
+    std::optional<cc::TargetSnapAreaElementIds> ids =
+        RareData()->snapped_query_target_ids_;
+    if (ids) {
+      return DynamicTo<Element>(GetSnapTargetAlongAxis(ids.value(), axis));
+    }
+  }
+  return nullptr;
+}
+
+void PaintLayerScrollableArea::SetScrollsnapchangeTargetIds(
+    std::optional<cc::TargetSnapAreaElementIds> ids) {
+  EnsureRareData().scrollsnapchange_target_ids_ = ids;
+}
+
+SnappedQueryScrollSnapshot&
+PaintLayerScrollableArea::EnsureSnappedQueryScrollSnapshot() {
+  PaintLayerScrollableAreaRareData& rare_data = EnsureRareData();
+  if (rare_data.snapped_query_snapshot_ == nullptr) {
+    rare_data.snapped_query_snapshot_ =
+        MakeGarbageCollected<SnappedQueryScrollSnapshot>(*this);
+  }
+  return *rare_data.snapped_query_snapshot_;
+}
+
+SnappedQueryScrollSnapshot*
+PaintLayerScrollableArea::GetSnappedQueryScrollSnapshot() {
+  return RareData() ? RareData()->snapped_query_snapshot_ : nullptr;
+}
+
+void PaintLayerScrollableArea::CreateAndSetSnappedQueryScrollSnapshotIfNeeded(
+    cc::TargetSnapAreaElementIds ids) {
+  Element* target_x = nullptr;
+  if (ids.x) {
+    target_x = DynamicTo<Element>(
+        DOMNodeIds::NodeForId(DOMNodeIdFromCompositorElementId(ids.x)));
+  }
+  Element* target_y = nullptr;
+  if (ids.y) {
+    target_y = DynamicTo<Element>(
+        DOMNodeIds::NodeForId(DOMNodeIdFromCompositorElementId(ids.y)));
+  }
+  for (Element* target : {target_x, target_y}) {
+    if (!target) {
+      continue;
+    }
+    if (ContainerQueryEvaluator* evaluator =
+            target->GetContainerQueryEvaluator()) {
+      if (evaluator->DependsOnSnapped()) {
+        EnsureSnappedQueryScrollSnapshot();
+      }
+    }
+  }
+}
+
+void PaintLayerScrollableArea::SetSnappedQueryTargetIds(
+    std::optional<cc::TargetSnapAreaElementIds> ids) {
+  EnsureRareData().snapped_query_target_ids_ = ids;
+}
+
+ScrollMarkerGroupPseudoElement* PaintLayerScrollableArea::GetScrollMarkerGroup()
+    const {
+  Element* element = DynamicTo<Element>(GetLayoutBox()->GetNode());
+  if (GetLayoutBox()->GetNode() &&
+      GetLayoutBox()->GetNode()->IsDocumentNode()) {
+    element = GetDocument()->documentElement();
+  }
+  if (!element) {
+    return nullptr;
+  }
+  if (PseudoElement* before =
+          element->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore)) {
+    auto* group_before = DynamicTo<ScrollMarkerGroupPseudoElement>(before);
+    return group_before;
+  } else if (PseudoElement* after =
+                 element->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
+    auto* group_after = DynamicTo<ScrollMarkerGroupPseudoElement>(after);
+    return group_after;
+  }
+  return nullptr;
+}
+
+void PaintLayerScrollableArea::AddScrollMarkerGroupContainerData(
+    ScrollMarkerGroupData* scroll_marker_group_data) {
+  scroll_marker_group_data_set_.insert(scroll_marker_group_data);
+}
+
+void PaintLayerScrollableArea::RemoveScrollMarkerGroupContainerData(
+    ScrollMarkerGroupData* scroll_marker_group_data) {
+  scroll_marker_group_data_set_.erase(scroll_marker_group_data);
+}
+
+void PaintLayerScrollableArea::UpdateScrollMarkers() {
+  if (ScrollMarkerGroupPseudoElement* marker_group = GetScrollMarkerGroup()) {
+    marker_group->UpdateSelectedScrollMarker();
+  }
+  for (ScrollMarkerGroupData* scroll_marker_group_data :
+       scroll_marker_group_data_set_) {
+    scroll_marker_group_data->UpdateSelectedScrollMarker();
+  }
+}
+
+bool PaintLayerScrollableArea::HasRunningAnimation() {
+  return GetScrollAnimator().HasRunningAnimation() ||
+         GetProgrammaticScrollAnimator().HasRunningAnimation();
 }
 
 }  // namespace blink

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/services/storage/indexed_db/scopes/varint_coding.h"
 
 #include <string_view>
@@ -9,7 +10,7 @@
 #include "base/dcheck_is_on.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace content {
+namespace content::indexed_db {
 namespace {
 
 static std::string WrappedEncodeVarInt(int64_t value) {
@@ -64,7 +65,7 @@ TEST(VarIntCoding, Decode) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeVarInt(&slice, &res));
     EXPECT_EQ(n, res);
     EXPECT_TRUE(slice.empty());
@@ -85,5 +86,21 @@ TEST(VarIntCoding, SingleByteCases) {
   }
 }
 
+TEST(VarIntCoding, EmbeddedZeroByte) {
+  auto arr = std::array<char, 3>{'\x81', '\x00', '\x07'};
+  std::string_view input(arr.data(), arr.size());
+  int64_t ignored;
+  EXPECT_FALSE(DecodeVarInt(&input, &ignored));
+}
+
+// When using the max number of bytes (10), the top byte must be exactly 1.
+TEST(VarIntCoding, JunkBitsInTopByte) {
+  auto arr = std::array<char, 10>{'\x80', '\x80', '\x80', '\x80', '\x80',
+                                  '\x80', '\x80', '\x80', '\x80', '\x05'};
+  std::string_view input(arr.data(), arr.size());
+  int64_t ignored;
+  EXPECT_FALSE(DecodeVarInt(&input, &ignored));
+}
+
 }  // namespace
-}  // namespace content
+}  // namespace content::indexed_db

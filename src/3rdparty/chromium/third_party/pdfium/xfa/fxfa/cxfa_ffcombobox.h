@@ -37,8 +37,8 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   bool CanSelectAll() override;
   bool Undo() override;
   bool Redo() override;
-  absl::optional<WideString> Copy() override;
-  absl::optional<WideString> Cut() override;
+  std::optional<WideString> Copy() override;
+  std::optional<WideString> Cut() override;
   bool Paste(const WideString& wsPaste) override;
   void SelectAll() override;
   void Delete() override;
@@ -48,7 +48,7 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
 
   // IFWL_WidgetDelegate
   void OnProcessMessage(CFWL_Message* pMessage) override;
-  void OnProcessEvent(CFWL_Event* pEvent) override;
+  void OnProcessEvent(pdfium::CFWL_Event* pEvent) override;
   void OnDrawWidget(CFGAS_GEGraphics* pGraphics,
                     const CFX_Matrix& matrix) override;
 
@@ -70,15 +70,15 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   // CXFA_FFField:
   bool PtInActiveRect(const CFX_PointF& point) override;
   bool CommitData() override;
-  bool UpdateFWLData() override;
+  void UpdateFWLData() override;
   bool IsDataChanged() override;
 
   uint32_t GetAlignment();
   void FWLEventSelChange(CXFA_EventParam* pParam);
   WideString GetCurrentText() const;
 
-  WideString m_wsNewValue;
-  cppgc::Member<IFWL_WidgetDelegate> m_pOldDelegate;
+  WideString new_value_;
+  cppgc::Member<IFWL_WidgetDelegate> old_delegate_;
 };
 
 #endif  // XFA_FXFA_CXFA_FFCOMBOBOX_H_

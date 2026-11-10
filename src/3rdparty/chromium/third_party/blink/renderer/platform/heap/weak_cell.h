@@ -7,7 +7,6 @@
 
 #include <type_traits>
 
-#include "base/functional/bind_internal.h"
 #include "base/types/pass_key.h"
 #include "third_party/blink/renderer/platform/heap/cross_thread_handle.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -107,6 +106,8 @@ class WeakCellFactory {
     DCHECK(weak_cell_);
     return weak_cell_.Get();
   }
+
+  bool HasWeakCells() const { return weak_cell_; }
 
   // Invalidates the previous `WeakCell<T>` so that `previous_cell->Get()`
   // returns null. Future calls to `GetWeakCell()` will return a *new* and

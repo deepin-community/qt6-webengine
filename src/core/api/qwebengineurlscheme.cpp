@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:data-parser
 
 #include "qwebengineurlscheme.h"
 
@@ -127,9 +128,8 @@ public:
   \l{https://www.w3.org/TR/powerful-features/#is-origin-trustworthy}{potentially
   trustworthy}. This flag should only be applied to URL schemes which ensure
   data authenticity, confidentiality, and integrity, either through encryption
-  or other means. Examples of secure builtin schemes include \c https
-  (authenticated and encrypted) and \c qrc (local resources only), whereas \c
-  http is an example of an insecure scheme.
+  or other means. An examples of secure builtin schemes is \c https
+  (authenticated and encrypted) whereas \c http is an example of an insecure scheme.
 
   \value LocalScheme
   Indicates that the URL scheme provides access to local resources. The purpose
@@ -156,7 +156,7 @@ public:
   Indicates that accesses to this scheme should bypass all
   Content-Security-Policy checks.
 
-  \value CorsEnabled
+  \value [since 5.14] CorsEnabled
   Enables cross-origin resource sharing (CORS) for this scheme. This flag is
   required in order for content to be loaded by documents of a different origin,
   this includes access from other schemes. The appropriate CORS headers are
@@ -335,29 +335,33 @@ void QWebEngineUrlScheme::setFlags(Flags newValue)
 void QWebEngineUrlScheme::registerScheme(const QWebEngineUrlScheme &scheme)
 {
     if (scheme.d->name.empty()) {
-        qWarning() << "QWebEngineUrlScheme::registerScheme: Scheme name cannot be empty";
+        qWarning("QWebEngineUrlScheme::registerScheme: Scheme name cannot be empty");
         return;
     }
 
     bool needsPort = scheme.d->has_port_component();
     bool hasPort = scheme.d->default_port != url::PORT_UNSPECIFIED;
     if (needsPort && !hasPort) {
-        qWarning() << "QWebEngineUrlScheme::registerScheme: Scheme" << scheme.name() << "needs a default port";
+        qWarning("QWebEngineUrlScheme::registerScheme: Scheme %s needs a default port",
+                 scheme.d->name.data());
         return;
     }
 
     if (url::CustomScheme::FindScheme(scheme.d->name)) {
-        qWarning() << "QWebEngineUrlScheme::registerScheme: Scheme" << scheme.name() << "already registered";
+        qWarning("QWebEngineUrlScheme::registerScheme: Scheme %s already registered",
+                 scheme.d->name.data());
         return;
     }
 
     if (url::IsStandard(scheme.d->name.data(), url::Component(0, static_cast<int>(scheme.d->name.size())))) {
-        qWarning() << "QWebEngineUrlScheme::registerScheme: Scheme" << scheme.name() << "is a standard scheme";
+        qWarning("QWebEngineUrlScheme::registerScheme: Scheme %s is a standard scheme",
+                 scheme.d->name.data());
         return;
     }
 
     if (g_schemesLocked) {
-        qWarning() << "QWebEngineUrlScheme::registerScheme: Too late to register scheme" << scheme.name();
+        qWarning("QWebEngineUrlScheme::registerScheme: Too late to register scheme %s",
+                 scheme.d->name.data());
         return;
     }
 

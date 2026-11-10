@@ -4,7 +4,9 @@
 
 #include "chrome/browser/extensions/api/printing/printing_api_utils.h"
 
+#include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -12,8 +14,9 @@
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/json/json_reader.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
+#include "base/notreached.h"
 #include "base/values.h"
 #include "chromeos/crosapi/mojom/local_printer.mojom.h"
 #include "chromeos/printing/printer_configuration.h"
@@ -21,7 +24,10 @@
 #include "components/cloud_devices/common/printer_description.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
+#include "printing/page_setup.h"
 #include "printing/print_settings.h"
+#include "printing/printing_features.h"
+#include "printing/units.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace extensions {
@@ -47,22 +53,38 @@ bool DoesPrinterMatchDefaultPrinterRules(
           RE2::FullMatch(printer.name, rules->name_pattern));
 }
 
-// Return true if the given item is in the allow list, else return false.
-bool ValidateVendorItem(const cloud_devices::printer::VendorItem& vendor_item) {
+// Validate a vendor ticket item from a print job ticket.  Items are validated
+// against an allow-list of values in addition to the advanced capabilities of
+// the printer.  Return true if the given item is allowed, false if not.
+bool ValidateVendorItem(const std::string& name,
+                        const std::string& value,
+                        const printing::AdvancedCapabilities& capabilities) {
   // A map containing the allowed vendor items.  The key is an IPP attribute,
   // and the value is a set of allowable values for that attribute.
   static const base::NoDestructor<
-      base::flat_map<base::StringPiece, base::flat_set<base::StringPiece>>>
+      base::flat_map<std::string_view, base::flat_set<std::string_view>>>
       kVendorItemAllowList({
           {"finishings", {"none", "trim"}},
       });
 
-  const auto& item = kVendorItemAllowList->find(vendor_item.id);
-  if (item == kVendorItemAllowList->end()) {
-    return false;
+  // Check the explicit allow list.  If the value does not match, this IPP
+  // attribute is then checked against the list of printer capabilities.
+  const auto& item = kVendorItemAllowList->find(name);
+  if (item != kVendorItemAllowList->end() && item->second.contains(value)) {
+    return true;
   }
 
-  return item->second.contains(vendor_item.value);
+  // Check other allowed attributes against the printer capabilities.
+  for (const printing::AdvancedCapability& capability : capabilities) {
+    if (capability.name != name) {
+      continue;
+    }
+
+    return base::Contains(capability.values, value,
+                          &printing::AdvancedCapabilityValue::name);
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -177,7 +199,6 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
 
     default:
       NOTREACHED();
-      break;
   }
 
   cloud_devices::printer::DuplexTicketItem duplex;
@@ -197,7 +218,6 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
       break;
     default:
       NOTREACHED();
-      break;
   }
 
   cloud_devices::printer::OrientationTicketItem orientation;
@@ -214,7 +234,6 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
       break;
     default:
       NOTREACHED();
-      break;
   }
 
   cloud_devices::printer::CopiesTicketItem copies;
@@ -253,17 +272,66 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
   }
   settings->set_collate(collate.value());
 
-  // These items are optional - don't fail if they don't exist.  However, if
-  // they do exist, this will fail if they are not an allowed vendor item.
+  // These items are optional - don't fail if they don't exist.
   cloud_devices::printer::VendorTicketItems vendor_items;
   if (vendor_items.LoadFrom(description)) {
     for (const auto& item : vendor_items) {
-      if (!ValidateVendorItem(item)) {
-        LOG(ERROR) << "Invalid vendor item/value: " << item.id << "/"
-                   << item.value << ".";
-        return nullptr;
-      }
       settings->advanced_settings().emplace(item.id, item.value);
+    }
+  }
+
+  if (base::FeatureList::IsEnabled(
+          printing::features::kApiPrintingMarginsAndScale)) {
+    // This item is optional - don't fail if it doesn't exist.
+    cloud_devices::printer::FitToPageTicketItem fit_to_page_ticket;
+    if (fit_to_page_ticket.LoadFrom(description)) {
+      switch (fit_to_page_ticket.value()) {
+        case cloud_devices::printer::FitToPageType::AUTO:
+          settings->set_print_scaling(printing::mojom::PrintScalingType::kAuto);
+          break;
+        case cloud_devices::printer::FitToPageType::AUTO_FIT:
+          settings->set_print_scaling(
+              printing::mojom::PrintScalingType::kAutoFit);
+          break;
+        case cloud_devices::printer::FitToPageType::FILL:
+          settings->set_print_scaling(printing::mojom::PrintScalingType::kFill);
+          break;
+        case cloud_devices::printer::FitToPageType::FIT:
+          settings->set_print_scaling(printing::mojom::PrintScalingType::kFit);
+          break;
+        case cloud_devices::printer::FitToPageType::NONE:
+          settings->set_print_scaling(printing::mojom::PrintScalingType::kNone);
+          break;
+        default:
+          NOTREACHED();
+      }
+    }
+
+    // This item is optional - don't fail if it doesn't exist.
+    cloud_devices::printer::MarginsTicketItem margin_ticket;
+    if (!margin_ticket.LoadFrom(description)) {
+      settings->set_margin_type(printing::mojom::MarginType::kDefaultMargins);
+    } else if (margin_ticket.value().left_um < 0 ||
+               margin_ticket.value().right_um < 0 ||
+               margin_ticket.value().top_um < 0 ||
+               margin_ticket.value().bottom_um < 0) {
+      LOG(ERROR) << "Loaded invalid margins from print ticket.";
+      return nullptr;
+    } else {
+      settings->SetCustomMarginsForBackend(
+          {/*header=*/0, /*footer=*/0, margin_ticket.value().left_um,
+           margin_ticket.value().right_um, margin_ticket.value().top_um,
+           margin_ticket.value().bottom_um});
+      if (margin_ticket.value().left_um == 0 &&
+          margin_ticket.value().right_um == 0 &&
+          margin_ticket.value().top_um == 0 &&
+          margin_ticket.value().bottom_um == 0) {
+        settings->set_margin_type(printing::mojom::MarginType::kNoMargins);
+        settings->set_borderless(true);
+      } else {
+        CHECK_EQ(settings->margin_type(),
+                 printing::mojom::MarginType::kPrecomputedMarginsForBackend);
+      }
     }
   }
 
@@ -299,9 +367,80 @@ bool CheckSettingsAndCapabilitiesCompatibility(
   if (!base::Contains(capabilities.dpis, settings.dpi_size()))
     return false;
 
+  for (const auto& [name, value] : settings.advanced_settings()) {
+    if (!value.is_string()) {
+      LOG(ERROR) << "Advanced setting '" << name
+                 << "' expects a string value, got: "
+                 << base::Value::GetTypeName(value.type());
+      return false;
+    }
+    if (!ValidateVendorItem(name, value.GetString(),
+                            capabilities.advanced_capabilities)) {
+      LOG(ERROR) << "Advanced setting '" << name << ":" << value.GetString()
+                 << "' is not compatible with printer capabilities";
+      return false;
+    }
+  }
+
+  if (base::FeatureList::IsEnabled(
+          printing::features::kApiPrintingMarginsAndScale)) {
+    // Default value is `kUnknownPrintScalingType`, so we only need to check if
+    // the value is not the default.
+    if (settings.print_scaling() !=
+        printing::mojom::PrintScalingType::kUnknownPrintScalingType) {
+      const bool uses_supported_print_scaling = base::Contains(
+          capabilities.print_scaling_types, settings.print_scaling());
+      base::UmaHistogramBoolean("Extensions.Printing.UsesSupportedPrintScaling",
+                                uses_supported_print_scaling);
+      if (!uses_supported_print_scaling) {
+        LOG(ERROR) << "Print scaling '" << settings.print_scaling()
+                   << "' is not compatible with printer capabilities";
+        return false;
+      }
+    }
+
+    if (settings.margin_type() !=
+        printing::mojom::MarginType::kDefaultMargins) {
+      CHECK_NE(settings.margin_type(),
+               printing::mojom::MarginType::kCustomMargins);
+      const auto& requested_margins_um =
+          settings.requested_custom_margins_in_microns();
+      bool margins_value_supported = std::ranges::any_of(
+          capabilities.papers,
+          [requested_margins_um,
+           needs_borderless_variant = settings.borderless()](
+              const printing::PrinterSemanticCapsAndDefaults::Paper& paper) {
+            // Borderless variant doesn't have margins stored separately. Thus,
+            // check if there is a paper with borderless variant.
+            if (needs_borderless_variant) {
+              return paper.has_borderless_variant() &&
+                     requested_margins_um.IsEmpty();
+            }
+            if (!paper.supported_margins_um().has_value()) {
+              return false;
+            }
+            const auto& supported_margins =
+                paper.supported_margins_um().value();
+            return requested_margins_um ==
+                   printing::PageMargins(/*header=*/0, /*footer=*/0,
+                                         supported_margins.left_margin_um,
+                                         supported_margins.right_margin_um,
+                                         supported_margins.top_margin_um,
+                                         supported_margins.bottom_margin_um);
+          });
+      base::UmaHistogramBoolean("Extensions.Printing.UsesSupportedMargins",
+                                margins_value_supported);
+      if (!margins_value_supported) {
+        LOG(ERROR) << "Margin values " << requested_margins_um.ToString()
+                   << " are not supported by the printer";
+        return false;
+      }
+    }
+  }
+
   const printing::PrintSettings::RequestedMedia& requested_media =
       settings.requested_media();
-  return base::ranges::any_of(
+  return std::ranges::any_of(
       capabilities.papers,
       [&requested_media](
           const printing::PrinterSemanticCapsAndDefaults::Paper& paper) {

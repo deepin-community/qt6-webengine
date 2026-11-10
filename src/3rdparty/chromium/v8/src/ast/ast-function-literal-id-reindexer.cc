@@ -15,12 +15,15 @@ AstFunctionLiteralIdReindexer::AstFunctionLiteralIdReindexer(size_t stack_limit,
 
 AstFunctionLiteralIdReindexer::~AstFunctionLiteralIdReindexer() = default;
 
-void AstFunctionLiteralIdReindexer::Reindex(Expression* pattern) {
+void AstFunctionLiteralIdReindexer::Reindex(Expression* pattern,
+                                            const AllowReindexScope& scope) {
 #ifdef DEBUG
   visited_.clear();
 #endif
   Visit(pattern);
-  CheckVisited(pattern);
+  if (!CheckStackOverflow()) {
+    CheckVisited(pattern);
+  }
 }
 
 void AstFunctionLiteralIdReindexer::VisitFunctionLiteral(FunctionLiteral* lit) {
@@ -29,6 +32,13 @@ void AstFunctionLiteralIdReindexer::VisitFunctionLiteral(FunctionLiteral* lit) {
 
   AstTraversalVisitor::VisitFunctionLiteral(lit);
   lit->set_function_literal_id(lit->function_literal_id() + delta_);
+}
+
+void AstFunctionLiteralIdReindexer::VisitCall(Call* expr) {
+  AstTraversalVisitor::VisitCall(expr);
+  if (expr->is_possibly_eval()) {
+    expr->adjust_eval_scope_info_index(delta_);
+  }
 }
 
 void AstFunctionLiteralIdReindexer::VisitClassLiteral(ClassLiteral* expr) {
@@ -104,6 +114,7 @@ class AstFunctionLiteralIdReindexChecker final
 }  // namespace
 
 void AstFunctionLiteralIdReindexer::CheckVisited(Expression* expr) {
+  DCHECK(!HasStackOverflow());
   AstFunctionLiteralIdReindexChecker(stack_limit(), &visited_).Visit(expr);
 }
 #endif

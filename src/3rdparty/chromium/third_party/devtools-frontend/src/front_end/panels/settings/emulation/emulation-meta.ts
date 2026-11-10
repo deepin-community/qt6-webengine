@@ -16,7 +16,7 @@ const UIStrings = {
    *@description Command that opens the device emulation view.
    */
   showDevices: 'Show Devices',
-};
+} as const;
 
 const str_ = i18n.i18n.registerUIStrings('panels/settings/emulation/emulation-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
@@ -41,7 +41,8 @@ UI.ViewManager.registerViewExtension({
   },
   id: 'devices',
   settings: [
-    'standardEmulatedDeviceList',
-    'customEmulatedDeviceList',
+    'standard-emulated-device-list',
+    'custom-emulated-device-list',
   ],
+  iconName: 'devices',
 });

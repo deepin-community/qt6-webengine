@@ -262,17 +262,22 @@ following order:
 7. Pattern matches in disabled categories.
 8. Pattern matches in disabled tags.
 
-If none of the steps produced a match, the category is enabled by default. In
-other words, every category is implicitly enabled unless specifically disabled.
+If none of the steps produced a match, the category:
+* is enabled by default in the C++ API
+* is disabled by default in the C API.
+
+Specifying an `enabled_categories: "*"` or `disabled_categories: "*"` helps
+achieving a consistent behavior explicitly.
+
 For example:
 
 | Setting                         | Needed configuration                         |
 | ------------------------------- | -------------------------------------------- |
-| Enable just specific categories | `enabled_categories = [“foo”, “bar”, “baz”]` |
-|                                 | `disabled_categories = [“*”]`                |
-| Enable all non-slow categories  | (Happens by default.)                        |
-| Enable specific tags            | `disabled_tags = [“*”]`                      |
-|                                 | `enabled_tags = [“foo”, “bar”]`              |
+| Enable just specific categories | `enabled_categories = ["foo", "bar", "baz"]` |
+|                                 | `disabled_categories = ["*"]`                |
+| Enable all non-slow categories  | `enabled_categories = ["*"] `                |
+| Enable specific tags            | `disabled_tags = ["*"]`                      |
+|                                 | `enabled_tags = ["foo", "bar"]`              |
 
 ## Dynamic and test-only categories
 
@@ -346,23 +351,6 @@ TRACE_EVENT("category", perfetto::StaticString{i % 2 == 0 ? "A" : "B"});
 
 DANGER: Using perfetto::StaticString with strings whose contents change
         dynamically can cause silent trace data corruption.
-
-## Performance
-
-Perfetto's trace points are designed to have minimal overhead when tracing is
-disabled while providing high throughput for data intensive tracing use
-cases. While exact timings will depend on your system, there is a
-[microbenchmark](/src/tracing/api_benchmark.cc) which gives some ballpark
-figures:
-
-| Scenario | Runtime on Pixel 3 XL | Runtime on ThinkStation P920 |
-| -------- | --------------------- | ---------------------------- |
-| `TRACE_EVENT(...)` (disabled)              | 2 ns   | 1 ns   |
-| `TRACE_EVENT("cat", "name")`               | 285 ns | 630 ns |
-| `TRACE_EVENT("cat", "name", <lambda>)`     | 304 ns | 663 ns |
-| `TRACE_EVENT("cat", "name", "key", value)` | 354 ns | 664 ns |
-| `DataSource::Trace(<lambda>)` (disabled)   | 2 ns   | 1 ns   |
-| `DataSource::Trace(<lambda>)`              | 133 ns | 58 ns  |
 
 ## Advanced topics
 

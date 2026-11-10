@@ -151,6 +151,8 @@ std::string ResponseCodeToString(int response_code) {
       return "IllegalAccountForPackagedEDULicense";
     case DeviceManagementService::kInvalidPackagedDeviceForKiosk:
       return "InvalidPackagedDeviceForKiosk";
+    case DeviceManagementService::kOrgUnitEnrollmentLimitExceeded:
+      return "OrgUnitEnrollmentLimitExceeded";
   }
 
   return base::NumberToString(response_code);
@@ -185,6 +187,7 @@ const int DeviceManagementService::kInvalidDomainlessCustomer;
 const int DeviceManagementService::kTosHasNotBeenAccepted;
 const int DeviceManagementService::kIllegalAccountForPackagedEDULicense;
 const int DeviceManagementService::kInvalidPackagedDeviceForKiosk;
+const int DeviceManagementService::kOrgUnitEnrollmentLimitExceeded;
 
 // static
 std::string DeviceManagementService::JobConfiguration::GetJobTypeAsString(
@@ -246,7 +249,11 @@ std::string DeviceManagementService::JobConfiguration::GetJobTypeAsString(
       return "Registration";
     case DeviceManagementService::JobConfiguration::TYPE_REMOTE_COMMANDS:
       return "RemoteCommands";
-    case DeviceManagementService::JobConfiguration::TYPE_TOKEN_ENROLLMENT:
+    // Type TOKEN_ENROLLMENT was renamed to BROWSER_REGISTRATION when device
+    // token-based enrollment was added, but unfortunately we have to keep the
+    // stringified job type as "TokenEnrollment" because this string defines
+    // an UMA metric.
+    case DeviceManagementService::JobConfiguration::TYPE_BROWSER_REGISTRATION:
       return "TokenEnrollment";
     case DeviceManagementService::JobConfiguration::TYPE_UNREGISTRATION:
       return "Unregistration";
@@ -265,6 +272,15 @@ std::string DeviceManagementService::JobConfiguration::GetJobTypeAsString(
       return "UploadrealtimeReport";
     case DeviceManagementService::JobConfiguration::TYPE_UPLOAD_STATUS:
       return "UploadStatus";
+    case DeviceManagementService::JobConfiguration::
+        TYPE_TOKEN_BASED_DEVICE_REGISTRATION:
+      return "TokenBasedDeviceRegistration";
+    case DeviceManagementService::JobConfiguration::
+        TYPE_UPLOAD_FM_REGISTRATION_TOKEN:
+      return "UploadFmRegistrationToken";
+    case DeviceManagementService::JobConfiguration::
+        TYPE_POLICY_AGENT_REGISTRATION:
+      return "PolicyAgentRegistration";
     // TODO(b/263367348): Remove the Active Directory types below, after they're
     // removed from the corresponding enum.
     case DeviceManagementService::JobConfiguration::
@@ -272,19 +288,23 @@ std::string DeviceManagementService::JobConfiguration::GetJobTypeAsString(
     case DeviceManagementService::JobConfiguration::
         TYPE_ACTIVE_DIRECTORY_PLAY_ACTIVITY:
       NOTREACHED() << "Invalid job type: " << type;
-      return "";
+    case DeviceManagementService::JobConfiguration::
+        TYPE_DETERMINE_PROMOTION_ELIGIBILITY:
+      return "DeterminePromotionEligibility";
   }
 }
 
 JobConfigurationBase::JobConfigurationBase(
     JobType type,
     DMAuth auth_data,
-    absl::optional<std::string> oauth_token,
+    std::optional<std::string> oauth_token,
+    bool use_cookies,
     scoped_refptr<network::SharedURLLoaderFactory> factory)
     : type_(type),
       factory_(factory),
       auth_data_(std::move(auth_data)),
-      oauth_token_(std::move(oauth_token)) {
+      oauth_token_(std::move(oauth_token)),
+      use_cookies_(use_cookies) {
   CHECK(!auth_data_.has_oauth_token()) << "Use |oauth_token| instead";
 
 #if !BUILDFLAG(IS_IOS)
@@ -318,6 +338,14 @@ const DMAuth& JobConfigurationBase::GetAuth() const {
   return auth_data_;
 }
 
+std::string JobConfigurationBase::GetContentType() {
+  return kPostContentType;
+}
+
+bool JobConfigurationBase::AreCookiesUsed() {
+  return use_cookies_;
+}
+
 scoped_refptr<network::SharedURLLoaderFactory>
 JobConfigurationBase::GetUrlLoaderFactory() {
   return factory_;
@@ -346,7 +374,8 @@ JobConfigurationBase::GetTrafficAnnotationTag() {
       destination: GOOGLE_OWNED_SERVICE
     }
     policy {
-      cookies_allowed: NO
+      cookies_allowed: YES
+      cookies_store: "user"
       setting:
         "This feature cannot be controlled by Chrome settings, but users "
         "can sign out of Chrome to disable it."
@@ -370,11 +399,18 @@ JobConfigurationBase::GetResourceRequest(bool bypass_proxy, int last_error) {
     url = net::AppendQueryParameter(url, entry->first, entry->second);
   }
 
-  rr->url = url;
+  rr->url = std::move(url);
   rr->method = "POST";
   rr->load_flags =
       net::LOAD_DISABLE_CACHE | (bypass_proxy ? net::LOAD_BYPASS_PROXY : 0);
-  rr->credentials_mode = network::mojom::CredentialsMode::kOmit;
+
+  if (use_cookies_) {
+    rr->credentials_mode = network::mojom::CredentialsMode::kInclude;
+    rr->site_for_cookies = net::SiteForCookies::FromUrl(rr->url);
+  } else {
+    rr->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  }
+
   // Disable secure DNS for requests related to device management to allow for
   // recovery in the event of a misconfigured secure DNS policy.
   rr->trusted_params = network::ResourceRequest::TrustedParams();
@@ -413,14 +449,21 @@ JobConfigurationBase::GetResourceRequest(bool bypass_proxy, int last_error) {
       // OAuth token is transferred as a HTTP query parameter.
       break;
     case DMAuthTokenType::kOidc:
-      // Send OIDC Auth token and ID token in auth header, send profile ID in
-      // URL parameter
-      rr->headers.SetHeader(
-          dm_protocol::kAuthHeader,
-          base::StrCat({dm_protocol::kOidcAuthHeaderPrefix,
-                        dm_protocol::kOidcAuthTokenHeaderPrefix, *oauth_token_,
-                        ",", dm_protocol::kOidcIdTokenHeaderPrefix,
-                        auth_data_.oidc_id_token()}));
+      if (oauth_token_ && !oauth_token_.value().empty()) {
+        rr->headers.SetHeader(
+            dm_protocol::kAuthHeader,
+            base::StrCat({dm_protocol::kOidcAuthHeaderPrefix,
+                          dm_protocol::kOidcAuthTokenHeaderPrefix,
+                          *oauth_token_, ",",
+                          dm_protocol::kOidcIdTokenHeaderPrefix,
+                          auth_data_.oidc_id_token()}));
+      } else {
+        rr->headers.SetHeader(
+            dm_protocol::kAuthHeader,
+            base::StrCat({dm_protocol::kOidcAuthHeaderPrefix,
+                          dm_protocol::kOidcEncryptedUserInfoPrefix,
+                          auth_data_.oidc_id_token()}));
+      }
       break;
   }
 
@@ -438,7 +481,7 @@ DeviceManagementService::Job::RetryMethod JobConfigurationBase::ShouldRetry(
   return DeviceManagementService::Job::NO_RETRY;
 }
 
-absl::optional<base::TimeDelta> JobConfigurationBase::GetTimeoutDuration() {
+std::optional<base::TimeDelta> JobConfigurationBase::GetTimeoutDuration() {
   return timeout_;
 }
 
@@ -505,7 +548,8 @@ void DeviceManagementService::JobImpl::CreateUrlLoader() {
   auto rr = config_->GetResourceRequest(bypass_proxy_, last_error_);
   auto annotation = config_->GetTrafficAnnotationTag();
   url_loader_ = network::SimpleURLLoader::Create(std::move(rr), annotation);
-  url_loader_->AttachStringForUpload(config_->GetPayload(), kPostContentType);
+  url_loader_->AttachStringForUpload(config_->GetPayload(),
+                                     config_->GetContentType());
   url_loader_->SetAllowHttpErrorResults(true);
   if (config_->GetTimeoutDuration()) {
     url_loader_->SetTimeoutDuration(config_->GetTimeoutDuration().value());
@@ -667,7 +711,6 @@ int DeviceManagementService::JobImpl::GetRetryDelay(RetryMethod method) {
       return 0;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -723,6 +766,10 @@ DeviceManagementService::CreateJobForTesting(
   auto job = std::make_unique<JobImpl>(task_runner_, std::move(config));
   JobForTesting job_for_testing(job.get());  // IN-TEST
   return std::make_pair(std::move(job), std::move(job_for_testing));
+}
+
+const scoped_refptr<base::SequencedTaskRunner> DeviceManagementService::GetTaskRunnerForTesting() {
+  return task_runner_;
 }
 
 std::unique_ptr<DeviceManagementService::Job>

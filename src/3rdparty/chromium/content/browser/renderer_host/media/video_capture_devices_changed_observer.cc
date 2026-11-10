@@ -5,7 +5,6 @@
 #include "content/browser/renderer_host/media/media_devices_manager.h"
 
 #include "content/public/browser/video_capture_service.h"
-#include "services/video_capture/public/cpp/features.h"
 #include "services/video_capture/public/mojom/video_capture_service.mojom.h"
 
 namespace content {
@@ -25,7 +24,10 @@ void MediaDevicesManager::VideoCaptureDevicesChangedObserver::
 }
 
 void MediaDevicesManager::VideoCaptureDevicesChangedObserver::
-    ConnectToService() {
+    EnsureConnectedToService() {
+  if (mojo_device_notifier_ && receiver_.is_bound()) {
+    return;
+  }
   CHECK(!mojo_device_notifier_);
   CHECK(!receiver_.is_bound());
   GetVideoCaptureService().ConnectToVideoSourceProvider(
@@ -46,7 +48,13 @@ void MediaDevicesManager::VideoCaptureDevicesChangedObserver::
   if (disconnect_cb_) {
     disconnect_cb_.Run();
   }
-  ConnectToService();
+  EnsureConnectedToService();
+}
+
+void MediaDevicesManager::VideoCaptureDevicesChangedObserver::
+    DisconnectVideoSourceProvider() {
+  mojo_device_notifier_.reset();
+  receiver_.reset();
 }
 
 }  // namespace content

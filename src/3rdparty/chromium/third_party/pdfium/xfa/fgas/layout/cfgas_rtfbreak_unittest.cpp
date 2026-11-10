@@ -17,7 +17,7 @@
 #include "xfa/fgas/font/cfgas_gefont.h"
 #include "xfa/fgas/layout/cfgas_char.h"
 
-class CFGAS_RTFBreakTest : public testing::Test {
+class CFGASRTFBreakTest : public testing::Test {
  public:
   void SetUp() override {
     const wchar_t kFontFamily[] = L"Arimo Bold";
@@ -39,11 +39,12 @@ class CFGAS_RTFBreakTest : public testing::Test {
 // As soon as you get one of the control characters the break is complete
 // and must be consumed before you get any more characters ....
 
-TEST_F(CFGAS_RTFBreakTest, AddChars) {
+TEST_F(CFGASRTFBreakTest, AddChars) {
   auto rtf_break = CreateBreak(CFGAS_Break::LayoutStyle::kExpandTab);
   WideString str(L"Input String.");
-  for (wchar_t ch : str)
+  for (wchar_t ch : str) {
     EXPECT_EQ(CFGAS_Char::BreakType::kNone, rtf_break->AppendChar(ch));
+  }
 
   EXPECT_EQ(CFGAS_Char::BreakType::kParagraph, rtf_break->AppendChar(L'\n'));
   ASSERT_EQ(1, rtf_break->CountBreakPieces());
@@ -54,8 +55,9 @@ TEST_F(CFGAS_RTFBreakTest, AddChars) {
   EXPECT_EQ(0, rtf_break->GetCurrentLineForTesting()->GetLineEnd());
 
   str = L"Second str.";
-  for (wchar_t ch : str)
+  for (wchar_t ch : str) {
     EXPECT_EQ(CFGAS_Char::BreakType::kNone, rtf_break->AppendChar(ch));
+  }
 
   // Force the end of the break at the end of the string.
   rtf_break->EndBreak(CFGAS_Char::BreakType::kParagraph);
@@ -63,7 +65,7 @@ TEST_F(CFGAS_RTFBreakTest, AddChars) {
   EXPECT_EQ(str, rtf_break->GetBreakPieceUnstable(0)->GetString());
 }
 
-TEST_F(CFGAS_RTFBreakTest, ControlCharacters) {
+TEST_F(CFGASRTFBreakTest, ControlCharacters) {
   auto rtf_break = CreateBreak(CFGAS_Break::LayoutStyle::kExpandTab);
   EXPECT_EQ(CFGAS_Char::BreakType::kLine, rtf_break->AppendChar(L'\v'));
   EXPECT_EQ(CFGAS_Char::BreakType::kPage, rtf_break->AppendChar(L'\f'));
@@ -75,17 +77,20 @@ TEST_F(CFGAS_RTFBreakTest, ControlCharacters) {
   EXPECT_EQ(L"\v", rtf_break->GetBreakPieceUnstable(0)->GetString());
 }
 
-TEST_F(CFGAS_RTFBreakTest, BidiLine) {
+TEST_F(CFGASRTFBreakTest, BidiLine) {
   auto rtf_break = CreateBreak(CFGAS_Break::LayoutStyle::kExpandTab);
   rtf_break->SetLineBreakTolerance(1);
   rtf_break->SetFontSize(12);
 
-  WideString input = WideString::FromUTF8(ByteStringView("\xa\x0\xa\xa", 4));
-  for (wchar_t ch : input)
+  // SAFETY: known fixed-length string.
+  WideString input =
+      WideString::FromUTF8(UNSAFE_BUFFERS(ByteStringView("\xa\x0\xa\xa", 4)));
+  for (wchar_t ch : input) {
     rtf_break->AppendChar(ch);
+  }
 
   std::vector<CFGAS_Char> chars =
-      rtf_break->GetCurrentLineForTesting()->m_LineChars;
+      rtf_break->GetCurrentLineForTesting()->line_chars_;
   CFGAS_Char::BidiLine(&chars, chars.size());
   EXPECT_EQ(3u, chars.size());
 }

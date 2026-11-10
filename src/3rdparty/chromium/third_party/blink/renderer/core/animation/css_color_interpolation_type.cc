@@ -11,8 +11,10 @@
 #include "third_party/blink/renderer/core/animation/color_property_functions.h"
 #include "third_party/blink/renderer/core/animation/interpolable_color.h"
 #include "third_party/blink/renderer/core/animation/interpolable_value.h"
+#include "third_party/blink/renderer/core/animation/underlying_value_owner.h"
 #include "third_party/blink/renderer/core/css/css_color.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
+#include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -65,12 +67,24 @@ void CSSColorInterpolationType::EnsureCompatibleInterpolableColorTypes(
     InterpolableList& list_b) {
   CHECK_EQ(list_a.length(), list_b.length());
   for (wtf_size_t i = 0; i < list_a.length(); i++) {
-    if (list_a.Get(i)->IsStyleColor() != list_b.Get(i)->IsStyleColor()) {
+    auto& underlying = list_a.GetMutable(i);
+    auto& other = list_b.GetMutable(i);
+
+    if (underlying->IsStyleColor() != other->IsStyleColor()) {
       // If either value is a style color then both must be.
       EnsureInterpolableStyleColor(list_a, i);
       EnsureInterpolableStyleColor(list_b, i);
     }
-    DCHECK_EQ(list_a.Get(i)->IsStyleColor(), list_b.Get(i)->IsStyleColor());
+    DCHECK_EQ(underlying->IsStyleColor(), other->IsStyleColor());
+    DCHECK_EQ(underlying->IsColor(), other->IsColor());
+
+    if (underlying->IsColor() && other->IsColor()) {
+      auto& a = To<InterpolableColor>(*underlying);
+      auto& b = To<InterpolableColor>(*other);
+      if (a.GetColor().GetColorSpace() != b.GetColor().GetColorSpace()) {
+        InterpolableColor::SetupColorInterpolationSpaces(a, b);
+      }
+    }
   }
 }
 
@@ -80,44 +94,73 @@ InterpolableColor* CSSColorInterpolationType::CreateInterpolableColor(
 }
 
 InterpolableColor* CSSColorInterpolationType::CreateInterpolableColor(
-    CSSValueID keyword) {
-  return InterpolableColor::Create(keyword);
+    CSSValueID keyword,
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) {
+  return InterpolableColor::Create(keyword, color_scheme, color_provider);
 }
 
 InterpolableColor* CSSColorInterpolationType::CreateInterpolableColor(
-    const StyleColor& color) {
+    const StyleColor& color,
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) {
   if (!color.IsNumeric()) {
     CSSValueID color_keyword = color.GetColorKeyword();
     DCHECK(StyleColor::IsColorKeyword(color_keyword))
         << color << " is not a recognized color keyword";
-    return CreateInterpolableColor(color_keyword);
+    return CreateInterpolableColor(color_keyword, color_scheme, color_provider);
   }
   return CreateInterpolableColor(color.GetColor());
 }
 
 BaseInterpolableColor* CSSColorInterpolationType::CreateBaseInterpolableColor(
-    const StyleColor& color) {
-  if (color.IsUnresolvedColorMixFunction()) {
+    const StyleColor& color,
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) {
+  if (color.IsUnresolvedColorFunction()) {
     return InterpolableStyleColor::Create(color);
   }
-  return CreateInterpolableColor(color);
+  return CreateInterpolableColor(color, color_scheme, color_provider);
 }
 
 InterpolableColor* CSSColorInterpolationType::MaybeCreateInterpolableColor(
-    const CSSValue& value) {
+    const CSSValue& value,
+    const StyleResolverState* state) {
   if (auto* color_value = DynamicTo<cssvalue::CSSColor>(value)) {
     return CreateInterpolableColor(color_value->Value());
   }
-  auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
-  if (!identifier_value)
-    return nullptr;
 
-  // TODO(crbug.com/1500708): Handle unresolved-color-mix. CSS-animations go
-  // through this code path. Unresolved color-mix results in a discrete
-  // animation.
-  if (!StyleColor::IsColorKeyword(identifier_value->GetValueID()))
-    return nullptr;
-  return CreateInterpolableColor(identifier_value->GetValueID());
+  mojom::blink::ColorScheme color_scheme =
+      state ? state->StyleBuilder().UsedColorScheme()
+            : mojom::blink::ColorScheme::kLight;
+  const ui::ColorProvider* color_provider =
+      state ? state->GetDocument().GetColorProviderForPainting(color_scheme)
+            : nullptr;
+
+  auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
+  if (identifier_value &&
+      StyleColor::IsColorKeyword(identifier_value->GetValueID())) {
+    return CreateInterpolableColor(identifier_value->GetValueID(), color_scheme,
+                                   color_provider);
+  }
+
+  if (state && (value.IsLightDarkValuePair() || value.IsColorMixValue() ||
+                value.IsRelativeColorValue())) {
+    ResolveColorValueContext context{
+        .conversion_data = state->CssToLengthConversionData(),
+        .text_link_colors = state->GetDocument().GetTextLinkColors(),
+        .used_color_scheme = color_scheme,
+        .color_provider = color_provider};
+    StyleColor style_color = ResolveColorValue(value, context);
+    if (!style_color.IsUnresolvedColorFunction()) {
+      return CreateInterpolableColor(style_color.GetColor());
+    }
+    // TODO(crbug.com/40940960): Handle unresolved-color-mix and unresolved
+    // relative colors. CSS-animations go through this code path. Unresolved
+    // color-mix and unresolved relative colors result in a discrete animation.
+  }
+
+  return nullptr;
 }
 
 Color CSSColorInterpolationType::GetColor(const InterpolableValue& value) {
@@ -158,8 +201,13 @@ class InheritedColorChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
   InheritedColorChecker(const CSSProperty& property,
-                        const absl::optional<StyleColor>& color)
+                        const OptionalStyleColor& color)
       : property_(property), color_(color) {}
+
+  void Trace(Visitor* visitor) const final {
+    visitor->Trace(color_);
+    CSSInterpolationType::CSSConversionChecker::Trace(visitor);
+  }
 
  private:
   bool IsValid(const StyleResolverState& state,
@@ -169,26 +217,37 @@ class InheritedColorChecker
   }
 
   const CSSProperty& property_;
-  const absl::optional<StyleColor> color_;
+  const OptionalStyleColor color_;
 };
 
 InterpolationValue CSSColorInterpolationType::MaybeConvertNeutral(
     const InterpolationValue&,
     ConversionCheckers&) const {
-  return ConvertStyleColorPair(StyleColor(Color::kTransparent),
-                               StyleColor(Color::kTransparent));
+  // It is okay to pass in `kLight` for `color_scheme` and nullptr for
+  // `color_provider` because the StyleColor is guaranteed not to be a system
+  // color.
+  return ConvertStyleColorPair(
+      StyleColor(Color::kTransparent), StyleColor(Color::kTransparent),
+      /*color_scheme=*/mojom::blink::ColorScheme::kLight,
+      /*color_provider=*/nullptr);
 }
 
 InterpolationValue CSSColorInterpolationType::MaybeConvertInitial(
     const StyleResolverState& state,
     ConversionCheckers& conversion_checkers) const {
-  absl::optional<StyleColor> initial_color =
-      ColorPropertyFunctions::GetInitialColor(
-          CssProperty(), state.GetDocument().GetStyleResolver().InitialStyle());
+  OptionalStyleColor initial_color = ColorPropertyFunctions::GetInitialColor(
+      CssProperty(), state.GetDocument().GetStyleResolver().InitialStyle());
   if (!initial_color.has_value()) {
     return nullptr;
   }
-  return ConvertStyleColorPair(initial_color.value(), initial_color.value());
+
+  mojom::blink::ColorScheme color_scheme =
+      state.StyleBuilder().UsedColorScheme();
+  const ui::ColorProvider* color_provider =
+      state.GetDocument().GetColorProviderForPainting(color_scheme);
+
+  return ConvertStyleColorPair(initial_color.value(), initial_color.value(),
+                               color_scheme, color_provider);
 }
 
 InterpolationValue CSSColorInterpolationType::MaybeConvertInherit(
@@ -198,12 +257,17 @@ InterpolationValue CSSColorInterpolationType::MaybeConvertInherit(
     return nullptr;
   // Visited color can never explicitly inherit from parent visited color so
   // only use the unvisited color.
-  absl::optional<StyleColor> inherited_color =
+  OptionalStyleColor inherited_color =
       ColorPropertyFunctions::GetUnvisitedColor(CssProperty(),
                                                 *state.ParentStyle());
-  conversion_checkers.push_back(
-      std::make_unique<InheritedColorChecker>(CssProperty(), inherited_color));
-  return ConvertStyleColorPair(inherited_color, inherited_color);
+  conversion_checkers.push_back(MakeGarbageCollected<InheritedColorChecker>(
+      CssProperty(), inherited_color));
+  mojom::blink::ColorScheme color_scheme =
+      state.StyleBuilder().UsedColorScheme();
+  const ui::ColorProvider* color_provider =
+      state.GetDocument().GetColorProviderForPainting(color_scheme);
+  return ConvertStyleColorPair(inherited_color, inherited_color, color_scheme,
+                               color_provider);
 }
 
 enum InterpolableColorPairIndex : unsigned {
@@ -214,18 +278,18 @@ enum InterpolableColorPairIndex : unsigned {
 
 InterpolationValue CSSColorInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState* state,
+    const StyleResolverState& state,
     ConversionCheckers& conversion_checkers) const {
   if (CssProperty().PropertyID() == CSSPropertyID::kColor) {
     auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
     if (identifier_value &&
         identifier_value->GetValueID() == CSSValueID::kCurrentcolor) {
-      DCHECK(state);
-      return MaybeConvertInherit(*state, conversion_checkers);
+      return MaybeConvertInherit(state, conversion_checkers);
     }
   }
 
-  InterpolableColor* interpolable_color = MaybeCreateInterpolableColor(value);
+  InterpolableColor* interpolable_color =
+      MaybeCreateInterpolableColor(value, &state);
   if (!interpolable_color) {
     return nullptr;
   }
@@ -268,30 +332,56 @@ PairwiseInterpolationValue CSSColorInterpolationType::MaybeMergeSingles(
 }
 
 InterpolationValue CSSColorInterpolationType::ConvertStyleColorPair(
-    const absl::optional<StyleColor>& unvisited_color,
-    const absl::optional<StyleColor>& visited_color) {
+    const OptionalStyleColor& unvisited_color,
+    const OptionalStyleColor& visited_color,
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) {
   if (!unvisited_color.has_value() || !visited_color.has_value()) {
     return nullptr;
   }
-  return ConvertStyleColorPair(unvisited_color.value(), visited_color.value());
+  return ConvertStyleColorPair(unvisited_color.value(), visited_color.value(),
+                               color_scheme, color_provider);
 }
 
 InterpolationValue CSSColorInterpolationType::ConvertStyleColorPair(
     const StyleColor& unvisited_color,
-    const StyleColor& visited_color) {
+    const StyleColor& visited_color,
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) {
   auto* color_pair =
       MakeGarbageCollected<InterpolableList>(kInterpolableColorPairIndexCount);
-  color_pair->Set(kUnvisited, CreateBaseInterpolableColor(unvisited_color));
-  color_pair->Set(kVisited, CreateBaseInterpolableColor(visited_color));
+  color_pair->Set(kUnvisited,
+                  CreateBaseInterpolableColor(unvisited_color, color_scheme,
+                                              color_provider));
+  color_pair->Set(kVisited, CreateBaseInterpolableColor(
+                                visited_color, color_scheme, color_provider));
   return InterpolationValue(color_pair);
 }
 
 InterpolationValue
 CSSColorInterpolationType::MaybeConvertStandardPropertyUnderlyingValue(
     const ComputedStyle& style) const {
+  // TODO(crbug.com/1231644): Need to pass an appropriate color provider here.
   return ConvertStyleColorPair(
       ColorPropertyFunctions::GetUnvisitedColor(CssProperty(), style),
-      ColorPropertyFunctions::GetVisitedColor(CssProperty(), style));
+      ColorPropertyFunctions::GetVisitedColor(CssProperty(), style),
+      style.UsedColorScheme(), /*color_provider=*/nullptr);
+}
+
+InterpolationValue
+CSSColorInterpolationType::MaybeConvertCustomPropertyUnderlyingValue(
+    const CSSValue& value) const {
+  InterpolableColor* interpolable_color =
+      MaybeCreateInterpolableColor(value, /*state=*/nullptr);
+  if (!interpolable_color) {
+    return nullptr;
+  }
+
+  auto* color_pair =
+      MakeGarbageCollected<InterpolableList>(kInterpolableColorPairIndexCount);
+  color_pair->Set(kUnvisited, interpolable_color->Clone());
+  color_pair->Set(kVisited, interpolable_color);
+  return InterpolationValue(color_pair);
 }
 
 void CSSColorInterpolationType::ApplyStandardPropertyValue(
@@ -339,7 +429,6 @@ void CSSColorInterpolationType::Composite(
     auto& underlying =
         To<BaseInterpolableColor>(*underlying_list.GetMutable(i));
     auto& other = To<BaseInterpolableColor>(*other_list.Get(i));
-    DCHECK_EQ(underlying.IsStyleColor(), other.IsStyleColor());
     underlying.Composite(other, underlying_fraction);
   }
 }

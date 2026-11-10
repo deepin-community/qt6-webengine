@@ -20,8 +20,10 @@ rtc_library("audio_encoder_opus_config") {
     "audio_encoder_opus_config.cc",
     "audio_encoder_opus_config.h",
   ]
-  deps = [ "../../../rtc_base/system:rtc_export" ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
+  deps = [
+    "..:audio_codecs_api",
+    "../../../rtc_base/system:rtc_export",
+  ]
   defines = []
   if (rtc_opus_variable_complexity) {
     defines += [ "WEBRTC_OPUS_VARIABLE_COMPLEXITY=1" ]
@@ -39,18 +41,17 @@ rtc_source_set("audio_decoder_opus_config") {
 rtc_library("audio_encoder_opus") {
   visibility = [ "*" ]
   poisonous = [ "audio_codecs" ]
-  public = [ "audio_encoder_opus.h" ]
-  sources = [ "audio_encoder_opus.cc" ]
+  sources = [
+    "audio_encoder_opus.cc",
+    "audio_encoder_opus.h",
+  ]
   deps = [
     ":audio_encoder_opus_config",
     "..:audio_codecs_api",
-    "../../../api:field_trials_view",
     "../../../modules/audio_coding:webrtc_opus",
+    "../../../rtc_base:checks",
     "../../../rtc_base/system:rtc_export",
-  ]
-  absl_deps = [
-    "//third_party/abseil-cpp/absl/strings",
-    "//third_party/abseil-cpp/absl/types:optional",
+    "../../environment",
   ]
 }
 
@@ -63,21 +64,22 @@ rtc_library("audio_decoder_opus") {
   ]
   deps = [
     "..:audio_codecs_api",
-    "../../../api:field_trials_view",
+    "../..:field_trials_view",
     "../../../modules/audio_coding:webrtc_opus",
+    "../../../rtc_base:checks",
     "../../../rtc_base/system:rtc_export",
-  ]
-  absl_deps = [
+    "../../environment",
     "//third_party/abseil-cpp/absl/strings",
-    "//third_party/abseil-cpp/absl/types:optional",
   ]
 }
 
 rtc_library("audio_encoder_multiopus") {
   visibility = [ "*" ]
   poisonous = [ "audio_codecs" ]
-  public = [ "audio_encoder_multi_channel_opus.h" ]
-  sources = [ "audio_encoder_multi_channel_opus.cc" ]
+  sources = [
+    "audio_encoder_multi_channel_opus.cc",
+    "audio_encoder_multi_channel_opus.h",
+  ]
   deps = [
     "..:audio_codecs_api",
     "../../../api:field_trials_view",
@@ -85,7 +87,6 @@ rtc_library("audio_encoder_multiopus") {
     "../../../rtc_base/system:rtc_export",
     "../opus:audio_encoder_opus_config",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
 
 rtc_library("audio_decoder_multiopus") {
@@ -101,10 +102,22 @@ rtc_library("audio_decoder_multiopus") {
     "../../../api:field_trials_view",
     "../../../modules/audio_coding:webrtc_multiopus",
     "../../../rtc_base/system:rtc_export",
-  ]
-  absl_deps = [
     "//third_party/abseil-cpp/absl/memory",
     "//third_party/abseil-cpp/absl/strings",
-    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_library("unittests") {
+  visibility = [ "*" ]
+  testonly = true
+  sources = [ "audio_decoder_opus_unittest.cc" ]
+  deps = [
+    ":audio_decoder_opus",
+    "..:audio_codecs_api",
+    "../..:field_trials",
+    "../../../test:create_test_field_trials",
+    "../../../test:test_support",
+    "../../environment",
+    "../../environment:environment_factory",
   ]
 }

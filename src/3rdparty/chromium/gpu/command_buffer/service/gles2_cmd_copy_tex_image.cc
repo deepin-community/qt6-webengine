@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "gpu/command_buffer/service/gles2_cmd_copy_tex_image.h"
 
 #include "gpu/command_buffer/service/decoder_context.h"
@@ -184,7 +185,7 @@ void CopyTexImageResourceManager::DoCopyTexSubImageToLUMACompatibilityTexture(
   // framebuffer is copying from a texture and sample directly from that texture
   // instead of doing an extra copy
 
-  glBindFramebufferEXT(GL_FRAMEBUFFER, source_framebuffer);
+  decoder->BindFramebuffer(GL_FRAMEBUFFER, source_framebuffer);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, scratch_textures_[0]);
   glCopyTexImage2D(GL_TEXTURE_2D, 0, source_framebuffer_internal_format, x, y,
@@ -192,19 +193,16 @@ void CopyTexImageResourceManager::DoCopyTexSubImageToLUMACompatibilityTexture(
 
   // Set the swizzle of the scratch texture so that the channels sample into the
   // correct emulated LUMA channels.
-  GLint swizzle[4] = {
+  std::array<GLint, 4> swizzle = {
       (luma_format == GL_ALPHA) ? GL_ALPHA : GL_RED,
-      (luma_format == GL_LUMINANCE_ALPHA) ? GL_ALPHA : GL_ZERO, GL_ZERO,
+      (luma_format == GL_LUMINANCE_ALPHA) ? GL_ALPHA : GL_ZERO,
+      GL_ZERO,
       GL_ZERO,
   };
-  if (feature_info_->gl_version_info().is_es) {
-    // ES doesn't support GL_TEXTURE_SWIZZLE_RGBA. We must set each swizzle
-    // separately.
-    for (int i = 0; i < 4; i++) {
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R + i, swizzle[i]);
-    }
-  } else {
-    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  // ES doesn't support GL_TEXTURE_SWIZZLE_RGBA. We must set each swizzle
+  // separately.
+  for (int i = 0; i < 4; i++) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R + i, swizzle[i]);
   }
 
   // Make a temporary framebuffer using the second scratch texture to render the
@@ -219,7 +217,7 @@ void CopyTexImageResourceManager::DoCopyTexSubImageToLUMACompatibilityTexture(
   glTexImage2D(GL_TEXTURE_2D, 0, compatability_format, width, height, 0,
                compatability_format, luma_type, nullptr);
 
-  glBindFramebufferEXT(GL_FRAMEBUFFER, scratch_fbo_);
+  decoder->BindFramebuffer(GL_FRAMEBUFFER, scratch_fbo_);
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                             scratch_textures_[1], 0);
 
@@ -234,6 +232,9 @@ void CopyTexImageResourceManager::DoCopyTexSubImageToLUMACompatibilityTexture(
   glDepthMask(GL_FALSE);
   glDisable(GL_BLEND);
   glDisable(GL_DITHER);
+  if (decoder->GetFeatureInfo()->IsWebGL2OrES3OrHigherContext()) {
+    glDisable(GL_RASTERIZER_DISCARD);
+  }
   if (decoder->GetFeatureInfo()->feature_flags().ext_window_rectangles) {
     glWindowRectanglesEXT(GL_EXCLUSIVE_EXT, 0, nullptr);
   }

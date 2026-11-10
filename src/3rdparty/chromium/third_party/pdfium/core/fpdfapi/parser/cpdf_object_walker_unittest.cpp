@@ -25,24 +25,25 @@ std::string Walk(RetainPtr<CPDF_Object> object) {
   std::ostringstream result;
   CPDF_ObjectWalker walker(std::move(object));
   while (RetainPtr<const CPDF_Object> obj = walker.GetNext()) {
-    if (obj->IsDictionary())
+    if (obj->IsDictionary()) {
       result << " Dict";
-    else if (obj->IsArray())
+    } else if (obj->IsArray()) {
       result << " Arr";
-    else if (obj->IsString())
+    } else if (obj->IsString()) {
       result << " Str";
-    else if (obj->IsBoolean())
+    } else if (obj->IsBoolean()) {
       result << " Bool";
-    else if (obj->IsStream())
+    } else if (obj->IsStream()) {
       result << " Stream";
-    else if (obj->IsReference())
+    } else if (obj->IsReference()) {
       result << " Ref";
-    else if (obj->IsNumber())
+    } else if (obj->IsNumber()) {
       result << " Num";
-    else if (obj->IsNull())
+    } else if (obj->IsNull()) {
       result << " Null";
-    else
+    } else {
       result << " Unknown";
+    }
   }
   std::string result_str = result.str();
   if (!result_str.empty()) {
@@ -59,7 +60,9 @@ TEST(ObjectWalkerTest, Simple) {
   EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_Array>()), "Arr");
   EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_String>()), "Str");
   EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_Boolean>()), "Bool");
-  EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_Stream>()), "Stream");
+  EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_Stream>(
+                pdfium::MakeRetain<CPDF_Dictionary>())),
+            "Stream Dict Num");
   EXPECT_EQ(Walk(pdfium::MakeRetain<CPDF_Reference>(nullptr, 0)), "Ref");
 }
 
@@ -124,8 +127,9 @@ TEST(ObjectWalkerTest, SkipWalkIntoCurrentObject) {
       // skip other array except root.
       walker.SkipWalkIntoCurrentObject();
     }
-    if (!obj->IsArray())
+    if (!obj->IsArray()) {
       ++non_array_objects;
+    }
   }
   // 2 objects from child array should be skipped.
   EXPECT_EQ(2, non_array_objects);
@@ -147,7 +151,7 @@ TEST(ObjectWalkerTest, DictionaryKey) {
     }
     // Test that, dictionary key is correct.
     EXPECT_EQ(walker.GetParent()->AsDictionary()->GetObjectFor(
-                  walker.dictionary_key()),
+                  walker.dictionary_key().AsStringView()),
               obj);
   }
 }

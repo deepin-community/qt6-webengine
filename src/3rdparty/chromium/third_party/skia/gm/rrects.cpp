@@ -24,6 +24,7 @@
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrPaint.h"
+#include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrPorterDuffXferProcessor.h"
 #include "src/gpu/ganesh/effects/GrRRectEffect.h"
@@ -130,7 +131,9 @@ protected:
                                           -0.14f * rrect.rect().height());
                     }
                     if (kEffect_Type == fType) {
-                        fRRects[curRRect].transform(canvas->getLocalToDeviceAs3x3(), &rrect);
+                        if (auto rr = fRRects[curRRect].transform(canvas->getLocalToDeviceAs3x3())){
+                            rrect = *rr;
+                        }
 
                         GrClipEdgeType edgeType = (GrClipEdgeType) et;
                         const auto& caps = *rContext->priv().caps()->shaderCaps();

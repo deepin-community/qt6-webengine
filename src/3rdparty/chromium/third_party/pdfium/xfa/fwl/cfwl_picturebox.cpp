@@ -6,6 +6,8 @@
 
 #include "xfa/fwl/cfwl_picturebox.h"
 
+namespace pdfium {
+
 CFWL_PictureBox::CFWL_PictureBox(CFWL_App* app)
     : CFWL_Widget(app, CFWL_Widget::Properties(), nullptr) {}
 
@@ -16,22 +18,27 @@ FWL_Type CFWL_PictureBox::GetClassID() const {
 }
 
 void CFWL_PictureBox::Update() {
-  if (IsLocked())
+  if (IsLocked()) {
     return;
+  }
 
-  m_ClientRect = GetClientRect();
+  client_rect_ = GetClientRect();
 }
 
 void CFWL_PictureBox::DrawWidget(CFGAS_GEGraphics* pGraphics,
                                  const CFX_Matrix& matrix) {
-  if (!pGraphics)
+  if (!pGraphics) {
     return;
+  }
 
-  if (HasBorder())
+  if (HasBorder()) {
     DrawBorder(pGraphics, CFWL_ThemePart::Part::kBorder, matrix);
+  }
 }
 
 void CFWL_PictureBox::OnDrawWidget(CFGAS_GEGraphics* pGraphics,
                                    const CFX_Matrix& matrix) {
   DrawWidget(pGraphics, matrix);
 }
+
+}  // namespace pdfium

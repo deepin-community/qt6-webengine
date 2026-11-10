@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/content_capture/task_session.h"
 
 #include <utility>
+#include <vector>
 
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -20,10 +21,15 @@ bool IsConstantStreamingEnabled() {
 
 }  // namespace
 
-TaskSession::DocumentSession::DocumentSession(const Document& document)
-    : document_(&document) {}
+TaskSession::DocumentSession::DocumentSession(const Document& document,
+                                              SentNodeCountCallback& callback)
+    : document_(&document), callback_(callback) {}
 
-TaskSession::DocumentSession::~DocumentSession() = default;
+TaskSession::DocumentSession::~DocumentSession() {
+  if (callback_.has_value()) {
+    callback_.value().Run(total_sent_nodes_);
+  }
+}
 
 bool TaskSession::DocumentSession::AddDetachedNode(const Node& node) {
   // Only notify the detachment of visible node which shall be in |sent_nodes|
@@ -38,7 +44,7 @@ bool TaskSession::DocumentSession::AddDetachedNode(const Node& node) {
   return false;
 }
 
-WebVector<int64_t> TaskSession::DocumentSession::MoveDetachedNodes() {
+std::vector<int64_t> TaskSession::DocumentSession::MoveDetachedNodes() {
   return std::move(detached_nodes_);
 }
 
@@ -183,7 +189,7 @@ TaskSession::DocumentSession& TaskSession::EnsureDocumentSession(
     const Document& doc) {
   DocumentSession* doc_session = GetDocumentSession(doc);
   if (!doc_session) {
-    doc_session = MakeGarbageCollected<DocumentSession>(doc);
+    doc_session = MakeGarbageCollected<DocumentSession>(doc, callback_);
     to_document_session_.insert(&doc, doc_session);
   }
   return *doc_session;
@@ -199,6 +205,10 @@ TaskSession::DocumentSession* TaskSession::GetDocumentSession(
 
 void TaskSession::Trace(Visitor* visitor) const {
   visitor->Trace(to_document_session_);
+}
+
+void TaskSession::ClearDocumentSessionsForTesting() {
+  to_document_session_.clear();
 }
 
 }  // namespace blink

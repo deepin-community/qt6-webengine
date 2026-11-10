@@ -23,7 +23,6 @@
 #include "fxbarcode/datamatrix/BC_TextEncoder.h"
 
 #include "core/fxcrt/fx_extension.h"
-#include "fxbarcode/common/BC_CommonBitMatrix.h"
 #include "fxbarcode/datamatrix/BC_C40Encoder.h"
 #include "fxbarcode/datamatrix/BC_Encoder.h"
 #include "fxbarcode/datamatrix/BC_EncoderContext.h"
@@ -86,8 +85,9 @@ int32_t CBC_TextEncoder::EncodeChar(wchar_t c, WideString* sb) {
     *sb += (wchar_t)(c - 123 + 27);
     return 2;
   }
-  if (c < 0x0080)
+  if (c < 0x0080) {
     return 0;
+  }
 
   *sb += (wchar_t)'\1';
   *sb += (wchar_t)0x001e;

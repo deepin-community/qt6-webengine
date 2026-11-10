@@ -41,23 +41,6 @@ BASE_FEATURE(kEnforceSHA256Checking,
              "CastSHA256Enforced",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enforce cast fallback CRL revocation when enabled.
-// If disabled, fallback CRL will be ignored. If the feature is enabled,  it
-// overrides kEnforceRevocationChecking.
-BASE_FEATURE(kEnforceFallbackCRLRevocationChecking,
-             "CastFallbackCRLRevocation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enforce certificate revocation when enabled.
-// If disabled, any revocation failures are ignored.
-//
-// This flags only controls the enforcement. Revocation is checked regardless.
-//
-// This flag tracks the changes necessary to fully enforce revocation.
-BASE_FEATURE(kEnforceRevocationChecking,
-             "CastCertificateRevocation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 namespace {
 
 const char kParseErrorPrefix[] = "Failed to parse auth message: ";
@@ -78,7 +61,7 @@ namespace cast_crypto = ::cast_certificate;
 AuthResult ParseAuthMessage(const CastMessage& challenge_reply,
                             DeviceAuthMessage* auth_message) {
   if (challenge_reply.payload_type() !=
-      cast::channel::CastMessage_PayloadType_BINARY) {
+      openscreen::cast::proto::CastMessage_PayloadType_BINARY) {
     return AuthResult::CreateWithParseError(
         "Wrong payload type in challenge reply",
         AuthResult::ERROR_WRONG_PAYLOAD_TYPE);
@@ -127,8 +110,8 @@ class CastNonce {
   CastNonce() { GenerateNonce(); }
   void GenerateNonce() {
     // Create a cryptographically secure nonce.
-    crypto::RandBytes(base::WriteInto(&nonce_, kNonceSizeInBytes + 1),
-                      kNonceSizeInBytes);
+    nonce_.resize(kNonceSizeInBytes);
+    crypto::RandBytes(base::as_writable_byte_span(nonce_));
     nonce_generation_time_ = base::Time::Now();
   }
 
@@ -298,11 +281,11 @@ AuthResult AuthContext::VerifySenderNonce(
 }
 
 AuthResult VerifyAndMapDigestAlgorithm(
-    cast::channel::HashAlgorithm response_digest_algorithm,
+    openscreen::cast::proto::HashAlgorithm response_digest_algorithm,
     cast_certificate::CastDigestAlgorithm* digest_algorithm) {
   AuthResult success;
   switch (response_digest_algorithm) {
-    case cast::channel::SHA1:
+    case openscreen::cast::proto::SHA1:
       RecordSignatureStatus(CastSignatureStatus::kAlgorithmUnsupported);
       *digest_algorithm = cast_certificate::CastDigestAlgorithm::SHA1;
       if (base::FeatureList::IsEnabled(kEnforceSHA256Checking)) {
@@ -313,7 +296,7 @@ AuthResult VerifyAndMapDigestAlgorithm(
         success.set_flag(CastChannelFlag::kSha1DigestAlgorithm);
       }
       break;
-    case cast::channel::SHA256:
+    case openscreen::cast::proto::SHA256:
       *digest_algorithm = cast_certificate::CastDigestAlgorithm::SHA256;
       break;
   }
@@ -390,9 +373,7 @@ AuthResult AuthenticateChallengeReply(const CastMessage& challenge_reply,
 //
 // * Verifies that the certificate chain |response.client_auth_certificate| +
 //   |response.intermediate_certificate| is valid and chains to a trusted
-//   Cast root. The list of trusted Cast roots can be overrided by providing a
-//   non-nullptr |cast_trust_store|. The certificate is verified at
-//   |verification_time|.
+//   Cast root. The certificate is verified at |verification_time|.
 //
 // * Verifies that none of the certificates in the chain are revoked based on
 //   the CRL provided in the response |response.crl|. The CRL is verified to be
@@ -408,7 +389,6 @@ AuthResult AuthenticateChallengeReply(const CastMessage& challenge_reply,
 AuthResult VerifyCredentialsImpl(const AuthResponse& response,
                                  const std::string& signature_input,
                                  const cast_crypto::CRLPolicy& crl_policy,
-                                 bssl::TrustStore* cast_trust_store,
                                  bssl::TrustStore* crl_trust_store,
                                  const base::Time& verification_time) {
   // Verify the certificate
@@ -449,16 +429,16 @@ AuthResult VerifyCredentialsImpl(const AuthResponse& response,
 
   // Perform certificate verification.
   cast_crypto::CastDeviceCertPolicy device_policy;
-  cast_crypto::CastCertError verify_result =
-      cast_crypto::VerifyDeviceCertUsingCustomTrustStore(
-          cert_chain, verification_time, &verification_context, &device_policy,
-          crl.get(), fallback_crl.get(), crl_policy, cast_trust_store);
+  cast_crypto::CastCertError verify_result = cast_crypto::VerifyDeviceCert(
+      cert_chain, verification_time, &verification_context, &device_policy,
+      crl.get(), fallback_crl.get(), crl_policy);
 
   // Handle and report errors.
   AuthResult result = MapToAuthResult(verify_result, crl_policy);
   result.CopyFlagsFrom(parse_result);
-  if (!result.success())
+  if (!result.success()) {
     return result;
+  }
 
   // The certificate is verified at this point.
   RecordCertificateStatus(CastCertificateStatus::kOk);
@@ -474,8 +454,9 @@ AuthResult VerifyCredentialsImpl(const AuthResponse& response,
   AuthResult digest_result =
       VerifyAndMapDigestAlgorithm(response.hash_algorithm(), &digest_algorithm);
   digest_result.CopyFlagsFrom(result);
-  if (!digest_result.success())
+  if (!digest_result.success()) {
     return digest_result;
+  }
 
   if (!verification_context->VerifySignatureOverData(
           response.signature(), signature_input, digest_algorithm)) {
@@ -509,31 +490,19 @@ AuthResult VerifyCredentialsImpl(const AuthResponse& response,
 
 AuthResult VerifyCredentials(const AuthResponse& response,
                              const std::string& signature_input) {
-  base::Time now = base::Time::Now();
-  cast_crypto::CRLPolicy policy = cast_crypto::CRLPolicy::CRL_REQUIRED;
-  if (!base::FeatureList::IsEnabled(kEnforceRevocationChecking)) {
-    policy = cast_crypto::CRLPolicy::CRL_OPTIONAL;
-  }
-  if (base::FeatureList::IsEnabled(kEnforceFallbackCRLRevocationChecking)) {
-    if (policy == cast_crypto::CRLPolicy::CRL_REQUIRED) {
-      policy = cast_crypto::CRLPolicy::CRL_REQUIRED_WITH_FALLBACK;
-    } else {
-      policy = cast_crypto::CRLPolicy::CRL_OPTIONAL_WITH_FALLBACK;
-    }
-  }
-  return VerifyCredentialsImpl(response, signature_input, policy, nullptr,
-                               nullptr, now);
+  return VerifyCredentialsImpl(
+      response, signature_input,
+      cast_crypto::CRLPolicy::CRL_REQUIRED_WITH_FALLBACK, nullptr,
+      base::Time::Now());
 }
 
 AuthResult VerifyCredentialsForTest(const AuthResponse& response,
                                     const std::string& signature_input,
                                     const cast_crypto::CRLPolicy& crl_policy,
-                                    bssl::TrustStore* cast_trust_store,
                                     bssl::TrustStore* crl_trust_store,
                                     const base::Time& verification_time) {
   return VerifyCredentialsImpl(response, signature_input, crl_policy,
-                               cast_trust_store, crl_trust_store,
-                               verification_time);
+                               crl_trust_store, verification_time);
 }
 
 }  // namespace cast_channel

@@ -1,15 +1,27 @@
 // Copyright 2015 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "name_constraints.h"
 
 #include <limits.h>
 
 #include <memory>
+#include <optional>
 
 #include <openssl/base.h>
-#include <optional>
+#include <openssl/bytestring.h>
+
 #include "cert_errors.h"
 #include "common_cert_errors.h"
 #include "general_names.h"
@@ -17,10 +29,9 @@
 #include "ip_util.h"
 #include "parser.h"
 #include "string_util.h"
-#include "tag.h"
 #include "verify_name_match.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -117,7 +128,7 @@ bool DNSNameMatches(std::string_view name, std::string_view dns_constraint,
 // NOTE: |subtrees| is not pre-initialized by the function(it is expected to be
 // a default initialized object), and it will be modified regardless of the
 // return value.
-[[nodiscard]] bool ParseGeneralSubtrees(const der::Input &value,
+[[nodiscard]] bool ParseGeneralSubtrees(der::Input value,
                                         GeneralNames *subtrees,
                                         CertErrors *errors) {
   BSSL_CHECK(errors);
@@ -278,7 +289,7 @@ NameConstraints::~NameConstraints() = default;
 
 // static
 std::unique_ptr<NameConstraints> NameConstraints::Create(
-    const der::Input &extension_value, bool is_critical, CertErrors *errors) {
+    der::Input extension_value, bool is_critical, CertErrors *errors) {
   BSSL_CHECK(errors);
 
   auto name_constraints = std::make_unique<NameConstraints>();
@@ -288,7 +299,18 @@ std::unique_ptr<NameConstraints> NameConstraints::Create(
   return name_constraints;
 }
 
-bool NameConstraints::Parse(const der::Input &extension_value, bool is_critical,
+std::unique_ptr<NameConstraints> NameConstraints::CreateFromPermittedSubtrees(
+    GeneralNames permitted_subtrees) {
+  auto name_constraints = std::make_unique<NameConstraints>();
+
+  name_constraints->constrained_name_types_ =
+      permitted_subtrees.present_name_types;
+  name_constraints->permitted_subtrees_ = std::move(permitted_subtrees);
+
+  return name_constraints;
+}
+
+bool NameConstraints::Parse(der::Input extension_value, bool is_critical,
                             CertErrors *errors) {
   BSSL_CHECK(errors);
 
@@ -306,8 +328,9 @@ bool NameConstraints::Parse(const der::Input &extension_value, bool is_critical,
   }
 
   std::optional<der::Input> permitted_subtrees_value;
-  if (!sequence_parser.ReadOptionalTag(der::ContextSpecificConstructed(0),
-                                       &permitted_subtrees_value)) {
+  if (!sequence_parser.ReadOptionalTag(
+          CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 0,
+          &permitted_subtrees_value)) {
     return false;
   }
   if (permitted_subtrees_value &&
@@ -320,8 +343,9 @@ bool NameConstraints::Parse(const der::Input &extension_value, bool is_critical,
       (is_critical ? GENERAL_NAME_ALL_TYPES : kSupportedNameTypes);
 
   std::optional<der::Input> excluded_subtrees_value;
-  if (!sequence_parser.ReadOptionalTag(der::ContextSpecificConstructed(1),
-                                       &excluded_subtrees_value)) {
+  if (!sequence_parser.ReadOptionalTag(
+          CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 1,
+          &excluded_subtrees_value)) {
     return false;
   }
   if (excluded_subtrees_value &&
@@ -348,7 +372,7 @@ bool NameConstraints::Parse(const der::Input &extension_value, bool is_critical,
   return true;
 }
 
-void NameConstraints::IsPermittedCert(const der::Input &subject_rdn_sequence,
+void NameConstraints::IsPermittedCert(der::Input subject_rdn_sequence,
                                       const GeneralNames *subject_alt_names,
                                       CertErrors *errors) const {
   // Checking NameConstraints is O(number_of_names * number_of_constraints).
@@ -381,7 +405,7 @@ void NameConstraints::IsPermittedCert(const der::Input &subject_rdn_sequence,
   } else {
     constraint_count += excluded_subtrees_.directory_names.size() +
                         permitted_subtrees_.directory_names.size();
-    name_count = subject_rdn_sequence.Length();
+    name_count = subject_rdn_sequence.size();
   }
   // Upper bound the number of possible checks, checking for overflow.
   size_t check_count = constraint_count * name_count;
@@ -502,7 +526,7 @@ void NameConstraints::IsPermittedCert(const der::Input &subject_rdn_sequence,
   // This code assumes that criticality condition is checked by the caller, and
   // therefore only needs to avoid the IsPermittedDirectoryName check against an
   // empty subject in such a case.
-  if (subject_alt_names && subject_rdn_sequence.Length() == 0) {
+  if (subject_alt_names && subject_rdn_sequence.empty()) {
     return;
   }
 
@@ -647,7 +671,7 @@ bool NameConstraints::IsPermittedDNSName(std::string_view name) const {
 }
 
 bool NameConstraints::IsPermittedDirectoryName(
-    const der::Input &name_rdn_sequence) const {
+    der::Input name_rdn_sequence) const {
   for (const auto &excluded_name : excluded_subtrees_.directory_names) {
     if (VerifyNameInSubtree(name_rdn_sequence, excluded_name)) {
       return false;
@@ -669,7 +693,7 @@ bool NameConstraints::IsPermittedDirectoryName(
   return false;
 }
 
-bool NameConstraints::IsPermittedIP(const der::Input &ip) const {
+bool NameConstraints::IsPermittedIP(der::Input ip) const {
   for (const auto &excluded_ip : excluded_subtrees_.ip_address_ranges) {
     if (IPAddressMatchesWithNetmask(ip, excluded_ip.first,
                                     excluded_ip.second)) {
@@ -693,4 +717,4 @@ bool NameConstraints::IsPermittedIP(const der::Input &ip) const {
   return false;
 }
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

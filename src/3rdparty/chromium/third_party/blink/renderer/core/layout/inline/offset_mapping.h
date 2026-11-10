@@ -5,7 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_INLINE_OFFSET_MAPPING_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_INLINE_OFFSET_MAPPING_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/editing/forward.h"
@@ -55,7 +56,13 @@ class CORE_EXPORT OffsetMappingUnit {
   // Returns associated node for this unit or null if this unit is associated
   // to generated content.
   const Node* AssociatedNode() const;
+
   OffsetMappingUnitType GetType() const { return type_; }
+  // Returns true if GetType() is OffsetMappingUnitType::kCollapsed.
+  bool IsCollapsed() const {
+    return type_ == OffsetMappingUnitType::kCollapsed;
+  }
+
   const LayoutObject& GetLayoutObject() const { return *layout_object_; }
   // Returns |Node| for this unit. If this unit comes from CSS generated
   // content, we can't use this function.
@@ -116,6 +123,28 @@ class CORE_EXPORT OffsetMapping final : public GarbageCollected<OffsetMapping> {
   const UnitVector& GetUnits() const { return units_; }
   const RangeMap& GetRanges() const { return ranges_; }
   const String& GetText() const { return text_; }
+
+  /// A utility class that converts offsets of `LayoutObject` to offsets of text
+  /// content.
+  class CORE_EXPORT LayoutObjectConverter {
+    STACK_ALLOCATED();
+
+   public:
+    // The `offset_mapping` must be non-null and outlive this instance.
+    LayoutObjectConverter(const OffsetMapping* offset_mapping,
+                          const LayoutObject& layout_object)
+        : units_(offset_mapping->GetMappingUnitsForLayoutObject(layout_object)),
+          last_unit_(units_.begin()) {}
+
+    unsigned TextContentOffset(unsigned offset) const;
+
+   private:
+    const base::span<const OffsetMappingUnit> units_;
+    // These are the cache of the last used `offset` and the result, to make
+    // the next search faster when `offset` increases.
+    mutable base::span<const OffsetMappingUnit>::iterator last_unit_;
+    mutable unsigned last_offset_ = 0;
+  };
 
   // ------ Static getters for offset mapping objects  ------
 
@@ -183,7 +212,7 @@ class CORE_EXPORT OffsetMapping final : public GarbageCollected<OffsetMapping> {
 
   // Returns the text content offset corresponding to the given position.
   // Returns nullopt when the position is not laid out in this context.
-  absl::optional<unsigned> GetTextContentOffset(const Position&) const;
+  std::optional<unsigned> GetTextContentOffset(const Position&) const;
 
   // Starting from the given position, searches for non-collapsed content in
   // the anchor node in forward/backward direction and returns the position
@@ -200,7 +229,7 @@ class CORE_EXPORT OffsetMapping final : public GarbageCollected<OffsetMapping> {
 
   // Maps the given position to a text content offset, and then returns the text
   // content character before the offset. Returns nullopt if it does not exist.
-  absl::optional<UChar> GetCharacterBefore(const Position&) const;
+  std::optional<UChar> GetCharacterBefore(const Position&) const;
 
   // ------ Mapping APIs from text content to DOM ------
 
@@ -260,17 +289,12 @@ class CORE_EXPORT OffsetMapping final : public GarbageCollected<OffsetMapping> {
 
 CORE_EXPORT LayoutBlockFlow* NGInlineFormattingContextOf(const Position&);
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct VectorTraits<blink::OffsetMappingUnit>
-    : VectorTraitsBase<blink::OffsetMappingUnit> {
+struct VectorTraits<OffsetMappingUnit> : VectorTraitsBase<OffsetMappingUnit> {
   static constexpr bool kCanClearUnusedSlotsWithMemset = true;
   static constexpr bool kCanTraceConcurrently = true;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_INLINE_OFFSET_MAPPING_H_

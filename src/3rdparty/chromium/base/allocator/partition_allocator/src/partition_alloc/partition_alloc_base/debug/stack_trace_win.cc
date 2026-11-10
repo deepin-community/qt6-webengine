@@ -2,17 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/debug/stack_trace.h"
 
+#include <windows.h>
+
+#include <psapi.h>
+
+#include <algorithm>
+#include <vector>
+
+#include "partition_alloc/partition_alloc_base/cxx_wrapper/algorithm.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "partition_alloc/partition_alloc_base/process/process_handle.h"
 #include "partition_alloc/partition_alloc_base/strings/safe_sprintf.h"
-
-#include <windows.h>
-#include <algorithm>
-
-#include <psapi.h>  // Depends on "windows.h"
-#include <vector>
 
 namespace partition_alloc::internal::base::debug {
 

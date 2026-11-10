@@ -391,7 +391,6 @@ class MediaControlsOrientationLockAndRotateToFullscreenDelegateTest
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
   void RotateDeviceTo(double beta, double gamma) {

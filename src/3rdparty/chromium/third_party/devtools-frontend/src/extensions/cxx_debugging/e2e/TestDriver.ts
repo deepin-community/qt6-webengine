@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 import {assert} from 'chai';
-import {type ElementHandle, type JSHandle} from 'puppeteer-core';
-
+import type {ElementHandle} from 'puppeteer-core';
+import {TestConfig} from 'test/conductor/test_config.js';
 import {
   CONSOLE_TAB_SELECTOR,
   focusConsolePrompt,
@@ -23,10 +23,8 @@ import {
 } from 'test/e2e/helpers/sources-helpers.js';
 import {
   $$,
-  assertNotNullOrUndefined,
   click,
   clickElement,
-  debuggerStatement,
   getBrowserAndPages,
   getPendingEvents,
   installEventListener,
@@ -34,12 +32,11 @@ import {
   waitFor,
   waitForFunction,
 } from 'test/shared/helper.js';
-import {describe, it} from 'test/shared/mocha-extensions.js';
 
 import {
+  type Action,
   loadTests,
   openTestSuiteResourceInSourcesPanel,
-  type Action,
 } from './cxx-debugging-extension-helpers.js';
 
 const STEP_OVER_BUTTON = '[aria-label="Step over next function call"]';
@@ -53,6 +50,7 @@ function pausedReasonText(reason: string) {
     case 'step':
       return 'Debugger paused';
   }
+  return;
 }
 
 describe('CXX Debugging Extension Test Suite', function() {
@@ -90,9 +88,9 @@ describe('CXX Debugging Extension Test Suite', function() {
               async () => ((await getPendingEvents(frontend, 'DevTools.DebuggerPaused')) || []).length > 0);
 
           const stopped = await waitFor(PAUSE_INDICATOR_SELECTOR);
-          const stoppedText = await waitForFunction(async () => stopped.evaluate(node => node.textContent));
+          const stoppedText = await waitForFunction(async () => await stopped.evaluate(node => node.textContent));
 
-          assert.equal(stoppedText, pausedReasonText(reason));
+          assert.strictEqual(stoppedText, pausedReasonText(reason));
 
           const pausedLocation = await retrieveTopCallFrameWithoutResuming();
           if (pausedLocation?.includes('…')) {
@@ -117,16 +115,14 @@ describe('CXX Debugging Extension Test Suite', function() {
 
               if (variableName.startsWith('$')) {
                 if (variableType) {
-                  assert.isTrue(scopeVariable && scopeVariable.endsWith(`: ${variableType}`));
+                  assert.isTrue(scopeVariable?.endsWith(`: ${variableType}`));
                 } else if (value) {
-                  assert.isTrue(scopeVariable && scopeVariable.endsWith(`: ${value}`));
+                  assert.isTrue(scopeVariable?.endsWith(`: ${value}`));
                 }
-              } else {
-                if (variableType) {
-                  assert.equal(scopeVariable, `${variableName}: ${variableType}`);
-                } else if (value) {
-                  assert.equal(scopeVariable, `${variableName}: ${value}`);
-                }
+              } else if (variableType) {
+                assert.strictEqual(scopeVariable, `${variableName}: ${variableType}`);
+              } else if (value) {
+                assert.strictEqual(scopeVariable, `${variableName}: ${value}`);
               }
             }
           }
@@ -138,13 +134,13 @@ describe('CXX Debugging Extension Test Suite', function() {
             await focusConsolePrompt();
 
             for (const {expression, value} of evaluations) {
-              await typeIntoConsoleAndWaitForResult(frontend, expression);
+              await typeIntoConsoleAndWaitForResult(expression);
               const evaluateResults = await frontend.evaluate(() => {
                 return Array.from(document.querySelectorAll('.console-user-command-result'))
                     .map(node => node.textContent);
               });
               const result = evaluateResults[evaluateResults.length - 1];
-              assert.equal(result, value.toString());
+              assert.strictEqual(result, value.toString());
             }
 
             await openSourcesPanel();
@@ -152,7 +148,8 @@ describe('CXX Debugging Extension Test Suite', function() {
 
           if (thread) {
             const threadElement = await waitFor(SELECTED_THREAD_SELECTOR);
-            const threadText = await waitForFunction(async () => threadElement.evaluate(node => node.textContent));
+            const threadText =
+                await waitForFunction(async () => await threadElement.evaluate(node => node.textContent));
             assert.include(threadText, thread, 'selected thread is not as expected');
           }
 
@@ -161,7 +158,7 @@ describe('CXX Debugging Extension Test Suite', function() {
         }
       } catch (e) {
         console.error(e.toString());
-        if (process.env['DEBUG_TEST']) {
+        if (TestConfig.debug) {
           await timeout(100000);
         }
         throw e;
@@ -176,12 +173,12 @@ async function readScopeView(scope: string, variable: string[]) {
     throw new Error(`Scope entry for ${scope} not found`);
   }
 
-  let parentNode = await scopeElement.evaluateHandle(n => n.nextElementSibling);
+  let parentNode = await scopeElement.evaluateHandle(n => n.nextElementSibling!);
   assert(parentNode, 'Scope element has no siblings');
 
   const result = [];
   for (const node of variable) {
-    const elementHandle: ElementHandle<Element> = await getMember(node, parentNode);
+    const elementHandle = await getMember(node, parentNode);
     const isExpanded = await elementHandle.evaluate((node: Element) => {
       node.scrollIntoView();
       return node.getAttribute('aria-expanded');
@@ -204,12 +201,12 @@ async function readScopeView(scope: string, variable: string[]) {
       result.push(await name.evaluate(node => node.textContent));
     }
 
-    parentNode = await elementHandle.evaluateHandle(n => n.nextElementSibling);
+    parentNode = await elementHandle.evaluateHandle(n => n.nextElementSibling!);
     assert(parentNode, 'Element has no siblings');
   }
   return result;
 
-  async function getMember(name: string, parentNode: ElementHandle|JSHandle<null>): Promise<ElementHandle<Element>> {
+  async function getMember(name: string, parentNode: ElementHandle): Promise<ElementHandle<Element>> {
     if (name.startsWith('$')) {
       const index = parseInt(name.slice(1), 10);
       if (!isNaN(index)) {
@@ -232,7 +229,7 @@ async function readScopeView(scope: string, variable: string[]) {
 async function scrollToLine(lineNumber: number): Promise<void> {
   await waitForFunction(async () => {
     const visibleLines = await $$(CODE_LINE_SELECTOR);
-    assertNotNullOrUndefined(visibleLines[0]);
+    assert.exists(visibleLines[0]);
     const lineNumbers = await Promise.all(visibleLines.map(v => v.evaluate(e => Number(e.textContent ?? ''))));
     if (lineNumbers.includes(lineNumber)) {
       return true;
@@ -245,7 +242,7 @@ async function scrollToLine(lineNumber: number): Promise<void> {
 }
 
 async function doActions({actions, reason}: {actions?: Action[], reason: string}) {
-  const {frontend, target} = getBrowserAndPages();
+  const {target} = getBrowserAndPages();
   let continuation;
   if (actions) {
     for (const step of actions) {
@@ -261,7 +258,7 @@ async function doActions({actions, reason}: {actions?: Action[], reason: string}
           }
           await openFileInEditor(file);
           await scrollToLine(Number(breakpoint));
-          await addBreakpointForLine(frontend, breakpoint);
+          await addBreakpointForLine(breakpoint);
           break;
         }
         case 'remove_breakpoint': {
@@ -270,7 +267,7 @@ async function doActions({actions, reason}: {actions?: Action[], reason: string}
             throw new Error('Invalid breakpoint spec: missing `breakpoint`');
           }
           await scrollToLine(Number(breakpoint));
-          await removeBreakpointForLine(frontend, breakpoint);
+          await removeBreakpointForLine(breakpoint);
           break;
         }
         case 'step_over':

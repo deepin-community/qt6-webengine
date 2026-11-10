@@ -24,6 +24,8 @@
 //  * Marks entries in the file between "// ===BEGIN PRIVATE DOMAINS==="
 //    and "// ===END PRIVATE DOMAINS===" as private.
 
+#include <iostream>
+
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -37,8 +39,8 @@
 int main(int argc, const char* argv[]) {
   base::EnableTerminationOnHeapCorruption();
   if (argc != 1) {
-    fprintf(stderr, "Normalizes and verifies UTF-8 TLD data files\n");
-    fprintf(stderr, "Usage: %s\n", argv[0]);
+    std::cerr << "Normalizes and verifies UTF-8 TLD data files\n";
+    std::cerr << "Usage: " << argv[0] << "\n";
     return 1;
   }
 

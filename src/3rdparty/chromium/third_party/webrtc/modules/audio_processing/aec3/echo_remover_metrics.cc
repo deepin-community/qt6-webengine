@@ -10,13 +10,14 @@
 
 #include "modules/audio_processing/aec3/echo_remover_metrics.h"
 
-#include <math.h>
-#include <stddef.h>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <numeric>
 
+#include "modules/audio_processing/aec3/aec3_common.h"
+#include "modules/audio_processing/aec3/aec_state.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/numerics/safe_minmax.h"
 #include "system_wrappers/include/metrics.h"
@@ -53,8 +54,8 @@ void EchoRemoverMetrics::ResetMetrics() {
 
 void EchoRemoverMetrics::Update(
     const AecState& aec_state,
-    const std::array<float, kFftLengthBy2Plus1>& comfort_noise_spectrum,
-    const std::array<float, kFftLengthBy2Plus1>& suppressor_gain) {
+    const std::array<float, kFftLengthBy2Plus1>& /* comfort_noise_spectrum */,
+    const std::array<float, kFftLengthBy2Plus1>& /* suppressor_gain */) {
   metrics_reported_ = false;
   if (++block_counter_ <= kMetricsCollectionBlocks) {
     erl_time_domain_.UpdateInstant(aec_state.ErlTimeDomain());
@@ -149,7 +150,7 @@ int TransformDbMetricForReporting(bool negate,
   if (negate) {
     new_value = -new_value;
   }
-  return static_cast<int>(rtc::SafeClamp(new_value, min_value, max_value));
+  return static_cast<int>(SafeClamp(new_value, min_value, max_value));
 }
 
 }  // namespace aec3

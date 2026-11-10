@@ -4,12 +4,12 @@
 
 import * as Platform from '../../core/platform/platform.js';
 
-// TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-// eslint-disable-next-line @typescript-eslint/naming-convention
-let _id = 0;
+import {Dialog} from './Dialog.js';
+
+let id = 0;
 
 export function nextId(prefix: string): string {
-  return (prefix || '') + ++_id;
+  return (prefix || '') + ++id;
 }
 
 export function bindLabelToControl(label: Element, control: Element): void {
@@ -146,10 +146,6 @@ export function markAsRadioGroup(element: Element): void {
   element.setAttribute('role', 'radiogroup');
 }
 
-export function markAsHidden(element: Element): void {
-  element.setAttribute('aria-hidden', 'true');
-}
-
 export function markAsSlider(element: Element, min: number|undefined = 0, max: number|undefined = 100): void {
   element.setAttribute('role', 'slider');
   element.setAttribute('aria-valuemin', String(min));
@@ -166,10 +162,6 @@ export function markAsPoliteLiveRegion(element: Element, isAtomic: boolean): voi
   if (isAtomic) {
     element.setAttribute('aria-atomic', 'true');
   }
-}
-
-export function markAsLog(element: Element): void {
-  element.setAttribute('role', 'log');
 }
 
 export function hasRole(element: Element): boolean {
@@ -246,7 +238,7 @@ export function unsetExpandable(element: Element): void {
 }
 
 export function setHidden(element: Element, value: boolean): void {
-  element.setAttribute('aria-hidden', (Boolean(value)).toString());
+  element.setAttribute('aria-hidden', value.toString());
 }
 
 export function setLevel(element: Element, level: number): void {
@@ -254,14 +246,14 @@ export function setLevel(element: Element, level: number): void {
 }
 
 export const enum AutocompleteInteractionModel {
-  Inline = 'inline',
-  List = 'list',
-  Both = 'both',
-  None = 'none',
+  INLINE = 'inline',
+  LIST = 'list',
+  BOTH = 'both',
+  NONE = 'none',
 }
 
 export function setAutocomplete(
-    element: Element, interactionModel: AutocompleteInteractionModel = AutocompleteInteractionModel.None): void {
+    element: Element, interactionModel: AutocompleteInteractionModel = AutocompleteInteractionModel.NONE): void {
   element.setAttribute('aria-autocomplete', interactionModel);
 }
 
@@ -270,17 +262,17 @@ export function clearAutocomplete(element: Element): void {
 }
 
 export const enum PopupRole {
-  False = 'false',      // (default) Indicates the element does not have a popup.
-  True = 'true',        // Indicates the popup is a menu.
-  Menu = 'menu',        // Indicates the popup is a menu.
-  ListBox = 'listbox',  // Indicates the popup is a listbox.
-  Tree = 'tree',        // Indicates the popup is a tree.
-  Grid = 'grid',        // Indicates the popup is a grid.
-  Dialog = 'dialog',    // Indicates the popup is a dialog.
+  FALSE = 'false',       // (default) Indicates the element does not have a popup.
+  TRUE = 'true',         // Indicates the popup is a menu.
+  MENU = 'menu',         // Indicates the popup is a menu.
+  LIST_BOX = 'listbox',  // Indicates the popup is a listbox.
+  TREE = 'tree',         // Indicates the popup is a tree.
+  GRID = 'grid',         // Indicates the popup is a grid.
+  DIALOG = 'dialog',     // Indicates the popup is a dialog.
 }
 
-export function setHasPopup(element: Element, value: PopupRole = PopupRole.False): void {
-  if (value !== PopupRole.False) {
+export function setHasPopup(element: Element, value: PopupRole = PopupRole.FALSE): void {
+  if (value !== PopupRole.FALSE) {
     element.setAttribute('aria-haspopup', value);
   } else {
     element.removeAttribute('aria-haspopup');
@@ -373,51 +365,89 @@ export function setPositionInSet(element: Element, position: number): void {
   element.setAttribute('aria-posinset', position.toString());
 }
 
-function hideFromLayout(element: HTMLElement): void {
-  element.style.position = 'absolute';
-  element.style.left = '-999em';
-  element.style.width = '100em';
-  element.style.overflow = 'hidden';
+export const enum AnnouncerRole {
+  ALERT = 'alert',
+  STATUS = 'status',
 }
+export class LiveAnnouncer {
+  static #announcerElementsByRole: Record<AnnouncerRole, WeakMap<HTMLElement, HTMLElement>> = {
+    [AnnouncerRole.ALERT]: new WeakMap<HTMLElement, HTMLElement>(),
+    [AnnouncerRole.STATUS]: new WeakMap<HTMLElement, HTMLElement>(),
+  };
 
-let alertElementOne: HTMLElement|undefined;
-let alertElementTwo: HTMLElement|undefined;
-let alertToggle: boolean = false;
+  static #hideFromLayout(element: HTMLElement): void {
+    element.style.position = 'absolute';
+    element.style.left = '-999em';
+    element.style.width = '100em';
+    element.style.overflow = 'hidden';
+  }
 
-/**
- * This function instantiates and switches off returning one of two offscreen alert elements.
- * We utilize two alert elements to ensure that alerts with the same string are still registered
- * as changes and trigger screen reader announcement.
- */
-export function alertElementInstance(): HTMLElement {
-  if (!alertElementOne) {
-    const element = document.body.createChild('div') as HTMLElement;
-    hideFromLayout(element);
-    element.setAttribute('role', 'alert');
+  static #createAnnouncerElement(container: HTMLElement, role: AnnouncerRole): HTMLDivElement {
+    const element = container.createChild('div');
+    LiveAnnouncer.#hideFromLayout(element);
+    element.setAttribute('role', role);
     element.setAttribute('aria-atomic', 'true');
-    alertElementOne = element;
+    return element;
   }
-  if (!alertElementTwo) {
-    const element = document.body.createChild('div') as HTMLElement;
-    hideFromLayout(element);
-    element.setAttribute('role', 'alert');
-    element.setAttribute('aria-atomic', 'true');
-    alertElementTwo = element;
-  }
-  alertToggle = !alertToggle;
-  if (alertToggle) {
-    alertElementTwo.textContent = '';
-    return alertElementOne;
-  }
-  alertElementOne.textContent = '';
-  return alertElementTwo;
-}
 
-/**
- * This function is used to announce a message with the screen reader.
- * Setting the textContent would allow the SR to access the offscreen element via browse mode
- */
-export function alert(message: string): void {
-  const element = alertElementInstance();
-  element.textContent = Platform.StringUtilities.trimEndWithMaxLength(message, 10000);
+  static #removeAnnouncerElement(container: HTMLElement, role: AnnouncerRole): void {
+    const element = LiveAnnouncer.#announcerElementsByRole[role].get(container);
+    if (element) {
+      element.remove();
+      LiveAnnouncer.#announcerElementsByRole[role].delete(container);
+    }
+  }
+
+  /**
+   * Announces the provided message using a dedicated ARIA alert element (`role="alert"`).
+   * Ensures messages are announced even if identical to the previous message by appending
+   * a non-breaking space ('\u00A0') when necessary. This works around screen reader
+   * optimizations that might otherwise silence repeated identical alerts. The element's
+   * `aria-atomic="true"` attribute ensures the entire message is announced upon change.
+   *
+   * The alert element is associated with the currently active dialog's content element
+   * if a dialog is showing, otherwise defaults to an element associated with the document body.
+   * Messages longer than 10000 characters will be trimmed.
+   *
+   * @param message - The message to be announced.
+   */
+  static #announce(message: string, role: AnnouncerRole): void {
+    const dialog = Dialog.getInstance();
+    const element =
+        LiveAnnouncer.getOrCreateAnnouncerElement(dialog?.isShowing() ? dialog.contentElement : undefined, role);
+
+    const announcedMessage = element.textContent === message ? `${message}\u00A0` : message;
+    element.textContent = Platform.StringUtilities.trimEndWithMaxLength(announcedMessage, 10000);
+  }
+
+  static getOrCreateAnnouncerElement(container: HTMLElement = document.body, role: AnnouncerRole, opts?: {
+    force: boolean,
+  }): HTMLElement {
+    const existingAnnouncerElement = LiveAnnouncer.#announcerElementsByRole[role].get(container);
+    if (existingAnnouncerElement && existingAnnouncerElement.isConnected && !opts?.force) {
+      return existingAnnouncerElement;
+    }
+
+    const newAnnouncerElement = LiveAnnouncer.#createAnnouncerElement(container, role);
+    LiveAnnouncer.#announcerElementsByRole[role].set(container, newAnnouncerElement);
+    return newAnnouncerElement;
+  }
+
+  static initializeAnnouncerElements(container: HTMLElement = document.body): void {
+    LiveAnnouncer.getOrCreateAnnouncerElement(container, AnnouncerRole.ALERT);
+    LiveAnnouncer.getOrCreateAnnouncerElement(container, AnnouncerRole.STATUS);
+  }
+
+  static removeAnnouncerElements(container: HTMLElement = document.body): void {
+    LiveAnnouncer.#removeAnnouncerElement(container, AnnouncerRole.ALERT);
+    LiveAnnouncer.#removeAnnouncerElement(container, AnnouncerRole.ALERT);
+  }
+
+  static alert(message: string): void {
+    LiveAnnouncer.#announce(message, AnnouncerRole.ALERT);
+  }
+
+  static status(message: string): void {
+    LiveAnnouncer.#announce(message, AnnouncerRole.STATUS);
+  }
 }

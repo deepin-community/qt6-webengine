@@ -7,22 +7,21 @@
 #include "base/containers/contains.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
-#include "device/fido/aoa/android_accessory_discovery.h"
 #include "device/fido/cable/fido_cable_discovery.h"
 #include "device/fido/cable/v2_discovery.h"
+#include "device/fido/enclave/enclave_discovery.h"
 #include "device/fido/features.h"
 #include "device/fido/fido_discovery_base.h"
 #include "device/fido/hid/fido_hid_discovery.h"
-#include "device/fido/mac/icloud_keychain.h"
 
 #if BUILDFLAG(IS_WIN)
+// clang-format off
 // rpc.h needs to be included before winuser.h.
 #include <rpc.h>
-
 #include <Winuser.h>
+// clang-format on
 
 #include "device/fido/win/discovery.h"
 #include "device/fido/win/webauthn_api.h"
@@ -31,15 +30,12 @@
 #if BUILDFLAG(IS_MAC)
 #include "base/process/process_info.h"
 #include "device/fido/mac/discovery.h"
+#include "device/fido/mac/icloud_keychain.h"
 #endif  // BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "device/fido/cros/discovery.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
-
-#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_QTWEBENGINE)
-#include "device/fido/enclave/enclave_discovery.h"
-#endif
 
 namespace device {
 
@@ -56,7 +52,7 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
       return {};
     case FidoTransportProtocol::kHybrid:
 #if BUILDFLAG(IS_MAC)
-      if (!base::IsProcessSelfResponsible()) {
+      if (!base::DoesResponsibleProcessHaveBluetoothMetadata()) {
         // On recent macOS a process must have listed Bluetooth metadata in
         // its Info.plist in order to call Bluetooth APIs. Failure to do so
         // results in the system killing with process with SIGABRT once
@@ -70,11 +66,24 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
         //
         // Thus, if the responsible process is not Chromium itself, then we
         // disable caBLE (and thus avoid Bluetooth calls).
-        FIDO_LOG(ERROR) << "Cannot start caBLE because process is not "
-                           "self-responsible. Launch from Finder to fix.";
+        FIDO_LOG(ERROR) << "Cannot use Bluetooth because the responsible app "
+                           "for the process does not have Bluetooth metadata "
+                           "in its Info.plist. Launch from Finder to fix.";
         return {};
       }
-#endif
+#endif  // BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_WIN)
+      {
+        device::WinWebAuthnApi* const webauthn_api =
+            device::WinWebAuthnApi::GetDefault();
+        if (webauthn_api && webauthn_api->SupportsHybrid() &&
+            base::FeatureList::IsEnabled(
+                device::kWebAuthnSkipHybridConfigIfSystemSupported)) {
+          FIDO_LOG(EVENT) << "Not starting hybrid because Windows handles it.";
+          return {};
+        }
+      }
+#endif  // BUILDFLAG(IS_WIN)
       if (device::BluetoothAdapterFactory::Get()->IsLowEnergySupported() &&
           (cable_data_.has_value() || qr_generator_key_.has_value())) {
         auto v1_discovery = std::make_unique<FidoCableDiscovery>(
@@ -93,7 +102,7 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
               cable_data_.value_or(std::vector<CableDiscoveryData>()),
               std::move(cable_pairing_callback_),
               std::move(cable_invalidated_pairing_callback_),
-              std::move(cable_event_callback_)));
+              std::move(cable_event_callback_), cable_must_support_ctap_));
         }
 
         ret.emplace_back(std::move(v1_discovery));
@@ -101,30 +110,31 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
       }
       return {};
     case FidoTransportProtocol::kNearFieldCommunication:
-      // TODO(https://crbug.com/825949): Add NFC support.
+      // TODO(crbug.com/40568770): Add NFC support.
       return {};
     case FidoTransportProtocol::kInternal: {
       std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
       discoveries = MaybeCreatePlatformDiscovery();
 #endif
-#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_QTWEBENGINE)
-      MaybeCreateEnclaveDiscovery(discoveries);
-#endif
       return discoveries;
     }
-    case FidoTransportProtocol::kAndroidAccessory:
-      if (usb_device_manager_) {
-        auto ret = SingleDiscovery(std::make_unique<AndroidAccessoryDiscovery>(
-            std::move(usb_device_manager_.value()),
-            std::move(aoa_request_description_)));
-        usb_device_manager_.reset();
-        return ret;
-      }
-      return {};
+    case FidoTransportProtocol::kDeprecatedAoa:
+      NOTREACHED() << "Android Open Accessory is deprecated.";
   }
   NOTREACHED() << "Unhandled transport type";
-  return {};
+}
+
+std::optional<std::unique_ptr<FidoDiscoveryBase>>
+FidoDiscoveryFactory::MaybeCreateEnclaveDiscovery() {
+#if !BUILDFLAG(IS_QTWEBENGINE)
+  if (!enclave_ui_request_stream_ || !network_context_factory_) {
+    return std::nullopt;
+  }
+  return std::make_unique<enclave::EnclaveAuthenticatorDiscovery>(
+      std::move(enclave_ui_request_stream_), network_context_factory_);
+#endif // !BUILDFLAG(IS_QTWEBENGINE)
+  return std::nullopt;
 }
 
 bool FidoDiscoveryFactory::IsTestOverride() {
@@ -134,18 +144,11 @@ bool FidoDiscoveryFactory::IsTestOverride() {
 void FidoDiscoveryFactory::set_cable_data(
     FidoRequestType request_type,
     std::vector<CableDiscoveryData> cable_data,
-    const absl::optional<std::array<uint8_t, cablev2::kQRKeySize>>&
+    const std::optional<std::array<uint8_t, cablev2::kQRKeySize>>&
         qr_generator_key) {
   request_type_ = request_type;
   cable_data_ = std::move(cable_data);
   qr_generator_key_ = std::move(qr_generator_key);
-}
-
-void FidoDiscoveryFactory::set_android_accessory_params(
-    mojo::Remote<device::mojom::UsbDeviceManager> usb_device_manager,
-    std::string aoa_request_description) {
-  usb_device_manager_.emplace(std::move(usb_device_manager));
-  aoa_request_description_ = std::move(aoa_request_description);
 }
 
 void FidoDiscoveryFactory::set_cable_pairing_callback(
@@ -177,14 +180,6 @@ void FidoDiscoveryFactory::set_hid_ignore_list(
     base::flat_set<VidPid> hid_ignore_list) {
   hid_ignore_list_ = std::move(hid_ignore_list);
 }
-
-#if !BUILDFLAG(IS_QTWEBENGINE)
-void FidoDiscoveryFactory::set_enclave_passkey_creation_callback(
-    base::RepeatingCallback<void(sync_pb::WebauthnCredentialSpecifics)>
-        callback) {
-  enclave_passkey_creation_callback_ = callback;
-}
-#endif
 
 void FidoDiscoveryFactory::set_enclave_ui_request_stream(
     std::unique_ptr<FidoDiscoveryBase::EventStream<
@@ -230,8 +225,8 @@ FidoDiscoveryFactory::MaybeCreatePlatformDiscovery() const {
         *mac_touch_id_config_));
   }
 #if CR_XCODE_VERSION >= 1500
-  if (base::FeatureList::IsEnabled(kWebAuthnICloudKeychain) &&
-      fido::icloud_keychain::IsSupported() && nswindow_ != 0) {
+  if (fido::icloud_keychain::IsSupported() &&
+      (nswindow_ || allow_no_nswindow_for_testing_)) {
     ret.emplace_back(fido::icloud_keychain::NewDiscovery(nswindow_));
   }
 #endif
@@ -262,21 +257,6 @@ void FidoDiscoveryFactory::
     set_get_assertion_request_for_legacy_credential_check(
         CtapGetAssertionRequest request) {
   get_assertion_request_for_legacy_credential_check_ = std::move(request);
-}
-#endif
-
-#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_QTWEBENGINE)
-void FidoDiscoveryFactory::MaybeCreateEnclaveDiscovery(
-    std::vector<std::unique_ptr<FidoDiscoveryBase>>& discoveries) {
-  if (!base::FeatureList::IsEnabled(kWebAuthnEnclaveAuthenticator) ||
-      !enclave_passkey_creation_callback_ || !enclave_ui_request_stream_ ||
-      !network_context_factory_) {
-    return;
-  }
-  discoveries.emplace_back(
-      std::make_unique<enclave::EnclaveAuthenticatorDiscovery>(
-          std::move(enclave_passkey_creation_callback_),
-          std::move(enclave_ui_request_stream_), network_context_factory_));
 }
 #endif
 

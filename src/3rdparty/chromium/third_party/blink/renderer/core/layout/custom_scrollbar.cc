@@ -30,9 +30,11 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_custom_scrollbar_part.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/custom_scrollbar_theme.h"
 #include "third_party/blink/renderer/core/paint/object_paint_invalidator.h"
+#include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 
@@ -188,7 +190,7 @@ void CustomScrollbar::UpdateScrollbarParts() {
     SetFrameRect(gfx::Rect(
         Location(), gfx::Size(is_horizontal ? Width() : new_thickness,
                               is_horizontal ? new_thickness : Height())));
-    if (LayoutBox* box = GetScrollableArea()->GetLayoutBox()) {
+    if (LayoutBox* box = GetLayoutBox()) {
       box->SetChildNeedsLayout();
       // LayoutNG may attempt to reuse line-box fragments. It will do this even
       // if the |LayoutObject::ChildNeedsLayout| is true (set above).
@@ -204,7 +206,7 @@ void CustomScrollbar::UpdateScrollbarParts() {
   // If we didn't return above, it means that there is no change or the change
   // doesn't affect layout of the box. Update position to reflect the change if
   // any.
-  if (LayoutBox* box = GetScrollableArea()->GetLayoutBox()) {
+  if (LayoutBox* box = GetLayoutBox()) {
     // It's not ready to position scrollbar parts if the containing box has not
     // been inserted into the layout tree.
     if (box->IsLayoutView() || box->Parent())
@@ -233,7 +235,6 @@ static PseudoId PseudoForScrollbarPart(ScrollbarPart part) {
       break;
   }
   NOTREACHED();
-  return kPseudoIdScrollbar;
 }
 
 void CustomScrollbar::UpdateScrollbarPart(ScrollbarPart part_type) {
@@ -458,6 +459,18 @@ void CustomScrollbar::InvalidateDisplayItemClientsOfScrollbarParts() {
 void CustomScrollbar::ClearPaintFlags() {
   for (auto& part : parts_)
     part.value->ClearPaintFlags();
+}
+
+void CustomScrollbar::Paint(const PaintInfo& paint_info,
+                            const PhysicalOffset& paint_offset) const {
+  auto& theme = GetTheme();
+  // TODO(crbug.com/40105990): We should not round paint_offset but should
+  // consider subpixel accumulation when painting scrollbars.
+  gfx::Vector2d offset = ToRoundedVector2d(paint_offset);
+  theme.PaintTrackAndButtons(paint_info, *this, FrameRect() + offset);
+  if (theme.HasThumb(*this)) {
+    theme.PaintThumb(paint_info, *this, theme.ThumbRect(*this) + offset);
+  }
 }
 
 }  // namespace blink

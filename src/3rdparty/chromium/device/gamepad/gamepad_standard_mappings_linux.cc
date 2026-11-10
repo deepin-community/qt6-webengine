@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "device/gamepad/gamepad_standard_mappings.h"
+
 #include <stddef.h>
 
+#include <algorithm>
 #include <iterator>
 
-#include "base/ranges/algorithm.h"
+#include "base/compiler_specific.h"
 #include "device/gamepad/gamepad_id_list.h"
-#include "device/gamepad/gamepad_standard_mappings.h"
 
 namespace device {
 
@@ -180,17 +182,17 @@ void MapperXboxElite2Bluetooth(const Gamepad& input, Gamepad* mapped) {
   // the mappings are shifted by 1
   int axis_shift = mapped->axes_length > 8 ? 1 : 0;
   mapped->buttons[BUTTON_INDEX_LEFT_TRIGGER] =
-      AxisToButton(input.axes[5 + axis_shift]);
+      AxisToButton(UNSAFE_TODO(input.axes[5 + axis_shift]));
   mapped->buttons[BUTTON_INDEX_RIGHT_TRIGGER] =
-      AxisToButton(input.axes[4 + axis_shift]);
+      AxisToButton(UNSAFE_TODO(input.axes[4 + axis_shift]));
   mapped->buttons[BUTTON_INDEX_DPAD_UP] =
-      AxisNegativeAsButton(input.axes[7 + axis_shift]);
+      AxisNegativeAsButton(UNSAFE_TODO(input.axes[7 + axis_shift]));
   mapped->buttons[BUTTON_INDEX_DPAD_DOWN] =
-      AxisPositiveAsButton(input.axes[7 + axis_shift]);
+      AxisPositiveAsButton(UNSAFE_TODO(input.axes[7 + axis_shift]));
   mapped->buttons[BUTTON_INDEX_DPAD_LEFT] =
-      AxisNegativeAsButton(input.axes[6 + axis_shift]);
+      AxisNegativeAsButton(UNSAFE_TODO(input.axes[6 + axis_shift]));
   mapped->buttons[BUTTON_INDEX_DPAD_RIGHT] =
-      AxisPositiveAsButton(input.axes[6 + axis_shift]);
+      AxisPositiveAsButton(UNSAFE_TODO(input.axes[6 + axis_shift]));
 
   // The Xbox (meta) button does not generate an input event for this device.
   mapped->buttons_length = BUTTON_INDEX_COUNT - 1;
@@ -1017,6 +1019,8 @@ constexpr struct MappingData {
     {GamepadId::kSonyProduct0ce6, MapperDualSense},
     // DualSense Edge
     {GamepadId::kSonyProduct0df2, MapperDualSense},
+    // PlayStation Access
+    {GamepadId::kSonyProduct0e5f, MapperDualSense},
     // Switch Joy-Con L
     {GamepadId::kNintendoProduct2006, MapperSwitchJoyCon},
     // Switch Joy-Con R
@@ -1086,7 +1090,7 @@ constexpr struct MappingData {
 }  // namespace
 
 GamepadStandardMappingFunction GetGamepadStandardMappingFunction(
-    const std::string_view product_name,
+    std::string_view product_name,
     const uint16_t vendor_id,
     const uint16_t product_id,
     const uint16_t hid_specification_version,
@@ -1094,8 +1098,8 @@ GamepadStandardMappingFunction GetGamepadStandardMappingFunction(
     GamepadBusType bus_type) {
   GamepadId gamepad_id =
       GamepadIdList::Get().GetGamepadId(product_name, vendor_id, product_id);
-  const auto* find_it = base::ranges::find(kAvailableMappings, gamepad_id,
-                                           &MappingData::gamepad_id);
+  const auto* find_it = std::ranges::find(kAvailableMappings, gamepad_id,
+                                          &MappingData::gamepad_id);
   GamepadStandardMappingFunction mapper =
       (find_it == std::end(kAvailableMappings)) ? nullptr : find_it->function;
 

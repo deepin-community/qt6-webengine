@@ -51,9 +51,10 @@ TransceiverStateSurfacer::~TransceiverStateSurfacer() {
 }
 
 void TransceiverStateSurfacer::Initialize(
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> native_peer_connection,
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
+        native_peer_connection,
     scoped_refptr<blink::WebRtcMediaStreamTrackAdapterMap> track_adapter_map,
-    std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
+    std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
         webrtc_transceivers) {
   DCHECK(signaling_task_runner_->BelongsToCurrentThread());
   DCHECK(!is_initialized_);
@@ -72,7 +73,7 @@ void TransceiverStateSurfacer::Initialize(
 
   for (auto& webrtc_transceiver : webrtc_transceivers) {
     // Create the sender state.
-    absl::optional<blink::RtpSenderState> sender_state;
+    std::optional<blink::RtpSenderState> sender_state;
     auto webrtc_sender = webrtc_transceiver->sender();
     if (webrtc_sender) {
       std::unique_ptr<blink::WebRtcMediaStreamTrackAdapterMap::AdapterRef>
@@ -93,7 +94,7 @@ void TransceiverStateSurfacer::Initialize(
           std::move(sender_track_ref), webrtc_sender->stream_ids());
     }
     // Create the receiver state.
-    absl::optional<blink::RtpReceiverState> receiver_state;
+    std::optional<blink::RtpReceiverState> receiver_state;
     auto webrtc_receiver = webrtc_transceiver->receiver();
     if (webrtc_receiver) {
       DCHECK(webrtc_receiver->track());

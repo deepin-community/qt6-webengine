@@ -27,15 +27,17 @@
 // clang-format on
 
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "absl/strings/escaping.h"
 #include "absl/strings/string_view.h"
+#include "quiche/quic/core/frames/quic_immediate_ack_frame.h"
 #include "quiche/quic/core/quic_framer.h"
 #include "quiche/quic/core/quic_types.h"
-#include "quiche/quic/core/quic_utils.h"
-#include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/common/platform/api/quiche_command_line_flags.h"
-#include "quiche/common/quiche_text_utils.h"
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(std::string, quic_version, "",
                                 "If set, specify the QUIC version to use.");
@@ -213,6 +215,14 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
     std::cerr << "OnAckFrequencyFrame: " << frame;
     return true;
   }
+  bool OnImmediateAckFrame(const QuicImmediateAckFrame& frame) override {
+    std::cerr << "OnImmediateAckFrame: " << frame;
+    return true;
+  }
+  bool OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) override {
+    std::cerr << "OnResetStreamAtFrame: " << frame;
+    return true;
+  }
   void OnPacketComplete() override { std::cerr << "OnPacketComplete\n"; }
   bool IsValidStatelessResetToken(
       const StatelessResetToken& /*token*/) const override {
@@ -266,7 +276,11 @@ int main(int argc, char* argv[]) {
     quiche::QuichePrintCommandLineFlagHelp(usage);
     return 1;
   }
-  std::string hex = absl::HexStringToBytes(args[1]);
+  std::string hex;
+  if (!absl::HexStringToBytes(args[1], &hex)) {
+    std::cerr << "Invalid hex string" << std::endl;
+    return 1;
+  }
   quic::ParsedQuicVersionVector versions = quic::AllSupportedVersions();
   // Fake a time since we're not actually generating acks.
   quic::QuicTime start(quic::QuicTime::Zero());

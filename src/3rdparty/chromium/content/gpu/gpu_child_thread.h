@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <vector>
 
 #include "base/command_line.h"
@@ -30,8 +29,6 @@
 #include "gpu/ipc/service/gpu_config.h"
 #include "gpu/ipc/service/x_util.h"
 #include "media/base/android_overlay_mojo_factory.h"
-#include "ui/gfx/gpu_extra_info.h"
-#include "ui/gfx/native_widget_types.h"
 
 namespace content {
 class GpuServiceFactory;
@@ -56,12 +53,6 @@ class GpuChildThread : public ChildThreadImpl,
 
   void Init(const base::TimeTicks& process_start_time);
 
-  static GpuChildThread* instance() { return instance_; }
-
-  gpu::GpuChannelManager* gpu_channel_manager() {
-    return viz_main_.gpu_service()->gpu_channel_manager();
-  }
-
  private:
   GpuChildThread(base::RepeatingClosure quit_closure,
                  ChildThreadImpl::Options options,
@@ -74,7 +65,6 @@ class GpuChildThread : public ChildThreadImpl,
 
   // viz::VizMainImpl::Delegate:
   void OnInitializationFailed() override;
-  void OnGpuChannelManagerCreated(gpu::GpuChannelManager* manager) override;
   void OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) override;
   void PostCompositorThreadCreated(
       base::SingleThreadTaskRunner* task_runner) override;
@@ -111,8 +101,6 @@ class GpuChildThread : public ChildThreadImpl,
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   base::WeakPtrFactory<GpuChildThread> weak_factory_{this};
-
-  static GpuChildThread* instance_;
 };
 
 }  // namespace content

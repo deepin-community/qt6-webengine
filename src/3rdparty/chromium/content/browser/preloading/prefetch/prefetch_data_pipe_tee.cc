@@ -4,8 +4,11 @@
 
 #include "content/browser/preloading/prefetch/prefetch_data_pipe_tee.h"
 
+#include "base/containers/span.h"
+#include "base/notreached.h"
+#include "base/strings/string_view_util.h"
 #include "mojo/public/cpp/system/string_data_source.h"
-#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/loading_params.h"
 
 namespace content {
 
@@ -19,9 +22,8 @@ MojoResult CreateDataPipeForServingData(
   options.struct_size = sizeof(MojoCreateDataPipeOptions);
   options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
   options.element_num_bytes = 1;
-  options.capacity_num_bytes =
-      network::features::GetDataPipeDefaultAllocationSize(
-          network::features::DataPipeAllocationSize::kLargerSizeIfPossible);
+  options.capacity_num_bytes = network::GetDataPipeDefaultAllocationSize(
+      network::DataPipeAllocationSize::kLargerSizeIfPossible);
 
   return mojo::CreateDataPipe(&options, producer_handle, consumer_handle);
 }
@@ -48,12 +50,20 @@ PrefetchDataPipeTee::PrefetchDataPipeTee(
 
 PrefetchDataPipeTee::~PrefetchDataPipeTee() {
   CHECK(!target_.first);
+
+  base::UmaHistogramEnumeration(
+      "Preloading.Prefetch.PrefetchDataPipeTeeDtorState", state_);
 }
 
 mojo::ScopedDataPipeConsumerHandle PrefetchDataPipeTee::Clone() {
+  ++count_clone_called_;
+
   switch (state_) {
     case State::kLoading:
       if (target_.first || pending_writes_) {
+        base::UmaHistogramCounts100(
+            "Preloading.Prefetch.PrefetchDataPipeTeeCloneFailed.Loading",
+            count_clone_called_);
         return {};
       }
       break;
@@ -63,6 +73,9 @@ mojo::ScopedDataPipeConsumerHandle PrefetchDataPipeTee::Clone() {
       state_ = State::kSizeExceeded;
       break;
     case State::kSizeExceeded:
+      base::UmaHistogramCounts100(
+          "Preloading.Prefetch.PrefetchDataPipeTeeCloneFailed.SizeExceeded",
+          count_clone_called_);
       return {};
     case State::kLoaded:
       break;
@@ -106,20 +119,18 @@ void PrefetchDataPipeTee::OnReadable(MojoResult result,
       return;
   }
 
-  const void* read_data = nullptr;
-  uint32_t num_bytes = 0;
-  MojoResult rv =
-      source_->BeginReadData(&read_data, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+  base::span<const uint8_t> read_data;
+  MojoResult rv = source_->BeginReadData(MOJO_READ_DATA_FLAG_NONE, read_data);
   if (rv == MOJO_RESULT_OK) {
     switch (state_) {
       case State::kLoading:
         CHECK_LE(buffer_.size(), buffer_limit_);
-        if (buffer_.size() + num_bytes <= buffer_limit_) {
-          buffer_.append(static_cast<const char*>(read_data), num_bytes);
+        if (buffer_.size() + read_data.size() <= buffer_limit_) {
+          buffer_.append(base::as_string_view(read_data));
           if (target_.first) {
-            WriteData(
-                ResetTarget({}),  //
-                std::string_view(buffer_).substr(buffer_.size() - num_bytes));
+            WriteData(ResetTarget({}),  //
+                      std::string_view(buffer_).substr(buffer_.size() -
+                                                       read_data.size()));
           }
           break;
         }
@@ -127,8 +138,8 @@ void PrefetchDataPipeTee::OnReadable(MojoResult result,
         // If there are no targets yet, stop reading and keep `buffer_` (== the
         // whole data read so far) until the first target is added.
         if (!target_.first) {
-          num_bytes = buffer_limit_ - buffer_.size();
-          buffer_.append(static_cast<const char*>(read_data), num_bytes);
+          read_data = read_data.first(buffer_limit_ - buffer_.size());
+          buffer_.append(base::as_string_view(read_data));
           state_ = State::kSizeExceededNoTarget;
           break;
         }
@@ -148,15 +159,14 @@ void PrefetchDataPipeTee::OnReadable(MojoResult result,
           break;
         }
 
-        buffer_.append(static_cast<const char*>(read_data), num_bytes);
+        buffer_.append(base::as_string_view(read_data));
         WriteData(ResetTarget({}), buffer_);
         break;
       case State::kSizeExceededNoTarget:
       case State::kLoaded:
         NOTREACHED();
-        break;
     }
-    source_->EndReadData(num_bytes);
+    source_->EndReadData(read_data.size());
     source_watcher_.ArmOrNotify();
   } else if (rv == MOJO_RESULT_FAILED_PRECONDITION) {
     switch (state_) {
@@ -172,10 +182,9 @@ void PrefetchDataPipeTee::OnReadable(MojoResult result,
       case State::kSizeExceededNoTarget:
       case State::kLoaded:
         NOTREACHED();
-        break;
     }
   } else if (rv != MOJO_RESULT_SHOULD_WAIT) {
-    CHECK(false) << "Unhandled MojoResult: " << rv;
+    NOTREACHED() << "Unhandled MojoResult: " << rv;
   }
 }
 
@@ -251,7 +260,6 @@ void PrefetchDataPipeTee::OnDataWritten(ProducerPair target,
       break;
     case State::kSizeExceededNoTarget:
       NOTREACHED();
-      break;
   }
 }
 

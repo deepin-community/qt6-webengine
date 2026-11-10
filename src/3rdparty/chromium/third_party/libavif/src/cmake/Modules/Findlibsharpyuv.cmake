@@ -32,10 +32,7 @@ endif(LIBSHARPYUV_LIBRARY)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(
-    libsharpyuv
-    FOUND_VAR LIBSHARPYUV_FOUND
-    REQUIRED_VARS LIBSHARPYUV_LIBRARY LIBSHARPYUV_LIBRARIES LIBSHARPYUV_INCLUDE_DIR
-    VERSION_VAR _LIBSHARPYUV_VERSION
+    libsharpyuv REQUIRED_VARS LIBSHARPYUV_LIBRARY LIBSHARPYUV_LIBRARIES LIBSHARPYUV_INCLUDE_DIR VERSION_VAR _LIBSHARPYUV_VERSION
 )
 
 # show the LIBSHARPYUV_INCLUDE_DIR, LIBSHARPYUV_LIBRARY and LIBSHARPYUV_LIBRARIES variables
@@ -48,6 +45,9 @@ if(LIBSHARPYUV_LIBRARY)
     else()
         add_library(sharpyuv::sharpyuv SHARED IMPORTED GLOBAL)
     endif()
-    set_target_properties(sharpyuv::sharpyuv PROPERTIES IMPORTED_LOCATION "${LIBSHARPYUV_LIBRARY}" IMPORTED_SONAME sharpyuv)
+    set_target_properties(
+        sharpyuv::sharpyuv PROPERTIES IMPORTED_LOCATION "${LIBSHARPYUV_LIBRARY}" IMPORTED_IMPLIB "${LIBSHARPYUV_LIBRARY}"
+                                      IMPORTED_SONAME sharpyuv
+    )
     target_include_directories(sharpyuv::sharpyuv INTERFACE "${LIBSHARPYUV_INCLUDE_DIR}")
 endif()

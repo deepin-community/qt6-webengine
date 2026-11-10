@@ -353,6 +353,8 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_palm_cove = 0x0010020B,
 	/** Intel Sunny Cove microarchitecture (10 nm, Ice Lake). */
 	cpuinfo_uarch_sunny_cove = 0x0010020C,
+	/** Intel Willow Cove microarchitecture (10 nm, Tiger Lake). */
+	cpuinfo_uarch_willow_cove = 0x0010020D,
 
 	/** Pentium 4 with Willamette, Northwood, or Foster cores. */
 	cpuinfo_uarch_willamette = 0x00100300,
@@ -371,6 +373,10 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_goldmont = 0x00100404,
 	/** Intel Goldmont Plus microarchitecture (Gemini Lake). */
 	cpuinfo_uarch_goldmont_plus = 0x00100405,
+	/** Intel Gracemont microarchitecture (Twin Lake). */
+	cpuinfo_uarch_gracemont = 0x00100406,
+	/** Intel Crestmont microarchitecture (Sierra Forest). */
+	cpuinfo_uarch_crestmont = 0x00100407,
 
 	/** Intel Knights Ferry HPC boards. */
 	cpuinfo_uarch_knights_ferry = 0x00100500,
@@ -382,6 +388,8 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_knights_hill = 0x00100503,
 	/** Intel Knights Mill Xeon Phi. */
 	cpuinfo_uarch_knights_mill = 0x00100504,
+	/** Intel Darkmont microarchitecture (e-core used in Clearwater Forest). */
+	cpuinfo_uarch_darkmont = 0x00100505,
 
 	/** Intel/Marvell XScale series. */
 	cpuinfo_uarch_xscale = 0x00100600,
@@ -419,6 +427,8 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_zen3 = 0x0020010B,
 	/** AMD Zen 4 microarchitecture. */
 	cpuinfo_uarch_zen4 = 0x0020010C,
+	/** AMD Zen 5 microarchitecture. */
+	cpuinfo_uarch_zen5 = 0x0020010D,
 
 	/** NSC Geode and AMD Geode GX and LX. */
 	cpuinfo_uarch_geode = 0x00200200,
@@ -496,13 +506,19 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_cortex_x2 = 0x00300502,
 	/** ARM Cortex-X3. */
 	cpuinfo_uarch_cortex_x3 = 0x00300503,
+	/** ARM Cortex-X4. */
+	cpuinfo_uarch_cortex_x4 = 0x00300504,
 
 	/** ARM Cortex-A510. */
 	cpuinfo_uarch_cortex_a510 = 0x00300551,
+	/** ARM Cortex-A520. */
+	cpuinfo_uarch_cortex_a520 = 0x00300552,
 	/** ARM Cortex-A710. */
 	cpuinfo_uarch_cortex_a710 = 0x00300571,
 	/** ARM Cortex-A715. */
 	cpuinfo_uarch_cortex_a715 = 0x00300572,
+	/** ARM Cortex-A720. */
+	cpuinfo_uarch_cortex_a720 = 0x00300573,
 
 	/** Qualcomm Scorpion. */
 	cpuinfo_uarch_scorpion = 0x00400100,
@@ -514,6 +530,8 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_falkor = 0x00400103,
 	/** Qualcomm Saphira. */
 	cpuinfo_uarch_saphira = 0x00400104,
+	/** Qualcomm Oryon. */
+	cpuinfo_uarch_oryon = 0x00400105,
 
 	/** Nvidia Denver. */
 	cpuinfo_uarch_denver = 0x00500100,
@@ -571,6 +589,22 @@ enum cpuinfo_uarch {
 	cpuinfo_uarch_avalanche = 0x0070010D,
 	/** Apple A15 / M2 processor (little cores). */
 	cpuinfo_uarch_blizzard = 0x0070010E,
+	/** Apple A16 processor (big cores). */
+	cpuinfo_uarch_everest = 0x00700200,
+	/** Apple A16 processor (little cores). */
+	cpuinfo_uarch_sawtooth = 0x00700201,
+	/** Apple A17 processor (big cores). */
+	cpuinfo_uarch_coll_everest = 0x00700202,
+	/** Apple A17 processor (little cores). */
+	cpuinfo_uarch_coll_sawtooth = 0x00700203,
+	/** Apple A18 processor (big cores). */
+	cpuinfo_uarch_tupai_everest = 0x00700204,
+	/** Apple A18 processor (little cores). */
+	cpuinfo_uarch_tupai_sawtooth = 0x00700205,
+	/** Apple A18 pro processor (big cores). */
+	cpuinfo_uarch_tahiti_everest = 0x00700206,
+	/** Apple A18 pro processor (little cores). */
+	cpuinfo_uarch_tahiti_sawtooth = 0x00700207,
 
 	/** Cavium ThunderX. */
 	cpuinfo_uarch_thunderx = 0x00800100,
@@ -812,6 +846,15 @@ struct cpuinfo_x86_isa {
 	bool avx512vp2intersect;
 	bool avx512_4vnniw;
 	bool avx512_4fmaps;
+	bool avx10_1;
+	bool avx10_2;
+	bool amx_bf16;
+	bool amx_tile;
+	bool amx_int8;
+	bool amx_fp16;
+	bool avx_vnni_int8;
+	bool avx_vnni_int16;
+	bool avx_ne_convert;
 	bool hle;
 	bool rtm;
 	bool xtest;
@@ -1328,6 +1371,114 @@ static inline bool cpuinfo_has_x86_avx512_4fmaps(void) {
 #endif
 }
 
+/* [NOTE] Intel Advanced Matrix Extensions (AMX) detection
+ *
+ * I.  AMX is a new extensions to the x86 ISA to work on matrices, consists of
+ *   1) 2-dimentional registers (tiles), hold sub-matrices from larger matrices in memory
+ *   2) Accelerator called Tile Matrix Multiply (TMUL), contains instructions operating on tiles
+ *
+ * II. Platforms that supports AMX:
+ * +-----------------+-----+----------+----------+----------+----------+
+ * |    Platforms    | Gen | amx-bf16 | amx-tile | amx-int8 | amx-fp16 |
+ * +-----------------+-----+----------+----------+----------+----------+
+ * | Sapphire Rapids | 4th |   YES    |   YES    |   YES    |    NO    |
+ * +-----------------+-----+----------+----------+----------+----------+
+ * | Emerald Rapids  | 5th |   YES    |   YES    |   YES    |    NO    |
+ * +-----------------+-----+----------+----------+----------+----------+
+ * | Granite Rapids  | 6th |   YES    |   YES    |   YES    |   YES    |
+ * +-----------------+-----+----------+----------+----------+----------+
+ *
+ * Reference: https://www.intel.com/content/www/us/en/products/docs
+ *    /accelerator-engines/advanced-matrix-extensions/overview.html
+ */
+static inline bool cpuinfo_has_x86_amx_bf16(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.amx_bf16;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_x86_amx_tile(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.amx_tile;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_x86_amx_int8(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.amx_int8;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_x86_amx_fp16(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.amx_fp16;
+#else
+	return false;
+#endif
+}
+
+/*
+ * Intel AVX Vector Neural Network Instructions (VNNI) INT8
+ * Supported Platfroms: Sierra Forest, Arrow Lake, Lunar Lake
+ */
+static inline bool cpuinfo_has_x86_avx_vnni_int8(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.avx_vnni_int8;
+#else
+	return false;
+#endif
+}
+
+/*
+ * Intel AVX Vector Neural Network Instructions (VNNI) INT16
+ * Supported Platfroms: Arrow Lake, Lunar Lake
+ */
+static inline bool cpuinfo_has_x86_avx_vnni_int16(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.avx_vnni_int16;
+#else
+	return false;
+#endif
+}
+
+/*
+ * A new set of instructions, which can convert low precision floating point
+ * like BF16/FP16 to high precision floating point FP32, as well as convert FP32
+ * elements to BF16. This instruction allows the platform to have improved AI
+ * capabilities and better compatibility.
+ *
+ * Supported Platforms: Sierra Forest, Arrow Lake, Lunar Lake
+ */
+static inline bool cpuinfo_has_x86_avx_ne_convert(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.avx_ne_convert;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_x86_avx10_1(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.avx10_1;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_x86_avx10_2(void) {
+#if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
+	return cpuinfo_isa.avx10_2;
+#else
+	return false;
+#endif
+}
+
 static inline bool cpuinfo_has_x86_hle(void) {
 #if CPUINFO_ARCH_X86 || CPUINFO_ARCH_X86_64
 	return cpuinfo_isa.hle;
@@ -1565,6 +1716,15 @@ struct cpuinfo_arm_isa {
 	bool sve;
 	bool sve2;
 	bool i8mm;
+	bool sme;
+	bool sme2;
+	bool sme2p1;
+	bool sme_i16i32;
+	bool sme_bi32i32;
+	bool sme_b16b16;
+	bool sme_f16f16;
+	uint32_t svelen;
+	uint32_t smelen;
 #endif
 	bool rdm;
 	bool fp16arith;
@@ -1932,6 +2092,80 @@ static inline bool cpuinfo_has_arm_sve_bf16(void) {
 static inline bool cpuinfo_has_arm_sve2(void) {
 #if CPUINFO_ARCH_ARM64
 	return cpuinfo_isa.sve2;
+#else
+	return false;
+#endif
+}
+
+// Function to get the max SVE vector length on ARM CPU's which support SVE.
+static inline uint32_t cpuinfo_get_max_arm_sve_length(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.svelen * 8; // bytes * 8 = bit length(vector length)
+#else
+	return 0;
+#endif
+}
+
+// Function to get the max SME vector length on ARM CPU's which support SME.
+static inline uint32_t cpuinfo_get_max_arm_sme_length(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.smelen * 8; // bytes * 8 = bit length(vector length)
+#else
+	return 0;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme2(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme2;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme2p1(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme2p1;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme_i16i32(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme_i16i32;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme_bi32i32(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme_bi32i32;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme_b16b16(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme_b16b16;
+#else
+	return false;
+#endif
+}
+
+static inline bool cpuinfo_has_arm_sme_f16f16(void) {
+#if CPUINFO_ARCH_ARM64
+	return cpuinfo_isa.sme_f16f16;
 #else
 	return false;
 #endif

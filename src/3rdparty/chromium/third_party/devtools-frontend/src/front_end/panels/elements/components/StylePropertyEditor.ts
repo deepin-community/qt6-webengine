@@ -1,11 +1,12 @@
 // Copyright (c) 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import '../../../ui/components/icon_button/icon_button.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as Lit from '../../../ui/lit/lit.js';
 import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import {findFlexContainerIcon, findGridContainerIcon, type IconInfo} from './CSSPropertyIconResolver.js';
@@ -24,16 +25,16 @@ const UIStrings = {
    * @example {row} propertyValue
    */
   deselectButton: 'Remove {propertyName}: {propertyValue}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/elements/components/StylePropertyEditor.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
-const {render, html, Directives} = LitHtml;
+const {render, html, Directives} = Lit;
 
 declare global {
   interface HTMLElementEventMap {
-    'propertyselected': PropertySelectedEvent;
-    'propertydeselected': PropertyDeselectedEvent;
+    propertyselected: PropertySelectedEvent;
+    propertydeselected: PropertyDeselectedEvent;
   }
 }
 
@@ -67,21 +68,11 @@ export class PropertyDeselectedEvent extends Event {
   }
 }
 
-// eslint-disable-next-line rulesdir/check_component_naming
 export class StylePropertyEditor extends HTMLElement {
   readonly #shadow = this.attachShadow({mode: 'open'});
-  #authoredProperties: Map<string, string> = new Map();
-  #computedProperties: Map<string, string> = new Map();
+  #authoredProperties = new Map<string, string>();
+  #computedProperties = new Map<string, string>();
   protected readonly editableProperties: EditableProperty[] = [];
-  protected readonly jslog: string = '';
-
-  constructor() {
-    super();
-  }
-
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [stylePropertyEditorStyles];
-  }
 
   getEditableProperties(): EditableProperty[] {
     return this.editableProperties;
@@ -97,7 +88,8 @@ export class StylePropertyEditor extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
-      <div class="container" jslog=${this.jslog}>
+      <style>${stylePropertyEditorStyles}</style>
+      <div class="container">
         ${this.editableProperties.map(prop => this.#renderProperty(prop))}
       </div>
     `, this.#shadow, {
@@ -106,7 +98,7 @@ export class StylePropertyEditor extends HTMLElement {
     // clang-format on
   }
 
-  #renderProperty(prop: EditableProperty): LitHtml.TemplateResult {
+  #renderProperty(prop: EditableProperty): Lit.TemplateResult {
     const authoredValue = this.#authoredProperties.get(prop.propertyName);
     const notAuthored = !authoredValue;
     const shownValue = authoredValue || this.#computedProperties.get(prop.propertyName);
@@ -124,7 +116,7 @@ export class StylePropertyEditor extends HTMLElement {
     </div>`;
   }
 
-  #renderButton(propertyValue: string, propertyName: string, selected: boolean = false): LitHtml.TemplateResult {
+  #renderButton(propertyValue: string, propertyName: string, selected = false): Lit.TemplateResult {
     const query = `${propertyName}: ${propertyValue}`;
     const iconInfo = this.findIcon(query, this.#computedProperties);
     if (!iconInfo) {
@@ -132,8 +124,8 @@ export class StylePropertyEditor extends HTMLElement {
     }
     const transform = `transform: rotate(${iconInfo.rotate}deg) scale(${iconInfo.scaleX}, ${iconInfo.scaleY})`;
     const classes = Directives.classMap({
-      'button': true,
-      'selected': selected,
+      button: true,
+      selected,
     });
     const values = {propertyName, propertyValue};
     const title = selected ? i18nString(UIStrings.deselectButton, values) : i18nString(UIStrings.selectButton, values);
@@ -141,9 +133,9 @@ export class StylePropertyEditor extends HTMLElement {
       <button title=${title}
               class=${classes}
               jslog=${VisualLogging.item().track({click: true}).context(`${propertyName}-${propertyValue}`)}
-              @click=${(): void => this.#onButtonClick(propertyName, propertyValue, selected)}>
-        <${IconButton.Icon.Icon.litTagName} style=${transform} name=${iconInfo.iconName}>
-        </${IconButton.Icon.Icon.litTagName}>
+              @click=${() => this.#onButtonClick(propertyName, propertyValue, selected)}>
+        <devtools-icon style=${transform} name=${iconInfo.iconName}>
+        </devtools-icon>
       </button>
     `;
   }
@@ -162,7 +154,7 @@ export class StylePropertyEditor extends HTMLElement {
 }
 
 export class FlexboxEditor extends StylePropertyEditor {
-  protected override readonly jslog = `${VisualLogging.cssFlexboxEditor()}`;
+  readonly jslogContext = 'cssFlexboxEditor';
   protected override readonly editableProperties: EditableProperty[] = FlexboxEditableProperties;
 
   protected override findIcon(query: string, computedProperties: Map<string, string>): IconInfo|null {
@@ -170,17 +162,16 @@ export class FlexboxEditor extends StylePropertyEditor {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-flexbox-editor', FlexboxEditor);
+customElements.define('devtools-flexbox-editor', FlexboxEditor);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-flexbox-editor': FlexboxEditor;
   }
 }
 
 export class GridEditor extends StylePropertyEditor {
-  protected override readonly jslog = `${VisualLogging.cssGridEditor()}`;
+  readonly jslogContext = 'cssGridEditor';
   protected override readonly editableProperties: EditableProperty[] = GridEditableProperties;
 
   protected override findIcon(query: string, computedProperties: Map<string, string>): IconInfo|null {
@@ -188,10 +179,9 @@ export class GridEditor extends StylePropertyEditor {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-grid-editor', GridEditor);
+customElements.define('devtools-grid-editor', GridEditor);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-grid-editor': GridEditor;
   }

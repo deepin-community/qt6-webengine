@@ -35,6 +35,7 @@
 namespace blink {
 
 class FillLayer;
+class CSSLengthResolver;
 class CSSValue;
 class StyleResolverState;
 class NinePieceImage;
@@ -68,13 +69,12 @@ class CSSToStyleMap {
 
   static Timing::Delay MapAnimationDelayStart(StyleResolverState&,
                                               const CSSValue&);
-  static Timing::Delay MapAnimationDelayEnd(const CSSValue&);
   static Timing::Delay MapAnimationDelayEnd(StyleResolverState&,
                                             const CSSValue&);
   static Timing::PlaybackDirection MapAnimationDirection(StyleResolverState&,
                                                          const CSSValue&);
-  static absl::optional<double> MapAnimationDuration(StyleResolverState&,
-                                                     const CSSValue&);
+  static std::optional<double> MapAnimationDuration(StyleResolverState&,
+                                                    const CSSValue&);
   static Timing::FillMode MapAnimationFillMode(StyleResolverState&,
                                                const CSSValue&);
   static double MapAnimationIterationCount(StyleResolverState&,
@@ -87,12 +87,11 @@ class CSSToStyleMap {
                                             const CSSValue&);
   static EAnimPlayState MapAnimationPlayState(StyleResolverState&,
                                               const CSSValue&);
-  static absl::optional<TimelineOffset> MapAnimationRangeStart(
+  static std::optional<TimelineOffset> MapAnimationRangeStart(
       StyleResolverState&,
       const CSSValue&);
-  static absl::optional<TimelineOffset> MapAnimationRangeEnd(
-      StyleResolverState&,
-      const CSSValue&);
+  static std::optional<TimelineOffset> MapAnimationRangeEnd(StyleResolverState&,
+                                                            const CSSValue&);
   static EffectModel::CompositeOperation MapAnimationComposition(
       StyleResolverState&,
       const CSSValue&);
@@ -100,6 +99,7 @@ class CSSToStyleMap {
       StyleResolverState&,
       const CSSValue&);
   static scoped_refptr<TimingFunction> MapAnimationTimingFunction(
+      const CSSLengthResolver&,
       const CSSValue&);
   static scoped_refptr<TimingFunction> MapAnimationTimingFunction(
       StyleResolverState&,
@@ -117,6 +117,32 @@ class CSSToStyleMap {
   static void MapNinePieceImageRepeat(StyleResolverState&,
                                       const CSSValue&,
                                       NinePieceImage&);
+  static EAnimationTriggerBehavior MapAnimationTriggerBehavior(
+      StyleResolverState&,
+      const CSSValue&);
+  static Persistent<const ScopedCSSName> MapAnimationTimelineTriggerName(
+      StyleResolverState&,
+      const CSSValue&);
+  static EAnimationTriggerBehavior MapAnimationTimelineTriggerBehavior(
+      StyleResolverState&,
+      const CSSValue&);
+  static std::optional<TimelineOffset> MapAnimationTimelineTriggerRangeStart(
+      StyleResolverState&,
+      const CSSValue&);
+  static std::optional<TimelineOffset> MapAnimationTimelineTriggerRangeEnd(
+      StyleResolverState&,
+      const CSSValue&);
+  static TimelineOffsetOrAuto MapAnimationTimelineTriggerExitRangeStart(
+      StyleResolverState&,
+      const CSSValue&);
+  static TimelineOffsetOrAuto MapAnimationTimelineTriggerExitRangeEnd(
+      StyleResolverState&,
+      const CSSValue&);
+  static StyleTimeline MapAnimationTimelineTriggerTimeline(StyleResolverState&,
+                                                           const CSSValue&);
+  static std::optional<Vector<AtomicString>> MapAnimationTriggerNames(
+      StyleResolverState&,
+      const CSSValue&);
 };
 
 }  // namespace blink

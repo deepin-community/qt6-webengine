@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const BASE64_CODES = new Uint8Array(123);
+export const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+export const BASE64_CODES = new Uint8Array(123);
 for (let index = 0; index < BASE64_CHARS.length; ++index) {
   BASE64_CODES[BASE64_CHARS.charCodeAt(index)] = index;
 }
@@ -11,7 +11,7 @@ for (let index = 0; index < BASE64_CHARS.length; ++index) {
 /**
  * Decodes Base64-encoded data from a string without performing any kind of checking.
  */
-export function decode(input: string): ArrayBuffer {
+export function decode(input: string): Uint8Array<ArrayBuffer> {
   let bytesLength = ((input.length * 3) / 4) >>> 0;
   if (input.charCodeAt(input.length - 2) === 0x3d /* '=' */) {
     bytesLength -= 2;
@@ -29,5 +29,19 @@ export function decode(input: string): ArrayBuffer {
     bytes[offset++] = ((b & 0x0f) << 4) | (c >> 2);
     bytes[offset++] = ((c & 0x03) << 6) | (d & 0x3f);
   }
-  return bytes.buffer;
+  return bytes;
+}
+
+export function encode(input: BlobPart): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('failed to convert to base64'));
+    reader.onload = () => {
+      const blobAsUrl = reader.result as string;
+      const [, base64] = blobAsUrl.split(',', 2);
+      resolve(base64);
+    };
+
+    reader.readAsDataURL(new Blob([input]));
+  });
 }

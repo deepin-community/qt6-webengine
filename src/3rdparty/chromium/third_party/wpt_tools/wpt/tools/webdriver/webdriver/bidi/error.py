@@ -12,14 +12,14 @@ class BidiException(Exception):
     error_code: ClassVar[str]
 
     def __init__(self, message: str, stacktrace: Optional[str] = None):
-        super()
+        super().__init__()
 
         self.message = message
         self.stacktrace = stacktrace
 
     def __repr__(self):
         """Return the object representation in string format."""
-        return f"{self.__class__.__name__}({self.error}, {self.message}, {self.stacktrace})"
+        return f"{self.__class__.__name__}({self.error_code}, {self.message}, {self.stacktrace})"
 
     def __str__(self):
         """Return the string representation of the object."""
@@ -41,6 +41,10 @@ class InvalidSelectorException(BidiException):
 
 class InvalidSessionIDError(BidiException):
     error_code = "invalid session id"
+
+
+class InvalidWebExtensionException(BidiException):
+    error_code = "invalid web extension"
 
 
 class MoveTargetOutOfBoundsException(BidiException):
@@ -71,6 +75,14 @@ class NoSuchHistoryEntryException(BidiException):
     error_code = "no such history entry"
 
 
+class NoSuchNetworkCollectorException(BidiException):
+    error_code = "no such network collector"
+
+
+class NoSuchNetworkDataException(BidiException):
+    error_code = "no such network data"
+
+
 class NoSuchNodeException(BidiException):
     error_code = "no such node"
 
@@ -83,12 +95,32 @@ class NoSuchScriptException(BidiException):
     error_code = "no such script"
 
 
+class NoSuchUserContextException(BidiException):
+    error_code = "no such user context"
+
+
+class NoSuchWebExtensionException(BidiException):
+    error_code = "no such web extension"
+
+
 class UnableToCaptureScreenException(BidiException):
     error_code = "unable to capture screen"
 
 
 class UnableToSetCookieException(BidiException):
     error_code = "unable to set cookie"
+
+
+class UnableToSetFileInputException(BidiException):
+    error_code = "unable to set file input"
+
+
+class UnavailableNetworkDataException(BidiException):
+    error_code = "unavailable network data"
+
+
+class UnderspecifiedStoragePartitionException(BidiException):
+    error_code = "underspecified storage partition"
 
 
 class UnknownCommandException(BidiException):

@@ -14,16 +14,13 @@
 
 #include "internal/platform/implementation/windows/ble_v2_socket.h"
 
-#include <cstddef>
-#include <memory>
+#include <cstdint>
 
-#include "absl/synchronization/mutex.h"
-#include "absl/time/clock.h"
-#include "absl/time/time.h"
 #include "internal/platform/byte_array.h"
 #include "internal/platform/exception.h"
-#include "internal/platform/implementation/windows/utils.h"
+#include "internal/platform/input_stream.h"
 #include "internal/platform/logging.h"
+#include "internal/platform/output_stream.h"
 
 namespace nearby {
 namespace windows {
@@ -34,44 +31,39 @@ OutputStream& BleV2Socket::GetOutputStream() { return output_stream_; }
 
 Exception BleV2Socket::Close() { return {Exception::kSuccess}; }
 
-api::ble_v2::BlePeripheral* BleV2Socket::GetRemotePeripheral() {
-  return ble_peripheral_;
-}
-
-bool BleV2Socket::Connect(api::ble_v2::BlePeripheral* ble_peripheral) {
+bool BleV2Socket::Connect() {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(VERBOSE) << __func__ << ": Connect to BLE peripheral="
-                       << ble_peripheral->GetAddress();
+  VLOG(1) << __func__ << ": Connect to BLE peripheral";
   return false;
 }
 
 ExceptionOr<ByteArray> BleV2Socket::BleInputStream::Read(std::int64_t size) {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(VERBOSE) << __func__ << ": Read data size=" << size;
+  VLOG(1) << __func__ << ": Read data size=" << size;
   return ExceptionOr<ByteArray>(Exception::kIo);
 }
 
 Exception BleV2Socket::BleInputStream::Close() {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(VERBOSE) << __func__ << ": Close BLE input stream.";
+  VLOG(1) << __func__ << ": Close BLE input stream.";
   return {Exception::kSuccess};
 }
 
 Exception BleV2Socket::BleOutputStream::Write(const ByteArray& data) {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(VERBOSE) << __func__ << ": Write data size=" << data.size();
+  VLOG(1) << __func__ << ": Write data size=" << data.size();
   return {Exception::kIo};
 }
 
 Exception BleV2Socket::BleOutputStream::Flush() {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(INFO) << __func__ << ": Flush is called.";
+  LOG(INFO) << __func__ << ": Flush is called.";
   return {Exception::kSuccess};
 }
 
 Exception BleV2Socket::BleOutputStream::Close() {
   // TODO(b/271031645): implement BLE socket using weave
-  NEARBY_LOGS(INFO) << __func__ << ": close is called.";
+  LOG(INFO) << __func__ << ": close is called.";
   return {Exception::kSuccess};
 }
 

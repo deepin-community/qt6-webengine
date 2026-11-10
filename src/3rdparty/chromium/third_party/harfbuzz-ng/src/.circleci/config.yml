@@ -3,11 +3,11 @@ version: 2.1
 executors:
   win32-executor:
     docker:
-      - image: cimg/base:2023.10
+      - image: ubuntu:24.04
   win64-executor:
     docker:
-      - image: cimg/base:2023.10
-  autotools-executor:
+      - image: ubuntu:24.04
+  dist-executor:
     docker:
       - image: cimg/base:2023.10
 
@@ -15,41 +15,38 @@ jobs:
 
   macos-aat-fonts:
     macos:
-      xcode: "12.5.1"
+      xcode: "15.3.0"
     steps:
       - checkout
       - run: HOMEBREW_NO_AUTO_UPDATE=1 brew install pkg-config ragel freetype glib cairo python3 icu4c graphite2 gobject-introspection ninja
       - run: pip3 install meson --upgrade
-      - run: PKG_CONFIG_PATH="/usr/local/opt/icu4c/lib/pkgconfig:/usr/local/opt/libffi/lib/pkgconfig" meson setup build -Dcoretext=enabled -Dgraphite=enabled -Dauto_features=enabled -Dchafa=disabled -Ddocs=disabled
+      - run: brew link --force icu4c
+      - run: PKG_CONFIG_PATH="/usr/local/opt/libffi/lib/pkgconfig" meson setup build -Dcoretext=enabled -Dgraphite=enabled -Dauto_features=enabled -Dchafa=disabled -Ddocs=disabled
       - run: meson compile -Cbuild
       - run: meson test -Cbuild --print-errorlogs
       - store_artifacts:
           path: build/meson-logs/
 
-  # will be dropped with autotools removal
-  distcheck:
-    executor: autotools-executor
+  dist:
+    executor: dist-executor
     steps:
       - checkout
-      - run: sudo apt update && DEBIAN_FRONTEND=noninteractive sudo apt install -y git ninja-build binutils libtool autoconf automake make gcc g++ pkg-config ragel gtk-doc-tools gobject-introspection libfreetype6-dev libglib2.0-dev libgirepository1.0-dev libcairo2-dev libicu-dev libgraphite2-dev python3 python3-pip
+      - run: sudo apt update && DEBIAN_FRONTEND=noninteractive sudo apt install -y git ninja-build binutils gcc g++ pkg-config ragel gtk-doc-tools gobject-introspection libfreetype6-dev libglib2.0-dev libgirepository1.0-dev libcairo2-dev libicu-dev libgraphite2-dev python3 python3-pip
       - run: pip3 install fonttools meson --upgrade
-      - run: ./autogen.sh
-      - run: make -j2 distcheck
-      - run: rm harfbuzz-* && make distdir
-      - run: cd harfbuzz-* && meson build && ninja -j2 -Cbuild test
-      - run: make dist
+      - run: meson setup build
+      - run: meson dist --no-tests -Cbuild
       - persist_to_workspace:
           root: .
-          paths: harfbuzz-*.tar.xz
+          paths: [build/meson-dist/harfbuzz-*.tar.xz]
 
   publish-dist:
-    executor: autotools-executor
+    executor: dist-executor
     steps:
       - checkout
       - attach_workspace:
           at: .
       - run: |
-          .ci/publish_release_artifact.sh harfbuzz-$CIRCLE_TAG.tar.xz
+          .ci/publish_release_artifact.sh build/meson-dist/harfbuzz-$CIRCLE_TAG.tar.xz
 
   fedora-valgrind:
     docker:
@@ -59,22 +56,7 @@ jobs:
       - run: dnf install -y pkg-config ragel valgrind gcc gcc-c++ meson git glib2-devel freetype-devel cairo-devel libicu-devel gobject-introspection-devel graphite2-devel redhat-rpm-config python python-pip || true
       - run: meson setup build --buildtype=debugoptimized
       - run: meson compile -Cbuild -j9
-      # TOOD: increase timeouts and remove --no-suite=slow
-      - run: RUN_VALGRIND=1 meson test -Cbuild --no-suite=slow --wrap='valgrind --leak-check=full --error-exitcode=1' --print-errorlogs --num-processes=$(($(nproc)/2 + 1))
-
-  alpine:
-    docker:
-      - image: alpine
-    steps:
-      - checkout
-      - run: apk update && apk add ragel gcc g++ glib-dev freetype-dev cairo-dev git py3-pip ninja
-      - run: |
-          python3 -m venv venv
-          source venv/bin/activate
-          pip3 install meson==0.56.0
-          meson setup build --buildtype=minsize
-          meson compile -Cbuild -j9
-          meson test -Cbuild --print-errorlogs
+      - run: RUN_VALGRIND=1 meson test -Cbuild -t 10 --no-suite=slow --wrap='valgrind --leak-check=full --error-exitcode=1' --print-errorlogs --num-processes=$(($(nproc)/2 + 1))
 
   asan-ubsan:
     docker:
@@ -89,11 +71,11 @@ jobs:
           pip3 install meson==0.56.0
           CC=clang CXX=clang++ meson setup build --default-library=static -Db_sanitize=address,undefined --buildtype=debugoptimized --wrap-mode=nodownload -Dexperimental_api=true
           meson compile -Cbuild -j9
-          meson test -Cbuild --print-errorlogs | asan_symbolize | c++filt
+          meson test -Cbuild -t 10 --print-errorlogs | asan_symbolize | c++filt
 
   tsan:
     docker:
-      - image: ubuntu:20.04
+      - image: ubuntu:24.04
     steps:
       - checkout
       - run: apt update || true
@@ -104,11 +86,11 @@ jobs:
           pip3 install meson==0.56.0
           CC=clang CXX=clang++ meson setup build --default-library=static -Db_sanitize=thread --buildtype=debugoptimized --wrap-mode=nodownload -Dexperimental_api=true
           meson compile -Cbuild -j9
-          meson test -Cbuild --print-errorlogs | asan_symbolize | c++filt
+          meson test -Cbuild -t 10 --print-errorlogs | asan_symbolize | c++filt
 
   msan:
     docker:
-      - image: ubuntu:20.04
+      - image: ubuntu:24.04
     steps:
       - checkout
       - run: apt update || true
@@ -120,7 +102,7 @@ jobs:
           # msan, needs --force-fallback-for=glib,freetype2 also which doesn't work yet but runs fuzzer cases at least
           CC=clang CXX=clang++ meson setup build --default-library=static -Db_sanitize=memory --buildtype=debugoptimized --wrap-mode=nodownload -Dauto_features=disabled -Dtests=enabled -Dexperimental_api=true
           meson compile -Cbuild -j9
-          meson test -Cbuild --print-errorlogs | asan_symbolize | c++filt
+          meson test -Cbuild -t 10 --print-errorlogs | asan_symbolize | c++filt
 
   clang-cxx2a:
     docker:
@@ -135,17 +117,21 @@ jobs:
     executor: win32-executor
     steps:
       - checkout
-      - run: sudo apt update && DEBIAN_FRONTEND=noninteractive sudo apt install -y ninja-build python3 python3-pip python3-venv git g++-mingw-w64-i686 zip
+      - run: dpkg --add-architecture i386
+      - run: apt update
+      - run: DEBIAN_FRONTEND=noninteractive apt install -y ninja-build python3 python3-pip python3-venv git g++-mingw-w64-i686 zip wine wine32
       - run: |
+          export LANG=en_US.UTF-8
           python3 -m venv venv
           source venv/bin/activate
-          pip3 install meson==0.60.0
-          bash .ci/build-win32.sh
+          pip3 install meson==1.6.0
+          bash .ci/build-win.sh 32
+          meson devenv -Cbuild-win32 meson test -t 10 --print-errorlogs --suite=harfbuzz
       - store_artifacts:
           path: harfbuzz-win32.zip
       - persist_to_workspace:
           root: .
-          paths: harfbuzz-win32.zip
+          paths: [harfbuzz-win32.zip]
 
   publish-win32:
     executor: win32-executor
@@ -153,6 +139,8 @@ jobs:
       - checkout
       - attach_workspace:
           at: .
+      - run: apt update
+      - run: DEBIAN_FRONTEND=noninteractive apt install -y curl
       - run: |
           mv harfbuzz-win32{,-$CIRCLE_TAG}.zip
           .ci/publish_release_artifact.sh harfbuzz-win32-$CIRCLE_TAG.zip
@@ -161,17 +149,20 @@ jobs:
     executor: win64-executor
     steps:
       - checkout
-      - run: sudo apt update && DEBIAN_FRONTEND=noninteractive sudo apt install -y ninja-build python3 python3-pip python3-venv git g++-mingw-w64-x86-64 zip
+      - run: apt update
+      - run: DEBIAN_FRONTEND=noninteractive apt install -y ninja-build python3 python3-pip python3-venv git g++-mingw-w64-x86-64 zip wine wine64
       - run: |
+          export LANG=en_US.UTF-8
           python3 -m venv venv
           source venv/bin/activate
-          pip3 install meson==0.60.0
-          bash .ci/build-win64.sh
+          pip3 install meson==1.6.0
+          bash .ci/build-win.sh 64
+          meson devenv -Cbuild-win64 meson test -t 10 --print-errorlogs --suite=harfbuzz
       - store_artifacts:
           path: harfbuzz-win64.zip
       - persist_to_workspace:
           root: .
-          paths: harfbuzz-win64.zip
+          paths: [harfbuzz-win64.zip]
 
   publish-win64:
     executor: win64-executor
@@ -179,6 +170,8 @@ jobs:
       - checkout
       - attach_workspace:
           at: .
+      - run: apt update
+      - run: DEBIAN_FRONTEND=noninteractive apt install -y curl
       - run: |
           mv harfbuzz-win64{,-$CIRCLE_TAG}.zip
           .ci/publish_release_artifact.sh harfbuzz-win64-$CIRCLE_TAG.zip
@@ -190,20 +183,19 @@ workflows:
   build:
     jobs:
       - macos-aat-fonts
-      - distcheck:
+      - dist:
           filters: # must have filter or won't work as a dependency
             tags:
               only: /.*/
       - publish-dist:
           requires:
-            - distcheck
+            - dist
           filters:
             tags:
               only: /^\d+\.\d+\.\d+$/
             branches:
               ignore: /.*/
       - fedora-valgrind
-      - alpine
       - asan-ubsan
       - tsan
       - msan

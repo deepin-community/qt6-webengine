@@ -14,9 +14,11 @@
 #import <Metal/Metal.h>
 
 #include "angle_gl.h"
+#include "common/MemoryBuffer.h"
 #include "common/PackedEnums.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Texture.h"
+#include "libANGLE/angletypes.h"
 #include "libANGLE/renderer/metal/mtl_format_utils.h"
 #include "libANGLE/renderer/metal/mtl_resources.h"
 #include "libANGLE/renderer/metal/mtl_state_cache.h"
@@ -44,24 +46,27 @@ bool PreferStagedTextureUploads(const gl::Context *context,
                                 const Format &textureObjFormat,
                                 const StagingPurpose purpose);
 
-// Initialize texture content to black.
+// Initialize texture content to black (or non-zero if requested).
 angle::Result InitializeTextureContents(const gl::Context *context,
                                         const TextureRef &texture,
                                         const Format &textureObjFormat,
-                                        const ImageNativeIndex &index);
-// Same as above but using GPU clear operation instead of CPU.forma
+                                        const ImageNativeIndex &index,
+                                        bool toNonZero = false);
+// Same as above but using GPU clear operation instead of CPU.
 // - channelsToInit parameter controls which channels will get their content initialized.
 angle::Result InitializeTextureContentsGPU(const gl::Context *context,
                                            const TextureRef &texture,
                                            const Format &textureObjFormat,
                                            const ImageNativeIndex &index,
-                                           MTLColorWriteMask channelsToInit);
+                                           MTLColorWriteMask channelsToInit,
+                                           bool toNonZero = false);
 
 // Same as above but for a depth/stencil texture.
 angle::Result InitializeDepthStencilTextureContentsGPU(const gl::Context *context,
                                                        const TextureRef &texture,
                                                        const Format &textureObjFormat,
-                                                       const ImageNativeIndex &index);
+                                                       const ImageNativeIndex &index,
+                                                       bool toNonZero = false);
 
 // Unified texture's per slice/depth texel reading function
 angle::Result ReadTexturePerSliceBytes(const gl::Context *context,
@@ -97,36 +102,23 @@ MTLScissorRect GetScissorRect(const gl::Rectangle &rect,
 
 uint32_t GetDeviceVendorId(id<MTLDevice> metalDevice);
 
-AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
-    const mtl::ContextDevice &metalDevice,
-    const std::string &source,
+angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
+    id<MTLDevice> metalDevice,
+    std::string_view source,
     const std::map<std::string, std::string> &substitutionDictionary,
     bool disableFastMath,
     bool usesInvariance,
-    AutoObjCPtr<NSError *> *error);
+    angle::ObjCPtr<NSError> *error);
 
-AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(const mtl::ContextDevice &metalDevice,
-                                                const std::string &source,
-                                                AutoObjCPtr<NSError *> *error);
+angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibraryFromBinary(id<MTLDevice> metalDevice,
+                                                             const uint8_t *data,
+                                                             size_t length,
+                                                             angle::ObjCPtr<NSError> *error);
 
-AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
-    const mtl::ContextDevice &metalDevice,
-    const char *source,
-    size_t sourceLen,
-    const std::map<std::string, std::string> &substitutionDictionary,
-    bool disableFastMath,
-    bool usesInvariance,
-    AutoObjCPtr<NSError *> *error);
-
-AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(id<MTLDevice> metalDevice,
-                                                const char *source,
-                                                size_t sourceLen,
-                                                AutoObjCPtr<NSError *> *error);
-
-AutoObjCPtr<id<MTLLibrary>> CreateShaderLibraryFromBinary(id<MTLDevice> metalDevice,
-                                                          const uint8_t *binarySource,
-                                                          size_t binarySourceLen,
-                                                          AutoObjCPtr<NSError *> *error);
+angle::ObjCPtr<id<MTLLibrary>> CreateShaderLibraryFromStaticBinary(id<MTLDevice> metalDevice,
+                                                                   const uint8_t *data,
+                                                                   size_t length,
+                                                                   angle::ObjCPtr<NSError> *error);
 
 // Compiles a shader library into a metallib file, returning the path to it.
 std::string CompileShaderLibraryToFile(const std::string &source,
@@ -165,13 +157,11 @@ MTLStencilOperation GetStencilOp(GLenum op);
 
 MTLWinding GetFrontfaceWinding(GLenum frontFaceMode, bool invert);
 
-PrimitiveTopologyClass GetPrimitiveTopologyClass(gl::PrimitiveMode mode);
+MTLPrimitiveTopologyClass GetPrimitiveTopologyClass(gl::PrimitiveMode mode);
 MTLPrimitiveType GetPrimitiveType(gl::PrimitiveMode mode);
 MTLIndexType GetIndexType(gl::DrawElementsType type);
 
-#if ANGLE_MTL_SWIZZLE_AVAILABLE
 MTLTextureSwizzle GetTextureSwizzle(GLenum swizzle);
-#endif
 
 // Get color write mask for a specified format. Some formats such as RGB565 doesn't have alpha
 // channel but is emulated by a RGBA8 format, we need to disable alpha write for this format.
@@ -204,6 +194,7 @@ NSUInteger ComputeTotalSizeUsedForMTLRenderPipelineDescriptor(
     const Context *context,
     const mtl::ContextDevice &device);
 
+gl::Rectangle MTLRegionToGLRect(const MTLRegion &mtlRegion);
 gl::Box MTLRegionToGLBox(const MTLRegion &mtlRegion);
 
 MipmapNativeLevel GetNativeMipLevel(GLuint level, GLuint base);
@@ -215,17 +206,11 @@ angle::Result GetTriangleFanIndicesCount(ContextMtl *context,
                                          GLsizei vetexCount,
                                          uint32_t *numElemsOut);
 
-angle::Result CreateMslShader(Context *context,
+angle::Result CreateMslShader(ContextMtl *context,
                               id<MTLLibrary> shaderLib,
                               NSString *shaderName,
                               MTLFunctionConstantValues *funcConstants,
-                              AutoObjCPtr<id<MTLFunction>> *shaderOut);
-
-angle::Result CreateMslShader(Context *context,
-                              id<MTLLibrary> shaderLib,
-                              NSString *shaderName,
-                              MTLFunctionConstantValues *funcConstants,
-                              id<MTLFunction> *shaderOut);
+                              angle::ObjCPtr<id<MTLFunction>> *shaderOut);
 
 }  // namespace mtl
 }  // namespace rx

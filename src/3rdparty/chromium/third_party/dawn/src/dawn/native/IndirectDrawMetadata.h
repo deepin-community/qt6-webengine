@@ -36,14 +36,21 @@
 #include "absl/container/flat_hash_set.h"
 #include "dawn/common/NonCopyable.h"
 #include "dawn/common/Ref.h"
+#include "dawn/common/ityp_vector.h"
 #include "dawn/native/Buffer.h"
 #include "dawn/native/CommandBufferStateTracker.h"
 #include "dawn/native/Commands.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 
 class RenderBundleBase;
 struct CombinedLimits;
+
+// The IndirectDrawIndex indicates the order in which an indirect draw is executed in a render
+// pass. It is tracked to enable association of validated buffer/offset data with the original
+// draw after draws are batched for validation.
+using IndirectDrawIndex = TypedInteger<struct IndirectDrawIndexT, uint64_t>;
 
 // In the unlikely scenario that indirect offsets used over a single buffer span more than
 // this length of the buffer, we split the validation work into multiple batches.
@@ -55,19 +62,52 @@ uint64_t ComputeMaxIndirectValidationBatchOffsetRange(const CombinedLimits& limi
 // commands.
 class IndirectDrawMetadata : public NonCopyable {
   public:
+    enum class DrawType : uint8_t {
+        NonIndexed,
+        Indexed,
+    };
+
     struct IndirectDraw {
+        IndirectDrawIndex validatedDrawIndex;
         uint64_t inputBufferOffset;
         uint64_t numIndexBufferElements;
-        // This is a pointer to the command that should be populated with the validated
-        // indirect scratch buffer. It is only valid up until the encoded command buffer
-        // is submitted.
-        DrawIndirectCmd* cmd;
+        uint64_t indexBufferOffsetInElements;
+        // When validation is enabled, the original indirect buffer is validated and copied to a new
+        // indirect buffer containing only valid commands. The pointer to the command allocated in
+        // the command allocator is used to swap the indirect buffer for the validated one before
+        // the backend processes the command. Valid until the backend has processed the
+        // commands.
+        raw_ptr<DrawIndirectCmd> cmd;
+    };
+
+    // Stores a side-channel of indirect draw args post-validation.
+    struct ValidatedIndirectDraw {
+        Ref<BufferBase> indirectBuffer;
+        uint64_t indirectOffset;
     };
 
     struct IndirectValidationBatch {
         uint64_t minOffset;
         uint64_t maxOffset;
         std::vector<IndirectDraw> draws;
+    };
+
+    struct IndirectMultiDraw {
+        DrawType type;
+
+        Ref<BufferBase> indexBuffer = nullptr;
+        uint64_t indexBufferSize = 0;
+        uint64_t indexBufferOffsetInBytes = 0;
+        wgpu::IndexFormat indexFormat = wgpu::IndexFormat::Undefined;
+        wgpu::PrimitiveTopology topology = wgpu::PrimitiveTopology::Undefined;
+        bool duplicateBaseVertexInstance;
+
+        // When validation is enabled, the original indirect buffer is validated and copied to a new
+        // indirect buffer containing only valid commands. The pointer to the command allocated in
+        // the command allocator is used to swap the indirect buffer for the validated one before
+        // the backend processes the command. Valid until the backend has processed the
+        // commands.
+        raw_ptr<MultiDrawIndirectCmd> cmd;
     };
 
     // Tracks information about every draw call in this render pass which uses the same indirect
@@ -88,11 +128,15 @@ class IndirectDrawMetadata : public NonCopyable {
         // it's added to mBatch.
         void AddBatch(uint32_t maxDrawCallsPerIndirectValidationBatch,
                       uint64_t maxBatchOffsetRange,
-                      const IndirectValidationBatch& batch);
+                      const IndirectValidationBatch& batch,
+                      IndirectDrawIndex indirectDrawIndexOffset);
 
         const std::vector<IndirectValidationBatch>& GetBatches() const;
 
+        BufferBase* GetIndirectBuffer() const;
+
       private:
+        friend class IndirectDrawMetadata;
         Ref<BufferBase> mIndirectBuffer;
 
         // A list of information about validation batches that will need to be executed for the
@@ -106,17 +150,20 @@ class IndirectDrawMetadata : public NonCopyable {
         std::vector<IndirectValidationBatch> mBatches;
     };
 
-    enum class DrawType {
-        NonIndexed,
-        Indexed,
-    };
     struct IndexedIndirectConfig {
-        BufferBase* inputIndirectBuffer;
-        bool duplicateBaseVertexInstance;
-        DrawType drawType;
+        const uintptr_t inputIndirectBufferPtr;
+        const bool duplicateBaseVertexInstance;
+        const DrawType drawType;
+
+        IndexedIndirectConfig(uintptr_t inputIndirectBufferPtr,
+                              bool duplicateBaseVertexInstance,
+                              DrawType drawType)
+            : inputIndirectBufferPtr(inputIndirectBufferPtr),
+              duplicateBaseVertexInstance(duplicateBaseVertexInstance),
+              drawType(drawType) {}
 
         bool operator<(const IndexedIndirectConfig& other) const;
-        bool operator==(const IndexedIndirectConfig& other) const;
+        bool operator==(const IndexedIndirectConfig& other) const = default;
     };
 
     using IndexedIndirectBufferValidationInfoMap =
@@ -133,6 +180,7 @@ class IndirectDrawMetadata : public NonCopyable {
     void AddBundle(RenderBundleBase* bundle);
     void AddIndexedIndirectDraw(wgpu::IndexFormat indexFormat,
                                 uint64_t indexBufferSize,
+                                uint64_t indexBufferOffset,
                                 BufferBase* indirectBuffer,
                                 uint64_t indirectOffset,
                                 bool duplicateBaseVertexInstance,
@@ -143,9 +191,36 @@ class IndirectDrawMetadata : public NonCopyable {
                          bool duplicateBaseVertexInstance,
                          DrawIndirectCmd* cmd);
 
+    void AddMultiDrawIndirect(wgpu::PrimitiveTopology topology,
+                              bool duplicateBaseVertexInstance,
+                              MultiDrawIndirectCmd* cmd);
+
+    void AddMultiDrawIndexedIndirect(BufferBase* indexBuffer,
+                                     wgpu::IndexFormat indexFormat,
+                                     uint64_t indexBufferSize,
+                                     uint64_t indexBufferOffset,
+                                     wgpu::PrimitiveTopology topology,
+                                     bool duplicateBaseVertexInstance,
+                                     MultiDrawIndexedIndirectCmd* cmd);
+
+    void ClearIndexedIndirectBufferValidationInfo();
+
+    const std::vector<IndirectMultiDraw>& GetIndirectMultiDraws() const;
+
+    void SetValidatedIndirectDrawArgs(const IndirectDraw& draw,
+                                      BufferBase* indirectBuffer,
+                                      uint64_t indirectOffset);
+    ValidatedIndirectDraw GetValidatedIndirectDraw(DrawIndirectCmd* cmd,
+                                                   IndirectDrawIndex indirectDrawIndex) const;
+
   private:
     IndexedIndirectBufferValidationInfoMap mIndexedIndirectBufferValidationInfo;
     absl::flat_hash_set<RenderBundleBase*> mAddedBundles;
+
+    std::vector<IndirectMultiDraw> mMultiDraws;
+
+    IndirectDrawIndex mNextIndirectDrawIndex{0};
+    ityp::vector<IndirectDrawIndex, ValidatedIndirectDraw> mValidatedIndirectDraws;
 
     uint64_t mMaxBatchOffsetRange;
     uint32_t mMaxDrawCallsPerBatch;

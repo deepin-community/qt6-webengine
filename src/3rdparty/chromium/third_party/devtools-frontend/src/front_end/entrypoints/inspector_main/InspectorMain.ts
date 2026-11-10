@@ -1,6 +1,7 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
@@ -9,6 +10,7 @@ import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import type * as Protocol from '../../generated/protocol.js';
 import * as MobileThrottling from '../../panels/mobile_throttling/mobile_throttling.js';
+import * as Security from '../../panels/security/security.js';
 import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
@@ -27,6 +29,7 @@ const UIStrings = {
    * DevTools is connected to. This text is used in various places in the UI as a label/name to inform
    * the user which target they are currently connected to, as DevTools may connect to multiple
    * targets at the same time in some scenarios.
+   * @meaning Tab target that's different than the "Tab" of Chrome. (See b/343009012)
    */
   tab: 'Tab',
   /**
@@ -38,7 +41,7 @@ const UIStrings = {
    * @description A message that prompts the user to open devtools for a specific environment (Node.js)
    */
   openDedicatedTools: 'Open dedicated DevTools for `Node.js`',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('entrypoints/inspector_main/InspectorMain.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 let inspectorMainImplInstance: InspectorMainImpl;
@@ -59,12 +62,12 @@ export class InspectorMainImpl implements Common.Runnable.Runnable {
     let firstCall = true;
     await SDK.Connections.initMainConnection(async () => {
       const type = Root.Runtime.Runtime.queryParam('v8only') ?
-          SDK.Target.Type.Node :
-          (Root.Runtime.Runtime.queryParam('targetType') === 'tab' ? SDK.Target.Type.Tab : SDK.Target.Type.Frame);
+          SDK.Target.Type.NODE :
+          (Root.Runtime.Runtime.queryParam('targetType') === 'tab' ? SDK.Target.Type.TAB : SDK.Target.Type.FRAME);
       // TODO(crbug.com/1348385): support waiting for debugger with tab target.
       const waitForDebuggerInPage =
-          type === SDK.Target.Type.Frame && Root.Runtime.Runtime.queryParam('panel') === 'sources';
-      const name = type === SDK.Target.Type.Frame ? i18nString(UIStrings.main) : i18nString(UIStrings.tab);
+          type === SDK.Target.Type.FRAME && Root.Runtime.Runtime.queryParam('panel') === 'sources';
+      const name = type === SDK.Target.Type.FRAME ? i18nString(UIStrings.main) : i18nString(UIStrings.tab);
       const target = SDK.TargetManager.TargetManager.instance().createTarget(
           'main', name, type, null, undefined, waitForDebuggerInPage);
 
@@ -102,10 +105,10 @@ export class InspectorMainImpl implements Common.Runnable.Runnable {
         }
       }
 
-      if (type !== SDK.Target.Type.Tab) {
+      if (type !== SDK.Target.Type.TAB) {
         void target.runtimeAgent().invoke_runIfWaitingForDebugger();
       }
-    }, Components.TargetDetachedDialog.TargetDetachedDialog.webSocketConnectionLost);
+    }, Components.TargetDetachedDialog.TargetDetachedDialog.connectionLost);
 
     new SourcesPanelIndicator();
     new BackendSettingsSync();
@@ -115,6 +118,43 @@ export class InspectorMainImpl implements Common.Runnable.Runnable {
         Host.InspectorFrontendHostAPI.Events.ReloadInspectedPage, ({data: hard}) => {
           SDK.ResourceTreeModel.ResourceTreeModel.reloadAllPages(hard);
         });
+
+    // Skip possibly showing the cookie control reload banner if devtools UI is not enabled or if there is an enterprise policy blocking third party cookies
+    if (!Root.Runtime.hostConfig.devToolsPrivacyUI?.enabled ||
+        Root.Runtime.hostConfig.thirdPartyCookieControls?.managedBlockThirdPartyCookies === true) {
+      return;
+    }
+
+    // Third party cookie control settings according to the browser
+    const browserCookieControls = Root.Runtime.hostConfig.thirdPartyCookieControls;
+
+    // Devtools cookie controls settings
+    const cookieControlOverrideSetting =
+        Common.Settings.Settings.instance().createSetting('cookie-control-override-enabled', undefined);
+    const gracePeriodMitigationDisabledSetting =
+        Common.Settings.Settings.instance().createSetting('grace-period-mitigation-disabled', undefined);
+    const heuristicMitigationDisabledSetting =
+        Common.Settings.Settings.instance().createSetting('heuristic-mitigation-disabled', undefined);
+
+    // If there are saved cookie control settings, check to see if they differ from the browser config. If they do, prompt a page reload so the user will see the cookie controls behavior.
+    if (cookieControlOverrideSetting.get() !== undefined) {
+      if (browserCookieControls?.thirdPartyCookieRestrictionEnabled !== cookieControlOverrideSetting.get()) {
+        Security.CookieControlsView.showInfobar();
+        return;
+      }
+
+      // If the devtools third-party cookie control is active, we also need to check if there's a discrepancy in the mitigation behavior.
+      if (cookieControlOverrideSetting.get()) {
+        if (browserCookieControls?.thirdPartyCookieMetadataEnabled === gracePeriodMitigationDisabledSetting.get()) {
+          Security.CookieControlsView.showInfobar();
+          return;
+        }
+        if (browserCookieControls?.thirdPartyCookieHeuristicsEnabled === heuristicMitigationDisabledSetting.get()) {
+          Security.CookieControlsView.showInfobar();
+          return;
+        }
+      }
+    }
   }
 }
 
@@ -152,15 +192,14 @@ export class NodeIndicator implements UI.Toolbar.Provider {
   readonly #button: UI.Toolbar.ToolbarItem;
   private constructor() {
     const element = document.createElement('div');
-    const shadowRoot =
-        UI.Utils.createShadowRootWithCoreStyles(element, {cssFile: [nodeIconStyles], delegatesFocus: undefined});
+    const shadowRoot = UI.UIUtils.createShadowRootWithCoreStyles(element, {cssFile: nodeIconStyles});
     this.#element = shadowRoot.createChild('div', 'node-icon');
     element.addEventListener(
         'click', () => Host.InspectorFrontendHost.InspectorFrontendHostInstance.openNodeFrontend(), false);
     this.#button = new UI.Toolbar.ToolbarItem(element);
     this.#button.setTitle(i18nString(UIStrings.openDedicatedTools));
     SDK.TargetManager.TargetManager.instance().addEventListener(
-        SDK.TargetManager.Events.AvailableTargetsChanged, event => this.#update(event.data));
+        SDK.TargetManager.Events.AVAILABLE_TARGETS_CHANGED, event => this.#update(event.data));
     this.#button.setVisible(false);
     this.#update([]);
   }
@@ -176,6 +215,11 @@ export class NodeIndicator implements UI.Toolbar.Provider {
   }
 
   #update(targetInfos: Protocol.Target.TargetInfo[]): void {
+    // Disable when we are testing, as debugging e2e
+    // attaches a debug process and this changes some view sizes
+    if (Host.InspectorFrontendHost.isUnderTest()) {
+      return;
+    }
     const hasNode = Boolean(targetInfos.find(target => target.type === 'node' && !target.attached));
     this.#element.classList.toggle('inactive', !hasNode);
     if (hasNode) {
@@ -191,13 +235,13 @@ export class NodeIndicator implements UI.Toolbar.Provider {
 export class SourcesPanelIndicator {
   constructor() {
     Common.Settings.Settings.instance()
-        .moduleSetting('javaScriptDisabled')
+        .moduleSetting('java-script-disabled')
         .addChangeListener(javaScriptDisabledChanged);
     javaScriptDisabledChanged();
 
     function javaScriptDisabledChanged(): void {
       const warnings = [];
-      if (Common.Settings.Settings.instance().moduleSetting('javaScriptDisabled').get()) {
+      if (Common.Settings.Settings.instance().moduleSetting('java-script-disabled').get()) {
         warnings.push(i18nString(UIStrings.javascriptIsDisabled));
       }
       UI.InspectorView.InspectorView.instance().setPanelWarnings('sources', warnings);
@@ -211,21 +255,21 @@ export class BackendSettingsSync implements SDK.TargetManager.Observer {
   readonly #emulatePageFocusSetting: Common.Settings.Setting<boolean>;
 
   constructor() {
-    this.#autoAttachSetting = Common.Settings.Settings.instance().moduleSetting('autoAttachToCreatedPages');
+    this.#autoAttachSetting = Common.Settings.Settings.instance().moduleSetting('auto-attach-to-created-pages');
     this.#autoAttachSetting.addChangeListener(this.#updateAutoAttach, this);
     this.#updateAutoAttach();
 
-    this.#adBlockEnabledSetting = Common.Settings.Settings.instance().moduleSetting('network.adBlockingEnabled');
+    this.#adBlockEnabledSetting = Common.Settings.Settings.instance().moduleSetting('network.ad-blocking-enabled');
     this.#adBlockEnabledSetting.addChangeListener(this.#update, this);
 
-    this.#emulatePageFocusSetting = Common.Settings.Settings.instance().moduleSetting('emulatePageFocus');
+    this.#emulatePageFocusSetting = Common.Settings.Settings.instance().moduleSetting('emulate-page-focus');
     this.#emulatePageFocusSetting.addChangeListener(this.#update, this);
 
     SDK.TargetManager.TargetManager.instance().observeTargets(this);
   }
 
   #updateTarget(target: SDK.Target.Target): void {
-    if (target.type() !== SDK.Target.Type.Frame || target.parentTarget()?.type() === SDK.Target.Type.Frame) {
+    if (target.type() !== SDK.Target.Type.FRAME || target.parentTarget()?.type() === SDK.Target.Type.FRAME) {
       return;
     }
     void target.pageAgent().invoke_setAdBlockingEnabled({enabled: this.#adBlockEnabledSetting.get()});

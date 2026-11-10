@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h"
 #include "src/gpu/ganesh/gl/GrGLDefines.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
 #include "tools/gpu/gl/GLTestContext.h"
@@ -150,7 +151,7 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
 
         EGLConfig surfaceConfig;
         if (!eglChooseConfig(fDisplay, configAttribs, &surfaceConfig, 1, &numConfigs)) {
-            SkDebugf("eglChooseConfig failed. EGL Error: 0x%08x\n", eglGetError());
+            SkDebugf("eglChooseConfig failed. EGL Error: 0x%08x\n", unsigned(eglGetError()));
             continue;
         }
 
@@ -166,7 +167,7 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
         }
 
         if (gles) {
-#ifdef GR_EGL_TRY_GLES3_THEN_GLES2
+#if defined(GR_EGL_TRY_GLES3_THEN_GLES2)
             // Some older devices (Nexus7/Tegra3) crash when you try this.  So it is (for now)
             // hidden behind this flag.
             fContext = create_gles_egl_context(fDisplay, surfaceConfig, eglShareContext, 3,
@@ -184,7 +185,7 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
                                              createProtected);
         }
         if (EGL_NO_CONTEXT == fContext) {
-            SkDebugf("eglCreateContext failed.  EGL Error: 0x%08x\n", eglGetError());
+            SkDebugf("eglCreateContext failed.  EGL Error: 0x%08x\n", unsigned(eglGetError()));
             continue;
         }
 
@@ -198,20 +199,20 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
 
         fSurface = eglCreatePbufferSurface(fDisplay, surfaceConfig, kSurfaceAttribs);
         if (EGL_NO_SURFACE == fSurface) {
-            SkDebugf("eglCreatePbufferSurface failed. EGL Error: 0x%08x\n", eglGetError());
+            SkDebugf("eglCreatePbufferSurface failed. EGL Error: 0x%08x\n", unsigned(eglGetError()));
             this->destroyGLContext();
             continue;
         }
 
         SkScopeExit restorer(context_restorer());
         if (!eglMakeCurrent(fDisplay, fSurface, fSurface, fContext)) {
-            SkDebugf("eglMakeCurrent failed.  EGL Error: 0x%08x\n", eglGetError());
+            SkDebugf("eglMakeCurrent failed.  EGL Error: 0x%08x\n", unsigned(eglGetError()));
             this->destroyGLContext();
             continue;
         }
 
-#ifdef SK_GL
-        gl = GrGLMakeNativeInterface();
+#if defined(SK_GL)
+        gl = GrGLInterfaces::MakeEGL();
         if (!gl) {
             SkDebugf("Failed to create gl interface.\n");
             this->destroyGLContext();
@@ -267,7 +268,7 @@ void EGLGLTestContext::destroyGLContext() {
 }
 
 GrEGLImage EGLGLTestContext::texture2DToEGLImage(GrGLuint texID) const {
-#ifdef SK_GL
+#if defined(SK_GL)
     if (!this->gl()->hasExtension("EGL_KHR_gl_texture_2D_image") || !fEglCreateImageProc) {
         return GR_EGL_NO_IMAGE;
     }
@@ -285,7 +286,7 @@ void EGLGLTestContext::destroyEGLImage(GrEGLImage image) const {
 }
 
 GrGLuint EGLGLTestContext::eglImageToExternalTexture(GrEGLImage image) const {
-#ifdef SK_GL
+#if defined(SK_GL)
     while (this->gl()->fFunctions.fGetError() != GR_GL_NO_ERROR) {}
     if (!this->gl()->hasExtension("GL_OES_EGL_image_external")) {
         return 0;

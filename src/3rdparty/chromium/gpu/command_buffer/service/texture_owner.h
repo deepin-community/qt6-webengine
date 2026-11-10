@@ -29,6 +29,16 @@ namespace gpu {
 class AbstractTextureAndroid;
 class TextureBase;
 
+// Used for diagnosting metrics. Do not use for anything else.
+// TODO(crbug.com/329821776): Remove once we get enough data.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum TextureOwnerCodecType {
+  kMediaCodec = 0,
+  kStreamTexture = 1,
+  kMaxValue = kStreamTexture
+};
+
 // A Texture wrapper interface that creates and maintains ownership of the
 // attached GL or Vulkan texture. The texture is destroyed with the object.
 // It should only be accessed on the thread it was created on, with the
@@ -53,14 +63,14 @@ class GPU_GLES2_EXPORT TextureOwner
   enum class Mode {
     kAImageReaderInsecure,
     kAImageReaderInsecureSurfaceControl,
-    kAImageReaderSecureSurfaceControl,
-    kSurfaceTextureInsecure
+    kAImageReaderSecureSurfaceControl
   };
 
   static scoped_refptr<TextureOwner> Create(
       Mode mode,
       scoped_refptr<SharedContextState> context_state,
-      scoped_refptr<RefCountedLock> drdc_lock);
+      scoped_refptr<RefCountedLock> drdc_lock,
+      TextureOwnerCodecType type_for_metrics);
 
   TextureOwner(const TextureOwner&) = delete;
   TextureOwner& operator=(const TextureOwner&) = delete;
@@ -79,7 +89,7 @@ class GPU_GLES2_EXPORT TextureOwner
   virtual gl::ScopedJavaSurface CreateJavaSurface() const = 0;
 
   // Update the texture image using the latest available image data.
-  virtual void UpdateTexImage() = 0;
+  virtual bool UpdateTexImage(bool discard) = 0;
 
   // Transformation matrix if any associated with the texture image.
   virtual void ReleaseBackBuffers() = 0;
@@ -135,6 +145,8 @@ class GPU_GLES2_EXPORT TextureOwner
   AbstractTextureAndroid* texture() const { return texture_.get(); }
 
   int tracing_id() const { return tracing_id_; }
+
+  static constexpr char kMemoryDumpPrefix[] = "gpu/media_texture_owner_0x%x";
 
  private:
   friend class MockTextureOwner;

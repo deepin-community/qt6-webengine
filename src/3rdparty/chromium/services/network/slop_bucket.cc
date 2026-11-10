@@ -286,7 +286,7 @@ class SlopBucket::Manager {
       return nullptr;
     }
 
-    base::HeapArray<char> chunk = GetChunk();
+    base::HeapArray<uint8_t> chunk = GetChunk();
     if (!chunk.data()) {
       return nullptr;
     }
@@ -299,7 +299,7 @@ class SlopBucket::Manager {
   // Returns a chunk to the pool. This method may be called on background
   // threads. Despite the overhead of locking, it is still 10 times faster to
   // reuse the chunks than to delete and new them again.
-  void ReleaseChunk(base::HeapArray<char> buffer) {
+  void ReleaseChunk(base::HeapArray<uint8_t> buffer) {
     if (disabled()) {
       return;  // `buffer` is freed.
     }
@@ -353,15 +353,16 @@ class SlopBucket::Manager {
   }
 
   // Encapsulates the locked section of RequestChunk().
-  base::HeapArray<char> GetChunk() VALID_CONTEXT_REQUIRED(sequence_checker_) {
-    base::HeapArray<char> chunk;
+  base::HeapArray<uint8_t> GetChunk()
+      VALID_CONTEXT_REQUIRED(sequence_checker_) {
+    base::HeapArray<uint8_t> chunk;
     base::ReleasableAutoLock auto_lock(&lock_);
     if (total_chunks_ == configuration_.max_chunks_total()) {
       // Don't hold the lock while logging.
       auto_lock.Release();
       DVLOG(1)
           << "Not allocating chunk because the global max has been reached";
-      return base::HeapArray<char>();
+      return base::HeapArray<uint8_t>();
     }
 
     if (!free_pool_.empty()) {
@@ -370,7 +371,7 @@ class SlopBucket::Manager {
       chunk = std::move(free_pool_.back());
       free_pool_.pop_back();
     } else {
-      chunk = base::HeapArray<char>::Uninit(configuration_.chunk_size());
+      chunk = base::HeapArray<uint8_t>::Uninit(configuration_.chunk_size());
     }
 
     ++total_chunks_;
@@ -391,11 +392,11 @@ class SlopBucket::Manager {
       Disable(DisabledReason::kMemoryPressure);
       RecordDisabledReason();
       DVLOG(1) << "Memory pressure detected. Disabling SlopBucket.";
-      memory_pressure_listener_ = absl::nullopt;
+      memory_pressure_listener_ = std::nullopt;
     }
     // We swap the vector so we don't have to hold the lock while we free the
     // elements.
-    std::vector<base::HeapArray<char>> old_free_pool;
+    std::vector<base::HeapArray<uint8_t>> old_free_pool;
     {
       base::AutoLock auto_lock(lock_);
       old_free_pool.swap(free_pool_);
@@ -420,7 +421,7 @@ class SlopBucket::Manager {
   size_t total_chunks_ GUARDED_BY(lock_) = 0;
 
   // Pool of free buffers.
-  std::vector<base::HeapArray<char>> free_pool_ GUARDED_BY(lock_);
+  std::vector<base::HeapArray<uint8_t>> free_pool_ GUARDED_BY(lock_);
 
   // Reason why SlopBucket is disabled. Only accessed on the IO thread.
   DisabledReason disabled_reason_;
@@ -434,14 +435,14 @@ class SlopBucket::Manager {
 
   // Calls OnMemoryPressure() on the IO thread when there is memory pressure.
   // Only set when SlopBucket is enabled. Only accessed on the IO thread.
-  absl::optional<base::MemoryPressureListener> memory_pressure_listener_;
+  std::optional<base::MemoryPressureListener> memory_pressure_listener_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };
 
 class SlopBucket::ChunkIOBuffer final : public net::IOBuffer {
  public:
-  explicit ChunkIOBuffer(base::HeapArray<char> storage)
+  explicit ChunkIOBuffer(base::HeapArray<uint8_t> storage)
       : IOBuffer(storage), base_(std::move(storage)) {}
 
   // Notes that `bytes` bytes have been read from a URLRequest into this chunk.
@@ -453,8 +454,7 @@ class SlopBucket::ChunkIOBuffer final : public net::IOBuffer {
     // that can be stored in a size_t.
     filled_up_to_ += bytes;
     CHECK_LE(filled_up_to_, chunk_size);
-    data_ += bytes;
-    size_ -= bytes;
+    SetSpan(span().subspan(bytes));
   }
 
   // Notes that `bytes` bytes have been written to the mojo data pipe and should
@@ -480,22 +480,22 @@ class SlopBucket::ChunkIOBuffer final : public net::IOBuffer {
   // True if there are no bytes available for reading out of this chunk.
   bool Empty() const { return consumed_up_to_ == filled_up_to_; }
 
-  // The next byte of this chunk available for copying to the mojo data pipe.
+  // The next span of this chunk available for copying to the mojo data pipe.
   // Note that the data() method from the parent class provides the next byte
   // available for writing to by the URLRequest.
-  const char* NextByteToConsume() const {
-    return base_.subspan(consumed_up_to_).data();
+  base::span<const uint8_t> NextSpanToConsume() const {
+    return base_.subspan(consumed_up_to_);
   }
 
  private:
   ~ChunkIOBuffer() override {
     // Prevent the base class from trying to free `data_`.
-    data_ = nullptr;
+    ClearSpan();
     // Return the chunk to the pool.
     Manager::Get().ReleaseChunk(std::move(base_));
   }
 
-  base::HeapArray<char> base_;
+  base::HeapArray<uint8_t> base_;
   size_t filled_up_to_ = 0;
   size_t consumed_up_to_ = 0;
 };
@@ -532,7 +532,7 @@ SlopBucket::~SlopBucket() {
                               peak_chunks_allocated_);
 }
 
-absl::optional<int> SlopBucket::AttemptRead() {
+std::optional<int> SlopBucket::AttemptRead() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(!read_in_progress_);
   CHECK(!completion_code_.has_value());
@@ -543,7 +543,7 @@ absl::optional<int> SlopBucket::AttemptRead() {
   if (chunks_.empty() ||
       chunk_size - chunks_.back()->filled_up_to() < min_buffer_size) {
     if (!TryToAllocateChunk()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
   }
   ChunkIOBuffer& destination = *chunks_.back();
@@ -577,25 +577,26 @@ void SlopBucket::OnReadCompleted(int bytes_read) {
   chunks_.back()->MarkFilled(bytes_read);
 }
 
-size_t SlopBucket::Consume(void* buffer, size_t max) {
+size_t SlopBucket::Consume(base::span<uint8_t> buffer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (chunks_.empty()) {
     return 0;
   }
 
-  return ConsumeSlowPath(buffer, max);
+  return ConsumeSlowPath(buffer);
 }
 
-size_t SlopBucket::ConsumeSlowPath(void* buffer, size_t max) {
+size_t SlopBucket::ConsumeSlowPath(base::span<uint8_t> buffer) {
+  size_t max = buffer.size();
   DVLOG(1) << "ConsumeSlowPath(" << max << ")";
   size_t consumed = 0;
   while (consumed < max && !chunks_.empty()) {
     ChunkIOBuffer& source = *chunks_.front();
     if (!source.Empty()) {
       const size_t bytes_available = source.UnconsumedBytes();
-      const size_t bytes_to_consume = std::min(bytes_available, max - consumed);
-      memcpy(static_cast<char*>(buffer) + consumed, source.NextByteToConsume(),
-             bytes_to_consume);
+      const size_t bytes_to_consume = std::min(bytes_available, buffer.size());
+      buffer.take_first(bytes_to_consume)
+          .copy_from(source.NextSpanToConsume().first(bytes_to_consume));
       source.MarkConsumed(bytes_to_consume);
       consumed += bytes_to_consume;
     }

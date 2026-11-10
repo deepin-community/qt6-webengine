@@ -30,20 +30,23 @@
 
 #include "third_party/blink/public/platform/web_string.h"
 
+#include "base/strings/latin1_string_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_fast_path.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
-STATIC_ASSERT_ENUM(WTF::kLenientUTF8Conversion,
+STATIC_ASSERT_ENUM(blink::Utf8ConversionMode::kLenient,
                    blink::WebString::UTF8ConversionMode::kLenient);
-STATIC_ASSERT_ENUM(WTF::kStrictUTF8Conversion,
+STATIC_ASSERT_ENUM(blink::Utf8ConversionMode::kStrict,
                    blink::WebString::UTF8ConversionMode::kStrict);
 STATIC_ASSERT_ENUM(
-    WTF::kStrictUTF8ConversionReplacingUnpairedSurrogatesWithFFFD,
+    blink::Utf8ConversionMode::kStrictReplacingErrors,
     blink::WebString::UTF8ConversionMode::kStrictReplacingErrorsWithFFFD);
 
 namespace blink {
@@ -56,9 +59,7 @@ WebString& WebString::operator=(const WebString&) = default;
 WebString& WebString::operator=(WebString&&) = default;
 
 WebString::WebString(std::u16string_view s)
-    : impl_(StringImpl::Create8BitIfPossible(
-          s.data(),
-          base::checked_cast<wtf_size_t>(s.length()))) {}
+    : impl_(StringImpl::Create8BitIfPossible(s)) {}
 
 void WebString::Reset() {
   impl_ = nullptr;
@@ -72,16 +73,8 @@ bool WebString::Is8Bit() const {
   return impl_->Is8Bit();
 }
 
-const WebLChar* WebString::Data8() const {
-  return impl_ && Is8Bit() ? impl_->Characters8() : nullptr;
-}
-
-const WebUChar* WebString::Data16() const {
-  return impl_ && !Is8Bit() ? impl_->Characters16() : nullptr;
-}
-
 std::string WebString::Utf8(UTF8ConversionMode mode) const {
-  return String(impl_).Utf8(static_cast<WTF::UTF8ConversionMode>(mode));
+  return String(impl_).Utf8(static_cast<Utf8ConversionMode>(mode));
 }
 
 WebString WebString::Substring(size_t pos, size_t len) const {
@@ -90,10 +83,14 @@ WebString WebString::Substring(size_t pos, size_t len) const {
 }
 
 WebString WebString::FromUTF8(std::string_view s) {
-  return String::FromUTF8(s.data(), s.length());
+  return String::FromUTF8(s);
 }
 
-WebString WebString::FromUTF16(absl::optional<std::u16string_view> s) {
+std::u16string WebString::Utf16() const {
+  return impl_ ? impl_->ToU16String() : std::u16string();
+}
+
+WebString WebString::FromUTF16(std::optional<std::u16string_view> s) {
   if (!s.has_value()) {
     return WebString();
   }
@@ -105,8 +102,7 @@ std::string WebString::Latin1() const {
 }
 
 WebString WebString::FromLatin1(std::string_view s) {
-  return String(reinterpret_cast<const WebLChar*>(s.data()),
-                base::checked_cast<wtf_size_t>(s.length()));
+  return String(s);
 }
 
 std::string WebString::Ascii() const {
@@ -116,12 +112,12 @@ std::string WebString::Ascii() const {
     return std::string();
 
   if (impl_->Is8Bit()) {
-    return std::string(reinterpret_cast<const char*>(impl_->Characters8()),
-                       impl_->length());
+    auto latin1 = base::as_chars(impl_->Span8());
+    return std::string(base::as_string_view(latin1));
   }
 
-  return std::string(impl_->Characters16(),
-                     impl_->Characters16() + impl_->length());
+  auto utf16 = impl_->Span16();
+  return std::string(utf16.begin(), utf16.end());
 }
 
 bool WebString::ContainsOnlyASCII() const {
@@ -138,8 +134,23 @@ bool WebString::Equals(const WebString& s) const {
 }
 
 bool WebString::Equals(std::string_view characters) const {
-  return Equal(impl_.get(), characters.data(),
-               base::checked_cast<wtf_size_t>(characters.length()));
+  return Equal(impl_.get(), characters);
+}
+
+size_t WebString::Find(const WebString& s) const {
+  if (!impl_) {
+    return std::string::npos;
+  }
+  wtf_size_t pos = impl_->Find(s.impl_.get());
+  return pos != kNotFound ? pos : std::string::npos;
+}
+
+size_t WebString::Find(std::string_view characters) const {
+  if (!impl_) {
+    return std::string::npos;
+  }
+  wtf_size_t pos = impl_->Find(characters.data());
+  return pos != kNotFound ? pos : std::string::npos;
 }
 
 bool WebString::operator<(const WebString& other) const {
@@ -157,21 +168,21 @@ WebString::operator WTF::String() const {
   return impl_.get();
 }
 
-WebString::operator WTF::StringView() const {
+WebString::operator StringView() const {
   return StringView(impl_.get());
 }
 
-WebString::WebString(const WTF::AtomicString& s) {
+WebString::WebString(const AtomicString& s) {
   impl_ = s.Impl();
 }
 
-WebString& WebString::operator=(const WTF::AtomicString& s) {
+WebString& WebString::operator=(const AtomicString& s) {
   impl_ = s.Impl();
   return *this;
 }
 
-WebString::operator WTF::AtomicString() const {
-  return WTF::AtomicString(impl_);
+WebString::operator AtomicString() const {
+  return AtomicString(impl_);
 }
 
 }  // namespace blink

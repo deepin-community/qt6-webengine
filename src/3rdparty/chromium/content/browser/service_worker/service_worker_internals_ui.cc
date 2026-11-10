@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/functional/bind.h"
@@ -19,6 +20,7 @@
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_registration.h"
@@ -156,9 +158,9 @@ base::Value::Dict UpdateVersionInfo(const ServiceWorkerVersionInfo& version) {
   for (auto& it : version.clients) {
     base::Value::Dict client;
     client.Set("client_id", it.first);
-    if (absl::holds_alternative<GlobalRenderFrameHostId>(it.second)) {
-      RenderFrameHost* render_frame_host = RenderFrameHost::FromID(
-          absl::get<GlobalRenderFrameHostId>(it.second));
+    if (std::holds_alternative<GlobalRenderFrameHostId>(it.second)) {
+      RenderFrameHost* render_frame_host =
+          RenderFrameHost::FromID(std::get<GlobalRenderFrameHostId>(it.second));
       if (render_frame_host) {
         client.Set("url", render_frame_host->GetLastCommittedURL().spec());
       }
@@ -362,13 +364,12 @@ ServiceWorkerInternalsUI::ServiceWorkerInternalsUI(WebUI* web_ui)
       kChromeUIServiceWorkerInternalsHost);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
-      "script-src chrome://resources 'self' 'unsafe-eval';");
+      "script-src chrome://resources 'self';");
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::TrustedTypes,
-      "trusted-types jstemplate;");
+      "trusted-types lit-html-desktop;");
   source->UseStringsJs();
-  source->AddResourcePaths(
-      base::make_span(kServiceWorkerResources, kServiceWorkerResourcesSize));
+  source->AddResourcePaths(kServiceWorkerResources);
   source->SetDefaultResource(IDR_SERVICE_WORKER_SERVICEWORKER_INTERNALS_HTML);
 
   source->DisableDenyXFrameOptions();
@@ -741,9 +742,10 @@ void ServiceWorkerInternalsHandler::UnregisterWithScope(
 
   // ServiceWorkerContextWrapper::UnregisterServiceWorker doesn't work here
   // because that reduces a status code to boolean.
-  context->context()->UnregisterServiceWorker(scope, storage_key,
-                                              /*is_immediate=*/false,
-                                              std::move(callback));
+  context->context()->UnregisterServiceWorker(
+      scope, storage_key,
+      /*is_immediate=*/false,
+      ServiceWorkerRegistration::DeleteInitiator::kWebUI, std::move(callback));
 }
 
 }  // namespace content

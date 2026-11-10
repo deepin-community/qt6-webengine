@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vmulcaddc/neon.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,15 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/vmulcaddc.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vmulcaddc.h"
 
 
 void xnn_f32_vmulcaddc_minmax_ukernel_c4__neonfma_2x(
@@ -23,7 +27,7 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c4__neonfma_2x(
     const float* restrict weights,
     float* restrict output,
     size_t output_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(rows != 0);
   assert(channels != 0);
@@ -37,8 +41,8 @@ void xnn_f32_vmulcaddc_minmax_ukernel_c4__neonfma_2x(
   const size_t input_increment = input_stride * 2 - channels;
   const size_t output_increment = output_stride * 2 - channels;
 
-  const float32x4_t vmin = vld1q_dup_f32(&params->scalar.min);
-  const float32x4_t vmax = vld1q_dup_f32(&params->scalar.max);
+  const float32x4_t vmin = vdupq_n_f32(params->scalar.min);
+  const float32x4_t vmax = vdupq_n_f32(params->scalar.max);
   do {
     if XNN_UNPREDICTABLE(rows < 2) {
       i1 = i0;

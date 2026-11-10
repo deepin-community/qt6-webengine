@@ -1,20 +1,27 @@
 // Copyright 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import '../../../ui/components/icon_button/icon_button.js';
+import '../../../ui/legacy/components/data_grid/data_grid.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
-import * as Platform from '../../../core/platform/platform.js';
 import * as SDK from '../../../core/sdk/sdk.js';
 import type * as Protocol from '../../../generated/protocol.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
-import * as DataGrid from '../../../ui/components/data_grid/data_grid.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
 import * as LegacyWrapper from '../../../ui/components/legacy_wrapper/legacy_wrapper.js';
 import * as RenderCoordinator from '../../../ui/components/render_coordinator/render_coordinator.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as UI from '../../../ui/legacy/legacy.js';
+import * as Lit from '../../../ui/lit/lit.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import trustTokensViewStyles from './trustTokensView.css.js';
+
+const PRIVATE_STATE_TOKENS_EXPLANATION_URL =
+    'https://developers.google.com/privacy-sandbox/protections/private-state-tokens';
+
+const {html} = Lit;
 
 const UIStrings = {
   /**
@@ -30,9 +37,14 @@ const UIStrings = {
    */
   allStoredTrustTokensAvailableIn: 'All stored private state tokens available in this browser instance.',
   /**
-   * @description Text shown instead of a table when the table would be empty.
+   * @description Text shown instead of a table when the table would be empty. https://developers.google.com/privacy-sandbox/protections/private-state-tokens
    */
-  noTrustTokensStored: 'No private state tokens are currently stored.',
+  noTrustTokens: 'No private state tokens detected',
+  /**
+   * @description Text shown if there are no private state tokens. https://developers.google.com/privacy-sandbox/protections/private-state-tokens
+   */
+  trustTokensDescription:
+      'On this page you can view all available private state tokens in the current browsing context.',
   /**
    * @description Each row in the Private State Token table has a delete button. This is the text shown
    * when hovering over this button. The placeholder is a normal URL, indicating the site which
@@ -44,7 +56,11 @@ const UIStrings = {
    * @description Heading label for a view. Previously known as 'Trust Tokens'.
    */
   trustTokens: 'Private state tokens',
-};
+  /**
+   * @description Text used in a link to learn more about the topic.
+   */
+  learnMore: 'Learn more',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/application/components/TrustTokensView.ts', UIStrings);
 export const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -53,13 +69,10 @@ export interface TrustTokensViewData {
   deleteClickHandler: (issuerOrigin: string) => void;
 }
 
-const coordinator = RenderCoordinator.RenderCoordinator.RenderCoordinator.instance();
-
 /** Fetch the Trust Token data regularly from the backend while the panel is open */
 const REFRESH_INTERVAL_MS = 1000;
 
 export class TrustTokensView extends LegacyWrapper.LegacyWrapper.WrappableComponent {
-  static readonly litTagName = LitHtml.literal`devtools-trust-tokens-storage-view`;
   readonly #shadow = this.attachShadow({mode: 'open'});
 
   #deleteClickHandler(issuerOrigin: string): void {
@@ -69,7 +82,6 @@ export class TrustTokensView extends LegacyWrapper.LegacyWrapper.WrappableCompon
 
   connectedCallback(): void {
     this.wrapper?.contentElement.classList.add('vbox');
-    this.#shadow.adoptedStyleSheets = [trustTokensViewStyles];
     void this.render();
   }
 
@@ -79,15 +91,14 @@ export class TrustTokensView extends LegacyWrapper.LegacyWrapper.WrappableCompon
       return;
     }
     const {tokens} = await mainTarget.storageAgent().invoke_getTrustTokens();
+    tokens.sort((a, b) => a.issuerOrigin.localeCompare(b.issuerOrigin));
 
-    await coordinator.write('Render TrustTokensView', () => {
+    await RenderCoordinator.write('Render TrustTokensView', () => {
       // clang-format off
-      LitHtml.render(LitHtml.html`
-        <div>
-          <span class="heading">${i18nString(UIStrings.trustTokens)}</span>
-          <${IconButton.Icon.Icon.litTagName} name="info" title=${i18nString(UIStrings.allStoredTrustTokensAvailableIn)}></${IconButton.Icon.Icon.litTagName}>
-          ${this.#renderGridOrNoDataMessage(tokens)}
-        </div>
+      Lit.render(html`
+        <style>${trustTokensViewStyles}</style>
+        <style>${UI.inspectorCommonStyles}</style>
+        ${this.#renderGridOrNoDataMessage(tokens)}
       `, this.#shadow, {host: this});
       // clang-format on
       if (this.isConnected) {
@@ -96,77 +107,51 @@ export class TrustTokensView extends LegacyWrapper.LegacyWrapper.WrappableCompon
     });
   }
 
-  #renderGridOrNoDataMessage(tokens: Protocol.Storage.TrustTokens[]): LitHtml.TemplateResult {
+  #renderGridOrNoDataMessage(tokens: Protocol.Storage.TrustTokens[]): Lit.TemplateResult {
     if (tokens.length === 0) {
-      return LitHtml.html`<div class="no-tt-message">${i18nString(UIStrings.noTrustTokensStored)}</div>`;
+      // clang-format off
+      return html`
+        <div class="empty-state" jslog=${VisualLogging.section().context('empty-view')}>
+          <div class="empty-state-header">${i18nString(UIStrings.noTrustTokens)}</div>
+          <div class="empty-state-description">
+            <span>${i18nString(UIStrings.trustTokensDescription)}</span>
+            ${UI.XLink.XLink.create(PRIVATE_STATE_TOKENS_EXPLANATION_URL, i18nString(UIStrings.learnMore), 'x-link', undefined, 'learn-more')}
+          </div>
+        </div>
+      `;
+      // clang-format on
     }
 
-    const k = Platform.StringUtilities.kebab;
-    const gridData: DataGrid.DataGridController.DataGridControllerData = {
-      columns: [
-        {
-          id: k('issuer'),
-          title: i18nString(UIStrings.issuer),
-          widthWeighting: 10,
-          hideable: false,
-          visible: true,
-          sortable: true,
-        },
-        {
-          id: k('count'),
-          title: i18nString(UIStrings.storedTokenCount),
-          widthWeighting: 5,
-          hideable: false,
-          visible: true,
-          sortable: true,
-        },
-        {
-          id: k('delete-button'),
-          title: '',
-          widthWeighting: 1,
-          hideable: false,
-          visible: true,
-          sortable: false,
-        },
-      ],
-      rows: this.#buildRowsFromTokens(tokens),
-      initialSort: {
-        columnId: 'issuer',
-        direction: DataGrid.DataGridUtils.SortDirection.ASC,
-      },
-    };
-
-    return LitHtml.html`
-      <${DataGrid.DataGridController.DataGridController.litTagName} .data=${
-        gridData as DataGrid.DataGridController.DataGridControllerData}></${
-        DataGrid.DataGridController.DataGridController.litTagName}>
-    `;
-  }
-
-  #buildRowsFromTokens(tokens: Protocol.Storage.TrustTokens[]): DataGrid.DataGridUtils.Row[] {
-    return tokens.filter(token => token.count > 0)
-        .map(token => ({
-               cells: [
-                 {
-                   columnId: 'delete-button',
-                   value: removeTrailingSlash(token.issuerOrigin),
-                   renderer: this.#deleteButtonRendererForDataGridCell.bind(this),
-                 },
-                 {columnId: 'issuer', value: removeTrailingSlash(token.issuerOrigin)},
-                 {columnId: 'count', value: token.count},
-               ],
-             }));
-  }
-
-  #deleteButtonRendererForDataGridCell(issuer: DataGrid.DataGridUtils.CellValue): LitHtml.TemplateResult {
     // clang-format off
-    return LitHtml.html`
-      <${Buttons.Button.Button.litTagName} .iconName=${'bin'}
-                                           .jslogContext=${'delete-all'}
-                                           .size=${Buttons.Button.Size.SMALL}
-                                           .title=${i18nString(UIStrings.deleteTrustTokens, {PH1: issuer as string})}
-                                           .variant=${Buttons.Button.Variant.ROUND}
-                                           @click=${this.#deleteClickHandler.bind(this, issuer as string)}></${Buttons.Button.Button.litTagName}>
+    return html`
+      <div>
+        <span class="heading">${i18nString(UIStrings.trustTokens)}</span>
+        <devtools-icon name="info" title=${i18nString(UIStrings.allStoredTrustTokensAvailableIn)}></devtools-icon>
+        <devtools-data-grid striped inline>
+          <table>
+            <tr>
+              <th id="issuer" weight="10" sortable>${i18nString(UIStrings.issuer)}</th>
+              <th id="count" weight="5" sortable>${i18nString(UIStrings.storedTokenCount)}</th>
+              <th id="delete-button" weight="1" sortable></th>
+            </tr>
+            ${tokens.filter(token => token.count > 0)
+                  .map(token => html`
+                <tr>
+                  <td>${removeTrailingSlash(token.issuerOrigin)}</td>
+                  <td>${token.count}</td>
+                  <td>
+                    <devtools-button .iconName=${'bin'}
+                                    .jslogContext=${'delete-all'}
+                                    .size=${Buttons.Button.Size.SMALL}
+                                    .title=${i18nString(UIStrings.deleteTrustTokens, {PH1: removeTrailingSlash(token.issuerOrigin)})}
+                                    .variant=${Buttons.Button.Variant.ICON}
+                                    @click=${this.#deleteClickHandler.bind(this, removeTrailingSlash(token.issuerOrigin))}></devtools-button>
+                  </td>
+                </tr>
+              `)}
+          </table>
+        </devtools-data-grid>
+      </div>
     `;
     // clang-format on
   }
@@ -176,10 +161,9 @@ function removeTrailingSlash(s: string): string {
   return s.replace(/\/$/, '');
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-trust-tokens-storage-view', TrustTokensView);
+customElements.define('devtools-trust-tokens-storage-view', TrustTokensView);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-trust-tokens-storage-view': TrustTokensView;
   }

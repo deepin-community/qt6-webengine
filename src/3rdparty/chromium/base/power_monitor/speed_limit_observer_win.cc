@@ -5,9 +5,9 @@
 #include "base/power_monitor/speed_limit_observer_win.h"
 
 #include <windows.h>
+#include <winternl.h>
 
 #include <powerbase.h>
-#include <winternl.h>
 
 #include <algorithm>
 #include <memory>
@@ -15,9 +15,10 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/power_monitor/cpu_frequency_utils.h"
 #include "base/system/sys_info.h"
 #include "base/timer/elapsed_timer.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 
 namespace {
@@ -70,43 +71,6 @@ bool GetCPUIdleness(int* idleness_percent) {
   return true;
 }
 
-#if defined(ARCH_CPU_X86_FAMILY) && !defined(COMPILER_MSVC)
-// Returns the estimated CPU frequency by executing a tight loop of predictable
-// assembly instructions. The estimated frequency should be proportional and
-// about the same magnitude than the real CPU frequency. The measurement should
-// be long enough to avoid Turbo Boost effect (~3ms) and be low enough to stay
-// within the operating system scheduler quantum (~100ms).
-double EstimateCpuFrequency() {
-  // The heuristic to estimate CPU frequency is based on UIforETW code.
-  // see: https://github.com/google/UIforETW/blob/main/UIforETW/CPUFrequency.cpp
-  //      https://github.com/google/UIforETW/blob/main/UIforETW/SpinALot64.asm
-  base::ElapsedTimer timer;
-  const int kAmountOfIterations = 50000;
-  const int kAmountOfInstructions = 10;
-  for (int i = 0; i < kAmountOfIterations; ++i) {
-    __asm__ __volatile__(
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        "addl  %%eax, %%eax\n"
-        :
-        :
-        : "eax");
-  }
-
-  const base::TimeDelta elapsed = timer.Elapsed();
-  const double estimated_frequency =
-      (kAmountOfIterations * kAmountOfInstructions) / elapsed.InSecondsF();
-  return estimated_frequency;
-}
-#endif
-
 }  // namespace
 
 namespace base {
@@ -125,7 +89,7 @@ SpeedLimitObserverWin::~SpeedLimitObserverWin() {
   timer_.Stop();
 }
 
-int SpeedLimitObserverWin::GetCurrentSpeedLimit() {
+int SpeedLimitObserverWin::GetCurrentSpeedLimit() const {
   const int kSpeedLimitMax = PowerThermalObserver::kSpeedLimitMax;
 
   int idleness_percent = 0;
@@ -144,14 +108,14 @@ int SpeedLimitObserverWin::GetCurrentSpeedLimit() {
   TRACE_EVENT_CATEGORY_GROUP_ENABLED(kPowerTraceCategory,
                                      &trace_events_enabled);
   if (trace_events_enabled) {
-    TRACE_COUNTER1(kPowerTraceCategory, "idleness", idleness_percent);
-    TRACE_COUNTER1(kPowerTraceCategory, "throttling_level",
-                   static_cast<unsigned int>(throttling_level * 100));
+    TRACE_COUNTER(kPowerTraceCategory, "idleness", idleness_percent);
+    TRACE_COUNTER(kPowerTraceCategory, "throttling_level",
+                  static_cast<unsigned int>(throttling_level * 100));
 
 #if defined(ARCH_CPU_X86_FAMILY) && !defined(COMPILER_MSVC)
     double cpu_frequency = EstimateCpuFrequency();
-    TRACE_COUNTER1(kPowerTraceCategory, "frequency_mhz",
-                   static_cast<unsigned int>(cpu_frequency / 1'000'000));
+    TRACE_COUNTER(kPowerTraceCategory, "frequency_mhz",
+                  static_cast<unsigned int>(cpu_frequency / 1'000'000));
 #endif
   }
 
@@ -198,11 +162,11 @@ void SpeedLimitObserverWin::OnTimerTick() {
     callback_.Run(speed_limit_);
   }
 
-  TRACE_COUNTER1(kPowerTraceCategory, "speed_limit",
-                 static_cast<unsigned int>(speed_limit));
+  TRACE_COUNTER(kPowerTraceCategory, "speed_limit",
+                static_cast<unsigned int>(speed_limit));
 }
 
-float SpeedLimitObserverWin::EstimateThrottlingLevel() {
+float SpeedLimitObserverWin::EstimateThrottlingLevel() const {
   float throttling_level = 0.f;
 
   // Populate the PROCESSOR_POWER_INFORMATION structures for all logical CPUs
@@ -228,7 +192,6 @@ float SpeedLimitObserverWin::EstimateThrottlingLevel() {
   // 1, the `CurrentIdleState` will always be 0 and the C-States are not
   // supported.
   int num_non_idle_cpus = 0;
-  int num_active_cpus = 0;
   float load_fraction_total = 0.0;
   for (size_t i = 0; i < num_cpus(); ++i) {
     // Amount of "non-idleness" is the distance from the max idle state.
@@ -245,21 +208,12 @@ float SpeedLimitObserverWin::EstimateThrottlingLevel() {
     load_fraction_total += load_fraction;
     // Used for a sanity check only.
     num_non_idle_cpus += (info[i].CurrentIdleState < info[i].MaxIdleState);
-
-    // Count the amount of CPU that are in the C0 state (active). If
-    // `MaxIdleState` is 1, C-states are not supported and we consider the CPU
-    // is active.
-    if (info[i].MaxIdleState == 1 || info[i].CurrentIdleState == 1) {
-      num_active_cpus++;
-    }
   }
 
   DCHECK_LE(load_fraction_total, static_cast<float>(num_non_idle_cpus))
       << " load_fraction_total: " << load_fraction_total
       << " num_non_idle_cpus:" << num_non_idle_cpus;
   throttling_level = (load_fraction_total / num_cpus());
-
-  TRACE_COUNTER1(kPowerTraceCategory, "num_active_cpus", num_active_cpus);
 
   return throttling_level;
 }

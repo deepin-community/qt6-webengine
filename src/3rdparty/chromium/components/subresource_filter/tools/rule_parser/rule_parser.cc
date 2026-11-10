@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
+#include "base/check_op.h"
 #include "base/logging.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -68,8 +70,8 @@ class KeywordMap {
 
     // Creates a generic option.
     OptionDetails(OptionType type, int flags) : type(type), flags(flags) {
-      DCHECK_NE(type, OPTION_ELEMENT_TYPE);
-      DCHECK_NE(type, OPTION_ACTIVATION_TYPE);
+      CHECK_NE(type, OPTION_ELEMENT_TYPE);
+      CHECK_NE(type, OPTION_ACTIVATION_TYPE);
     }
 
     bool requires_value() const { return flags & FLAG_REQUIRES_VALUE; }
@@ -165,7 +167,7 @@ const KeywordMap::OptionDetails* KeywordMap::Lookup(
 void KeywordMap::AddOption(std::string_view name,
                            const OptionDetails& details) {
   auto inserted = options_.insert(std::make_pair(std::string(name), details));
-  DCHECK(inserted.second);
+  CHECK(inserted.second);
 }
 
 KeywordMap* GetKeywordsMapSingleton() {
@@ -246,8 +248,9 @@ RuleType RuleParser::Parse(std::string_view line) {
       break;
     }
     const char next_char = part[css_separator_pos + 1];
-    if (next_char == '#' || next_char == '@')  // CSS rule starter.
+    if (next_char == '#' || next_char == '@') {  // CSS rule starter.
       break;
+    }
   }
 
   if (css_separator_pos != std::string_view::npos) {
@@ -284,8 +287,9 @@ RuleType RuleParser::ParseUrlRule(std::string_view origin,
 
   if (options_start != std::string_view::npos) {
     const std::string_view options = part.substr(options_start + 1);
-    if (!ParseUrlRuleOptions(origin, options))
+    if (!ParseUrlRuleOptions(origin, options)) {
       return url_pattern_index::proto::RULE_TYPE_UNSPECIFIED;
+    }
     part.remove_suffix(part.size() - options_start);
   }
 
@@ -321,7 +325,7 @@ bool RuleParser::ParseUrlRuleOptions(std::string_view origin,
   bool has_seen_element_or_activation_type = false;
   for (std::string_view piece : base::SplitStringPiece(
            options, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    DCHECK(!piece.empty());
+    CHECK(!piece.empty());
 
     TriState tri_state = TriState::YES;
     if (base::StartsWith(piece, "~", base::CompareCase::SENSITIVE)) {
@@ -379,19 +383,21 @@ bool RuleParser::ParseUrlRuleOptions(std::string_view origin,
         // option is negated) or excluded (otherwise).
         if (tri_state == TriState::YES) {
           // TODO(pkalinnikov): How about not resetting ActivationType options?
-          if (!has_seen_element_or_activation_type)
+          if (!has_seen_element_or_activation_type) {
             url_rule_.type_mask = 0;
+          }
           url_rule_.type_mask |= type_mask_for(option_details->element_type);
         } else {
-          DCHECK(tri_state == TriState::NO);
+          CHECK(tri_state == TriState::NO);
           url_rule_.type_mask &= ~type_mask_for(option_details->element_type);
         }
         has_seen_element_or_activation_type = true;
         break;
       }
       case KeywordMap::OPTION_ACTIVATION_TYPE:
-        if (!has_seen_element_or_activation_type)
+        if (!has_seen_element_or_activation_type) {
           url_rule_.type_mask = 0;
+        }
         url_rule_.type_mask |= type_mask_for(option_details->activation_type);
         has_seen_element_or_activation_type = true;
         break;
@@ -422,12 +428,12 @@ RuleType RuleParser::ParseCssRule(std::string_view origin,
 
   // Check for a list of domains.
   if (css_section_start) {
-    DCHECK(css_section_start != std::string_view::npos);
+    CHECK(css_section_start != std::string_view::npos);
     auto pieces = base::SplitStringPiece(part.substr(0, css_section_start), ",",
                                          base::TRIM_WHITESPACE,
                                          base::SPLIT_WANT_NONEMPTY);
     for (std::string_view domain : pieces) {
-      DCHECK(!domain.empty());
+      CHECK(!domain.empty());
       css_rule_.domains.push_back(std::string(domain));
     }
   }
@@ -460,8 +466,8 @@ RuleType RuleParser::ParseCssRule(std::string_view origin,
 void RuleParser::SetParseError(ParseError::ErrorCode code,
                                std::string_view origin,
                                const char* error_begin) {
-  DCHECK(code != ParseError::NONE);
-  DCHECK(error_begin >= origin.data());
+  CHECK(code != ParseError::NONE);
+  CHECK(error_begin >= origin.data());
 
   parse_error_.error_code = code;
   parse_error_.line = std::string(origin);

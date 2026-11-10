@@ -29,7 +29,7 @@
 #define SRC_TINT_LANG_WGSL_SEM_MODULE_H_
 
 #include "src/tint/lang/wgsl/ast/diagnostic_control.h"
-#include "src/tint/lang/wgsl/extension.h"
+#include "src/tint/lang/wgsl/enums.h"
 #include "src/tint/lang/wgsl/sem/node.h"
 #include "src/tint/utils/containers/vector.h"
 
@@ -61,9 +61,7 @@ class Module final : public Castable<Module, Node> {
     /// Modifies the severity of a specific diagnostic rule for this module.
     /// @param rule the diagnostic rule
     /// @param severity the new diagnostic severity
-    void SetDiagnosticSeverity(wgsl::DiagnosticRule rule, wgsl::DiagnosticSeverity severity) {
-        diagnostic_severities_[rule] = severity;
-    }
+    void SetDiagnosticSeverity(wgsl::DiagnosticRule rule, wgsl::DiagnosticSeverity severity);
 
     /// @returns the diagnostic severity modifications applied to this module
     const wgsl::DiagnosticRuleSeverities& DiagnosticSeverities() const {

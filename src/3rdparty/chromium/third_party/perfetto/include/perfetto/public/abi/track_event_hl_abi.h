@@ -36,6 +36,76 @@
 extern "C" {
 #endif
 
+// The type of the proto field.
+enum PerfettoTeHlProtoFieldType {
+  PERFETTO_TE_HL_PROTO_TYPE_CSTR = 0,
+  PERFETTO_TE_HL_PROTO_TYPE_BYTES = 1,
+  PERFETTO_TE_HL_PROTO_TYPE_NESTED = 2,
+  PERFETTO_TE_HL_PROTO_TYPE_VARINT = 3,
+  PERFETTO_TE_HL_PROTO_TYPE_FIXED64 = 4,
+  PERFETTO_TE_HL_PROTO_TYPE_FIXED32 = 5,
+  PERFETTO_TE_HL_PROTO_TYPE_DOUBLE = 6,
+  PERFETTO_TE_HL_PROTO_TYPE_FLOAT = 7,
+};
+
+// Common header for all the proto fields.
+struct PerfettoTeHlProtoField {
+  enum PerfettoTeHlProtoFieldType type;
+  // Proto field id.
+  uint32_t id;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_CSTR
+struct PerfettoTeHlProtoFieldCstr {
+  struct PerfettoTeHlProtoField header;
+  // Null terminated string.
+  const char* str;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_BYTES
+struct PerfettoTeHlProtoFieldBytes {
+  struct PerfettoTeHlProtoField header;
+  const void* buf;
+  size_t len;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_NESTED
+struct PerfettoTeHlProtoFieldNested {
+  struct PerfettoTeHlProtoField header;
+  // Array of pointers to the fields. The last pointer should be NULL.
+  struct PerfettoTeHlProtoField* const* fields;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_VARINT
+struct PerfettoTeHlProtoFieldVarInt {
+  struct PerfettoTeHlProtoField header;
+  uint64_t value;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_FIXED64
+struct PerfettoTeHlProtoFieldFixed64 {
+  struct PerfettoTeHlProtoField header;
+  uint64_t value;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_FIXED32
+struct PerfettoTeHlProtoFieldFixed32 {
+  struct PerfettoTeHlProtoField header;
+  uint32_t value;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_DOUBLE
+struct PerfettoTeHlProtoFieldDouble {
+  struct PerfettoTeHlProtoField header;
+  double value;
+};
+
+// PERFETTO_TE_HL_PROTO_TYPE_FLOAT
+struct PerfettoTeHlProtoFieldFloat {
+  struct PerfettoTeHlProtoField header;
+  float value;
+};
+
 // The type of an event extra parameter.
 enum PerfettoTeHlExtraType {
   PERFETTO_TE_HL_EXTRA_TYPE_REGISTERED_TRACK = 1,
@@ -54,15 +124,16 @@ enum PerfettoTeHlExtraType {
   PERFETTO_TE_HL_EXTRA_TYPE_TERMINATING_FLOW = 14,
   PERFETTO_TE_HL_EXTRA_TYPE_FLUSH = 15,
   PERFETTO_TE_HL_EXTRA_TYPE_NO_INTERN = 16,
+  PERFETTO_TE_HL_EXTRA_TYPE_PROTO_FIELDS = 17,
+  PERFETTO_TE_HL_EXTRA_TYPE_PROTO_TRACK = 18,
+  PERFETTO_TE_HL_EXTRA_TYPE_NESTED_TRACKS = 19,
 };
 
-// List of extra event parameters. Each type of parameter should embed this as
-// its first member.
+// An extra event parameter. Each type of parameter should embed this as its
+// first member.
 struct PerfettoTeHlExtra {
   // enum PerfettoTeHlExtraType. Identifies the exact type of this.
   uint32_t type;
-  // Pointer to the next PerfettoTeHlExtra in the list or NULL.
-  const struct PerfettoTeHlExtra* next;
 };
 
 // PERFETTO_TE_HL_EXTRA_TYPE_REGISTERED_TRACK
@@ -174,6 +245,66 @@ struct PerfettoTeHlExtraFlow {
   uint64_t id;
 };
 
+// PERFETTO_TE_HL_EXTRA_TYPE_PROTO_FIELDS
+struct PerfettoTeHlExtraProtoFields {
+  struct PerfettoTeHlExtra header;
+  // Array of pointers to the fields. The last pointer should be NULL.
+  struct PerfettoTeHlProtoField* const* fields;
+};
+
+// PERFETTO_TE_HL_EXTRA_TYPE_PROTO_TRACK
+struct PerfettoTeHlExtraProtoTrack {
+  struct PerfettoTeHlExtra header;
+  uint64_t uuid;
+  // Array of pointers to the fields. The last pointer should be NULL.
+  struct PerfettoTeHlProtoField* const* fields;
+};
+
+// The type of a nested track
+enum PerfettoTeHlNestedTrackType {
+  PERFETTO_TE_HL_NESTED_TRACK_TYPE_NAMED = 1,
+  PERFETTO_TE_HL_NESTED_TRACK_TYPE_PROTO = 2,
+  PERFETTO_TE_HL_NESTED_TRACK_TYPE_REGISTERED = 3,
+  PERFETTO_TE_HL_NESTED_TRACK_TYPE_THREAD = 4,
+  PERFETTO_TE_HL_NESTED_TRACK_TYPE_PROCESS = 5,
+};
+
+struct PerfettoTeHlNestedTrack {
+  // enum PerfettoTeHlNestedTrackType
+  uint32_t type;
+};
+
+// PERFETTO_TE_HL_NESTED_TRACK_TYPE_NAMED
+struct PerfettoTeHlNestedTrackNamed {
+  struct PerfettoTeHlNestedTrack header;
+  const char* name;
+  // Partially identifies the track, along `name` and the parent hierarchy.
+  uint64_t id;
+};
+
+struct PerfettoTeHlNestedTrackProto {
+  struct PerfettoTeHlNestedTrack header;
+  // Partially identifies the track, along with the parent hierarchy.
+  uint64_t id;
+  // Array of pointers to the fields. The last pointer should be NULL.
+  struct PerfettoTeHlProtoField* const* fields;
+};
+
+struct PerfettoTeHlNestedTrackRegistered {
+  struct PerfettoTeHlNestedTrack header;
+  // Pointer to a registered track.
+  const struct PerfettoTeRegisteredTrackImpl* track;
+};
+
+// PERFETTO_TE_HL_EXTRA_TYPE_NESTED_TRACKS
+struct PerfettoTeHlExtraNestedTracks {
+  struct PerfettoTeHlExtra header;
+  // Array of pointers to the nested tracks. The last pointer should be NULL.
+  // The first pointer is the outermost track (the parent track), the (second
+  // to) last pointer is the innermost track (the child track).
+  struct PerfettoTeHlNestedTrack* const* tracks;
+};
+
 // Emits an event on all active instances of the track event data source.
 // * `cat`: The registered category of the event, it knows on which data source
 //          instances the event should be emitted. Use
@@ -182,12 +313,13 @@ struct PerfettoTeHlExtraFlow {
 //           PerfettoTeType`.
 // * `name`: All events (except when PERFETTO_TE_TYPE_SLICE_END) can have an
 //           associated name. It can be nullptr.
-// * `extra_data`: Optional parameters associated with the events.
+// * `extra_data`: Optional parameters associated with the events. Array of
+// pointers to each event. The last pointer should be NULL.
 PERFETTO_SDK_EXPORT void PerfettoTeHlEmitImpl(
     struct PerfettoTeCategoryImpl* cat,
     int32_t type,
     const char* name,
-    const struct PerfettoTeHlExtra* extra_data);
+    struct PerfettoTeHlExtra* const* extra_data);
 
 #ifdef __cplusplus
 }

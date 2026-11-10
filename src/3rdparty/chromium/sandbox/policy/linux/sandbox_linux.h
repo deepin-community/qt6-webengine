@@ -171,12 +171,12 @@ class SANDBOX_POLICY_EXPORT SandboxLinux {
   // Stop |thread| in a way that can be trusted by the sandbox.
   void StopThread(base::Thread* thread);
 
-  // Returns the status of the renderer, worker and ppapi sandbox. Can only
-  // be queried after going through PreinitializeSandbox(). This is a bitmask
-  // and uses the constants defined in "enum Status" above. Since the
-  // status needs to be provided before the sandboxes are actually started,
-  // this returns what will actually happen once InitializeSandbox()
-  // is called from inside these processes.
+  // Returns the status of the renderer and worker sandbox. Can only be queried
+  // after going through PreinitializeSandbox(). This is a bitmask and uses the
+  // constants defined in "enum Status" above. Since the status needs to be
+  // provided before the sandboxes are actually started, this returns what will
+  // actually happen once InitializeSandbox() is called from inside these
+  // processes.
   int GetStatus();
 
   // Returns true if the current process is single-threaded or if the number
@@ -226,16 +226,9 @@ class SANDBOX_POLICY_EXPORT SandboxLinux {
   //
   // |policy| is the policy being run by the client, and is used to derive the
   // equivalent broker-side policy.
-  //
-  // |broker_side_hook| is an alternate pre-sandbox hook to be run before the
-  // broker itself gets sandboxed, to which the broker side policy and |options|
-  // are passed. Crashes the process if the broker can not be started since
-  // continuation is impossible (and presumably unsafe). This should never be
-  // destroyed, as after the sandbox is started it is vital to the process.
   void StartBrokerProcess(
       const syscall_broker::BrokerCommandSet& allowed_command_set,
       std::vector<syscall_broker::BrokerFilePermission> permissions,
-      PreSandboxHook broker_side_hook,
       const Options& options);
 
   // Returns true if the broker should handle a particular syscall indicated by
@@ -248,6 +241,9 @@ class SANDBOX_POLICY_EXPORT SandboxLinux {
   // syscalls that take pathnames, so we can enforce pathname whitelisting.
   // Only usable if StartBrokerProcess() was already called.
   bpf_dsl::ResultExpr HandleViaBroker(int sysno) const;
+
+  // Reports Landlock status through UMA metrics.
+  static void ReportLandlockStatus();
 
  private:
   friend struct base::DefaultSingletonTraits<SandboxLinux>;

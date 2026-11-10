@@ -5,10 +5,10 @@
 #ifndef NET_DNS_PUBLIC_DNS_CONFIG_OVERRIDES_H_
 #define NET_DNS_PUBLIC_DNS_CONFIG_OVERRIDES_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
-#include <optional>
 #include "base/time/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
@@ -29,8 +29,8 @@ struct NET_EXPORT DnsConfigOverrides {
   DnsConfigOverrides& operator=(const DnsConfigOverrides& other);
   DnsConfigOverrides& operator=(DnsConfigOverrides&& other);
 
-  bool operator==(const DnsConfigOverrides& other) const;
-  bool operator!=(const DnsConfigOverrides& other) const;
+  friend bool operator==(const DnsConfigOverrides&,
+                         const DnsConfigOverrides&) = default;
 
   // Creation method that initializes all values with the defaults from
   // DnsConfig. Guarantees the result of OverridesEverything() will be |true|.

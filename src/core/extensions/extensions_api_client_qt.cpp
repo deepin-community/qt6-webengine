@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Portions copyright 2015 The Chromium Embedded Framework Authors.
 // Portions copyright 2014 The Chromium Authors. All rights reserved.
@@ -7,15 +8,19 @@
 // found in the LICENSE file.
 
 #include "extensions_api_client_qt.h"
+
+#include "api/display_info_provider_qt.h"
+#include "api/management_api_delegate_qt.h"
+#include "extension_web_contents_observer_qt.h"
 #include "file_system_delegate_qt.h"
 #include "messaging_delegate_qt.h"
+#include "mime_handler_view_guest_delegate_qt.h"
 
 #include <memory>
 
-#include "extension_web_contents_observer_qt.h"
+#include "extensions/browser/guest_view/app_view/app_view_guest_delegate.h"
 #include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
-#include "mime_handler_view_guest_delegate_qt.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 
@@ -29,7 +34,7 @@ ExtensionsAPIClientQt::ExtensionsAPIClientQt()
 {
 }
 
-AppViewGuestDelegate *ExtensionsAPIClientQt::CreateAppViewGuestDelegate() const
+std::unique_ptr<AppViewGuestDelegate> ExtensionsAPIClientQt::CreateAppViewGuestDelegate() const
 {
     // TODO(extensions): Implement to support Apps.
     NOTREACHED();
@@ -67,6 +72,20 @@ MessagingDelegate *ExtensionsAPIClientQt::GetMessagingDelegate()
     if (!m_messagingDelegate)
         m_messagingDelegate = std::make_unique<MessagingDelegateQt>();
     return m_messagingDelegate.get();
+}
+
+std::unique_ptr<DisplayInfoProvider> ExtensionsAPIClientQt::CreateDisplayInfoProvider() const
+{
+    return std::make_unique<DisplayInfoProviderQt>();
+}
+
+ManagementAPIDelegate *ExtensionsAPIClientQt::CreateManagementAPIDelegate() const
+{
+#if QT_CONFIG(webengine_extensions)
+    return new ManagementAPIDelegateQt;
+#else
+    return nullptr;
+#endif
 }
 
 } // namespace extensions

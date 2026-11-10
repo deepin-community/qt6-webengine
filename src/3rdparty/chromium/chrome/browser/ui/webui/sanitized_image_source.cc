@@ -26,7 +26,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/google_service_auth_error.h"
-#include "ipc/ipc_channel.h"
+#include "ipc/constants.mojom.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -45,7 +45,7 @@
 namespace {
 
 const int64_t kMaxImageSizeInBytes =
-    static_cast<int64_t>(IPC::Channel::kMaximumMessageSize);
+    static_cast<int64_t>(IPC::mojom::kChannelMaximumMessageSize);
 
 constexpr char kEncodeTypeKey[] = "encodeType";
 constexpr char kIsGooglePhotosKey[] = "isGooglePhotos";
@@ -58,7 +58,7 @@ std::map<std::string, std::string> ParseParams(std::string_view param_string) {
   url::Component value;
   constexpr int kMaxUriDecodeLen = 2048;
   std::map<std::string, std::string> params;
-  while (url::ExtractQueryKeyValue(param_string.data(), &query, &key, &value)) {
+  while (url::ExtractQueryKeyValue(param_string, &query, &key, &value)) {
     url::RawCanonOutputW<kMaxUriDecodeLen> output;
     url::DecodeURLEscapeSequences(param_string.substr(value.begin, value.len),
                                   url::DecodeURLMode::kUTF8OrIsomorphic,
@@ -77,8 +77,9 @@ bool IsGooglePhotosUrl(const GURL& url) {
   };
 
   for (const char* const suffix : kGooglePhotosHostSuffixes) {
-    if (base::EndsWith(url.host_piece(), suffix))
+    if (base::EndsWith(url.host_piece(), suffix)) {
       return true;
+    }
   }
   return false;
 }
@@ -88,8 +89,7 @@ bool IsGooglePhotosUrl(const GURL& url) {
 void SanitizedImageSource::DataDecoderDelegate::DecodeImage(
     const std::string& data,
     DecodeImageCallback callback) {
-  base::span<const uint8_t> bytes = base::make_span(
-      reinterpret_cast<const uint8_t*>(data.data()), data.size());
+  base::span<const uint8_t> bytes = base::as_byte_span(data);
 
   data_decoder::DecodeImage(
       &data_decoder_, bytes, data_decoder::mojom::ImageCodec::kDefault,
@@ -100,8 +100,7 @@ void SanitizedImageSource::DataDecoderDelegate::DecodeImage(
 void SanitizedImageSource::DataDecoderDelegate::DecodeAnimation(
     const std::string& data,
     DecodeAnimationCallback callback) {
-  base::span<const uint8_t> bytes = base::make_span(
-      reinterpret_cast<const uint8_t*>(data.data()), data.size());
+  base::span<const uint8_t> bytes = base::as_byte_span(data);
 
   data_decoder::DecodeAnimation(&data_decoder_, bytes, /*shrink_to_fit=*/true,
                                 kMaxImageSizeInBytes, std::move(callback));
@@ -190,8 +189,7 @@ void SanitizedImageSource::StartDataRequest(
 
   // Request an auth token for downloading the image body.
   auto fetcher = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-      "sanitized_image_source", identity_manager_,
-      signin::ScopeSet({GaiaConstants::kPhotosModuleImageOAuth2Scope}),
+      signin::OAuthConsumerId::kSanitizedImageSource, identity_manager_,
       signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
       signin::ConsentLevel::kSignin);
   auto* fetcher_ptr = fetcher.get();
@@ -343,16 +341,16 @@ void SanitizedImageSource::EncodeAndReplyStaticImage(
       base::BindOnce(
           [](const SkBitmap& bitmap,
              RequestAttributes::EncodeType encode_type) {
-            auto encoded = base::MakeRefCounted<base::RefCountedBytes>();
-            const bool success =
+            std::optional<std::vector<uint8_t>> result =
                 encode_type == RequestAttributes::EncodeType::kWebP
-                    ? gfx::WebpCodec::Encode(bitmap, /*quality=*/90,
-                                             &encoded->data())
+                    ? gfx::WebpCodec::Encode(bitmap, /*quality=*/90)
                     : gfx::PNGCodec::EncodeBGRASkBitmap(
-                          bitmap, /*discard_transparency=*/false,
-                          &encoded->data());
-            return success ? encoded
-                           : base::MakeRefCounted<base::RefCountedBytes>();
+                          bitmap, /*discard_transparency=*/false);
+            if (!result) {
+              return base::MakeRefCounted<base::RefCountedBytes>();
+            }
+            return base::MakeRefCounted<base::RefCountedBytes>(
+                std::move(result.value()));
           },
           bitmap, request_attributes.encode_type),
       std::move(callback));

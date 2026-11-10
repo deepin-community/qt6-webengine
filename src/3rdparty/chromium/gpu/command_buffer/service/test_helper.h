@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/command_buffer/service/shader_translator.h"
 #include "ui/gl/gl_implementation.h"
@@ -121,13 +122,11 @@ class TestHelper {
       ::gl::MockGLInterface* gl,
       bool is_es3_enabled,
       bool is_es3_capable,
-      bool is_desktop_core_profile,
       const gfx::ExtensionSet& extensions,
       bool use_default_textures);
   static void SetupTextureManagerDestructionExpectations(
       ::gl::MockGLInterface* gl,
       bool is_es3_enabled,
-      bool is_desktop_core_profile,
       const gfx::ExtensionSet& extensions,
       bool use_default_textures);
 
@@ -148,8 +147,8 @@ class TestHelper {
       size_t num_uniforms,
       VaryingInfo* varyings,
       size_t num_varyings,
-      ProgramOutputInfo* program_outputs,
-      size_t num_program_outputs,
+      base::span<ProgramOutputInfo> program_outputs,
+      size_t spanification_suspected_redundant_num_program_outputs,
       GLuint service_id);
 
   static void SetupProgramSuccessExpectations(
@@ -161,8 +160,8 @@ class TestHelper {
       size_t num_uniforms,
       VaryingInfo* varyings,
       size_t num_varyings,
-      ProgramOutputInfo* program_outputs,
-      size_t num_program_outputs,
+      base::span<ProgramOutputInfo> program_outputs,
+      size_t spanification_suspected_redundant_num_program_outputs,
       GLuint service_id);
 
   static void DoBufferData(::gl::MockGLInterface* gl,

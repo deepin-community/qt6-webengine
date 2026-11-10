@@ -1,6 +1,7 @@
 // Copyright (c) 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
@@ -23,7 +24,7 @@ const UIStrings = {
    * For a button that opens a tool that shows the layers present in the current document.
    */
   toggleCSSLayers: 'Toggle CSS Layers view',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/elements/LayersWidget.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -34,10 +35,11 @@ export class LayersWidget extends UI.Widget.Widget {
   private layerTreeComponent = new TreeOutline.TreeOutline.TreeOutline<string>();
 
   constructor() {
-    super(true);
+    super({useShadowDom: true});
+    this.registerRequiredCSS(layersWidgetStyles);
 
     this.contentElement.className = 'styles-layers-pane';
-    this.contentElement.setAttribute('jslog', `${VisualLogging.pane().context('css-layers')}`);
+    this.contentElement.setAttribute('jslog', `${VisualLogging.pane('css-layers')}`);
     UI.UIUtils.createTextChild(this.contentElement.createChild('div'), i18nString(UIStrings.cssLayersTitle));
 
     this.contentElement.appendChild(this.layerTreeComponent);
@@ -58,13 +60,12 @@ export class LayersWidget extends UI.Widget.Widget {
     }
   }
 
-  override async wasShown(): Promise<void> {
+  override wasShown(): Promise<void> {
     super.wasShown();
-    this.registerCSSFiles([layersWidgetStyles]);
     return this.update();
   }
 
-  private async update(): Promise<void> {
+  async update(): Promise<void> {
     if (!this.isShowing()) {
       return;
     }
@@ -82,22 +83,21 @@ export class LayersWidget extends UI.Widget.Widget {
     if (!this.cssModel) {
       return;
     }
-    const makeTreeNode = (parentId: string) =>
-        (layer: Protocol.CSS.CSSLayerData): TreeOutline.TreeOutlineUtils.TreeNode<string> => {
-          const subLayers = layer.subLayers;
-          const name = SDK.CSSModel.CSSModel.readableLayerName(layer.name);
-          const treeNodeData = layer.order + ': ' + name;
-          const id = parentId ? parentId + '.' + name : name;
-          if (!subLayers) {
-            return {treeNodeData, id};
-          }
-          return {
-            treeNodeData,
-            id,
-            children: (): Promise<TreeOutline.TreeOutlineUtils.TreeNode<string>[]> =>
-                Promise.resolve(subLayers.sort((layer1, layer2) => layer1.order - layer2.order).map(makeTreeNode(id))),
-          };
-        };
+    const makeTreeNode = (parentId: string) => (layer: Protocol.CSS.CSSLayerData) => {
+      const subLayers = layer.subLayers;
+      const name = SDK.CSSModel.CSSModel.readableLayerName(layer.name);
+      const treeNodeData = layer.order + ': ' + name;
+      const id = parentId ? parentId + '.' + name : name;
+      if (!subLayers) {
+        return {treeNodeData, id};
+      }
+      return {
+        treeNodeData,
+        id,
+        children: () =>
+            Promise.resolve(subLayers.sort((layer1, layer2) => layer1.order - layer2.order).map(makeTreeNode(id))),
+      };
+    };
     const rootLayer = await this.cssModel.getRootLayer(node.id);
     this.layerTreeComponent.data = {
       defaultRenderer: TreeOutline.TreeOutline.defaultRenderer,
@@ -114,7 +114,7 @@ export class LayersWidget extends UI.Widget.Widget {
       ElementsPanel.instance().showToolbarPane(this, ButtonProvider.instance().item());
     }
     await this.update();
-    return this.layerTreeComponent.expandToAndSelectTreeNodeId('implicit outer layer.' + layerName);
+    return await this.layerTreeComponent.expandToAndSelectTreeNodeId('implicit outer layer.' + layerName);
   }
 
   static instance(opts: {
@@ -136,10 +136,9 @@ export class ButtonProvider implements UI.Toolbar.Provider {
   private constructor() {
     this.button = new UI.Toolbar.ToolbarToggle(i18nString(UIStrings.toggleCSSLayers), 'layers', 'layers-filled');
     this.button.setVisible(false);
-    this.button.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this.clicked, this);
+    this.button.addEventListener(UI.Toolbar.ToolbarButton.Events.CLICK, this.clicked, this);
     this.button.element.classList.add('monospace');
-    this.button.element.setAttribute(
-        'jslog', `${VisualLogging.toggleSubpane().track({click: true}).context('css-layers')}`);
+    this.button.element.setAttribute('jslog', `${VisualLogging.toggleSubpane('css-layers').track({click: true})}`);
   }
 
   static instance(opts: {

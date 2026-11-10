@@ -8,6 +8,7 @@
 
 #include "base/check_op.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "components/services/storage/indexed_db/scopes/leveldb_scope.h"
@@ -19,7 +20,7 @@
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
 
-namespace content {
+namespace content::indexed_db {
 
 TransactionalLevelDBTransaction::TransactionalLevelDBTransaction(
     TransactionalLevelDBDatabase* db,
@@ -86,6 +87,7 @@ leveldb::Status TransactionalLevelDBTransaction::Commit(bool sync_on_commit) {
 
   finished_ = true;
   return db_->scopes()->Commit(std::move(scope_), sync_on_commit,
+                               /*on_commit_complete=*/base::OnceClosure(),
                                std::move(commit_cleanup_complete_callback_));
 }
 
@@ -106,10 +108,6 @@ TransactionalLevelDBTransaction::CreateIterator(leveldb::Status& s) {
       weak_factory_.GetWeakPtr(), db_->DefaultReadOptions());
   loaded_iterators_.insert(it.get());
   return it;
-}
-
-uint64_t TransactionalLevelDBTransaction::GetTransactionSize() const {
-  return scope_->GetMemoryUsage() + scope_->GetApproximateBytesWritten();
 }
 
 leveldb::Status TransactionalLevelDBTransaction::ForceWriteChangesAndUndoLog() {
@@ -143,8 +141,8 @@ void TransactionalLevelDBTransaction::EvictLoadedIterators() {
   if (loaded_iterators_.empty())
     return;
   is_evicting_all_loaded_iterators_ = true;
-  base::flat_set<TransactionalLevelDBIterator*> to_be_evicted =
-      std::move(loaded_iterators_);
+  base::flat_set<raw_ptr<TransactionalLevelDBIterator, CtnExperimental>>
+      to_be_evicted = std::move(loaded_iterators_);
   for (TransactionalLevelDBIterator* iter : to_be_evicted) {
     iter->EvictLevelDBIterator();
   }
@@ -197,4 +195,4 @@ leveldb::Status LevelDBDirectTransaction::Commit() {
   return s;
 }
 
-}  // namespace content
+}  // namespace content::indexed_db

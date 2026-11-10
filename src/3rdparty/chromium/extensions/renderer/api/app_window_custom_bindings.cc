@@ -52,7 +52,7 @@ void AppWindowCustomBindings::GetFrame(
   bool notify_browser = args[1].As<v8::Boolean>()->Value();
 
   content::RenderFrame* app_frame =
-      ExtensionFrameHelper::FindFrameFromFrameTokenString(context()->isolate(),
+      ExtensionFrameHelper::FindFrameFromFrameTokenString(args.GetIsolate(),
                                                           args[0]);
   if (!app_frame) {
     return;
@@ -70,7 +70,7 @@ void AppWindowCustomBindings::GetFrame(
   // allowed accessing its window.
   v8::Local<v8::Context> caller_context =
       args.GetIsolate()->GetCurrentContext();
-  if (!ContextCanAccessObject(caller_context,
+  if (!ContextCanAccessObject(args.GetIsolate(), caller_context,
                               v8::Local<v8::Object>::Cast(window), true)) {
     return;
   }
@@ -82,7 +82,6 @@ void AppWindowCustomBindings::ResumeParser(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   if (args.Length() != 1 || !args[0]->IsString()) {
     NOTREACHED();
-    return;
   }
 
   content::RenderFrame* app_frame =
@@ -90,14 +89,12 @@ void AppWindowCustomBindings::ResumeParser(
                                                           args[0]);
   if (!app_frame) {
     NOTREACHED();
-    return;
   }
 
   blink::WebDocumentLoader* loader =
       app_frame->GetWebFrame()->GetDocumentLoader();
   if (!loader) {
     NOTREACHED();
-    return;
   }
 
   loader->ResumeParser();

@@ -4,10 +4,14 @@
 
 #include "chrome/test/chromedriver/server/http_server.h"
 
+#include "base/compiler_specific.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_interfaces.h"
 #include "net/base/sys_addrinfo.h"
+#include "net/http/http_status_code.h"
 #include "url/gurl.h"
 
 namespace {
@@ -45,7 +49,7 @@ bool IsMatch(const std::string& system_host, const std::string& hostname) {
 
 void GetCanonicalHostName(std::vector<std::string>* canonical_host_names) {
   struct addrinfo hints, *info = nullptr, *p;
-  memset(&hints, 0, sizeof(hints));
+  UNSAFE_TODO(memset(&hints, 0, sizeof(hints)));
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_CANONNAME;
@@ -192,14 +196,18 @@ int HttpServer::Start(uint16_t port, bool allow_remote, bool use_ipv4) {
       new net::TCPServerSocket(nullptr, net::NetLogSource()));
   int status = use_ipv4 ? ListenOnIPv4(server_socket.get(), port, allow_remote)
                         : ListenOnIPv6(server_socket.get(), port, allow_remote);
+
   if (status != net::OK) {
     VLOG(0) << "listen on " << (use_ipv4 ? "IPv4" : "IPv6")
             << " failed with error " << net::ErrorToShortString(status);
     return status;
   }
   server_ = std::make_unique<net::HttpServer>(std::move(server_socket), this);
-  net::IPEndPoint address;
-  return server_->GetLocalAddress(&address);
+  return server_->GetLocalAddress(&local_address_);
+}
+
+const net::IPEndPoint& HttpServer::LocalAddress() const {
+  return local_address_;
 }
 
 void HttpServer::OnConnect(int connection_id) {
@@ -227,6 +235,14 @@ HttpServer::~HttpServer() = default;
 
 void HttpServer::OnWebSocketRequest(int connection_id,
                                     const net::HttpServerRequestInfo& info) {
+  if (!RequestIsSafeToServe(info, allow_remote_, whitelisted_ips_,
+                            allowed_origins_)) {
+    server_->Send(connection_id, net::HTTP_FORBIDDEN,
+                  "Host header or origin header is specified and is not "
+                  "whitelisted or localhost.",
+                  "text/html", TRAFFIC_ANNOTATION_FOR_TESTS);
+    return;
+  }
   cmd_runner_->PostTask(
       FROM_HERE, base::BindOnce(&HttpHandler::OnWebSocketRequest, handler_,
                                 this, connection_id, info));

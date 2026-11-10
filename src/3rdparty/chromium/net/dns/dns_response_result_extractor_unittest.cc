@@ -4,13 +4,13 @@
 
 #include "net/dns/dns_response_result_extractor.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
@@ -41,6 +41,7 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Ne;
+using ::testing::Optional;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::ResultOf;
@@ -57,7 +58,15 @@ class DnsResponseResultExtractorTest : public ::testing::Test {
  protected:
   base::SimpleTestClock clock_;
   base::SimpleTestTickClock tick_clock_;
+
+  base::HistogramTester histogram_tester_;
 };
+
+constexpr uint8_t fake_test_rdata[] = {'f', 'a', 'k', 'e', ' ',
+                                       'r', 'd', 'a', 't', 'a'};
+
+constexpr uint8_t malformed_test_rdata[] = {
+    'm', 'a', 'l', 'f', 'o', 'r', 'm', 'e', 'd', ' ', 'r', 'd', 'a', 't', 'a'};
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsSingleARecord) {
   constexpr char kName[] = "address.test";
@@ -78,6 +87,8 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsSingleARecord) {
                   /*expiration_matcher=*/Ne(std::nullopt),
                   /*timed_expiration_matcher=*/Ne(std::nullopt),
                   ElementsAre(IPEndPoint(kExpected, /*port=*/0))))));
+  histogram_tester_.ExpectUniqueSample(
+      DnsResponseResultExtractor::kHasValidCnameRecordsHistogram, false, 1);
 }
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsSingleAAAARecord) {
@@ -101,6 +112,8 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsSingleAAAARecord) {
                   /*expiration_matcher=*/Ne(std::nullopt),
                   /*timed_expiration_matcher=*/Ne(std::nullopt),
                   ElementsAre(IPEndPoint(expected, /*port=*/0))))));
+  histogram_tester_.ExpectUniqueSample(
+      DnsResponseResultExtractor::kHasValidCnameRecordsHistogram, false, 1);
 }
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsSingleARecordWithCname) {
@@ -130,6 +143,8 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsSingleARecordWithCname) {
               kName, DnsQueryType::A, kDnsSource,
               /*expiration_matcher=*/Ne(std::nullopt),
               /*timed_expiration_matcher=*/Ne(std::nullopt), kCanonicalName))));
+  histogram_tester_.ExpectUniqueSample(
+      DnsResponseResultExtractor::kHasValidCnameRecordsHistogram, true, 1);
 }
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsARecordsWithCname) {
@@ -170,17 +185,20 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsARecordsWithCname) {
               kName, DnsQueryType::A, kDnsSource,
               /*expiration_matcher=*/Ne(std::nullopt),
               /*timed_expiration_matcher=*/Ne(std::nullopt), "alias.test"))));
+  histogram_tester_.ExpectUniqueSample(
+      DnsResponseResultExtractor::kHasValidCnameRecordsHistogram, true, 1);
 }
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsNxdomainAResponses) {
   constexpr char kName[] = "address.test";
   constexpr auto kTtl = base::Hours(2);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeA, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeA, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)},
+                           /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -201,10 +219,11 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataAResponses) {
   constexpr char kName[] = "address.test";
   constexpr auto kTtl = base::Minutes(15);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeA, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeA, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -221,13 +240,31 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataAResponses) {
                   ERR_NAME_NOT_RESOLVED))));
 }
 
+TEST_F(DnsResponseResultExtractorTest, ExtractsNodataAResponsesWithoutTtl) {
+  constexpr char kName[] = "address.test";
+
+  // Response without a TTL-containing SOA record.
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeA, /*answers=*/{});
+  DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
+
+  ResultsOrError results =
+      extractor.ExtractDnsResults(DnsQueryType::A,
+                                  /*original_domain_name=*/kName,
+                                  /*request_port=*/0);
+
+  // Expect empty result because not cacheable.
+  ASSERT_TRUE(results.has_value());
+  EXPECT_THAT(results.value(), IsEmpty());
+}
+
 TEST_F(DnsResponseResultExtractorTest, RejectsMalformedARecord) {
   constexpr char kName[] = "address.test";
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeA,
       {BuildTestDnsRecord(kName, dns_protocol::kTypeA,
-                          "malformed rdata")} /* answers */);
+                          malformed_test_rdata)} /* answers */);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   EXPECT_EQ(extractor
@@ -324,7 +361,7 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsMinATtl) {
 }
 
 MATCHER_P(ContainsContiguousElements, elements, "") {
-  return base::ranges::search(arg, elements) != arg.end();
+  return std::ranges::search(arg, elements).begin() != arg.end();
 }
 
 TEST_F(DnsResponseResultExtractorTest, ExtractsTxtResponses) {
@@ -365,11 +402,12 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNxdomainTxtResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Days(4);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeTXT, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeTXT, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)},
+                           /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -390,10 +428,11 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataTxtResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Minutes(42);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeTXT,
-      /*answers=*/{}, /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeTXT,
+                           /*answers=*/{}, /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -416,7 +455,25 @@ TEST_F(DnsResponseResultExtractorTest, RejectsMalformedTxtRecord) {
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeTXT,
       {BuildTestDnsRecord(kName, dns_protocol::kTypeTXT,
-                          "malformed rdata")} /* answers */);
+                          malformed_test_rdata)} /* answers */);
+  DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
+
+  EXPECT_EQ(extractor
+                .ExtractDnsResults(DnsQueryType::TXT,
+                                   /*original_domain_name=*/kName,
+                                   /*request_port=*/0)
+                .error_or(ExtractionError::kOk),
+            ExtractionError::kMalformedRecord);
+}
+
+TEST_F(DnsResponseResultExtractorTest, RejectsMalformedEmptyTxtRecord) {
+  constexpr char kName[] = "name.test";
+
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeTXT,
+                           /*answers=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeTXT,
+                                               /*rdata=*/{})});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   EXPECT_EQ(extractor
@@ -515,11 +572,12 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNxdomainPtrResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Hours(5);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypePTR, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypePTR, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)},
+                           /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -540,10 +598,11 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataPtrResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Minutes(50);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypePTR, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypePTR, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -566,7 +625,7 @@ TEST_F(DnsResponseResultExtractorTest, RejectsMalformedPtrRecord) {
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypePTR,
       {BuildTestDnsRecord(kName, dns_protocol::kTypePTR,
-                          "malformed rdata")} /* answers */);
+                          malformed_test_rdata)} /* answers */);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   EXPECT_EQ(extractor
@@ -690,11 +749,12 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNxdomainSrvResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Days(7);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeSRV, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeSRV, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)},
+                           /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -715,10 +775,11 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataSrvResponses) {
   constexpr char kName[] = "name.test";
   constexpr auto kTtl = base::Hours(12);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeSRV, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeSRV, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -741,7 +802,7 @@ TEST_F(DnsResponseResultExtractorTest, RejectsMalformedSrvRecord) {
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeSRV,
       {BuildTestDnsRecord(kName, dns_protocol::kTypeSRV,
-                          "malformed rdata")} /* answers */);
+                          malformed_test_rdata)} /* answers */);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   EXPECT_EQ(extractor
@@ -820,6 +881,8 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsComprehensiveHttpsResponses) {
   constexpr char kAlpn[] = "foo";
   constexpr uint8_t kEchConfig[] = "EEEEEEEEECH!";
   constexpr auto kTtl = base::Hours(12);
+  const std::vector<std::vector<uint8_t>> kTrustAnchorIDs = {{0x01, 0x02, 0x03},
+                                                             {0x02, 0x02}};
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -828,7 +891,8 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsComprehensiveHttpsResponses) {
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({kAlpn}),
-            BuildTestHttpsServiceEchConfigParam(kEchConfig)},
+            BuildTestHttpsServiceEchConfigParam(kEchConfig),
+            BuildTestHttpsServiceTrustAnchorIDsParam(kTrustAnchorIDs)},
            kTtl),
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/3,
@@ -857,19 +921,17 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsComprehensiveHttpsResponses) {
               Pair(4, ExpectConnectionEndpointMetadata(
                           ElementsAre(kAlpn,
                                       dns_protocol::kHttpsServiceDefaultAlpn),
-                          ElementsAreArray(kEchConfig), kName)))))));
+                          ElementsAreArray(kEchConfig), kName,
+                          ElementsAreArray(kTrustAnchorIDs))))))));
 }
 
-TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithAlias) {
+TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithJustAlias) {
   constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kTtl = base::Days(5);
 
-  DnsResponse response =
-      BuildTestDnsResponse(kName, dns_protocol::kTypeHttps,
-                           {BuildTestHttpsServiceRecord(kName,
-                                                        /*priority=*/4,
-                                                        /*service_name=*/".",
-                                                        /*params=*/{}),
-                            BuildTestHttpsAliasRecord(kName, "alias.test")});
+  DnsResponse response = BuildTestDnsResponse(
+      kName, dns_protocol::kTypeHttps,
+      {BuildTestHttpsAliasRecord(kName, "alias.test", kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -878,20 +940,54 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithAlias) {
                                   /*request_port=*/0);
 
   // Expect empty metadata result to signify compatible HTTPS records with no
-  // data of use to Chrome.
+  // data of use to Chrome. Still expect expiration from record, so the empty
+  // response can be cached.
   ASSERT_TRUE(results.has_value());
-  EXPECT_THAT(results.value(),
-              ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
-                  kName, DnsQueryType::HTTPS, kDnsSource,
-                  /*expiration_matcher=*/Ne(std::nullopt),
-                  /*timed_expiration_matcher=*/Ne(std::nullopt),
-                  /*metadatas_matcher=*/IsEmpty()))));
+  EXPECT_THAT(
+      results.value(),
+      ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
+          kName, DnsQueryType::HTTPS, kDnsSource,
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kTtl),
+          /*metadatas_matcher=*/IsEmpty()))));
+}
+
+TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithAlias) {
+  constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kLowestTtl = base::Minutes(32);
+
+  DnsResponse response = BuildTestDnsResponse(
+      kName, dns_protocol::kTypeHttps,
+      {BuildTestHttpsServiceRecord(kName,
+                                   /*priority=*/4,
+                                   /*service_name=*/".",
+                                   /*params=*/{}, base::Days(1)),
+       BuildTestHttpsAliasRecord(kName, "alias.test", kLowestTtl)});
+  DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
+
+  ResultsOrError results =
+      extractor.ExtractDnsResults(DnsQueryType::HTTPS,
+                                  /*original_domain_name=*/kName,
+                                  /*request_port=*/0);
+
+  // Expect empty metadata result to signify compatible HTTPS records with no
+  // data of use to Chrome. Expiration should match lowest TTL from all
+  // compatible records.
+  ASSERT_TRUE(results.has_value());
+  EXPECT_THAT(
+      results.value(),
+      ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
+          kName, DnsQueryType::HTTPS, kDnsSource,
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kLowestTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kLowestTtl),
+          /*metadatas_matcher=*/IsEmpty()))));
 }
 
 // Expect the entire response to be ignored if all HTTPS records have the
 // "no-default-alpn" param.
 TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithNoDefaultAlpn) {
   constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kLowestTtl = base::Hours(3);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -900,13 +996,15 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithNoDefaultAlpn) {
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({"foo1"}),
-            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}}),
+            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}},
+           kLowestTtl),
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/5,
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({"foo2"}),
-            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}})});
+            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}},
+           base::Days(3))});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -917,12 +1015,13 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsResponseWithNoDefaultAlpn) {
   // Expect empty metadata result to signify compatible HTTPS records with no
   // data of use to Chrome.
   ASSERT_TRUE(results.has_value());
-  EXPECT_THAT(results.value(),
-              ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
-                  kName, DnsQueryType::HTTPS, kDnsSource,
-                  /*expiration_matcher=*/Ne(std::nullopt),
-                  /*timed_expiration_matcher=*/Ne(std::nullopt),
-                  /*metadatas_matcher=*/IsEmpty()))));
+  EXPECT_THAT(
+      results.value(),
+      ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
+          kName, DnsQueryType::HTTPS, kDnsSource,
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kLowestTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kLowestTtl),
+          /*metadatas_matcher=*/IsEmpty()))));
 }
 
 // Unsupported/unknown HTTPS params are simply ignored if not marked mandatory.
@@ -962,6 +1061,7 @@ TEST_F(DnsResponseResultExtractorTest,
        IgnoresHttpsRecordWithUnsupportedMandatoryParam) {
   constexpr char kName[] = "https.test";
   constexpr uint16_t kMadeUpParamKey = 65500;  // From the private-use block.
+  constexpr base::TimeDelta kTtl = base::Days(5);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -971,11 +1071,12 @@ TEST_F(DnsResponseResultExtractorTest,
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({"ignored_alpn"}),
             BuildTestHttpsServiceMandatoryParam({kMadeUpParamKey}),
-            {kMadeUpParamKey, "foo"}}),
+            {kMadeUpParamKey, "foo"}},
+           base::Hours(2)),
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/5,
            /*service_name=*/".",
-           /*params=*/{BuildTestHttpsServiceAlpnParam({"foo"})})});
+           /*params=*/{BuildTestHttpsServiceAlpnParam({"foo"})}, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -984,12 +1085,14 @@ TEST_F(DnsResponseResultExtractorTest,
                                   /*request_port=*/0);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be derived only from non-ignored records.
   EXPECT_THAT(
       results.value(),
       ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
           kName, DnsQueryType::HTTPS, kDnsSource,
-          /*expiration_matcher=*/Ne(std::nullopt),
-          /*timed_expiration_matcher=*/Ne(std::nullopt),
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kTtl),
           ElementsAre(Pair(
               5, ExpectConnectionEndpointMetadata(
                      ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
@@ -1127,6 +1230,7 @@ TEST_F(DnsResponseResultExtractorTest,
 TEST_F(DnsResponseResultExtractorTest,
        IgnoreHttpsRecordWithNonMatchingServiceName) {
   constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kTtl = base::Hours(14);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -1134,11 +1238,12 @@ TEST_F(DnsResponseResultExtractorTest,
            kName, /*priority=*/4,
            /*service_name=*/"other.service.test",
            /*params=*/
-           {BuildTestHttpsServiceAlpnParam({"ignored"})}),
+           {BuildTestHttpsServiceAlpnParam({"ignored"})}, base::Hours(3)),
        BuildTestHttpsServiceRecord("https.test", /*priority=*/5,
                                    /*service_name=*/".",
                                    /*params=*/
-                                   {BuildTestHttpsServiceAlpnParam({"foo"})})});
+                                   {BuildTestHttpsServiceAlpnParam({"foo"})},
+                                   kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1147,12 +1252,14 @@ TEST_F(DnsResponseResultExtractorTest,
                                   /*request_port=*/0);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be derived only from non-ignored records.
   EXPECT_THAT(
       results.value(),
       ElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
           kName, DnsQueryType::HTTPS, kDnsSource,
-          /*expiration_matcher=*/Ne(std::nullopt),
-          /*timed_expiration_matcher=*/Ne(std::nullopt),
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kTtl),
           ElementsAre(Pair(
               5, ExpectConnectionEndpointMetadata(
                      ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
@@ -1261,6 +1368,7 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsHttpsRecordWithMatchingPort) {
 
 TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithMismatchingPort) {
   constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kTtl = base::Days(14);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -1268,11 +1376,13 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithMismatchingPort) {
                                    /*service_name=*/".",
                                    /*params=*/
                                    {BuildTestHttpsServiceAlpnParam({"ignored"}),
-                                    BuildTestHttpsServicePortParam(1003)}),
+                                    BuildTestHttpsServicePortParam(1003)},
+                                   base::Hours(12)),
        BuildTestHttpsServiceRecord(kName, /*priority=*/4,
                                    /*service_name=*/".",
                                    /*params=*/
-                                   {BuildTestHttpsServiceAlpnParam({"foo"})})});
+                                   {BuildTestHttpsServiceAlpnParam({"foo"})},
+                                   kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1281,12 +1391,14 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithMismatchingPort) {
                                   /*request_port=*/55);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be derived only from non-ignored records.
   EXPECT_THAT(
       results.value(),
       UnorderedElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
           kName, DnsQueryType::HTTPS, kDnsSource,
-          /*expiration_matcher=*/Ne(std::nullopt),
-          /*timed_expiration_matcher=*/Ne(std::nullopt),
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kTtl),
           ElementsAre(Pair(
               4, ExpectConnectionEndpointMetadata(
                      ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
@@ -1297,6 +1409,7 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithMismatchingPort) {
 // "self-consistent" and should be ignored.
 TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithNoAlpn) {
   constexpr char kName[] = "https.test";
+  constexpr base::TimeDelta kTtl = base::Minutes(150);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -1304,11 +1417,13 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithNoAlpn) {
            kName, /*priority=*/4,
            /*service_name=*/".",
            /*params=*/
-           {{dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}}),
+           {{dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}},
+           base::Minutes(10)),
        BuildTestHttpsServiceRecord(kName, /*priority=*/4,
                                    /*service_name=*/".",
                                    /*params=*/
-                                   {BuildTestHttpsServiceAlpnParam({"foo"})})});
+                                   {BuildTestHttpsServiceAlpnParam({"foo"})},
+                                   kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1317,12 +1432,14 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithNoAlpn) {
                                   /*request_port=*/55);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be derived only from non-ignored records.
   EXPECT_THAT(
       results.value(),
       UnorderedElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
           kName, DnsQueryType::HTTPS, kDnsSource,
-          /*expiration_matcher=*/Ne(std::nullopt),
-          /*timed_expiration_matcher=*/Ne(std::nullopt),
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kTtl),
           ElementsAre(Pair(
               4, ExpectConnectionEndpointMetadata(
                      ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
@@ -1335,6 +1452,7 @@ TEST_F(DnsResponseResultExtractorTest,
        IgnoresHttpsResponseWithNoCompatibleDefaultAlpn) {
   constexpr char kName[] = "https.test";
   constexpr uint16_t kMadeUpParamKey = 65500;  // From the private-use block.
+  constexpr base::TimeDelta kLowestTtl = base::Days(2);
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
@@ -1343,29 +1461,32 @@ TEST_F(DnsResponseResultExtractorTest,
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({"foo1"}),
-            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}}),
+            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}},
+           base::Days(3)),
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/5,
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceAlpnParam({"foo2"}),
-            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}}),
+            {dns_protocol::kHttpsServiceParamKeyNoDefaultAlpn, ""}},
+           base::Days(4)),
        // Allows default ALPN, but ignored due to non-matching service name.
        BuildTestHttpsServiceRecord(kName, /*priority=*/3,
                                    /*service_name=*/"other.test",
-                                   /*params=*/{}),
+                                   /*params=*/{}, kLowestTtl),
        // Allows default ALPN, but ignored due to incompatible param.
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/6,
            /*service_name=*/".",
            /*params=*/
            {BuildTestHttpsServiceMandatoryParam({kMadeUpParamKey}),
-            {kMadeUpParamKey, "foo"}}),
+            {kMadeUpParamKey, "foo"}},
+           base::Hours(1)),
        // Allows default ALPN, but ignored due to mismatching port.
        BuildTestHttpsServiceRecord(
            kName, /*priority=*/10,
            /*service_name=*/".",
-           /*params=*/{BuildTestHttpsServicePortParam(1005)})});
+           /*params=*/{BuildTestHttpsServicePortParam(1005)}, base::Days(5))});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1374,12 +1495,15 @@ TEST_F(DnsResponseResultExtractorTest,
                                   /*request_port=*/0);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be from the lowest TTL from the "compatible" records
+  // that don't have incompatible params.
   EXPECT_THAT(
       results.value(),
       UnorderedElementsAre(Pointee(ExpectHostResolverInternalMetadataResult(
           kName, DnsQueryType::HTTPS, kDnsSource,
-          /*expiration_matcher=*/Ne(std::nullopt),
-          /*timed_expiration_matcher=*/Ne(std::nullopt),
+          /*expiration_matcher=*/Optional(tick_clock_.NowTicks() + kLowestTtl),
+          /*timed_expiration_matcher=*/Optional(clock_.Now() + kLowestTtl),
           /*metadatas_matcher=*/IsEmpty()))));
 }
 
@@ -1387,11 +1511,12 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNxdomainHttpsResponses) {
   constexpr char kName[] = "https.test";
   constexpr auto kTtl = base::Minutes(45);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeHttps, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)},
+                           /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1412,10 +1537,11 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataHttpsResponses) {
   constexpr char kName[] = "https.test";
   constexpr auto kTtl = base::Hours(36);
 
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeHttps, /*answers=*/{},
+                           /*authority=*/
+                           {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA,
+                                               fake_test_rdata, kTtl)});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1432,13 +1558,31 @@ TEST_F(DnsResponseResultExtractorTest, ExtractsNodataHttpsResponses) {
                   ERR_NAME_NOT_RESOLVED))));
 }
 
+TEST_F(DnsResponseResultExtractorTest, ExtractsNodataHttpsResponsesWithoutTtl) {
+  constexpr char kName[] = "https.test";
+
+  // Response without a TTL-containing SOA record.
+  DnsResponse response =
+      BuildTestDnsResponse(kName, dns_protocol::kTypeHttps, /*answers=*/{});
+  DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
+
+  ResultsOrError results =
+      extractor.ExtractDnsResults(DnsQueryType::HTTPS,
+                                  /*original_domain_name=*/kName,
+                                  /*request_port=*/0);
+
+  // Expect empty result because not cacheable.
+  ASSERT_TRUE(results.has_value());
+  EXPECT_THAT(results.value(), IsEmpty());
+}
+
 TEST_F(DnsResponseResultExtractorTest, RejectsMalformedHttpsRecord) {
   constexpr char kName[] = "https.test";
 
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeHttps,
       {BuildTestDnsRecord(kName, dns_protocol::kTypeHttps,
-                          "malformed rdata")} /* answers */);
+                          malformed_test_rdata)} /* answers */);
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   EXPECT_EQ(extractor
@@ -1530,12 +1674,14 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresAdditionalHttpsRecords) {
 
 TEST_F(DnsResponseResultExtractorTest, IgnoresUnsolicitedHttpsRecords) {
   constexpr char kName[] = "name.test";
-
+  constexpr auto kTtl = base::Minutes(45);
+  const uint8_t test_rdata[] = {0x03, 'f', 'o', 'o'};
   DnsResponse response = BuildTestDnsResponse(
       kName, dns_protocol::kTypeTXT,
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeTXT,
-                          "\003foo")} /* answers */,
-      {} /* authority */,
+      /*answers=*/
+      {BuildTestDnsRecord(kName, dns_protocol::kTypeTXT, test_rdata, kTtl)},
+      /*authority=*/{},
+      /*additional=*/
       {BuildTestHttpsServiceRecord(
            "https.test", /*priority=*/3u, /*service_name=*/".",
            /*params=*/
@@ -1544,7 +1690,7 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresUnsolicitedHttpsRecords) {
                                    /*service_name=*/".",
                                    /*params=*/
                                    {BuildTestHttpsServiceAlpnParam({"foo3"})},
-                                   base::Minutes(30))} /* additional */);
+                                   base::Minutes(30))});
   DnsResponseResultExtractor extractor(response, clock_, tick_clock_);
 
   ResultsOrError results =
@@ -1553,11 +1699,13 @@ TEST_F(DnsResponseResultExtractorTest, IgnoresUnsolicitedHttpsRecords) {
                                   /*request_port=*/0);
 
   ASSERT_TRUE(results.has_value());
+
+  // Expect expiration to be derived only from the non-ignored answer record.
   EXPECT_THAT(results.value(),
               ElementsAre(Pointee(ExpectHostResolverInternalDataResult(
                   kName, DnsQueryType::TXT, kDnsSource,
-                  /*expiration_matcher=*/Ne(std::nullopt),
-                  /*timed_expiration_matcher=*/Ne(std::nullopt),
+                  /*expiration_matcher=*/Eq(tick_clock_.NowTicks() + kTtl),
+                  /*timed_expiration_matcher=*/Eq(clock_.Now() + kTtl),
                   /*endpoints_matcher=*/IsEmpty(), ElementsAre("foo")))));
 }
 
@@ -1642,6 +1790,8 @@ TEST_F(DnsResponseResultExtractorTest, HandlesInOrderCnameChainTypeA) {
               /*expiration_matcher=*/Ne(std::nullopt),
               /*timed_expiration_matcher=*/Ne(std::nullopt),
               ElementsAre(expected_endpoint)))));
+  histogram_tester_.ExpectUniqueSample(
+      DnsResponseResultExtractor::kHasValidCnameRecordsHistogram, true, 1);
 }
 
 TEST_F(DnsResponseResultExtractorTest, HandlesReverseOrderCnameChain) {
@@ -2191,14 +2341,13 @@ TEST_F(DnsResponseResultExtractorTest, ValidatesAliasNames) {
 TEST_F(DnsResponseResultExtractorTest, CanonicalizesAliasNames) {
   const IPAddress kExpected(192, 168, 0, 1);
   constexpr char kName[] = "address.test";
-  constexpr char kCname[] = "\005ALIAS\004test\000";
-
+  constexpr const uint8_t kCname[] = {0x05, 'A', 'L', 'I', 'A', 'S',
+                                      0x04, 't', 'e', 's', 't', 0x00};
   // Need to build records directly in order to manually encode alias target
   // name because BuildTestDnsAddressResponseWithCname() uses
   // DNSDomainFromDot() which does not support non-URL-canonicalized names.
   std::vector<DnsResourceRecord> answers = {
-      BuildTestDnsRecord(kName, dns_protocol::kTypeCNAME,
-                         std::string(kCname, sizeof(kCname) - 1)),
+      BuildTestDnsRecord(kName, dns_protocol::kTypeCNAME, kCname),
       BuildTestAddressRecord("alias.test", kExpected)};
   DnsResponse response =
       BuildTestDnsResponse(kName, dns_protocol::kTypeA, answers);

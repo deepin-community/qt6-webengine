@@ -46,9 +46,6 @@ class CONTENT_EXPORT PrefetchOriginProber {
   virtual void Probe(const GURL& url, OnProbeResultCallback callback);
 
  private:
-  void DNSProbe(const GURL& url, OnProbeResultCallback callback);
-  void TLSProbe(const GURL& url, OnProbeResultCallback callback);
-
   // Does a DNS resolution for a DNS or TLS probe, passing all the arguments to
   // |OnDNSResolved|.
   void StartDNSResolution(const GURL& url,
@@ -63,7 +60,7 @@ class CONTENT_EXPORT PrefetchOriginProber {
                      OnProbeResultCallback callback,
                      bool also_do_tls_connect,
                      int net_error,
-                     const std::optional<net::AddressList>& resolved_addresses);
+                     const net::AddressList& resolved_addresses);
 
   // Both DNS and TLS probes need to resolve DNS. This starts the TLS probe with
   // the |addresses| from the DNS resolution.

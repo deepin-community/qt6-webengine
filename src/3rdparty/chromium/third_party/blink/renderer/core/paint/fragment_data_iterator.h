@@ -5,7 +5,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_FRAGMENT_DATA_ITERATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_FRAGMENT_DATA_ITERATOR_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <cstddef>
+#include <optional>
+
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/paint/fragment_data.h"
 
@@ -33,13 +35,13 @@ class FragmentDataIteratorBase {
     }
     idx_++;
     if (idx_ >= fragment_head_.size()) {
-      idx_ = WTF::kNotFound;
+      idx_ = kNotFound;
       return false;
     }
     return true;
   }
 
-  bool IsDone() const { return idx_ == WTF::kNotFound; }
+  bool IsDone() const { return idx_ == kNotFound; }
 
   Iterator& begin() {
     DCHECK_EQ(idx_, 0u);
@@ -47,7 +49,7 @@ class FragmentDataIteratorBase {
   }
   Iterator end() {
     Iterator end_it(*static_cast<Iterator*>(this));
-    end_it.idx_ = WTF::kNotFound;
+    end_it.idx_ = kNotFound;
     return end_it;
   }
   bool operator!=(const Iterator& other) {
@@ -108,7 +110,7 @@ class AccompaniedFragmentIterator : public FragmentDataIterator {
   bool Advance();
 
  private:
-  absl::optional<InlineCursor> cursor_;
+  std::optional<InlineCursor> cursor_;
   const LayoutBox* ng_layout_box_ = nullptr;
 };
 

@@ -9,10 +9,11 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
-#include "base/debug/stack_trace.h"
 #include "base/functional/bind.h"
 #include "base/trace_event/trace_event.h"
+#include "content/browser/bad_message.h"
 #include "content/browser/devtools/devtools_manager.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/protocol.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
@@ -153,7 +154,7 @@ void DevToolsSession::Dispose() {
 }
 
 DevToolsSession* DevToolsSession::GetRootSession() {
-  return root_session_ ? root_session_ : this;
+  return root_session_ ? root_session_.get() : this;
 }
 
 void DevToolsSession::AddHandler(
@@ -184,7 +185,7 @@ void DevToolsSession::AttachToAgent(blink::mojom::DevToolsAgent* agent,
     return;
   }
 
-  // TODO(https://crbug.com/978694): Consider a reset flow since new mojo types
+  // TODO(crbug.com/41467868): Consider a reset flow since new mojo types
   // checks is_bound strictly.
   if (receiver_.is_bound()) {
     receiver_.reset();
@@ -197,14 +198,17 @@ void DevToolsSession::AttachToAgent(blink::mojom::DevToolsAgent* agent,
       receiver_.BindNewEndpointAndPassRemote(),
       session_.BindNewEndpointAndPassReceiver(),
       io_session_.BindNewPipeAndPassReceiver(), session_state_cookie_.Clone(),
-      client_->UsesBinaryProtocol(), client_->IsTrusted(), session_id_,
-      IsWaitingForDebuggerOnStart());
+      script_to_evaluate_on_load_, client_->UsesBinaryProtocol(),
+      client_->IsTrusted(), session_id_, IsWaitingForDebuggerOnStart());
   session_.set_disconnect_handler(base::BindOnce(
       &DevToolsSession::MojoConnectionDestroyed, base::Unretained(this)));
 
   // Set cookie to an empty struct to reattach next time instead of attaching.
   if (!session_state_cookie_)
     session_state_cookie_ = blink::mojom::DevToolsSessionState::New();
+
+  // Only use script_to_evaluate_on_load_ once.
+  script_to_evaluate_on_load_.clear();
 
   // We're attaching to a new agent while suspended; therefore, messages that
   // have been sent previously either need to be terminated or re-sent once we
@@ -482,8 +486,8 @@ void DevToolsSession::ResumeSendingMessagesToAgent() {
 void DevToolsSession::ClearPendingMessages(bool did_crash) {
   for (auto it = pending_messages_.begin(); it != pending_messages_.end();) {
     const PendingMessage& message = *it;
-    if (SpanEquals(crdtp::SpanFrom("Page.reload"),
-                   crdtp::SpanFrom(message.method))) {
+    // TODO(caseq): remove when non-RenderDocument code paths are gone.
+    if (message.method == "Page.reload") {
       ++it;
       continue;
     }
@@ -522,10 +526,19 @@ void DevToolsSession::FlushProtocolNotifications() {}
 // parsed and sent as is, since a renderer may be compromised; so therefore,
 // we're not sending them via the DevToolsAgentHostClientChannel interface
 // (::DispatchProtocolMessageToClient) but directly to the client instead.
-static void DispatchProtocolResponseOrNotification(
+void DevToolsSession::DispatchProtocolResponseOrNotification(
     DevToolsAgentHostClient* client,
     DevToolsAgentHostImpl* agent_host,
-    blink::mojom::DevToolsMessagePtr message) {
+    blink::mojom::DevToolsMessagePtr message,
+    const std::string& session_id) {
+  base::span<const uint8_t> message_span = message->data;
+  if (!ValidateSessionId(session_id, message_span)) {
+    if (RenderProcessHost* process_host = agent_host->GetProcessHost()) {
+      bad_message::ReceivedBadMessage(
+          process_host, bad_message::RFH_INCONSISTENT_DEVTOOLS_MESSAGE);
+    }
+    return;
+  }
   client->DispatchProtocolMessage(agent_host, message->data);
 }
 
@@ -545,7 +558,7 @@ void DevToolsSession::DispatchProtocolResponse(
   pending_messages_.erase(it->second);
   waiting_for_response_.erase(it);
   DispatchProtocolResponseOrNotification(client_, agent_host_,
-                                         std::move(message));
+                                         std::move(message), session_id_);
   // |this| may be deleted at this point.
 }
 
@@ -554,7 +567,7 @@ void DevToolsSession::DispatchProtocolNotification(
     blink::mojom::DevToolsSessionStatePtr updates) {
   ApplySessionStateUpdates(std::move(updates));
   DispatchProtocolResponseOrNotification(client_, agent_host_,
-                                         std::move(message));
+                                         std::move(message), session_id_);
   // |this| may be deleted at this point.
 }
 
@@ -630,6 +643,56 @@ bool DevToolsSession::HasChildSession(const std::string& session_id) {
   return base::Contains(child_sessions_, session_id);
 }
 
+DevToolsSession* DevToolsSession::GetSessionById(const std::string& session_id) {
+  auto it = child_sessions_.find(session_id);
+  return it == child_sessions_.end() ? nullptr : it->second.get();
+}
+
+// static
+bool DevToolsSession::ValidateSessionId(const std::string& expected_session_id,
+                                        base::span<const uint8_t> message) {
+  std::vector<uint8_t> cbor_message;
+  crdtp::span<uint8_t> span_message = crdtp::SpanFrom(message);
+
+  if (!crdtp::cbor::IsCBORMessage(span_message)) {
+    if (!crdtp::json::ConvertJSONToCBOR(span_message, &cbor_message).ok()) {
+      return false;  // Safely terminate renderer on malformed JSON
+    }
+    span_message = crdtp::SpanFrom(cbor_message);
+  }
+
+  // Do NOT use crdtp::Dispatchable here. It enforces the presence of both
+  // 'id' and 'method', which are not guaranteed in Responses and Notifications.
+  crdtp::span<uint8_t> extracted_session_id =
+      crdtp::cbor::GetString8ValueFromMap(span_message,
+                                          crdtp::SpanFrom("sessionId"));
+
+  if (expected_session_id.empty()) {
+    if (!extracted_session_id.empty()) {
+      DLOG(ERROR) << "Root session expected no sessionId but received one: "
+                  << (extracted_session_id.empty()
+                          ? ""
+                          : std::string(extracted_session_id.begin(),
+                                        extracted_session_id.end()));
+      return false;
+    }
+    return true;
+  } else {
+    if (extracted_session_id.empty() ||
+        !crdtp::SpanEquals(crdtp::SpanFrom(expected_session_id),
+                           extracted_session_id)) {
+      DLOG(ERROR) << "Child session expected sessionId: " << expected_session_id
+                  << ", but got: "
+                  << (extracted_session_id.empty()
+                          ? ""
+                          : std::string(extracted_session_id.begin(),
+                                        extracted_session_id.end()));
+      return false;
+    }
+    return true;
+  }
+}
+
 void DevToolsSession::AddObserver(ChildObserver* obs) {
   child_observers_.AddObserver(obs);
   for (auto& entry : child_sessions_) {
@@ -639,6 +702,11 @@ void DevToolsSession::AddObserver(ChildObserver* obs) {
 
 void DevToolsSession::RemoveObserver(ChildObserver* obs) {
   child_observers_.RemoveObserver(obs);
+}
+
+void DevToolsSession::PrepareForReload(std::string script_to_evaluate_on_load) {
+  script_to_evaluate_on_load_ = std::move(script_to_evaluate_on_load);
+  io_session_->UnpauseAndTerminate();
 }
 
 }  // namespace content

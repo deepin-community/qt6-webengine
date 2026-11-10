@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebenginenewwindowrequest_p.h"
 #include "qquickwebengineview_p.h"
@@ -20,7 +21,7 @@ QQuickWebEngineNewWindowRequest::QQuickWebEngineNewWindowRequest(DestinationType
 }
 
 /*!
-    \qmlmethod WebEngineNewWindowRequest::openIn(WebEngineView view)
+    \qmlmethod void WebEngineNewWindowRequest::openIn(WebEngineView view)
     Opens the requested page in the new web engine view \a view. State and history of the
     view and the page possibly loaded in it will be lost.
     \sa WebEngineView::newWindowRequested

@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/paint/video_painter.h"
 
+#include <memory>
+
 #include "base/unguessable_token.h"
 #include "cc/layers/layer.h"
 #include "components/paint_preview/common/paint_preview_tracker.h"
@@ -13,8 +15,9 @@
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/paint/paint_controller_paint_test.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/media/media_player_client.h"
 #include "third_party/blink/renderer/platform/testing/empty_web_media_player.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
@@ -63,7 +66,8 @@ size_t CountImagesOfType(const PaintRecord& record, cc::ImageType image_type) {
 
 class StubWebMediaPlayer : public EmptyWebMediaPlayer {
  public:
-  StubWebMediaPlayer(WebMediaPlayerClient* client) : client_(client) {}
+  explicit StubWebMediaPlayer(WebMediaPlayerClient* client)
+      : client_(static_cast<MediaPlayerClient*>(client)) {}
 
   const cc::Layer* GetCcLayer() { return layer_.get(); }
 
@@ -86,7 +90,7 @@ class StubWebMediaPlayer : public EmptyWebMediaPlayer {
   ReadyState GetReadyState() const override { return ready_state_; }
 
  private:
-  WebMediaPlayerClient* client_;
+  MediaPlayerClient* client_;
   scoped_refptr<cc::Layer> layer_;
   NetworkState network_state_ = kNetworkStateEmpty;
   ReadyState ready_state_ = kReadyStateHaveNothing;
@@ -137,8 +141,13 @@ TEST_F(VideoPainterTest, VideoLayerAppearsInLayerTree) {
   ASSERT_TRUE(layer);
   EXPECT_TRUE(HasLayerAttached(*layer));
   // The layer bounds reflects the aspect ratio and object-fit of the video.
-  EXPECT_EQ(gfx::Vector2dF(0, 75), layer->offset_to_transform_parent());
-  EXPECT_EQ(gfx::Size(300, 150), layer->bounds());
+  if (RuntimeEnabledFeatures::VideoAspectRatioNaturalDimensionEnabled()) {
+    EXPECT_EQ(gfx::Vector2dF(0, 0), layer->offset_to_transform_parent());
+    EXPECT_EQ(gfx::Size(300, 300), layer->bounds());
+  } else {
+    EXPECT_EQ(gfx::Vector2dF(0, 75), layer->offset_to_transform_parent());
+    EXPECT_EQ(gfx::Size(300, 150), layer->bounds());
+  }
 }
 
 class MockWebMediaPlayer : public StubWebMediaPlayer {
@@ -153,7 +162,7 @@ class MockWebMediaPlayer : public StubWebMediaPlayer {
 
 class TestWebFrameClientImpl : public frame_test_helpers::TestWebFrameClient {
  public:
-  WebMediaPlayer* CreateMediaPlayer(
+  std::unique_ptr<WebMediaPlayer> CreateMediaPlayer(
       const WebMediaPlayerSource&,
       WebMediaPlayerClient* client,
       blink::MediaInspectorContext*,
@@ -162,7 +171,7 @@ class TestWebFrameClientImpl : public frame_test_helpers::TestWebFrameClient {
       const WebString& sink_id,
       const cc::LayerTreeSettings* settings,
       scoped_refptr<base::TaskRunner> compositor_worker_task_runner) override {
-    MockWebMediaPlayer* player = new MockWebMediaPlayer(client);
+    auto player = std::make_unique<MockWebMediaPlayer>(client);
     EXPECT_CALL(*player, HasAvailableVideoFrame)
         .WillRepeatedly(testing::Return(false));
     return player;
@@ -174,6 +183,7 @@ class VideoPaintPreviewTest : public testing::Test,
  public:
   ~VideoPaintPreviewTest() {
     CSSDefaultStyleSheets::Instance().PrepareForLeakDetection();
+    ThreadState::Current()->CollectAllGarbageForTesting();
   }
 
   void SetUp() override {
@@ -187,6 +197,8 @@ class VideoPaintPreviewTest : public testing::Test,
     GetDocument().View()->SetParentVisible(true);
     GetDocument().View()->SetSelfVisible(true);
   }
+
+  void TearDown() override { web_view_helper_.Reset(); }
 
   void SetBodyInnerHTML(const std::string& content) {
     frame_test_helpers::LoadHTMLString(&GetLocalMainFrame(), content,
@@ -231,7 +243,8 @@ class VideoPaintPreviewTest : public testing::Test,
     GetLocalMainFrame().CapturePaintPreview(
         bounds(), canvas,
         /*include_linked_destinations=*/true,
-        /*skip_accelerated_content=*/skip_accelerated_content);
+        /*skip_accelerated_content=*/skip_accelerated_content,
+        /*allow_scrollbars=*/false);
     return recorder.finishRecordingAsPicture();
   }
 
@@ -240,15 +253,20 @@ class VideoPaintPreviewTest : public testing::Test,
 
   LocalFrame* GetFrame() { return GetLocalMainFrame().GetFrame(); }
 
+  TestWebFrameClientImpl web_frame_client_;
+
+  // This must be destroyed before `web_frame_client_`; when the WebViewHelper
+  // is deleted, it destroys child views that were created, but the list of
+  // child views is maintained on `web_frame_client_`.
   frame_test_helpers::WebViewHelper web_view_helper_;
   gfx::Rect bounds_ = {0, 0, 640, 480};
-
-  TestWebFrameClientImpl web_frame_client_;
 };
 
 INSTANTIATE_PAINT_TEST_SUITE_P(VideoPaintPreviewTest);
 
-TEST_P(VideoPaintPreviewTest, URLIsRecordedWhenPaintingPreview) {
+// TODO(crbug.com/398893942): This test is flaky on Win and Linux, when this
+// fails it doesn't find any records with cc::ImageType::kGIF.
+TEST_P(VideoPaintPreviewTest, DISABLED_URLIsRecordedWhenPaintingPreview) {
   // Insert a <video> and allow it to begin loading. The image was taken from
   // the RFC for the data URI scheme https://tools.ietf.org/html/rfc2397.
   SetBodyInnerHTML(R"HTML(
@@ -275,7 +293,9 @@ TEST_P(VideoPaintPreviewTest, URLIsRecordedWhenPaintingPreview) {
   EXPECT_EQ(1U, CountImagesOfType(record, cc::ImageType::kGIF));
 }
 
-TEST_P(VideoPaintPreviewTest, PosterFlagToggleFrameCapture) {
+// TODO(crbug.com/398893942): This test is flaky on Win and Linux, when this
+// fails it doesn't find any records with cc::ImageType::kGIF.
+TEST_P(VideoPaintPreviewTest, DISABLED_PosterFlagToggleFrameCapture) {
   // Insert a <video> and allow it to begin loading. The image was taken from
   // the RFC for the data URI scheme https://tools.ietf.org/html/rfc2397.
   SetBodyInnerHTML(R"HTML(

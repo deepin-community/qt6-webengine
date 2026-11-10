@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef BUILD_CONFIG_QT
 #define BUILD_CONFIG_QT
@@ -8,14 +9,14 @@
 #include <QtWebEngineCore/qtwebenginecore-config.h>
 #include <QtWebEngineCore/private/qtwebenginecore-config_p.h>
 
+#include "content/public/common/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "media/media_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 
 // This is just config sanity check
 #if QT_CONFIG(webengine_printing_and_pdf)
-#if !BUILDFLAG(ENABLE_PRINTING) || !BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#if !BUILDFLAG(ENABLE_PRINTING) || !BUILDFLAG(ENABLE_PRINT_PREVIEW) || !BUILDFLAG(ENABLE_PLUGINS)
 #error Config sanity check for webengine_printing_and_pdf failed
 #endif
 #else
@@ -31,16 +32,6 @@
 #else
 #if BUILDFLAG(ENABLE_SPELLCHECK)
 #error Config sanity check for ENABLE_SPELLCHECK failed
-#endif
-#endif
-
-#if QT_CONFIG(webengine_pepper_plugins)
-#if !BUILDFLAG(ENABLE_PLUGINS)
-#error Config sanity check for webengine_pepper_plugins failed
-#endif
-#else
-#if BUILDFLAG(ENABLE_PLUGINS)
-#error Config sanity check for ENABLE_PLUGINS failed
 #endif
 #endif
 

@@ -27,10 +27,10 @@ class ExtensionDevToolsInfoBarDelegate : public ConfirmInfoBarDelegate {
   using CallbackList = base::OnceClosureList;
 
   // Ensures a global infobar corresponding to the supplied extension is
-  // showing and registers |destroyed_callback| with it to be called back on
+  // showing and registers `destroyed_callback` with it to be called back on
   // destruction.
   static base::CallbackListSubscription Create(
-      const std::string& extension_id,
+      const ExtensionId& extension_id,
       const std::string& extension_name,
       base::OnceClosure destroyed_callback);
 
@@ -48,10 +48,10 @@ class ExtensionDevToolsInfoBarDelegate : public ConfirmInfoBarDelegate {
   int GetButtons() const override;
 
  private:
-  ExtensionDevToolsInfoBarDelegate(std::string extension_id,
+  ExtensionDevToolsInfoBarDelegate(ExtensionId extension_id,
                                    const std::string& extension_name);
 
-  // Adds |destroyed_callback| to the list of callbacks to run on destruction.
+  // Adds `destroyed_callback` to the list of callbacks to run on destruction.
   base::CallbackListSubscription RegisterDestroyedCallback(
       base::OnceClosure destroyed_callback);
 
@@ -61,7 +61,7 @@ class ExtensionDevToolsInfoBarDelegate : public ConfirmInfoBarDelegate {
   const ExtensionId extension_id_;
   const std::u16string extension_name_;
   // infobar_ is set after attaching an extension and is deleted 5 seconds after
-  // detaching the extension. |infobar_| owns this object and is therefore
+  // detaching the extension. `infobar_` owns this object and is therefore
   // guaranteed to outlive it.
   raw_ptr<GlobalConfirmInfoBar> infobar_ = nullptr;
   CallbackList callback_list_;

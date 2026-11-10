@@ -31,10 +31,8 @@ class PrefService;
 #endif
 
 #if BUILDFLAG(IS_MAC)
-#include "ui/display/screen.h"
-
 namespace device {
-class GeolocationManager;
+class GeolocationSystemPermissionManager;
 }  // namespace device
 #endif
 
@@ -71,8 +69,6 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
       const override;
   void Shutdown() override;
   std::vector<HeadlessBrowserContext*> GetAllBrowserContexts() override;
-  HeadlessWebContents* GetWebContentsForDevToolsAgentHostId(
-      const std::string& devtools_agent_host_id) override;
   HeadlessBrowserContext* GetBrowserContextForId(
       const std::string& id) override;
   void SetDefaultBrowserContext(
@@ -113,6 +109,7 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
   int exit_code() const { return exit_code_; }
 
 #if defined(HEADLESS_USE_PREFS)
+  void CreatePrefService();
   PrefService* GetPrefs();
 #endif
 
@@ -121,16 +118,14 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
 #endif
 
 #if BUILDFLAG(IS_MAC)
-  device::GeolocationManager* GetGeolocationManager();
-  void SetGeolocationManagerForTesting(
-      std::unique_ptr<device::GeolocationManager> geolocation_manager);
+  device::GeolocationSystemPermissionManager*
+  GetGeolocationSystemPermissionManager();
+  void SetGeolocationSystemPermissionManagerForTesting(
+      std::unique_ptr<device::GeolocationSystemPermissionManager>
+          geolocation_system_permission_manager);
 #endif
 
  private:
-#if defined(HEADLESS_USE_PREFS)
-  void CreatePrefService();
-#endif
-
   base::OnceCallback<void(HeadlessBrowser*)> on_start_callback_;
   std::optional<HeadlessBrowser::Options> options_;
 
@@ -146,8 +141,8 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
   base::OnceClosure quit_main_message_loop_;
 
 #if BUILDFLAG(IS_MAC)
-  std::unique_ptr<display::ScopedNativeScreen> screen_;
-  std::unique_ptr<device::GeolocationManager> geolocation_manager_;
+  std::unique_ptr<device::GeolocationSystemPermissionManager>
+      geolocation_system_permission_manager_;
 #endif
 
 #if defined(HEADLESS_USE_PREFS)

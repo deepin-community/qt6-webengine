@@ -19,7 +19,6 @@
 #include "vpx/vpx_decoder.h"
 #include "vpx_dsp/bitreader_buffer.h"
 #include "vpx_dsp/vpx_dsp_common.h"
-#include "vpx_util/vpx_thread.h"
 
 #include "vp9/common/vp9_alloccommon.h"
 #include "vp9/common/vp9_frame_buffers.h"
@@ -456,6 +455,7 @@ static vpx_codec_err_t ctrl_set_reference(vpx_codec_alg_priv_t *ctx,
     vpx_ref_frame_t *const frame = (vpx_ref_frame_t *)data;
     YV12_BUFFER_CONFIG sd;
     image2yuvconfig(&frame->img, &sd);
+    if (!ctx->pbi) return VPX_CODEC_ERROR;
     return vp9_set_reference_dec(
         &ctx->pbi->common, ref_frame_to_vp9_reframe(frame->frame_type), &sd);
   } else {
@@ -471,6 +471,7 @@ static vpx_codec_err_t ctrl_copy_reference(vpx_codec_alg_priv_t *ctx,
     vpx_ref_frame_t *frame = (vpx_ref_frame_t *)data;
     YV12_BUFFER_CONFIG sd;
     image2yuvconfig(&frame->img, &sd);
+    if (!ctx->pbi) return VPX_CODEC_ERROR;
     return vp9_copy_reference_dec(ctx->pbi, (VP9_REFFRAME)frame->frame_type,
                                   &sd);
   } else {
@@ -738,6 +739,7 @@ CODEC_INTERFACE(vpx_codec_vp9_dx) = {
       NULL,  // vpx_codec_enc_config_set_fn_t
       NULL,  // vpx_codec_get_global_headers_fn_t
       NULL,  // vpx_codec_get_preview_frame_fn_t
-      NULL   // vpx_codec_enc_mr_get_mem_loc_fn_t
+      NULL,  // vpx_codec_enc_mr_get_mem_loc_fn_t
+      NULL   // vpx_codec_enc_mr_free_mem_loc_fn_t
   }
 };

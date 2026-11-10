@@ -41,7 +41,16 @@
 #include "src/tint/utils/ice/ice.h"
 #include "src/tint/utils/macros/compiler.h"
 #include "src/tint/utils/math/hash.h"
+#include "src/tint/utils/memory/aligned_storage.h"
 #include "src/tint/utils/memory/bitcast.h"
+
+// This file implements a custom STL style container & iterator in a performant manner, using
+// C-style data access. It is not unexpected that -Wunsafe-buffer-usage triggers in this code, since
+// the type of dynamic access being used cannot be guaranteed to be safe via static analysis.
+// Attempting to change this code in simple ways to quiet these errors either a) negatively affects
+// the performance by introducing unneeded copes, or b) uses typing shenanigans to work around the
+// warning that other linters/analyses are unhappy with.
+TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 #ifndef TINT_VECTOR_MUTATION_CHECKS_ENABLED
 #ifdef NDEBUG
@@ -282,7 +291,8 @@ class VectorIterator {
 /// @param out the stream to write to
 /// @param it the VectorIterator
 /// @returns @p out so calls can be chained
-template <typename STREAM, typename T, bool FORWARD, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM, typename T, bool FORWARD>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, const VectorIterator<T, FORWARD>& it) {
     return out << *it;
 }
@@ -777,7 +787,7 @@ class Vector {
 #endif
 
     /// @returns a hash code for this Vector
-    size_t HashCode() const {
+    tint::HashCode HashCode() const {
         auto hash = Hash(Length());
         for (auto& el : *this) {
             hash = HashCombine(hash, el);
@@ -912,26 +922,18 @@ class Vector {
     constexpr static bool HasSmallArray = N > 0;
 
     /// A structure that has the same size and alignment as T.
-    /// Replacement for std::aligned_storage as this is broken on earlier versions of MSVC.
-    struct alignas(alignof(T)) TStorage {
-        /// @returns the storage reinterpreted as a T*
-        T* Get() { return Bitcast<T*>(&data[0]); }
-        /// @returns the storage reinterpreted as a T*
-        const T* Get() const { return Bitcast<const T*>(&data[0]); }
-        /// Byte array of length sizeof(T)
-        uint8_t data[sizeof(T)];
-    };
+    using TStorage = AlignedStorage<T>;
 
     /// The internal structure for the vector with a small array.
     struct ImplWithSmallArray {
         TStorage small_arr[N];
-        tint::Slice<T> slice = {small_arr[0].Get(), 0, N};
+        tint::Slice<T> slice = {&small_arr[0].Get(), 0, N};
 
         /// Allocates a new vector of `T` either from #small_arr, or from the heap, then assigns the
         /// pointer it to #slice.data, and updates #slice.cap.
         void Allocate(size_t new_cap) {
             if (new_cap < N) {
-                slice.data = small_arr[0].Get();
+                slice.data = &small_arr[0].Get();
                 slice.cap = N;
             } else {
                 slice.data = Bitcast<T*>(new TStorage[new_cap]);
@@ -941,14 +943,14 @@ class Vector {
 
         /// Frees `data`, if isn't a pointer to #small_arr
         void Free(T* data) const {
-            if (data != small_arr[0].Get()) {
+            if (data != &small_arr[0].Get()) {
                 delete[] Bitcast<TStorage*>(data);
             }
         }
 
         /// Indicates whether the slice structure can be std::move()d.
         /// @returns true if #slice.data does not point to #small_arr
-        bool CanMove() const { return slice.data != small_arr[0].Get(); }
+        bool CanMove() const { return slice.data != &small_arr[0].Get(); }
     };
 
     /// The internal structure for the vector without a small array.
@@ -1160,12 +1162,19 @@ class VectorRef {
     auto rend() const { return slice_.rend(); }
 
     /// @returns a hash code of the Vector
-    size_t HashCode() const {
+    tint::HashCode HashCode() const {
         auto hash = Hash(Length());
         for (auto& el : *this) {
             hash = HashCombine(hash, el);
         }
         return hash;
+    }
+
+    /// @returns true if the predicate function returns true for any of the elements of the vector
+    /// @param pred a function-like with the signature `bool(T)`
+    template <typename PREDICATE>
+    bool Any(PREDICATE&& pred) const {
+        return std::any_of(begin(), end(), std::forward<PREDICATE>(pred));
     }
 
   private:
@@ -1201,6 +1210,24 @@ std::vector<T> ToStdVector(const Vector<T, N>& vector) {
     return out;
 }
 
+/// Helper for constructing a Vector from a Slice. Only the size must be supplied as the type is
+/// deduced.
+/// @param slice the input slice
+/// @return the converted vector
+/// @note This helper is useful because Vectors require a size parameter, but because it is the
+/// second template parameter to a Vector, both the type and size parameters must be explicitly
+/// declared. Furthermore, Slices are often of const pointer/reference type, but a Vector cannot be
+/// of const pointer/reference type, again requiring the caller to be explicit. This helper makes it
+/// possible to only specify the size.
+template <size_t N, typename T>
+auto ToVector(const tint::Slice<T>& slice) {
+    // If Slice is of type 'T* const', make it 'T*' (or 'T& const', make it 'T&') as Vectors cannot
+    // be of const pointer/reference type.
+    using U = std::conditional_t<std::is_pointer_v<T> || std::is_reference_v<T>,
+                                 std::remove_const_t<T>, T>;
+    return Vector<U, N>{slice};
+}
+
 /// Helper for converting a std::vector to a Vector.
 /// @param vector the input vector
 /// @return the converted vector
@@ -1219,7 +1246,8 @@ Vector<T, N> ToVector(const std::vector<T>& vector) {
 /// @param o the stream to write to
 /// @param vec the vector
 /// @return the stream so calls can be chained
-template <typename STREAM, typename T, size_t N, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM, typename T, size_t N>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& o, const Vector<T, N>& vec) {
     o << "[";
     bool first = true;
@@ -1238,7 +1266,8 @@ auto& operator<<(STREAM& o, const Vector<T, N>& vec) {
 /// @param o the stream to write to
 /// @param vec the vector reference
 /// @return the stream so calls can be chained
-template <typename STREAM, typename T, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM, typename T>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& o, VectorRef<T> vec) {
     o << "[";
     bool first = true;
@@ -1282,5 +1311,7 @@ template <typename T>
 static constexpr bool IsVectorLike = tint::detail::IsVectorLike<T>::value;
 
 }  // namespace tint
+
+TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 #endif  // SRC_TINT_UTILS_CONTAINERS_VECTOR_H_

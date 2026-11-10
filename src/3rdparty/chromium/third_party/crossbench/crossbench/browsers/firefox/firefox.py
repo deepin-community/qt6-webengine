@@ -4,98 +4,79 @@
 
 from __future__ import annotations
 
-import pathlib
-import re
-import tempfile
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
-from crossbench import plt
+from typing_extensions import override
+
+from crossbench.browsers.attributes import BrowserAttributes
 from crossbench.browsers.browser import Browser
+from crossbench.browsers.firefox.version import FirefoxVersion
 from crossbench.browsers.viewport import Viewport
 from crossbench.browsers.webdriver import WebDriverBrowser
 
 if TYPE_CHECKING:
-  from crossbench.browsers.splash_screen import SplashScreen
-  from crossbench.flags import Flags
-  from crossbench.network.base import Network
-  from crossbench.runner.groups import BrowserSessionRunGroup
+  from crossbench import plt
+  from crossbench.flags.base import Flags
+  from crossbench.path import AnyPath
+  from crossbench.runner.groups.session import BrowserSessionRunGroup
 
 
 class Firefox(Browser):
 
   @classmethod
-  def default_path(cls) -> pathlib.Path:
-    return plt.PLATFORM.search_app_or_executable(
+  def default_path(cls, platform: plt.Platform) -> AnyPath:
+    return platform.search_app_or_executable(
         "Firefox",
         macos=["Firefox.app"],
         linux=["firefox"],
         win=["Mozilla Firefox/firefox.exe"])
 
   @classmethod
-  def developer_edition_path(cls) -> pathlib.Path:
-    return plt.PLATFORM.search_app_or_executable(
+  def developer_edition_path(cls, platform: plt.Platform) -> AnyPath:
+    return platform.search_app_or_executable(
         "Firefox Developer Edition",
         macos=["Firefox Developer Edition.app"],
         linux=["firefox-developer-edition"],
         win=["Firefox Developer Edition/firefox.exe"])
 
   @classmethod
-  def nightly_path(cls) -> pathlib.Path:
-    return plt.PLATFORM.search_app_or_executable(
+  def nightly_path(cls, platform: plt.Platform) -> AnyPath:
+    return platform.search_app_or_executable(
         "Firefox Nightly",
         macos=["Firefox Nightly.app"],
         linux=["firefox-nightly", "firefox-trunk"],
         win=["Firefox Nightly/firefox.exe"])
 
-  def __init__(
-      self,
-      label: str,
-      path: pathlib.Path,
-      flags: Optional[Flags.InitialDataType] = None,
-      js_flags: Optional[Flags.InitialDataType] = None,
-      cache_dir: Optional[pathlib.Path] = None,
-      type: str = "firefox",  # pylint: disable=redefined-builtin
-      network: Optional[Network] = None,
-      driver_path: Optional[pathlib.Path] = None,
-      viewport: Optional[Viewport] = None,
-      splash_screen: Optional[SplashScreen] = None,
-      platform: Optional[plt.Platform] = None):
-    if cache_dir is None:
-      # pylint: disable=bad-option-value, consider-using-with
-      self.cache_dir = pathlib.Path(
-          tempfile.TemporaryDirectory(prefix="firefox").name)
-      self.clear_cache_dir = True
-      self.cache_dir = cache_dir
-      self.clear_cache_dir = False
-    super().__init__(
-        label,
-        path,
-        flags,
-        js_flags=None,
-        type=type,
-        network=network,
-        driver_path=driver_path,
-        viewport=viewport,
-        splash_screen=splash_screen,
-        platform=platform)
-    assert not js_flags, "Firefox doesn't support custom js_flags"
+  @classmethod
+  @override
+  def type_name(cls) -> str:
+    return "firefox"
 
-  def _extract_version(self) -> str:
-    assert self.path
-    version_string = self.platform.app_version(self.path)
-    # "Firefox 107.0" => "107.0"
-    return str(re.findall(r"[\d\.]+", version_string)[0])
+  @classmethod
+  @override
+  def attributes(cls) -> BrowserAttributes:
+    return BrowserAttributes.FIREFOX
 
+  @override
+  def _setup_cache_dir(self) -> Optional[AnyPath]:
+    if cache_dir := self.settings.cache_dir:
+      return cache_dir
+    return self.platform.mkdtemp(prefix="firefox")
+
+  @override
+  def _extract_version(self) -> FirefoxVersion:
+    return FirefoxVersion.parse(self.platform.app_version(self.path))
+
+  @override
   def _get_browser_flags_for_session(
-      self, session: BrowserSessionRunGroup) -> Tuple[str, ...]:
+      self, session: BrowserSessionRunGroup) -> tuple[str, ...]:
     flags_copy = self.flags.copy()
     flags_copy.update(session.extra_flags)
+    flags_copy.update(self.network.extra_flags(self.attributes()))
     self._handle_viewport_flags(flags_copy)
-    if self.cache_dir and self.cache_dir:
-      flags_copy["--profile"] = str(self.cache_dir)
     if self.log_file:
       flags_copy["--MOZ_LOG_FILE"] = str(self.log_file)
-    return tuple(flags_copy.get_list())
+    return tuple(flags_copy)
 
   def _handle_viewport_flags(self, flags: Flags) -> None:
     new_width, new_height = 0, 0
@@ -131,7 +112,6 @@ class Firefox(Browser):
                         WebDriverBrowser) and self.viewport.size != (0, 0):
         raise ValueError(f"Browser {self} cannot handle viewport position: "
                          f"{self.viewport.position}")
-    else:
-      if not isinstance(self, WebDriverBrowser):
-        raise ValueError(
-            f"Browser {self} cannot handle viewport mode: {self.viewport}")
+    elif not isinstance(self, WebDriverBrowser):
+      raise ValueError(
+          f"Browser {self} cannot handle viewport mode: {self.viewport}")

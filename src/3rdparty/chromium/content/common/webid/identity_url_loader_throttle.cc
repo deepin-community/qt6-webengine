@@ -4,6 +4,8 @@
 
 #include "content/common/webid/identity_url_loader_throttle.h"
 
+#include <string_view>
+
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
@@ -28,19 +30,12 @@ static constexpr char kSetLoginHeader[] = "Set-Login";
 static constexpr char kSetLoginHeaderValueLoggedIn[] = "logged-in";
 static constexpr char kSetLoginHeaderValueLoggedOut[] = "logged-out";
 
-bool IsFedCmIdpSigninStatusThrottleEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmIdpSigninStatusMetrics) ||
-         base::FeatureList::IsEnabled(features::kFedCmIdpSigninStatusEnabled);
-}
-
 }  // namespace
 
 namespace content {
 
 std::unique_ptr<blink::URLLoaderThrottle> MaybeCreateIdentityUrlLoaderThrottle(
     SetIdpStatusCallback cb) {
-  if (!IsFedCmIdpSigninStatusThrottleEnabled())
-    return nullptr;
   return std::make_unique<IdentityUrlLoaderThrottle>(std::move(cb));
 }
 
@@ -52,10 +47,12 @@ IdentityUrlLoaderThrottle::~IdentityUrlLoaderThrottle() = default;
 void IdentityUrlLoaderThrottle::DetachFromCurrentSequence() {
   set_idp_status_cb_ = base::BindRepeating(
       [](scoped_refptr<base::SequencedTaskRunner> task_runner,
-         SetIdpStatusCallback original_cb, const url::Origin& origin,
-         blink::mojom::IdpSigninStatus status) {
-        task_runner->PostTask(
-            FROM_HERE, base::BindOnce(std::move(original_cb), origin, status));
+         SetIdpStatusCallback original_cb,
+         const std::optional<url::Origin>& initiator,
+         const url::Origin& idp_origin, blink::mojom::IdpSigninStatus status) {
+        task_runner->PostTask(FROM_HERE,
+                              base::BindOnce(std::move(original_cb), initiator,
+                                             idp_origin, status));
       },
       base::SequencedTaskRunner::GetCurrentDefault(),
       std::move(set_idp_status_cb_));
@@ -65,6 +62,7 @@ void IdentityUrlLoaderThrottle::WillStartRequest(
     network::ResourceRequest* request,
     bool* defer) {
   request_url_ = request->url;
+  request_initiator_ = request->request_initiator;
   has_user_gesture_ = request->has_user_gesture;
 }
 
@@ -92,11 +90,12 @@ void IdentityUrlLoaderThrottle::WillRedirectRequest(
 void IdentityUrlLoaderThrottle::HandleResponseOrRedirect(
     const GURL& response_url,
     const network::mojom::URLResponseHead& response_head) {
-  url::Origin origin = url::Origin::Create(response_url);
-  if (!network::IsOriginPotentiallyTrustworthy(origin))
+  url::Origin idp_origin = url::Origin::Create(response_url);
+  if (!network::IsOriginPotentiallyTrustworthy(idp_origin)) {
     return;
+  }
 
-  // TODO(crbug.com/1357790):
+  // TODO(crbug.com/40236764):
   // - Limit to toplevel frames
   // - Decide whether to limit to same-origin
   // - Decide the right behavior with respect to user gestures.
@@ -111,30 +110,32 @@ void IdentityUrlLoaderThrottle::HandleResponseOrRedirect(
     VLOG(1) << "IDP signed in: " << response_url.spec();
     UMA_HISTOGRAM_BOOLEAN("Blink.FedCm.IdpSigninRequestInitiatedByUser",
                           has_user_gesture_);
-    set_idp_status_cb_.Run(origin, IdpSigninStatus::kSignedIn);
+    set_idp_status_cb_.Run(request_initiator_, idp_origin,
+                           IdpSigninStatus::kSignedIn);
   } else if (HeaderHasToken(*headers, kSetLoginHeader,
                             kSetLoginHeaderValueLoggedOut)) {
     // Mark IDP as logged out
     VLOG(1) << "IDP signed out: " << response_url.spec();
     UMA_HISTOGRAM_BOOLEAN("Blink.FedCm.IdpSignoutRequestInitiatedByUser",
                           has_user_gesture_);
-    set_idp_status_cb_.Run(origin, IdpSigninStatus::kSignedOut);
+    set_idp_status_cb_.Run(request_initiator_, idp_origin,
+                           IdpSigninStatus::kSignedOut);
   }
 }
 
 // static
 bool IdentityUrlLoaderThrottle::HeaderHasToken(
     const net::HttpResponseHeaders& headers,
-    base::StringPiece header_name,
-    base::StringPiece token) {
+    std::string_view header_name,
+    std::string_view token) {
   if (!headers.HasHeader(header_name)) {
     return false;
   }
 
-  std::string value;
-  headers.GetNormalizedHeader(header_name, &value);
+  std::string value =
+      headers.GetNormalizedHeader(header_name).value_or(std::string());
 
-  std::vector<base::StringPiece> tokens = base::SplitStringPiece(
+  std::vector<std::string_view> tokens = base::SplitStringPiece(
       value, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   return base::Contains(tokens, token);
 }

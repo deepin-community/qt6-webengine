@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "web_engine_settings.h"
 
@@ -13,7 +14,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "media/base/media_switches.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/peerconnection/webrtc_ip_handling_policy.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
@@ -25,6 +25,8 @@
 #include <QFont>
 #include <QTimer>
 
+using namespace Qt::StringLiterals;
+
 namespace QtWebEngineCore {
 
 QHash<QWebEngineSettings::WebAttribute, bool> WebEngineSettings::s_defaultAttributes;
@@ -33,27 +35,9 @@ QHash<QWebEngineSettings::FontSize, int> WebEngineSettings::s_defaultFontSizes;
 
 static const int batchTimerTimeout = 0;
 
-static inline bool isTouchEventsAPIEnabled() {
-    static bool initialized = false;
-    static bool touchEventsAPIEnabled = false;
-    if (!initialized) {
-        base::CommandLine *parsedCommandLine = base::CommandLine::ForCurrentProcess();
-
-        // By default the Touch Events API support (presence of 'ontouchstart' in 'window' object)
-        // will be determined based on the availability of touch screen devices.
-        const std::string touchEventsSwitchValue =
-            parsedCommandLine->HasSwitch(switches::kTouchEventFeatureDetection) ?
-                parsedCommandLine->GetSwitchValueASCII(switches::kTouchEventFeatureDetection) :
-                switches::kTouchEventFeatureDetectionAuto;
-
-        if (touchEventsSwitchValue == switches::kTouchEventFeatureDetectionEnabled)
-            touchEventsAPIEnabled = true;
-        else if (touchEventsSwitchValue == switches::kTouchEventFeatureDetectionAuto)
-            touchEventsAPIEnabled = (ui::GetTouchScreensAvailability() == ui::TouchScreensAvailability::ENABLED);
-
-        initialized = true;
-    }
-    return touchEventsAPIEnabled;
+static inline bool isTouchScreenDetected()
+{
+    return ui::GetTouchScreensAvailability() == ui::TouchScreensAvailability::ENABLED;
 }
 
 blink::mojom::ImageAnimationPolicy
@@ -125,6 +109,18 @@ bool WebEngineSettings::testAttribute(QWebEngineSettings::WebAttribute attr) con
     auto it = m_attributes.constFind(attr);
     if (it != m_attributes.constEnd())
         return *it;
+
+    // Setting either LocalContentCanAccessFileUrls and LocalContentCanAccessRemoteUrls implies the other default off
+    if (attr == QWebEngineSettings::LocalContentCanAccessFileUrls) {
+        auto it2 = m_attributes.constFind(QWebEngineSettings::LocalContentCanAccessRemoteUrls);
+        if (it2 != m_attributes.constEnd() && *it2)
+            return false;
+    }
+    if (attr == QWebEngineSettings::LocalContentCanAccessRemoteUrls) {
+        auto it2 = m_attributes.constFind(QWebEngineSettings::LocalContentCanAccessFileUrls);
+        if (it2 != m_attributes.constEnd() && *it2)
+            return false;
+    }
 
     if (parentSettings)
         return parentSettings->testAttribute(attr);
@@ -301,6 +297,12 @@ void WebEngineSettings::initDefaults()
         s_defaultAttributes.insert(QWebEngineSettings::ReadingFromCanvasEnabled, !noReadingFromCanvas);
         bool forceDarkMode = commandLine->HasSwitch(switches::kForceDarkMode);
         s_defaultAttributes.insert(QWebEngineSettings::ForceDarkMode, forceDarkMode);
+        s_defaultAttributes.insert(QWebEngineSettings::PrintHeaderAndFooter, false);
+        s_defaultAttributes.insert(QWebEngineSettings::PreferCSSMarginsForPrinting, false);
+        s_defaultAttributes.insert(QWebEngineSettings::TouchEventsApiEnabled,
+                                   isTouchScreenDetected());
+        s_defaultAttributes.insert(QWebEngineSettings::BackForwardCacheEnabled, false);
+        s_defaultAttributes.insert(QWebEngineSettings::TrimAccessibilityIdentifiers, false);
     }
 
     if (s_defaultFontFamilies.isEmpty()) {
@@ -333,7 +335,7 @@ void WebEngineSettings::initDefaults()
         s_defaultFontSizes.insert(QWebEngineSettings::DefaultFontSize, 16);
     }
 
-    m_defaultEncoding = QStringLiteral("ISO-8859-1");
+    m_defaultEncoding = u"ISO-8859-1"_s;
     m_unknownUrlSchemePolicy = QWebEngineSettings::InheritedUnknownUrlSchemePolicy;
     m_imageAnimationPolicy = QWebEngineSettings::ImageAnimationPolicy::Inherited;
 }
@@ -365,7 +367,6 @@ void WebEngineSettings::applySettingsToWebPreferences(blink::web_pref::WebPrefer
     prefs->picture_in_picture_enabled = false;
 
     // Override for now
-    prefs->touch_event_feature_detection_enabled = isTouchEventsAPIEnabled();
 #if !QT_CONFIG(webengine_embedded_build)
     prefs->available_hover_types = (int)blink::mojom::HoverType::kHoverHoverType;
     prefs->primary_hover_type = blink::mojom::HoverType::kHoverHoverType;
@@ -385,7 +386,6 @@ void WebEngineSettings::applySettingsToWebPreferences(blink::web_pref::WebPrefer
             testAttribute(QWebEngineSettings::JavascriptCanAccessClipboard);
     prefs->tabs_to_links = testAttribute(QWebEngineSettings::LinksIncludedInFocusChain);
     prefs->local_storage_enabled = testAttribute(QWebEngineSettings::LocalStorageEnabled);
-    prefs->databases_enabled = testAttribute(QWebEngineSettings::LocalStorageEnabled);
     prefs->allow_remote_access_from_local_urls =
             testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls);
     prefs->spatial_navigation_enabled = testAttribute(QWebEngineSettings::SpatialNavigationEnabled);
@@ -415,6 +415,10 @@ void WebEngineSettings::applySettingsToWebPreferences(blink::web_pref::WebPrefer
     prefs->dns_prefetching_enabled = testAttribute(QWebEngineSettings::DnsPrefetchEnabled);
     prefs->disable_reading_from_canvas = !testAttribute(QWebEngineSettings::ReadingFromCanvasEnabled);
     prefs->animation_policy = toBlinkImageAnimationPolicy(imageAnimationPolicy());
+    bool touchEventsEnabled = isAttributeExplicitlySet(QWebEngineSettings::TouchEventsApiEnabled)
+            ? testAttribute(QWebEngineSettings::TouchEventsApiEnabled)
+            : isTouchScreenDetected();
+    prefs->touch_event_feature_detection_enabled = touchEventsEnabled;
 
     // Fonts settings.
     prefs->standard_font_family_map[blink::web_pref::kCommonScript] =
@@ -449,7 +453,7 @@ void WebEngineSettings::applySettingsToWebPreferences(blink::web_pref::WebPrefer
     }
 
     // Apply native CaptionStyle parameters.
-    absl::optional<ui::CaptionStyle> style;
+    std::optional<ui::CaptionStyle> style;
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kForceCaptionStyle)) {
         style = ui::CaptionStyle::FromSpec(
                     base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(switches::kForceCaptionStyle));
@@ -474,12 +478,14 @@ void WebEngineSettings::applySettingsToWebPreferences(blink::web_pref::WebPrefer
 bool WebEngineSettings::applySettingsToRendererPreferences(blink::RendererPreferences *prefs)
 {
     bool changed = false;
+    prefs->uses_platform_autofill = false;
 #if QT_CONFIG(webengine_webrtc)
     if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kForceWebRtcIPHandlingPolicy)) {
-        std::string webrtc_ip_handling_policy =
-                testAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly)
-                ? blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly
-                : blink::kWebRTCIPHandlingDefault;
+        auto webrtc_ip_handling_policy =
+                blink::ToWebRTCIPHandlingPolicy(
+                    testAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly)
+                    ? blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly
+                    : blink::kWebRTCIPHandlingDefault);
         if (prefs->webrtc_ip_handling_policy != webrtc_ip_handling_policy) {
             prefs->webrtc_ip_handling_policy = webrtc_ip_handling_policy;
             changed = true;

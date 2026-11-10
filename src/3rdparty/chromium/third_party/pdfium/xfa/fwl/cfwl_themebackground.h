@@ -14,6 +14,8 @@
 class CFGAS_GEGraphics;
 class CFGAS_GEPath;
 
+namespace pdfium {
+
 class CFWL_ThemeBackground final : public CFWL_ThemePart {
  public:
   FX_STACK_ALLOCATED();
@@ -23,13 +25,18 @@ class CFWL_ThemeBackground final : public CFWL_ThemePart {
                        CFGAS_GEGraphics* pGraphics);
   ~CFWL_ThemeBackground();
 
-  CFGAS_GEGraphics* GetGraphics() const { return m_pGraphics; }
-  const CFGAS_GEPath* GetPath() const { return m_pPath; }
-  void SetPath(const CFGAS_GEPath* pPath) { m_pPath = pPath; }
+  CFGAS_GEGraphics* GetGraphics() const { return graphics_; }
+  const CFGAS_GEPath* GetPath() const { return path_; }
+  void SetPath(const CFGAS_GEPath* pPath) { path_ = pPath; }
 
  private:
-  UnownedPtr<const CFGAS_GEPath> m_pPath;
-  UnownedPtr<CFGAS_GEGraphics> const m_pGraphics;
+  UnownedPtr<const CFGAS_GEPath> path_;
+  UnownedPtr<CFGAS_GEGraphics> const graphics_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_ThemeBackground;
 
 #endif  // XFA_FWL_CFWL_THEMEBACKGROUND_H_

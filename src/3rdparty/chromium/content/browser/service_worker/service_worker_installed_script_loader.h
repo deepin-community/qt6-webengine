@@ -63,19 +63,17 @@ class ServiceWorkerInstalledScriptLoader
       const std::optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
 
  private:
   // mojo::DataPipeDrainer::Client overrides:
   // These just do nothing.
-  void OnDataAvailable(const void* data, size_t num_bytes) override {}
+  void OnDataAvailable(base::span<const uint8_t> data) override {}
   void OnDataComplete() override {}
 
   URLLoaderClientCheckedRemote client_;
   scoped_refptr<ServiceWorkerVersion>
       version_for_main_script_http_response_info_;
-  base::TimeTicks request_start_;
+  base::TimeTicks request_start_time_;
   std::unique_ptr<ServiceWorkerInstalledScriptReader> reader_;
 
   std::string encoding_;

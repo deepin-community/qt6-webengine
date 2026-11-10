@@ -34,9 +34,9 @@
 
 #include "dawn/native/Texture.h"
 
+#include "absl/container/inlined_vector.h"
 #include "dawn/common/CoreFoundationRef.h"
 #include "dawn/common/NSRef.h"
-#include "dawn/common/StackContainer.h"
 #include "dawn/native/DawnNative.h"
 #include "dawn/native/MetalBackend.h"
 
@@ -44,7 +44,6 @@ namespace dawn::native::metal {
 
 class CommandRecordingContext;
 class Device;
-struct MTLSharedEventAndSignalValue;
 class SharedTextureMemory;
 
 MTLPixelFormat MetalPixelFormat(const DeviceBase* device, wgpu::TextureFormat format);
@@ -73,7 +72,6 @@ class Texture final : public TextureBase {
                                                    const SubresourceRange& range);
 
     void SynchronizeTextureBeforeUse(CommandRecordingContext* commandContext);
-    void IOSurfaceEndAccess(ExternalImageIOSurfaceEndAccessDescriptor* descriptor);
 
   private:
     using TextureBase::TextureBase;
@@ -95,18 +93,18 @@ class Texture final : public TextureBase {
                             const SubresourceRange& range,
                             TextureBase::ClearValue clearValue);
 
-    StackVector<NSPRef<id<MTLTexture>>, kMaxPlanesPerFormat> mMtlPlaneTextures;
+    absl::InlinedVector<NSPRef<id<MTLTexture>>, kMaxPlanesPerFormat> mMtlPlaneTextures;
     MTLPixelFormat mMtlFormat = MTLPixelFormatInvalid;
 
     MTLTextureUsage mMtlUsage;
     CFRef<IOSurfaceRef> mIOSurface = nullptr;
-    std::vector<MTLSharedEventAndSignalValue> mWaitEvents;
 };
 
 class TextureView final : public TextureViewBase {
   public:
-    static ResultOrError<Ref<TextureView>> Create(TextureBase* texture,
-                                                  const TextureViewDescriptor* descriptor);
+    static ResultOrError<Ref<TextureView>> Create(
+        TextureBase* texture,
+        const UnpackedPtr<TextureViewDescriptor>& descriptor);
 
     id<MTLTexture> GetMTLTexture() const;
 
@@ -119,7 +117,7 @@ class TextureView final : public TextureViewBase {
 
   private:
     using TextureViewBase::TextureViewBase;
-    MaybeError Initialize(const TextureViewDescriptor* descriptor);
+    MaybeError Initialize(const UnpackedPtr<TextureViewDescriptor>& descriptor);
     void DestroyImpl() override;
     void SetLabelImpl() override;
 

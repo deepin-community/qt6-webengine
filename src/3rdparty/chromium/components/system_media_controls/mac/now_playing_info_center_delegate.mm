@@ -29,7 +29,6 @@ MPNowPlayingPlaybackState PlaybackStatusToMPNowPlayingPlaybackState(
     default:
       NOTREACHED();
   }
-  return MPNowPlayingPlaybackStateUnknown;
 }
 
 }  // anonymous namespace

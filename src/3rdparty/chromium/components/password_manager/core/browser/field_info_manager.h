@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/task/single_thread_task_runner.h"
-#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/common/signatures.h"
@@ -21,8 +20,6 @@
 namespace password_manager {
 
 struct FormPredictions;
-
-constexpr base::TimeDelta kFieldInfoLifetime = base::Minutes(5);
 
 struct FieldInfo {
   // Id of the PasswordManagerDriver which corresponds to the frame of the
@@ -77,7 +74,8 @@ class FieldInfoManager : public KeyedService {
 
   // Propagates signatures and field type received from the server.
   void ProcessServerPredictions(
-      const std::map<autofill::FormSignature, FormPredictions>& predictions);
+      const std::map<std::pair<autofill::FormSignature, int>, FormPredictions>&
+          predictions);
 
  private:
   struct FieldInfoEntry {
@@ -95,7 +93,7 @@ class FieldInfoManager : public KeyedService {
   // Deletes the oldest field info entry.
   void ClearOldestFieldInfoEntry();
 
-  // TODO(crbug/1468297): Reset the cache after a save prompt is accepted.
+  // TODO(crbug.com/40277063): Reset the cache after a save prompt is accepted.
   std::deque<FieldInfoEntry> field_info_cache_;
 
   // Task runner used for evicting field info entries after timeout.

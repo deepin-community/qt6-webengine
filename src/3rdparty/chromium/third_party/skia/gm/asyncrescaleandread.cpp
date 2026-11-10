@@ -14,8 +14,8 @@
 #include "include/core/SkYUVAInfo.h"
 #include "include/core/SkYUVAPixmaps.h"
 #include "include/effects/SkGradientShader.h"
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #include "src/base/SkScopeExit.h"
 #include "src/core/SkAutoPixmapStorage.h"
@@ -166,7 +166,9 @@ protected:
             graphiteContext->submit();
             while (!asyncContext->fCalled) {
                 graphiteContext->checkAsyncWorkCompletion();
-                this->graphiteTestContext()->tick();
+                if (this->graphiteTestContext()) {
+                    this->graphiteTestContext()->tick();
+                }
             }
 #endif
         } else {
@@ -254,7 +256,9 @@ protected:
             graphiteContext->submit();
             while (!asyncContext.fCalled) {
                 graphiteContext->checkAsyncWorkCompletion();
-                graphiteTestContext()->tick();
+                if (this->graphiteTestContext()) {
+                    this->graphiteTestContext()->tick();
+                }
             }
 #endif
         } else {
@@ -544,14 +548,16 @@ public:
         if (!image) {
             return skiagm::DrawResult::kFail;
         }
-        SkPaint paint;
-        canvas->drawImage(image.get(), 0, 0);
+
+        static constexpr SkIPoint kOffset = {15, 12};
+        SkISize evenSz = {image->width() & ~0b1, image->height() & ~0b1};
+        canvas->drawImage(image.get(), kOffset.fX, kOffset.fY);
 
         skgpu::graphite::Recorder* recorder = canvas->recorder();
         SkScopeExit scopeExit;
         auto yuvImage = readAndScaleYUVA<ReadSource::kSurface>(surface,
-                                                               SkIRect::MakeWH(400, 300),
-                                                               SkISize{400, 300},
+                                                               SkIRect::MakePtSize(kOffset, evenSz),
+                                                               evenSz,
                                                                /*readAlpha=*/false,
                                                                dContext,
                                                                recorder,

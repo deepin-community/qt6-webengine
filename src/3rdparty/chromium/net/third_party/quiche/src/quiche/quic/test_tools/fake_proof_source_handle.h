@@ -31,11 +31,11 @@ class FakeProofSourceHandle : public ProofSourceHandle {
   };
 
   // |delegate| must do cert selection and signature synchronously.
-  // |dealyed_ssl_config| is the config passed to OnSelectCertificateDone.
+  // |delayed_ssl_config| is the config passed to OnSelectCertificateDone.
   FakeProofSourceHandle(
       ProofSource* delegate, ProofSourceHandleCallback* callback,
       Action select_cert_action, Action compute_signature_action,
-      QuicDelayedSSLConfig dealyed_ssl_config = QuicDelayedSSLConfig());
+      QuicDelayedSSLConfig delayed_ssl_config = QuicDelayedSSLConfig());
 
   ~FakeProofSourceHandle() override = default;
 
@@ -46,7 +46,7 @@ class FakeProofSourceHandle : public ProofSourceHandle {
       const QuicSocketAddress& client_address,
       const QuicConnectionId& original_connection_id,
       absl::string_view ssl_capabilities, const std::string& hostname,
-      absl::string_view client_hello, const std::string& alpn,
+      const SSL_CLIENT_HELLO& client_hello, const std::string& alpn,
       std::optional<std::string> alps,
       const std::vector<uint8_t>& quic_transport_params,
       const std::optional<std::vector<uint8_t>>& early_data_context,
@@ -70,8 +70,7 @@ class FakeProofSourceHandle : public ProofSourceHandle {
                    QuicSocketAddress client_address,
                    QuicConnectionId original_connection_id,
                    absl::string_view ssl_capabilities, std::string hostname,
-                   absl::string_view client_hello, std::string alpn,
-                   std::optional<std::string> alps,
+                   std::string alpn, std::optional<std::string> alps,
                    std::vector<uint8_t> quic_transport_params,
                    std::optional<std::vector<uint8_t>> early_data_context,
                    QuicSSLConfig ssl_config)
@@ -80,7 +79,6 @@ class FakeProofSourceHandle : public ProofSourceHandle {
           original_connection_id(original_connection_id),
           ssl_capabilities(ssl_capabilities),
           hostname(hostname),
-          client_hello(client_hello),
           alpn(alpn),
           alps(alps),
           quic_transport_params(quic_transport_params),
@@ -92,7 +90,6 @@ class FakeProofSourceHandle : public ProofSourceHandle {
     QuicConnectionId original_connection_id;
     std::string ssl_capabilities;
     std::string hostname;
-    std::string client_hello;
     std::string alpn;
     std::optional<std::string> alps;
     std::vector<uint8_t> quic_transport_params;
@@ -148,7 +145,7 @@ class FakeProofSourceHandle : public ProofSourceHandle {
     SelectCertOperation(ProofSource* delegate,
                         ProofSourceHandleCallback* callback, Action action,
                         SelectCertArgs args,
-                        QuicDelayedSSLConfig dealyed_ssl_config);
+                        QuicDelayedSSLConfig delayed_ssl_config);
 
     ~SelectCertOperation() override = default;
 
@@ -156,7 +153,7 @@ class FakeProofSourceHandle : public ProofSourceHandle {
 
    private:
     const SelectCertArgs args_;
-    const QuicDelayedSSLConfig dealyed_ssl_config_;
+    const QuicDelayedSSLConfig delayed_ssl_config_;
   };
 
   class ComputeSignatureOperation : public PendingOperation {
@@ -183,7 +180,7 @@ class FakeProofSourceHandle : public ProofSourceHandle {
   Action select_cert_action_ = Action::DELEGATE_SYNC;
   // Action for the next compute signature operation.
   Action compute_signature_action_ = Action::DELEGATE_SYNC;
-  const QuicDelayedSSLConfig dealyed_ssl_config_;
+  const QuicDelayedSSLConfig delayed_ssl_config_;
   std::optional<SelectCertOperation> select_cert_op_;
   std::optional<ComputeSignatureOperation> compute_signature_op_;
 

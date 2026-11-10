@@ -10,7 +10,9 @@
 #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scrollbar_display_item.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -95,15 +97,16 @@ static WTF::String PaintPhaseAsDebugString(int paint_phase) {
       return "PaintPhaseMask";
     default:
       NOTREACHED();
-      return "Unknown";
   }
 }
 
-#define PAINT_PHASE_BASED_DEBUG_STRINGS(Category)          \
-  if (type >= DisplayItem::k##Category##PaintPhaseFirst && \
-      type <= DisplayItem::k##Category##PaintPhaseLast)    \
-    return #Category + PaintPhaseAsDebugString(            \
-                           type - DisplayItem::k##Category##PaintPhaseFirst);
+#define PAINT_PHASE_BASED_DEBUG_STRINGS(Category)                            \
+  if (type >= DisplayItem::k##Category##PaintPhaseFirst &&                   \
+      type <= DisplayItem::k##Category##PaintPhaseLast) {                    \
+    return StrCat(                                                           \
+        {#Category, PaintPhaseAsDebugString(                                 \
+                        type - DisplayItem::k##Category##PaintPhaseFirst)}); \
+  }
 
 #define DEBUG_STRING_CASE(DisplayItemName) \
   case DisplayItem::k##DisplayItemName:    \
@@ -111,8 +114,7 @@ static WTF::String PaintPhaseAsDebugString(int paint_phase) {
 
 #define DEFAULT_CASE \
   default:           \
-    NOTREACHED();    \
-    return "Unknown"
+    NOTREACHED();
 
 static WTF::String SpecialDrawingTypeAsDebugString(DisplayItem::Type type) {
   switch (type) {
@@ -149,7 +151,7 @@ static WTF::String SpecialDrawingTypeAsDebugString(DisplayItem::Type type) {
 
 static WTF::String DrawingTypeAsDebugString(DisplayItem::Type type) {
   PAINT_PHASE_BASED_DEBUG_STRINGS(Drawing);
-  return "Drawing" + SpecialDrawingTypeAsDebugString(type);
+  return StrCat({"Drawing", SpecialDrawingTypeAsDebugString(type)});
 }
 
 static String ForeignLayerTypeAsDebugString(DisplayItem::Type type) {
@@ -185,7 +187,6 @@ WTF::String DisplayItem::TypeAsDebugString(Type type) {
     DEBUG_STRING_CASE(RegionCapture);
     DEBUG_STRING_CASE(ScrollHitTest);
     DEBUG_STRING_CASE(ResizerScrollHitTest);
-    DEBUG_STRING_CASE(PluginScrollHitTest);
     DEBUG_STRING_CASE(ScrollbarHitTest);
     DEBUG_STRING_CASE(LayerChunk);
     DEBUG_STRING_CASE(LayerChunkForeground);
@@ -206,22 +207,18 @@ String DisplayItem::IdAsString(const PaintArtifact& paint_artifact) const {
   if (IsSubsequenceTombstone())
     return "SUBSEQUENCE TOMBSTONE";
   if (IsTombstone())
-    return "TOMBSTONE " + paint_artifact.IdAsString(GetId());
+    return StrCat({"TOMBSTONE ", paint_artifact.IdAsString(GetId())});
   return paint_artifact.IdAsString(GetId());
 }
 
 void DisplayItem::PropertiesAsJSON(JSONObject& json,
-                                   const PaintArtifact& paint_artifact,
-                                   bool client_known_to_be_alive) const {
+                                   const PaintArtifact& paint_artifact) const {
   json.SetString("id", IdAsString(paint_artifact));
-  if (IsSubsequenceTombstone())
+  if (IsSubsequenceTombstone()) {
     return;
-
-  json.SetString("clientDebugName", paint_artifact.ClientDebugName(client_id_));
-  if (client_known_to_be_alive) {
-    json.SetString("invalidation", PaintInvalidationReasonToString(
-                                       GetPaintInvalidationReason()));
   }
+  json.SetString("invalidation",
+                 PaintInvalidationReasonToString(GetPaintInvalidationReason()));
   json.SetString("visualRect", String(VisualRect().ToString()));
   if (GetRasterEffectOutset() != RasterEffectOutset::kNone) {
     json.SetDouble(

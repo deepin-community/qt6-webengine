@@ -4,6 +4,8 @@
 
 #include "components/browsing_data/content/browsing_data_model.h"
 
+#include <variant>
+
 #include "base/barrier_closure.h"
 #include "base/feature_list.h"
 #include "base/memory/weak_ptr.h"
@@ -19,8 +21,8 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "net/base/schemeful_site.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/extras/shared_dictionary/shared_dictionary_usage_info.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/test/test_network_context.h"
@@ -64,8 +66,8 @@ class MockNetworkContext : public network::TestNetworkContext {
 std::unique_ptr<net::CanonicalCookie> MakeCanonicalCookie(
     const std::string& name,
     const std::string& domain,
-    absl::optional<net::CookiePartitionKey> cookie_partition_key =
-        absl::nullopt) {
+    std::optional<net::CookiePartitionKey> cookie_partition_key =
+        std::nullopt) {
   return net::CanonicalCookie::CreateUnsafeCookieForTesting(
       name, "1", domain, /*path=*/"/", /*creation=*/base::Time(),
       /*expiration=*/base::Time(), /*last_access=*/base::Time(),
@@ -203,8 +205,8 @@ TEST_F(BrowsingDataModelTest, ConcurrentDeletions) {
   // Check that the model is able to support multiple deletion operations in
   // flight at the same time, even if the backends finish out-of-order.
   std::vector<::network::mojom::StoredTrustTokensForIssuerPtr> tokens;
-  tokens.emplace_back(absl::in_place, kSubdomainOrigin, 10);
-  tokens.emplace_back(absl::in_place, kAnotherSiteOrigin, 20);
+  tokens.emplace_back(std::in_place, kSubdomainOrigin, 10);
+  tokens.emplace_back(std::in_place, kAnotherSiteOrigin, 20);
 
   EXPECT_CALL(*mock_network_context(), GetStoredTrustTokenCounts(testing::_))
       .WillOnce(
@@ -382,20 +384,25 @@ class OriginOwnershipDelegate final : public BrowsingDataModel::Delegate {
     std::move(callback).Run();
   }
 
-  absl::optional<BrowsingDataModel::DataOwner> GetDataOwner(
+  std::optional<BrowsingDataModel::DataOwner> GetDataOwner(
       const BrowsingDataModel::DataKey& data_key,
       BrowsingDataModel::StorageType storage_type) const override {
-    const url::Origin* origin = absl::get_if<url::Origin>(&data_key);
+    const url::Origin* origin = std::get_if<url::Origin>(&data_key);
     if (origin && origin->host() == origin_owned_host_) {
       return *origin;
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  absl::optional<bool> IsBlockedByThirdPartyCookieBlocking(
-      const BrowsingDataModel::DataKey& data_key,
+  std::optional<bool> IsStorageTypeCookieLike(
       BrowsingDataModel::StorageType storage_type) const override {
     return false;
+  }
+
+  std::optional<bool> IsBlockedByThirdPartyCookieBlocking(
+      const BrowsingDataModel::DataKey& data_key,
+      BrowsingDataModel::StorageType storage_type) const override {
+    return IsStorageTypeCookieLike(storage_type);
   }
 
   bool IsCookieDeletionDisabled(const GURL& url) override { return false; }
@@ -466,7 +473,7 @@ TEST_F(BrowsingDataModelTest, IteratorCanHandleEmptyDataKeyEntriesMaps) {
 }
 
 TEST_F(BrowsingDataModelTest, RemoveBasedOnPartitioning) {
-  // TODO(crbug/1455899): Use helpers so this test can be broken up, likely
+  // TODO(crbug.com/40272946): Use helpers so this test can be broken up, likely
   // done alongside moving partition key detection to a visitor pattern.
   std::unique_ptr<BrowsingDataModel> model = BrowsingDataModel::BuildEmpty(
       storage_partition(),
@@ -574,9 +581,11 @@ TEST_F(BrowsingDataModelTest, ThirdPartyCookieTypes) {
       content::SessionStorageUsageInfo{partitioned_storage_key, "example"};
 
   auto unpartitioned_shared_worker_info = browsing_data::SharedWorkerInfo(
-      kSiteOrigin.GetURL(), "example", unpartitioned_storage_key);
+      kSiteOrigin.GetURL(), "example", unpartitioned_storage_key,
+      blink::mojom::SharedWorkerSameSiteCookies::kAll);
   auto partitioned_shared_worker_info = browsing_data::SharedWorkerInfo(
-      kSiteOrigin.GetURL(), "example", partitioned_storage_key);
+      kSiteOrigin.GetURL(), "example", partitioned_storage_key,
+      blink::mojom::SharedWorkerSameSiteCookies::kNone);
 
   auto unpartitioned_cookie = MakeCanonicalCookie("name", kSiteOriginHost);
 
@@ -592,6 +601,9 @@ TEST_F(BrowsingDataModelTest, ThirdPartyCookieTypes) {
   content::AttributionDataModel::DataKey attribution_reporting_key{kSiteOrigin};
   content::PrivateAggregationDataModel::DataKey private_aggregation_key{
       kSiteOrigin};
+  net::device_bound_sessions::SessionKey device_bound_session_key(
+      net::SchemefulSite(kSiteOrigin.GetURL()),
+      net::device_bound_sessions::SessionKey::Id("session_id"));
 
   std::map<BrowsingDataModel::StorageType, BrowsingDataModel::DataKey>
       third_party_cookie_types = {
@@ -605,7 +617,9 @@ TEST_F(BrowsingDataModelTest, ThirdPartyCookieTypes) {
            unpartitioned_session_storage_usage},
           {BrowsingDataModel::StorageType::kSharedWorker,
            unpartitioned_shared_worker_info},
-          {BrowsingDataModel::StorageType::kCookie, *unpartitioned_cookie}};
+          {BrowsingDataModel::StorageType::kCookie, *unpartitioned_cookie},
+          {BrowsingDataModel::StorageType::kDeviceBoundSession,
+           device_bound_session_key}};
 
   std::map<BrowsingDataModel::StorageType, BrowsingDataModel::DataKey>
       non_third_party_cookie_types = {
@@ -614,6 +628,8 @@ TEST_F(BrowsingDataModelTest, ThirdPartyCookieTypes) {
           {BrowsingDataModel::StorageType::kLocalStorage,
            partitioned_storage_key},
           {BrowsingDataModel::StorageType::kQuotaStorage,
+           partitioned_storage_key},
+          {BrowsingDataModel::StorageType::kCdmStorage,
            partitioned_storage_key},
           {BrowsingDataModel::StorageType::kSessionStorage,
            partitioned_session_storage_usage},
@@ -680,7 +696,8 @@ TEST_F(BrowsingDataModelTest, HasThirdPartyPartitioningSite_True) {
   auto partitioned_shared_dictionary_key = net::SharedDictionaryIsolationKey{
       kSiteOrigin, net::SchemefulSite(kTestOrigin)};
   auto partitioned_shared_worker_info = browsing_data::SharedWorkerInfo(
-      kSiteOrigin.GetURL(), "example", partitioned_storage_key);
+      kSiteOrigin.GetURL(), "example", partitioned_storage_key,
+      blink::mojom::SharedWorkerSameSiteCookies::kNone);
 
   model->AddBrowsingData(partitioned_storage_key,
                          BrowsingDataModel::StorageType::kQuotaStorage, 0, 0);
@@ -714,7 +731,8 @@ TEST_F(BrowsingDataModelTest, HasThirdPartyPartitioningSite_False) {
   auto unpartitioned_shared_dictionary_key = net::SharedDictionaryIsolationKey{
       kSubdomainOrigin, net::SchemefulSite(kSiteOrigin)};
   auto unpartitioned_shared_worker_info = browsing_data::SharedWorkerInfo(
-      kSiteOrigin.GetURL(), "example", unpartitioned_storage_key);
+      kSiteOrigin.GetURL(), "example", unpartitioned_storage_key,
+      blink::mojom::SharedWorkerSameSiteCookies::kAll);
   auto non_partition_key = kAnotherTestOrigin;
 
   model->AddBrowsingData(unpartitioned_storage_key,

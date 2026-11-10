@@ -6,10 +6,10 @@ import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { assert } from '../../../../common/util/util.js';
 import { kTextureUsages } from '../../../capability_info.js';
 import { GPUConst } from '../../../constants.js';
+import { UniqueFeaturesOrLimitsGPUTest } from '../../../gpu_test.js';
 import { kAllCanvasTypes, createCanvas } from '../../../util/create_elements.js';
-import { ValidationTest } from '../validation_test.js';
 
-class BGRA8UnormStorageValidationTests extends ValidationTest {
+class BGRA8UnormStorageValidationTests extends UniqueFeaturesOrLimitsGPUTest {
   testCreateShaderModuleWithBGRA8UnormStorage(
     shaderType: 'fragment' | 'compute',
     success: boolean
@@ -55,7 +55,7 @@ this feature is not enabled, which are skipped here.
       format: 'bgra8unorm' as const,
       usage: GPUConst.TextureUsage.STORAGE,
     };
-    t.device.createTexture(descriptor);
+    t.createTextureTracked(descriptor);
   });
 
 g.test('create_bind_group_layout')
@@ -79,37 +79,6 @@ validation cases where this feature is not enabled, which are skipped here.
         },
       ],
     });
-  });
-
-g.test('create_shader_module_with_bgra8unorm_storage')
-  .desc(
-    `
-Test that it is valid to declare the format of a storage texture as bgra8unorm in a shader module if
-the feature bgra8unorm-storage is enabled.
-`
-  )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('bgra8unorm-storage');
-  })
-  .params(u => u.combine('shaderType', ['fragment', 'compute'] as const))
-  .fn(t => {
-    const { shaderType } = t.params;
-
-    t.testCreateShaderModuleWithBGRA8UnormStorage(shaderType, true);
-  });
-
-g.test('create_shader_module_without_bgra8unorm_storage')
-  .desc(
-    `
-Test that it is invalid to declare the format of a storage texture as bgra8unorm in a shader module
-if the feature bgra8unorm-storage is not enabled.
-`
-  )
-  .params(u => u.combine('shaderType', ['fragment', 'compute'] as const))
-  .fn(t => {
-    const { shaderType } = t.params;
-
-    t.testCreateShaderModuleWithBGRA8UnormStorage(shaderType, false);
   });
 
 g.test('configure_storage_usage_on_canvas_context_without_bgra8unorm_storage')
@@ -157,7 +126,12 @@ with 'bgra8unorm-storage' enabled.
 `
   )
   .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('bgra8unorm-storage');
+    t.selectDeviceOrSkipTestCase({
+      requiredFeatures: ['bgra8unorm-storage'],
+      requiredLimits: {
+        maxStorageTexturesInFragmentStage: 1,
+      },
+    });
   })
   .params(u =>
     u

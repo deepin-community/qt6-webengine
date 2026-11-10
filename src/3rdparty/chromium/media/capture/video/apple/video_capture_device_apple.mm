@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/capture/video/apple/video_capture_device_apple.h"
 
 #include <stddef.h>
@@ -225,6 +230,7 @@ void VideoCaptureDeviceApple::ReceiveFrame(
     int aspect_numerator,
     int aspect_denominator,
     base::TimeDelta timestamp,
+    std::optional<base::TimeTicks> capture_begin_time,
     int rotation) {
   if (capture_format_.frame_size != frame_format.frame_size) {
     ReceiveError(VideoCaptureError::kMacReceivedFrameWithUnexpectedResolution,
@@ -237,12 +243,14 @@ void VideoCaptureDeviceApple::ReceiveFrame(
   client_->OnIncomingCapturedData(
       video_frame, video_frame_length, frame_format, color_space,
       rotation /* clockwise_rotation */, false /* flip_y */,
-      base::TimeTicks::Now(), timestamp);
+      base::TimeTicks::Now(), timestamp, capture_begin_time,
+      GetVideoFrameMetadata());
 }
 
 void VideoCaptureDeviceApple::ReceiveExternalGpuMemoryBufferFrame(
     CapturedExternalVideoBuffer frame,
-    base::TimeDelta timestamp) {
+    base::TimeDelta timestamp,
+    std::optional<base::TimeTicks> capture_begin_time) {
   if (capture_format_.frame_size != frame.format.frame_size) {
     ReceiveError(VideoCaptureError::kMacReceivedFrameWithUnexpectedResolution,
                  FROM_HERE,
@@ -250,29 +258,52 @@ void VideoCaptureDeviceApple::ReceiveExternalGpuMemoryBufferFrame(
                      ", and expected " + capture_format_.frame_size.ToString());
     return;
   }
+
   client_->OnIncomingCapturedExternalBuffer(
-      std::move(frame), base::TimeTicks::Now(), timestamp,
-      gfx::Rect(capture_format_.frame_size));
+      std::move(frame), base::TimeTicks::Now(), timestamp, capture_begin_time,
+      gfx::Rect(capture_format_.frame_size), GetVideoFrameMetadata());
 }
 
 void VideoCaptureDeviceApple::OnPhotoTaken(const uint8_t* image_data,
                                            size_t image_length,
                                            const std::string& mime_type) {
-  DCHECK(photo_callback_);
-  if (!image_data || !image_length) {
-    OnPhotoError();
-    return;
+  // Note: While OnPhotoTaken() is called on an AVFoundation background queue by
+  // VideoCaptureDeviceAVFoundation, it is guaranteed that `this` is not deleted
+  // because VideoCaptureDeviceAVFoundation holds `_lock` while calling
+  // `_frameReceiver->OnPhotoTaken(...)`, and StopAndDeAllocate() acquires
+  // `_lock` when setting `_frameReceiver = nil` before destruction on the main
+  // thread. Therefore, accessing `task_runner_` here is safe.
+  mojom::BlobPtr blob;
+  if (image_data && image_length) {
+    blob = mojom::Blob::New();
+    blob->data.assign(image_data, image_data + image_length);
+    blob->mime_type = mime_type;
   }
-
-  mojom::BlobPtr blob = mojom::Blob::New();
-  blob->data.assign(image_data, image_data + image_length);
-  blob->mime_type = mime_type;
-  std::move(photo_callback_).Run(std::move(blob));
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&VideoCaptureDeviceApple::OnPhotoResultOnMainThread,
+                     weak_factory_.GetWeakPtr(), std::move(blob)));
 }
 
 void VideoCaptureDeviceApple::OnPhotoError() {
   VLOG(1) << __func__ << " error taking picture";
-  photo_callback_.Reset();
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&VideoCaptureDeviceApple::OnPhotoResultOnMainThread,
+                     weak_factory_.GetWeakPtr(), nullptr));
+}
+
+void VideoCaptureDeviceApple::OnPhotoResultOnMainThread(mojom::BlobPtr blob) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  if (!photo_callback_) {
+    return;
+  }
+  if (!blob) {
+    VLOG(1) << __func__ << " error taking picture";
+    photo_callback_.Reset();
+    return;
+  }
+  std::move(photo_callback_).Run(std::move(blob));
 }
 
 void VideoCaptureDeviceApple::ReceiveError(VideoCaptureError error,
@@ -296,6 +327,12 @@ void VideoCaptureDeviceApple::ReceiveCaptureConfigurationChanged() {
       FROM_HERE,
       base::BindOnce(&VideoCaptureDeviceApple::OnCaptureConfigurationChanged,
                      weak_factory_.GetWeakPtr()));
+}
+
+void VideoCaptureDeviceApple::OnLog(const std::string& message) {
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&VideoCaptureDeviceApple::LogMessage,
+                                        weak_factory_.GetWeakPtr(), message));
 }
 
 void VideoCaptureDeviceApple::OnCaptureConfigurationChanged() {
@@ -358,6 +395,16 @@ bool VideoCaptureDeviceApple::UpdateCaptureResolution() {
     return false;
   }
   return true;
+}
+
+VideoFrameMetadata VideoCaptureDeviceApple::GetVideoFrameMetadata() {
+  VideoFrameMetadata metadata;
+  if ([capture_device_ isPortraitEffectSupported]) {
+    bool isPortraitEffectActive = [capture_device_ isPortraitEffectActive];
+    metadata.background_blur = EffectInfo{.enabled = isPortraitEffectActive};
+  }
+
+  return metadata;
 }
 
 }  // namespace media

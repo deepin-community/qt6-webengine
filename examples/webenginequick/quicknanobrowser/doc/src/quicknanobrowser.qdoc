@@ -3,15 +3,15 @@
 
 /*!
     \example webenginequick/quicknanobrowser
-    \title WebEngine Quick Nano Browser
+    \title Qt WebEnginQuick Examples - A example for a WebEngineView in Qt Quick
     \ingroup webengine-examples
-    \brief A web browser implemented using the WebEngineView QML type.
+    \brief This example demonstrates how to use the QtWebEngineQuick module with Qt Quick.
 
-    \image quicknanobrowser-demo.jpg
+    \image quicknanobrowser-demo.jpg {Browser demo}
     \examplecategory {Application Examples}
     \examplecategory {Web Technologies}
 
-    \e {Quick Nano Browser} demonstrates how to use the \l{Qt WebEngine QML Types}
+    \e This example demonstrates how to use the \l{Qt WebEngine QML Types}
     {Qt WebEngine QML types} to develop a small web browser application that consists of a browser
     window with a title bar, toolbar, tab view, and status bar. The web content is loaded in a web
     engine view within the tab view. If certificate errors occur, users are prompted for action in a
@@ -63,22 +63,22 @@
     We use the \l TextField Qt Quick Control within a \l ToolBar to create an address bar that
     shows the current URL and where users can enter another URL:
 
-    \quotefromfile webenginequick/quicknanobrowser/BrowserWindow.qml
-    \skipto menuBar: ToolBar
-    \printuntil anchors.fill
+    \quotefromfile webenginequick/quicknanobrowser/WebToolBar.qml
+    \skipto ToolBar
+    \printuntil id: root
     \dots
     \skipto TextField
     \printuntil addressBar
     \dots
     \skipto focus
-    \printuntil /^\ {12}\}/
+    \printuntil /^\ {8}\}/
 
     \section1 Handling Certificate Errors
 
     In case of a certificate error, we check whether it came from the main frame, or from a
     resource inside the page. Resource errors automatically trigger a certificate rejection,
     since a user won't have enough context to make a decision.
-    For all other cases, we call the \l{WebEngineCertificateError::}{defer()} QML method to pause
+    For all other cases, we call the \l{webEngineCertificateError::}{defer()} QML method to pause
     the URL request and wait for user input:
 
     \quotefromfile webenginequick/quicknanobrowser/BrowserWindow.qml
@@ -88,9 +88,9 @@
 
     We use the Dialog type to prompt users to continue or cancel the loading of the web page.
     If users select \uicontrol Yes, we call the
-    \l{WebEngineCertificateError::}{acceptCertificate()} method to continue loading content from
+    \l{webEngineCertificateError::}{acceptCertificate()} method to continue loading content from
     the URL. If users select \uicontrol No, we call the
-    \l{WebEngineCertificateError::}{rejectCertificate()} method to reject the request and stop
+    \l{webEngineCertificateError::}{rejectCertificate()} method to reject the request and stop
     loading content from the URL:
 
     \skipto Dialog {
@@ -122,9 +122,9 @@
 
     We create a menu item for allowing fullscreen mode in a settings menu that we place on the tool
     bar. Also, we create an action for leaving fullscreen mode by using a keyboard shortcut.
-    We call the \l{FullScreenRequest::}{accept()} method to accept the fullscreen request.
+    We call the \l{fullScreenRequest::}{accept()} method to accept the fullscreen request.
     The methdod sets the \l{WebEngineView::}{isFullScreen} property to be equal to the
-    \l{FullScreenRequest::}{toggleOn} property.
+    \l{fullScreenRequest::}{toggleOn} property.
 
     \quotefromfile webenginequick/quicknanobrowser/BrowserWindow.qml
     \skipto onFullScreenRequested

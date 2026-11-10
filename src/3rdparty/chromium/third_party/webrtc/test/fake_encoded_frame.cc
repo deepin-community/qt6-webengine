@@ -10,23 +10,21 @@
 
 #include "test/fake_encoded_frame.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
+#include "api/rtp_packet_infos.h"
+#include "api/units/timestamp.h"
+#include "api/video/encoded_frame.h"
+#include "api/video/encoded_image.h"
 #include "api/video/video_frame_type.h"
+#include "api/video/video_rotation.h"
+#include "api/video/video_timing.h"
+#include "rtc_base/checks.h"
 
 namespace webrtc {
-
-void PrintTo(const EncodedFrame& frame,
-             std::ostream* os) /* no-presubmit-check TODO(webrtc:8982) */ {
-  *os << "EncodedFrame with id=" << frame.Id()
-      << " rtp=" << frame.RtpTimestamp() << " size=" << frame.size()
-      << " refs=[";
-  for (size_t ref = 0; ref < frame.num_references; ++ref) {
-    *os << frame.references[ref] << ",";
-  }
-  *os << "]";
-}
-
 namespace test {
 
 int64_t FakeEncodedFrame::ReceivedTime() const {

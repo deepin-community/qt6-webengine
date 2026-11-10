@@ -5,6 +5,11 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_SUBKEY_REQUESTER_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_SUBKEY_REQUESTER_H_
 
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "third_party/libaddressinput/chromium/chrome_address_validator.h"
@@ -30,12 +35,12 @@ class SubKeyRequester : public LoadRulesListener {
   class Request {
    public:
     virtual void OnRulesLoaded() = 0;
-    virtual ~Request() {}
+    virtual ~Request() = default;
   };
 
   SubKeyRequester(std::unique_ptr<::i18n::addressinput::Source> source,
                   std::unique_ptr<::i18n::addressinput::Storage> storage,
-                  const std::string& language);
+                  std::string_view language);
 
   SubKeyRequester(const SubKeyRequester&) = delete;
   SubKeyRequester& operator=(const SubKeyRequester&) = delete;

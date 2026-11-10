@@ -147,22 +147,25 @@ void EventReaderLibevdevCros::ApplyDeviceSettings(
   haptic_feedback_enabled_ = touchpad_settings.haptic_feedback_enabled;
 }
 
-void EventReaderLibevdevCros::ReceivedKeyboardInput(uint64_t key) {
+void EventReaderLibevdevCros::ReceivedKeyboardInput(
+    uint64_t key,
+    double timestamp_in_seconds) {
   if (!IsSuspectedKeyboardImposter() || !IsValidKeyboardKeyPress(key)) {
     return;
   }
 
   SetSuspectedKeyboardImposter(false);
-  received_valid_input_callback_.Run(this);
+  received_valid_input_callback_.Run(this, timestamp_in_seconds);
 }
 
-void EventReaderLibevdevCros::ReceivedMouseInput(int rel_value) {
+void EventReaderLibevdevCros::ReceivedMouseInput(int rel_value,
+                                                 double timestamp_in_seconds) {
   if (!IsSuspectedMouseImposter() || rel_value == 0) {
     return;
   }
 
   SetSuspectedMouseImposter(false);
-  received_valid_input_callback_.Run(this);
+  received_valid_input_callback_.Run(this, timestamp_in_seconds);
 }
 
 void EventReaderLibevdevCros::SetReceivedValidInputCallback(
@@ -172,6 +175,10 @@ void EventReaderLibevdevCros::SetReceivedValidInputCallback(
   delegate_->SetReceivedValidMouseInputCallback(base::BindRepeating(
       &EventReaderLibevdevCros::ReceivedMouseInput, base::Unretained(this)));
   received_valid_input_callback_ = std::move(callback);
+}
+
+void EventReaderLibevdevCros::SetBlockModifiers(bool block_modifiers) {
+  delegate_->SetBlockModifiers(block_modifiers);
 }
 
 bool EventReaderLibevdevCros::HasCapsLockLed() const {

@@ -4,6 +4,8 @@
 
 #include "base/test/scoped_run_loop_timeout.h"
 
+#include <optional>
+
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -11,7 +13,6 @@
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base::test {
 
@@ -26,18 +27,18 @@ std::string TimeoutMessage(const RepeatingCallback<std::string()>& get_log,
                            const Location& timeout_enabled_from_here) {
   std::string message = "RunLoop::Run() timed out. Timeout set at ";
   message += timeout_enabled_from_here.ToString() + ".";
-  if (get_log)
+  if (get_log) {
     StrAppend(&message, {"\n", get_log.Run()});
+  }
   return message;
 }
 
 void StandardTimeoutCallback(const Location& timeout_enabled_from_here,
                              RepeatingCallback<std::string()> on_timeout_log,
                              const Location& run_from_here) {
-  const std::string message =
-      TimeoutMessage(on_timeout_log, timeout_enabled_from_here);
-  logging::LogMessage(run_from_here.file_name(), run_from_here.line_number(),
-                      message.data());
+  logging::CheckNoreturnError::Check(
+      TimeoutMessage(on_timeout_log, timeout_enabled_from_here).data(),
+      run_from_here);
 }
 
 void TimeoutCallbackWithGtestFailure(
@@ -73,7 +74,7 @@ ScopedRunLoopTimeout::~ScopedRunLoopTimeout() {
 
 ScopedRunLoopTimeout::ScopedRunLoopTimeout(
     const Location& timeout_enabled_from_here,
-    absl::optional<TimeDelta> timeout,
+    std::optional<TimeDelta> timeout,
     RepeatingCallback<std::string()> on_timeout_log)
     : nested_timeout_(RunLoop::GetTimeoutForCurrentThread()) {
   CHECK(timeout.has_value() || nested_timeout_)

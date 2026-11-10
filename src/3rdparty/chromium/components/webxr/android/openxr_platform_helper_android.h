@@ -41,11 +41,16 @@ class OpenXrPlatformHelperAndroid : public device::OpenXrPlatformHelper {
 
   XrResult DestroyInstance(XrInstance& instance) override;
 
+  void PrepareForSessionShutdown(
+      base::OnceClosure shutdown_ready_callback) override;
+
  private:
   // Creates a temporary XrInstance that's only used for querying information
   // about the OpenXR system, and not able to present session content.
   XrResult CreateTemporaryInstance(XrInstance* instance,
                                    content::WebContents* web_contents);
+
+  void OnInstanceCreateFailure() override;
 
   void OnXrActivityReady(PlatformCreateInfoReadyCallback callback,
                          const base::android::JavaParamRef<jobject>& activity);

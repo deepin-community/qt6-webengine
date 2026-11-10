@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_component_impl.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_track_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_receiver_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_sender_platform.h"
@@ -100,7 +101,7 @@ class RTCPeerConnectionTest : public testing::Test {
   }
 
   std::string GetExceptionMessage(V8TestingScope& scope) {
-    ExceptionState& exception_state = scope.GetExceptionState();
+    DummyExceptionStateForTesting& exception_state = scope.GetExceptionState();
     return exception_state.HadException() ? exception_state.Message().Utf8()
                                           : "";
   }
@@ -371,6 +372,14 @@ TEST_F(RTCPeerConnectionTest, MediaStreamTrackStopsThrottling) {
   // Stopping the track disables the opt-out.
   track->stopTrack(scope.GetExecutionContext());
   EXPECT_FALSE(scheduler->OptedOutFromAggressiveThrottlingForTest());
+}
+
+TEST_F(RTCPeerConnectionTest, GettingRtpTransportEarlySucceeds) {
+  V8TestingScope scope;
+
+  RTCPeerConnection* pc = CreatePC(scope);
+  EXPECT_NE(pc->rtpTransport(), nullptr);
+  EXPECT_EQ("", GetExceptionMessage(scope));
 }
 
 }  // namespace blink

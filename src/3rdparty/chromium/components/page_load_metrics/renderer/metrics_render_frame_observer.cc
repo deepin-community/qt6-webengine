@@ -7,10 +7,12 @@
 #include <string>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/page_load_metrics/renderer/features.h"
 #include "components/page_load_metrics/renderer/page_timing_metrics_sender.h"
 #include "components/page_load_metrics/renderer/page_timing_sender.h"
 #include "content/public/renderer/render_frame.h"
@@ -63,7 +65,7 @@ class MojoPageTimingSender : public PageTimingSender {
       const mojom::FrameRenderDataUpdate& render_data,
       const mojom::CpuTimingPtr& cpu_timing,
       mojom::InputTimingPtr input_timing_delta,
-      const absl::optional<blink::SubresourceLoadMetrics>&
+      const std::optional<blink::SubresourceLoadMetrics>&
           subresource_load_metrics,
       const mojom::SoftNavigationMetricsPtr& soft_navigation_metrics) override {
     DCHECK(page_load_metrics_);
@@ -74,17 +76,23 @@ class MojoPageTimingSender : public PageTimingSender {
         subresource_load_metrics, soft_navigation_metrics->Clone());
   }
 
-  void SetUpSmoothnessReporting(
-      base::ReadOnlySharedMemoryRegion shared_memory) override {
+  void SetUpDroppedFramesReporting(
+      base::ReadOnlySharedMemoryRegion shared_memory_dropped_frames) override {
     DCHECK(page_load_metrics_);
-    page_load_metrics_->SetUpSharedMemoryForSmoothness(
-        std::move(shared_memory));
+    page_load_metrics_->SetUpSharedMemoryForDroppedFrames(
+        std::move(shared_memory_dropped_frames));
+  }
+
+  void SendCustomUserTiming(mojom::CustomUserTimingMarkPtr timing) override {
+    CHECK(timing);
+    CHECK(page_load_metrics_);
+    page_load_metrics_->AddCustomUserTiming(std::move(timing));
   }
 
  private:
   // Indicates that this sender should not send timing updates or frame render
   // data updates.
-  // TODO(https://crbug.com/1097127): When timing updates are handled for cases
+  // TODO(crbug.com/40136524): When timing updates are handled for cases
   // where we have a subframe document and no committed navigation, this can be
   // removed.
   bool limited_sending_mode_ = false;
@@ -95,44 +103,21 @@ class MojoPageTimingSender : public PageTimingSender {
 };
 }  //  namespace
 
-namespace internal {
-void RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-    base::TimeDelta start_time_relative_to_reference,
-    double nav_start_to_reference) {
-  if (start_time_relative_to_reference.is_zero()) {
-    if (nav_start_to_reference == 0) {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsZeroAndEqNavStart);
-    } else {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsZeroAndLtNavStart);
-    }
-  } else {
-    if (start_time_relative_to_reference.InSecondsF() <
-        nav_start_to_reference) {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsNonZeroAndLtNavStart);
-    } else {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsNonZeroAndEqNavStart);
-    }
-  }
-}
-}  // namespace internal
-
 MetricsRenderFrameObserver::MetricsRenderFrameObserver(
     content::RenderFrame* render_frame)
     : content::RenderFrameObserver(render_frame),
       blink::WebLocalFrameObserver(render_frame ? render_frame->GetWebFrame()
-                                                : nullptr) {}
+                                                : nullptr) {
+  if (base::FeatureList::IsEnabled(
+          features::kDidObserveNewFeatureUsageImprovement) &&
+      render_frame) {
+    // If the optimization is enabled, `DidObserveNewFeatureUsage()` will be
+    // called as a callback instead of the observer interface.
+    render_frame->SetNewFeatureUsageCallback(base::BindRepeating(
+        &MetricsRenderFrameObserver::DidObserveNewFeatureUsage,
+        weak_factory_.GetWeakPtr()));
+  }
+}
 
 MetricsRenderFrameObserver::~MetricsRenderFrameObserver() {
   if (page_timing_metrics_sender_) {
@@ -146,14 +131,16 @@ void MetricsRenderFrameObserver::DidChangePerformanceTiming() {
 
 void MetricsRenderFrameObserver::DidObserveUserInteraction(
     base::TimeTicks max_event_start,
+    base::TimeTicks max_event_queued_main_thread,
+    base::TimeTicks max_event_commit_finish,
     base::TimeTicks max_event_end,
-    blink::UserInteractionType interaction_type,
     uint64_t interaction_offset) {
   if (!page_timing_metrics_sender_ || HasNoRenderFrame()) {
     return;
   }
   page_timing_metrics_sender_->DidObserveUserInteraction(
-      max_event_start, max_event_end, interaction_type, interaction_offset);
+      max_event_start, max_event_queued_main_thread, max_event_commit_finish,
+      max_event_end, interaction_offset);
 }
 
 void MetricsRenderFrameObserver::DidChangeCpuTiming(base::TimeDelta time) {
@@ -196,29 +183,18 @@ void MetricsRenderFrameObserver::DidObserveNewFeatureUsage(
 }
 
 void MetricsRenderFrameObserver::DidObserveSoftNavigation(
-    blink::SoftNavigationMetrics soft_nav_metrics) {
+    blink::SoftNavigationMetricsForReporting soft_nav_metrics) {
   if (page_timing_metrics_sender_) {
     const blink::WebPerformanceMetricsForReporting& metrics =
         render_frame()->GetWebFrame()->PerformanceMetricsForReporting();
 
     // Make soft navigation start time relative to navigation start.
-    base::TimeDelta start_time_relative_to_reference =
-        soft_nav_metrics.start_time;
     soft_nav_metrics.start_time = CreateTimeDeltaFromTimestampsInSeconds(
         soft_nav_metrics.start_time.InSecondsF(), metrics.NavigationStart());
 
-    // TODO(crbug.com/1489583): Avoid a crash here, while further investigating
-    // its causes.
-    if (soft_nav_metrics.start_time.is_zero()) {
-      // When soft navigation start time relative to navigation start is 0, the
-      // soft navigation start time relative to reference time is either less or
-      // equal to the navigation start. We also want to know if the start time
-      // relative to reference time itself is 0. That gives 4 scenarios.
-      internal::
-          RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-              start_time_relative_to_reference, metrics.NavigationStart());
-      return;
-    }
+    // (crbug.com/40074158): will non-fatally dump in official builds if the
+    // start_time is 0.
+    DUMP_WILL_BE_CHECK(!soft_nav_metrics.start_time.is_zero());
 
     page_timing_metrics_sender_->DidObserveSoftNavigation(soft_nav_metrics);
   }
@@ -322,25 +298,28 @@ void MetricsRenderFrameObserver::WillDetach(blink::DetachReason detach_reason) {
 
 void MetricsRenderFrameObserver::DidStartNavigation(
     const GURL& url,
-    absl::optional<blink::WebNavigationType> navigation_type) {
+    std::optional<blink::WebNavigationType> navigation_type) {
   // Send current metrics, as we might create a new RenderFrame later due to
   // this navigation (that might end up in a different process entirely, and
   // won't notify us until the current RenderFrameHost in the browser changed).
   // If that happens, it will be too late to send the metrics from WillDetach
   // or the destructor, because the browser ignores metrics update from
   // non-current RenderFrameHosts. See crbug.com/1150242 for more details.
-  // TODO(crbug.com/1150242): Remove this when we have the full fix for the bug.
+  // TODO(crbug.com/40157795): Remove this when we have the full fix for the
+  // bug.
   if (page_timing_metrics_sender_) {
     page_timing_metrics_sender_->SendLatest();
   }
 }
 
-void MetricsRenderFrameObserver::DidSetPageLifecycleState() {
+void MetricsRenderFrameObserver::DidSetPageLifecycleState(
+    bool restoring_from_bfcache) {
   // Send current metrics, as this RenderFrame might be replaced by a new
   // RenderFrame or its process might be killed, and this might be the last
   // point we can send the metrics to the browser. See crbug.com/1150242 for
   // more details.
-  // TODO(crbug.com/1150242): Remove this when we have the full fix for the bug.
+  // TODO(crbug.com/40157795): Remove this when we have the full fix for the
+  // bug.
   if (page_timing_metrics_sender_) {
     page_timing_metrics_sender_->SendLatest();
   }
@@ -383,7 +362,7 @@ void MetricsRenderFrameObserver::DidCreateDocumentElement() {
   // will only send resource usage updates to the browser process. There
   // currently is not infrastructure in the browser process to monitor this case
   // and properly handle timing updates without a committed load.
-  // TODO(https://crbug.com/1097127): Implement proper handling of timing
+  // TODO(crbug.com/40136524): Implement proper handling of timing
   // updates in the browser process and create a normal page timing sender.
 
   // It should not be possible to have a |provisional_frame_resource_data_use_|
@@ -392,11 +371,7 @@ void MetricsRenderFrameObserver::DidCreateDocumentElement() {
   // be possible.
   DCHECK(!provisional_frame_resource_data_use_);
 
-  // Set `document_token_` when the document first becomes available.
-  document_token_ = render_frame()->GetWebFrame()->GetDocument().Token();
-
   Timing timing = GetTiming();
-
   page_timing_metrics_sender_ = std::make_unique<PageTimingMetricsSender>(
       CreatePageTimingSender(true /* limited_sending_mode */), CreateTimer(),
       std::move(timing.relative_timing), timing.monotonic_timing,
@@ -456,13 +431,13 @@ void MetricsRenderFrameObserver::OnFrameDetached() {
   WillDetach(blink::DetachReason::kNavigation);
 }
 
-bool MetricsRenderFrameObserver::SetUpSmoothnessReporting(
-    base::ReadOnlySharedMemoryRegion& shared_memory) {
+bool MetricsRenderFrameObserver::SetUpDroppedFramesReporting(
+    base::ReadOnlySharedMemoryRegion& shared_memory_dropped_frames) {
   if (page_timing_metrics_sender_) {
-    page_timing_metrics_sender_->SetUpSmoothnessReporting(
-        std::move(shared_memory));
+    page_timing_metrics_sender_->SetUpDroppedFramesReporting(
+        std::move(shared_memory_dropped_frames));
   } else {
-    ukm_smoothness_data_ = std::move(shared_memory);
+    ukm_dropped_frames_data_ = std::move(shared_memory_dropped_frames);
   }
   return true;
 }
@@ -507,12 +482,18 @@ void MetricsRenderFrameObserver::SendMetrics() {
       GetSoftNavigationMetrics());
   page_timing_metrics_sender_->Update(std::move(timing.relative_timing),
                                       timing.monotonic_timing);
+
+  mojom::CustomUserTimingMarkPtr user_timing = GetCustomUserTimingMark();
+  if (user_timing) {
+    page_timing_metrics_sender_->SendCustomUserTimingMark(
+        std::move(user_timing));
+  }
 }
 
 void MetricsRenderFrameObserver::OnMetricsSenderCreated() {
-  if (ukm_smoothness_data_.IsValid()) {
-    page_timing_metrics_sender_->SetUpSmoothnessReporting(
-        std::move(ukm_smoothness_data_));
+  if (ukm_dropped_frames_data_.IsValid()) {
+    page_timing_metrics_sender_->SetUpDroppedFramesReporting(
+        std::move(ukm_dropped_frames_data_));
   }
 
   // Send the latest the frame intersection update, as otherwise we may miss
@@ -537,7 +518,7 @@ MetricsRenderFrameObserver::GetSoftNavigationMetrics() const {
   CHECK(!soft_navigation_metrics.is_null());
 
   soft_navigation_metrics->largest_contentful_paint =
-      mojom::LargestContentfulPaintTiming::New();
+      CreateLargestContentfulPaintTiming();
 
   auto soft_navigation_lcp_details_ =
       metrics.SoftNavigationLargestContentfulDetailsForMetrics();
@@ -596,10 +577,12 @@ MetricsRenderFrameObserver::GetSoftNavigationMetrics() const {
     }
 
     // Set largest image discovery time.
-    if (soft_navigation_lcp_details_.image_discovery_time.has_value()) {
+    if (soft_navigation_lcp_details_.resource_load_timings.discovery_time
+            .has_value()) {
       base::TimeDelta image_discovery_time_relative_to_navigation_start =
           CreateTimeDeltaFromTimestampsInSeconds(
-              (soft_navigation_lcp_details_.image_discovery_time.value())
+              (soft_navigation_lcp_details_.resource_load_timings.discovery_time
+                   .value())
                   .InSecondsF(),
               navigation_start);
 
@@ -608,16 +591,18 @@ MetricsRenderFrameObserver::GetSoftNavigationMetrics() const {
               image_discovery_time_relative_to_navigation_start.InSecondsF(),
               soft_navigation_start_relative_to_navigation_start);
 
-      soft_navigation_metrics->largest_contentful_paint
-          ->largest_image_discovery_time =
+      soft_navigation_metrics->largest_contentful_paint->resource_load_timings
+          ->discovery_time =
           image_discovery_time_relative_to_soft_navigation_start;
     }
 
     // Set largest image load start.
-    if (soft_navigation_lcp_details_.image_load_start.has_value()) {
+    if (soft_navigation_lcp_details_.resource_load_timings.load_start
+            .has_value()) {
       base::TimeDelta image_load_start_relative_to_navigation_start =
           CreateTimeDeltaFromTimestampsInSeconds(
-              (soft_navigation_lcp_details_.image_load_start.value())
+              (soft_navigation_lcp_details_.resource_load_timings.load_start
+                   .value())
                   .InSecondsF(),
               navigation_start);
 
@@ -626,16 +611,17 @@ MetricsRenderFrameObserver::GetSoftNavigationMetrics() const {
               image_load_start_relative_to_navigation_start.InSecondsF(),
               soft_navigation_start_relative_to_navigation_start);
 
-      soft_navigation_metrics->largest_contentful_paint
-          ->largest_image_load_start =
-          image_load_start_relative_to_soft_navigation_start;
+      soft_navigation_metrics->largest_contentful_paint->resource_load_timings
+          ->load_start = image_load_start_relative_to_soft_navigation_start;
     }
 
     // Set largest image load end.
-    if (soft_navigation_lcp_details_.image_load_end.has_value()) {
+    if (soft_navigation_lcp_details_.resource_load_timings.load_end
+            .has_value()) {
       base::TimeDelta image_load_end_relative_to_navigation_start =
           CreateTimeDeltaFromTimestampsInSeconds(
-              (soft_navigation_lcp_details_.image_load_end.value())
+              (soft_navigation_lcp_details_.resource_load_timings.load_end
+                   .value())
                   .InSecondsF(),
               navigation_start);
 
@@ -644,9 +630,8 @@ MetricsRenderFrameObserver::GetSoftNavigationMetrics() const {
               image_load_end_relative_to_navigation_start.InSecondsF(),
               soft_navigation_start_relative_to_navigation_start);
 
-      soft_navigation_metrics->largest_contentful_paint
-          ->largest_image_load_end =
-          image_load_end_relative_to_soft_navigation_start;
+      soft_navigation_metrics->largest_contentful_paint->resource_load_timings
+          ->load_end = image_load_end_relative_to_soft_navigation_start;
     }
   }
 
@@ -687,9 +672,6 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
   double start = perf.NavigationStart();
   timing->navigation_start = base::Time::FromSecondsSinceUnixEpoch(start);
   monotonic_timing.navigation_start = perf.NavigationStartAsMonotonicTime();
-  // Document token is nullopt on the first call of `GetTiming` when the
-  // document is not ready yet.
-  monotonic_timing.document_token = document_token_;
   if (perf.InputForNavigationStart() > 0.0) {
     timing->input_to_navigation_start = CreateTimeDeltaFromTimestampsInSeconds(
         start, perf.InputForNavigationStart());
@@ -715,6 +697,22 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         CreateTimeDeltaFromTimestampsInSeconds(
             (*perf.FirstScrollTimestamp()).InSecondsF(), start);
   }
+  if (perf.DomainLookupStart() > 0.0) {
+    timing->domain_lookup_timing->domain_lookup_start =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.DomainLookupStart(), start);
+  }
+  if (perf.DomainLookupEnd() > 0.0) {
+    timing->domain_lookup_timing->domain_lookup_end =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.DomainLookupEnd(), start);
+  }
+  if (perf.ConnectStart() > 0.0) {
+    timing->connect_start =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.ConnectStart(), start);
+  }
+  if (perf.ConnectEnd() > 0.0) {
+    timing->connect_end =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.ConnectEnd(), start);
+  }
   if (perf.ResponseStart() > 0.0) {
     timing->response_start =
         CreateTimeDeltaFromTimestampsInSeconds(perf.ResponseStart(), start);
@@ -738,7 +736,7 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
     for (const auto& restore_timing : restore_timings) {
       double navigation_start = restore_timing.navigation_start;
       double first_paint = restore_timing.first_paint;
-      absl::optional<base::TimeDelta> first_input_delay =
+      std::optional<base::TimeDelta> first_input_delay =
           restore_timing.first_input_delay;
 
       auto back_forward_cache_timing = mojom::BackForwardCacheTiming::New();
@@ -823,38 +821,35 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
     }
 
     // Set largest image load timings.
-    if (largest_contentful_paint_details.image_discovery_time.has_value()) {
-      timing->paint_timing->largest_contentful_paint
-          ->largest_image_discovery_time =
-          CreateTimeDeltaFromTimestampsInSeconds(
-              (largest_contentful_paint_details.image_discovery_time.value())
-                  .InSecondsF(),
-              start);
+    if (largest_contentful_paint_details.resource_load_timings.discovery_time
+            .has_value()) {
+      timing->paint_timing->largest_contentful_paint->resource_load_timings
+          ->discovery_time = CreateTimeDeltaFromTimestampsInSeconds(
+          (largest_contentful_paint_details.resource_load_timings.discovery_time
+               .value())
+              .InSecondsF(),
+          start);
     }
 
-    if (largest_contentful_paint_details.image_load_start.has_value()) {
-      timing->paint_timing->largest_contentful_paint->largest_image_load_start =
-          CreateTimeDeltaFromTimestampsInSeconds(
-              (largest_contentful_paint_details.image_load_start.value())
-                  .InSecondsF(),
-              start);
+    if (largest_contentful_paint_details.resource_load_timings.load_start
+            .has_value()) {
+      timing->paint_timing->largest_contentful_paint->resource_load_timings
+          ->load_start = CreateTimeDeltaFromTimestampsInSeconds(
+          (largest_contentful_paint_details.resource_load_timings.load_start
+               .value())
+              .InSecondsF(),
+          start);
     }
 
-    if (largest_contentful_paint_details.image_load_end.has_value()) {
-      timing->paint_timing->largest_contentful_paint->largest_image_load_end =
-          CreateTimeDeltaFromTimestampsInSeconds(
-              (largest_contentful_paint_details.image_load_end.value())
-                  .InSecondsF(),
-              start);
+    if (largest_contentful_paint_details.resource_load_timings.load_end
+            .has_value()) {
+      timing->paint_timing->largest_contentful_paint->resource_load_timings
+          ->load_end = CreateTimeDeltaFromTimestampsInSeconds(
+          (largest_contentful_paint_details.resource_load_timings.load_end
+               .value())
+              .InSecondsF(),
+          start);
     }
-
-    timing->paint_timing->largest_contentful_paint
-        ->is_loaded_from_memory_cache =
-        largest_contentful_paint_details.is_loaded_from_memory_cache;
-
-    timing->paint_timing->largest_contentful_paint
-        ->is_preloaded_with_early_hints =
-        largest_contentful_paint_details.is_preloaded_with_early_hints;
   }
   if (largest_contentful_paint_details.text_paint_size > 0) {
     // LargestTextPaint and LargestTextPaintSize should be available at the
@@ -910,10 +905,6 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         base::Seconds(
             perf.ParseBlockedOnScriptExecutionFromDocumentWriteDuration());
   }
-  if (perf.LastPortalActivatedPaint().has_value()) {
-    timing->paint_timing->portal_activated_paint =
-        *perf.LastPortalActivatedPaint();
-  }
   if (perf.PrerenderActivationStart().has_value()) {
     timing->activation_start = perf.PrerenderActivationStart();
   }
@@ -931,6 +922,23 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
   }
 
   return Timing(std::move(timing), monotonic_timing);
+}
+
+mojom::CustomUserTimingMarkPtr
+MetricsRenderFrameObserver::GetCustomUserTimingMark() const {
+  const blink::WebPerformanceMetricsForReporting& perf =
+      render_frame()->GetWebFrame()->PerformanceMetricsForReporting();
+  auto timing = perf.CustomUserTimingMark();
+  if (!timing.has_value()) {
+    return nullptr;
+  }
+  const auto [mark_name, start_time] = timing.value();
+  mojom::CustomUserTimingMarkPtr custom_user_timing_mark =
+      mojom::CustomUserTimingMark::New();
+  custom_user_timing_mark->mark_name = mark_name;
+  custom_user_timing_mark->start_time = start_time;
+
+  return custom_user_timing_mark;
 }
 
 std::unique_ptr<base::OneShotTimer> MetricsRenderFrameObserver::CreateTimer() {

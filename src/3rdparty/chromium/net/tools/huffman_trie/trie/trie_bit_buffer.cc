@@ -83,7 +83,7 @@ void TrieBitBuffer::WriteChar(uint8_t byte,
                               HuffmanBuilder* huffman_builder) {
   HuffmanRepresentationTable::const_iterator item;
   item = table.find(byte);
-  DCHECK(item != table.end());
+  CHECK(item != table.end());
   if (huffman_builder) {
     huffman_builder->RecordUsage(byte);
   }

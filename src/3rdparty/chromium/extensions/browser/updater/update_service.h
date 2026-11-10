@@ -19,6 +19,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/update_client/update_client.h"
 #include "extensions/browser/updater/extension_update_data.h"
+#include "extensions/common/extension_id.h"
 
 namespace base {
 class Version;
@@ -30,6 +31,7 @@ class BrowserContext;
 
 namespace update_client {
 enum class Error;
+struct CrxUpdateItem;
 class UpdateClient;
 }
 
@@ -100,13 +102,13 @@ class UpdateService : public KeyedService {
       update_client::UpdateClient::Observer* observer);
 
   void OnCrxStateChange(UpdateFoundCallback update_found_callback,
-                        update_client::CrxUpdateItem item);
+                        const update_client::CrxUpdateItem& item);
 
-  void HandleComponentUpdateErrorEvent(const std::string& extension_id) const;
+  void HandleComponentUpdateErrorEvent(const ExtensionId& extension_id) const;
 
   // Get the extension Omaha attributes sent from update config.
   base::Value::Dict GetExtensionOmahaAttributes(
-      update_client::CrxUpdateItem& update_item);
+      const update_client::CrxUpdateItem& update_item);
 
  private:
   raw_ptr<content::BrowserContext> browser_context_;

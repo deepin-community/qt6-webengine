@@ -19,12 +19,24 @@ g.test('module_scope_multiple')
 
 g.test('after_enable')
   .desc(`Test that a semicolon must be placed after an enable directive.`)
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
   .fn(t => {
     t.expectCompileResult(/* pass */ true, `enable f16;`);
     t.expectCompileResult(/* pass */ false, `enable f16`);
+  });
+
+g.test('after_requires')
+  .desc(`Test that a semicolon must be placed after a requires directive.`)
+  .fn(t => {
+    t.skipIfLanguageFeatureNotSupported('readonly_and_readwrite_storage_textures');
+    t.expectCompileResult(/* pass */ true, `requires readonly_and_readwrite_storage_textures;`);
+    t.expectCompileResult(/* pass */ false, `requires readonly_and_readwrite_storage_textures`);
+  });
+
+g.test('after_diagnostic')
+  .desc(`Test that a semicolon must be placed after a requires directive.`)
+  .fn(t => {
+    t.expectCompileResult(/* pass */ true, `diagnostic(info, derivative_uniformity);`);
+    t.expectCompileResult(/* pass */ false, `diagnostic(info, derivative_uniformity)`);
   });
 
 g.test('after_struct_decl')

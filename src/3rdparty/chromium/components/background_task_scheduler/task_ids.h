@@ -43,6 +43,10 @@ enum class TaskIds {
   // team_email: platform-capabilities@chromium.org
   // owner: peter@chromium.org
   NOTIFICATION_SERVICE_JOB_ID = 21,
+  // component: UI>Notifications
+  // team_email: platform-capabilities@chromium.org
+  // owner: engedy@chromium.org
+  NOTIFICATION_SERVICE_PRE_UNSUBSCRIBE_JOB_ID = 221,
   // component: Mobile>WebView
   // team_email: android-webview-dev@chromium.org
   // owner: boliu@chromium.org
@@ -135,6 +139,14 @@ enum class TaskIds {
   // team_email: privacy-sandbox-dev@chromium.org
   // owner: csharrison@chromium.org
   ATTRIBUTION_PROVIDER_FLUSH_JOB_ID = 111,
+  // component: UI>Settings>Privacy
+  // team_email: chrome-privacy-controls@google.com
+  // owner: zalmashni@google.com, rubindl@chromium.org
+  SAFETY_HUB_JOB_ID = 112,
+  // component: UI>Browser>Mobile>Start
+  // team_email: clank-start@google.com
+  // owner:hanxi@chromium.org
+  AUXILIARY_SEARCH_DONATE_JOB_ID = 113,
 };
 
 }  // namespace background_task

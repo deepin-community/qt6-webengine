@@ -20,15 +20,14 @@
 namespace settings {
 
 StartupPagesHandler::StartupPagesHandler(content::WebUI* webui)
-    : startup_custom_pages_table_model_(Profile::FromWebUI(webui)) {
-}
+    : startup_custom_pages_table_model_(Profile::FromWebUI(webui)) {}
 
-StartupPagesHandler::~StartupPagesHandler() {
-}
+StartupPagesHandler::~StartupPagesHandler() = default;
 
 void StartupPagesHandler::RegisterMessages() {
-  if (Profile::FromWebUI(web_ui())->IsOffTheRecord())
+  if (Profile::FromWebUI(web_ui())->IsOffTheRecord()) {
     return;
+  }
 
   web_ui()->RegisterMessageCallback(
       "addStartupPage",
@@ -60,8 +59,9 @@ void StartupPagesHandler::OnJavascriptAllowed() {
   SessionStartupPref pref = SessionStartupPref::GetStartupPref(prefService);
   startup_custom_pages_table_model_.SetURLs(pref.urls);
 
-  if (pref.urls.empty())
+  if (pref.urls.empty()) {
     pref.type = SessionStartupPref::DEFAULT;
+  }
 
   pref_change_registrar_.Init(prefService);
   pref_change_registrar_.Add(
@@ -114,10 +114,9 @@ void StartupPagesHandler::HandleAddStartupPage(const base::Value::List& args) {
 
   if (!args[1].is_string()) {
     NOTREACHED();
-    return;
   }
 
-  std::string url_string = args[1].GetString();
+  const std::string& url_string = args[1].GetString();
 
   GURL url;
   if (!settings_utils::FixupAndValidateStartupPage(url_string, &url)) {
@@ -140,10 +139,9 @@ void StartupPagesHandler::HandleEditStartupPage(const base::Value::List& args) {
                        startup_custom_pages_table_model_.RowCount()) {
     RejectJavascriptCallback(callback_id, base::Value());
     NOTREACHED();
-    return;
   }
 
-  std::string url_string = args[2].GetString();
+  const std::string& url_string = args[2].GetString();
 
   GURL fixed_url;
   if (settings_utils::FixupAndValidateStartupPage(url_string, &fixed_url)) {
@@ -167,14 +165,12 @@ void StartupPagesHandler::HandleRemoveStartupPage(
   CHECK_EQ(args.size(), 1u);
   if (!args[0].is_int()) {
     NOTREACHED();
-    return;
   }
   int selected_index = args[0].GetInt();
 
   if (selected_index < 0 || static_cast<size_t>(selected_index) >=
                                 startup_custom_pages_table_model_.RowCount()) {
     NOTREACHED();
-    return;
   }
 
   startup_custom_pages_table_model_.Remove(selected_index);
@@ -194,8 +190,9 @@ void StartupPagesHandler::SaveStartupPagesPref() {
   SessionStartupPref pref = SessionStartupPref::GetStartupPref(prefs);
   pref.urls = startup_custom_pages_table_model_.GetURLs();
 
-  if (pref.urls.empty())
+  if (pref.urls.empty()) {
     pref.type = SessionStartupPref::DEFAULT;
+  }
 
   SessionStartupPref::SetStartupPref(prefs, pref);
 }

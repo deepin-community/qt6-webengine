@@ -42,6 +42,10 @@ std::string_view PrivateNetworkAccessCheckResultToStringPiece(Result result) {
       return "blocked-by-inconsistent-ip-address-space";
     case Result::kAllowedPotentiallyTrustworthySameOrigin:
       return "allowed-potentially-trustworthy-same-origin";
+    case Result::kLNAPermissionRequired:
+      return "lna-permission-required";
+    case Result::kLNAAllowedByPolicyWarn:
+      return "lna-allowed-by-policy-warn";
   }
 }
 
@@ -50,7 +54,7 @@ std::ostream& operator<<(std::ostream& out,
   return out << PrivateNetworkAccessCheckResultToStringPiece(result);
 }
 
-absl::optional<CorsError> PrivateNetworkAccessCheckResultToCorsError(
+std::optional<CorsError> PrivateNetworkAccessCheckResultToCorsError(
     Result result) {
   switch (result) {
     case Result::kAllowedMissingClientSecurityState:
@@ -60,7 +64,8 @@ absl::optional<CorsError> PrivateNetworkAccessCheckResultToCorsError(
     case Result::kAllowedByTargetIpAddressSpace:
     case Result::kAllowedByPolicyPreflightWarn:
     case Result::kAllowedPotentiallyTrustworthySameOrigin:
-      return absl::nullopt;
+    case Result::kLNAAllowedByPolicyWarn:
+      return std::nullopt;
     case Result::kBlockedByLoadOption:
       // TODO(https:/crbug.com/1254689): Return better error than this, which
       // does not fit.
@@ -72,6 +77,8 @@ absl::optional<CorsError> PrivateNetworkAccessCheckResultToCorsError(
     case Result::kBlockedByPolicyPreflightWarn:
     case Result::kBlockedByPolicyPreflightBlock:
       return CorsError::kUnexpectedPrivateNetworkAccess;
+    case Result::kLNAPermissionRequired:
+      return CorsError::kLocalNetworkAccessPermissionDenied;
   }
 }
 

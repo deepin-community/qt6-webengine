@@ -11,9 +11,9 @@
 #include <memory>
 #include <vector>
 
-#include "cast/streaming/bandwidth_estimator.h"
-#include "cast/streaming/constants.h"
-#include "cast/streaming/environment.h"
+#include "cast/streaming/impl/bandwidth_estimator.h"
+#include "cast/streaming/public/constants.h"
+#include "cast/streaming/public/environment.h"
 #include "cast/streaming/ssrc.h"
 #include "platform/api/time.h"
 #include "platform/base/span.h"
@@ -44,14 +44,14 @@ class SenderPacketRouter : public BandwidthEstimator,
   class Sender {
    public:
     // Called to provide the Sender with what looks like a RTCP packet meant for
-    // it specifically (among other Senders) to process. |arrival_time|
+    // it specifically (among other Senders) to process. `arrival_time`
     // indicates when the packet arrived (i.e., when it was received from the
     // platform).
     virtual void OnReceivedRtcpPacket(Clock::time_point arrival_time,
                                       ByteView packet) = 0;
 
-    // Populates the given |buffer| with a RTCP/RTP packet that will be sent
-    // immediately. Returns the portion of |buffer| contaning the packet, or an
+    // Populates the given `buffer` with a RTCP/RTP packet that will be sent
+    // immediately. Returns the portion of `buffer` contaning the packet, or an
     // empty Span if nothing is ready to send.
     virtual ByteBuffer GetRtcpPacketForImmediateSend(
         Clock::time_point send_time,
@@ -77,13 +77,13 @@ class SenderPacketRouter : public BandwidthEstimator,
   };
 
   // Constructs an instance with default burst parameters appropriate for the
-  // given |max_burst_bitrate|.
-  explicit SenderPacketRouter(Environment* environment,
+  // given `max_burst_bitrate`.
+  explicit SenderPacketRouter(Environment& environment,
                               int max_burst_bitrate = kDefaultMaxBurstBitrate);
 
   // Constructs an instance with specific burst parameters. The maximum bitrate
   // will be computed based on these (and Environment::GetMaxPacketSize()).
-  SenderPacketRouter(Environment* environment,
+  SenderPacketRouter(Environment& environment,
                      int max_packets_per_burst,
                      std::chrono::milliseconds burst_interval);
 
@@ -145,7 +145,7 @@ class SenderPacketRouter : public BandwidthEstimator,
                         std::vector<uint8_t> packet) final;
 
   // Helper to return an iterator pointing to the entry corresponding to the
-  // given |receiver_ssrc|, or "end" if not found.
+  // given `receiver_ssrc`, or "end" if not found.
   SenderEntries::iterator FindEntry(Ssrc receiver_ssrc);
 
   // Examine the next send time for all Senders, and decide whether to schedule
@@ -160,7 +160,7 @@ class SenderPacketRouter : public BandwidthEstimator,
   int SendJustTheRtcpPackets(Clock::time_point send_time);
 
   // Send zero or more RTP packets from each Sender, up to a maximum of
-  // |num_packets_to_send|, and return the number of packets sent.
+  // `num_packets_to_send`, and return the number of packets sent.
   int SendJustTheRtpPackets(Clock::time_point send_time,
                             int num_packets_to_send);
 
@@ -176,7 +176,7 @@ class SenderPacketRouter : public BandwidthEstimator,
                                     int max_packets_per_burst,
                                     std::chrono::milliseconds burst_interval);
 
-  Environment* const environment_;
+  Environment& environment_;
   const int packet_buffer_size_;
   const std::unique_ptr<uint8_t[]> packet_buffer_;
   const int max_packets_per_burst_;

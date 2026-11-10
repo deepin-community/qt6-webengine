@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/ime/ash/input_method_util.h"
 
 #include <stddef.h>
@@ -21,7 +26,8 @@
 #include "ui/base/ime/ash/component_extension_ime_manager.h"
 #include "ui/base/ime/ash/extension_ime_util.h"
 // For SetHardwareKeyboardLayoutForTesting.
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "ui/base/ime/ash/fake_input_method_delegate.h"
 #include "ui/base/ime/ash/input_method_delegate.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -67,13 +73,13 @@ const struct {
   const char* layout;
   const char* engine_id;
 } kDefaultInputMethodRecommendation[] = {
-  { "ja", "jp", "nacl_mozc_jp" },
-  { "ja", "", "nacl_mozc_us" },
-  { "zh-CN", "", "zh-t-i0-pinyin" },
-  { "zh-TW", "", "zh-hant-t-i0-und" },
-  { "th", "", "vkd_th" },
-  { "vi", "", "vkd_vi_tcvn" },
-  { "ru", "", "xkb:ru::rus" },
+    {"ja", "jp", "nacl_mozc_jp"},
+    {"ja", "", "nacl_mozc_us"},
+    {"zh-CN", "", "zh-t-i0-pinyin"},
+    {"zh-TW", "", "zh-hant-t-i0-und"},
+    {"th", "", "vkd_th"},
+    {"vi", "", "vkd_vi_tcvn"},
+    {"ru", "", "xkb:ru::rus"},
 };
 
 // The engine ID map for migration. This migration is for input method IDs from
@@ -389,6 +395,98 @@ const struct InputMethodNameMap {
     {"__MSG_TRANSLITERATION_UR__", IDS_IME_NAME_TRANSLITERATION_UR},
 };
 
+// List of input methods that should be enabled in OOBE.
+// The only fuzzy IMs included in this list are those that have required data
+// pre-bundled in the system's image. Entries in the list should be updated
+// if pre-bundled data for any fuzzy IM is removed from the image.
+const char* const kOobeAllowlistedExtensionLocalIds[] = {
+    // Keyboard layout IMs.
+    "xkb:us::eng",              // English (US)
+    "xkb:us:altgr-intl:eng",    // English (US) with Extended keyboard
+    "xkb:us:colemak:eng",       // English (US) with Colemak keyboard
+    "xkb:us:dvorak:eng",        // English (US) with Dvorak keyboard
+    "xkb:us:dvp:eng",           // English (US) with Programmer Dvorak keyboard
+    "xkb:us:intl_pc:eng",       // English (US) with International PC keyboard
+    "xkb:us:intl:eng",          // English (US) with International keyboard
+    "xkb:us:workman-intl:eng",  // English (US) with Workman International
+                                // keyboard
+    "xkb:us:workman:eng",       // English (US) with Workman keyboard
+    "xkb:dk::dan",              // Danish
+    "xkb:be::nld",              // Dutch (Belgium)
+    "xkb:us:intl_pc:nld",       // Dutch (Netherlands) with US International PC
+                                // keyboard
+    "xkb:us:intl:nld",          // Dutch (Netherlands)
+    "xkb:ca:eng:eng",           // English (Canada)
+    "xkb:gb:dvorak:eng",        // English (UK) with Dvorak keyboard
+    "xkb:gb:extd:eng",          // English (UK)
+    "xkb:fi::fin",              // Finnish
+    "xkb:be::fra",              // French (Belgium)
+    "xkb:ca::fra",              // French (Canada)
+    "xkb:ca:multix:fra",        // French (Canada) with Multilingual keyboard
+    "xkb:fr::fra",              // French (France)
+    "xkb:fr:bepo:fra",          // French (France) with Bépo keyboard
+    "xkb:ch:fr:fra",            // French (Switzerland)
+    "xkb:be::ger",              // German (Belgium)
+    "xkb:de::ger",              // German (Germany)
+    "xkb:de:neo:ger",           // German (Germany) with Neo 2 keyboard
+    "xkb:ch::ger",              // German (Switzerland)
+    "xkb:it::ita",              // Italian
+    "xkb:no::nob",              // Norwegian
+    "xkb:pl::pol",              // Polish
+    "xkb:br::por",              // Portuguese (Brazil)
+    "xkb:pt::por",              // Portuguese (Portugal)
+    "xkb:us:intl_pc:por",       // Portuguese with US International PC keyboard
+    "xkb:us:intl:por",          // Portuguese with US International keyboard
+    "xkb:latam::spa",           // Spanish (Latin America)
+    "xkb:es::spa",              // Spanish (Spain)
+    "xkb:se::swe",              // Swedish
+    "xkb:tr::tur",              // Turkish
+    "xkb:tr:f:tur",             // Turkish with F-keyboard
+    "xkb:am:phonetic:arm",      // Armenian
+    "xkb:bg::bul",              // Bulgarian
+    "xkb:bg:phonetic:bul",      // Bulgarian with Phonetic keyboard
+    "xkb:by::bel",              // Belarusian
+    "xkb:es:cat:cat",           // Catalan
+    "xkb:cz:qwerty:cze",        // Czech with QWERTY keyboard
+    "xkb:cz::cze",              // Czech
+    "xkb:in::eng",              // English (India)
+    "xkb:pk::eng",              // English (Pakistan)
+    "xkb:za:gb:eng",            // English (South Africa)
+    "xkb:ee::est",              // Estonian
+    "xkb:us::fil",              // Filipino
+    "xkb:fo::fao",              // Faroese
+    "xkb:ge::geo",              // Georgian
+    "xkb:gr::gre",              // Greek
+    "xkb:hr::scr",              // Croatian
+    "xkb:hu::hun",              // Hungarian
+    "xkb:hu:qwerty:hun",        // Hungarian with QWERTY keyboard
+    "xkb:us::ind",              // Indonesian
+    "xkb:ie::ga",               // Irish
+    "xkb:il::heb",              // Hebrew
+    "xkb:is::ice",              // Icelandic
+    "xkb:jp::jpn",              // Alphanumeric with Japanese keyboard
+    "xkb:kz::kaz",              // Kazakh
+    "xkb:lt::lit",              // Lithuanian
+    "xkb:lv:apostrophe:lav",    // Latvian
+    "xkb:mk::mkd",              // Macedonian
+    "xkb:mn::mon",              // Mongolian
+    "xkb:us::msa",              // Malay
+    "xkb:mt::mlt",              // Maltese
+    "xkb:ro::rum",              // Romanian
+    "xkb:ro:std:rum",           // Romanian with Standard keyboard
+    "xkb:ru::rus",              // Russian
+    "xkb:ru:phonetic:rus",      // Russian with Phonetic keyboard
+    "xkb:rs::srp",              // Serbian
+    "xkb:si::slv",              // Slovenian
+    "xkb:sk::slo",              // Slovak
+    "xkb:ua::ukr",              // Ukrainian
+    // Deterministic IMEs.
+    "vkd_ar",  // Arabic
+    // Fuzzy IMs.
+    "nacl_mozc_us",  // Japanese
+    "nacl_mozc_jp",  // Japanese with US keyboard
+};
+
 // Inserts {key, value} into the multimap if it does not exist.
 void MultimapDeduplicatedInsert(LanguageCodeToIdsMap& multimap,
                                 const std::string& key,
@@ -428,6 +526,13 @@ InputMethodUtil::InputMethodUtil(InputMethodDelegate* delegate)
   english_to_resource_id_ = EnglishToIDMap(std::move(map_storage));
   DCHECK(english_to_resource_id_.size() == kEnglishToResourceIdArraySize)
       << "Duplicate string is found";
+
+  for (const char* extension_local_id : kOobeAllowlistedExtensionLocalIds) {
+    std::string fully_qualified_id =
+        extension_ime_util::GetInputMethodIDByEngineID(
+            std::string(extension_local_id));
+    oobe_allowlisted_ids_.insert(fully_qualified_id);
+  }
 }
 
 InputMethodUtil::~InputMethodUtil() = default;
@@ -436,15 +541,16 @@ std::string InputMethodUtil::GetLocalizedDisplayName(
     const InputMethodDescriptor& descriptor) {
   // Localizes the input method name.
   const std::string& disp = descriptor.name();
-  if (base::StartsWith(disp, "__MSG_", base::CompareCase::SENSITIVE)) {
+  if (disp.starts_with("__MSG_")) {
     const InputMethodNameMap* map = kInputMethodNameMap;
     size_t map_size = std::size(kInputMethodNameMap);
     std::string name = base::ToUpperASCII(disp);
     const InputMethodNameMap map_key = {name.c_str(), 0};
     const InputMethodNameMap* p =
         std::lower_bound(map, map + map_size, map_key);
-    if (p != map + map_size && name == p->message_name)
+    if (p != map + map_size && name == p->message_name) {
       return l10n_util::GetStringUTF8(p->resource_id);
+    }
   }
   return disp;
 }
@@ -460,8 +566,8 @@ bool InputMethodUtil::IsValidInputMethodId(
 
 // static
 bool InputMethodUtil::IsKeyboardLayout(const std::string& input_method_id) {
-  return base::StartsWith(input_method_id, "xkb:",
-                          base::CompareCase::INSENSITIVE_ASCII) ||
+  return base::StartsWith(input_method_id,
+                          "xkb:", base::CompareCase::INSENSITIVE_ASCII) ||
          extension_ime_util::IsKeyboardLayoutExtension(input_method_id);
 }
 
@@ -532,8 +638,9 @@ std::u16string InputMethodUtil::GetInputMethodLongName(
 const InputMethodDescriptor* InputMethodUtil::GetInputMethodDescriptorFromId(
     const std::string& input_method_id) const {
   auto iter = id_to_descriptor_.find(input_method_id);
-  if (iter == id_to_descriptor_.end())
+  if (iter == id_to_descriptor_.end()) {
     return nullptr;
+  }
   return &(iter->second);
 }
 
@@ -541,9 +648,9 @@ bool InputMethodUtil::GetInputMethodIdsFromLanguageCode(
     std::string_view normalized_language_code,
     InputMethodType type,
     std::vector<std::string>* out_input_method_ids) const {
-  return GetInputMethodIdsFromLanguageCodeInternal(
-      language_code_to_ids_,
-      normalized_language_code, type, out_input_method_ids);
+  return GetInputMethodIdsFromLanguageCodeInternal(language_code_to_ids_,
+                                                   normalized_language_code,
+                                                   type, out_input_method_ids);
 }
 
 bool InputMethodUtil::GetInputMethodIdsFromLanguageCodeInternal(
@@ -556,8 +663,8 @@ bool InputMethodUtil::GetInputMethodIdsFromLanguageCodeInternal(
 
   bool result = false;
   std::pair<LanguageCodeToIdsMap::const_iterator,
-      LanguageCodeToIdsMap::const_iterator> range =
-      language_code_to_ids.equal_range(normalized_language_code);
+            LanguageCodeToIdsMap::const_iterator>
+      range = language_code_to_ids.equal_range(normalized_language_code);
   for (auto iter = range.first; iter != range.second; ++iter) {
     const std::string& input_method_id = iter->second;
     if ((type == kAllInputMethods) || IsKeyboardLayout(input_method_id)) {
@@ -607,8 +714,8 @@ void InputMethodUtil::GetFirstLoginInputMethodIds(
   }
 
   std::vector<std::string> input_method_ids;
-  GetInputMethodIdsFromLanguageCode(
-      language_code, kAllInputMethods, &input_method_ids);
+  GetInputMethodIdsFromLanguageCode(language_code, kAllInputMethods,
+                                    &input_method_ids);
   // Uses the first input method as the most popular one.
   if (input_method_ids.size() > 0 &&
       preferred_input_method.id() != input_method_ids[0]) {
@@ -643,13 +750,14 @@ std::string InputMethodUtil::GetLanguageDefaultInputMethodId(
   std::vector<std::string> candidates;
   GetInputMethodIdsFromLanguageCode(
       language_code, input_method::kKeyboardLayoutsOnly, &candidates);
-  if (candidates.size())
+  if (candidates.size()) {
     return candidates.front();
+  }
 
   return std::string();
 }
 
-std::string InputMethodUtil::MigrateInputMethod(
+std::string InputMethodUtil::GetMigratedInputMethod(
     const std::string& input_method_id) {
   std::string engine_id = input_method_id;
   // Migrates some Engine IDs from VPD.
@@ -665,8 +773,9 @@ std::string InputMethodUtil::MigrateInputMethod(
   if (extension_ime_util::IsComponentExtensionIME(id)) {
     std::string id_new = extension_ime_util::GetInputMethodIDByEngineID(
         extension_ime_util::GetComponentIDByInputMethodID(id));
-    if (extension_ime_util::IsComponentExtensionIME(id_new))
+    if (extension_ime_util::IsComponentExtensionIME(id_new)) {
       id = id_new;
+    }
   }
   return id;
 }
@@ -676,7 +785,7 @@ bool InputMethodUtil::GetMigratedInputMethodIDs(
   bool rewritten = false;
   std::vector<std::string>& ids = *input_method_ids;
   for (std::string& i : ids) {
-    std::string id = MigrateInputMethod(i);
+    std::string id = GetMigratedInputMethod(i);
     if (id != i) {
       i = id;
       rewritten = true;
@@ -687,8 +796,9 @@ bool InputMethodUtil::GetMigratedInputMethodIDs(
     std::vector<std::string> new_ids;
     std::unordered_set<std::string> ids_set;
     for (const auto& id : ids) {
-      if (ids_set.find(id) == ids_set.end())
+      if (ids_set.find(id) == ids_set.end()) {
         new_ids.push_back(id);
+      }
       ids_set.insert(id);
     }
     ids.swap(new_ids);
@@ -710,10 +820,12 @@ void InputMethodUtil::UpdateHardwareLayoutCache() {
 
   bool has_xkb = false;
   for (const auto& hardware_layout : hardware_layouts_) {
-    if (IsLoginKeyboard(hardware_layout))
+    if (IsLoginKeyboard(hardware_layout)) {
       hardware_login_layouts_.push_back(hardware_layout);
-    if (extension_ime_util::IsKeyboardLayoutExtension(hardware_layout))
+    }
+    if (extension_ime_util::IsKeyboardLayoutExtension(hardware_layout)) {
       has_xkb = true;
+    }
   }
 
   if (hardware_login_layouts_.empty()) {
@@ -735,8 +847,9 @@ void InputMethodUtil::UpdateHardwareLayoutCache() {
     // VPD should be "ime:ko:hangul". See chrome-os-partner:48623.
     // 3) Russian keyboard cannot be used to input Latin characters, but it is
     // XKB input method. So the VPD can be "xkb:ru::rus".
-    if (hardware_layouts_.empty() || has_xkb)
+    if (hardware_layouts_.empty() || has_xkb) {
       hardware_layouts_.insert(hardware_layouts_.begin(), fallback_id);
+    }
   }
 }
 
@@ -760,11 +873,17 @@ InputMethodUtil::GetHardwareLoginInputMethodIds() {
   return hardware_login_layouts_;
 }
 
-bool InputMethodUtil::IsLoginKeyboard(const std::string& input_method_id)
-    const {
+bool InputMethodUtil::IsLoginKeyboard(
+    const std::string& input_method_id) const {
   const InputMethodDescriptor* ime =
       GetInputMethodDescriptorFromId(input_method_id);
   return ime ? ime->is_login_keyboard() : false;
+}
+
+bool InputMethodUtil::IsOobeAllowlisted(
+    const std::string& input_method_id) const {
+  return oobe_allowlisted_ids_.find(input_method_id) !=
+         oobe_allowlisted_ids_.cend();
 }
 
 void InputMethodUtil::AppendInputMethods(const InputMethodDescriptors& imes) {
@@ -779,7 +898,7 @@ void InputMethodUtil::AppendInputMethods(const InputMethodDescriptors& imes) {
                                  input_method.id());
     }
 
-    const absl::optional<std::string>& handwriting_language =
+    const std::optional<std::string>& handwriting_language =
         input_method.handwriting_language();
     if (handwriting_language.has_value()) {
       MultimapDeduplicatedInsert(handwriting_language_to_ids_,
@@ -810,10 +929,10 @@ InputMethodDescriptor InputMethodUtil::GetFallbackInputMethodDescriptor() {
       extension_ime_util::GetInputMethodIDByEngineID("xkb:us::eng"), "", "US",
       "us",  // layout
       languages,
-      true,                                   // login keyboard.
-      GURL(),                                 // options page, not available.
-      GURL(),                                 // input view page, not available.
-      /*handwriting_language=*/absl::nullopt  // not available.
+      true,                                  // login keyboard.
+      GURL(),                                // options page, not available.
+      GURL(),                                // input view page, not available.
+      /*handwriting_language=*/std::nullopt  // not available.
   );
 }
 

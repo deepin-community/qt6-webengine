@@ -5,9 +5,10 @@
 #ifndef UI_OZONE_PLATFORM_HEADLESS_HEADLESS_WINDOW_H_
 #define UI_OZONE_PLATFORM_HEADLESS_HEADLESS_WINDOW_H_
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image_skia.h"
@@ -29,16 +30,6 @@ class HeadlessWindow : public PlatformWindow {
   HeadlessWindow& operator=(const HeadlessWindow&) = delete;
 
   ~HeadlessWindow() override;
-
- protected:
-  PlatformWindowDelegate* delegate() { return delegate_; }
-
- private:
-  enum class ActivationState {
-    kUnknown,
-    kActive,
-    kInactive,
-  };
 
   // PlatformWindow:
   void Show(bool inactive) override;
@@ -77,6 +68,18 @@ class HeadlessWindow : public PlatformWindow {
   void UpdateBounds(const gfx::Rect& bounds);
   void UpdateWindowState(PlatformWindowState new_window_state);
 
+  gfx::AcceleratedWidget widget() const { return widget_; }
+
+ protected:
+  PlatformWindowDelegate* delegate() { return delegate_; }
+
+ private:
+  enum class ActivationState {
+    kUnknown,
+    kActive,
+    kInactive,
+  };
+
   raw_ptr<PlatformWindowDelegate> delegate_ = nullptr;
   raw_ptr<HeadlessWindowManager> manager_;
   gfx::Rect bounds_;
@@ -84,7 +87,7 @@ class HeadlessWindow : public PlatformWindow {
   gfx::AcceleratedWidget widget_;
 
   bool visible_ = false;
-  absl::optional<gfx::Rect> restored_bounds_;
+  std::optional<gfx::Rect> restored_bounds_;
   PlatformWindowState window_state_ = PlatformWindowState::kUnknown;
   ActivationState activation_state_ = ActivationState::kUnknown;
 };

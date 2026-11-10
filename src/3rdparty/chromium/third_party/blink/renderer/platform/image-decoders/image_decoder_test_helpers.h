@@ -5,8 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_IMAGE_DECODER_TEST_HELPERS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_IMAGE_DECODER_TEST_HELPERS_H_
 
+#include <cstdint>
 #include <memory>
 
+#include "base/containers/span.h"
 #include "base/metrics/histogram_base.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
@@ -19,20 +21,26 @@ namespace blink {
 class ImageDecoder;
 
 const char kDecodersTestingDir[] = "renderer/platform/image-decoders/testing";
-const unsigned kDefaultTestSize = 4 * SharedBuffer::kSegmentSize;
+const unsigned kDefaultSegmentTestSize = 0x1000;
+const unsigned kDefaultTestSize = 4 * kDefaultSegmentTestSize;
 
 using DecoderCreator = std::unique_ptr<ImageDecoder> (*)();
 using DecoderCreatorWithAlpha =
     std::unique_ptr<ImageDecoder> (*)(ImageDecoder::AlphaOption);
 
-inline void PrepareReferenceData(char* buffer, size_t size) {
-  for (size_t i = 0; i < size; ++i) {
-    buffer[i] = static_cast<char>(i);
+inline void PrepareReferenceData(base::span<uint8_t> buffer) {
+  for (size_t i = 0; i < buffer.size(); ++i) {
+    buffer[i] = static_cast<uint8_t>(i);
   }
 }
 
-scoped_refptr<SharedBuffer> ReadFile(StringView file_name);
-scoped_refptr<SharedBuffer> ReadFile(const char* dir, const char* file_name);
+Vector<char> ReadFile(StringView file_name);
+Vector<char> ReadFile(const char* dir, const char* file_name);
+
+scoped_refptr<SharedBuffer> ReadFileToSharedBuffer(StringView file_name);
+scoped_refptr<SharedBuffer> ReadFileToSharedBuffer(const char* dir,
+                                                   const char* file_name);
+
 unsigned HashBitmap(const SkBitmap&);
 void CreateDecodingBaseline(DecoderCreator,
                             SharedBuffer*,
@@ -51,11 +59,6 @@ void TestByteByByteDecode(DecoderCreator create_decoder,
                           const char* file,
                           size_t expected_frame_count,
                           int expected_repetition_count);
-
-void TestMergeBuffer(DecoderCreator create_decoder, const char* file);
-void TestMergeBuffer(DecoderCreator create_decoder,
-                     const char* dir,
-                     const char* file);
 
 // |skipping_step| is used to randomize the decoding order. For images with
 // a small number of frames (e.g. < 10), this value should be smaller, on the
@@ -121,7 +124,7 @@ void TestBppHistogram(DecoderCreator create_decoder,
                       const char* image_type,
                       const char* image_name,
                       const char* histogram_name,
-                      base::HistogramBase::Sample sample);
+                      base::HistogramBase::Sample32 sample);
 
 }  // namespace blink
 

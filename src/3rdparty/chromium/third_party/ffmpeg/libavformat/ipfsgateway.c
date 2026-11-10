@@ -22,6 +22,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/file_open.h"
 #include "libavutil/getenv_utf8.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include <sys/stat.h>
 #include "os_support.h"
@@ -289,7 +290,7 @@ static int translate_ipfs_to_http(URLContext *h, const char *uri, int flags, AVD
         goto err;
     }
 
-    // Pass the URL back to FFMpeg's protocol handler.
+    // Pass the URL back to FFmpeg's protocol handler.
     ret = ffurl_open_whitelist(&c->inner, fulluri, flags,
                                &h->interrupt_callback, options,
                                h->protocol_whitelist,

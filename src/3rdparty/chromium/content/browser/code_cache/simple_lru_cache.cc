@@ -129,7 +129,7 @@ bool SimpleLruCache::GetInternal(const std::string& key,
 void SimpleLruCache::Evict() {
   while (capacity_ < size_) {
     auto it = access_list_.begin();
-    DCHECK(it != access_list_.end());
+    CHECK(it != access_list_.end());
     DCHECK(entries_.find(it->second) != entries_.end());
 
     Delete(it->second);

@@ -6,6 +6,7 @@
 #define GPU_COMMAND_BUFFER_SERVICE_WEBGPU_DECODER_H_
 
 #include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/command_buffer/service/decoder_context.h"
@@ -43,7 +44,7 @@ class GPU_GLES2_EXPORT WebGPUDecoder : public DecoderContext,
       DecoderClient* client,
       CommandBufferServiceBase* command_buffer_service,
       SharedImageManager* shared_image_manager,
-      MemoryTracker* memory_tracker,
+      scoped_refptr<MemoryTracker> memory_tracker,
       gles2::Outputter* outputter,
       const GpuPreferences& gpu_preferences,
       scoped_refptr<SharedContextState> shared_context_state,

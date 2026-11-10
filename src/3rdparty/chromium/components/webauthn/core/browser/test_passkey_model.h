@@ -6,6 +6,7 @@
 #define COMPONENTS_WEBAUTHN_CORE_BROWSER_TEST_PASSKEY_MODEL_H_
 
 #include <string>
+#include <vector>
 
 #include "base/observer_list.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
@@ -22,19 +23,30 @@ class TestPasskeyModel : public PasskeyModel {
   // PasskeyModel:
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  base::WeakPtr<syncer::ModelTypeControllerDelegate>
-  GetModelTypeControllerDelegate() override;
+  base::WeakPtr<syncer::DataTypeControllerDelegate>
+  GetDataTypeControllerDelegate() override;
+  bool IsReady() const override;
+  bool IsEmpty() const override;
   base::flat_set<std::string> GetAllSyncIds() const override;
   std::vector<sync_pb::WebauthnCredentialSpecifics> GetAllPasskeys()
       const override;
-  absl::optional<sync_pb::WebauthnCredentialSpecifics> GetPasskeyByCredentialId(
+  std::optional<sync_pb::WebauthnCredentialSpecifics> GetPasskeyByCredentialId(
       const std::string& rp_id,
       const std::string& credential_id) const override;
   std::vector<sync_pb::WebauthnCredentialSpecifics>
   GetPasskeysForRelyingPartyId(const std::string& rp_id) const override;
-  bool DeletePasskey(const std::string& credential_id) override;
+  bool DeletePasskey(const std::string& credential_id,
+                     const base::Location& location) override;
+  bool SetPasskeyHidden(const std::string& credential_id, bool hidden) override;
+  void DeleteAllPasskeys() override;
   bool UpdatePasskey(const std::string& credential_id,
-                     PasskeyUpdate change) override;
+                     PasskeyUpdate change,
+                     bool updated_by_user) override;
+  bool UpdatePasskeyTimestamp(const std::string& credential_id,
+                              base::Time last_used_time) override;
+  bool UpdatePasskeyEncryptedBlob(
+      const std::string& credential_id,
+      const std::string& new_encrypted_blob) override;
   sync_pb::WebauthnCredentialSpecifics CreatePasskey(
       std::string_view rp_id,
       const UserEntity& user_entity,

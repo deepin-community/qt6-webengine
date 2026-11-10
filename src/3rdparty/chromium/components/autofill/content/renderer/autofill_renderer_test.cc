@@ -5,7 +5,6 @@
 #include "components/autofill/content/renderer/autofill_renderer_test.h"
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -44,13 +43,12 @@ void AutofillRendererTest::SetUp() {
 
   auto password_autofill_agent = std::make_unique<TestPasswordAutofillAgent>(
       GetMainRenderFrame(), &associated_interfaces_);
-  auto password_generation = std::make_unique<PasswordGenerationAgent>(
+  auto password_generation_agent = std::make_unique<PasswordGenerationAgent>(
       GetMainRenderFrame(), password_autofill_agent.get(),
       &associated_interfaces_);
-  autofill_agent_ = std::make_unique<AutofillAgent>(
-      GetMainRenderFrame(), AutofillAgent::Config(),
-      std::move(password_autofill_agent), std::move(password_generation),
-      &associated_interfaces_);
+  autofill_agent_ = CreateAutofillAgent(
+      GetMainRenderFrame(), std::move(password_autofill_agent),
+      std::move(password_generation_agent), &associated_interfaces_);
 }
 
 void AutofillRendererTest::TearDown() {
@@ -60,6 +58,16 @@ void AutofillRendererTest::TearDown() {
   GetMainFrame()->SetAutofillClient(nullptr);
   autofill_agent_.reset();
   RenderViewTest::TearDown();
+}
+
+std::unique_ptr<AutofillAgent> AutofillRendererTest::CreateAutofillAgent(
+    content::RenderFrame* render_frame,
+    std::unique_ptr<PasswordAutofillAgent> password_autofill_agent,
+    std::unique_ptr<PasswordGenerationAgent> password_generation_agent,
+    blink::AssociatedInterfaceRegistry* associated_interfaces) {
+  return std::make_unique<AutofillAgent>(
+      render_frame, std::move(password_autofill_agent),
+      std::move(password_generation_agent), associated_interfaces);
 }
 
 bool AutofillRendererTest::SimulateElementClickAndWait(
@@ -76,6 +84,11 @@ void AutofillRendererTest::SimulateElementFocusAndWait(
   ExecuteJavaScriptForTests(
       base::StrCat({"document.getElementById('", element_id, "').focus();"})
           .c_str());
+  task_environment_.RunUntilIdle();
+}
+
+void AutofillRendererTest::SimulateScrollingAndWait() {
+  ExecuteJavaScriptForTests("window.scrollTo(0, 1000);");
   task_environment_.RunUntilIdle();
 }
 

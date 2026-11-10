@@ -1,18 +1,28 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_TRUST_STORE_IN_MEMORY_H_
 #define BSSL_PKI_TRUST_STORE_IN_MEMORY_H_
 
-#include <unordered_map>
 #include <set>
+#include <unordered_map>
 
 #include <openssl/base.h>
 
 #include "trust_store.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 // A very simple implementation of a TrustStore, which contains a set of
 // certificates and their trustedness.
@@ -89,13 +99,13 @@ class OPENSSL_EXPORT TrustStoreInMemory : public TrustStore {
   std::unordered_multimap<std::string_view, Entry> entries_;
 
   // Set of distrusted SPKIs.
-  std::set<std::string> distrusted_spkis_;
+  std::set<std::string, std::less<>> distrusted_spkis_;
 
   // Returns the `Entry` matching `cert`, or `nullptr` if not in the trust
   // store.
   const Entry *GetEntry(const ParsedCertificate *cert) const;
 };
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_TRUST_STORE_IN_MEMORY_H_

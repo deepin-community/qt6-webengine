@@ -4,19 +4,23 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include <xnnpack.h>
-#include <xnnpack/allocator.h>
-#include <xnnpack/config.h>
-#include <xnnpack/log.h>
-#include <xnnpack/operator.h>
-#include <xnnpack/microparams-init.h>
-#include <xnnpack/params.h>
-
+#include "include/xnnpack.h"
+#include "src/xnnpack/allocator.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/compute.h"
+#include "src/xnnpack/config-types.h"
+#include "src/xnnpack/config.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/operator-type.h"
+#include "src/xnnpack/operator-utils.h"
+#include "src/xnnpack/operator.h"
+#include "src/xnnpack/params.h"
+#include <pthreadpool.h>
 
 static void init_constant_pad_nd(
     uint32_t padding_value,
@@ -26,7 +30,7 @@ static void init_constant_pad_nd(
     const struct xnn_xx_pad_config* pad_config,
     xnn_operator_t constant_pad_op)
 {
-  constant_pad_op->pad_value = padding_value;
+  constant_pad_op->padding.pad_value = padding_value;
 
   constant_pad_op->type = operator_type;
   constant_pad_op->flags = flags;
@@ -59,6 +63,21 @@ static enum xnn_status create_constant_pad_nd(
     xnn_log_error(
       "failed to allocate %zu bytes for %s operator descriptor",
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  constant_pad_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (constant_pad_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  constant_pad_op->num_compute_invocations = 1;
+  constant_pad_op->dynamic_context.reduce = xnn_allocate_zero_simd_memory(sizeof(struct pad_context));
+  if (constant_pad_op->dynamic_context.reduce == NULL) {
+    xnn_log_error(
+      "failed to allocate %zu bytes for %s operator descriptor",
+      sizeof(struct pad_context), xnn_operator_type_to_string(operator_type));
     goto error;
   }
 
@@ -128,28 +147,22 @@ static enum xnn_status reshape_constant_pad_nd(
     pthreadpool_t threadpool)
 {
   if (constant_pad_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(constant_pad_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(constant_pad_op));
     return xnn_status_invalid_parameter;
   }
   constant_pad_op->state = xnn_run_state_invalid;
 
   if (num_dims > XNN_MAX_TENSOR_DIMS) {
     xnn_log_error(
-      "failed to setup %s operator with %zu dimensions in input shape: "
-      "the number of input dimensions must not exceed %d",
-      xnn_operator_type_to_string(constant_pad_op->type), num_dims, XNN_MAX_TENSOR_DIMS);
+        "failed to setup %s operator with %zu dimensions in input shape: "
+        "the number of input dimensions must not exceed %d",
+        xnn_operator_type_to_string_v2(constant_pad_op), num_dims,
+        XNN_MAX_TENSOR_DIMS);
     return xnn_status_unsupported_parameter;
-  }
-
-  for (size_t i = 0; i < num_dims; i++) {
-    if (input_shape[i] == 0) {
-      xnn_log_error(
-        "failed to setup %s operator: input shape dimension #%zu is zero",
-        xnn_operator_type_to_string(constant_pad_op->type), i);
-      return xnn_status_invalid_parameter;
-    }
   }
 
   size_t num_squeezed_dims = 0;
@@ -187,32 +200,44 @@ static enum xnn_status reshape_constant_pad_nd(
     }
   }
 
+  // If the resulting output has size zero, then there is nothing left to do.
+  size_t output_size = 1;
+  for (int i = 0; i < XNN_MAX_TENSOR_DIMS; i++) {
+    output_size *= normalized_output_shape[i];
+  }
+  if (output_size == 0) {
+    xnn_log_debug("skipping %s operator: output size is zero",
+                  xnn_operator_type_to_string_v2(constant_pad_op));
+    constant_pad_op->state = xnn_run_state_skip;
+    return xnn_status_success;
+  }
+
   const struct xnn_xx_fill_config* xx_fill_config = constant_pad_op->fill_config;
   const struct xnn_xx_pad_config* xx_pad_config = constant_pad_op->pad_config;
 
-  constant_pad_op->context.pad = (struct pad_context) {
-    .padding_value = constant_pad_op->pad_value,
+  *constant_pad_op->dynamic_context.pad = (struct pad_context) {
+    .padding_value = constant_pad_op->padding.pad_value,
     .fill_ukernel = xx_fill_config->ukernel,
     .pad_ukernel = xx_pad_config->ukernel,
   };
 
   for (size_t i = 0; i < XNN_MAX_TENSOR_DIMS; i++) {
-    constant_pad_op->context.pad.pre_paddings[i] = normalized_pre_paddings[XNN_MAX_TENSOR_DIMS - 1 - i];
-    constant_pad_op->context.pad.input_size[i] = normalized_input_shape[XNN_MAX_TENSOR_DIMS - 1 - i];
+    constant_pad_op->dynamic_context.pad->pre_paddings[i] = normalized_pre_paddings[XNN_MAX_TENSOR_DIMS - 1 - i];
+    constant_pad_op->dynamic_context.pad->input_size[i] = normalized_input_shape[XNN_MAX_TENSOR_DIMS - 1 - i];
   }
   size_t input_stride = normalized_input_shape[XNN_MAX_TENSOR_DIMS - 1];
   size_t output_stride = normalized_output_shape[XNN_MAX_TENSOR_DIMS - 1];
   for (size_t i = 1; i < XNN_MAX_TENSOR_DIMS; i++) {
-    constant_pad_op->context.pad.input_stride[i - 1] = input_stride << log2_element_size;
-    constant_pad_op->context.pad.output_stride[i - 1] = output_stride << log2_element_size;
+    constant_pad_op->dynamic_context.pad->input_stride[i - 1] = input_stride << log2_element_size;
+    constant_pad_op->dynamic_context.pad->output_stride[i - 1] = output_stride << log2_element_size;
     input_stride *= normalized_input_shape[XNN_MAX_TENSOR_DIMS - 1 - i];
     output_stride *= normalized_output_shape[XNN_MAX_TENSOR_DIMS - 1 - i];
   }
-  constant_pad_op->context.pad.input_size[0] <<= log2_element_size;
-  constant_pad_op->context.pad.output_size[0] = normalized_output_shape[XNN_MAX_TENSOR_DIMS - 1] << log2_element_size;
-  constant_pad_op->context.pad.pre_paddings[0] <<= log2_element_size;
-  constant_pad_op->context.pad.post_paddings[0] =
-    constant_pad_op->context.pad.output_size[0] - constant_pad_op->context.pad.pre_paddings[0] - constant_pad_op->context.pad.input_size[0];
+  constant_pad_op->dynamic_context.pad->input_size[0] <<= log2_element_size;
+  constant_pad_op->dynamic_context.pad->output_size[0] = normalized_output_shape[XNN_MAX_TENSOR_DIMS - 1] << log2_element_size;
+  constant_pad_op->dynamic_context.pad->pre_paddings[0] <<= log2_element_size;
+  constant_pad_op->dynamic_context.pad->post_paddings[0] =
+    constant_pad_op->dynamic_context.pad->output_size[0] - constant_pad_op->dynamic_context.pad->pre_paddings[0] - constant_pad_op->dynamic_context.pad->input_size[0];
 
   constant_pad_op->compute[0].type = xnn_parallelization_type_5d;
   constant_pad_op->compute[0].task_5d = (pthreadpool_task_5d_t) xnn_compute_pad_5d;
@@ -278,9 +303,11 @@ static enum xnn_status setup_constant_pad_nd(
     void* output)
 {
   if (constant_pad_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(constant_pad_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(constant_pad_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -289,8 +316,8 @@ static enum xnn_status setup_constant_pad_nd(
       return xnn_status_success;
     case xnn_run_state_invalid:
       xnn_log_error(
-        "failed to setup %s operator: operator has not been reshaped yet",
-        xnn_operator_type_to_string(constant_pad_op->type));
+          "failed to setup %s operator: operator has not been reshaped yet",
+          xnn_operator_type_to_string_v2(constant_pad_op));
       return xnn_status_invalid_state;
     case xnn_run_state_needs_setup:
       // Operator has been reshaped, but not setup, continue with setup.
@@ -299,13 +326,13 @@ static enum xnn_status setup_constant_pad_nd(
       break;
   }
 
-  constant_pad_op->context.pad.input = input;
-  constant_pad_op->context.pad.output = output;
+  constant_pad_op->dynamic_context.pad->input = input;
+  constant_pad_op->dynamic_context.pad->output = output;
 
   for (size_t i = 1; i < XNN_MAX_TENSOR_DIMS; i++) {
-    constant_pad_op->context.pad.input =
-      (const void*) ((uintptr_t) constant_pad_op->context.pad.input -
-                     (constant_pad_op->context.pad.pre_paddings[i] * constant_pad_op->context.pad.input_stride[i - 1]));
+    constant_pad_op->dynamic_context.pad->input =
+      (const void*) ((uintptr_t) constant_pad_op->dynamic_context.pad->input -
+                     (constant_pad_op->dynamic_context.pad->pre_paddings[i] * constant_pad_op->dynamic_context.pad->input_stride[i - 1]));
   }
   constant_pad_op->state = xnn_run_state_ready;
 
@@ -357,6 +384,13 @@ enum xnn_status run_constant_pad_nd(
 {
   struct xnn_operator constant_pad_op;
   memset(&constant_pad_op, 0, sizeof(constant_pad_op));
+  struct compute_parameters compute;
+  memset(&compute, 0, sizeof(compute));
+  constant_pad_op.compute = &compute;
+  constant_pad_op.num_compute_invocations = 1;
+  struct pad_context pad_context;
+  memset(&pad_context, 0, sizeof(pad_context));
+  constant_pad_op.dynamic_context.pad = &pad_context;
 
   const struct xnn_xx_fill_config* fill_config = xnn_init_xx_fill_config();
   if (fill_config == NULL) {

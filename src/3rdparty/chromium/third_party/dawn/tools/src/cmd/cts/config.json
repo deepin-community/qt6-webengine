@@ -10,7 +10,8 @@
     {
       "ExecutionMode": "compat",
       "Prefixes": [
-        "ninja://chrome/test:telemetry_gpu_integration_test/gpu_tests.webgpu_compat_cts_integration_test.WebGpuCompatCtsIntegrationTest."
+        "ninja://chrome/test:telemetry_gpu_integration_test/gpu_tests.webgpu_compat_cts_integration_test.WebGpuCompatCtsIntegrationTest.",
+        "ninja://chrome/test:telemetry_gpu_integration_test_android_chrome/gpu_tests.webgpu_compat_cts_integration_test.WebGpuCompatCtsIntegrationTest."
       ]
     }
   ],
@@ -49,10 +50,30 @@
       "Bucket": "try",
       "Builder": "dawn-try-win10-x86-rel"
     },
+    "Win-Intel-UHD770": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-win-x64-intel-uhd770-rel"
+    },
     "Mac": {
       "Project": "chromium",
       "Bucket": "try",
       "Builder": "mac-dawn-rel"
+    },
+    "Mac-Arm64-M2-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-arm64-m2-exp"
+    },
+    "Mac-x64-Intel-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-intel-exp"
+    },
+    "Mac-x64-AMD-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-amd-exp"
     },
     "Mac-Arm64": {
       "Project": "chromium",
@@ -63,10 +84,23 @@
       "Project": "chromium",
       "Bucket": "try",
       "Builder": "linux-dawn-rel"
+    },
+    "Linux-Intel-UHD770" : {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-linux-x64-intel-uhd770-rel"
+    },
+    "Linux-NVIDIA-GTX1660-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "linux-dawn-nvidia-1660-exp-rel"
     }
   },
   "Tag": {
-    "Remove": [],
+    "Remove": [
+      "ventura",
+      "sonoma"
+    ],
   },
   "Sheets": {
     // Spreadsheet to export results data to

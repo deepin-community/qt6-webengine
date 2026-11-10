@@ -6,6 +6,9 @@
 #define NET_SOCKET_CONNECT_JOB_FACTORY_H_
 
 #include <memory>
+#include <optional>
+#include <variant>
+#include <vector>
 
 #include "net/base/host_port_pair.h"
 #include "net/base/network_anonymization_key.h"
@@ -18,8 +21,7 @@
 #include "net/socket/socks_connect_job.h"
 #include "net/socket/ssl_connect_job.h"
 #include "net/socket/transport_connect_job.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "net/ssl/ssl_config.h"
 #include "url/scheme_host_port.h"
 
 namespace net {
@@ -61,7 +63,7 @@ class NET_EXPORT_PRIVATE ConnectJobFactory {
 
   // Representation of the endpoint of a connection. Could be schemeful or
   // schemeless.
-  using Endpoint = absl::variant<url::SchemeHostPort, SchemelessEndpoint>;
+  using Endpoint = std::variant<url::SchemeHostPort, SchemelessEndpoint>;
 
   // Default factory will be used if passed the default `nullptr`.
   explicit ConnectJobFactory(
@@ -84,8 +86,8 @@ class NET_EXPORT_PRIVATE ConnectJobFactory {
   std::unique_ptr<ConnectJob> CreateConnectJob(
       url::SchemeHostPort endpoint,
       const ProxyChain& proxy_chain,
-      const absl::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
-      const SSLConfig* ssl_config_for_origin,
+      const std::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+      const std::vector<SSLConfig::CertAndStatus>& allowed_bad_certs,
       ConnectJobFactory::AlpnMode alpn_mode,
       bool force_tunnel,
       PrivacyMode privacy_mode,
@@ -98,14 +100,13 @@ class NET_EXPORT_PRIVATE ConnectJobFactory {
       const CommonConnectJobParams* common_connect_job_params,
       ConnectJob::Delegate* delegate) const;
 
-  // TODO(crbug.com/1206799): Rename to discourage use except in cases where the
-  // scheme is non-standard or unknown.
+  // TODO(crbug.com/40181080): Rename to discourage use except in cases where
+  // the scheme is non-standard or unknown.
   std::unique_ptr<ConnectJob> CreateConnectJob(
       bool using_ssl,
       HostPortPair endpoint,
       const ProxyChain& proxy_chain,
-      const absl::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
-      const SSLConfig* ssl_config_for_origin,
+      const std::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
       bool force_tunnel,
       PrivacyMode privacy_mode,
       const OnHostResolutionCallback& resolution_callback,
@@ -120,8 +121,8 @@ class NET_EXPORT_PRIVATE ConnectJobFactory {
   virtual std::unique_ptr<ConnectJob> CreateConnectJob(
       Endpoint endpoint,
       const ProxyChain& proxy_chain,
-      const absl::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
-      const SSLConfig* ssl_config_for_origin,
+      const std::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+      const std::vector<SSLConfig::CertAndStatus>& allowed_bad_certs,
       ConnectJobFactory::AlpnMode alpn_mode,
       bool force_tunnel,
       PrivacyMode privacy_mode,

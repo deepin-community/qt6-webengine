@@ -23,15 +23,15 @@
 #include "quiche/quic/tools/quic_backend_response.h"
 #include "quiche/quic/tools/quic_memory_cache_backend.h"
 #include "quiche/quic/tools/quic_simple_server_backend.h"
+#include "quiche/common/http/http_header_block.h"
 #include "quiche/common/quiche_text_utils.h"
-#include "quiche/spdy/core/http2_header_block.h"
 
 namespace quic {
 
-MasqueServerBackend::MasqueServerBackend(MasqueMode masque_mode,
+MasqueServerBackend::MasqueServerBackend(MasqueMode /*masque_mode*/,
                                          const std::string& server_authority,
                                          const std::string& cache_directory)
-    : masque_mode_(masque_mode), server_authority_(server_authority) {
+    : server_authority_(server_authority) {
   // Start with client IP 10.1.1.2.
   connect_ip_next_client_ip_[0] = 10;
   connect_ip_next_client_ip_[1] = 1;
@@ -41,10 +41,15 @@ MasqueServerBackend::MasqueServerBackend(MasqueMode masque_mode,
   if (!cache_directory.empty()) {
     QuicMemoryCacheBackend::InitializeBackend(cache_directory);
   }
+
+  // We don't currently use `masque_mode_` but will in the future. To silence
+  // clang's `-Wunused-private-field` warning for this when building QUICHE for
+  // Chrome, add a use of it here.
+  (void)masque_mode_;
 }
 
 bool MasqueServerBackend::MaybeHandleMasqueRequest(
-    const spdy::Http2HeaderBlock& request_headers,
+    const quiche::HttpHeaderBlock& request_headers,
     QuicSimpleServerBackend::RequestHandler* request_handler) {
   auto method_pair = request_headers.find(":method");
   if (method_pair == request_headers.end()) {
@@ -52,14 +57,13 @@ bool MasqueServerBackend::MaybeHandleMasqueRequest(
     return false;
   }
   absl::string_view method = method_pair->second;
-  std::string masque_path = "";
   auto protocol_pair = request_headers.find(":protocol");
   if (method != "CONNECT" || protocol_pair == request_headers.end() ||
       (protocol_pair->second != "connect-udp" &&
        protocol_pair->second != "connect-ip" &&
        protocol_pair->second != "connect-ethernet")) {
     // This is not a MASQUE request.
-    if (!signature_auth_on_all_requests_) {
+    if (!concealed_auth_on_all_requests_) {
       return false;
     }
   }
@@ -77,34 +81,44 @@ bool MasqueServerBackend::MaybeHandleMasqueRequest(
     }
   }
 
-  auto it = backend_client_states_.find(request_handler->connection_id());
-  if (it == backend_client_states_.end()) {
-    QUIC_LOG(ERROR) << "Could not find backend client for " << masque_path
+  BackendClient* backend_client = nullptr;
+  std::vector<std::unique_ptr<QuicBackendResponse>>* responses = nullptr;
+  for (BackendClientState& state : backend_client_states_) {
+    if (state.backend_client->GetQuicSpdySession() !=
+        request_handler->GetStream()->spdy_session()) {
+      continue;
+    }
+    backend_client = state.backend_client;
+    responses = &state.responses;
+  }
+  if (backend_client == nullptr) {
+    QUIC_LOG(ERROR) << "Could not find backend client for "
+                    << request_handler->connection_id()
                     << request_headers.DebugString();
     return false;
   }
-
-  BackendClient* backend_client = it->second.backend_client;
 
   std::unique_ptr<QuicBackendResponse> response =
       backend_client->HandleMasqueRequest(request_headers, request_handler);
   if (response == nullptr) {
     QUIC_LOG(ERROR) << "Backend client did not process request for "
-                    << masque_path << request_headers.DebugString();
+                    << request_handler->connection_id()
+                    << request_headers.DebugString();
     return false;
   }
 
   QUIC_DLOG(INFO) << "Sending MASQUE response for "
+                  << request_handler->connection_id()
                   << request_headers.DebugString();
 
   request_handler->OnResponseBackendComplete(response.get());
-  it->second.responses.emplace_back(std::move(response));
+  responses->emplace_back(std::move(response));
 
   return true;
 }
 
 void MasqueServerBackend::FetchResponseFromBackend(
-    const spdy::Http2HeaderBlock& request_headers,
+    const quiche::HttpHeaderBlock& request_headers,
     const std::string& request_body,
     QuicSimpleServerBackend::RequestHandler* request_handler) {
   if (MaybeHandleMasqueRequest(request_headers, request_handler)) {
@@ -118,7 +132,7 @@ void MasqueServerBackend::FetchResponseFromBackend(
 }
 
 void MasqueServerBackend::HandleConnectHeaders(
-    const spdy::Http2HeaderBlock& request_headers,
+    const quiche::HttpHeaderBlock& request_headers,
     RequestHandler* request_handler) {
   if (MaybeHandleMasqueRequest(request_headers, request_handler)) {
     // Request was handled as a MASQUE request.
@@ -136,19 +150,23 @@ void MasqueServerBackend::CloseBackendResponseStream(
   QuicMemoryCacheBackend::CloseBackendResponseStream(request_handler);
 }
 
-void MasqueServerBackend::RegisterBackendClient(QuicConnectionId connection_id,
-                                                BackendClient* backend_client) {
-  QUIC_DLOG(INFO) << "Registering backend client for " << connection_id;
-  QUIC_BUG_IF(quic_bug_12005_1, backend_client_states_.find(connection_id) !=
-                                    backend_client_states_.end())
-      << connection_id << " already in backend clients map";
-  backend_client_states_[connection_id] =
-      BackendClientState{backend_client, {}};
+void MasqueServerBackend::RegisterBackendClient(BackendClient* backend_client) {
+  QUIC_DLOG(INFO) << "Registering backend client for "
+                  << backend_client->GetQuicSpdySession()->connection_id();
+  backend_client_states_.push_back(BackendClientState{backend_client, {}});
 }
 
-void MasqueServerBackend::RemoveBackendClient(QuicConnectionId connection_id) {
-  QUIC_DLOG(INFO) << "Removing backend client for " << connection_id;
-  backend_client_states_.erase(connection_id);
+void MasqueServerBackend::RemoveBackendClient(BackendClient* backend_client) {
+  QUIC_DLOG(INFO) << "Removing backend client for "
+                  << backend_client->GetQuicSpdySession()->connection_id();
+  backend_client_states_.erase(
+      std::remove_if(backend_client_states_.begin(),
+                     backend_client_states_.end(),
+                     [backend_client](BackendClientState& state) {
+                       return state.backend_client->GetQuicSpdySession() ==
+                              backend_client->GetQuicSpdySession();
+                     }),
+      backend_client_states_.end());
 }
 
 QuicIpAddress MasqueServerBackend::GetNextClientIpAddress() {
@@ -172,12 +190,12 @@ QuicIpAddress MasqueServerBackend::GetNextClientIpAddress() {
   return address;
 }
 
-void MasqueServerBackend::SetSignatureAuth(absl::string_view signature_auth) {
-  signature_auth_credentials_.clear();
-  if (signature_auth.empty()) {
+void MasqueServerBackend::SetConcealedAuth(absl::string_view concealed_auth) {
+  concealed_auth_credentials_.clear();
+  if (concealed_auth.empty()) {
     return;
   }
-  for (absl::string_view sp : absl::StrSplit(signature_auth, ';')) {
+  for (absl::string_view sp : absl::StrSplit(concealed_auth, ';')) {
     quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&sp);
     if (sp.empty()) {
       continue;
@@ -186,23 +204,26 @@ void MasqueServerBackend::SetSignatureAuth(absl::string_view signature_auth) {
         absl::StrSplit(sp, absl::MaxSplits(':', 1));
     quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[0]);
     quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[1]);
-    SignatureAuthCredential credential;
+    ConcealedAuthCredential credential;
     credential.key_id = std::string(kv[0]);
-    std::string public_key = absl::HexStringToBytes(kv[1]);
+    std::string public_key;
+    if (!absl::HexStringToBytes(kv[1], &public_key)) {
+      QUIC_LOG(FATAL) << "Invalid concealed auth public key hex " << kv[1];
+    }
     if (public_key.size() != sizeof(credential.public_key)) {
-      QUIC_LOG(FATAL) << "Invalid signature auth public key length "
+      QUIC_LOG(FATAL) << "Invalid concealed auth public key length "
                       << public_key.size();
     }
     memcpy(credential.public_key, public_key.data(),
            sizeof(credential.public_key));
-    signature_auth_credentials_.push_back(credential);
+    concealed_auth_credentials_.push_back(credential);
   }
 }
 
-bool MasqueServerBackend::GetSignatureAuthKeyForId(
+bool MasqueServerBackend::GetConcealedAuthKeyForId(
     absl::string_view key_id,
     uint8_t out_public_key[ED25519_PUBLIC_KEY_LEN]) const {
-  for (const auto& credential : signature_auth_credentials_) {
+  for (const auto& credential : concealed_auth_credentials_) {
     if (credential.key_id == key_id) {
       memcpy(out_public_key, credential.public_key,
              sizeof(credential.public_key));

@@ -1,19 +1,27 @@
 // Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+
 #include "chrome/test/chromedriver/log_replay/devtools_log_reader.h"
+
+#include <array>
 
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 // Log files to test the reader against
-const char* const kTestDataPath[] = {"chrome", "test", "chromedriver",
-                                     "log_replay", "test_data"};
+constexpr auto kTestDataPath = std::to_array<const char*>({
+    "chrome",
+    "test",
+    "chromedriver",
+    "log_replay",
+    "test_data",
+});
 const char kTestGetTitlePath[] = "testGetTitle_simple.log";
 const char kOneEntryPath[] = "oneDevToolsEntry.log";
 const char kBrowserEntryPath[] = "oneDevToolsBrowserEntry.log";

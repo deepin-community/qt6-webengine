@@ -43,6 +43,12 @@ enum class BrowserTaskType {
   // task runner. Reach out to navigation-dev@ before adding new usages.
   kBeforeUnloadBrowserResponse,
 
+  // A subset of tasks that are critical for startup performance. While other
+  // tasks may also run during the startup phase, this allows us to apply
+  // certain constraints on other task queues until these critical startup tasks
+  // are finished.
+  kStartup,
+
 };
 
 class CONTENT_EXPORT BrowserTaskTraits {
@@ -50,8 +56,8 @@ class CONTENT_EXPORT BrowserTaskTraits {
   struct ValidTrait {
     ValidTrait(BrowserTaskType);
 
-    // TODO(1026641): Reconsider whether BrowserTaskTraits should really be
-    // supporting base::TaskPriority.
+    // TODO(crbug.com/40108370): Reconsider whether BrowserTaskTraits should
+    // really be supporting base::TaskPriority.
     ValidTrait(base::TaskPriority);
   };
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "extensions/browser/extension_user_script_loader.h"
 
 #include <stddef.h>
@@ -16,6 +21,7 @@
 #include <utility>
 
 #include "base/containers/contains.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -30,15 +36,15 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
-#include "extensions/browser/api/scripting/scripting_constants.h"
-#include "extensions/browser/api/scripting/scripting_utils.h"
 #include "extensions/browser/component_extension_resource_manager.h"
-#include "extensions/browser/content_verifier.h"
+#include "extensions/browser/content_verifier/content_verifier.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/l10n_file_util.h"
+#include "extensions/browser/scripting_constants.h"
+#include "extensions/browser/scripting_utils.h"
 #include "extensions/browser/state_store.h"
 #include "extensions/browser/user_script_loader.h"
 #include "extensions/common/api/content_scripts.h"
@@ -72,39 +78,11 @@ enum class ReadScriptContentSource {
   // ExtensionResource.
   kFile,
   // ResourceBundle.
-  kResouceBundle,
+  kResourceBundle,
 };
 
-struct VerifyContentInfo {
-  VerifyContentInfo(const scoped_refptr<ContentVerifier>& verifier,
-                    const ExtensionId& extension_id,
-                    const base::FilePath& extension_root,
-                    const base::FilePath relative_path,
-                    std::optional<std::string> content)
-      : verifier(verifier),
-        extension_id(extension_id),
-        extension_root(extension_root),
-        relative_path(relative_path),
-        content(std::move(content)) {}
-
-  // We explicitly disallow copying this because the `content` string may
-  // be quite large for different extension files.
-  VerifyContentInfo(const VerifyContentInfo&) = delete;
-  VerifyContentInfo& operator=(VerifyContentInfo&) = delete;
-
-  VerifyContentInfo(VerifyContentInfo&& other) = default;
-  VerifyContentInfo& operator=(VerifyContentInfo&& other) = default;
-
-  scoped_refptr<ContentVerifier> verifier;
-  ExtensionId extension_id;
-  base::FilePath extension_root;
-  base::FilePath relative_path;
-
-  // The content to verify, or nullopt if there was an error retrieving it
-  // from its associated file. Example of errors are: missing or unreadable
-  // file.
-  std::optional<std::string> content;
-};
+// The key for storing a dynamic content script's id.
+inline constexpr char kId[] = "id";
 
 // Reads and returns {content, source} of a |script_file|.
 //   - content contains the std::string content, or nullopt if the script file
@@ -120,7 +98,7 @@ ReadScriptContent(UserScript::Content* script_file,
     if (script_resource_id) {
       const ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
       return {rb.LoadDataResourceString(*script_resource_id),
-              ReadScriptContentSource::kResouceBundle};
+              ReadScriptContentSource::kResourceBundle};
     }
     LOG(WARNING) << "Failed to get file path to "
                  << script_file->relative_path().value() << " from "
@@ -146,24 +124,21 @@ ReadScriptContent(UserScript::Content* script_file,
 }
 
 // Verifies file contents as they are read.
-void VerifyContent(VerifyContentInfo info) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  DCHECK(info.verifier);
-  scoped_refptr<ContentVerifyJob> job(info.verifier->CreateAndStartJobFor(
-      info.extension_id, info.extension_root, info.relative_path));
-  if (job.get()) {
-    if (info.content)
-      job->Read(info.content->data(), info.content->size(), MOJO_RESULT_OK);
-    else
-      job->Read("", 0u, MOJO_RESULT_NOT_FOUND);
-    job->Done();
+void VerifyContent(ContentVerifier* verifier,
+                   const ExtensionId& extension_id,
+                   const base::FilePath& extension_root,
+                   const base::FilePath& relative_path,
+                   const std::optional<std::string>& content) {
+  DCHECK(verifier);
+  scoped_refptr<ContentVerifyJob> job(ContentVerifier::CreateAndStartJobFor(
+      extension_id, extension_root, relative_path, verifier));
+  CHECK(job);
+  if (content) {
+    job->BytesRead(*content, MOJO_RESULT_OK);
+  } else {
+    job->BytesRead({}, MOJO_RESULT_NOT_FOUND);
   }
-}
-
-void ForwardVerifyContentToIO(VerifyContentInfo info) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  content::GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&VerifyContent, std::move(info)));
+  job->DoneReading();
 }
 
 void RecordContentScriptLength(const std::string& script_content) {
@@ -222,27 +197,22 @@ void LoadScriptContent(const mojom::HostID& host_id,
   if (needs_content_verification && verifier.get()) {
     // Note: |content| is nullopt here for missing / unreadable file. We still
     // pass it through ContentVerifier to report content verification error.
-    VerifyContentInfo info(verifier, host_id.id, script_file->extension_root(),
-                           script_file->relative_path(), content);
-
-    // Call VerifyContent() after yielding on UI thread so it is ensured that
-    // ContentVerifierIOData is populated at the time we call VerifyContent().
-    // Priority set explicitly to avoid unwanted task priority inheritance.
-    content::GetUIThreadTaskRunner({base::TaskPriority::USER_BLOCKING})
-        ->PostTask(FROM_HERE,
-                   base::BindOnce(&ForwardVerifyContentToIO, std::move(info)));
+    VerifyContent(verifier.get(), host_id.id, script_file->extension_root(),
+                  script_file->relative_path(), content);
   }
 
-  if (!content)
+  if (!content) {
     return;
+  }
 
   // Localize the content.
   if (localization_messages) {
     std::string error;
     MessageBundle::ReplaceMessagesWithExternalDictionary(*localization_messages,
                                                          &*content, &error);
-    if (!error.empty())
+    if (!error.empty()) {
       LOG(WARNING) << "Failed to replace messages in script: " << error;
+    }
   }
 
   // Remove BOM from the content.
@@ -258,12 +228,14 @@ void FillScriptFileResourceIds(const UserScript::ContentList& script_files,
                                ScriptResourceIds& script_resource_ids) {
   const ComponentExtensionResourceManager* extension_resource_manager =
       ExtensionsBrowserClient::Get()->GetComponentExtensionResourceManager();
-  if (!extension_resource_manager)
+  if (!extension_resource_manager) {
     return;
+  }
 
   for (const std::unique_ptr<UserScript::Content>& script_file : script_files) {
-    if (!script_file->GetContent().empty())
+    if (!script_file->GetContent().empty()) {
       continue;
+    }
     int resource_id = 0;
     if (extension_resource_manager->IsComponentExtensionResource(
             script_file->extension_root(), script_file->relative_path(),
@@ -316,8 +288,9 @@ void LoadUserScripts(
   for (const std::unique_ptr<UserScript>& script : *user_scripts) {
     size_t script_files_length = 0u;
 
-    if (added_script_ids.count(script->id()) == 0)
+    if (added_script_ids.count(script->id()) == 0) {
       continue;
+    }
     for (const std::unique_ptr<UserScript::Content>& script_file :
          script->js_scripts()) {
       if (script_file->GetContent().empty()) {
@@ -329,10 +302,10 @@ void LoadUserScripts(
       script_files_length += script_file->GetContent().length();
     }
     if (script->css_scripts().size() > 0) {
-      std::unique_ptr<SubstitutionMap> localization_messages(
+      std::unique_ptr<SubstitutionMap> localization_messages =
           l10n_file_util::LoadMessageBundleSubstitutionMap(
               host_info.file_path, script->host_id().id,
-              host_info.default_locale, host_info.gzip_permission));
+              host_info.default_locale, host_info.gzip_permission);
 
       for (const std::unique_ptr<UserScript::Content>& script_file :
            script->css_scripts()) {
@@ -386,7 +359,7 @@ void LoadScriptsOnFileTaskRunner(
 // Attempts to coerce a `dict` from an `api::content_scripts::ContentScript` to
 // an `api::scripts_internal::SerializedUserScript`, returning std::nullopt on
 // failure.
-// TODO(https://crbug.com/1494155): Remove this when migration is complete.
+// TODO(crbug.com/40286091): Remove this when migration is complete.
 std::optional<api::scripts_internal::SerializedUserScript>
 ContentScriptDictToSerializedUserScript(const base::Value::Dict& dict) {
   auto content_script = api::content_scripts::ContentScript::FromValue(dict);
@@ -394,7 +367,7 @@ ContentScriptDictToSerializedUserScript(const base::Value::Dict& dict) {
     return std::nullopt;  // Bad entry.
   }
 
-  auto* id = dict.FindString(scripting::kId);
+  auto* id = dict.FindString(kId);
   if (!id || id->empty()) {
     return std::nullopt;  // Bad entry.
   }
@@ -440,19 +413,6 @@ ContentScriptDictToSerializedUserScript(const base::Value::Dict& dict) {
     return sources;
   };
 
-  auto convert_run_at = [](api::content_scripts::RunAt run_at) {
-    switch (run_at) {
-      case api::content_scripts::RunAt::kDocumentStart:
-        return api::extension_types::RunAt::kDocumentStart;
-      case api::content_scripts::RunAt::kDocumentEnd:
-        return api::extension_types::RunAt::kDocumentEnd;
-      case api::content_scripts::RunAt::kDocumentIdle:
-        return api::extension_types::RunAt::kDocumentIdle;
-      case api::content_scripts::RunAt::kNone:
-        return api::extension_types::RunAt::kNone;
-    }
-  };
-
   api::scripts_internal::SerializedUserScript serialized_script;
   serialized_script.all_frames = content_script->all_frames;
   if (content_script->css) {
@@ -471,7 +431,7 @@ ContentScriptDictToSerializedUserScript(const base::Value::Dict& dict) {
   serialized_script.matches = std::move(content_script->matches);
   serialized_script.match_origin_as_fallback =
       content_script->match_origin_as_fallback;
-  serialized_script.run_at = convert_run_at(content_script->run_at);
+  serialized_script.run_at = content_script->run_at;
   serialized_script.source = source;
   serialized_script.world = content_script->world;
 
@@ -498,7 +458,7 @@ UserScriptList ConvertValueToScripts(const Extension& extension,
     if (!value.GetDict().Find("source")) {
       // It's the old type, or could be a bad entry.
 
-      // TODO(https://crbug.com/1494155): Add UMA and forced-migration so we
+      // TODO(crbug.com/40286091): Add UMA and forced-migration so we
       // can remove this code.
       serialized_script =
           ContentScriptDictToSerializedUserScript(value.GetDict());
@@ -570,20 +530,17 @@ std::unique_ptr<UserScript> CopyDynamicScriptInfo(const UserScript& script) {
 ExtensionUserScriptLoader::ExtensionUserScriptLoader(
     BrowserContext* browser_context,
     const Extension& extension,
-    StateStore* state_store,
-    bool listen_for_extension_system_loaded)
+    StateStore* state_store)
     : ExtensionUserScriptLoader(
           browser_context,
           extension,
           state_store,
-          listen_for_extension_system_loaded,
           ExtensionSystem::Get(browser_context)->content_verifier()) {}
 
 ExtensionUserScriptLoader::ExtensionUserScriptLoader(
     BrowserContext* browser_context,
     const Extension& extension,
     StateStore* state_store,
-    bool listen_for_extension_system_loaded,
     scoped_refptr<ContentVerifier> content_verifier)
     : UserScriptLoader(
           browser_context,
@@ -593,15 +550,18 @@ ExtensionUserScriptLoader::ExtensionUserScriptLoader(
                       &extension)}),
       helper_(browser_context, extension.id(), state_store),
       content_verifier_(std::move(content_verifier)) {
-  if (listen_for_extension_system_loaded) {
-    ExtensionSystem::Get(browser_context)
-        ->ready()
-        .Post(FROM_HERE,
-              base::BindOnce(&ExtensionUserScriptLoader::OnExtensionSystemReady,
-                             weak_factory_.GetWeakPtr()));
-  } else {
-    SetReady(true);
-  }
+  // TODO(crbug.com/415850597): Could we immediately call
+  // OnExtensionSystemReady() if the ExtensionSystem is ready now to be more
+  // efficient?
+
+  // Wait for the extension system to be ready before declaring this loader
+  // ready. This ensures that other parts of the system (like the state store or
+  // content verifier) are available.
+  ExtensionSystem::Get(browser_context)
+      ->ready()
+      .Post(FROM_HERE,
+            base::BindOnce(&ExtensionUserScriptLoader::OnExtensionSystemReady,
+                           weak_factory_.GetWeakPtr()));
 }
 
 ExtensionUserScriptLoader::~ExtensionUserScriptLoader() = default;
@@ -664,7 +624,7 @@ void ExtensionUserScriptLoader::AddDynamicScripts(
     // Additionally, only add scripts to the set of active scripts in renderers
     // (through `AddScripts()`) if the `source` for that script is enabled.
     if (!base::Contains(disabled_sources_, script->GetSource())) {
-      // TODO(crbug.com/1496555): This results in an additional copy being
+      // TODO(crbug.com/40938420): This results in an additional copy being
       // stored in the browser for each of these scripts. Optimize the usage of
       // inline code.
       scripts_to_add.push_back(CopyDynamicScriptInfo(*script));
@@ -773,7 +733,7 @@ std::set<std::string> ExtensionUserScriptLoader::GetDynamicScriptIDs(
     UserScript::Source source) const {
   std::set<std::string> dynamic_script_ids;
 
-  for (std::string pending_id : pending_dynamic_script_ids_) {
+  for (const std::string& pending_id : pending_dynamic_script_ids_) {
     if (UserScript::GetSourceForScriptID(pending_id) == source) {
       dynamic_script_ids.insert(pending_id);
     }
@@ -853,18 +813,20 @@ void ExtensionUserScriptLoader::DynamicScriptsStorageHelper::GetDynamicScripts(
 void ExtensionUserScriptLoader::DynamicScriptsStorageHelper::SetDynamicScripts(
     const UserScriptList& scripts,
     const std::set<std::string>& persistent_dynamic_script_ids) {
-  if (!state_store_)
+  if (!state_store_) {
     return;
+  }
 
   base::Value::List scripts_value;
   URLPatternSet persistent_patterns;
   for (const std::unique_ptr<UserScript>& script : scripts) {
-    if (!base::Contains(persistent_dynamic_script_ids, script->id()))
+    if (!base::Contains(persistent_dynamic_script_ids, script->id())) {
       continue;
+    }
 
     base::Value::Dict value =
         script_serialization::SerializeUserScript(*script).ToValue();
-    value.Set(scripting::kId, script->id());
+    value.Set(kId, script->id());
 
     scripts_value.Append(std::move(value));
     persistent_patterns.AddPatterns(script->url_patterns());
@@ -892,8 +854,8 @@ void ExtensionUserScriptLoader::DynamicScriptsStorageHelper::
         *extension, util::IsIncognitoEnabled(extension->id(), browser_context_),
         value->GetList());
 
-    // TODO(crbug.com/1385165): Write back `dynamic_scripts` into the StateStore
-    // if scripts in the StateStore do not have prefixed IDs.
+    // TODO(crbug.com/40061759): Write back `dynamic_scripts` into the
+    // StateStore if scripts in the StateStore do not have prefixed IDs.
 
     scripts.insert(scripts.end(),
                    std::make_move_iterator(dynamic_scripts.begin()),
@@ -911,8 +873,9 @@ void ExtensionUserScriptLoader::LoadScripts(
 
   ScriptResourceIds script_resource_ids;
   for (const std::unique_ptr<UserScript>& script : user_scripts) {
-    if (!base::Contains(added_script_ids, script->id()))
+    if (!base::Contains(added_script_ids, script->id())) {
       continue;
+    }
     FillScriptFileResourceIds(script->js_scripts(), script_resource_ids);
     FillScriptFileResourceIds(script->css_scripts(), script_resource_ids);
   }

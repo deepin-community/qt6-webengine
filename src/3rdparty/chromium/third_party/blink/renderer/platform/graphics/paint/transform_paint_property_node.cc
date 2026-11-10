@@ -5,7 +5,8 @@
 #include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
 
 #include "base/memory/values_equivalent.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/graphics/paint/scroll_paint_property_node.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 
 namespace blink {
@@ -82,6 +83,7 @@ PaintPropertyChangeType TransformPaintPropertyNode::State::ComputeChange(
       is_for_svg_child != other.is_for_svg_child ||
       backface_visibility != other.backface_visibility ||
       rendering_context_id != other.rendering_context_id ||
+      direct_compositing_reasons != other.direct_compositing_reasons ||
       compositor_element_id != other.compositor_element_id ||
       // This change affects cull rect expansion for scrolling contents.
       UsesCompositedScrolling() != other.UsesCompositedScrolling() ||
@@ -90,28 +92,30 @@ PaintPropertyChangeType TransformPaintPropertyNode::State::ComputeChange(
       scroll != other.scroll ||
       scroll_translation_for_fixed != other.scroll_translation_for_fixed ||
       !base::ValuesEquivalent(sticky_constraint, other.sticky_constraint) ||
-      !base::ValuesEquivalent(anchor_position_scrollers_data,
-                              other.anchor_position_scrollers_data) ||
+      !base::ValuesEquivalent(anchor_position_scroll_data,
+                              other.anchor_position_scroll_data) ||
       visible_frame_element_id != other.visible_frame_element_id) {
     return PaintPropertyChangeType::kChangedOnlyValues;
   }
 
-  auto change =
-      ComputeTransformChange(other.transform_and_origin, animation_state);
+  return ComputeTransformChange(other.transform_and_origin, animation_state);
+}
 
-  bool non_reraster_values_changed =
-      direct_compositing_reasons != other.direct_compositing_reasons;
-  if (non_reraster_values_changed) {
-    // Both transform change and non-reraster change is upgraded to value
-    // change to avoid loss of non-reraster change when PaintPropertyTreeBuilder
-    // downgrades kChangedOnlySimpleValues to kChangedOnlyCompositedValues
-    // after a successful direct update.
-    return change != PaintPropertyChangeType::kUnchanged
-               ? PaintPropertyChangeType::kChangedOnlyValues
-               : PaintPropertyChangeType::kChangedOnlyNonRerasterValues;
-  }
+void TransformPaintPropertyNode::State::Trace(Visitor* visitor) const {
+  visitor->Trace(scroll);
+  visitor->Trace(scroll_translation_for_fixed);
+}
 
-  return change;
+TransformPaintPropertyNode::TransformPaintPropertyNode(RootTag)
+    : TransformPaintPropertyNodeOrAlias(kRoot),
+      state_{.scroll = &ScrollPaintPropertyNode::Root(),
+             .in_subtree_of_page_scale = false} {}
+
+const TransformPaintPropertyNode& TransformPaintPropertyNode::Root() {
+  DEFINE_STATIC_LOCAL(
+      Persistent<TransformPaintPropertyNode>, root,
+      (MakeGarbageCollected<TransformPaintPropertyNode>(kRoot)));
+  return *root;
 }
 
 PaintPropertyChangeType
@@ -124,17 +128,6 @@ TransformPaintPropertyNode::DirectlyUpdateTransformAndOrigin(
   if (change != PaintPropertyChangeType::kUnchanged)
     AddChanged(change);
   return change;
-}
-
-// The root of the transform tree. The root transform node references the root
-// scroll node.
-const TransformPaintPropertyNode& TransformPaintPropertyNode::Root() {
-  DEFINE_STATIC_REF(
-      TransformPaintPropertyNode, root,
-      base::AdoptRef(new TransformPaintPropertyNode(
-          nullptr, State{.scroll = &ScrollPaintPropertyNode::Root(),
-                         .in_subtree_of_page_scale = false})));
-  return *root;
 }
 
 bool TransformPaintPropertyNodeOrAlias::Changed(
@@ -152,29 +145,23 @@ bool TransformPaintPropertyNodeOrAlias::Changed(
   return relative_to_node.Changed(change, TransformPaintPropertyNode::Root());
 }
 
-bool TransformPaintPropertyNodeOrAlias::ChangedExceptScroll(
-    PaintPropertyChangeType change,
-    const TransformPaintPropertyNodeOrAlias& relative_to_node) const {
-  for (const auto* node = this; node; node = node->Parent()) {
-    if (node == &relative_to_node) {
-      return false;
-    }
-    if (!node->IsParentAlias() &&
-        static_cast<const TransformPaintPropertyNode*>(node)->ScrollNode()) {
+void TransformPaintPropertyNodeOrAlias::ClearChangedToRoot(
+    int sequence_number) const {
+  for (auto* n = this; n && n->ChangedSequenceNumber() != sequence_number;
+       n = n->Parent()) {
+    n->ClearChanged(sequence_number);
+    if (n->IsParentAlias()) {
       continue;
     }
-    if (node->NodeChanged() >= change) {
-      return true;
+    if (const auto* scroll =
+            static_cast<const TransformPaintPropertyNode*>(n)->ScrollNode()) {
+      scroll->ClearChangedToRoot(sequence_number);
     }
   }
-
-  // |this| is not a descendant of |relative_to_node|. We have seen no changed
-  // flag from |this| to the root. Now check |relative_to_node| to the root.
-  return relative_to_node.Changed(change, TransformPaintPropertyNode::Root());
 }
 
 std::unique_ptr<JSONObject> TransformPaintPropertyNode::ToJSON() const {
-  auto json = ToJSONBase();
+  auto json = TransformPaintPropertyNodeOrAlias::ToJSON();
   if (IsIdentityOr2dTranslation()) {
     if (!Get2dTranslation().IsZero())
       json->SetString("translation2d", String(Get2dTranslation().ToString()));
@@ -211,12 +198,12 @@ std::unique_ptr<JSONObject> TransformPaintPropertyNode::ToJSON() const {
                     String(state_.compositor_element_id.ToString()));
   }
   if (state_.scroll)
-    json->SetString("scroll", String::Format("%p", state_.scroll.get()));
+    json->SetString("scroll", String::Format("%p", state_.scroll.Get()));
 
   if (state_.scroll_translation_for_fixed) {
     json->SetString(
         "scroll_translation_for_fixed",
-        String::Format("%p", state_.scroll_translation_for_fixed.get()));
+        String::Format("%p", state_.scroll_translation_for_fixed.Get()));
   }
   return json;
 }

@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "chrome/browser/devtools/device/devtools_device_discovery.h"
 
 #include <map>
+#include <string_view>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
@@ -93,7 +96,7 @@ void ProtocolCommand::OnSocketClosed() {
   delete this;
 }
 
-ProtocolCommand::~ProtocolCommand() {}
+ProtocolCommand::~ProtocolCommand() = default;
 
 // AgentHostDelegate ----------------------------------------------------------
 
@@ -126,15 +129,14 @@ class WebSocketProxy : public AndroidDeviceManager::AndroidWebSocket::Delegate {
   }
 
   void OnFrameRead(const std::string& message) override {
-    proxy_->DispatchOnClientHost(base::as_bytes(base::make_span(message)));
+    proxy_->DispatchOnClientHost(base::as_byte_span(message));
   }
 
   void OnSocketClosed() override {
     constexpr char kMsg[] =
         "{\"method\":\"Inspector.detached\",\"params\":"
         "{\"reason\":\"Connection lost.\"}}";
-    proxy_->DispatchOnClientHost(
-        base::as_bytes(base::make_span(kMsg, strlen(kMsg))));
+    proxy_->DispatchOnClientHost(base::byte_span_with_nul_from_cstring(kMsg));
     web_socket_.reset();
     socket_opened_ = false;
     proxy_->ConnectionClosed();  // Deletes |this|.
@@ -144,7 +146,7 @@ class WebSocketProxy : public AndroidDeviceManager::AndroidWebSocket::Delegate {
   bool socket_opened_;
   std::vector<std::string> pending_messages_;
   std::unique_ptr<AndroidDeviceManager::AndroidWebSocket> web_socket_;
-  content::DevToolsExternalAgentProxy* proxy_;
+  raw_ptr<content::DevToolsExternalAgentProxy> proxy_;
 };
 
 class AgentHostDelegate : public content::DevToolsExternalAgentProxyDelegate {
@@ -198,7 +200,7 @@ class AgentHostDelegate : public content::DevToolsExternalAgentProxyDelegate {
   std::string description_;
   GURL url_;
   GURL favicon_url_;
-  content::DevToolsAgentHost* agent_host_;
+  raw_ptr<content::DevToolsAgentHost> agent_host_;
   std::map<content::DevToolsExternalAgentProxy*,
            std::unique_ptr<WebSocketProxy>>
       proxies_;
@@ -471,7 +473,7 @@ void DevToolsDeviceDiscovery::DiscoveryRequest::ParseBrowserInfo(
   }
   const std::string* browser_name = value_dict->FindString("Browser");
   if (browser_name) {
-    std::vector<base::StringPiece> parts = base::SplitStringPiece(
+    std::vector<std::string_view> parts = base::SplitStringPiece(
         *browser_name, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
     if (parts.size() == 2) {
       browser->version_ = parts[1];
@@ -503,8 +505,7 @@ void DevToolsDeviceDiscovery::DiscoveryRequest::ReceivedVersion(
   if (result >= 0) {
     ParseBrowserInfo(browser, response, is_chrome);
   }
-  if (base::FeatureList::IsEnabled(::features::kDevToolsTabTarget) &&
-      is_chrome) {
+  if (is_chrome) {
     url += "?for_tab";
   }
   device->SendJsonRequest(
@@ -550,7 +551,7 @@ DevToolsDeviceDiscovery::RemotePage::RemotePage(
       browser_version_(browser_version),
       dict_(std::move(dict)) {}
 
-DevToolsDeviceDiscovery::RemotePage::~RemotePage() {}
+DevToolsDeviceDiscovery::RemotePage::~RemotePage() = default;
 
 scoped_refptr<content::DevToolsAgentHost>
 DevToolsDeviceDiscovery::RemotePage::CreateTarget() {
@@ -591,7 +592,7 @@ std::string DevToolsDeviceDiscovery::RemoteBrowser::GetId() {
 DevToolsDeviceDiscovery::RemoteBrowser::ParsedVersion
 DevToolsDeviceDiscovery::RemoteBrowser::GetParsedVersion() {
   ParsedVersion result;
-  for (const base::StringPiece& part : base::SplitStringPiece(
+  for (std::string_view part : base::SplitStringPiece(
            version_, ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
     int value = 0;
     base::StringToInt(part, &value);
@@ -600,7 +601,7 @@ DevToolsDeviceDiscovery::RemoteBrowser::GetParsedVersion() {
   return result;
 }
 
-DevToolsDeviceDiscovery::RemoteBrowser::~RemoteBrowser() {}
+DevToolsDeviceDiscovery::RemoteBrowser::~RemoteBrowser() = default;
 
 // DevToolsDeviceDiscovery::RemoteDevice --------------------------------------
 
@@ -617,7 +618,7 @@ DevToolsDeviceDiscovery::RemoteDevice::RemoteDevice(
   }
 }
 
-DevToolsDeviceDiscovery::RemoteDevice::~RemoteDevice() {}
+DevToolsDeviceDiscovery::RemoteDevice::~RemoteDevice() = default;
 
 // DevToolsDeviceDiscovery ----------------------------------------------------
 

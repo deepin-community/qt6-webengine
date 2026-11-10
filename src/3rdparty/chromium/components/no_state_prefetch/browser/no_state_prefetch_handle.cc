@@ -15,9 +15,9 @@ using content::BrowserThread;
 
 namespace prerender {
 
-NoStatePrefetchHandle::Observer::Observer() {}
+NoStatePrefetchHandle::Observer::Observer() = default;
 
-NoStatePrefetchHandle::Observer::~Observer() {}
+NoStatePrefetchHandle::Observer::~Observer() = default;
 
 NoStatePrefetchHandle::~NoStatePrefetchHandle() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -32,14 +32,16 @@ void NoStatePrefetchHandle::SetObserver(Observer* observer) {
 
 void NoStatePrefetchHandle::OnNavigateAway() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (prefetch_data_)
+  if (prefetch_data_) {
     prefetch_data_->OnHandleNavigatedAway(this);
+  }
 }
 
 void NoStatePrefetchHandle::OnCancel() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (prefetch_data_)
+  if (prefetch_data_) {
     prefetch_data_->OnHandleCanceled(this);
+  }
 }
 
 bool NoStatePrefetchHandle::IsPrefetching() const {
@@ -53,18 +55,9 @@ bool NoStatePrefetchHandle::IsFinishedLoading() const {
   return prefetch_data_ && prefetch_data_->contents()->has_finished_loading();
 }
 
-bool NoStatePrefetchHandle::IsAbandoned() const {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return prefetch_data_ && !prefetch_data_->abandon_time().is_null();
-}
-
 NoStatePrefetchContents* NoStatePrefetchHandle::contents() const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return prefetch_data_ ? prefetch_data_->contents() : nullptr;
-}
-
-const GURL& NoStatePrefetchHandle::prefetch_url() const {
-  return prefetch_url_;
 }
 
 NoStatePrefetchHandle::NoStatePrefetchHandle(
@@ -74,24 +67,15 @@ NoStatePrefetchHandle::NoStatePrefetchHandle(
   if (prefetch_data) {
     prefetch_data_ = prefetch_data->AsWeakPtr();
     prefetch_data->OnHandleCreated(this);
-    if (prefetch_data->contents()) {
-      prefetch_url_ = prefetch_data->contents()->prefetch_url();
-    }
   }
 }
 
 void NoStatePrefetchHandle::OnPrefetchStop(
     NoStatePrefetchContents* no_state_prefetch_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (observer_)
+  if (observer_) {
     observer_->OnPrefetchStop(this);
-}
-
-void NoStatePrefetchHandle::OnPrefetchNetworkBytesChanged(
-    NoStatePrefetchContents* no_state_prefetch_contents) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (observer_)
-    observer_->OnPrefetchNetworkBytesChanged(this);
+  }
 }
 
 bool NoStatePrefetchHandle::RepresentingSamePrefetchAs(

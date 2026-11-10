@@ -60,24 +60,17 @@ void GPUQueue::submit(Napi::Env env,
 }
 
 interop::Promise<void> GPUQueue::onSubmittedWorkDone(Napi::Env env) {
-    struct Context {
-        Napi::Env env;
-        interop::Promise<void> promise;
-        AsyncTask task;
-    };
-    auto ctx = new Context{env, interop::Promise<void>(env, PROMISE_INFO), AsyncTask(async_)};
+    auto ctx = std::make_unique<AsyncContext<void>>(env, PROMISE_INFO, async_);
     auto promise = ctx->promise;
 
     queue_.OnSubmittedWorkDone(
-        [](WGPUQueueWorkDoneStatus status, void* userdata) {
-            auto c = std::unique_ptr<Context>(static_cast<Context*>(userdata));
-            if (status != WGPUQueueWorkDoneStatus::WGPUQueueWorkDoneStatus_Success) {
-                Napi::Error::New(c->env, "onSubmittedWorkDone() failed")
-                    .ThrowAsJavaScriptException();
+        wgpu::CallbackMode::AllowProcessEvents,
+        [ctx = std::move(ctx)](wgpu::QueueWorkDoneStatus status, wgpu::StringView message) {
+            if (status != wgpu::QueueWorkDoneStatus::Success) {
+                Napi::Error::New(ctx->env, std::string(message)).ThrowAsJavaScriptException();
             }
-            c->promise.Resolve();
-        },
-        ctx);
+            ctx->promise.Resolve();
+        });
 
     return promise;
 }
@@ -134,13 +127,13 @@ void GPUQueue::writeBuffer(Napi::Env env,
 }
 
 void GPUQueue::writeTexture(Napi::Env env,
-                            interop::GPUImageCopyTexture destination,
+                            interop::GPUTexelCopyTextureInfo destination,
                             interop::AllowSharedBufferSource data,
-                            interop::GPUImageDataLayout dataLayout,
+                            interop::GPUTexelCopyBufferLayout dataLayout,
                             interop::GPUExtent3D size) {
-    wgpu::ImageCopyTexture dst{};
+    wgpu::TexelCopyTextureInfo dst{};
     Converter::BufferSource src{};
-    wgpu::TextureDataLayout layout{};
+    wgpu::TexelCopyBufferLayout layout{};
     wgpu::Extent3D sz{};
     Converter conv(env);
     if (!conv(dst, destination) ||    //
@@ -154,8 +147,8 @@ void GPUQueue::writeTexture(Napi::Env env,
 }
 
 void GPUQueue::copyExternalImageToTexture(Napi::Env env,
-                                          interop::GPUImageCopyExternalImage source,
-                                          interop::GPUImageCopyTextureTagged destination,
+                                          interop::GPUCopyExternalImageSourceInfo source,
+                                          interop::GPUCopyExternalImageDestInfo destination,
                                           interop::GPUExtent3D copySize) {
     UNIMPLEMENTED(env);
 }

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/webui/ash/add_supervision/add_supervision_ui.h"
+
 #include <string>
 
 #include "base/strings/strcat.h"
@@ -9,7 +11,6 @@
 #include "base/test/metrics/user_action_tester.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/ash/add_supervision/add_supervision_metrics_recorder.h"
-#include "chrome/browser/ui/webui/ash/add_supervision/add_supervision_ui.h"
 #include "chrome/browser/ui/webui/ash/add_supervision/confirm_signout_dialog.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -129,7 +130,7 @@ IN_PROC_BROWSER_TEST_F(AddSupervisionBrowserTest, URLParameters) {
   url::Component key;
   url::Component value;
   std::map<std::string, std::string> query_parts;
-  while (url::ExtractQueryKeyValue(query_str.c_str(), &query, &key, &value)) {
+  while (url::ExtractQueryKeyValue(query_str, &query, &key, &value)) {
     query_parts[query_str.substr(key.begin, key.len)] =
         query_str.substr(value.begin, value.len);
   }

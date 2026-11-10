@@ -5,19 +5,25 @@
 #include "components/privacy_sandbox/privacy_sandbox_test_util.h"
 
 #include <tuple>
+#include <variant>
 
 #include "base/feature_list.h"
+#include "base/metrics/metrics_hashes.h"
+#include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/content_settings/core/test/content_settings_mock_provider.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
+#include "components/metrics/dwa/dwa_recorder.h"
 #include "components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/browser_task_environment.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
@@ -37,13 +43,13 @@ std::map<T, TestCaseItemValue> UnpackKeys(
 
   for (const auto& [test_key, value] : test_key_to_test_value) {
     // If test_key is a single key, set the value in the map directly.
-    if (absl::holds_alternative<T>(test_key)) {
-      auto key = absl::get<T>(test_key);
+    if (std::holds_alternative<T>(test_key)) {
+      auto key = std::get<T>(test_key);
       EXPECT_EQ(0u, unpacked_map.count(key))
           << "Duplicate test key " << static_cast<int>(key);
       unpacked_map[key] = value;
     } else {
-      auto keys = absl::get<MultipleKeys<T>>(test_key);
+      auto keys = std::get<MultipleKeys<T>>(test_key);
       for (auto key : keys) {
         EXPECT_EQ(0u, unpacked_map.count(key))
             << "Duplicate test key " << static_cast<int>(key);
@@ -57,8 +63,8 @@ std::map<T, TestCaseItemValue> UnpackKeys(
 
 template <typename T>
 T GetItemValue(const TestCaseItemValue& value) {
-  EXPECT_TRUE(absl::holds_alternative<T>(value));
-  return absl::get<T>(value);
+  EXPECT_TRUE(std::holds_alternative<T>(value));
+  return std::get<T>(value);
 }
 
 template <typename V, typename K>
@@ -286,7 +292,7 @@ void ApplyTestState(
       SCOPED_TRACE("State Setup: Attestations Map");
       privacy_sandbox::PrivacySandboxAttestations::GetInstance()
           ->SetAttestationsForTesting(
-              GetItemValue<absl::optional<
+              GetItemValue<std::optional<
                   privacy_sandbox::PrivacySandboxAttestationsMap>>(value));
       return;
     }
@@ -294,6 +300,18 @@ void ApplyTestState(
       SCOPED_TRACE("State Setup: Disable FLEDGE joining for eTLD+1");
       privacy_sandbox_settings->SetFledgeJoiningAllowed(
           GetItemValue<std::string>(value), false);
+      return;
+    }
+    case (StateKey::kBlockAll3pcToggleEnabledUserPrefValue): {
+      SCOPED_TRACE("State Setup: Block all 3pc toggle enabled");
+      testing_pref_service->SetUserPref(prefs::kBlockAll3pcToggleEnabled,
+                                        base::Value(GetItemValue<bool>(value)));
+      return;
+    }
+    case (StateKey::kTrackingProtection3pcdEnabledUserPrefValue): {
+      SCOPED_TRACE("State Setup: Tracking protection 3pcd enabled");
+      testing_pref_service->SetUserPref(prefs::kTrackingProtection3pcdEnabled,
+                                        base::Value(GetItemValue<bool>(value)));
       return;
     }
     default:
@@ -311,8 +329,10 @@ void ProvideInput(const std::pair<InputKey, TestCaseItemValue>& input,
       return;
     }
     case (InputKey::kPromptAction): {
+      // TODO(crbug.com/359902106): Test various SurfaceTypes like we do for
+      // PromptAction here.
       privacy_sandbox_service->PromptActionOccurred(
-          GetItemValue<int>(input_value));
+          GetItemValue<int>(input_value), /*kDesktop*/ 0);
       return;
     }
     default: {
@@ -506,8 +526,11 @@ void CheckOutput(
       auto accessing_origin =
           GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
       auto return_value = GetItemValue<bool>(output_value);
-      ASSERT_EQ(return_value, privacy_sandbox_settings->IsSharedStorageAllowed(
-                                  top_frame_origin, accessing_origin));
+      ASSERT_EQ(return_value,
+                privacy_sandbox_settings->IsSharedStorageAllowed(
+                    top_frame_origin, accessing_origin,
+                    /*out_debug_message=*/nullptr, /*console_frame=*/nullptr,
+                    /*out_block_is_site_setting_specific=*/nullptr));
       return;
     }
 
@@ -518,9 +541,11 @@ void CheckOutput(
       auto accessing_origin =
           GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
       auto return_value = GetItemValue<bool>(output_value);
-      ASSERT_EQ(return_value,
-                privacy_sandbox_settings->IsSharedStorageSelectURLAllowed(
-                    top_frame_origin, accessing_origin));
+      ASSERT_EQ(
+          return_value,
+          privacy_sandbox_settings->IsSharedStorageSelectURLAllowed(
+              top_frame_origin, accessing_origin, /*out_debug_message=*/nullptr,
+              /*out_block_is_site_setting_specific=*/nullptr));
       return;
     }
 
@@ -533,7 +558,8 @@ void CheckOutput(
       auto return_value = GetItemValue<bool>(output_value);
       ASSERT_EQ(return_value,
                 privacy_sandbox_settings->IsPrivateAggregationAllowed(
-                    top_frame_origin, reporting_origin));
+                    top_frame_origin, reporting_origin,
+                    /*out_block_is_site_setting_specific=*/nullptr));
       return;
     }
 
@@ -655,11 +681,47 @@ void CheckOutput(
           GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
       auto reporting_origin = GetItemValueForKey<url::Origin>(
           InputKey::kAdMeasurementReportingOrigin, input);
+
+      base::test::ScopedFeatureList scoped_feature_list_{
+          metrics::dwa::kDwaFeature};
+
+      // Ensures that metrics are only counted for this call.
+      // TODO(crbug.com/403946431): Consider implementing a scoped object to
+      // improve ergonomics.
+      metrics::dwa::DwaRecorder::Get()->EnableRecording();
+      metrics::dwa::DwaRecorder::Get()->Purge();
+      ASSERT_THAT(metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting(),
+                  testing::IsEmpty());
+
       std::ignore = privacy_sandbox_settings->IsAttributionReportingAllowed(
           top_frame_origin, reporting_origin);
       auto histogram_value = GetItemValue<int>(output_value);
       histogram_tester.ExpectUniqueSample(
           "PrivacySandbox.IsAttributionReportingAllowed", histogram_value, 1);
+
+      ASSERT_THAT(metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting(),
+                  testing::SizeIs(1));
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()
+              ->GetEntriesForTesting()[0]
+              ->event_hash,
+          base::HashMetricName("PrivacySandbox.IsAttributionReportingAllowed"));
+
+      // DWA content sanitization extracts the eTLD+1 from the provided
+      // reporting origin.
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()
+              ->GetEntriesForTesting()[0]
+              ->content_hash,
+          base::HashMetricName(
+              net::registry_controlled_domains::GetDomainAndRegistry(
+                  reporting_origin.GetURL(), net::registry_controlled_domains::
+                                                 INCLUDE_PRIVATE_REGISTRIES)));
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting()[0]->metrics,
+          testing::UnorderedElementsAre(
+              testing::Pair(base::HashMetricName("Status"), histogram_value)));
+
       return;
     }
     case (OutputKey::kMaySendAttributionReportMetric): {
@@ -686,7 +748,9 @@ void CheckOutput(
       auto accessing_origin =
           GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
       std::ignore = privacy_sandbox_settings->IsSharedStorageAllowed(
-          top_frame_origin, accessing_origin);
+          top_frame_origin, accessing_origin, /*out_debug_message=*/nullptr,
+          /*console_frame=*/nullptr,
+          /*out_block_is_site_setting_specific=*/nullptr);
       auto histogram_value = GetItemValue<int>(output_value);
       histogram_tester.ExpectUniqueSample(
           "PrivacySandbox.IsSharedStorageAllowed", histogram_value, 1);
@@ -701,7 +765,8 @@ void CheckOutput(
       auto accessing_origin =
           GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
       std::ignore = privacy_sandbox_settings->IsSharedStorageSelectURLAllowed(
-          top_frame_origin, accessing_origin);
+          top_frame_origin, accessing_origin, /*out_debug_message=*/nullptr,
+          /*out_block_is_site_setting_specific=*/nullptr);
       auto histogram_value = GetItemValue<int>(output_value);
       histogram_tester.ExpectUniqueSample(
           "PrivacySandbox.IsSharedStorageSelectURLAllowed", histogram_value, 1);
@@ -714,11 +779,47 @@ void CheckOutput(
           GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
       auto reporting_origin = GetItemValueForKey<url::Origin>(
           InputKey::kAdMeasurementReportingOrigin, input);
+
+      base::test::ScopedFeatureList scoped_feature_list_{
+          metrics::dwa::kDwaFeature};
+
+      // Ensures that metrics are only counted for this call.
+      // TODO(crbug.com/403946431): Consider implementing a scoped object to
+      // improve ergonomics.
+      metrics::dwa::DwaRecorder::Get()->EnableRecording();
+      metrics::dwa::DwaRecorder::Get()->Purge();
+      ASSERT_THAT(metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting(),
+                  testing::IsEmpty());
+
       std::ignore = privacy_sandbox_settings->IsPrivateAggregationAllowed(
-          top_frame_origin, reporting_origin);
+          top_frame_origin, reporting_origin,
+          /*out_block_is_site_setting_specific=*/nullptr);
       auto histogram_value = GetItemValue<int>(output_value);
       histogram_tester.ExpectUniqueSample(
           "PrivacySandbox.IsPrivateAggregationAllowed", histogram_value, 1);
+
+      ASSERT_THAT(metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting(),
+                  testing::SizeIs(1));
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()
+              ->GetEntriesForTesting()[0]
+              ->event_hash,
+          base::HashMetricName("PrivacySandbox.IsPrivateAggregationAllowed"));
+
+      // DWA content sanitization extracts the eTLD+1 from the provided
+      // reporting origin.
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()
+              ->GetEntriesForTesting()[0]
+              ->content_hash,
+          base::HashMetricName(
+              net::registry_controlled_domains::GetDomainAndRegistry(
+                  reporting_origin.GetURL(), net::registry_controlled_domains::
+                                                 INCLUDE_PRIVATE_REGISTRIES)));
+      EXPECT_THAT(
+          metrics::dwa::DwaRecorder::Get()->GetEntriesForTesting()[0]->metrics,
+          testing::UnorderedElementsAre(
+              testing::Pair(base::HashMetricName("Status"), histogram_value)));
       return;
     }
     case (OutputKey::kTopicsConsentGiven): {
@@ -767,15 +868,15 @@ void CheckOutput(
             std::string(stored_text_iterator, stored_text.end()) + "\"");
 
         auto mismatch_pair =
-            base::ranges::mismatch(string.begin(), string.end(),
-                                   stored_text_iterator, stored_text.end());
+            std::ranges::mismatch(string.begin(), string.end(),
+                                  stored_text_iterator, stored_text.end());
 
         // The first mismatch should be at the end of the string, indicating
         // that the entire string was matched.
-        EXPECT_EQ(string.end(), mismatch_pair.first);
+        EXPECT_EQ(string.end(), mismatch_pair.in1);
 
         // Update text iterator to where the matches for this string stopped.
-        stored_text_iterator = mismatch_pair.second;
+        stored_text_iterator = mismatch_pair.in2;
 
         // The iterator should now point to the whitespace character joining the
         // strings, unless we're at the end of the string.
@@ -792,7 +893,9 @@ void CheckOutput(
       auto force_chrome_build =
           GetItemValueForKey<bool>(InputKey::kForceChromeBuild, input);
       privacy_sandbox_service->ForceChromeBuildForTests(force_chrome_build);
-      EXPECT_EQ(prompt_type, privacy_sandbox_service->GetRequiredPromptType());
+      // TODO(crbug.com/359902106): Test various SurfaceTypes here.
+      EXPECT_EQ(prompt_type,
+                privacy_sandbox_service->GetRequiredPromptType(/*kDesktop*/ 0));
       return;
     }
     case (OutputKey::kM1PromptSuppressedReason): {
@@ -888,6 +991,147 @@ void CheckOutput(
               top_frame_origin, context_origin));
       return;
     }
+    case (OutputKey::kIsSharedStorageAllowedDebugMessage): {
+      SCOPED_TRACE(
+          "Check Output: Verify out_debug_message in IsSharedStorageAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      std::string* actual_out_debug_message = GetItemValueForKey<std::string*>(
+          InputKey::kOutSharedStorageDebugMessage, input);
+      privacy_sandbox_settings->IsSharedStorageAllowed(
+          top_frame_origin, accessing_origin, actual_out_debug_message,
+          /*console_frame=*/nullptr,
+          /*out_block_is_site_setting_specific=*/nullptr);
+      std::string* expected_out_debug_message =
+          GetItemValue<std::string*>(output_value);
+      ASSERT_EQ(!!actual_out_debug_message, !!expected_out_debug_message);
+      if (expected_out_debug_message) {
+        ASSERT_EQ(*actual_out_debug_message, *expected_out_debug_message);
+      }
+      return;
+    }
+
+    case (OutputKey::kIsSharedStorageSelectURLAllowedDebugMessage): {
+      SCOPED_TRACE(
+          "Check Output: Verify out_debug_message in "
+          "IsSharedStorageSelectURLAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      std::string* actual_out_debug_message = GetItemValueForKey<std::string*>(
+          InputKey::kOutSharedStorageSelectURLDebugMessage, input);
+      privacy_sandbox_settings->IsSharedStorageSelectURLAllowed(
+          top_frame_origin, accessing_origin, actual_out_debug_message,
+          /*out_block_is_site_setting_specific=*/nullptr);
+      std::string* expected_out_debug_message =
+          GetItemValue<std::string*>(output_value);
+      ASSERT_EQ(!!actual_out_debug_message, !!expected_out_debug_message);
+      if (expected_out_debug_message) {
+        ASSERT_EQ(*actual_out_debug_message, *expected_out_debug_message);
+      }
+      return;
+    }
+    case (OutputKey::kIsSharedStorageBlockSiteSettingSpecific): {
+      SCOPED_TRACE(
+          "Check Output: Verify out_is_block_site_specific in "
+          "IsSharedStorageAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      bool* actual_out_is_block_site_specific = GetItemValueForKey<bool*>(
+          InputKey::kOutSharedStorageBlockIsSiteSettingSpecific, input);
+      privacy_sandbox_settings->IsSharedStorageAllowed(
+          top_frame_origin, accessing_origin, /*out_debug_message=*/nullptr,
+          /*console_frame=*/nullptr, actual_out_is_block_site_specific);
+      bool* expected_out_is_block_site_specific =
+          GetItemValue<bool*>(output_value);
+      ASSERT_EQ(!!actual_out_is_block_site_specific,
+                !!expected_out_is_block_site_specific);
+      if (expected_out_is_block_site_specific) {
+        ASSERT_EQ(*actual_out_is_block_site_specific,
+                  *expected_out_is_block_site_specific);
+      }
+      return;
+    }
+    case (OutputKey::kIsSharedStorageSelectURLBlockSiteSettingSpecific): {
+      SCOPED_TRACE(
+          "Check Output: Verify out_is_block_site_specific in "
+          "IsSharedStorageSelectURLAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      bool* actual_out_is_block_site_specific = GetItemValueForKey<bool*>(
+          InputKey::kOutSharedStorageSelectURLBlockIsSiteSettingSpecific,
+          input);
+      privacy_sandbox_settings->IsSharedStorageSelectURLAllowed(
+          top_frame_origin, accessing_origin, /*out_debug_message=*/nullptr,
+          actual_out_is_block_site_specific);
+      bool* expected_out_is_block_site_specific =
+          GetItemValue<bool*>(output_value);
+      ASSERT_EQ(!!actual_out_is_block_site_specific,
+                !!expected_out_is_block_site_specific);
+      if (expected_out_is_block_site_specific) {
+        ASSERT_EQ(*actual_out_is_block_site_specific,
+                  *expected_out_is_block_site_specific);
+      }
+      return;
+    }
+    case (OutputKey::kIsPrivateAggregationBlockSiteSettingSpecific): {
+      SCOPED_TRACE(
+          "Check Output: Verify out_is_block_site_specific in "
+          "IsPrivateAggregationAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      bool* actual_out_is_block_site_specific = GetItemValueForKey<bool*>(
+          InputKey::kOutPrivateAggregationBlockIsSiteSettingSpecific, input);
+      privacy_sandbox_settings->IsPrivateAggregationAllowed(
+          top_frame_origin, accessing_origin,
+          actual_out_is_block_site_specific);
+      bool* expected_out_is_block_site_specific =
+          GetItemValue<bool*>(output_value);
+      ASSERT_EQ(!!actual_out_is_block_site_specific,
+                !!expected_out_is_block_site_specific);
+      if (expected_out_is_block_site_specific) {
+        ASSERT_EQ(*actual_out_is_block_site_specific,
+                  *expected_out_is_block_site_specific);
+      }
+      return;
+    }
+    case (OutputKey::kIsFencedStorageReadAllowed): {
+      SCOPED_TRACE("Check Output: IsFencedStorageReadAllowed()");
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      auto return_value = GetItemValue<bool>(output_value);
+      ASSERT_EQ(return_value,
+                privacy_sandbox_settings->IsFencedStorageReadAllowed(
+                    top_frame_origin, accessing_origin,
+                    /*console_frame=*/nullptr));
+      return;
+    }
+    case (OutputKey::kIsFencedStorageReadAllowedMetric): {
+      SCOPED_TRACE("Check Output: PrivacySandbox.IsFencedStorageReadAllowed");
+      base::HistogramTester histogram_tester;
+      auto top_frame_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kTopFrameOrigin, input);
+      auto accessing_origin =
+          GetItemValueForKey<url::Origin>(InputKey::kAccessingOrigin, input);
+      std::ignore = privacy_sandbox_settings->IsFencedStorageReadAllowed(
+          top_frame_origin, accessing_origin,
+          /*console_frame=*/nullptr);
+      auto histogram_value = GetItemValue<int>(output_value);
+      histogram_tester.ExpectUniqueSample(
+          "PrivacySandbox.IsFencedStorageReadAllowed", histogram_value, 1);
+      return;
+    }
   }
 }
 
@@ -940,6 +1184,16 @@ void RunTestCase(
     CheckOutput(inputs, output, privacy_sandbox_settings,
                 privacy_sandbox_service, testing_pref_service);
   }
+}
+
+// static
+bool PrivacySandboxSettingsTestPeer::IsAllowed(Status status) {
+  return privacy_sandbox::PrivacySandboxSettingsImpl::IsAllowed(status);
+}
+
+bool PrivacySandboxSettingsTestPeer::IsFledgeJoiningAllowed(
+    const url::Origin& top_frame_origin) const {
+  return pss_impl_->IsFledgeJoiningAllowed(top_frame_origin);
 }
 
 }  // namespace privacy_sandbox_test_util

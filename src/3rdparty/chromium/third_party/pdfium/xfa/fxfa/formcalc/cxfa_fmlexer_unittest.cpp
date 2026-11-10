@@ -8,7 +8,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(CXFA_FMLexerTest, NullString) {
+TEST(CXFAFMLexerTest, NullString) {
   WideStringView null_string;
   CXFA_FMLexer lexer(null_string);
   CXFA_FMLexer::Token token = lexer.NextToken();
@@ -16,14 +16,14 @@ TEST(CXFA_FMLexerTest, NullString) {
   EXPECT_TRUE(lexer.IsComplete());
 }
 
-TEST(CXFA_FMLexerTest, EmptyString) {
+TEST(CXFAFMLexerTest, EmptyString) {
   CXFA_FMLexer lexer(L"");
   CXFA_FMLexer::Token token = lexer.NextToken();
   EXPECT_EQ(TOKeof, token.GetType());
   EXPECT_TRUE(lexer.IsComplete());
 }
 
-TEST(CXFA_FMLexerTest, Numbers) {
+TEST(CXFAFMLexerTest, Numbers) {
   {
     CXFA_FMLexer lexer(L"-12");
     CXFA_FMLexer::Token token = lexer.NextToken();
@@ -79,7 +79,7 @@ TEST(CXFA_FMLexerTest, Numbers) {
 }
 
 // The quotes are stripped in CXFA_FMStringExpression::ToJavaScript.
-TEST(CXFA_FMLexerTest, Strings) {
+TEST(CXFAFMLexerTest, Strings) {
   {
     CXFA_FMLexer lexer(L"\"The cat jumped over the fence.\"");
     CXFA_FMLexer::Token token = lexer.NextToken();
@@ -116,79 +116,79 @@ TEST(CXFA_FMLexerTest, Strings) {
 }
 
 // Note, 'this' is a keyword but is not matched by the lexer.
-TEST(CXFA_FMLexerTest, OperatorsAndKeywords) {
-  struct {
+TEST(CXFAFMLexerTest, OperatorsAndKeywords) {
+  static const struct {
     const wchar_t* op;
     XFA_FM_TOKEN token;
-  } op[] = {{L"+", TOKplus},
-            {L"/", TOKdiv},
-            {L"-", TOKminus},
-            {L"&", TOKand},
-            {L"|", TOKor},
-            {L"*", TOKmul},
-            {L"<", TOKlt},
-            {L">", TOKgt},
-            {L"==", TOKeq},
-            {L"<>", TOKne},
-            {L"<=", TOKle},
-            {L">=", TOKge},
-            {L"and", TOKksand},
-            {L"break", TOKbreak},
-            {L"continue", TOKcontinue},
-            {L"do", TOKdo},
-            {L"downto", TOKdownto},
-            {L"else", TOKelse},
-            {L"elseif", TOKelseif},
-            {L"end", TOKend},
-            {L"endfor", TOKendfor},
-            {L"endfunc", TOKendfunc},
-            {L"endif", TOKendif},
-            {L"endwhile", TOKendwhile},
-            {L"eq", TOKkseq},
-            {L"exit", TOKexit},
-            {L"for", TOKfor},
-            {L"foreach", TOKforeach},
-            {L"func", TOKfunc},
-            {L"ge", TOKksge},
-            {L"gt", TOKksgt},
-            {L"if", TOKif},
-            {L"in", TOKin},
-            {L"infinity", TOKinfinity},
-            {L"le", TOKksle},
-            {L"lt", TOKkslt},
-            {L"nan", TOKnan},
-            {L"ne", TOKksne},
-            {L"not", TOKksnot},
-            {L"null", TOKnull},
-            {L"or", TOKksor},
-            {L"return", TOKreturn},
-            {L"step", TOKstep},
-            {L"then", TOKthen},
-            {L"throw", TOKthrow},
-            {L"upto", TOKupto},
-            {L"var", TOKvar},
-            {L"while", TOKwhile},
+  } kOps[] = {{L"+", TOKplus},
+              {L"/", TOKdiv},
+              {L"-", TOKminus},
+              {L"&", TOKand},
+              {L"|", TOKor},
+              {L"*", TOKmul},
+              {L"<", TOKlt},
+              {L">", TOKgt},
+              {L"==", TOKeq},
+              {L"<>", TOKne},
+              {L"<=", TOKle},
+              {L">=", TOKge},
+              {L"and", TOKksand},
+              {L"break", TOKbreak},
+              {L"continue", TOKcontinue},
+              {L"do", TOKdo},
+              {L"downto", TOKdownto},
+              {L"else", TOKelse},
+              {L"elseif", TOKelseif},
+              {L"end", TOKend},
+              {L"endfor", TOKendfor},
+              {L"endfunc", TOKendfunc},
+              {L"endif", TOKendif},
+              {L"endwhile", TOKendwhile},
+              {L"eq", TOKkseq},
+              {L"exit", TOKexit},
+              {L"for", TOKfor},
+              {L"foreach", TOKforeach},
+              {L"func", TOKfunc},
+              {L"ge", TOKksge},
+              {L"gt", TOKksgt},
+              {L"if", TOKif},
+              {L"in", TOKin},
+              {L"infinity", TOKinfinity},
+              {L"le", TOKksle},
+              {L"lt", TOKkslt},
+              {L"nan", TOKnan},
+              {L"ne", TOKksne},
+              {L"not", TOKksnot},
+              {L"null", TOKnull},
+              {L"or", TOKksor},
+              {L"return", TOKreturn},
+              {L"step", TOKstep},
+              {L"then", TOKthen},
+              {L"throw", TOKthrow},
+              {L"upto", TOKupto},
+              {L"var", TOKvar},
+              {L"while", TOKwhile},
 
-            // The following are defined but aren't in the spec.
-            {L"(", TOKlparen},
-            {L")", TOKrparen},
-            {L",", TOKcomma},
-            {L".", TOKdot},
-            {L"[", TOKlbracket},
-            {L"]", TOKrbracket},
-            {L"..", TOKdotdot},
-            {L".#", TOKdotscream},
-            {L".*", TOKdotstar}};
+              // The following are defined but aren't in the spec.
+              {L"(", TOKlparen},
+              {L")", TOKrparen},
+              {L",", TOKcomma},
+              {L".", TOKdot},
+              {L"[", TOKlbracket},
+              {L"]", TOKrbracket},
+              {L"..", TOKdotdot},
+              {L".#", TOKdotscream},
+              {L".*", TOKdotstar}};
 
-  for (size_t i = 0; i < std::size(op); ++i) {
-    CXFA_FMLexer lexer(op[i].op);
+  for (const auto& op : kOps) {
+    CXFA_FMLexer lexer(op.op);
     CXFA_FMLexer::Token token = lexer.NextToken();
-    EXPECT_EQ(op[i].token, token.GetType());
+    EXPECT_EQ(op.token, token.GetType());
     EXPECT_TRUE(lexer.IsComplete());
   }
 }
 
-TEST(CXFA_FMLexerTest, Comments) {
+TEST(CXFAFMLexerTest, Comments) {
   {
     CXFA_FMLexer lexer(L"// Empty.");
     CXFA_FMLexer::Token token = lexer.NextToken();
@@ -238,7 +238,7 @@ TEST(CXFA_FMLexerTest, Comments) {
   }
 }
 
-TEST(CXFA_FMLexerTest, ValidIdentifiers) {
+TEST(CXFAFMLexerTest, ValidIdentifiers) {
   std::vector<const wchar_t*> identifiers = {
       L"a", L"an_identifier", L"_ident", L"$ident", L"!ident", L"GetAddr"};
   for (const auto* ident : identifiers) {
@@ -250,7 +250,7 @@ TEST(CXFA_FMLexerTest, ValidIdentifiers) {
   }
 }
 
-TEST(CXFA_FMLexerTest, InvalidIdentifiers) {
+TEST(CXFAFMLexerTest, InvalidIdentifiers) {
   {
     CXFA_FMLexer lexer(L"#a");
     CXFA_FMLexer::Token token = lexer.NextToken();
@@ -280,7 +280,7 @@ TEST(CXFA_FMLexerTest, InvalidIdentifiers) {
   }
 }
 
-TEST(CXFA_FMLexerTest, Whitespace) {
+TEST(CXFAFMLexerTest, Whitespace) {
   {
     CXFA_FMLexer lexer(L" \t\xc\x9\xb");
     CXFA_FMLexer::Token token = lexer.NextToken();
@@ -302,8 +302,10 @@ TEST(CXFA_FMLexerTest, Whitespace) {
   }
 }
 
-TEST(CXFA_FMLexerTest, NullData) {
-  CXFA_FMLexer lexer(WideStringView(L"\x2d\x32\x00\x2d\x32", 5));
+TEST(CXFAFMLexerTest, NullData) {
+  CXFA_FMLexer lexer(
+      // SAFETY: required for test, manual length computation for fixed string.
+      UNSAFE_BUFFERS(WideStringView(L"\x2d\x32\x00\x2d\x32", 5)));
   CXFA_FMLexer::Token token = lexer.NextToken();
   EXPECT_EQ(TOKminus, token.GetType());
 

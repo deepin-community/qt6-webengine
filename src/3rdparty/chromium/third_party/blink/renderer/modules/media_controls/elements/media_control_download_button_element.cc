@@ -8,6 +8,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/user_metrics_action.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -20,6 +21,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
+#include "ui/strings/grit/ax_strings.h"
 
 namespace blink {
 
@@ -29,7 +31,7 @@ MediaControlDownloadButtonElement::MediaControlDownloadButtonElement(
   setType(input_type_names::kButton);
   setAttribute(
       html_names::kAriaLabelAttr,
-      WTF::AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_DOWNLOAD_BUTTON)));
+      AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_DOWNLOAD_BUTTON)));
 
   SetShadowPseudoId(AtomicString("-internal-media-controls-download-button"));
   SetIsWanted(false);
@@ -47,6 +49,14 @@ bool MediaControlDownloadButtonElement::ShouldDisplayDownloadButton() const {
     UseCounter::Count(MediaElement().GetDocument(),
                       WebFeature::kHTMLMediaElementControlsListNoDownload);
     return false;
+  }
+
+  if (GetDocument().GetFrame()) {
+    WebLocalFrame* web_local_frame = WebLocalFrame::FromFrameToken(
+        GetDocument().GetFrame()->GetLocalFrameToken());
+    if (web_local_frame && !web_local_frame->IsAllowedToDownload()) {
+      return false;
+    }
   }
 
   return true;

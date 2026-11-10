@@ -102,7 +102,7 @@ class ContextProviderObserver : viz::ContextLostObserver {
             base::BindPostTaskToCurrentDefault(on_gpu_capabilities_fetched)) {
     DETACH_FROM_SEQUENCE(main_sequence_checker_);
 
-    content::GetUIThreadTaskRunner({})->PostTask(
+    GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(
             &ContextProviderObserver::GetContextProviderOnMainSequence,
@@ -174,7 +174,7 @@ FrameSinkVideoCaptureDevice::~FrameSinkVideoCaptureDevice() {
 bool FrameSinkVideoCaptureDevice::CanSupportNV12Format() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(crbug.com/1518528): Determine if we actually need to know the format
+  // TODO(crbug.com/41491504): Determine if we actually need to know the format
   // client-side (which is what this method is used for) beyond sending it over
   // to the service side. If not, compute this information service-side. If yes,
   // port all of the below code to be a check on SharedImageCapabilities once
@@ -304,8 +304,6 @@ void FrameSinkVideoCaptureDevice::AllocateAndStartWithReceiverInternal() {
   }
 
   AllocateCapturer(pixel_format);
-
-  receiver_->OnStarted();
 
   if (!suspend_requested_) {
     MaybeStartConsuming();
@@ -499,6 +497,11 @@ void FrameSinkVideoCaptureDevice::OnFrameCaptured(
   // assume the user is interacting with the view.
   info->metadata.interactive_content = true;
 #endif
+
+  if (!has_sent_on_started_to_client_) {
+    has_sent_on_started_to_client_ = true;
+    receiver_->OnStarted();
+  }
 
   // Pass the video frame to the VideoFrameReceiver. This is done by first
   // passing the shared memory buffer handle and then notifying it that a new

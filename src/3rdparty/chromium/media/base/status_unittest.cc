@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
+#include "media/base/status.h"
+
+#include <algorithm>
 #include <sstream>
 #include <string>
 
 #include "base/json/json_writer.h"
-#include "base/ranges/algorithm.h"
 #include "media/base/media_serializers.h"
-#include "media/base/status.h"
 #include "media/base/test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -88,6 +94,21 @@ struct TraitsWithDataPacking {
     status->WithData("DataA", data.a);
     status->WithData("DataB", data.b);
     status->WithData("DataC", data.c);
+  }
+};
+
+struct TraitsWithDefaultNamedMessage {
+  enum class Codes { kFail1, kFail2, kFail3 };
+  static constexpr StatusGroupType Group() { return "GroupWithDefaultNames"; }
+  static constexpr std::string ReadableCodeName(Codes code) {
+    switch (code) {
+      case Codes::kFail1:
+        return "Failure1";
+      case Codes::kFail2:
+        return "Failure2";
+      case Codes::kFail3:
+        return "Failure3";
+    }
   }
 };
 
@@ -201,7 +222,7 @@ TEST_F(StatusTest, DifferentModesOfConstruction) {
   ASSERT_EQ(packed.message(), "");
   // Keep serialized around, accessing |data| from it inline causes it
   // to be destructed and |unpacked| to be used after being freed.
-  auto serialized = MediaSerialize(packed).TakeDict();
+  auto serialized = MediaSerializeForTesting(packed).TakeDict();
   auto* unpacked = serialized.FindDict("data");
   ASSERT_NE(unpacked, nullptr);
   ASSERT_EQ(unpacked->size(), 3ul);
@@ -214,7 +235,7 @@ TEST_F(StatusTest, DifferentModesOfConstruction) {
   PackingStatus packed2 = {PackingStatus::Codes::kFail, "*explosion*", data};
   ASSERT_EQ(packed2.code(), PackingStatus::Codes::kFail);
   ASSERT_EQ(packed2.message(), "*explosion*");
-  serialized = MediaSerialize(packed).TakeDict();
+  serialized = MediaSerializeForTesting(packed).TakeDict();
   unpacked = serialized.FindDict("data");
   ASSERT_NE(unpacked, nullptr);
   ASSERT_EQ(unpacked->size(), 3ul);
@@ -223,8 +244,8 @@ TEST_F(StatusTest, DifferentModesOfConstruction) {
   ASSERT_EQ(*unpacked->FindString("DataC"), "apple pie");
 
   NormalStatus root = NormalStatus::Codes::kFoo;
-  PackingStatus derrived = {PackingStatus::Codes::kFail, std::move(root)};
-  serialized = MediaSerialize(derrived).TakeDict();
+  PackingStatus derived = {PackingStatus::Codes::kFail, std::move(root)};
+  serialized = MediaSerializeForTesting(derived).TakeDict();
   unpacked = serialized.FindDict("cause");
   ASSERT_NE(unpacked, nullptr);
   ASSERT_EQ(unpacked->size(), 5ul);
@@ -232,8 +253,8 @@ TEST_F(StatusTest, DifferentModesOfConstruction) {
             static_cast<int>(NormalStatus::Codes::kFoo));
 
   root = NormalStatus::Codes::kFoo;
-  derrived = {PackingStatus::Codes::kFail, "blah", std::move(root)};
-  serialized = MediaSerialize(derrived).TakeDict();
+  derived = {PackingStatus::Codes::kFail, "blah", std::move(root)};
+  serialized = MediaSerializeForTesting(derived).TakeDict();
   unpacked = serialized.FindDict("cause");
   ASSERT_EQ(*serialized.FindString("message"), "blah");
   ASSERT_NE(unpacked, nullptr);
@@ -253,13 +274,13 @@ TEST_F(StatusTest, DerefOpOnOrType) {
 
 TEST_F(StatusTest, StaticOKMethodGivesCorrectSerialization) {
   NormalStatus ok = DontFail();
-  base::Value actual = MediaSerialize(ok);
+  base::Value actual = MediaSerializeForTesting(ok);
   ASSERT_EQ(actual.GetString(), "Ok");
 }
 
 TEST_F(StatusTest, SingleLayerError) {
   NormalStatus failed = FailEasily();
-  base::Value actual = MediaSerialize(failed);
+  base::Value actual = MediaSerializeForTesting(failed);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -281,7 +302,7 @@ TEST_F(StatusTest, SingleLayerError) {
 
 TEST_F(StatusTest, MultipleErrorLayer) {
   NormalStatus failed = FailRecursively(3);
-  base::Value actual = MediaSerialize(failed);
+  base::Value actual = MediaSerializeForTesting(failed);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -296,7 +317,7 @@ TEST_F(StatusTest, MultipleErrorLayer) {
 
 TEST_F(StatusTest, CanHaveData) {
   NormalStatus failed = FailWithData("example", "data");
-  base::Value actual = MediaSerialize(failed);
+  base::Value actual = MediaSerializeForTesting(failed);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -314,7 +335,7 @@ TEST_F(StatusTest, CanHaveData) {
 TEST_F(StatusTest, CanUseCustomSerializer) {
   NormalStatus failed =
       FailWithData("example", UselessThingToBeSerialized("F"));
-  base::Value actual = MediaSerialize(failed);
+  base::Value actual = MediaSerializeForTesting(failed);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -331,7 +352,7 @@ TEST_F(StatusTest, CanUseCustomSerializer) {
 
 TEST_F(StatusTest, CausedByHasVector) {
   NormalStatus causal = FailWithCause();
-  base::Value actual = MediaSerialize(causal);
+  base::Value actual = MediaSerializeForTesting(causal);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 6ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -351,8 +372,8 @@ TEST_F(StatusTest, CausedByHasVector) {
 TEST_F(StatusTest, CausedByCanAssignCopy) {
   NormalStatus causal = FailWithCause();
   NormalStatus copy_causal = causal;
-  base::Value causal_serialized = MediaSerialize(causal);
-  base::Value copy_causal_serialized = MediaSerialize(copy_causal);
+  base::Value causal_serialized = MediaSerializeForTesting(causal);
+  base::Value copy_causal_serialized = MediaSerializeForTesting(copy_causal);
 
   base::Value::Dict* original = causal_serialized.GetDict().FindDict("cause");
   ASSERT_EQ(original->size(), 5ul);
@@ -374,7 +395,7 @@ TEST_F(StatusTest, CanCopyEasily) {
   NormalStatus failed = FailEasily();
   NormalStatus withData = DoSomethingGiveItBack(failed);
 
-  base::Value actual = MediaSerialize(failed);
+  base::Value actual = MediaSerializeForTesting(failed);
   const base::Value::Dict& actual_dict = actual.GetDict();
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
@@ -382,7 +403,7 @@ TEST_F(StatusTest, CanCopyEasily) {
   ASSERT_EQ(actual_dict.Find("cause"), nullptr);
   ASSERT_EQ(actual_dict.FindDict("data")->size(), 0ul);
 
-  actual = MediaSerialize(withData);
+  actual = MediaSerializeForTesting(withData);
   ASSERT_EQ(actual_dict.size(), 5ul);
   ASSERT_EQ(*actual_dict.FindString("message"), "Message");
   ASSERT_EQ(actual_dict.FindList("stack")->size(), 1ul);
@@ -459,7 +480,7 @@ TEST_F(StatusTest, TypedStatusWithNoDefaultAndNoOk) {
   EXPECT_TRUE(ok.has_value());
   // One cannot call ok.code() without an okay type.
 
-  base::Value::Dict actual = MediaSerialize(bar).TakeDict();
+  base::Value::Dict actual = MediaSerializeForTesting(bar).TakeDict();
   EXPECT_EQ(*actual.FindInt("code"), static_cast<int>(bar.code()));
 }
 
@@ -487,7 +508,7 @@ TEST_F(StatusTest, TypedStatusWithNoDefaultHasOk) {
   EXPECT_TRUE(ok.has_value());
   EXPECT_EQ(ok.code(), NDStatus::Codes::kOk);
 
-  base::Value::Dict actual = MediaSerialize(bar).TakeDict();
+  base::Value::Dict actual = MediaSerializeForTesting(bar).TakeDict();
   EXPECT_EQ(*actual.FindInt("code"), static_cast<int>(bar.code()));
 }
 
@@ -511,9 +532,6 @@ TEST_F(StatusTest, Okayness) {
 }
 
 TEST_F(StatusTest, MustHaveOkOrHelperMethod) {
-  static_assert(internal::StatusTraitsHelper<CustomDefaultValue>::has_default,
-                "WOW");
-
   auto nook = internal::StatusTraitsHelper<NoOkStatusTypeTraits>::OkEnumValue();
   ASSERT_FALSE(nook.has_value());
 
@@ -568,7 +586,7 @@ TEST_F(StatusTest, OrTypeMapping) {
   // try it with a lambda returning-lambda
   auto finder = [](char search) {
     return [search](std::string seq) -> NormalStatus::Or<int> {
-      auto count = base::ranges::count(seq, search);
+      auto count = std::ranges::count(seq, search);
       if (count == 0)
         return NormalStatus::Codes::kFoo;
       return count;
@@ -609,95 +627,16 @@ TEST_F(StatusTest, OrTypeMapping) {
   ASSERT_TRUE(case_5 == MapValueCodeTraits::Codes::kBadStartCode);
 }
 
-TEST_F(StatusTest, OrTypeMappingToOtherOrType) {
-  using A = TypedStatus<NoOkStatusTypeTraits>;
-  using B = TypedStatus<MapValueCodeTraits>;
-
-  auto unwrap = [](std::unique_ptr<int> ptr) -> A::Or<int> {
-    if (!ptr)
-      return A::Codes::kFoo;
-    return *ptr;
-  };
-
-  // Returns a valid unique ptr, maps unwraps, and is successful
-  B::Or<std::unique_ptr<int>> b1 = GetStartingValue(0);
-  A::Or<int> a1 = std::move(b1).MapValue(unwrap, A::Codes::kBar);
-  ASSERT_TRUE(a1.has_value() && std::move(a1).value() == 36);
-
-  // Returns a nullptr, not and error. so the unwrapper gives a kFoo.
-  B::Or<std::unique_ptr<int>> b2 = GetStartingValue(3);
-  A::Or<int> a2 = std::move(b2).MapValue(unwrap, A::Codes::kBar);
-  ASSERT_TRUE(a2 == A::Codes::kFoo);
-
-  // b3 is an error here, so Mapping it will wrap it in kBar.
-  B::Or<std::unique_ptr<int>> b3 = GetStartingValue(5);
-  A::Or<int> a3 = std::move(b3).MapValue(unwrap, A::Codes::kBar);
-  ASSERT_TRUE(a3 == A::Codes::kBar);
-}
-
-TEST_F(StatusTest, UKMSerializerTest) {
-  using SerializeStatus = TypedStatus<TraitsWithCustomUKMSerializer>;
-  struct MockUkmBuilder {
-    internal::UKMPackHelper status, root;
-    void SetStatus(uint64_t data) { status.packed = data; }
-    void SetRootCause(uint64_t data) { root.packed = data; }
-  };
-
-  MockUkmBuilder builder;
-
-  // Normal status without PackExtraData won't have anything in |.extra_data|,
-  // but if it has a cause, that will be serialized properly.
-  NormalStatus causal = FailWithCause();
-  causal.ToUKM(builder);
-
-  ASSERT_NE(builder.root.packed, 0lu);
-  ASSERT_EQ(builder.status.bits.code,
-            static_cast<StatusCodeType>(NormalStatus::Codes::kFoo));
-  ASSERT_EQ(builder.root.bits.code,
-            static_cast<StatusCodeType>(NormalStatus::Codes::kFoo));
-  ASSERT_EQ(builder.status.bits.extra_data, 0u);
-  ASSERT_EQ(builder.root.bits.extra_data, 0u);
-
-  // Make a status that supports PackExtraData, but doesn't have the key
-  // it's lookinf for, and returns 0 instead.
-  SerializeStatus result = SerializeStatus::Codes::kFoo;
-  result.ToUKM(builder);
-  ASSERT_EQ(builder.status.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kFoo));
-  ASSERT_EQ(builder.status.bits.extra_data, 0u);
-
-  // Add the special key, and demonstrate that |PackExtraData| is called.
-  result.WithData("might_exist_key", 2);
-  result.ToUKM(builder);
-  ASSERT_EQ(builder.status.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kFoo));
-  ASSERT_EQ(builder.status.bits.extra_data, 0u);
-
-  // Wrap the code with extra data to ensure that |.root.extra_data| is
-  // serialized.
-  SerializeStatus wraps = SerializeStatus::Codes::kBar;
-  wraps.AddCause(std::move(result));
-  wraps.ToUKM(builder);
-  ASSERT_NE(builder.root.packed, 0u);
-  ASSERT_EQ(builder.root.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kFoo));
-  ASSERT_EQ(builder.root.bits.extra_data, 0u);
-  ASSERT_NE(builder.status.packed, 0u);
-  ASSERT_EQ(builder.status.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kBar));
-  ASSERT_EQ(builder.status.bits.extra_data, 0u);
-
-  // Make a copy, and ensure that the root cause is carried over.
-  SerializeStatus moved = wraps;
-  moved.ToUKM(builder);
-  ASSERT_NE(builder.root.packed, 0u);
-  ASSERT_EQ(builder.root.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kFoo));
-  ASSERT_EQ(builder.root.bits.extra_data, 0u);
-  ASSERT_NE(builder.status.packed, 0u);
-  ASSERT_EQ(builder.status.bits.code,
-            static_cast<StatusCodeType>(SerializeStatus::Codes::kBar));
-  ASSERT_EQ(builder.status.bits.extra_data, 0u);
+TEST_F(StatusTest, TestDefaultMessageHelper) {
+  using Status = TypedStatus<TraitsWithDefaultNamedMessage>;
+  Status default_msg1 = Status::Codes::kFail1;
+  Status default_msg2 = Status::Codes::kFail2;
+  Status default_msg3 = Status::Codes::kFail3;
+  Status custom_msg = {Status::Codes::kFail1, "Custom"};
+  ASSERT_EQ(default_msg1.message(), "Failure1");
+  ASSERT_EQ(default_msg2.message(), "Failure2");
+  ASSERT_EQ(default_msg3.message(), "Failure3");
+  ASSERT_EQ(custom_msg.message(), "Custom");
 }
 
 }  // namespace media

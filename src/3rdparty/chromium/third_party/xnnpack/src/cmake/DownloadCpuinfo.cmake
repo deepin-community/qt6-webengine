@@ -15,10 +15,11 @@ IF(POLICY CMP0135)
   CMAKE_POLICY(SET CMP0135 NEW)
 ENDIF()
 
+# LINT.IfChange
 INCLUDE(ExternalProject)
 ExternalProject_Add(cpuinfo
-  URL https://github.com/pytorch/cpuinfo/archive/d6860c477c99f1fce9e28eb206891af3c0e1a1d7.zip
-  URL_HASH SHA256=a615cac78fad03952cc3e1fd231ce789a8df6e81a5957b64350cb8200364b385
+  URL https://github.com/pytorch/cpuinfo/archive/e4cadd02a8b386c38b84f0a19eddacec3f433baa.zip
+  URL_HASH SHA256=a074e612706113048f1bb2937e7af3c5b57a037ce048d3cfaaca2931575819d2
   SOURCE_DIR "${CMAKE_BINARY_DIR}/cpuinfo-source"
   BINARY_DIR "${CMAKE_BINARY_DIR}/cpuinfo"
   CONFIGURE_COMMAND ""
@@ -27,3 +28,4 @@ ExternalProject_Add(cpuinfo
   INSTALL_COMMAND ""
   TEST_COMMAND ""
 )
+# LINT.ThenChange(../MODULE.bazel:cpuinfo)

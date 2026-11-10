@@ -3,15 +3,17 @@
 // found in the LICENSE file.
 
 #include "components/segmentation_platform/internal/metadata/metadata_writer.h"
+
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/strings/strcat.h"
 #include "components/segmentation_platform/public/constants.h"
 #include "components/segmentation_platform/public/proto/model_metadata.pb.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform {
 
@@ -22,26 +24,27 @@ void FillCustomInput(const MetadataWriter::CustomInput feature,
   input.set_tensor_length(feature.tensor_length);
   input.set_fill_policy(feature.fill_policy);
   for (size_t i = 0; i < feature.default_values_size; ++i) {
-    input.add_default_value(feature.default_values[i]);
+    input.add_default_value(UNSAFE_TODO(feature.default_values[i]));
   }
   if (feature.name) {
     input.set_name(feature.name);
   }
 
   for (size_t i = 0; i < feature.arg_size; ++i) {
-    (*input.mutable_additional_args())[feature.arg[i].first] =
-        std::string(feature.arg[i].second);
+    (*input.mutable_additional_args())[UNSAFE_TODO(feature.arg[i]).first] =
+        std::string(UNSAFE_TODO(feature.arg[i]).second);
   }
 }
 
+template <typename StringVector>
 void PopulateMultiClassClassifier(
     proto::Predictor::MultiClassClassifier* multi_class_classifier,
-    const char* const* class_labels,
-    size_t class_labels_length,
+    const StringVector& class_labels,
     int top_k_outputs) {
   multi_class_classifier->set_top_k_outputs(top_k_outputs);
-  for (size_t i = 0; i < class_labels_length; ++i) {
-    multi_class_classifier->mutable_class_labels()->Add(class_labels[i]);
+  for (const auto& class_label : class_labels) {
+    multi_class_classifier->mutable_class_labels()->Add(
+        std::string(class_label));
   }
 }
 
@@ -55,7 +58,7 @@ void MetadataWriter::AddUmaFeatures(const UMAFeature features[],
                                     size_t features_size,
                                     bool is_output) {
   for (size_t i = 0; i < features_size; i++) {
-    const auto& feature = features[i];
+    const auto& feature = UNSAFE_TODO(features[i]);
     proto::UMAFeature* uma_feature;
     if (is_output) {
       auto* training_output =
@@ -74,11 +77,11 @@ void MetadataWriter::AddUmaFeatures(const UMAFeature features[],
     uma_feature->set_aggregation(feature.aggregation);
 
     for (size_t j = 0; j < feature.enum_ids_size; j++) {
-      uma_feature->add_enum_ids(feature.accepted_enum_ids[j]);
+      uma_feature->add_enum_ids(UNSAFE_TODO(feature.accepted_enum_ids[j]));
     }
 
     for (size_t j = 0; j < feature.default_values_size; j++) {
-      uma_feature->add_default_values(feature.default_values[j]);
+      uma_feature->add_default_values(UNSAFE_TODO(feature.default_values[j]));
     }
   }
 }
@@ -88,12 +91,12 @@ proto::SqlFeature* MetadataWriter::AddSqlFeature(const SqlFeature& feature) {
       metadata_->add_input_features()->mutable_sql_feature();
   proto->set_sql(feature.sql);
   for (size_t ev = 0; ev < feature.events_size; ++ev) {
-    const auto& event = feature.events[ev];
+    const auto& event = UNSAFE_TODO(feature.events[ev]);
     auto* ukm_event = proto->mutable_signal_filter()->add_ukm_events();
     ukm_event->set_event_hash(event.event_hash.GetUnsafeValue());
     for (size_t m = 0; m < event.metrics_size; ++m) {
       ukm_event->mutable_metric_hash_filter()->Add(
-          event.metrics[m].GetUnsafeValue());
+          UNSAFE_TODO(event.metrics[m]).GetUnsafeValue());
     }
   }
   return proto;
@@ -131,8 +134,8 @@ void MetadataWriter::AddDiscreteMappingEntries(
   auto* discrete_mappings = metadata_->mutable_discrete_mappings();
   for (size_t i = 0; i < mappings_size; i++) {
     auto* discrete_mapping_entry = (*discrete_mappings)[key].add_entries();
-    discrete_mapping_entry->set_min_result(mappings[i].first);
-    discrete_mapping_entry->set_rank(mappings[i].second);
+    discrete_mapping_entry->set_min_result(UNSAFE_TODO(mappings[i]).first);
+    discrete_mapping_entry->set_rank(UNSAFE_TODO(mappings[i]).second);
   }
 }
 
@@ -204,39 +207,52 @@ void MetadataWriter::SetIgnorePreviousModelTTLInOutputConfig() {
 }
 
 void MetadataWriter::AddOutputConfigForMultiClassClassifier(
-    const char* const* class_labels,
-    size_t class_labels_length,
+    base::span<const char* const> class_labels,
     int top_k_outputs,
-    absl::optional<float> threshold) {
+    std::optional<float> threshold) {
   proto::Predictor::MultiClassClassifier* multi_class_classifier =
       metadata_->mutable_output_config()
           ->mutable_predictor()
           ->mutable_multi_class_classifier();
 
   PopulateMultiClassClassifier(multi_class_classifier, class_labels,
-                               class_labels_length, top_k_outputs);
+                               top_k_outputs);
   if (threshold.has_value()) {
     multi_class_classifier->set_threshold(threshold.value());
   }
 }
 
 void MetadataWriter::AddOutputConfigForMultiClassClassifier(
-    const char* const* class_labels,
-    size_t class_labels_length,
+    const std::vector<std::string>& class_labels,
     int top_k_outputs,
-    const float* per_class_thresholds,
-    size_t per_class_thresholds_length) {
-  CHECK_EQ(class_labels_length, per_class_thresholds_length);
+    std::optional<float> threshold) {
   proto::Predictor::MultiClassClassifier* multi_class_classifier =
       metadata_->mutable_output_config()
           ->mutable_predictor()
           ->mutable_multi_class_classifier();
 
   PopulateMultiClassClassifier(multi_class_classifier, class_labels,
-                               class_labels_length, top_k_outputs);
+                               top_k_outputs);
+  if (threshold.has_value()) {
+    multi_class_classifier->set_threshold(threshold.value());
+  }
+}
 
-  for (size_t i = 0; i < per_class_thresholds_length; ++i) {
-    multi_class_classifier->add_class_thresholds(per_class_thresholds[i]);
+void MetadataWriter::AddOutputConfigForMultiClassClassifier(
+    base::span<const char* const> class_labels,
+    int top_k_outputs,
+    const base::span<float> per_class_thresholds) {
+  CHECK_EQ(class_labels.size(), per_class_thresholds.size());
+  proto::Predictor::MultiClassClassifier* multi_class_classifier =
+      metadata_->mutable_output_config()
+          ->mutable_predictor()
+          ->mutable_multi_class_classifier();
+
+  PopulateMultiClassClassifier(multi_class_classifier, class_labels,
+                               top_k_outputs);
+
+  for (float per_class_threshold : per_class_thresholds) {
+    multi_class_classifier->add_class_thresholds(per_class_threshold);
   }
 }
 

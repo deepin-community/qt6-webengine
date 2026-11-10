@@ -19,6 +19,30 @@ namespace features {
 // IdentifiableSurface::Type is encoded as the decimal representation of the
 // enum value.
 
+// Feature for the Identifiability Study Meta experiment.
+//
+// If the feature is enabled, the meta experiment is activated on a random set
+// of clients according to the selection probability.
+BASE_DECLARE_FEATURE(kIdentifiabilityStudyMetaExperiment);
+
+// Probability with which the meta experiment will be activated on each client.
+//
+// Parameter name: "ActivationProbability"
+// Parameter type: double
+//
+// A value of the parameter outside the interval [0, 1] will be interpreted as
+// the default probability, which depends on the channel and is encoded in
+// chrome/browser/privacy_budget/identifiability_study_state.cc
+extern const base::FeatureParam<double>
+    kIdentifiabilityStudyMetaExperimentActivationProbability;
+
+// Default activation probability for the Identifiability Study Meta Experiment.
+// This is a value outside [0, 1], which will be replaced by the default
+// probability depending on the channel in
+// chrome/browser/privacy_budget/identifiability_study_state.cc
+constexpr double
+    kIdentifiabilityStudyMetaExperimentDefaultActivationProbability = -1;
+
 // Root feature for all identifiability study logic.
 //
 // If the feature is disabled, then this browser instance will not be
@@ -111,7 +135,7 @@ extern const base::FeatureParam<std::string>
 // the overall number of surfaces will exceed this limit, but based on prior
 // measurements these cases account for a tiny fraction of the entire
 // population.
-constexpr int kMaxIdentifiabilityStudyExpectedSurfaceCount = 1500;
+inline constexpr int kMaxIdentifiabilityStudyExpectedSurfaceCount = 1500;
 
 // The limit for the optimistic naive budget for the identifiability study.
 //
@@ -136,7 +160,7 @@ extern const base::FeatureParam<int> kIdentifiabilityStudyActiveSurfaceBudget;
 //
 // This restriction prevents `active_surface_budget_` being increased past this
 // hardcoded limit from a server-side configuration.
-constexpr int kMaxIdentifiabilityStudyActiveSurfaceBudget = 40;
+inline constexpr int kMaxIdentifiabilityStudyActiveSurfaceBudget = 40;
 
 // Relative cost of individual surfaces.
 //
@@ -314,7 +338,7 @@ extern const base::FeatureParam<std::string> kIdentifiabilityStudyPerTypeCost;
 // If, in the finch client configuration, a surface appears with total
 // probability higher than this threshold, the study will be deactivated for
 // this client and this client will not report any surface.
-constexpr double kMaxProbabilityPerSurface = 0.5;
+inline constexpr double kMaxProbabilityPerSurface = 0.5;
 
 }  // namespace features
 

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -198,16 +199,17 @@ TEST(SignatureVerifierTest, BasicTest) {
   // calls).
   EXPECT_TRUE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
                                   signature, public_key_info));
-  auto tbs_certificate_span = base::make_span(tbs_certificate);
+  auto tbs_certificate_span = base::span(tbs_certificate);
 
-  verifier.VerifyUpdate(tbs_certificate_span.first(256));
-  verifier.VerifyUpdate(tbs_certificate_span.subspan(256, 256));
-  verifier.VerifyUpdate(tbs_certificate_span.subspan(512));
+  verifier.VerifyUpdate(tbs_certificate_span.first<256>());
+  verifier.VerifyUpdate(tbs_certificate_span.subspan<256, 256>());
+  verifier.VerifyUpdate(tbs_certificate_span.subspan<512>());
   EXPECT_TRUE(verifier.VerifyFinal());
 
   // Test 3: verify the signature with incorrect data.
   uint8_t bad_tbs_certificate[sizeof(tbs_certificate)];
-  memcpy(bad_tbs_certificate, tbs_certificate, sizeof(tbs_certificate));
+  UNSAFE_TODO(
+      memcpy(bad_tbs_certificate, tbs_certificate, sizeof(tbs_certificate)));
   bad_tbs_certificate[10] += 1;  // Corrupt one byte of the data.
   EXPECT_TRUE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
                                   signature, public_key_info));
@@ -216,7 +218,7 @@ TEST(SignatureVerifierTest, BasicTest) {
 
   // Test 4: verify a bad signature.
   uint8_t bad_signature[sizeof(signature)];
-  memcpy(bad_signature, signature, sizeof(signature));
+  UNSAFE_TODO(memcpy(bad_signature, signature, sizeof(signature)));
   bad_signature[10] += 1;  // Corrupt one byte of the signature.
   EXPECT_TRUE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
                                   bad_signature, public_key_info));
@@ -225,15 +227,17 @@ TEST(SignatureVerifierTest, BasicTest) {
 
   // Test 5: import an invalid key.
   uint8_t bad_public_key_info[sizeof(public_key_info)];
-  memcpy(bad_public_key_info, public_key_info, sizeof(public_key_info));
+  UNSAFE_TODO(
+      memcpy(bad_public_key_info, public_key_info, sizeof(public_key_info)));
   bad_public_key_info[0] += 1;  // Corrupt part of the SPKI syntax.
   EXPECT_FALSE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
                                    signature, bad_public_key_info));
 
   // Test 6: import a key with extra data.
   uint8_t long_public_key_info[sizeof(public_key_info) + 5];
-  memset(long_public_key_info, 0, sizeof(long_public_key_info));
-  memcpy(long_public_key_info, public_key_info, sizeof(public_key_info));
+  UNSAFE_TODO(memset(long_public_key_info, 0, sizeof(long_public_key_info)));
+  UNSAFE_TODO(
+      memcpy(long_public_key_info, public_key_info, sizeof(public_key_info)));
   EXPECT_FALSE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
                                    signature, long_public_key_info));
 }
@@ -381,7 +385,7 @@ TEST(SignatureVerifierTest, VerifyRSAPSS) {
   ASSERT_TRUE(verifier.VerifyInit(crypto::SignatureVerifier::RSA_PSS_SHA256,
                                   kPSSSignatureGood, kPSSPublicKey));
   for (uint8_t b : kPSSMessage) {
-    verifier.VerifyUpdate(base::make_span(&b, 1u));
+    verifier.VerifyUpdate(base::span_from_ref(b));
   }
   EXPECT_TRUE(verifier.VerifyFinal());
 

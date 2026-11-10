@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/c2-neon-mull-shuffle.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,15 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qd8_f16_qc8w_gemm_minmax_ukernel_2x8c2s4__neonfp16arith(
@@ -22,11 +26,11 @@ void xnn_qd8_f16_qc8w_gemm_minmax_ukernel_2x8c2s4__neonfp16arith(
     const int8_t* restrict a,
     size_t a_stride,
     const void* restrict w,
-    void* restrict c,
+    xnn_float16* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f16_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 2);
@@ -222,12 +226,12 @@ void xnn_qd8_f16_qc8w_gemm_minmax_ukernel_2x8c2s4__neonfp16arith(
     float16x8_t vfp16out1x01234567 = vcombine_f16(vcvt_f16_f32(vout1x0123), vcvt_f16_f32(vout1x4567));
 
     #if XNN_ARCH_ARM64
-      const uint16x8x2_t voutput_minmax = vld2q_dup_u16(&params->fp16arith.min);
+      const uint16x8x2_t voutput_minmax = vld2q_dup_u16((const uint16_t*) &params->scalar.min);
       const float16x8_t voutput_min = vreinterpretq_f16_u16(voutput_minmax.val[0]);
       const float16x8_t voutput_max = vreinterpretq_f16_u16(voutput_minmax.val[1]);
     #else
-      const float16x8_t voutput_min = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.min));
-      const float16x8_t voutput_max = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.max));
+      const float16x8_t voutput_min = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.min));
+      const float16x8_t voutput_max = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.max));
     #endif
     vfp16out0x01234567 = vmaxq_f16(vfp16out0x01234567, voutput_min);
     vfp16out1x01234567 = vmaxq_f16(vfp16out1x01234567, voutput_min);

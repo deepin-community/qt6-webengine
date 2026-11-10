@@ -5,8 +5,9 @@
 #include <QFile>
 #include <QLoggingCategory>
 #include <QMimeDatabase>
+#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 
-Q_LOGGING_CATEGORY(gHttpServerLog, "HttpServer")
+Q_WEBENGINE_LOGGING_CATEGORY(gHttpServerLog, "HttpServer")
 
 HttpServer::HttpServer(QObject *parent)
     : HttpServer(new QTcpServer, "http", QHostAddress::LocalHost, 0, parent)
@@ -74,7 +75,7 @@ void HttpServer::handleNewConnection()
     auto rr = new HttpReqRep(m_tcpServer->nextPendingConnection(), this);
     connect(rr, &HttpReqRep::requestReceived, [this, rr]() {
         Q_EMIT newRequest(rr);
-        if (rr->isClosed()) // was explicitly answered
+        if (rr->isClosing() || rr->isClosed()) // was explicitly answered
             return;
 
         // if request wasn't handled or purposely ignored for default behavior

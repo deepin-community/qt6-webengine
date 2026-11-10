@@ -38,7 +38,7 @@ void SetScrollOffset(PropertyTrees* property_trees,
   TransformNode* transform_node =
       property_trees->transform_tree_mutable().FindNodeFromElementId(
           scroller_id);
-  transform_node->scroll_offset = offset;
+  transform_node->SetScrollOffset(offset, DamageReason::kUntracked);
   transform_node->needs_local_transform_update = true;
 }
 
@@ -57,7 +57,6 @@ void CreateScrollingElement(PropertyTrees* property_trees,
   // Add the scrolling node for the scrolling and link it to the above transform
   // node.
   ScrollNode scroll_node;
-  scroll_node.scrollable = true;
   scroll_node.bounds = content_size;
   scroll_node.container_bounds = container_size;
   scroll_node.element_id = scroller_id;

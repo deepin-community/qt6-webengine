@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef PROFILE_QT_H
 #define PROFILE_QT_H
@@ -11,13 +12,10 @@
 
 class PrefService;
 
-namespace extensions {
-class ExtensionSystemQt;
-}
-
 namespace QtWebEngineCore {
 
 class BrowsingDataRemoverDelegateQt;
+class ExtensionManager;
 class PermissionManagerQt;
 class ProfileAdapter;
 class ProfileIODataQt;
@@ -65,9 +63,6 @@ public:
 #if QT_CONFIG(webengine_spellchecker)
     void FailedToLoadDictionary(const std::string &language) override;
 #endif
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    extensions::ExtensionSystemQt* GetExtensionSystem();
-#endif // defined(ENABLE_EXTENSIONS)
 
     // Build/Re-build the preference service. Call when updating the storage
     // data path.
@@ -78,7 +73,16 @@ public:
     PrefServiceAdapter &prefServiceAdapter();
     const PrefServiceAdapter &prefServiceAdapter() const;
 
+    void initUserAgentMetadata();
     const blink::UserAgentMetadata &userAgentMetadata();
+#if QT_CONFIG(webengine_extensions)
+    ExtensionManager *extensionManager();
+#endif
+
+    void requestCryptoModulePassword(const std::string &module_name,
+                                     bool retry,
+                                     const std::string &hostname,
+                                     base::OnceCallback<void(const std::string &)> callback);
 
 private:
     std::unique_ptr<BrowsingDataRemoverDelegateQt> m_removerDelegate;
@@ -89,10 +93,6 @@ private:
     ProfileAdapter *m_profileAdapter;
     PrefServiceAdapter m_prefServiceAdapter;
     blink::UserAgentMetadata m_userAgentMetadata;
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    extensions::ExtensionSystemQt *m_extensionSystem;
-#endif //ENABLE_EXTENSIONS
 
     friend class ProfileAdapter;
     friend class ProfileIODataQt;

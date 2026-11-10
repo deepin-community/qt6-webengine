@@ -26,13 +26,14 @@
 
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 
+#include <algorithm>
+
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 #include "url/url_util.h"
 #include "url/url_util_qt.h"
 
@@ -84,10 +85,12 @@ class URLSchemesRegistry final {
     // Non-blink Chromium has it's own version of this list (see
     // content::RegisterContentSchemes).
     for (auto& cs : url::CustomScheme::GetSchemes()) {
-      if (cs.flags & url::CustomScheme::ServiceWorkersAllowed)
+      if (cs.flags & url::CustomScheme::ServiceWorkersAllowed) {
         service_worker_schemes.insert(String(cs.name.c_str()));
-      if (cs.flags & url::CustomScheme::FetchApiAllowed)
+      }
+      if (cs.flags & url::CustomScheme::FetchApiAllowed) {
         fetch_api_schemes.insert(String(cs.name.c_str()));
+      }
     }
   }
   ~URLSchemesRegistry() = default;
@@ -116,6 +119,7 @@ class URLSchemesRegistry final {
   URLSchemesSet allowing_shared_array_buffer_schemes;
   URLSchemesSet web_ui_schemes;
   URLSchemesSet code_cache_with_hashing_schemes;
+  URLSchemesSet webui_bundled_bytecode_schemes;
 
  private:
   friend const URLSchemesRegistry& GetURLSchemesRegistry();
@@ -134,7 +138,7 @@ const URLSchemesRegistry& GetURLSchemesRegistry() {
 
 URLSchemesRegistry& GetMutableURLSchemesRegistry() {
 #if DCHECK_IS_ON()
-  DCHECK(WTF::IsBeforeThreadCreated());
+  DCHECK(IsBeforeThreadCreated());
 #endif
   return URLSchemesRegistry::GetInstance();
 }
@@ -216,7 +220,7 @@ void SchemeRegistry::RegisterURLSchemeAsNotAllowingJavascriptURLs(
       scheme);
 }
 
-void SchemeRegistry::RemoveURLSchemeAsNotAllowingJavascriptURLs(
+void SchemeRegistry::RemoveURLSchemeAsNotAllowingJavascriptURLsForTest(
     const String& scheme) {
   GetMutableURLSchemesRegistry().not_allowing_javascript_urls_schemes.erase(
       scheme);
@@ -239,9 +243,15 @@ bool SchemeRegistry::ShouldTreatURLSchemeAsCorsEnabled(const String& scheme) {
 }
 
 String SchemeRegistry::ListOfCorsEnabledURLSchemes() {
+  Vector<String> sorted_schemes(GetURLSchemesRegistry().cors_enabled_schemes);
+  std::sort(sorted_schemes.begin(), sorted_schemes.end(),
+            [](const String& a, const String& b) {
+              return CodeUnitCompareLessThan(a, b);
+            });
+
   StringBuilder builder;
   bool add_separator = false;
-  for (const auto& scheme : GetURLSchemesRegistry().cors_enabled_schemes) {
+  for (const auto& scheme : sorted_schemes) {
     if (add_separator)
       builder.Append(", ");
     else
@@ -310,7 +320,7 @@ void SchemeRegistry::RegisterURLSchemeAsFirstPartyWhenTopLevel(
       scheme);
 }
 
-void SchemeRegistry::RemoveURLSchemeAsFirstPartyWhenTopLevel(
+void SchemeRegistry::RemoveURLSchemeAsFirstPartyWhenTopLevelForTest(
     const String& scheme) {
   DCHECK_EQ(scheme, scheme.LowerASCII());
   GetMutableURLSchemesRegistry().first_party_when_top_level_schemes.erase(
@@ -356,7 +366,8 @@ void SchemeRegistry::RegisterURLSchemeAsAllowedForReferrer(
   GetMutableURLSchemesRegistry().allowed_in_referrer_schemes.insert(scheme);
 }
 
-void SchemeRegistry::RemoveURLSchemeAsAllowedForReferrer(const String& scheme) {
+void SchemeRegistry::RemoveURLSchemeAsAllowedForReferrerForTest(
+    const String& scheme) {
   GetMutableURLSchemesRegistry().allowed_in_referrer_schemes.erase(scheme);
 }
 
@@ -404,8 +415,9 @@ void SchemeRegistry::RegisterURLSchemeAsBypassingContentSecurityPolicy(
       .content_security_policy_bypassing_schemes.insert(scheme, policy_areas);
 }
 
-void SchemeRegistry::RemoveURLSchemeRegisteredAsBypassingContentSecurityPolicy(
-    const String& scheme) {
+void SchemeRegistry::
+    RemoveURLSchemeRegisteredAsBypassingContentSecurityPolicyForTest(
+        const String& scheme) {
   DCHECK_EQ(scheme, scheme.LowerASCII());
   GetMutableURLSchemesRegistry()
       .content_security_policy_bypassing_schemes.erase(scheme);
@@ -460,10 +472,6 @@ void SchemeRegistry::RegisterURLSchemeAsWebUI(const String& scheme) {
   GetMutableURLSchemesRegistry().web_ui_schemes.insert(scheme);
 }
 
-void SchemeRegistry::RemoveURLSchemeAsWebUI(const String& scheme) {
-  GetMutableURLSchemesRegistry().web_ui_schemes.erase(scheme);
-}
-
 bool SchemeRegistry::IsWebUIScheme(const String& scheme) {
   if (scheme.empty())
     return false;
@@ -486,7 +494,7 @@ void SchemeRegistry::RegisterURLSchemeAsCodeCacheWithHashing(
   GetMutableURLSchemesRegistry().code_cache_with_hashing_schemes.insert(scheme);
 }
 
-void SchemeRegistry::RemoveURLSchemeAsCodeCacheWithHashing(
+void SchemeRegistry::RemoveURLSchemeAsCodeCacheWithHashingForTest(
     const String& scheme) {
   GetMutableURLSchemesRegistry().code_cache_with_hashing_schemes.erase(scheme);
 }
@@ -496,6 +504,26 @@ bool SchemeRegistry::SchemeSupportsCodeCacheWithHashing(const String& scheme) {
     return false;
   DCHECK_EQ(scheme, scheme.LowerASCII());
   return GetURLSchemesRegistry().code_cache_with_hashing_schemes.Contains(
+      scheme);
+}
+
+void SchemeRegistry::RegisterURLSchemeAsWebUIBundledBytecode(
+    const String& scheme) {
+  DCHECK_EQ(scheme, scheme.LowerASCII());
+  GetMutableURLSchemesRegistry().webui_bundled_bytecode_schemes.insert(scheme);
+}
+
+void SchemeRegistry::RemoveURLSchemeAsWebUIBundledBytecodeForTest(
+    const String& scheme) {
+  GetMutableURLSchemesRegistry().webui_bundled_bytecode_schemes.erase(scheme);
+}
+
+bool SchemeRegistry::SchemeSupportsWebUIBundledBytecode(const String& scheme) {
+  if (scheme.empty()) {
+    return false;
+  }
+  DCHECK_EQ(scheme, scheme.LowerASCII());
+  return GetURLSchemesRegistry().webui_bundled_bytecode_schemes.Contains(
       scheme);
 }
 

@@ -25,6 +25,7 @@
 #include "quiche/common/quiche_buffer_allocator.h"
 #include "quiche/common/quiche_callbacks.h"
 #include "quiche/common/quiche_circular_deque.h"
+#include "quiche/common/quiche_mem_slice.h"
 #include "quiche/common/quiche_stream.h"
 #include "quiche/common/simple_buffer_allocator.h"
 #include "quiche/web_transport/web_transport.h"
@@ -102,6 +103,7 @@ class QUICHE_EXPORT EncapsulatedSession
   SessionStats GetSessionStats() override;
   void NotifySessionDraining() override;
   void SetOnDraining(quiche::SingleUseCallback<void()> callback) override;
+  std::optional<std::string> GetNegotiatedSubprotocol() const override;
 
   // quiche::WriteStreamVisitor implementation.
   void OnCanWrite() override;
@@ -144,7 +146,7 @@ class QUICHE_EXPORT EncapsulatedSession
     bool SkipBytes(size_t bytes) override;
 
     // WriteStream implementation.
-    absl::Status Writev(absl::Span<const absl::string_view> data,
+    absl::Status Writev(absl::Span<quiche::QuicheMemSlice> data,
                         const quiche::StreamWriteOptions& options) override;
     bool CanWrite() const override;
 
@@ -163,6 +165,8 @@ class QUICHE_EXPORT EncapsulatedSession
 
     void ResetDueToInternalError() override { ResetWithUserCode(0); }
     void MaybeResetDueToStreamObjectGone() override { ResetWithUserCode(0); }
+
+    void SetPriority(const StreamPriority& priority) override;
 
     void CloseReadSide(std::optional<StreamErrorCode> error);
     void CloseWriteSide(std::optional<StreamErrorCode> error);

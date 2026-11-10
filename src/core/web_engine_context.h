@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef WEB_ENGINE_CONTEXT_H
 #define WEB_ENGINE_CONTEXT_H
@@ -9,6 +10,7 @@
 #include "build_config_qt.h"
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
+#include "base/memory_coordinator/memory_consumer_registry.h"
 
 #include <QtGui/qtgui-config.h>
 #include <QList>
@@ -21,18 +23,13 @@ class FieldTrialList;
 
 namespace content {
 class BrowserMainRunner;
+class BrowserMemoryConsumerRegistry;
 class ContentMainRunner;
-class GpuThreadController;
-class InProcessChildThreadParams;
 class MojoIpcSupport;
 }
 
 namespace discardable_memory {
 class DiscardableSharedMemoryManager;
-}
-
-namespace gpu {
-struct GpuPreferences;
 }
 
 #if QT_CONFIG(webengine_printing_and_pdf)
@@ -56,8 +53,6 @@ class ContentMainDelegateQt;
 class DevToolsServerQt;
 class ProfileAdapter;
 
-bool usingSoftwareDynamicGL();
-
 typedef std::tuple<bool, QString, QString> ProxyAuthentication;
 
 class WebEngineContext : public base::RefCounted<WebEngineContext> {
@@ -77,9 +72,9 @@ public:
     void destroyProfileAdapter();
     void addProfileAdapter(ProfileAdapter *profileAdapter);
     void removeProfileAdapter(ProfileAdapter *profileAdapter);
+    bool profileExistOnPath(const QString &dataPath);
     void destroy();
-    static base::CommandLine *initCommandLine(bool &useEmbeddedSwitches,
-                                              bool &enableGLSoftwareRendering);
+    static base::CommandLine *initCommandLine(bool *useEmbeddedSwitches);
 
 private:
     friend class base::RefCounted<WebEngineContext>;
@@ -107,6 +102,9 @@ private:
 #if QT_CONFIG(webengine_printing_and_pdf)
     std::unique_ptr<printing::PrintJobManager> m_printJobManager;
 #endif
+    std::unique_ptr<base::ScopedMemoryConsumerRegistry<content::BrowserMemoryConsumerRegistry>>
+            m_browserMemoryConsumerRegistry;
+
     static scoped_refptr<QtWebEngineCore::WebEngineContext> m_handle;
     static bool m_destroyed;
     static bool m_closingDown;

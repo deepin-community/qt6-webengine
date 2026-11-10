@@ -3,7 +3,12 @@ include($QT_INSTALL_DOCS/config/exampleurl-qtwebengine.qdocconf)
 
 project                 = QtWebEngine
 description             = Qt WebEngine Reference Documentation
+productname             = "Qt WebEngine"
 version                 = $QT_VERSION
+url                     = https://doc.qt.io/qtwebengine
+
+# Online sidebar config
+HTML.stylesheets       += style/tree_config.xml
 
 qhp.projects            = QtWebEngine
 
@@ -13,7 +18,7 @@ qhp.QtWebEngine.virtualFolder       = qtwebengine
 qhp.QtWebEngine.indexTitle          = Qt WebEngine
 qhp.QtWebEngine.indexRoot           =
 
-qhp.QtWebEngine.subprojects         = classes qmltypes examples widgetexamples
+qhp.QtWebEngine.subprojects = manual examples widgetexamples classes qmltypes
 
 qhp.QtWebEngine.subprojects.classes.title = C++ Classes and Namespaces
 qhp.QtWebEngine.subprojects.classes.indexTitle = Qt WebEngine C++ Classes and Namespaces
@@ -34,6 +39,10 @@ qhp.QtWebEngine.subprojects.widgetexamples.title = Examples (Widgets)
 qhp.QtWebEngine.subprojects.widgetexamples.indexTitle = Qt WebEngine Widgets Examples
 qhp.QtWebEngine.subprojects.widgetexamples.selectors = group:webengine-widgetexamples
 qhp.QtWebEngine.subprojects.widgetexamples.sortPages = true
+
+qhp.QtWebEngine.subprojects.manual.title = Qt WebEngine
+qhp.QtWebEngine.subprojects.manual.indexTitle = Qt WebEngine module topics
+qhp.QtWebEngine.subprojects.manual.type = manual
 
 manifestmeta.highlighted.names += "QtWebEngine/WebEngine Widgets Simple Browser Example" \
                 "QtWebEngine/WebEngine Quick Nano Browser" \
@@ -70,6 +79,8 @@ headerdirs  += ../../core/api \
 
 sourcedirs  += ../../core/api \
                ../../core/doc \
+               ../../core/doc/src/includes \
+               ../../core/tools/webenginedriver \
                ../../webenginequick/api \
                ../../webenginequick/doc \
                ../../webenginewidgets/api \
@@ -79,6 +90,9 @@ exampledirs +=  ../../../examples \
                 ../../core/doc/snippets \
                 ../../webenginequick/doc/snippets \
                 ../../webenginewidgets/doc/snippets
+
+# Path to the root of qtwebengine (for automatic linking to source code)
+url.sources.rootdir     = ../../..
 
 #exclude Qt PDF example directories
 excludedirs += ../../../examples/pdfwidgets \
@@ -90,12 +104,25 @@ imagedirs += \
              images \
              ../../webenginequick/doc/images
 
-navigation.landingpage = "Qt WebEngine"
+{navigation.homepage,navigation.hometitle} = "Qt WebEngine"
 navigation.cppclassespage = "Qt WebEngine C++ Classes and Namespaces"
 navigation.qmltypespage = "Qt WebEngine QML Types"
+# Auto-generate navigation linking based on "Qt WebEngine module topics":
+navigation.toctitles = "Qt WebEngine module topics"
+navigation.toctitles.inclusive = false
 
 # \QWE macro expands to 'Qt WebEngine' without auto-linking anywhere.
 macro.QWE    = "Qt \\WebEngine"
 
+# QTBUG-134416: Ignore overwrite warnings, attribution
+# documentation generates many of these
+spurious += "Output file already exists, overwriting .*"
+
+# Ignore incorrect link generated for attribution docs
+spurious += "Can't link to 'This is the canonical repository.'"
+
 # Enforce zero documentation warnings
-warninglimit = 2
+warninglimit = 0
+
+# Report warnings for images without alt text
+reportmissingalttextforimages = true

@@ -10,8 +10,10 @@
 #include "quiche/quic/core/frames/quic_ack_frequency_frame.h"
 #include "quiche/quic/core/frames/quic_frame.h"
 #include "quiche/quic/core/frames/quic_new_connection_id_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
 #include "quiche/quic/core/frames/quic_retire_connection_id_frame.h"
 #include "quiche/quic/core/quic_constants.h"
+#include "quiche/quic/core/quic_error_codes.h"
 #include "quiche/quic/core/quic_session.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_utils.h"
@@ -66,6 +68,15 @@ void QuicControlFrameManager::WriteOrBufferRstStream(
   QUIC_DVLOG(1) << "Writing RST_STREAM_FRAME";
   WriteOrBufferQuicFrame((QuicFrame(new QuicRstStreamFrame(
       ++last_control_frame_id_, id, error, bytes_written))));
+}
+
+void QuicControlFrameManager::WriteOrBufferResetStreamAt(
+    QuicStreamId id, QuicResetStreamError error, QuicStreamOffset bytes_written,
+    QuicStreamOffset reliable_size) {
+  QUIC_DVLOG(1) << "Writing RST_STREAM_AT_FRAME";
+  WriteOrBufferQuicFrame((QuicFrame(new QuicResetStreamAtFrame(
+      ++last_control_frame_id_, id, error.ietf_application_code(),
+      bytes_written, reliable_size))));
 }
 
 void QuicControlFrameManager::WriteOrBufferGoAway(
@@ -126,11 +137,12 @@ void QuicControlFrameManager::WriteOrBufferAckFrequency(
   QuicControlFrameId control_frame_id = ++last_control_frame_id_;
   // Using the control_frame_id for sequence_number here leaves gaps in
   // sequence_number.
-  WriteOrBufferQuicFrame(
-      QuicFrame(new QuicAckFrequencyFrame(control_frame_id,
-                                          /*sequence_number=*/control_frame_id,
-                                          ack_frequency_frame.packet_tolerance,
-                                          ack_frequency_frame.max_ack_delay)));
+  WriteOrBufferQuicFrame(QuicFrame(
+      new QuicAckFrequencyFrame(control_frame_id,
+                                /*sequence_number=*/control_frame_id,
+                                ack_frequency_frame.ack_eliciting_threshold,
+                                ack_frequency_frame.requested_max_ack_delay,
+                                ack_frequency_frame.reordering_threshold)));
 }
 
 void QuicControlFrameManager::WriteOrBufferNewConnectionId(

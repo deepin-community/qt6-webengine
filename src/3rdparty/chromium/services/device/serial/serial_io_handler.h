@@ -12,6 +12,7 @@
 
 #include "base/files/file.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_span.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "base/task/single_thread_task_runner.h"
@@ -72,6 +73,18 @@ class SerialIoHandler : public base::RefCountedThreadSafe<SerialIoHandler> {
   // (potentially synchronously) with a result. |buffer| must remain valid until
   // |callback| is run.
   void Write(base::span<const uint8_t> buffer, WriteCompleteCallback callback);
+
+#if BUILDFLAG(IS_WIN)
+  // Registers a closure to be run when the pending read operation completes.
+  // This is used to ensure that memory buffers backing the pending read remain
+  // valid until the kernel has signaled completion.
+  void KeepAliveUntilReadCompletes(base::OnceClosure cleanup);
+
+  // Registers a closure to be run when the pending write operation completes.
+  // This is used to ensure that memory buffers backing the pending write remain
+  // valid until the kernel has signaled completion.
+  void KeepAliveUntilWriteCompletes(base::OnceClosure cleanup);
+#endif  // BUILDFLAG(IS_WIN)
 
   // Indicates whether or not a read is currently pending.
   bool IsReadPending() const;
@@ -209,15 +222,20 @@ class SerialIoHandler : public base::RefCountedThreadSafe<SerialIoHandler> {
   // Currently applied connection options.
   mojom::SerialConnectionOptions options_;
 
-  base::span<uint8_t> pending_read_buffer_;
+  base::raw_span<uint8_t> pending_read_buffer_;
   ReadCompleteCallback pending_read_callback_;
   mojom::SerialReceiveError read_cancel_reason_;
   bool read_canceled_;
 
-  base::span<const uint8_t> pending_write_buffer_;
+  base::raw_span<const uint8_t> pending_write_buffer_;
   WriteCompleteCallback pending_write_callback_;
   mojom::SerialSendError write_cancel_reason_;
   bool write_canceled_;
+
+#if BUILDFLAG(IS_WIN)
+  base::OnceClosure pending_read_cleanup_;
+  base::OnceClosure pending_write_cleanup_;
+#endif  // BUILDFLAG(IS_WIN)
 
   // Callback to handle the completion of a pending Open() request.
   OpenCompleteCallback open_complete_;

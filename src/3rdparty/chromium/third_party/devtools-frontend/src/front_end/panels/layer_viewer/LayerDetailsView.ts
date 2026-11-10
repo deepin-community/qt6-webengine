@@ -28,9 +28,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* eslint-disable rulesdir/no-imperative-dom-api */
+
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
-import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import type * as Protocol from '../../generated/protocol.js';
 import * as UI from '../../ui/legacy/legacy.js';
@@ -52,6 +53,10 @@ const UIStrings = {
    */
   selectALayerToSeeItsDetails: 'Select a layer to see its details',
   /**
+   *@description Text in Layer Details View of the Layers panel if no layer is selected for viewing its content
+   */
+  noLayerSelected: 'No layer selected',
+  /**
    *@description Element text content in Layer Details View of the Layers panel
    *@example {Touch event handler} PH1
    *@example {10} PH2
@@ -71,7 +76,7 @@ const UIStrings = {
    *@example {&lt;unnamed&gt;} PH2
    *@example {5} PH3
    */
-  stickyAncenstorLayersS: '{PH1}: {PH2} ({PH3})',
+  stickyAncestorLayersS: '{PH1}: {PH2} ({PH3})',
   /**
    *@description Sticky box rect element text content in Layer Details View of the Layers panel
    *@example {10} PH1
@@ -157,7 +162,7 @@ const UIStrings = {
    *@description Text in Layer Details View of the Layers panel
    */
   mainThreadScrollingReason: 'Main thread scrolling reason',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/layer_viewer/LayerDetailsView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
@@ -178,12 +183,17 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
   private selection: Selection|null;
 
   constructor(layerViewHost: LayerViewHost) {
-    super(true);
-    this.element.setAttribute('jslog', `${VisualLogging.pane().context('layers-details')}`);
+    super({
+      jslog: `${VisualLogging.pane('layers-details')}`,
+      useShadowDom: true,
+    });
+    this.registerRequiredCSS(layerDetailsViewStyles);
+    this.contentElement.classList.add('layer-details-container');
 
     this.layerViewHost = layerViewHost;
     this.layerViewHost.registerView(this);
-    this.emptyWidget = new UI.EmptyWidget.EmptyWidget(i18nString(UIStrings.selectALayerToSeeItsDetails));
+    this.emptyWidget = new UI.EmptyWidget.EmptyWidget(
+        i18nString(UIStrings.noLayerSelected), i18nString(UIStrings.selectALayerToSeeItsDetails));
     this.layerSnapshotMap = this.layerViewHost.getLayerSnapshotMap();
 
     this.buildContent();
@@ -205,7 +215,6 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
 
   override wasShown(): void {
     super.wasShown();
-    this.registerCSSFiles([layerDetailsViewStyles]);
     this.update();
   }
 
@@ -224,9 +233,9 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
       return;
     }
     const snapshotSelection =
-        this.selection.type() === Type.Snapshot ? this.selection : this.layerSnapshotMap.get(this.selection.layer());
+        this.selection.type() === Type.SNAPSHOT ? this.selection : this.layerSnapshotMap.get(this.selection.layer());
     if (snapshotSelection) {
-      this.dispatchEventToListeners(Events.PaintProfilerRequested, snapshotSelection);
+      this.dispatchEventToListeners(Events.PAINT_PROFILER_REQUESTED, snapshotSelection);
     }
   }
 
@@ -246,7 +255,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
       PH5: scrollRect.rect.y,
     });
     element.addEventListener('click', this.onScrollRectClicked.bind(this, index), false);
-    element.setAttribute('jslog', `${VisualLogging.action().track({click: true}).context('layers.select-object')}`);
+    element.setAttribute('jslog', `${VisualLogging.action('layers.select-object').track({click: true})}`);
   }
 
   private formatStickyAncestorLayer(title: string, layer: SDK.LayerTreeBase.Layer|null): string {
@@ -256,7 +265,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
 
     const node = layer.nodeForSelfOrAncestor();
     const name = node ? node.simpleSelector() : i18nString(UIStrings.unnamed);
-    return i18nString(UIStrings.stickyAncenstorLayersS, {PH1: title, PH2: name, PH3: layer.id()});
+    return i18nString(UIStrings.stickyAncestorLayersS, {PH1: title, PH2: name, PH3: layer.id()});
   }
 
   private createStickyAncestorChild(title: string, layer: SDK.LayerTreeBase.Layer|null): void {
@@ -299,7 +308,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
   }
 
   update(): void {
-    const layer = this.selection && this.selection.layer();
+    const layer = this.selection?.layer();
     if (!layer) {
       this.tableElement.remove();
       this.paintProfilerLink.remove();
@@ -316,12 +325,12 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
       this.paintCountCell.parentElement.classList.toggle('hidden', !layer.paintCount());
     }
     this.paintCountCell.textContent = String(layer.paintCount());
-    this.memoryEstimateCell.textContent = Platform.NumberUtilities.bytesToString(layer.gpuMemoryUsage());
+    this.memoryEstimateCell.textContent = i18n.ByteUtilities.bytesToString(layer.gpuMemoryUsage());
     void layer.requestCompositingReasons().then(this.updateCompositingReasons.bind(this));
     this.scrollRectsCell.removeChildren();
     layer.scrollRects().forEach(this.createScrollRectElement.bind(this));
     this.populateStickyPositionConstraintCell(layer.stickyPositionConstraint());
-    const snapshot = this.selection && this.selection.type() === Type.Snapshot ?
+    const snapshot = this.selection && this.selection.type() === Type.SNAPSHOT ?
         (this.selection as SnapshotSelection).snapshot() :
         null;
 
@@ -329,15 +338,16 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
   }
 
   private buildContent(): void {
-    this.tableElement = this.contentElement.createChild('table') as HTMLElement;
-    this.tbodyElement = this.tableElement.createChild('tbody') as HTMLElement;
+    this.tableElement = this.contentElement.createChild('table');
+    this.tbodyElement = this.tableElement.createChild('tbody');
     this.sizeCell = this.createRow(i18nString(UIStrings.size));
     this.compositingReasonsCell = this.createRow(i18nString(UIStrings.compositingReasons));
     this.memoryEstimateCell = this.createRow(i18nString(UIStrings.memoryEstimate));
     this.paintCountCell = this.createRow(i18nString(UIStrings.paintCount));
     this.scrollRectsCell = this.createRow(i18nString(UIStrings.slowScrollRegions));
     this.stickyPositionConstraintCell = this.createRow(i18nString(UIStrings.stickyPositionConstraint));
-    this.paintProfilerLink = this.contentElement.createChild('span', 'hidden devtools-link link-margin') as HTMLElement;
+    this.paintProfilerLink =
+        this.contentElement.createChild('button', 'hidden devtools-link link-margin text-button link-style');
     UI.ARIAUtils.markAsLink(this.paintProfilerLink);
     this.paintProfilerLink.textContent = i18nString(UIStrings.paintProfiler);
     this.paintProfilerLink.tabIndex = 0;
@@ -345,14 +355,8 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
       e.consume(true);
       this.invokeProfilerLink();
     });
-    this.paintProfilerLink.addEventListener('keydown', event => {
-      if (event.key === 'Enter') {
-        event.consume();
-        this.invokeProfilerLink();
-      }
-    });
     this.paintProfilerLink.setAttribute(
-        'jslog', `${VisualLogging.action().track({click: true, keydown: 'Enter'}).context('layers.paint-profiler')}`);
+        'jslog', `${VisualLogging.action('layers.paint-profiler').track({click: true, keydown: 'Enter'})}`);
   }
 
   private createRow(title: string): HTMLElement {
@@ -363,7 +367,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
   }
 
   private updateCompositingReasons(compositingReasons: string[]): void {
-    if (!compositingReasons || !compositingReasons.length) {
+    if (!compositingReasons?.length) {
       this.compositingReasonsCell.textContent = 'n/a';
       return;
     }
@@ -376,20 +380,20 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
 }
 
 export const enum Events {
-  PaintProfilerRequested = 'PaintProfilerRequested',
+  PAINT_PROFILER_REQUESTED = 'PaintProfilerRequested',
 }
 
-export type EventTypes = {
-  [Events.PaintProfilerRequested]: Selection,
-};
+export interface EventTypes {
+  [Events.PAINT_PROFILER_REQUESTED]: Selection;
+}
 
 export const slowScrollRectNames = new Map([
-  [SDK.LayerTreeBase.Layer.ScrollRectType.NonFastScrollable, i18nLazyString(UIStrings.nonFastScrollable)],
-  [SDK.LayerTreeBase.Layer.ScrollRectType.TouchEventHandler, i18nLazyString(UIStrings.touchEventHandler)],
-  [SDK.LayerTreeBase.Layer.ScrollRectType.WheelEventHandler, i18nLazyString(UIStrings.wheelEventHandler)],
-  [SDK.LayerTreeBase.Layer.ScrollRectType.RepaintsOnScroll, i18nLazyString(UIStrings.repaintsOnScroll)],
+  [SDK.LayerTreeBase.Layer.ScrollRectType.NON_FAST_SCROLLABLE, i18nLazyString(UIStrings.nonFastScrollable)],
+  [SDK.LayerTreeBase.Layer.ScrollRectType.TOUCH_EVENT_HANDLER, i18nLazyString(UIStrings.touchEventHandler)],
+  [SDK.LayerTreeBase.Layer.ScrollRectType.WHEEL_EVENT_HANDLER, i18nLazyString(UIStrings.wheelEventHandler)],
+  [SDK.LayerTreeBase.Layer.ScrollRectType.REPAINTS_ON_SCROLL, i18nLazyString(UIStrings.repaintsOnScroll)],
   [
-    SDK.LayerTreeBase.Layer.ScrollRectType.MainThreadScrollingReason,
+    SDK.LayerTreeBase.Layer.ScrollRectType.MAIN_THREAD_SCROLL_REASON,
     i18nLazyString(UIStrings.mainThreadScrollingReason),
   ],
 ]);

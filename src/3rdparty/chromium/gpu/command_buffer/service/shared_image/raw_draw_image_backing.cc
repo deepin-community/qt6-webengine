@@ -5,6 +5,7 @@
 #include "gpu/command_buffer/service/shared_image/raw_draw_image_backing.h"
 
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/types/optional_util.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "components/viz/common/resources/resource_sizes.h"
@@ -16,7 +17,7 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 
@@ -115,7 +116,8 @@ RawDrawImageBacking::RawDrawImageBacking(const Mailbox& mailbox,
                                          const gfx::ColorSpace& color_space,
                                          GrSurfaceOrigin surface_origin,
                                          SkAlphaType alpha_type,
-                                         uint32_t usage)
+                                         gpu::SharedImageUsageSet usage,
+                                         std::string debug_label)
     : ClearTrackingSharedImageBacking(mailbox,
                                       format,
                                       size,
@@ -123,6 +125,7 @@ RawDrawImageBacking::RawDrawImageBacking(const Mailbox& mailbox,
                                       surface_origin,
                                       alpha_type,
                                       usage,
+                                      std::move(debug_label),
                                       /*estimated_size=*/0,
                                       /*is_thread_safe=*/true) {}
 
@@ -188,8 +191,7 @@ bool RawDrawImageBacking::CreateBackendTextureAndFlushPaintOps(bool flush) {
   if (context_state_->context_lost())
     return false;
 
-  auto sk_color = viz::ToClosestSkColorType(
-      /*gpu_compositing=*/true, format());
+  auto sk_color = viz::ToClosestSkColorType(format());
   const std::string label =
       "RawDrawImageBacking" + CreateLabelForSharedImageUsage(usage());
   GrDirectContext* direct_context = context_state_->gr_context();
@@ -301,7 +303,7 @@ void RawDrawImageBacking::EndRasterWriteAccess(base::OnceClosure callback) {
   // janky scrolling for some page which SVG images are heavily used.
   // Workaround the problem by return nullptr here, and then SkiaRenderer will
   // fallback to using |backing_texture_|.
-  // TODO(crbug.com/1292068): only cache raster results for the SaveLayerOp
+  // TODO(crbug.com/40212988): only cache raster results for the SaveLayerOp
   // covered area.
   if (visible_ && paint_op_buffer_->has_save_layer_ops()) {
     // If the raster task priority is high, we will execute paint ops
@@ -338,7 +340,7 @@ cc::PaintOpBuffer* RawDrawImageBacking::BeginRasterReadAccess(
   // janky scrolling for some page which SVG images are heavily used.
   // Workaround the problem by return nullptr here, and then SkiaRenderer will
   // fallback to using |backing_texture_|.
-  // TODO(crbug.com/1292068): only cache raster results for the SaveLayerOp
+  // TODO(crbug.com/40212988): only cache raster results for the SaveLayerOp
   // covered area.
   if (paint_op_buffer_ && paint_op_buffer_->has_save_layer_ops())
     return nullptr;

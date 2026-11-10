@@ -6,6 +6,7 @@
 
 #include <QtCore/qfile.h>
 #include <QtTest/QtTest>
+#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 #include <QtWebEngineCore/qwebengineurlrequestinterceptor.h>
 #include <QtWebEngineCore/qwebengineurlrequestjob.h>
 #include <QtWebEngineCore/qwebengineurlscheme.h>
@@ -25,7 +26,7 @@
 #define QSL QStringLiteral
 #define QBAL QByteArrayLiteral
 
-Q_LOGGING_CATEGORY(lc, "qt.webengine.tests")
+Q_WEBENGINE_LOGGING_CATEGORY(lc, "qt.webengine.tests")
 
 void registerSchemes()
 {
@@ -337,6 +338,7 @@ private Q_SLOTS:
     void fetchApiCustomUrl_data();
     void fetchApiCustomUrl();
     void fetchApiHttpUrl();
+    void eitherLocalOrRemoteAccess();
 
 private:
     bool verifyLoad(const QUrl &url)
@@ -467,14 +469,20 @@ void tst_Origins::jsUrlRelative()
     // this. The following cases all fail with TypeErrors.
     QCOMPARE(eval(QSL("new URL('bar', 'tst:foo').href")), QVariant());
     QCOMPARE(eval(QSL("new URL('baz', 'tst:foo/bar').href")), QVariant());
-    QCOMPARE(eval(QSL("new URL('bar', 'tst://foo').href")), QVariant());
-    QCOMPARE(eval(QSL("new URL('bar', 'tst:///foo').href")), QVariant());
 
     // However, registered custom schemes have been patched to allow relative
     // URLs even without an initial slash.
     QCOMPARE(eval(QSL("new URL('bar', 'qrc:foo').href")), QVariant(QSL("qrc:bar")));
     QCOMPARE(eval(QSL("new URL('baz', 'qrc:foo/bar').href")), QVariant(QSL("qrc:foo/baz")));
-    QCOMPARE(eval(QSL("new URL('bar', 'qrc://foo').href")), QVariant(QSL("qrc://bar")));
+
+    // Standard WHATWG URL resolution for custom schemes.
+    QCOMPARE(eval(QSL("new URL('bar', 'tst:/foo').href")), QVariant(QSL("tst:/bar"))); // Host ""; path "/foo" -> "/bar"
+    QCOMPARE(eval(QSL("new URL('bar', 'tst://foo').href")), QVariant(QSL("tst://foo/bar"))); // Host "foo"; path "/" -> "/bar"
+    QCOMPARE(eval(QSL("new URL('bar', 'tst:///foo').href")), QVariant(QSL("tst:///bar"))); // Host ""; path "/foo" -> "/bar"
+
+    // QRC scheme follows the standard authority parsing rules.
+    QCOMPARE(eval(QSL("new URL('bar', 'qrc:/foo').href")), QVariant(QSL("qrc:/bar")));
+    QCOMPARE(eval(QSL("new URL('bar', 'qrc://foo').href")), QVariant(QSL("qrc://foo/bar")));
     QCOMPARE(eval(QSL("new URL('bar', 'qrc:///foo').href")), QVariant(QSL("qrc:///bar")));
 
     // With a slash it works the same as http except 'foo' is part of the path and not the host.
@@ -491,8 +499,8 @@ void tst_Origins::jsUrlRelative()
     // If the relative URL begins with >= 2 slashes, then the scheme is treated
     // not as a Syntax::Path scheme but as a Syntax::HostPortAndUserInformation
     // scheme.
-    QCOMPARE(eval(QSL("new URL('//baz', 'qrc:/foo/bar/').href")), QVariant(QSL("qrc://baz/")));
-    QCOMPARE(eval(QSL("new URL('///baz', 'qrc:/foo/bar/').href")), QVariant(QSL("qrc://baz/")));
+    QCOMPARE(eval(QSL("new URL('//baz', 'qrc:/foo/bar/').href")), QVariant(QSL("qrc://baz")));
+    QCOMPARE(eval(QSL("new URL('///baz', 'qrc:/foo/bar/').href")), QVariant(QSL("qrc:///baz")));
 }
 
 // Test origin serialization in Blink, implemented by blink::KURL and
@@ -542,18 +550,16 @@ public:
     ScopedAttribute(QWebEngineSettings *settings, QWebEngineSettings::WebAttribute attribute, bool newValue)
         : m_settings(settings)
         , m_attribute(attribute)
-        , m_oldValue(m_settings->testAttribute(m_attribute))
     {
         m_settings->setAttribute(m_attribute, newValue);
     }
     ~ScopedAttribute()
     {
-        m_settings->setAttribute(m_attribute, m_oldValue);
+        m_settings->resetAttribute(m_attribute);
     }
 private:
     QWebEngineSettings *m_settings;
     QWebEngineSettings::WebAttribute m_attribute;
-    bool m_oldValue;
 };
 
 // Test same-origin policy of file, qrc and custom schemes.
@@ -583,7 +589,7 @@ void tst_Origins::subdirWithAccess()
 // a result all file URLs will be considered to have unique/opaque origins, that
 // is, they are not the 'same origin as' any other origin.
 //
-// Note that this applies only to file URLs and not qrc or custom schemes.
+// Note that this applies only to local schemes.
 //
 // See also (in Blink):
 //   - the allow_file_access_from_file_urls option and
@@ -598,8 +604,8 @@ void tst_Origins::subdirWithoutAccess()
     QCOMPARE(eval(QSL("msg[1]")), QVariant());
 
     QVERIFY(verifyLoad(QSL("qrc:/resources/subdir/index.html")));
-    QCOMPARE(eval(QSL("msg[0]")), QVariant(QSL("hello")));
-    QCOMPARE(eval(QSL("msg[1]")), QVariant(QSL("world")));
+    QCOMPARE(eval(QSL("msg[0]")), QVariant());
+    QCOMPARE(eval(QSL("msg[1]")), QVariant());
 
     QVERIFY(verifyLoad(QSL("tst:/resources/subdir/index.html")));
     QCOMPARE(eval(QSL("msg[0]")), QVariant(QSL("hello")));
@@ -741,14 +747,14 @@ void tst_Origins::mixedSchemes_data()
           } },
         { "qrc",
           {
-                  { "file", ERR },
+                  { "file", OK },
                   { "qrc", SLF },
                   { "tst", OK },
           } },
         { "tst",
           {
                   { "file", ERR },
-                  { "qrc", OK },
+                  { "qrc", ERR },
                   { "tst", SLF },
           } },
         { "PathSyntax",
@@ -902,7 +908,7 @@ void tst_Origins::mixedXHR_data()
             std::pair<const char *, std::vector<QVariant>>>>> data = {
         { "file", {
             { "file",               {  OK,  OK, ERR, ERR } },
-            { "qrc",                { ERR, ERR, ERR, ERR } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -910,13 +916,13 @@ void tst_Origins::mixedXHR_data()
             { "local-cors",         {  OK,  OK, ERR, ERR } }, } },
 
         { "qrc",  {
-            { "file",               { ERR, ERR, ERR, ERR } },
+            { "file",               {  OK,  OK,  OK,  OK } },
             { "qrc",                {  OK,  OK,  OK,  OK } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               {  OK,  OK,  OK,  OK } },
-            { "local-localaccess",  { ERR, ERR, ERR, ERR } },
-            { "local-cors",         { ERR, ERR, ERR, ERR } }, } },
+            { "local-localaccess",  {  OK,  OK,  OK,  OK } },
+            { "local-cors",         {  OK,  OK,  OK,  OK } }, } },
 
         { "tst",  {
             { "file",               { ERR, ERR, ERR, ERR } },
@@ -938,7 +944,7 @@ void tst_Origins::mixedXHR_data()
 
         { "local", {                // +local -cors -local-access
             { "file",               {  OK,  OK, ERR, ERR } },
-            { "qrc",                { ERR, ERR, ERR, ERR } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -947,7 +953,7 @@ void tst_Origins::mixedXHR_data()
 
         { "local-cors", {           // +local +cors -local-access
             { "file",               {  OK,  OK, ERR, ERR } },
-            { "qrc",                { ERR, ERR, ERR, ERR } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -956,7 +962,7 @@ void tst_Origins::mixedXHR_data()
 
         { "local-localaccess", {    // +local -cors +local-access
             { "file",               {  OK,  OK,  OK,  OK } },
-            { "qrc",                { ERR, ERR, ERR, ERR } },
+            { "qrc",                {  OK,  OK,  OK,  OK } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -965,7 +971,7 @@ void tst_Origins::mixedXHR_data()
 
         { "localaccess", {          // -local -cors +local-access
             { "file",               {  OK,  OK,  OK,  OK } },
-            { "qrc",                { ERR, ERR, ERR, ERR } },
+            { "qrc",                {  OK,  OK,  OK,  OK } },
             { "tst",                { ERR, ERR, ERR, ERR } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               {  OK,  OK,  OK,  OK } },
@@ -1056,7 +1062,7 @@ void tst_Origins::mixedContent_data()
             std::pair<const char *, std::vector<QVariant>>>>> data = {
         { "file", {
             { "file",               { SLF, SLF, ERR, ERR } },
-            { "qrc",                {  OK,  OK,  OK,  OK } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR,  OK, ERR,  OK } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -1065,17 +1071,17 @@ void tst_Origins::mixedContent_data()
         } },
 
         { "qrc",  {
-            { "file",               { ERR, ERR, ERR, ERR } },
-            { "qrc",                { SLF, SLF, SLF, SLF } },
+            { "file",               {  OK,  OK,  OK,  OK } },
+            { "qrc",                { SLF, SLF,  OK,  OK } },
             { "tst",                {  OK,  OK,  OK,  OK } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               {  OK,  OK,  OK,  OK } },
-            { "local-localaccess",  { ERR, ERR, ERR, ERR } },
-            { "local-cors",         { ERR, ERR, ERR, ERR } }, } },
+            { "local-localaccess",  {  OK,  OK,  OK,  OK } },
+            { "local-cors",         {  OK,  OK,  OK,  OK } }, } },
 
         { "tst",  {
             { "file",               { ERR, ERR, ERR, ERR } },
-            { "qrc",                {  OK,  OK,  OK,  OK } },
+            { "qrc",                { ERR, ERR, ERR, ERR } },
             { "tst",                { SLF, SLF, SLF, SLF } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               {  OK,  OK,  OK,  OK } },
@@ -1084,7 +1090,7 @@ void tst_Origins::mixedContent_data()
 
         { "cors", {                 // -local +cors -local-access
             { "file",               { ERR, ERR, ERR, ERR } },
-            { "qrc",                {  OK,  OK,  OK,  OK } },
+            { "qrc",                { ERR, ERR, ERR, ERR } },
             { "tst",                {  OK,  OK,  OK,  OK } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { SLF, SLF, SLF, SLF } },
@@ -1093,7 +1099,7 @@ void tst_Origins::mixedContent_data()
 
         { "local", {                // +local -cors -local-access
             { "file",               {  OK,  OK, ERR, ERR } },
-            { "qrc",                {  OK,  OK,  OK,  OK } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR,  OK, ERR,  OK } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -1103,7 +1109,7 @@ void tst_Origins::mixedContent_data()
 
         { "local-cors", {           // +local +cors -local-access
             { "file",               {  OK,  OK, ERR, ERR } },
-            { "qrc",                {  OK,  OK,  OK,  OK } },
+            { "qrc",                {  OK,  OK, ERR, ERR } },
             { "tst",                { ERR,  OK, ERR,  OK } },
             { "data",               {  OK,  OK,  OK,  OK } },
             { "cors",               { ERR,  OK, ERR,  OK } },
@@ -1111,7 +1117,7 @@ void tst_Origins::mixedContent_data()
             { "local-cors",         { SLF, SLF, ERR, ERR } },
         } },
 
-        { "local-localaccess", {    // +local -cors + OK-access
+        { "local-localaccess", {    // +local -cors +local-access
             { "file",               {  OK,  OK,  OK,  OK } },
             { "qrc",                {  OK,  OK,  OK,  OK } },
             { "tst",                { ERR,  OK, ERR,  OK } },
@@ -1724,6 +1730,56 @@ void tst_Origins::fetchApiHttpUrl()
     QTRY_VERIFY(loadSpy.count() > 0);
     QTRY_VERIFY(jsSpy.count() > 0);
     QVERIFY(httpServer.stop());
+}
+
+void tst_Origins::eitherLocalOrRemoteAccess()
+{
+    // Check standard defaults
+    QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+    QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+
+    {
+        ScopedAttribute sa0(m_page->settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+        QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
+    {
+        ScopedAttribute sa1(m_page->settings(), QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
+    {
+        // Explicitly set both, override the safety behavior
+        ScopedAttribute sa0(m_page->settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+        ScopedAttribute sa1(m_page->settings(), QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
+
+    QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+    QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+
+    {
+        ScopedAttribute sa0(m_profile.settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+        QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
+    {
+        // Explicitly set both, override the safety behavior
+        ScopedAttribute sa0(m_profile.settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+        ScopedAttribute sa1(m_profile.settings(), QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
+    {
+        // But mixing them across levels does not count as explicitly set to ignore safe defaults.
+        ScopedAttribute sa0(m_profile.settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+        ScopedAttribute sa1(m_page->settings(), QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+        QVERIFY(!m_profile.settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(m_profile.settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+        QVERIFY(m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls));
+        QVERIFY(!m_page->settings()->testAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls));
+    }
 }
 
 QTEST_MAIN(tst_Origins)

@@ -11,7 +11,7 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
-#include "base/strings/string_piece.h"
+#include "base/containers/to_vector.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/support_tool/data_collection_module.pb.h"
@@ -27,10 +27,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/crosapi/fake_browser_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 using ::testing::ContainerEq;
 using ::testing::IsEmpty;
@@ -52,6 +48,7 @@ const PIIMap kPIIMap = {
 const redaction::PIIType kPIITypes[] = {redaction::PIIType::kIPAddress,
                                         redaction::PIIType::kURL,
                                         redaction::PIIType::kStableIdentifier};
+
 }  // namespace
 
 class SupportToolUiUtilsTest : public ::testing::Test {
@@ -61,20 +58,17 @@ class SupportToolUiUtilsTest : public ::testing::Test {
   SupportToolUiUtilsTest(const SupportToolUiUtilsTest&) = delete;
   SupportToolUiUtilsTest& operator=(const SupportToolUiUtilsTest&) = delete;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void SetUp() override {
     profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(profile_manager_->SetUp());
-
-    browser_manager_ = std::make_unique<crosapi::FakeBrowserManager>();
   }
 
   void TearDown() override {
-    browser_manager_.reset();
     profile_manager_.reset();
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Change included field of `included_data_collectors` in `data_collectors` as
   // true for testing.
@@ -89,8 +83,9 @@ class SupportToolUiUtilsTest : public ::testing::Test {
       ASSERT_TRUE(data_collector_enum);
       if (base::Contains(included_data_collectors,
                          static_cast<support_tool::DataCollectorType>(
-                             data_collector_enum.value())))
+                             data_collector_enum.value()))) {
         data_collector_item.Set(support_tool_ui::kDataCollectorIncluded, true);
+      }
     }
   }
 
@@ -103,10 +98,7 @@ class SupportToolUiUtilsTest : public ::testing::Test {
              {redaction::PIIType::kURL, IDS_SUPPORT_TOOL_URLS},
              {redaction::PIIType::kStableIdentifier,
               IDS_SUPPORT_TOOL_STABLE_IDENTIDIERS}});
-    // fixed_flat_map uses std::array<T> as the backing container, which has
-    // std::array::iterator<T> = T*, thus the iterator of the
-    // `kExpectedPiiTypeDefinitions` is a pointer.
-    auto* it = kExpectedPiiTypeDefinitions.find(pii_type);
+    auto it = kExpectedPiiTypeDefinitions.find(pii_type);
     EXPECT_NE(kExpectedPiiTypeDefinitions.end(), it);
     std::string definition = l10n_util::GetStringUTF8(it->second);
     return definition;
@@ -114,10 +106,9 @@ class SupportToolUiUtilsTest : public ::testing::Test {
 
  private:
   content::BrowserTaskEnvironment task_environment_;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<TestingProfileManager> profile_manager_;
-  std::unique_ptr<crosapi::FakeBrowserManager> browser_manager_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 };
 
 TEST_F(SupportToolUiUtilsTest, PiiItems) {
@@ -138,10 +129,16 @@ TEST_F(SupportToolUiUtilsTest, PiiItems) {
     // The definition string must equal to the expected one in
     // `kPIIStringsWithDefinition`.
     EXPECT_EQ(*description, GetExpectedPIIDefinitionString(pii_type));
-    const std::string* pii_data =
-        pii_item->FindString(support_tool_ui::kPiiItemDetectedDataKey);
+    const base::Value::List* pii_data =
+        pii_item->FindList(support_tool_ui::kPiiItemDetectedDataKey);
     // Check the detected data.
     EXPECT_TRUE(pii_data);
+    EXPECT_THAT(kPIIMap.at(pii_type),
+                UnorderedElementsAreArray(
+                    base::ToVector(*pii_data, [](const base::Value& value) {
+                      // Contents of PII data must be string.
+                      return value.GetString();
+                    })));
   }
 
   // Update all PII items to have their keep value as true.

@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -85,7 +86,7 @@ class CacheStorageCacheEntryHandler {
              int bytes_to_read,
              base::OnceCallback<void(int)> callback);
 
-    int GetSize(CacheStorageCache::EntryIndex disk_cache_index) const;
+    int64_t GetSize(CacheStorageCache::EntryIndex disk_cache_index) const;
 
     void Invalidate();
 
@@ -156,7 +157,7 @@ class CacheStorageCacheEntryHandler {
   // them if the cache has to be deleted while there are still references to
   // data in it.  DiskCacheBlobEntries are owned by EntryReaderImpl, which
   // are owned by their mojo remote (which indirectly is is owned by some blob).
-  std::set<DiskCacheBlobEntry*> blob_entries_;
+  std::set<raw_ptr<DiskCacheBlobEntry, SetExperimental>> blob_entries_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

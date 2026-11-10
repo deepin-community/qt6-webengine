@@ -5,12 +5,13 @@
 #include "gpu/command_buffer/service/shared_image/gl_texture_holder.h"
 
 #include "base/bits.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/gl_repack_utils.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_gl_utils.h"
 #include "gpu/command_buffer/service/skia_utils.h"
-#include "third_party/skia/include/gpu/GrContextThreadSafeProxy.h"
+#include "third_party/skia/include/gpu/ganesh/GrContextThreadSafeProxy.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
@@ -23,7 +24,7 @@ namespace {
 
 // This value can't be cached as it may change for different contexts.
 bool SupportsUnpackSubimage() {
-  return gl::g_current_gl_version->is_es3_capable ||
+  return gl::g_current_gl_version->IsAtLeastGLES(3, 0) ||
          gl::g_current_gl_driver->ext.b_GL_EXT_unpack_subimage;
 }
 
@@ -35,7 +36,7 @@ bool SupportsPackSubimage() {
   // for that row.
   return false;
 #else
-  return gl::g_current_gl_version->is_es3_capable;
+  return gl::g_current_gl_version->IsAtLeastGLES(3, 0);
 #endif
 }
 
@@ -51,6 +52,29 @@ constexpr int ComputeBestAlignment(size_t bytes_per_pixel, size_t stride) {
 
   return bytes_per_pixel;
 }
+
+class ScopedTemporaryFramebuffer {
+ public:
+  explicit ScopedTemporaryFramebuffer(gl::GLApi* api) : api_(api) {
+    api_->glGenFramebuffersEXTFn(1, &id_);
+  }
+
+  ScopedTemporaryFramebuffer(const ScopedTemporaryFramebuffer&) = delete;
+  ScopedTemporaryFramebuffer& operator=(const ScopedTemporaryFramebuffer&) =
+      delete;
+
+  ~ScopedTemporaryFramebuffer() {
+    if (id_ != 0) {
+      api_->glDeleteFramebuffersEXTFn(1, &id_);
+    }
+  }
+
+  GLuint id() const { return id_; }
+
+ private:
+  const raw_ptr<gl::GLApi> api_;
+  GLuint id_ = 0;
+};
 
 }  // anonymous namespace
 
@@ -76,9 +100,9 @@ viz::SharedImageFormat GLTextureHolder::GetPlaneFormat(
                                : viz::SinglePlaneFormat::kR_16;
     case viz::SharedImageFormat::ChannelFormat::k16F:
       CHECK_EQ(num_channels, 1);
-      return viz::SinglePlaneFormat::kLUMINANCE_F16;
+      return viz::SinglePlaneFormat::kR_F16;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 GLTextureHolder::GLTextureHolder(viz::SharedImageFormat format,
@@ -150,21 +174,18 @@ void GLTextureHolder::Initialize(
 
   if (is_passthrough_) {
     passthrough_texture_->SetEstimatedSize(format_.EstimatedSizeInBytes(size_));
-  } else {
-    // TODO(piman): We pretend the texture was created in an ES2 context, so
-    // that it can be used in other ES2 contexts, and so we have to pass
-    // gl_format as the internal format in the LevelInfo.
-    // https://crbug.com/628064
-    texture_->SetLevelInfo(format_desc_.target, 0, format_desc_.data_format,
-                           size_.width(), size_.height(), /*depth=*/1, 0,
-                           format_desc_.data_format, format_desc_.data_type,
-                           /*cleared_rect=*/gfx::Rect());
-    texture_->SetImmutable(true, format_info.supports_storage);
   }
 
   gl::GLApi* api = gl::g_current_gl_context;
   gl::ScopedRestoreTexture scoped_restore(api, format_desc_.target,
                                           GetServiceId());
+
+  // Drain any pre-existing GL errors so the post-allocation check
+  // below is attributable to the storage call. Silently squelching
+  // these errors is unfortunate, but is done in order to mirror other
+  // allocation checks done in the command decoder.
+  while (api->glGetErrorFn() != GL_NO_ERROR) {
+  }
 
   // Initialize the texture storage/image parameters and upload initial pixels
   // if available.
@@ -213,6 +234,27 @@ void GLTextureHolder::Initialize(
   }
 
   if (!is_passthrough_) {
+    // Only commit decoder-side LevelInfo / immutable state once the native
+    // allocation has succeeded. If the driver rejected the allocation (e.g.
+    // GL_OUT_OF_MEMORY), leaving LevelInfo at {0,0,0} ensures
+    // Texture::ValidForTexture rejects subsequent TexSubImage calls instead of
+    // forwarding oversized writes to a zero-storage native texture. This
+    // mirrors the fix in GLES2DecoderImpl::TexStorageImpl.
+    if (api->glGetErrorFn() == GL_NO_ERROR) {
+      // TODO(piman): We pretend the texture was created in an ES2 context, so
+      // that it can be used in other ES2 contexts, and so we have to pass
+      // gl_format as the internal format in the LevelInfo.
+      // https://crbug.com/628064
+      const gfx::Rect cleared_rect =
+          !pixel_data.empty() ? gfx::Rect(size_) : gfx::Rect();
+      texture_->SetLevelInfo(
+          format_desc_.target, /*level=*/0, format_desc_.data_format,
+          size_.width(), size_.height(), /*depth=*/1, /*border=*/0,
+          format_desc_.data_format, format_desc_.data_type, cleared_rect);
+      texture_->SetImmutable(true, format_info.supports_storage);
+    } else {
+      LOG(ERROR) << "GLTextureHolder: native storage allocation failed";
+    }
     // Must be set after initial pixel upload.
     texture_->SetCompatibilitySwizzle(format_info.swizzle);
   }
@@ -282,7 +324,7 @@ bool GLTextureHolder::UploadFromMemory(const SkPixmap& pixmap) {
   bool result = gles2::GLES2Util::ComputeImageDataSizes(
       size_.width(), size_.height(), /*depth=*/1, gl_format, gl_type,
       gl_unpack_alignment, &expected_total_bytes, nullptr, &expected_stride);
-  DCHECK(result);
+  CHECK(result);
   DCHECK_GE(src_total_bytes, expected_total_bytes);
   DCHECK_GE(src_stride, expected_stride);
 
@@ -337,9 +379,15 @@ bool GLTextureHolder::ReadbackToMemory(const SkPixmap& pixmap) {
   }
 
   gl::GLApi* api = gl::g_current_gl_context;
-  GLuint framebuffer;
-  api->glGenFramebuffersEXTFn(1, &framebuffer);
-  gl::ScopedFramebufferBinder scoped_framebuffer_binder(framebuffer);
+  // ScopedTemporaryFramebuffer must be declared before ScopedFramebufferBinder
+  // so that when this scope exits, ScopedFramebufferBinder is destroyed first
+  // (restoring the previous framebuffer binding) before the temporary FBO is
+  // deleted. Some drivers retain an internal reference to the previously bound
+  // FBO across bind transitions; deleting it while bound can trigger a
+  // driver UAF (see https://crbug.com/525317502).
+  ScopedTemporaryFramebuffer temp_fbo(api);
+  gl::ScopedFramebufferBinder scoped_framebuffer_binder(temp_fbo.id());
+
   // This uses GL_FRAMEBUFFER instead of GL_READ_FRAMEBUFFER as the target for
   // GLES2 compatibility.
   api->glFramebufferTexture2DEXTFn(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
@@ -391,7 +439,7 @@ bool GLTextureHolder::ReadbackToMemory(const SkPixmap& pixmap) {
   bool result = gles2::GLES2Util::ComputeImageDataSizes(
       size_.width(), size_.height(), /*depth=*/1, gl_format, gl_type,
       gl_pack_alignment, &expected_total_bytes, nullptr, &expected_stride);
-  DCHECK(result);
+  CHECK(result);
   DCHECK_GE(pixmap.computeByteSize(), expected_total_bytes);
   DCHECK_GE(dst_stride, expected_stride);
 
@@ -417,8 +465,6 @@ bool GLTextureHolder::ReadbackToMemory(const SkPixmap& pixmap) {
     api->glReadPixelsFn(0, 0, size_.width(), size_.height(), gl_format, gl_type,
                         pixels);
   }
-
-  api->glDeleteFramebuffersEXTFn(1, &framebuffer);
 
   if (!unpack_buffer.empty()) {
     DCHECK_GT(dst_stride, expected_stride);

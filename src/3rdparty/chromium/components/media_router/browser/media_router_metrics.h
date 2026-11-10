@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_MEDIA_ROUTER_BROWSER_MEDIA_ROUTER_METRICS_H_
 #define COMPONENTS_MEDIA_ROUTER_BROWSER_MEDIA_ROUTER_METRICS_H_
 
+#include <optional>
+
 #include "base/gtest_prod_util.h"
 #include "base/time/time.h"
 #include "components/media_router/common/media_route_provider_helper.h"
@@ -12,7 +14,6 @@
 #include "components/media_router/common/mojom/media_router.mojom-forward.h"
 #include "components/media_router/common/route_request_result.h"
 #include "media/base/container_names.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class GURL;
 
@@ -119,13 +120,14 @@ enum class MediaRouterAndroidDialogAction {
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
-enum class MediaRouterUserPromptWhenLaunchingCast {
-  kPendingUserAuth = 0,
-  kUserNotAllowed = 1,
+enum class MediaRouterUiPermissionRejectedViewEvents {
+  kCastDialogErrorShown = 0,
+  kCastDialogLinkClicked = 1,
+  kGmcDialogErrorShown = 2,
+  kGmcDialogLinkClicked = 3,
+  kGmcDialogErrorDismissed = 4,
 
-  // Add new types only immediately above this line. Remember to also update
-  // tools/metrics/histograms/enums.xml.
-  kMaxValue = kUserNotAllowed,
+  kMaxValue = kGmcDialogErrorDismissed,
 };
 
 class MediaRouterMetrics {
@@ -142,13 +144,13 @@ class MediaRouterMetrics {
   static const char kHistogramUiDeviceCount[];
   static const char kHistogramUiDialogActivationLocationAndCastMode[];
   static const char kHistogramUiDialogIconStateAtOpen[];
-  static const char kHistogramUiDialogLoadedWithData[];
+  static const char kHistogramUiCastDialogLoadedWithData[];
+  static const char kHistogramUiGmcDialogLoadedWithData[];
   static const char kHistogramUiFirstAction[];
   static const char kHistogramUiIconStateAtInit[];
   static const char kHistogramUiAndroidDialogType[];
   static const char kHistogramUiAndroidDialogAction[];
-  static const char kHistogramUserPromptWhenLaunchingCast[];
-  static const char kHistogramPendingUserAuthLatency[];
+  static const char kHistogramUiPermissionRejectedViewAction[];
 
   // When recording the number of devices shown in UI we record after a delay
   // because discovering devices can take some time after the UI is shown.
@@ -158,9 +160,10 @@ class MediaRouterMetrics {
   static void RecordMediaRouterDialogActivationLocation(
       MediaRouterDialogActivationLocation activation_location);
 
-  // Records the duration it takes for the Media Router dialog to load its
+  // Records the duration it takes for the Cast or GMC dialog to load its
   // initial data after a user clicks to open the dialog.
-  static void RecordMediaRouterDialogLoaded(const base::TimeDelta& delta);
+  static void RecordCastDialogLoaded(const base::TimeDelta& delta);
+  static void RecordGmcDialogLoaded(const base::TimeDelta& delta);
 
   // Records the format of a cast file.
   static void RecordMediaRouterFileFormat(
@@ -198,18 +201,18 @@ class MediaRouterMetrics {
   // histograms.
   static void RecordCreateRouteResultCode(
       mojom::RouteRequestResultCode result_code,
-      absl::optional<mojom::MediaRouteProviderId> provider_id = absl::nullopt);
+      std::optional<mojom::MediaRouteProviderId> provider_id = std::nullopt);
 
   // Records the outcome of a join route request to a Media Route Provider.
   static void RecordJoinRouteResultCode(
       mojom::RouteRequestResultCode result_code,
-      absl::optional<mojom::MediaRouteProviderId> provider_id = absl::nullopt);
+      std::optional<mojom::MediaRouteProviderId> provider_id = std::nullopt);
 
   // Records the outcome of a call to terminateRoute() on a Media Route
   // Provider.
   static void RecordMediaRouteProviderTerminateRoute(
       mojom::RouteRequestResultCode result_code,
-      absl::optional<mojom::MediaRouteProviderId> provider_id = absl::nullopt);
+      std::optional<mojom::MediaRouteProviderId> provider_id = std::nullopt);
 
   // Records the type of the MediaRouter dialog opened. Android only.
   static void RecordMediaRouterAndroidDialogType(
@@ -219,15 +222,8 @@ class MediaRouterMetrics {
   static void RecordMediaRouterAndroidDialogAction(
       MediaRouterAndroidDialogAction action);
 
-  // Records the number of times the user was asked to allow casting and the
-  // number of times the user didn't allow it
-  static void RecordMediaRouterUserPromptWhenLaunchingCast(
-      MediaRouterUserPromptWhenLaunchingCast user_prompt);
-
-  // Records the duration it takes between sending cast request and receiving a
-  // response of UserPendingAuthorization
-  static void RecordMediaRouterPendingUserAuthLatency(
-      const base::TimeDelta& delta);
+  static void RecordMediaRouterUiPermissionRejectedViewEvents(
+      MediaRouterUiPermissionRejectedViewEvents event);
 };
 
 }  // namespace media_router

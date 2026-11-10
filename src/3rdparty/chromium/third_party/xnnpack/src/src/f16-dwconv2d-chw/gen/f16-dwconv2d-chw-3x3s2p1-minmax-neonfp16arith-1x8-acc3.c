@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-dwconv2d-chw/3x3s2p1-neonfp16arith.c.in
 //   Generator: tools/xngen
@@ -7,24 +8,27 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_f16_dwconv2d_chw_ukernel_3x3s2p1__neonfp16arith_1x8_acc3(
     size_t input_height,
     size_t input_width,
-    const void* input,
-    const void* weights,
-    const void* zero,
-    void* output,
+    const xnn_float16* input,
+    const xnn_float16* weights,
+    const xnn_float16* zero,
+    xnn_float16* output,
     uint32_t padding_top,
-    const union xnn_f16_chw_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f16_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(input_height != 0);
   assert(input_width != 0);
@@ -32,17 +36,19 @@ void xnn_f16_dwconv2d_chw_ukernel_3x3s2p1__neonfp16arith_1x8_acc3(
   assert(padding_top <= 1);
 
   #if XNN_ARCH_ARM64
-    const uint16x8x2_t vminmax = vld2q_dup_u16(&params->neonfp16arith_stride2.min);
+    const uint16x8x2_t vminmax = vld2q_dup_u16((const uint16_t*) &params->scalar.min);
     const float16x8_t vmin = vreinterpretq_f16_u16(vminmax.val[0]);
     const float16x8_t vmax = vreinterpretq_f16_u16(vminmax.val[1]);
   #else
     // vld2_dup is to work around aarch32 clang bug with vld1q_dup
-    const uint16x4x2_t vminmax = vld2_dup_u16(&params->neonfp16arith_stride2.min);
+    const uint16x4x2_t vminmax = vld2_dup_u16((const uint16_t*) &params->scalar.min);
     const float16x8_t vmin = vreinterpretq_f16_u16(vcombine_u16(vminmax.val[0], vminmax.val[0]));
     const float16x8_t vmax = vreinterpretq_f16_u16(vcombine_u16(vminmax.val[1], vminmax.val[1]));
   #endif
-  const uint16x8_t vmask_even = vld1q_u16(params->neonfp16arith_stride2.mask_even);
-  const uint16x8_t vmask_odd  = vld1q_u16(params->neonfp16arith_stride2.mask_odd);
+
+  static const int16_t mask_table[16] = {-1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0};
+  const uint16x8_t vmask_even = vld1q_u16((const uint16_t*) &mask_table[8 - (((input_width & 31) + 2) >> 2)]);
+  const uint16x8_t vmask_odd = vld1q_u16((const uint16_t*) &mask_table[8 - ((input_width & 31) >> 2)]);
 
   const uint16_t* w = (const uint16_t*) weights;
   const float16x8_t vw01234567 = vreinterpretq_f16_u16(vld1q_u16(w));
@@ -53,17 +59,17 @@ void xnn_f16_dwconv2d_chw_ukernel_3x3s2p1__neonfp16arith_1x8_acc3(
   const uint16_t* i0 = (const uint16_t*) ((uintptr_t) input - ((-padding_top) & input_width));
   const uint16_t* i1 = (const uint16_t*) ((uintptr_t) i0 + input_width);
   if XNN_UNPREDICTABLE(padding_top != 0) {
-    i0 = zero;
+    i0 = (const uint16_t*) zero;
   }
   const uint16_t* i2 = (const uint16_t*) ((uintptr_t) i1 + input_width);
 
-  uint16_t* o0 = output;
+  uint16_t* o0 = (uint16_t*) output;
 
   size_t padded_input_height = input_height + padding_top + 1 /* padding bottom */;
   size_t output_height = (padded_input_height - 3 /* kernel size */ + 2 /* subsampling */) / 2;
   do {
     if XNN_UNPREDICTABLE(padded_input_height < 4) {
-      i2 = zero;
+      i2 = (const uint16_t*) zero;
     }
 
     float16x8_t vi0x13579BDF = vreinterpretq_f16_u16(vmovq_n_u16(0));

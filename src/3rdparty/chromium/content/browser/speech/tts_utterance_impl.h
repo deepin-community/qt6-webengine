@@ -13,13 +13,8 @@
 #include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/tts_utterance.h"
-
-namespace base {
-class Value;
-}
 
 namespace content {
 class BrowserContext;
@@ -86,7 +81,8 @@ class CONTENT_EXPORT TtsUtteranceImpl : public TtsUtterance {
   void SetEngineId(const std::string& engine_id) override;
   const std::string& GetEngineId() override;
 
-  void SetEventDelegate(UtteranceEventDelegate* event_delegate) override;
+  void SetEventDelegate(
+      std::unique_ptr<UtteranceEventDelegate> event_delegate) override;
   UtteranceEventDelegate* GetEventDelegate() override;
 
   BrowserContext* GetBrowserContext() override;
@@ -137,8 +133,9 @@ class CONTENT_EXPORT TtsUtteranceImpl : public TtsUtterance {
   // The URL of the page where called speak was called.
   GURL src_url_;
 
-  // The delegate to be called when an utterance event is fired.
-  raw_ptr<UtteranceEventDelegate> event_delegate_ = nullptr;
+  // The delegate to be called when an utterance event is fired. This is owned
+  // by the utterance.
+  std::unique_ptr<UtteranceEventDelegate> event_delegate_;
 
   // The parsed options.
   std::string voice_name_;

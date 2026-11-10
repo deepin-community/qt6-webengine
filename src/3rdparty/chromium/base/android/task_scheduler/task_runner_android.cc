@@ -9,8 +9,6 @@
 #include <utility>
 
 #include "base/android/jni_string.h"
-#include "base/android_runtime_jni_headers/Runnable_jni.h"
-#include "base/base_jni/TaskRunnerImpl_jni.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/functional/bind.h"
@@ -22,7 +20,11 @@
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "base/android_runtime_jni_headers/Runnable_jni.h"
+#include "base/tasks_jni/TaskRunnerImpl_jni.h"
 
 namespace base {
 
@@ -34,15 +36,8 @@ TaskRunnerAndroid::UiThreadTaskRunnerCallback& GetUiThreadTaskRunnerCallback() {
   return *callback;
 }
 
-void RunJavaTask(base::android::ScopedJavaGlobalRef<jobject> task,
-                 const std::string& runnable_class_name) {
-  TRACE_EVENT("toplevel", nullptr, [&](::perfetto::EventContext& ctx) {
-    std::string event_name =
-        base::StrCat({"JniPostTask: ", runnable_class_name});
-    ctx.event()->set_name(event_name.c_str());
-  });
-  JNIEnv* env = base::android::AttachCurrentThread();
-  JNI_Runnable::Java_Runnable_run(env, task);
+void RunJavaTask(jint task_index) {
+  Java_TaskRunnerImpl_runTask(jni_zero::AttachCurrentThread(), task_index);
 }
 
 }  // namespace
@@ -66,28 +61,13 @@ void TaskRunnerAndroid::Destroy(JNIEnv* env) {
   delete this;
 }
 
-void TaskRunnerAndroid::PostDelayedTask(
-    JNIEnv* env,
-    const base::android::JavaRef<jobject>& task,
-    jlong delay,
-    jstring runnable_class_name) {
+void TaskRunnerAndroid::PostDelayedTask(JNIEnv* env,
+                                        jlong delay,
+                                        jint task_index) {
   // This could be run on any java thread, so we can't cache |env| in the
   // BindOnce because JNIEnv is thread specific.
   task_runner_->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(
-          &RunJavaTask, base::android::ScopedJavaGlobalRef<jobject>(task),
-          android::ConvertJavaStringToUTF8(env, runnable_class_name)),
-      Milliseconds(delay));
-}
-
-bool TaskRunnerAndroid::BelongsToCurrentThread(JNIEnv* env) {
-  // TODO(crbug.com/1026641): Move BelongsToCurrentThread from TaskRunnerImpl to
-  // SequencedTaskRunnerImpl on the Java side too.
-  if (type_ == TaskRunnerType::BASE)
-    return false;
-  return static_cast<SequencedTaskRunner*>(task_runner_.get())
-      ->RunsTasksInCurrentSequence();
+      FROM_HERE, base::BindOnce(&RunJavaTask, task_index), Milliseconds(delay));
 }
 
 // static
@@ -120,6 +100,8 @@ std::unique_ptr<TaskRunnerAndroid> TaskRunnerAndroid::Create(
     case ::TaskTraits::UI_USER_VISIBLE:
       [[fallthrough]];
     case ::TaskTraits::UI_USER_BLOCKING:
+      [[fallthrough]];
+    case ::TaskTraits::UI_STARTUP:
       use_thread_pool = false;
       break;
   }

@@ -5,8 +5,6 @@
 #ifndef CONTENT_BROWSER_WORKER_HOST_DEDICATED_WORKER_HOST_FACTORY_IMPL_H_
 #define CONTENT_BROWSER_WORKER_HOST_DEDICATED_WORKER_HOST_FACTORY_IMPL_H_
 
-#include <optional>
-
 #include "content/browser/network/cross_origin_embedder_policy_reporter.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/dedicated_worker_creator.h"
@@ -14,6 +12,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/isolation_info.h"
+#include "net/storage_access_api/status.h"
 #include "services/network/public/mojom/client_security_state.mojom-forward.h"
 #include "services/network/public/mojom/cross_origin_embedder_policy.mojom-forward.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -42,8 +41,7 @@ class CONTENT_EXPORT DedicatedWorkerHostFactoryImpl
       const blink::StorageKey& creator_storage_key,
       const net::IsolationInfo& isolation_info,
       network::mojom::ClientSecurityStatePtr creator_client_security_state,
-      base::WeakPtr<CrossOriginEmbedderPolicyReporter> creator_coep_reporter,
-      base::WeakPtr<CrossOriginEmbedderPolicyReporter> ancestor_coep_reporter);
+      base::WeakPtr<CrossOriginEmbedderPolicyReporter> creator_coep_reporter);
 
   DedicatedWorkerHostFactoryImpl(const DedicatedWorkerHostFactoryImpl&) =
       delete;
@@ -53,15 +51,6 @@ class CONTENT_EXPORT DedicatedWorkerHostFactoryImpl
   ~DedicatedWorkerHostFactoryImpl() override;
 
   // blink::mojom::DedicatedWorkerHostFactory:
-  void CreateWorkerHost(
-      const blink::DedicatedWorkerToken& token,
-      const GURL& script_url,
-      mojo::PendingReceiver<blink::mojom::BrowserInterfaceBroker>
-          broker_receiver,
-      mojo::PendingReceiver<blink::mojom::DedicatedWorkerHost> host_receiver,
-      CreateWorkerHostCallback callback) override;
-
-  // PlzDedicatedWorker:
   void CreateWorkerHostAndStartScriptLoad(
       const blink::DedicatedWorkerToken& token,
       const GURL& script_url,
@@ -70,7 +59,8 @@ class CONTENT_EXPORT DedicatedWorkerHostFactoryImpl
           outside_fetch_client_settings_object,
       mojo::PendingRemote<blink::mojom::BlobURLToken> blob_url_token,
       mojo::PendingRemote<blink::mojom::DedicatedWorkerHostFactoryClient>
-          client) override;
+          client,
+      net::StorageAccessApiStatus storage_access_api_status) override;
 
  private:
   // The ID of the RenderProcessHost where the worker will live.
@@ -91,7 +81,6 @@ class CONTENT_EXPORT DedicatedWorkerHostFactoryImpl
   network::mojom::ClientSecurityStatePtr creator_client_security_state_;
 
   base::WeakPtr<CrossOriginEmbedderPolicyReporter> creator_coep_reporter_;
-  base::WeakPtr<CrossOriginEmbedderPolicyReporter> ancestor_coep_reporter_;
 };
 
 }  // namespace content

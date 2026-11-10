@@ -1,10 +1,10 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import * as Common from '../../../../core/common/common.js';
-import * as ComponentHelpers from '../../../components/helpers/helpers.js';
-import * as LitHtml from '../../../lit-html/lit-html.js';
+import * as Lit from '../../../lit/lit.js';
 import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 
 import cssAngleEditorStyles from './cssAngleEditor.css.js';
@@ -17,8 +17,8 @@ import {
   getRadiansFromAngle,
 } from './CSSAngleUtils.js';
 
-const {render, html} = LitHtml;
-const styleMap = LitHtml.Directives.styleMap;
+const {render, html} = Lit;
+const styleMap = Lit.Directives.styleMap;
 
 const CLOCK_DIAL_LENGTH = 6;
 
@@ -29,23 +29,22 @@ export interface CSSAngleEditorData {
 }
 
 export class CSSAngleEditor extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-css-angle-editor`;
   private readonly shadow = this.attachShadow({mode: 'open'});
   private angle: Angle = {
     value: 0,
-    unit: AngleUnit.Rad,
+    unit: AngleUnit.RAD,
   };
   private onAngleUpdate?: (angle: Angle) => void;
   private background = '';
   private clockRadius = 77 / 2;  // By default the clock is 77 * 77.
-  private dialTemplates?: LitHtml.TemplateResult[];
+  private dialTemplates?: Lit.TemplateResult[];
   private mousemoveThrottler = new Common.Throttler.Throttler(16.67 /* 60fps */);
   private mousemoveListener = this.onMousemove.bind(this);
 
   connectedCallback(): void {
-    this.shadow.adoptedStyleSheets = [cssAngleEditorStyles];
-    ComponentHelpers.SetCSSProperty.set(this, '--clock-dial-length', `${CLOCK_DIAL_LENGTH}px`);
+    this.style.setProperty('--clock-dial-length', `${CLOCK_DIAL_LENGTH}px`);
   }
+
   set data(data: CSSAngleEditorData) {
     this.angle = data.angle;
     this.onAngleUpdate = data.onAngleUpdate;
@@ -67,7 +66,7 @@ export class CSSAngleEditor extends HTMLElement {
     if (shouldSnapToMultipleOf15Degrees) {
       const multipleInRadian = getRadiansFromAngle({
         value: 15,
-        unit: AngleUnit.Deg,
+        unit: AngleUnit.DEG,
       });
       const closestMultipleOf15Degrees = Math.round(radian / multipleInRadian) * multipleInRadian;
       this.onAngleUpdate(getAngleFromRadians(closestMultipleOf15Degrees, this.angle.unit));
@@ -131,7 +130,8 @@ export class CSSAngleEditor extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
-      <div class="editor" jslog=${VisualLogging.cssAngleEditor().track({click: true, drag: true})}>
+      <style>${cssAngleEditorStyles}</style>
+      <div class="editor" jslog=${VisualLogging.dialog('cssAngleEditor').track({click: true, drag: true, resize: true, keydown: 'Enter|Escape'})}>
         <span class="pointer"></span>
         <div
           class="clock"
@@ -149,7 +149,7 @@ export class CSSAngleEditor extends HTMLElement {
     // clang-format on
   }
 
-  private renderDials(): LitHtml.TemplateResult[] {
+  private renderDials(): Lit.TemplateResult[] {
     if (!this.dialTemplates) {
       // Disabled until https://crbug.com/1079231 is fixed.
       // clang-format off
@@ -157,7 +157,7 @@ export class CSSAngleEditor extends HTMLElement {
         const radius = this.clockRadius - CLOCK_DIAL_LENGTH - 3 /* clock border */;
         const {translateX, translateY} = get2DTranslationsForAngle({
           value: deg,
-          unit: AngleUnit.Deg,
+          unit: AngleUnit.DEG,
         }, radius);
         const dialStyles = {
           transform: `translate(${translateX}px, ${translateY}px) rotate(${deg}deg)`,
@@ -171,10 +171,9 @@ export class CSSAngleEditor extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-css-angle-editor', CSSAngleEditor);
+customElements.define('devtools-css-angle-editor', CSSAngleEditor);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-css-angle-editor': CSSAngleEditor;
   }

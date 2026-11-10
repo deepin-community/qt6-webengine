@@ -12,12 +12,12 @@
 
   This file is intended to be combined at build-time with other
   related code, most notably a header and footer which wraps this
-  whole file into an Emscripten Module.postRun() handler. The sqlite3
-  JS API has no hard requirements on Emscripten and does not expose
-  any Emscripten APIs to clients. It is structured such that its build
-  can be tweaked to include it in arbitrary WASM environments which
-  can supply the necessary underlying features (e.g. a POSIX file I/O
-  layer).
+  whole file into a single callback which can be run after Emscripten
+  loads the corresponding WASM module. The sqlite3 JS API has no hard
+  requirements on Emscripten and does not expose any Emscripten APIs
+  to clients. It is structured such that its build can be tweaked to
+  include it in arbitrary WASM environments which can supply the
+  necessary underlying features (e.g. a POSIX file I/O layer).
 
   Main project home page: https://sqlite.org
 
@@ -37,7 +37,7 @@
 
    This function expects a configuration object, intended to abstract
    away details specific to any given WASM environment, primarily so
-   that it can be used without any _direct_ dependency on
+   that it can be used without any direct dependency on
    Emscripten. (Note the default values for the config object!) The
    config object is only honored the first time this is
    called. Subsequent calls ignore the argument and return the same
@@ -98,14 +98,37 @@
 
    The returned object is the top-level sqlite3 namespace object.
 
+
+   Client code may optionally assign sqlite3ApiBootstrap.defaultConfig
+   an object-type value before calling sqlite3ApiBootstrap() (without
+   arguments) in order to tell that call to use this object as its
+   default config value. The intention of this is to provide
+   downstream clients with a reasonably flexible approach for plugging
+   in an environment-suitable configuration without having to define a
+   new global-scope symbol.
+
+   However, because clients who access this library via an
+   Emscripten-hosted module will not have an opportunity to call
+   sqlite3ApiBootstrap() themselves, nor to access it before it is
+   called, an alternative option for setting the configuration is to
+   define globalThis.sqlite3ApiConfig to an object. If it is set, it
+   is used instead of sqlite3ApiBootstrap.defaultConfig if
+   sqlite3ApiBootstrap() is called without arguments.
+
+   Both sqlite3ApiBootstrap.defaultConfig and
+   globalThis.sqlite3ApiConfig get deleted by sqlite3ApiBootstrap()
+   because any changes to them made after that point would have no
+   useful effect.
 */
 'use strict';
 globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
   apiConfig = (globalThis.sqlite3ApiConfig || sqlite3ApiBootstrap.defaultConfig)
 ){
-  if(sqlite3ApiBootstrap.sqlite3){ /* already initalized */
-    console.warn("sqlite3ApiBootstrap() called multiple times.",
-                 "Config and external initializers are ignored on calls after the first.");
+  if(sqlite3ApiBootstrap.sqlite3){ /* already initialized */
+    (sqlite3ApiBootstrap.sqlite3.config || console).warn(
+      "sqlite3ApiBootstrap() called multiple times.",
+      "Config and external initializers are ignored on calls after the first."
+    );
     return sqlite3ApiBootstrap.sqlite3;
   }
   const config = Object.assign(Object.create(null),{
@@ -114,8 +137,16 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
     bigIntEnabled: (()=>{
       if('undefined'!==typeof Module){
         /* Emscripten module will contain HEAPU64 when built with
-           -sWASM_BIGINT=1, else it will not. */
-        return !!Module.HEAPU64;
+           -sWASM_BIGINT=1, else it will not.
+
+           As of emsdk 3.1.55, when building in strict mode, HEAPxyz
+           are only available if _explicitly_ included in the exports,
+           else they are not. We do not (as of 2024-03-04) use -sSTRICT
+           for the canonical builds.
+        */
+        if( !!Module.HEAPU64 ) return true;
+        /* Else fall through and hope for the best. Nobody _really_
+           builds this without BigInt support, do they? */
       }
       return !!globalThis.BigInt64Array;
     })(),
@@ -149,13 +180,22 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
       config[k] = config[k]();
     }
   });
+
+  /**
+     Eliminate any confusion about whether these config objects may
+     be used after library initialization by eliminating the outward-facing
+     objects...
+  */
+  delete globalThis.sqlite3ApiConfig;
+  delete sqlite3ApiBootstrap.defaultConfig;
+
   /**
       The main sqlite3 binding API gets installed into this object,
       mimicking the C API as closely as we can. The numerous members
       names with prefixes 'sqlite3_' and 'SQLITE_' behave, insofar as
       possible, identically to the C-native counterparts, as documented at:
 
-      https://www.sqlite.org/c3ref/intro.html
+      https://sqlite.org/c3ref/intro.html
 
       A very few exceptions require an additional level of proxy
       function or may otherwise require special attention in the WASM
@@ -205,7 +245,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
 
        The exception's message is created by concatenating its
        arguments with a space between each, except for the
-       two-args-with-an-objec form and that the first argument will
+       two-args-with-an-object form and that the first argument will
        get coerced to a string, as described above, if it's an
        integer.
 
@@ -623,7 +663,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
        free those pointers (using `wasm.uninstallFunction()` or
        equivalent).
 
-       C reference: https://www.sqlite.org/c3ref/create_function.html
+       C reference: https://sqlite.org/c3ref/create_function.html
 
        Maintenance reminder: the ability to add new
        WASM-accessible functions to the runtime requires that the
@@ -829,7 +869,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
        Emscripten -sWASM_BIGINT flag, else false. When
        enabled, certain 64-bit sqlite3 APIs are enabled which
        are not otherwise enabled due to JS/WASM int64
-       impedence mismatches.
+       impedance mismatches.
     */
     bigIntEnabled: !!config.bigIntEnabled,
     /**
@@ -840,7 +880,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
 
     /**
        When Emscripten compiles with `-sIMPORTED_MEMORY`, it
-       initalizes the heap and imports it into wasm, as opposed to
+       initializes the heap and imports it into wasm, as opposed to
        the other way around. In this case, the memory is not
        available via this.exports.memory.
     */
@@ -1061,7 +1101,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
        are undefined if the passed-in value did not come from
        this.pointer.
     */
-    restore: wasm.exports.sqlite3_wasm_pstack_restore,
+    restore: wasm.exports.sqlite3__wasm_pstack_restore,
     /**
        Attempts to allocate the given number of bytes from the
        pstack. On success, it zeroes out a block of memory of the
@@ -1083,7 +1123,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
       if('string'===typeof n && !(n = wasm.sizeofIR(n))){
         WasmAllocError.toss("Invalid value for pstack.alloc(",arguments[0],")");
       }
-      return wasm.exports.sqlite3_wasm_pstack_alloc(n)
+      return wasm.exports.sqlite3__wasm_pstack_alloc(n)
         || WasmAllocError.toss("Could not allocate",n,
                                "bytes from the pstack.");
     },
@@ -1163,10 +1203,10 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
     */
     pointer: {
       configurable: false, iterable: true, writeable: false,
-      get: wasm.exports.sqlite3_wasm_pstack_ptr
+      get: wasm.exports.sqlite3__wasm_pstack_ptr
       //Whether or not a setter as an alternative to restore() is
       //clearer or would just lead to confusion is unclear.
-      //set: wasm.exports.sqlite3_wasm_pstack_restore
+      //set: wasm.exports.sqlite3__wasm_pstack_restore
     },
     /**
        sqlite3.wasm.pstack.quota to the total number of bytes
@@ -1175,7 +1215,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
     */
     quota: {
       configurable: false, iterable: true, writeable: false,
-      get: wasm.exports.sqlite3_wasm_pstack_quota
+      get: wasm.exports.sqlite3__wasm_pstack_quota
     },
     /**
        sqlite3.wasm.pstack.remaining resolves to the amount of space
@@ -1183,7 +1223,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
     */
     remaining: {
       configurable: false, iterable: true, writeable: false,
-      get: wasm.exports.sqlite3_wasm_pstack_remaining
+      get: wasm.exports.sqlite3__wasm_pstack_remaining
     }
   })/*wasm.pstack properties*/;
 
@@ -1238,9 +1278,10 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
      option is not available on the client.
 
      Though the mount point name returned by this function is intended
-     to remain stable, clients should not hard-coded it anywhere. Always call this function to get the path.
+     to remain stable, clients should not hard-coded it
+     anywhere. Always call this function to get the path.
 
-     Note that this function is a no-op in must builds of this
+     Note that this function is a no-op in most builds of this
      library, as the WASMFS capability requires a custom
      build.
   */
@@ -1256,14 +1297,14 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
     }
     try{
       if(pdir && 0===wasm.xCallWrapped(
-        'sqlite3_wasm_init_wasmfs', 'i32', ['string'], pdir
+        'sqlite3__wasm_init_wasmfs', 'i32', ['string'], pdir
       )){
         return __wasmfsOpfsDir = pdir;
       }else{
         return __wasmfsOpfsDir = "";
       }
     }catch(e){
-      // sqlite3_wasm_init_wasmfs() is not available
+      // sqlite3__wasm_init_wasmfs() is not available
       return __wasmfsOpfsDir = "";
     }
   };
@@ -1365,7 +1406,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
       const zSchema = schema
             ? (wasm.isPtr(schema) ? schema : wasm.scopedAllocCString(''+schema))
             : 0;
-      let rc = wasm.exports.sqlite3_wasm_db_serialize(
+      let rc = wasm.exports.sqlite3__wasm_db_serialize(
         pDb, zSchema, ppOut, pSize, 0
       );
       if(rc){
@@ -1391,7 +1432,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
      or not provided, then "main" is assumed.
   */
   capi.sqlite3_js_db_vfs =
-    (dbPointer, dbName=0)=>wasm.sqlite3_wasm_db_vfs(dbPointer, dbName);
+    (dbPointer, dbName=0)=>util.sqlite3__wasm_db_vfs(dbPointer, dbName);
 
   /**
      A thin wrapper around capi.sqlite3_aggregate_context() which
@@ -1412,7 +1453,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
      creates (or overwrites) the given file using those APIs. This is
      primarily intended for use in Emscripten-based builds where the POSIX
      APIs are transparently proxied by an in-memory virtual filesystem.
-     It may behave diffrently in other environments.
+     It may behave differently in other environments.
 
      The first argument must be either a JS string or WASM C-string
      holding the filename. Note that this routine does _not_ create
@@ -1449,7 +1490,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
       if(!util.isInt32(dataLen) || dataLen<0){
         SQLite3Error.toss("Invalid 3rd argument for sqlite3_js_posix_create_file().");
       }
-      const rc = wasm.sqlite3_wasm_posix_create_file(filename, pData, dataLen);
+      const rc = util.sqlite3__wasm_posix_create_file(filename, pData, dataLen);
       if(rc) SQLite3Error.toss("Creation of file failed with sqlite3 result code",
                                capi.sqlite3_js_rc_str(rc));
     }finally{
@@ -1514,7 +1555,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
      - "memdb": results are undefined.
 
      - "kvvfs": will fail with an I/O error due to strict internal
-       requirments of that VFS's xTruncate().
+       requirements of that VFS's xTruncate().
 
      - "unix" and related: will use the WASM build's equivalent of the
        POSIX I/O APIs. This will work so long as neither a specific
@@ -1551,7 +1592,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
       SQLite3Error.toss("Invalid 4th argument for sqlite3_js_vfs_create_file().");
     }
     try{
-      const rc = wasm.sqlite3_wasm_vfs_create_file(vfs, filename, pData, dataLen);
+      const rc = util.sqlite3__wasm_vfs_create_file(vfs, filename, pData, dataLen);
       if(rc) SQLite3Error.toss("Creation of file failed with sqlite3 result code",
                                capi.sqlite3_js_rc_str(rc));
     }finally{
@@ -1671,41 +1712,48 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
      missing or falsy pointer argument as 0.
   */
   capi.sqlite3_db_config = function(pDb, op, ...args){
-    if(!this.s){
-      this.s = wasm.xWrap('sqlite3_wasm_db_config_s','int',
-                          ['sqlite3*', 'int', 'string:static']
-                          /* MAINDBNAME requires a static string */);
-      this.pii = wasm.xWrap('sqlite3_wasm_db_config_pii', 'int',
-                            ['sqlite3*', 'int', '*','int', 'int']);
-      this.ip = wasm.xWrap('sqlite3_wasm_db_config_ip','int',
-                           ['sqlite3*', 'int', 'int','*']);
-    }
     switch(op){
-        case capi.SQLITE_DBCONFIG_ENABLE_FKEY:
-        case capi.SQLITE_DBCONFIG_ENABLE_TRIGGER:
-        case capi.SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER:
-        case capi.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION:
-        case capi.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE:
-        case capi.SQLITE_DBCONFIG_ENABLE_QPSG:
-        case capi.SQLITE_DBCONFIG_TRIGGER_EQP:
-        case capi.SQLITE_DBCONFIG_RESET_DATABASE:
-        case capi.SQLITE_DBCONFIG_DEFENSIVE:
-        case capi.SQLITE_DBCONFIG_WRITABLE_SCHEMA:
-        case capi.SQLITE_DBCONFIG_LEGACY_ALTER_TABLE:
-        case capi.SQLITE_DBCONFIG_DQS_DML:
-        case capi.SQLITE_DBCONFIG_DQS_DDL:
-        case capi.SQLITE_DBCONFIG_ENABLE_VIEW:
-        case capi.SQLITE_DBCONFIG_LEGACY_FILE_FORMAT:
-        case capi.SQLITE_DBCONFIG_TRUSTED_SCHEMA:
-        case capi.SQLITE_DBCONFIG_STMT_SCANSTATUS:
-        case capi.SQLITE_DBCONFIG_REVERSE_SCANORDER:
-          return this.ip(pDb, op, args[0], args[1] || 0);
-        case capi.SQLITE_DBCONFIG_LOOKASIDE:
-          return this.pii(pDb, op, args[0], args[1], args[2]);
-        case capi.SQLITE_DBCONFIG_MAINDBNAME:
-          return this.s(pDb, op, args[0]);
-        default:
-          return capi.SQLITE_MISUSE;
+      case capi.SQLITE_DBCONFIG_ENABLE_FKEY:
+      case capi.SQLITE_DBCONFIG_ENABLE_TRIGGER:
+      case capi.SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER:
+      case capi.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION:
+      case capi.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE:
+      case capi.SQLITE_DBCONFIG_ENABLE_QPSG:
+      case capi.SQLITE_DBCONFIG_TRIGGER_EQP:
+      case capi.SQLITE_DBCONFIG_RESET_DATABASE:
+      case capi.SQLITE_DBCONFIG_DEFENSIVE:
+      case capi.SQLITE_DBCONFIG_WRITABLE_SCHEMA:
+      case capi.SQLITE_DBCONFIG_LEGACY_ALTER_TABLE:
+      case capi.SQLITE_DBCONFIG_DQS_DML:
+      case capi.SQLITE_DBCONFIG_DQS_DDL:
+      case capi.SQLITE_DBCONFIG_ENABLE_VIEW:
+      case capi.SQLITE_DBCONFIG_LEGACY_FILE_FORMAT:
+      case capi.SQLITE_DBCONFIG_TRUSTED_SCHEMA:
+      case capi.SQLITE_DBCONFIG_STMT_SCANSTATUS:
+      case capi.SQLITE_DBCONFIG_REVERSE_SCANORDER:
+      case capi.SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE:
+      case capi.SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE:
+      case capi.SQLITE_DBCONFIG_ENABLE_COMMENTS:
+        if( !this.ip ){
+          this.ip = wasm.xWrap('sqlite3__wasm_db_config_ip','int',
+                               ['sqlite3*', 'int', 'int', '*']);
+        }
+        return this.ip(pDb, op, args[0], args[1] || 0);
+      case capi.SQLITE_DBCONFIG_LOOKASIDE:
+        if( !this.pii ){
+          this.pii = wasm.xWrap('sqlite3__wasm_db_config_pii', 'int',
+                                ['sqlite3*', 'int', '*', 'int', 'int']);
+        }
+        return this.pii(pDb, op, args[0], args[1], args[2]);
+      case capi.SQLITE_DBCONFIG_MAINDBNAME:
+        if(!this.s){
+          this.s = wasm.xWrap('sqlite3__wasm_db_config_s','int',
+                              ['sqlite3*', 'int', 'string:static']
+                              /* MAINDBNAME requires a static string */);
+        }
+        return this.s(pDb, op, args[0]);
+      default:
+        return capi.SQLITE_MISUSE;
     }
   }.bind(Object.create(null));
 
@@ -1798,7 +1846,7 @@ globalThis.sqlite3ApiBootstrap = function sqlite3ApiBootstrap(
   /**
      Calls either sqlite3_result_error_nomem(), if e is-a
      WasmAllocError, or sqlite3_result_error(). In the latter case,
-     the second arugment is coerced to a string to create the error
+     the second argument is coerced to a string to create the error
      message.
 
      The first argument is a (sqlite3_context*). Returns void.

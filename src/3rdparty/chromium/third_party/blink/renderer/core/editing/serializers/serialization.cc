@@ -68,14 +68,20 @@
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/html_head_element.h"
+#include "third_party/blink/renderer/core/html/html_html_element.h"
 #include "third_party/blink/renderer/core/html/html_quote_element.h"
 #include "third_party/blink/renderer/core/html/html_span_element.h"
+#include "third_party/blink/renderer/core/html/html_style_element.h"
 #include "third_party/blink/renderer/core/html/html_table_cell_element.h"
 #include "third_party/blink/renderer/core/html/html_table_element.h"
 #include "third_party/blink/renderer/core/html/html_template_element.h"
+#include "third_party/blink/renderer/core/html/parser/html_document_parser_fastpath.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
+#include "third_party/blink/renderer/core/mathml/mathml_element.h"
+#include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/svg/svg_style_element.h"
 #include "third_party/blink/renderer/core/svg/svg_use_element.h"
@@ -83,14 +89,11 @@
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_client.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
-
-#if defined(USE_INNER_HTML_PARSER_FAST_PATH)
-#include "third_party/blink/renderer/core/html/parser/html_document_parser_fastpath.h"
-#endif
 
 namespace blink {
 
@@ -128,13 +131,14 @@ class EmptyLocalFrameClientWithFailingLoaderFactory final
  public:
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
       override {
-    // TODO(crbug.com/1413912): CreateSanitizedFragmentFromMarkupWithContext may
+    // TODO(crbug.com/1413912): CreateFragmentFromMarkupWithContext may
     // call this method for data: URL resources. But ResourceLoader::Start()
     // don't need to call GetURLLoaderFactory() for data: URL because
     // ResourceLoader handles the data: URL resource load without the returned
     // SharedURLLoaderFactory.
-    // Note: Non-data: URL resource can't be loaded because the CORS check in
-    // BaseFetchContext::CanRequestInternal fails for non-data: URL resources.
+    // Note: Non-data: URL resource can't be loaded because the security checks
+    // in BaseFetchContext::CanRequestInternal fails for non-data: URL
+    // resources.
     return base::MakeRefCounted<network::SingleRequestURLLoaderFactory>(
         WTF::BindOnce(
             [](const network::ResourceRequest& resource_request,
@@ -145,14 +149,12 @@ class EmptyLocalFrameClientWithFailingLoaderFactory final
   }
 };
 
-#if defined(USE_INNER_HTML_PARSER_FAST_PATH)
 void LogFastPathParserTotalTime(base::TimeDelta parse_time) {
   // The time needed to parse is typically < 1ms (even at the 99%).
   UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
       "Blink.HTMLFastPathParser.TotalParseTime2", parse_time,
       base::Microseconds(1), base::Milliseconds(10), 100);
 }
-#endif
 
 }  // namespace
 
@@ -180,6 +182,15 @@ static bool IsHTMLBlockElement(const Node* node) {
   DCHECK(node);
   return IsA<HTMLTableCellElement>(*node) ||
          IsNonTableCellHTMLBlockElement(node);
+}
+
+// Helper function to check if a node is a MathML math element
+static bool IsMathMLMathElement(const Node* node) {
+  const auto* element = DynamicTo<MathMLElement>(node);
+  if (!element) {
+    return false;
+  }
+  return element->HasTagName(mathml_names::kMathTag);
 }
 
 static HTMLElement* AncestorToRetainStructureAndAppearanceForBlock(
@@ -225,7 +236,7 @@ bool PropertyMissingOrEqualToNone(CSSPropertyValueSet* style,
 }
 
 template <typename Strategy>
-static HTMLElement* HighestAncestorToWrapMarkup(
+static Element* HighestAncestorToWrapMarkup(
     const PositionTemplate<Strategy>& start_position,
     const PositionTemplate<Strategy>& end_position,
     const CreateMarkupOptions& options) {
@@ -236,7 +247,7 @@ static HTMLElement* HighestAncestorToWrapMarkup(
       Strategy::CommonAncestor(*start_position.ComputeContainerNode(),
                                *end_position.ComputeContainerNode());
   DCHECK(common_ancestor);
-  HTMLElement* special_common_ancestor = nullptr;
+  Element* special_common_ancestor = nullptr;
   if (options.ShouldAnnotateForInterchange()) {
     // Include ancestors that aren't completely inside the range but are
     // required to retain the structure and appearance of the copied markup.
@@ -251,7 +262,7 @@ static HTMLElement* HighestAncestorToWrapMarkup(
           ContainerNode* ancestor = parent_list_node->parentNode();
           while (ancestor && !IsHTMLListElement(ancestor))
             ancestor = ancestor->parentNode();
-          special_common_ancestor = To<HTMLElement>(ancestor);
+          special_common_ancestor = To<Element>(ancestor);
         }
       }
 
@@ -262,6 +273,18 @@ static HTMLElement* HighestAncestorToWrapMarkup(
                   first_node_position, IsMailHTMLBlockquoteElement,
                   kCanCrossEditingBoundary))) {
         special_common_ancestor = highest_mail_blockquote;
+      }
+
+      // Retain MathML structure by including ancestor <math> elements.
+      // This ensures that when copying MathML content, the semantic context
+      // is preserved even for partial selections within math expressions.
+      if (RuntimeEnabledFeatures::MathMLSerializationOnCopyEnabled()) {
+        if (auto* highest_math_element =
+                To<MathMLElement>(HighestEnclosingNodeOfType(
+                    first_node_position, IsMathMLMathElement,
+                    kCanCrossEditingBoundary))) {
+          special_common_ancestor = highest_math_element;
+        }
       }
     }
   }
@@ -279,11 +302,10 @@ static HTMLElement* HighestAncestorToWrapMarkup(
         options.ConstrainingAncestor()
             ? const_cast<Node*>(options.ConstrainingAncestor())
             : EnclosingBlock(check_ancestor);
-    auto* new_special_common_ancestor =
-        To<HTMLElement>(HighestEnclosingNodeOfType(
-            Position::FirstPositionInNode(*check_ancestor),
-            &IsPresentationalHTMLElement, kCanCrossEditingBoundary,
-            constraining_ancestor));
+    auto* new_special_common_ancestor = To<Element>(HighestEnclosingNodeOfType(
+        Position::FirstPositionInNode(*check_ancestor),
+        &IsPresentationalHTMLElement, kCanCrossEditingBoundary,
+        constraining_ancestor));
     if (new_special_common_ancestor)
       special_common_ancestor = new_special_common_ancestor;
   }
@@ -294,18 +316,18 @@ static HTMLElement* HighestAncestorToWrapMarkup(
   // necessarily be above any tab span that needs to be included.
   if (!special_common_ancestor &&
       IsTabHTMLSpanElementTextNode(common_ancestor)) {
-    special_common_ancestor =
-        To<HTMLSpanElement>(Strategy::Parent(*common_ancestor));
+    special_common_ancestor = To<Element>(Strategy::Parent(*common_ancestor));
   }
   if (!special_common_ancestor && IsTabHTMLSpanElement(common_ancestor))
-    special_common_ancestor = To<HTMLSpanElement>(common_ancestor);
+    special_common_ancestor = To<Element>(common_ancestor);
 
-  if (auto* enclosing_anchor = To<HTMLAnchorElement>(EnclosingElementWithTag(
+  if (auto* enclosing_anchor = To<Element>(EnclosingElementWithTag(
           Position::FirstPositionInNode(special_common_ancestor
                                             ? *special_common_ancestor
                                             : *common_ancestor),
-          html_names::kATag)))
+          html_names::kATag))) {
     special_common_ancestor = enclosing_anchor;
+  }
 
   return special_common_ancestor;
 }
@@ -348,7 +370,7 @@ String CreateMarkupAlgorithm<Strategy>::CreateMarkup(
   DocumentLifecycle::DisallowTransitionScope disallow_transition(
       document->Lifecycle());
 
-  HTMLElement* special_common_ancestor = HighestAncestorToWrapMarkup<Strategy>(
+  Element* special_common_ancestor = HighestAncestorToWrapMarkup<Strategy>(
       start_position, end_position, options);
   StyledMarkupSerializer<Strategy> serializer(start_position, end_position,
                                               special_common_ancestor, options);
@@ -497,8 +519,7 @@ DocumentFragment* CreateFragmentFromMarkupWithContext(
 String CreateMarkup(const Node* node,
                     ChildrenOnly children_only,
                     AbsoluteURLs should_resolve_urls,
-                    IncludeShadowRoots include_shadow_roots,
-                    ClosedRootsSet include_closed_roots) {
+                    const ShadowRootInclusion& shadow_root_inclusion) {
   if (!node)
     return "";
 
@@ -506,7 +527,7 @@ String CreateMarkup(const Node* node,
                                 IsA<HTMLDocument>(node->GetDocument())
                                     ? SerializationType::kHTML
                                     : SerializationType::kXML,
-                                include_shadow_roots, include_closed_roots);
+                                shadow_root_inclusion);
   return accumulator.SerializeNodes<EditingStrategy>(*node, children_only);
 }
 
@@ -655,7 +676,7 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
     const String& markup,
     Element* context_element,
     ParserContentPolicy parser_content_policy,
-    Element::IncludeShadowRoots include_shadow_roots,
+    Element::ParseDeclarativeShadowRoots parse_declarative_shadows,
     Element::ForceHtml force_html,
     ExceptionState& exception_state) {
   DCHECK(context_element);
@@ -671,17 +692,24 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
           : context_element->GetDocument();
   DocumentFragment* fragment = DocumentFragment::Create(document);
   document.setAllowDeclarativeShadowRoots(
-      include_shadow_roots == Element::IncludeShadowRoots::kInclude);
+      parse_declarative_shadows ==
+      Element::ParseDeclarativeShadowRoots::kParse);
 
   if (IsA<HTMLDocument>(document) || force_html == Element::ForceHtml::kForce) {
-#if defined(USE_INNER_HTML_PARSER_FAST_PATH)
     bool log_tag_stats = false;
     base::ElapsedTimer parse_timer;
+    HTMLFragmentParsingBehaviorSet parser_behavior;
+    if (parse_declarative_shadows ==
+        Element::ParseDeclarativeShadowRoots::kParse) {
+      parser_behavior.Put(HTMLFragmentParsingBehavior::kIncludeShadowRoots);
+    }
     const bool parsed_fast_path = TryParsingHTMLFragment(
         markup, document, *fragment, *context_element, parser_content_policy,
-        include_shadow_roots == Element::IncludeShadowRoots::kInclude,
-        &log_tag_stats);
+        parser_behavior, &log_tag_stats);
     if (parsed_fast_path) {
+      fragment->SetHoldsUnnotifiedChildren(true);
+      fragment->ParserFinishedBuildingDocumentFragment(
+          DocumentFragment::ShouldNotifyInsertedNodes::kSkip);
       LogFastPathParserTotalTime(parse_timer.Elapsed());
 #if DCHECK_IS_ON()
       // As a sanity check for the fast-path, create another fragment using
@@ -697,20 +725,17 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
       return fragment;
     }
     fragment = DocumentFragment::Create(document);
-#endif
     fragment->ParseHTML(markup, context_element, parser_content_policy);
-#if defined(USE_INNER_HTML_PARSER_FAST_PATH)
     LogFastPathParserTotalTime(parse_timer.Elapsed());
     if (log_tag_stats &&
         RuntimeEnabledFeatures::InnerHTMLParserFastpathLogFailureEnabled()) {
       LogTagsForUnsupportedTagTypeFailure(*fragment);
     }
-#endif
     return fragment;
   }
 
-  bool was_valid =
-      fragment->ParseXML(markup, context_element, parser_content_policy);
+  bool was_valid = fragment->ParseXML(markup, context_element, exception_state,
+                                      parser_content_policy);
   if (!was_valid) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
@@ -747,7 +772,7 @@ DocumentFragment* CreateFragmentForTransformToFragment(
     fragment->ParserAppendChild(Text::Create(output_doc, source_string));
   } else {
     bool successful_parse =
-        fragment->ParseXML(source_string, nullptr,
+        fragment->ParseXML(source_string, nullptr, IGNORE_EXCEPTION,
                            kAllowScriptingContentAndDoNotMarkAlreadyStarted);
     if (!successful_parse)
       return nullptr;
@@ -778,8 +803,12 @@ DocumentFragment* CreateContextualFragment(
 
   DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
       markup, element, parser_content_policy,
-      Element::IncludeShadowRoots::kDontInclude, Element::ForceHtml::kDontForce,
-      exception_state);
+      Element::ParseDeclarativeShadowRoots::kDontParse,
+      Element::ForceHtml::kDontForce, exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+
   if (!fragment)
     return nullptr;
 
@@ -860,14 +889,17 @@ void MergeWithNextTextNode(Text* text_node, ExceptionState& exception_state) {
     return;
 
   text_node->appendData(text_next->data());
-  if (text_next->parentNode())  // Might have been removed by mutation event.
+  if (text_next->parentNode()) {
+    // Might have been removed by synchronous event.
     text_next->remove(exception_state);
+  }
 }
 
 static Document* CreateStagingDocumentForMarkupSanitization(
     AgentGroupScheduler& agent_group_scheduler) {
   Page* page = Page::CreateNonOrdinary(GetStaticEmptyChromeClientInstance(),
-                                       agent_group_scheduler);
+                                       agent_group_scheduler,
+                                       /*color_provider_colors=*/nullptr);
 
   page->GetSettings().SetScriptEnabled(false);
   page->GetSettings().SetPluginsEnabled(false);
@@ -883,8 +915,9 @@ static Document* CreateStagingDocumentForMarkupSanitization(
       nullptr,  // Frame* parent
       nullptr,  // Frame* previous_sibling
       FrameInsertType::kInsertInConstructor, blink::LocalFrameToken(),
-      nullptr,  // WindowAgentFactory*
-      nullptr   // InterfaceRegistry*
+      nullptr,            // WindowAgentFactory*
+      nullptr,            // InterfaceRegistry*
+      mojo::NullRemote()  // BrowserInterfaceBroker
   );
   // Don't leak the actual viewport size to unsanitized markup
   LocalFrameView* frame_view =
@@ -917,9 +950,7 @@ static bool ContainsStyleElements(const DocumentFragment& fragment) {
 static bool StripSVGUseNonLocalHrefs(Node& node) {
   if (auto* use = DynamicTo<SVGUseElement>(node)) {
     SVGURLReferenceResolver resolver(use->HrefString(), use->GetDocument());
-    if ((RuntimeEnabledFeatures::PastingBlocksSVGUseNonLocalHrefsEnabled() &&
-         !resolver.IsLocal()) ||
-        resolver.AbsoluteUrl().ProtocolIsData()) {
+    if (!resolver.IsLocal() || resolver.AbsoluteUrl().ProtocolIsData()) {
       node.remove();
     }
     return true;
@@ -941,15 +972,15 @@ constexpr unsigned kMaxSanitizationIterations = 16;
 
 }  // namespace
 
-String CreateSanitizedMarkupWithContext(Document& document,
-                                        const String& raw_markup,
-                                        unsigned fragment_start,
-                                        unsigned fragment_end,
-                                        const String& base_url,
-                                        ChildrenOnly children_only,
-                                        AbsoluteURLs should_resolve_urls,
-                                        IncludeShadowRoots include_shadow_roots,
-                                        ClosedRootsSet include_closed_roots) {
+String CreateStrictlyProcessedMarkupWithContext(
+    Document& document,
+    const String& raw_markup,
+    unsigned fragment_start,
+    unsigned fragment_end,
+    const String& base_url,
+    ChildrenOnly children_only,
+    AbsoluteURLs should_resolve_urls,
+    const ShadowRootInclusion& shadow_root_inclusion) {
   if (raw_markup.empty())
     return String();
 
@@ -1008,21 +1039,20 @@ String CreateSanitizedMarkupWithContext(Document& document,
     DocumentFragment* final_fragment =
         CreateFragmentFromMarkup(*staging_document, markup, base_url,
                                  kDisallowScriptingAndPluginContent);
-    final_markup =
-        CreateMarkup(final_fragment, children_only, should_resolve_urls,
-                     include_shadow_roots, include_closed_roots);
+    final_markup = CreateMarkup(final_fragment, children_only,
+                                should_resolve_urls, shadow_root_inclusion);
   }
   staging_document->GetPage()->WillBeDestroyed();
   return final_markup;
 }
 
-DocumentFragment* CreateSanitizedFragmentFromMarkupWithContext(
+DocumentFragment* CreateStrictlyProcessedFragmentFromMarkupWithContext(
     Document& document,
     const String& raw_markup,
     unsigned fragment_start,
     unsigned fragment_end,
     const String& base_url) {
-  String sanitized_markup = CreateSanitizedMarkupWithContext(
+  String sanitized_markup = CreateStrictlyProcessedMarkupWithContext(
       document, raw_markup, fragment_start, fragment_end, KURL());
   if (sanitized_markup.IsNull())
     return nullptr;

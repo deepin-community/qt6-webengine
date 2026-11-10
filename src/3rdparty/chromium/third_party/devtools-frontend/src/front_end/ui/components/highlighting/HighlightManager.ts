@@ -1,6 +1,7 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import type * as TextUtils from '../../../models/text_utils/text_utils.js';
 
@@ -65,12 +66,12 @@ export const HIGHLIGHT_REGISTRY = 'search-highlight';
 
 let highlightManagerInstance: HighlightManager;
 export class HighlightManager {
-  // @ts-expect-error
   #highlights = new Highlight();
 
   constructor() {
-    document.adoptedStyleSheets.push(highlightingStyles);
-    // @ts-expect-error
+    const styleElement = document.createElement('style');
+    styleElement.textContent = highlightingStyles;
+    document.head.appendChild(styleElement);
     CSS.highlights.set(HIGHLIGHT_REGISTRY, this.#highlights);
   }
 

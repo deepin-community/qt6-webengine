@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("../../../third_party/typescript/typescript.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 
 node_ts_library("helpers") {
   sources = [
@@ -22,24 +22,23 @@ node_ts_library("helpers") {
     "issues-helpers.ts",
     "layers-helpers.ts",
     "lighthouse-helpers.ts",
-    "media-helpers.ts",
     "memory-helpers.ts",
     "network-helpers.ts",
     "performance-helpers.ts",
-    "profiler-helpers.ts",
     "quick_open-helpers.ts",
-    "search-helpers.ts",
+    "recorder-helpers.ts",
     "security-helpers.ts",
-    "sensors-helpers.ts",
     "settings-helpers.ts",
     "settings-shortcuts-helpers.ts",
     "sources-helpers.ts",
     "style-property-editor-helpers.ts",
-    "webaudio-helpers.ts",
+    "visual-logging-helpers.ts",
   ]
 
   deps = [
     "../../../extension-api",
+    "../../../front_end/panels/recorder:bundle",
+    "../../e2e_non_hosted/shared",
     "../../shared",
   ]
 }

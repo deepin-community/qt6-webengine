@@ -224,10 +224,9 @@ struct Atomics::State {
                 }
                 auto count = arr->ConstantCount();
                 if (!count) {
-                    ctx.dst->Diagnostics().add_error(
-                        diag::System::Transform,
-                        "the Atomics transform does not currently support array counts that "
-                        "use override values");
+                    ctx.dst->Diagnostics().AddError(Source{})
+                        << "the Atomics transform does not currently support array counts that use "
+                           "override values";
                     count = 1;
                 }
                 return b.ty.array(AtomicTypeFor(arr->ElemType()), u32(count.value()));
@@ -262,16 +261,16 @@ struct Atomics::State {
         // with atomicLoad and atomicStore.
         for (auto* node : ctx.src->ASTNodes().Objects()) {
             if (auto* load = ctx.src->Sem().Get<sem::Load>(node)) {
-                if (is_ref_to_atomic_var(load->Reference())) {
-                    ctx.Replace(load->Reference()->Declaration(), [=] {
-                        auto* expr = ctx.CloneWithoutTransform(load->Reference()->Declaration());
+                if (is_ref_to_atomic_var(load->Source())) {
+                    ctx.Replace(load->Source()->Declaration(), [load, this] {
+                        auto* expr = ctx.CloneWithoutTransform(load->Source()->Declaration());
                         return b.Call(wgsl::BuiltinFn::kAtomicLoad, b.AddressOf(expr));
                     });
                 }
             } else if (auto* assign = node->As<ast::AssignmentStatement>()) {
                 auto* sem_lhs = ctx.src->Sem().GetVal(assign->lhs);
                 if (is_ref_to_atomic_var(sem_lhs)) {
-                    ctx.Replace(assign, [=] {
+                    ctx.Replace(assign, [assign, this] {
                         auto* lhs = ctx.CloneWithoutTransform(assign->lhs);
                         auto* rhs = ctx.CloneWithoutTransform(assign->rhs);
                         auto* call = b.Call(wgsl::BuiltinFn::kAtomicStore, b.AddressOf(lhs), rhs);

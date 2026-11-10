@@ -50,8 +50,6 @@ class DecryptingRendererTest : public testing::Test {
     EXPECT_CALL(decryptor_, CancelDecrypt(_)).Times(AnyNumber());
     EXPECT_CALL(media_resource_, GetAllStreams())
         .WillRepeatedly(Invoke(this, &DecryptingRendererTest::GetAllStreams));
-    EXPECT_CALL(media_resource_, GetType())
-        .WillRepeatedly(Return(MediaResource::Type::kStream));
   }
 
   ~DecryptingRendererTest() override {
@@ -68,8 +66,8 @@ class DecryptingRendererTest : public testing::Test {
     use_aes_decryptor_ = use_aes_decryptor;
   }
 
-  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> GetAllStreams() {
-    std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams;
+  std::vector<DemuxerStream*> GetAllStreams() {
+    std::vector<DemuxerStream*> streams;
 
     for (auto& stream : streams_) {
       streams.push_back(stream.get());

@@ -23,6 +23,7 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/no_destructor.h"
 #include "perfetto/ext/base/waitable_event.h"
+#include "perfetto/tracing/internal/track_event_data_source.h"
 #include "perfetto/tracing/internal/track_event_internal.h"
 #include "src/tracing/internal/tracing_muxer_impl.h"
 
@@ -91,6 +92,7 @@ void Tracing::ResetForTesting() {
   base::SetLogMessageCallback(nullptr);
   internal::TracingMuxerImpl::ResetForTesting();
   internal::TrackRegistry::ResetForTesting();
+  internal::TrackEventDataSource::ResetForTesting();
   g_was_initialized = false;
 }
 
@@ -125,6 +127,8 @@ void Tracing::ActivateTriggers(const std::vector<std::string>& triggers,
 }
 
 TracingSession::~TracingSession() = default;
+
+void TracingSession::CloneTrace(CloneTraceArgs, CloneTraceCallback) {}
 
 // Can be called from any thread.
 bool TracingSession::FlushBlocking(uint32_t timeout_ms) {

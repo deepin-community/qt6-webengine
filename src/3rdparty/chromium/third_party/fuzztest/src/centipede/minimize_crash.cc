@@ -20,7 +20,6 @@
 #include <filesystem>  // NOLINT
 #include <string>
 #include <string_view>
-#include <thread>  // NOLINT(build/c++11)
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -28,16 +27,18 @@
 #include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "./centipede/centipede_callbacks.h"
-#include "./centipede/defs.h"
-#include "./centipede/early_exit.h"
 #include "./centipede/environment.h"
-#include "./centipede/logging.h"  // IWYU pragma: keep
 #include "./centipede/mutation_input.h"
 #include "./centipede/runner_result.h"
+#include "./centipede/stop.h"
+#include "./centipede/thread_pool.h"
 #include "./centipede/util.h"
 #include "./centipede/workdir.h"
+#include "./common/defs.h"
+#include "./common/hash.h"
+#include "./common/logging.h"  // IWYU pragma: keep
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // Work queue for the minimizer.
 // Thread-safe.
@@ -96,7 +97,7 @@ static void MinimizeCrash(const Environment &env,
   size_t num_batches = env.num_runs / env.batch_size;
   for (size_t i = 0; i < num_batches; ++i) {
     LOG_EVERY_POW_2(INFO) << "[" << i << "] Minimizing... Interrupt to stop";
-    if (EarlyExitRequested()) break;
+    if (ShouldStop()) break;
     // Get up to kMaxNumCrashersToGet most recent crashers. We don't want just
     // the most recent crasher to avoid being stuck in local minimum.
     constexpr size_t kMaxNumCrashersToGet = 20;
@@ -114,9 +115,8 @@ static void MinimizeCrash(const Environment &env,
     // discarding all inputs that are too large.
     // TODO(kcc): modify the Mutate() interface such that max_len can be passed.
     //
-    std::vector<ByteArray> mutants;
-    callbacks->Mutate(GetMutationInputRefsFromDataInputs(recent_crashers),
-                      env.batch_size, mutants);
+    const std::vector<ByteArray> mutants = callbacks->Mutate(
+        GetMutationInputRefsFromDataInputs(recent_crashers), env.batch_size);
     std::vector<ByteArray> smaller_mutants;
     for (const auto &m : mutants) {
       if (m.size() < min_known_size) smaller_mutants.push_back(m);
@@ -128,7 +128,7 @@ static void MinimizeCrash(const Environment &env,
       CHECK_LT(crash_inputs_idx, smaller_mutants.size());
       const auto &new_crasher = smaller_mutants[crash_inputs_idx];
       LOG(INFO) << "Crasher: size: " << new_crasher.size() << ": "
-                << AsString(new_crasher, 40);
+                << AsPrintableString(new_crasher, /*max_len=*/40);
       queue.AddCrasher(new_crasher);
     }
   }
@@ -151,19 +151,19 @@ int MinimizeCrash(ByteSpan crashy_input, const Environment &env,
   LOG(INFO) << "Starting the crash minimization loop in " << env.num_threads
             << "threads";
 
-  MinimizerWorkQueue queue(WorkDir{env}.CrashReproducerDirPath(),
+  MinimizerWorkQueue queue(WorkDir{env}.CrashReproducerDirPaths().MyShard(),
                            original_crashy_input);
 
-  std::vector<std::thread> threads(env.num_threads);
-  for (auto &thread : threads) {
-    thread =
-        std::thread([&]() { MinimizeCrash(env, callbacks_factory, queue); });
-  }
-  for (auto &thread : threads) {
-    thread.join();
-  }
+  {
+    ThreadPool threads{static_cast<int>(env.num_threads)};
+    for (size_t i = 0; i < env.num_threads; ++i) {
+      threads.Schedule([&env, &callbacks_factory, &queue]() {
+        MinimizeCrash(env, callbacks_factory, queue);
+      });
+    }
+  }  // The threads join here.
 
   return queue.SmallerCrashesFound() ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

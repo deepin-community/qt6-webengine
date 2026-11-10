@@ -1,8 +1,7 @@
 {
   "$build/chromium_orchestrator": {
     "compilator": "linux-chromeos-rel-compilator",
-    "compilator_watcher_git_revision": "27c191f304c8d7329a393d8a69020fc14032c3c3",
-    "propagate_properties_to_compilator": true
+    "compilator_watcher_git_revision": "27c191f304c8d7329a393d8a69020fc14032c3c3"
   },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
@@ -15,7 +14,7 @@
             "builder_id": {
               "bucket": "ci",
               "builder": "linux-chromeos-rel",
-              "project": "chromium-m122"
+              "project": "chromium-m140"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-chromiumos-archive",
@@ -46,9 +45,10 @@
         {
           "bucket": "ci",
           "builder": "linux-chromeos-rel",
-          "project": "chromium-m122"
+          "project": "chromium-m140"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/linux-chromeos-rel/targets"
     }
   },
   "$build/code_coverage": {
@@ -62,20 +62,19 @@
     "check_for_flakiness": true,
     "check_for_flakiness_with_resultdb": true
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 500,
-    "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
-  },
   "$build/siso": {
     "configs": [
-      "builder"
+      "builder",
+      "remote-link"
     ],
+    "enable_cloud_monitoring": true,
     "enable_cloud_profiler": true,
     "enable_cloud_trace": true,
     "experiments": [],
-    "project": "rbe-chromium-untrusted"
+    "metrics_project": "chromium-reclient-metrics",
+    "output_local_strategy": "minimum",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

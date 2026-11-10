@@ -29,7 +29,7 @@ class WebContentsAdapter;
 }
 
 namespace autofill {
-class NextIdleTimeTicks;
+class NextIdleBarrier;
 }
 
 namespace content {
@@ -54,6 +54,8 @@ namespace internal {
 class SequenceManagerImpl;
 }
 }  // namespace sequence_manager
+
+class IOWatcher;
 
 // CurrentThread is a proxy to a subset of Task related APIs bound to the
 // current thread
@@ -117,7 +119,7 @@ class BASE_EXPORT CurrentThread {
   // thread/sequence.
   class BASE_EXPORT DestructionObserver {
    public:
-    // TODO(https://crbug.com/891670): Rename to
+    // TODO(crbug.com/40596446): Rename to
     // WillDestroyCurrentTaskExecutionEnvironment
     virtual void WillDestroyCurrentMessageLoop() = 0;
 
@@ -154,9 +156,9 @@ class BASE_EXPORT CurrentThread {
   // to run.
   class RegisterOnNextIdleCallbackPasskey {
    private:
-    RegisterOnNextIdleCallbackPasskey() {}
+    RegisterOnNextIdleCallbackPasskey() = default;
 
-    friend autofill::NextIdleTimeTicks;
+    friend autofill::NextIdleBarrier;
     friend content::BrowserMainLoop;
     friend bool test::RunUntil(FunctionRef<bool(void)>);
     friend void test::TestPredicateOrRegisterOnNextIdleCallback(
@@ -214,7 +216,15 @@ class BASE_EXPORT CurrentThread {
 
   // Enables ThreadControllerWithMessagePumpImpl's TimeKeeper metrics.
   // `thread_name` will be used as a suffix.
-  void EnableMessagePumpTimeKeeperMetrics(const char* thread_name);
+  // Setting `wall_time_based_metrics_enabled_for_testing` adds wall-time
+  // based metrics for this thread. This is only for test environments as it
+  // disables subsampling.
+  void EnableMessagePumpTimeKeeperMetrics(
+      const char* thread_name,
+      bool wall_time_based_metrics_enabled_for_testing = false);
+
+  // Returns the IOWatcher instance exposed by this thread, if any.
+  IOWatcher* GetIOWatcher();
 
  protected:
   explicit CurrentThread(
@@ -224,7 +234,6 @@ class BASE_EXPORT CurrentThread {
   static sequence_manager::internal::SequenceManagerImpl*
   GetCurrentSequenceManagerImpl();
 
-  friend class MessagePumpLibeventTest;
   friend class ScheduleWorkTest;
   friend class Thread;
   friend class sequence_manager::internal::SequenceManagerImpl;
@@ -235,8 +244,6 @@ class BASE_EXPORT CurrentThread {
 
   raw_ptr<sequence_manager::internal::SequenceManagerImpl> current_;
 };
-
-#if !BUILDFLAG(IS_NACL)
 
 // UI extension of CurrentThread.
 class BASE_EXPORT CurrentUIThread : public CurrentThread {
@@ -254,7 +261,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   static_assert(
       std::is_base_of_v<WatchableIOMessagePumpPosix, MessagePumpForUI>,
       "CurrentThreadForUI::WatchFileDescriptor is supported only"
-      "by MessagePumpLibevent and MessagePumpGlib implementations.");
+      "by MessagePumpEpoll and MessagePumpGlib implementations.");
   bool WatchFileDescriptor(int fd,
                            bool persistent,
                            MessagePumpForUI::Mode mode,
@@ -264,15 +271,15 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
 
 #if BUILDFLAG(IS_IOS)
   // Forwards to SequenceManager::Attach().
-  // TODO(https://crbug.com/825327): Plumb the actual SequenceManager* to
+  // TODO(crbug.com/40568517): Plumb the actual SequenceManager* to
   // callers and remove ability to access this method from
   // CurrentUIThread.
   void Attach();
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
-  // Forwards to MessagePumpForUI::Abort().
-  // TODO(https://crbug.com/825327): Plumb the actual MessagePumpForUI* to
+  // Forwards to MessagePumpAndroid::Abort().
+  // TODO(crbug.com/40568517): Plumb the actual MessagePumpForUI* to
   // callers and remove ability to access this method from
   // CurrentUIThread.
   void Abort();
@@ -291,8 +298,6 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   MessagePumpForUI* GetMessagePumpForUI() const;
 };
 
-#endif  // !BUILDFLAG(IS_NACL)
-
 // ForIO extension of CurrentThread.
 class BASE_EXPORT CurrentIOThread : public CurrentThread {
  public:
@@ -305,11 +310,10 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
 
   CurrentIOThread* operator->() { return this; }
 
-#if !BUILDFLAG(IS_NACL)
-
 #if BUILDFLAG(IS_WIN)
   // Please see MessagePumpWin for definitions of these methods.
-  HRESULT RegisterIOHandler(HANDLE file, MessagePumpForIO::IOHandler* handler);
+  [[nodiscard]] bool RegisterIOHandler(HANDLE file,
+                                       MessagePumpForIO::IOHandler* handler);
   bool RegisterJobObject(HANDLE job, MessagePumpForIO::IOHandler* handler);
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // Please see WatchableIOMessagePumpPosix for definition.
@@ -321,7 +325,8 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
                            MessagePumpForIO::FdWatcher* delegate);
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_IOS) && !BUILDFLAG(CRONET_BUILD))
+#if BUILDFLAG(IS_MAC) || \
+    (BUILDFLAG(IS_IOS) && !BUILDFLAG(CRONET_BUILD) && !BUILDFLAG(IS_IOS_TVOS))
   bool WatchMachReceivePort(
       mach_port_t port,
       MessagePumpForIO::MachPortWatchController* controller,
@@ -336,8 +341,6 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
                      MessagePumpForIO::ZxHandleWatchController* controller,
                      MessagePumpForIO::ZxHandleWatcher* delegate);
 #endif  // BUILDFLAG(IS_FUCHSIA)
-
-#endif  // !BUILDFLAG(IS_NACL)
 
  private:
   explicit CurrentIOThread(

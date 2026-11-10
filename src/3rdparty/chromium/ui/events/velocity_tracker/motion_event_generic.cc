@@ -4,14 +4,15 @@
 
 #include "ui/events/velocity_tracker/motion_event_generic.h"
 
+#include <numbers>
 #include <ostream>
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
-#include "base/numerics/math_constants.h"
+#include "base/numerics/angle_conversions.h"
 #include "ui/events/base_event_utils.h"
-#include "ui/gfx/geometry/angle_conversions.h"
 
 namespace ui {
 
@@ -63,16 +64,17 @@ void PointerProperties::SetAxesAndOrientation(float radius_x,
                                               float radius_y,
                                               float rotation_angle_degree) {
   DCHECK(!touch_major && !touch_minor && !orientation);
-  float rotation_angle_rad = gfx::DegToRad(rotation_angle_degree);
+  float rotation_angle_rad = base::DegToRad(rotation_angle_degree);
   DCHECK_GE(radius_x, 0) << "Unexpected x-radius < 0 (" << radius_x << ")";
   DCHECK_GE(radius_y, 0) << "Unexpected y-radius < 0 (" << radius_y << ")";
-  DCHECK(0 <= rotation_angle_rad && rotation_angle_rad < base::kPiFloat)
+  DCHECK(0 <= rotation_angle_rad &&
+         rotation_angle_rad < std::numbers::pi_v<float>)
       << "Unexpected touch rotation angle " << rotation_angle_rad << " rad";
 
   // Make the angle acute to ease subsequent logic. The angle range effectively
   // changes from [0, pi) to [0, pi/2).
-  if (rotation_angle_rad >= base::kPiFloat / 2) {
-    rotation_angle_rad -= base::kPiFloat / 2;
+  if (rotation_angle_rad >= std::numbers::pi_v<float> / 2) {
+    rotation_angle_rad -= std::numbers::pi_v<float> / 2;
     std::swap(radius_x, radius_y);
   }
 
@@ -82,7 +84,7 @@ void PointerProperties::SetAxesAndOrientation(float radius_x,
     // cases but always seem to be set to zero) unchanged.
     touch_major = 2.f * radius_x;
     touch_minor = 2.f * radius_y;
-    orientation = rotation_angle_rad - base::kPiFloat / 2;
+    orientation = rotation_angle_rad - std::numbers::pi_v<float> / 2;
   } else {
     touch_major = 2.f * radius_y;
     touch_minor = 2.f * radius_x;
@@ -256,8 +258,8 @@ int32_t MotionEventGeneric::GetSourceDeviceId(size_t pointer_index) const {
 
 // static
 std::unique_ptr<MotionEventGeneric> MotionEventGeneric::CloneEvent(
-    const MotionEvent& event) {
-  bool with_history = true;
+    const MotionEvent& event,
+    bool with_history) {
   return base::WrapUnique(new MotionEventGeneric(event, with_history));
 }
 
@@ -267,6 +269,11 @@ std::unique_ptr<MotionEventGeneric> MotionEventGeneric::CancelEvent(
   bool with_history = false;
   std::unique_ptr<MotionEventGeneric> cancel_event(
       new MotionEventGeneric(event, with_history));
+  if (event.GetAction() == MotionEvent::Action::POINTER_UP) {
+    // Remove this pointer since Renderer would already know about up of this
+    // pointer.
+    cancel_event->RemovePointerAt(event.GetActionIndex());
+  }
   cancel_event->set_action(Action::CANCEL);
   cancel_event->set_unique_event_id(ui::GetNextTouchEventId());
   return cancel_event;
@@ -280,7 +287,7 @@ size_t MotionEventGeneric::PushPointer(const PointerProperties& pointer) {
 
 void MotionEventGeneric::RemovePointerAt(size_t index) {
   DCHECK_LT(index, pointers_.size());
-  pointers_.erase(pointers_.begin() + index);
+  pointers_.erase(UNSAFE_TODO(pointers_.begin() + index));
 }
 
 void MotionEventGeneric::PushHistoricalEvent(

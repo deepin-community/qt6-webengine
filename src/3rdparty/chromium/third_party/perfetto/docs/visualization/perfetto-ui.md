@@ -1,94 +1,114 @@
 # Perfetto UI
 
-[Perfetto UI](https://ui.perfetto.dev) enables you to view and analyze traces in
-the browser. It supports several different tracing formats, including the
-perfetto proto trace format and the legacy json trace format.
+The [Perfetto UI](https://ui.perfetto.dev) enables you to view and analyze
+traces in the browser. It supports several different tracing formats, including
+the perfetto proto trace format and the legacy json trace format.
 
-## New Features
-What features have come to the UI recently? See below.
+## Loading a Trace
 
-### Custom visualisation with Vega and Vega-lite
+Click one of the examples in the 'Example Traces' section of the taskbar to get
+going.
 
-The `Viz` page available in the sidebar after you load the trace allows
-for custom visualisation using [Vega](https://vega.github.io/vega/) or
-[Vega-lite](https://vega.github.io/vega-lite/docs/).
+Drag and drop a trace from your file explorer, or click 'Open trace file' in the
+sidebar to open a local trace file.
 
-Type a Vega specification into the bottom editor pane and the
-visualisation will update in real time in the top pane.
-You can put arbitrary `trace_processor` SQL queries where the URL would
-go in a normal Vega visualisation.
+## Navigating the Timeline
 
-![Viz page](https://storage.googleapis.com/perfetto-misc/feature-viz-page.png)
+Use the WASD cluster to zoom and pan around the timeline. W and S zoom in and
+out, and A and D pan left and right respectively.
 
-Try the following visualisation with the Android example trace:
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/keyboard-nav.webm" type="video/webm">
+</video>
 
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"url": "select cpu, dur from sched where utid != 0"},
-  "mark": "bar",
-  "encoding": {
-    "x": {
-      "field": "cpu"
-    },
-    "y": {"aggregate": "sum", "field": "dur"}
-  }
-}
-```
+Alternatively you can use Shit+Drag to pan using the mouse. Ctrl+MouseWheel
+zooms in and out.
 
-### Command Palette
-Tired of remembering the location of buttons in the Perfetto UI?
-Commands to the rescue!
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/mouse-nav.webm" type="video/webm">
+</video>
 
-![Command](https://storage.googleapis.com/perfetto-misc/feature-command-palette.gif)
+## Track Event Selections
 
-Commands are:
-- Discoverable & Searchable
-- Keyboard driven
-- Plugin-able
-- Context sensitive
-- ...with more added every day
+Selecting entities on the tace is the primary way to dig into events of a trace
+and reveal more data about those events.
 
-Access the command palette via `Ctrl-Shift-P` or by typing `>` in the
-search bar.
+Select a track event by clicking on it. Details about the selected event will
+appear in the 'Current Selection' tab in the tab drawer.
 
-### Changing the time format and offset
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/select-event.webm" type="video/webm">
+</video>
 
-![Time](https://storage.googleapis.com/perfetto-misc/feature-time.gif)
+Use '.' and ',' to navigate between adjacent slices on the same track.
 
-The displayed timestamp format can be changed globally, cycling between seconds, raw nanoseconds and a new "timecode" format.
-We also have a new `TO_TIMECODE()` function in Trace Processor to print timestamps in the timecode format.
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/next-prev-events.webm" type="video/webm">
+</video>
 
-## UI Tips and Tricks
+Press 'F' to center the selected entity in the viewport, and press 'F' again to
+fit that slice to the viewport. This can be useful for really short events that
+cannot otherwise be seen clearly at the current zoom level.
 
-### Pivot Tables
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/focus-event.webm" type="video/webm">
+</video>
 
-To use pivot tables in the Perfetto UI, you will need to enable the
-"Pivot tables" feature flag in the "Flags" tab under "Support" in the Sidebar.
-You can pop up a pivot table over the entire trace when clicking "p" on your
-keyboard. The "Edit" button opens a pop up window to add/remove and reorder
-columns and change the default sorting of aggregations.
+At any point, press 'escape' or click on some empty space in the timeline to
+clear the selection.
 
-![Pivot table editor](/docs/images/pivot-tables/pivot-table-editor.png)
+## Area Selections
 
-Clicking on "Query" generates a table with the selected columns.
-Table cells with the expand icon can be expanded to show the next column values.
-The "name (stack)" column displays top level slices that can be expanded to show
-their descendants down to the last child.
+Click and drag over the timeline to make an area selection. An area selection
+consists of a start + end time and a list of tracks. Click+drag on the markers
+to move the start and end times. Check or uncheck the checkboxes in the track
+shells to modify the list of tracks in the selection.
 
-![Pivot table](/docs/images/pivot-tables/pivot-table.png)
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/area-selection.webm" type="video/webm">
+</video>
 
-Area selection pops up a pre-filled pivot table restricted over the selected
-timestamps and track ids.
+You can also convert a single selection into an area selection using the 'R'
+hotkey. This turns the currently selected track event in to an area selection
+using the bounds of the selected event.
 
-![Pivot table area selection](/docs/images/pivot-tables/pivot-table-area-selection.png)
+## Commands
 
-### Disabling metrics
+Commands provide a quick way to run common tasks throughout the UI. Press
+'Ctrl+Shift+P' ('Cmd+Shift+P' on Mac) to open the command palette, or by
+entering '>' in the omnibox. The omnibox transforms into a command palette.
+Commands can be searched using fuzzy matching. Press up or down to highlight a
+command and Enter to run it.
 
-Some metrics execute at trace load time to annotate the trace with
-additional tracks and events. You can stop these metrics from
-running by disabling them in the 'Flags' page:
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/commands.webm" type="video/webm">
+</video>
 
-![Disable metrics from running at trace load time](/docs/images/perfetto-ui-disable-metrics.png)
+## Showing/hiding the tab drawer
 
+Press 'Q' to toggle the tab drawer.
 
+## Finding Tracks
+
+Press 'Ctrl+P' (or 'Cmd+Shift+P on Mac) to open the track finder and start
+typing to fuzzy find tracks.
+
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/finding-tracks.webm" type="video/webm">
+</video>
+
+## Pinning Tracks
+
+Press the 'Pin' icon in the track shell to pin a track to the top of the
+timeline. This operation moves the track to the top of the workspace. This can
+be handy if you want to keep important tracks in view while scrolling through
+the main timeline.
+
+<video width="800" controls>
+  <source src="https://storage.googleapis.com/perfetto-misc/pinning-tracks.webm" type="video/webm">
+</video>
+
+## Hotkeys
+
+Hotkey bindings are displayed to the right of the commands in the command
+palette, or press the '?' hotkey to display all configured hotkeys.

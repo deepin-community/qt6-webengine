@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-velu/avx512f-rr1-lut16-p3-perm.c.in
 //   Generator: tools/xngen
@@ -8,35 +9,53 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f32_velu_ukernel__avx512f_rr1_lut16_p3_perm_u48(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_elu_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_elu_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m512 vprescale = _mm512_set1_ps(params->avx512_rr1_lut16_p3.prescale);
-  const __m512 valpha = _mm512_set1_ps(params->avx512_rr1_lut16_p3.alpha);
-  const __m512 vbeta = _mm512_set1_ps(params->avx512_rr1_lut16_p3.beta);
-  const __m512 vsat_cutoff = _mm512_set1_ps(params->avx512_rr1_lut16_p3.sat_cutoff);
-  const __m512 vmagic_bias = _mm512_set1_ps(params->avx512_rr1_lut16_p3.magic_bias);
-  const __m512 vlog2e = _mm512_set1_ps(params->avx512_rr1_lut16_p3.log2e);
-  const __m512 vminus_ln2 = _mm512_set1_ps(params->avx512_rr1_lut16_p3.minus_ln2);
-  const __m512 vc3 = _mm512_set1_ps(params->avx512_rr1_lut16_p3.c3);
-  const __m512 vc2 = _mm512_set1_ps(params->avx512_rr1_lut16_p3.c2);
-  const __m512i vtable = _mm512_load_si512(params->avx512_rr1_lut16_p3.table);
+  XNN_ALIGN(64) static const uint32_t table[16] = {
+    UINT32_C(0x3F800000), UINT32_C(0x3F7DAAC3), UINT32_C(0x3F7B95C2), UINT32_C(0x3F79C3D3),
+    UINT32_C(0x3F7837F0), UINT32_C(0x3F76F532), UINT32_C(0x3F75FED7), UINT32_C(0x3F75583F),
+    UINT32_C(0x3F7504F3), UINT32_C(0x3F7508A4), UINT32_C(0x3F75672A), UINT32_C(0x3F76248C),
+    UINT32_C(0x3F7744FD), UINT32_C(0x3F78CCDF), UINT32_C(0x3F7AC0C7), UINT32_C(0x3F7D257D),
+  };
+  const __m512i vtable = _mm512_load_si512(table);
+
+  const __m512 vsat_cutoff = _mm512_set1_ps(-0x1.154246p+4f);
+  const __m512 vmagic_bias = _mm512_set1_ps(0x1.800000p19f);
+  const __m512 vlog2e = _mm512_set1_ps(0x1.715476p+0f);
+  const __m512 vminus_ln2 = _mm512_set1_ps(-0x1.62E430p-1f);
+  const __m512 vc3 = _mm512_set1_ps(0x1.55561Cp-3f);
+  const __m512 vc2 = _mm512_set1_ps(0x1.0001ECp-1f);
+
+  XNN_FORCE_REALIZATION(vsat_cutoff);
+  XNN_FORCE_REALIZATION(vmagic_bias);
+  XNN_FORCE_REALIZATION(vlog2e);
+  XNN_FORCE_REALIZATION(vminus_ln2);
+  XNN_FORCE_REALIZATION(vc3);
+  XNN_FORCE_REALIZATION(vc2);
+
+  const __m512 vprescale = _mm512_set1_ps(params->scalar.prescale);
+  const __m512 valpha = _mm512_set1_ps(params->scalar.alpha);
+  const __m512 vbeta = _mm512_set1_ps(params->scalar.beta);
 
   for (; batch >= 48 * sizeof(float); batch -= 48 * sizeof(float)) {
     __m512 vx0 = _mm512_loadu_ps(input);
@@ -139,7 +158,7 @@ void xnn_f32_velu_ukernel__avx512f_rr1_lut16_p3_perm_u48(
     assert(batch <= 15 * sizeof(float));
     // Prepare mask for valid 32-bit elements (depends on batch).
     batch >>= XNN_LOG2_SIZEOF_FLOAT;
-    const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << batch) - UINT32_C(1)));
+    const __mmask16 vmask = _cvtu32_mask16((uint32_t) ((UINT32_C(1) << batch) - UINT32_C(1)));
 
     __m512 vx = _mm512_maskz_loadu_ps(vmask, input);
 

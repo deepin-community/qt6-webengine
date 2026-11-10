@@ -4,6 +4,7 @@
 
 #include "quiche/quic/qbone/qbone_client.h"
 
+#include <memory>
 #include <utility>
 
 
@@ -70,14 +71,6 @@ int QboneClient::GetNumSentClientHellosFromSession() {
 
 int QboneClient::GetNumReceivedServerConfigUpdatesFromSession() {
   return qbone_session()->GetNumReceivedServerConfigUpdates();
-}
-
-void QboneClient::ResendSavedData() {
-  // no op.
-}
-
-void QboneClient::ClearDataToResend() {
-  // no op.
 }
 
 bool QboneClient::HasActiveRequests() {

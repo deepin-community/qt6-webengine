@@ -6,125 +6,39 @@ from __future__ import annotations
 
 import abc
 import datetime as dt
-import json
 import logging
-import pathlib
-from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Type
+from typing import TYPE_CHECKING, Any, MutableMapping, Optional, Sequence, Type
 
-from crossbench.benchmarks.base import PressBenchmark
-from crossbench.probes import metric as cb_metric
-from crossbench.probes.json import JsonResultProbe
-from crossbench.probes.results import ProbeResult, ProbeResultDict
-from crossbench.stories.press_benchmark import PressBenchmarkStory
+from typing_extensions import override
+
+from crossbench.action_runner.action.enums import ReadyState
+from crossbench.benchmarks.base import PressBenchmarkStoryFilter
+from crossbench.benchmarks.jetstream.jetstream import (JetStreamBenchmark,
+                                                       JetStreamProbe,
+                                                       JetStreamProbeContext,
+                                                       JetStreamStory)
+from crossbench.helper import url_helper
+from crossbench.parse import NumberParser
 
 if TYPE_CHECKING:
-  from crossbench.runner.actions import Actions
-  from crossbench.runner.groups import BrowsersRunGroup, StoriesRunGroup
+  import argparse
+
   from crossbench.runner.run import Run
 
 
-class JetStream2Probe(JsonResultProbe, metaclass=abc.ABCMeta):
+class JetStream2Probe(JetStreamProbe, metaclass=abc.ABCMeta):
   """
   JetStream2-specific Probe.
   Extracts all JetStream2 times and scores.
   """
-  IS_GENERAL_PURPOSE: bool = False
-  FLATTEN: bool = False
-  JS: str = """
-  let results = Object.create(null);
-  for (let benchmark of JetStream.benchmarks) {
-    const data = { score: benchmark.score };
-    if ("worst4" in benchmark) {
-      data.firstIteration = benchmark.firstIteration;
-      data.average = benchmark.average;
-      data.worst4 = benchmark.worst4;
-    } else if ("runTime" in benchmark) {
-      data.runTime = benchmark.runTime;
-      data.startupTime = benchmark.startupTime;
-    }
-    results[benchmark.plan.name] = data;
-  };
-  return results;
-"""
-
-  def to_json(self, actions: Actions) -> Dict[str, float]:
-    data = actions.js(self.JS)
-    assert len(data) > 0, "No benchmark data generated"
-    return data
-
-  def process_json_data(self, json_data: Dict[str, Any]) -> Dict[str, Any]:
-    assert "Total" not in json_data, (
-        "JSON result data already contains a ['Total'] entry.")
-    json_data["Total"] = self._compute_total_metrics(json_data)
-    return json_data
-
-  def _compute_total_metrics(self, json_data: Dict[str,
-                                                   Any]) -> Dict[str, float]:
-    # Manually add all total scores
-    accumulated_metrics = defaultdict(list)
-    for _, metrics in json_data.items():
-      for metric, value in metrics.items():
-        accumulated_metrics[metric].append(value)
-    total: Dict[str, float] = {}
-    for metric, values in accumulated_metrics.items():
-      total[metric] = cb_metric.geomean(values)
-    return total
-
-  def merge_stories(self, group: StoriesRunGroup) -> ProbeResult:
-    merged = cb_metric.MetricsMerger.merge_json_list(
-        story_group.results[self].json
-        for story_group in group.repetitions_groups)
-    return self.write_group_result(group, merged, write_csv=True)
-
-  def merge_browsers(self, group: BrowsersRunGroup) -> ProbeResult:
-    return self.merge_browsers_json_list(group).merge(
-        self.merge_browsers_csv_list(group))
-
-  def log_run_result(self, run: Run) -> None:
-    self._log_result(run.results, single_result=True)
-
-  def log_browsers_result(self, group: BrowsersRunGroup) -> None:
-    self._log_result(group.results, single_result=False)
-
-  def _log_result(self, result_dict: ProbeResultDict,
-                  single_result: bool) -> None:
-    if self not in result_dict:
-      return
-    results_json: pathlib.Path = result_dict[self].json
-    logging.info("-" * 80)
-    logging.critical("JetStream results:")
-    if not single_result:
-      logging.critical("  %s", result_dict[self].csv)
-    logging.info("- " * 40)
-
-    with results_json.open(encoding="utf-8") as f:
-      data = json.load(f)
-      if single_result:
-        logging.critical("Score %s", data["Total"]["score"])
-      else:
-        self._log_result_metrics(data)
-
-  def _extract_result_metrics_table(self, metrics: Dict[str, Any],
-                                    table: Dict[str, List[str]]) -> None:
-    for metric_key, metric_value in metrics.items():
-      parts = metric_key.split("/")
-      if len(parts) != 2 or parts[0] == "Total" or parts[1] != "score":
-        continue
-      table[metric_key].append(
-          cb_metric.format_metric(metric_value["average"],
-                                  metric_value["stddev"]))
-      # Separate runs don't produce a score
-    if "Total/score" in metrics:
-      metric_value = metrics["Total/score"]
-      table["Score"].append(
-          cb_metric.format_metric(metric_value["average"],
-                                  metric_value["stddev"]))
 
 
-class JetStream2Story(PressBenchmarkStory, metaclass=abc.ABCMeta):
-  URL_LOCAL: str = "http://localhost:8000/"
-  SUBSTORIES: Tuple[str, ...] = (
+class JetStream2ProbeContext(JetStreamProbeContext):
+  pass
+
+
+class JetStream2Story(JetStreamStory, metaclass=abc.ABCMeta):
+  SUBSTORIES: tuple[str, ...] = (
       "WSL",
       "UniPoker",
       "uglify-js-wtb",
@@ -191,17 +105,47 @@ class JetStream2Story(PressBenchmarkStory, metaclass=abc.ABCMeta):
       "3d-cube-SP",
   )
 
-  @property
-  def substory_duration(self) -> dt.timedelta:
-    return dt.timedelta(seconds=2)
+  def __init__(self,
+               substories: Sequence[str] = (),
+               iterations: Optional[int] = None,
+               url: Optional[str] = None) -> None:
+    self._iterations: int | None = iterations
+    if iterations is not None:
+      self._iterations = NumberParser.positive_int(
+          self._iterations, "iteration count", parse_str=False)
+    super().__init__(url=url, substories=substories)
 
+  @property
+  def iterations(self) -> Optional[int]:
+    return self._iterations
+
+  @property
+  def url_params(self) -> MutableMapping[str, str]:
+    params: MutableMapping[str, str] = {}
+    if iterations := self.iterations:
+      params["iterationCount"] = str(iterations)
+    return params
+
+  @override
+  def get_run_url(self, run: Run) -> str:
+    url = super().get_run_url(run)
+    url = url_helper.update_url_query(url, self.url_params)
+    if url != self.url:
+      logging.info("CUSTOM URL: %s", url)
+    return url
+
+  @override
   def setup(self, run: Run) -> None:
     with run.actions("Setup") as actions:
-      actions.show_url(self._url)
+      actions.show_url(
+          url=self.get_run_url(run),
+          ready_state=ReadyState.COMPLETE,
+          timeout=dt.timedelta(seconds=10))
       if self._substories != self.SUBSTORIES:
-        actions.wait_js_condition(("return JetStream && JetStream.benchmarks "
-                                   "&& JetStream.benchmarks.length > 0;"), 0.1,
-                                  10)
+        actions.wait_js_condition(
+            "return globalThis?.JetStream?.benchmarks?.length > 0;",
+            0.1,
+            timeout=10)
         actions.js(
             """
         let benchmarks = arguments[0];
@@ -212,33 +156,60 @@ class JetStream2Story(PressBenchmarkStory, metaclass=abc.ABCMeta):
       actions.wait_js_condition(
           """
         return document.querySelectorAll("#results>.benchmark").length > 0;
-      """, 1, self.duration + dt.timedelta(seconds=30))
-
-  def run(self, run: Run) -> None:
-    with run.actions("Running") as actions:
-      actions.js("JetStream.start()")
-      actions.wait(self.fast_duration)
-    with run.actions("Waiting for completion") as actions:
-      actions.wait_js_condition(
-          """
-        let summaryElement = document.getElementById("result-summary");
-        return (summaryElement.classList.contains("done"));
-        """, self.substory_duration, self.slow_duration)
+      """,
+          1,
+          timeout=self.duration + dt.timedelta(seconds=30))
 
 
-ProbeClsTupleT = Tuple[Type[JetStream2Probe], ...]
+ProbeClsTupleT = tuple[Type[JetStream2Probe], ...]
 
 
-class JetStreamBenchmark(PressBenchmark, metaclass=abc.ABCMeta):
+class JetStream2BenchmarkStoryFilter(PressBenchmarkStoryFilter):
+  __doc__ = PressBenchmarkStoryFilter.__doc__
 
   @classmethod
-  def short_base_name(cls) -> str:
-    return "js"
+  @override
+  def add_cli_arguments(
+      cls, parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser = super().add_cli_arguments(parser)
+    parser.add_argument(
+        "--iterations",
+        "--iteration-count",
+        default=None,
+        type=NumberParser.positive_int,
+        help="Number of iterations each JetStream subtest is run "
+        "within the same session. \n"
+        "Note: --repetitions restarts the whole benchmark, --iterations runs "
+        "the same test tests n-times within the same session without the setup "
+        "overhead of starting up a whole new browser. \n"
+        "This option is not supported on the official benchmark "
+        "before version 3.0.")
+    return parser
 
   @classmethod
-  def base_name(cls) -> str:
-    return "jetstream"
+  @override
+  def kwargs_from_cli(cls, args: argparse.Namespace) -> dict[str, Any]:
+    kwargs = super().kwargs_from_cli(args)
+    kwargs["iterations"] = args.iterations
+    return kwargs
+
+  def __init__(self,
+               story_cls: Type[JetStream2Story],
+               patterns: Sequence[str],
+               args: Optional[argparse.Namespace] = None,
+               separate: bool = False,
+               url: Optional[str] = None,
+               iterations: Optional[int] = None) -> None:
+    self.iterations = iterations
+    assert issubclass(story_cls, JetStream2Story)
+    super().__init__(story_cls, patterns, args, separate, url)
+
+  @override
+  def create_stories_from_names(self, names: list[str],
+                                separate: bool) -> Sequence[JetStream2Story]:
+    return self.story_cls.from_names(
+        names, separate=separate, url=self.url, iterations=self.iterations)
 
 
 class JetStream2Benchmark(JetStreamBenchmark):
-  pass
+  STORY_FILTER_CLS = JetStream2BenchmarkStoryFilter

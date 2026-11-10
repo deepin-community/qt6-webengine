@@ -21,11 +21,11 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
-namespace audio {
+namespace media {
 namespace mojom {
 class AudioStreamFactory;
 }
-}  // namespace audio
+}  // namespace media
 
 namespace content {
 
@@ -64,7 +64,7 @@ class CONTENT_EXPORT AudioLoopbackStreamBroker final
 
  private:
   void StreamCreated(mojo::PendingRemote<media::mojom::AudioInputStream> stream,
-                     media::mojom::ReadOnlyAudioDataPipePtr data_pipe);
+                     media::mojom::ReadWriteAudioDataPipePtr data_pipe);
   void Cleanup();
 
   // Owner of the output streams to be looped back.

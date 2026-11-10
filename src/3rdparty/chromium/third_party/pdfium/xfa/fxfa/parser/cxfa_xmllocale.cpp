@@ -9,11 +9,11 @@
 #include <utility>
 
 #include "core/fxcrt/cfx_read_only_span_stream.h"
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_codepage.h"
 #include "core/fxcrt/xml/cfx_xmldocument.h"
 #include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "core/fxcrt/xml/cfx_xmlparser.h"
-#include "third_party/base/check.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_localemgr.h"
 #include "xfa/fxfa/parser/cxfa_nodelocale.h"
@@ -31,12 +31,13 @@ constexpr wchar_t kCurrencySymbol[] = L"currencySymbol";
 
 // static
 CXFA_XMLLocale* CXFA_XMLLocale::Create(cppgc::Heap* heap,
-                                       pdfium::span<uint8_t> data) {
+                                       pdfium::span<const uint8_t> data) {
   auto stream = pdfium::MakeRetain<CFX_ReadOnlySpanStream>(data);
   CFX_XMLParser parser(stream);
   auto doc = parser.Parse();
-  if (!doc)
+  if (!doc) {
     return nullptr;
+  }
 
   for (auto* child = doc->GetRoot()->GetFirstChild(); child;
        child = child->GetNextSibling()) {
@@ -125,29 +126,34 @@ WideString CXFA_XMLLocale::GetCalendarSymbol(WideStringView symbol,
                                              size_t index,
                                              bool bAbbr) const {
   CFX_XMLElement* child = locale_->GetFirstChildNamed(L"calendarSymbols");
-  if (!child)
+  if (!child) {
     return WideString();
+  }
 
   WideString pstrSymbolNames = symbol + L"Names";
   CFX_XMLElement* name_child = nullptr;
   for (auto* name = child->GetFirstChild(); name;
        name = name->GetNextSibling()) {
     CFX_XMLElement* elem = ToXMLElement(name);
-    if (!elem || elem->GetName() != pstrSymbolNames)
+    if (!elem || elem->GetName() != pstrSymbolNames) {
       continue;
+    }
 
     WideString abbr = elem->GetAttribute(L"abbr");
     bool abbr_value = false;
-    if (!abbr.IsEmpty())
+    if (!abbr.IsEmpty()) {
       abbr_value = abbr.EqualsASCII("1");
-    if (abbr_value != bAbbr)
+    }
+    if (abbr_value != bAbbr) {
       continue;
+    }
 
     name_child = elem;
     break;
   }
-  if (!name_child)
+  if (!name_child) {
     return WideString();
+  }
 
   CFX_XMLElement* sym_element = name_child->GetNthChildNamed(symbol, index);
   return sym_element ? sym_element->GetTextData() : WideString();
@@ -155,8 +161,9 @@ WideString CXFA_XMLLocale::GetCalendarSymbol(WideStringView symbol,
 
 WideString CXFA_XMLLocale::GetDatePattern(DateTimeSubcategory eType) const {
   CFX_XMLElement* patterns = locale_->GetFirstChildNamed(L"datePatterns");
-  if (!patterns)
+  if (!patterns) {
     return WideString();
+  }
 
   WideString wsName;
   switch (eType) {
@@ -179,8 +186,9 @@ WideString CXFA_XMLLocale::GetDatePattern(DateTimeSubcategory eType) const {
 
 WideString CXFA_XMLLocale::GetTimePattern(DateTimeSubcategory eType) const {
   CFX_XMLElement* patterns = locale_->GetFirstChildNamed(L"timePatterns");
-  if (!patterns)
+  if (!patterns) {
     return WideString();
+  }
 
   WideString wsName;
   switch (eType) {

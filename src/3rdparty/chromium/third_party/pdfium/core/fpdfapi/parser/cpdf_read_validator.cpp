@@ -9,7 +9,7 @@
 
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fxcrt/fx_safe_types.h"
-#include "third_party/base/notreached.h"
+#include "core/fxcrt/notreached.h"
 
 namespace {
 
@@ -57,22 +57,26 @@ void CPDF_ReadValidator::ResetErrors() {
 bool CPDF_ReadValidator::ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
                                            FX_FILESIZE offset) {
   if (offset < 0) {
-    NOTREACHED();
+    // TODO(crbug.com/42271016): Figure out if this should be a CHECK() or the
+    // DCHECK() removed.
+    DCHECK(false);
     return false;
   }
 
   FX_SAFE_FILESIZE end_offset = offset;
   end_offset += buffer.size();
-  if (!end_offset.IsValid() || end_offset.ValueOrDie() > file_size_)
+  if (!end_offset.IsValid() || end_offset.ValueOrDie() > file_size_) {
     return false;
+  }
 
   if (!IsDataRangeAvailable(offset, buffer.size())) {
     ScheduleDownload(offset, buffer.size());
     return false;
   }
 
-  if (file_read_->ReadBlockAtOffset(buffer, offset))
+  if (file_read_->ReadBlockAtOffset(buffer, offset)) {
     return true;
+  }
 
   read_error_ = true;
   ScheduleDownload(offset, buffer.size());
@@ -85,14 +89,17 @@ FX_FILESIZE CPDF_ReadValidator::GetSize() {
 
 void CPDF_ReadValidator::ScheduleDownload(FX_FILESIZE offset, size_t size) {
   has_unavailable_data_ = true;
-  if (!hints_ || size == 0)
+  if (!hints_ || size == 0) {
     return;
+  }
 
   const FX_FILESIZE start_segment_offset = AlignDown(offset);
   FX_SAFE_FILESIZE end_segment_offset = offset;
   end_segment_offset += size;
   if (!end_segment_offset.IsValid()) {
-    NOTREACHED();
+    // TODO(crbug.com/42271016): Figure out if this should be a CHECK() or the
+    // DCHECK() removed.
+    DCHECK(false);
     return;
   }
   end_segment_offset =
@@ -101,7 +108,9 @@ void CPDF_ReadValidator::ScheduleDownload(FX_FILESIZE offset, size_t size) {
   FX_SAFE_SIZE_T segment_size = end_segment_offset;
   segment_size -= start_segment_offset;
   if (!segment_size.IsValid()) {
-    NOTREACHED();
+    // TODO(crbug.com/42271016): Figure out if this should be a CHECK() or the
+    // DCHECK() removed.
+    DCHECK(false);
     return;
   }
   hints_->AddSegment(start_segment_offset, segment_size.ValueOrDie());
@@ -125,15 +134,18 @@ bool CPDF_ReadValidator::IsWholeFileAvailable() {
 bool CPDF_ReadValidator::CheckDataRangeAndRequestIfUnavailable(
     FX_FILESIZE offset,
     size_t size) {
-  if (offset > file_size_)
+  if (offset > file_size_) {
     return true;
+  }
 
   FX_SAFE_FILESIZE end_segment_offset = offset;
   end_segment_offset += size;
   // Increase checked range to allow CPDF_SyntaxParser read whole buffer.
   end_segment_offset += CPDF_Stream::kFileBufSize;
   if (!end_segment_offset.IsValid()) {
-    NOTREACHED();
+    // TODO(crbug.com/42271016): Figure out if this should be a CHECK() or the
+    // DCHECK() removed.
+    DCHECK(false);
     return false;
   }
   end_segment_offset = std::min(
@@ -141,24 +153,29 @@ bool CPDF_ReadValidator::CheckDataRangeAndRequestIfUnavailable(
   FX_SAFE_SIZE_T segment_size = end_segment_offset;
   segment_size -= offset;
   if (!segment_size.IsValid()) {
-    NOTREACHED();
+    // TODO(crbug.com/42271016): Figure out if this should be a CHECK() or the
+    // DCHECK() removed.
+    DCHECK(false);
     return false;
   }
 
-  if (IsDataRangeAvailable(offset, segment_size.ValueOrDie()))
+  if (IsDataRangeAvailable(offset, segment_size.ValueOrDie())) {
     return true;
+  }
 
   ScheduleDownload(offset, segment_size.ValueOrDie());
   return false;
 }
 
 bool CPDF_ReadValidator::CheckWholeFileAndRequestIfUnavailable() {
-  if (IsWholeFileAvailable())
+  if (IsWholeFileAvailable()) {
     return true;
+  }
 
   const FX_SAFE_SIZE_T safe_size = file_size_;
-  if (safe_size.IsValid())
+  if (safe_size.IsValid()) {
     ScheduleDownload(0, safe_size.ValueOrDie());
+  }
 
   return false;
 }

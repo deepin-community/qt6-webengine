@@ -13,12 +13,10 @@
 // limitations under the License.
 
 import m from 'mithril';
-
 import {copyToClipboard} from '../base/clipboard';
 import {Icons} from '../base/semantic_icons';
-
 import {Anchor} from './anchor';
-import {MenuItem, PopupMenu2} from './menu';
+import {MenuItem, PopupMenu} from './menu';
 
 // This widget provides common styling and popup menu options for a SQL row,
 // given a table name and an ID.
@@ -27,29 +25,32 @@ export interface SqlRefAttrs {
   table: string;
   // The ID of our row.
   // If not provided, `table[Unknown]` is shown with no popup menu.
-  id?: number;
+  id?: number | bigint;
+  // Optional additional popup menu items.
+  additionalMenuItems?: m.Children;
 }
 
 export class SqlRef implements m.ClassComponent<SqlRefAttrs> {
   view({attrs}: m.CVnode<SqlRefAttrs>) {
-    const {table, id} = attrs;
+    const {table, id, additionalMenuItems} = attrs;
     if (id !== undefined) {
       return m(
-          PopupMenu2,
-          {
-            trigger: m(Anchor, {icon: Icons.ContextMenu}, `${table}[${id}]`),
-          },
-          m(MenuItem, {
-            label: 'Copy ID',
-            icon: 'content_copy',
-            onclick: () => copyToClipboard(`${id}`),
-          }),
-          m(MenuItem, {
-            label: 'Copy SQL query',
-            icon: 'file_copy',
-            onclick: () =>
-                copyToClipboard(`select * from ${table} where id=${id}`),
-          }),
+        PopupMenu,
+        {
+          trigger: m(Anchor, {icon: Icons.ContextMenu}, `${table}[${id}]`),
+        },
+        m(MenuItem, {
+          label: 'Copy ID',
+          icon: 'content_copy',
+          onclick: () => copyToClipboard(`${id}`),
+        }),
+        m(MenuItem, {
+          label: 'Copy SQL query',
+          icon: 'file_copy',
+          onclick: () =>
+            copyToClipboard(`select * from ${table} where id=${id}`),
+        }),
+        additionalMenuItems,
       );
     } else {
       return `${table}[Unknown]`;

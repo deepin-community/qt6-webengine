@@ -40,7 +40,6 @@
 
 namespace dawn::native {
 
-struct TrackedFutureWaitInfo;
 class SystemEventPipeSender;
 
 // SystemEventReceiver holds an OS event primitive (Win32 Event Object or POSIX file descriptor (fd)
@@ -59,6 +58,8 @@ class SystemEventReceiver final : NonCopyable {
     explicit SystemEventReceiver(SystemHandle primitive);
     SystemEventReceiver(SystemEventReceiver&&) = default;
     SystemEventReceiver& operator=(SystemEventReceiver&&) = default;
+
+    const SystemHandle& GetPrimitive() const;
 
   private:
     template <typename It>
@@ -104,8 +105,6 @@ std::pair<SystemEventPipeSender, SystemEventReceiver> CreateSystemEventPipe();
 
 class SystemEvent : public RefCounted {
   public:
-    static Ref<SystemEvent> CreateSignaled();
-
     bool IsSignaled() const;
     void Signal();
 

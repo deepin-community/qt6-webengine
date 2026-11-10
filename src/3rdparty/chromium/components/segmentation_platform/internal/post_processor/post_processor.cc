@@ -21,7 +21,7 @@ constexpr int kInvalidResult = -2;
 constexpr int kNoWinningLabel = -1;
 constexpr int kUnderflowBinIndex = -1;
 
-bool IsValidResult(proto::PredictionResult prediction_result) {
+bool IsValidResult(const proto::PredictionResult& prediction_result) {
   if (metadata_utils::ValidateOutputConfig(prediction_result.output_config()) !=
       metadata_utils::ValidationResult::kValidationSuccess) {
     return false;
@@ -30,6 +30,10 @@ bool IsValidResult(proto::PredictionResult prediction_result) {
   const auto& predictor = prediction_result.output_config().predictor();
   if (predictor.has_multi_class_classifier()) {
     output_length = predictor.multi_class_classifier().class_labels_size();
+    int threshold_count = predictor.multi_class_classifier().class_thresholds_size();
+    if (threshold_count > 0 && output_length != threshold_count) {
+      return false;
+    }
   }
   if (predictor.has_generic_predictor()) {
     output_length = predictor.generic_predictor().output_labels_size();
@@ -69,6 +73,9 @@ bool PostProcessor::IsClassificationResult(
 
 std::vector<std::string> PostProcessor::GetClassifierResults(
     const proto::PredictionResult& prediction_result) {
+  if (!IsValidResult(prediction_result)) {
+    return {};
+  }
   const std::vector<float> model_scores(prediction_result.result().begin(),
                                         prediction_result.result().end());
   const proto::Predictor& predictor =
@@ -85,7 +92,6 @@ std::vector<std::string> PostProcessor::GetClassifierResults(
                                         predictor.binned_classifier());
     default:
       NOTREACHED();
-      return std::vector<std::string>();
   }
 }
 
@@ -202,7 +208,6 @@ int PostProcessor::GetIndexOfTopLabel(
         }
       }
       NOTREACHED();
-      return kInvalidResult;
     }
     case proto::Predictor::kBinnedClassifier: {
       const auto& binned_classifier = predictor.binned_classifier();
@@ -216,11 +221,9 @@ int PostProcessor::GetIndexOfTopLabel(
         }
       }
       NOTREACHED();
-      return kInvalidResult;
     }
     default:
       NOTREACHED();
-      return kInvalidResult;
   }
 }
 
@@ -229,7 +232,9 @@ base::TimeDelta PostProcessor::GetTTLForPredictedResult(
   std::vector<std::string> ordered_labels;
   if (prediction_result.result_size() > 0 &&
       prediction_result.has_output_config()) {
-    ordered_labels = GetClassifierResults(prediction_result);
+    if (IsClassificationResult(prediction_result)) {
+      ordered_labels = GetClassifierResults(prediction_result);
+    }
     if (!prediction_result.output_config().has_predicted_result_ttl()) {
       LOG(ERROR) << "Prediction result has no `predicted_result_ttl` on its "
                     "`output_config`, returning empty TTL.";

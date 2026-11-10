@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_FILE_SYSTEM_ACCESS_FILE_SYSTEM_ACCESS_OBSERVER_HOST_H_
 
 #include <memory>
+#include <variant>
 
 #include "base/containers/flat_set.h"
 #include "base/containers/unique_ptr_adapters.h"
@@ -65,15 +66,32 @@ class FileSystemAccessObserverHost
       ObserveCallback callback,
       FileSystemAccessTransferTokenImpl* resolved_token);
 
+  void DidCheckIfSymlinkOrJunction(
+      std::variant<std::unique_ptr<FileSystemAccessDirectoryHandleImpl>,
+                   std::unique_ptr<FileSystemAccessFileHandleImpl>> handle,
+      ObserveCallback callback,
+      storage::FileSystemURL url,
+      bool is_recursive,
+      FileSystemAccessPermissionContext::HandleType handle_type,
+      bool is_symlink_or_junction);
+
+  void DidCheckItemExists(
+      std::variant<std::unique_ptr<FileSystemAccessDirectoryHandleImpl>,
+                   std::unique_ptr<FileSystemAccessFileHandleImpl>> handle,
+      ObserveCallback callback,
+      storage::FileSystemURL url,
+      bool is_recursive,
+      base::File::Error result);
+
   void DidResolveTransferTokenToUnobserve(
       FileSystemAccessTransferTokenImpl* resolved_token);
 
   void GotObservation(
-      absl::variant<std::unique_ptr<FileSystemAccessDirectoryHandleImpl>,
-                    std::unique_ptr<FileSystemAccessFileHandleImpl>> handle,
+      std::variant<std::unique_ptr<FileSystemAccessDirectoryHandleImpl>,
+                   std::unique_ptr<FileSystemAccessFileHandleImpl>> handle,
       ObserveCallback callback,
       base::expected<
-          std::unique_ptr<FileSystemAccessWatcherManager::Observation>,
+          std::unique_ptr<FileSystemAccessObservationGroup::Observer>,
           blink::mojom::FileSystemAccessErrorPtr> observation_or_error);
 
   void OnHostReceiverDisconnect();
@@ -96,7 +114,7 @@ class FileSystemAccessObserverHost
   // Connection owned by a FileSystemObserver object. When the
   // FileSystemObserver is destroyed, this instance will remove itself from the
   // manager.
-  // TODO(https://crbug.com/1488875): Make the lifetime not depend on GC.
+  // TODO(crbug.com/40283779): Make the lifetime not depend on GC.
   mojo::Receiver<blink::mojom::FileSystemAccessObserverHost> host_receiver_
       GUARDED_BY_CONTEXT(sequence_checker_);
 

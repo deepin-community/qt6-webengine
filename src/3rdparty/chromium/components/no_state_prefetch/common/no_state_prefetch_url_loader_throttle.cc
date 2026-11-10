@@ -15,39 +15,32 @@
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
+#include "third_party/blink/public/common/navigation/preloading_headers.h"
 
 namespace prerender {
 
 namespace {
 
-const char kPurposeHeaderName[] = "Purpose";
-const char kPurposeHeaderValue[] = "prefetch";
-
-void CallCancelPrerenderForUnsupportedScheme(
-    mojo::PendingRemote<prerender::mojom::PrerenderCanceler> canceler) {
-  mojo::Remote<prerender::mojom::PrerenderCanceler>(std::move(canceler))
-      ->CancelPrerenderForUnsupportedScheme();
+void CallCancelNoStatePrefetchForUnsupportedScheme(
+    mojo::PendingRemote<prerender::mojom::NoStatePrefetchCanceler> canceler) {
+  mojo::Remote<prerender::mojom::NoStatePrefetchCanceler>(std::move(canceler))
+      ->CancelNoStatePrefetchForUnsupportedScheme();
 }
 
 }  // namespace
 
 NoStatePrefetchURLLoaderThrottle::NoStatePrefetchURLLoaderThrottle(
-    mojo::PendingRemote<prerender::mojom::PrerenderCanceler> canceler)
+    mojo::PendingRemote<prerender::mojom::NoStatePrefetchCanceler> canceler)
     : canceler_(std::move(canceler)) {
   DCHECK(canceler_);
 }
 
 NoStatePrefetchURLLoaderThrottle::~NoStatePrefetchURLLoaderThrottle() {
-  if (destruction_closure_)
+  if (destruction_closure_) {
     std::move(destruction_closure_).Run();
-}
-
-void NoStatePrefetchURLLoaderThrottle::PrerenderUsed() {
-  if (original_request_priority_)
-    delegate_->SetPriority(original_request_priority_.value());
-  if (deferred_)
-    delegate_->Resume();
+  }
 }
 
 void NoStatePrefetchURLLoaderThrottle::DetachFromCurrentSequence() {
@@ -66,8 +59,17 @@ void NoStatePrefetchURLLoaderThrottle::WillStartRequest(
     network::ResourceRequest* request,
     bool* defer) {
   request->load_flags |= net::LOAD_PREFETCH;
-  request->cors_exempt_headers.SetHeader(kPurposeHeaderName,
-                                         kPurposeHeaderValue);
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kRemovePurposeHeaderForPrefetch)) {
+    request->cors_exempt_headers.SetHeader(
+        blink::kPurposeHeaderName, blink::kSecPurposePrefetchHeaderValue);
+  }
+
+  if (base::FeatureList::IsEnabled(
+          blink::features::kSecPurposePrefetchHeaderNoStatePrefetch)) {
+    request->headers.SetHeader(blink::kSecPurposeHeaderName,
+                               blink::kSecPurposePrefetchHeaderValue);
+  }
 
   request_destination_ = request->destination;
   // Abort any prerenders that spawn requests that use unsupported HTTP
@@ -88,7 +90,7 @@ void NoStatePrefetchURLLoaderThrottle::WillStartRequest(
     // WillRedirectRequest() and NoStatePrefetchContents::CheckURL(). See
     // http://crbug.com/673771.
     delegate_->CancelWithError(net::ERR_ABORTED);
-    CallCancelPrerenderForUnsupportedScheme(std::move(canceler_));
+    CallCancelNoStatePrefetchForUnsupportedScheme(std::move(canceler_));
     return;
   }
 
@@ -109,7 +111,6 @@ void NoStatePrefetchURLLoaderThrottle::WillStartRequest(
   if (request->load_flags & net::LOAD_IGNORE_LIMITS) {
     DCHECK_EQ(request->priority, net::MAXIMUM_PRIORITY);
   } else if (request->priority != net::IDLE) {
-    original_request_priority_ = request->priority;
     request->priority = net::IDLE;
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -130,17 +131,17 @@ void NoStatePrefetchURLLoaderThrottle::WillRedirectRequest(
     std::vector<std::string>* /* to_be_removed_headers */,
     net::HttpRequestHeaders* /* modified_headers */,
     net::HttpRequestHeaders* /* modified_cors_exempt_headers */) {
-
   std::string follow_only_when_prerender_shown_header;
   if (response_head.headers) {
-    response_head.headers->GetNormalizedHeader(
-        kFollowOnlyWhenPrerenderShown,
-        &follow_only_when_prerender_shown_header);
+    follow_only_when_prerender_shown_header =
+        response_head.headers
+            ->GetNormalizedHeader(kFollowOnlyWhenPrerenderShown)
+            .value_or(std::string());
   }
   // Abort any prerenders with requests which redirect to invalid schemes.
   if (!DoesURLHaveValidScheme(redirect_info->new_url)) {
     delegate_->CancelWithError(net::ERR_ABORTED);
-    CallCancelPrerenderForUnsupportedScheme(std::move(canceler_));
+    CallCancelNoStatePrefetchForUnsupportedScheme(std::move(canceler_));
   } else if (follow_only_when_prerender_shown_header == "1" &&
              request_destination_ !=
                  network::mojom::RequestDestination::kDocument) {

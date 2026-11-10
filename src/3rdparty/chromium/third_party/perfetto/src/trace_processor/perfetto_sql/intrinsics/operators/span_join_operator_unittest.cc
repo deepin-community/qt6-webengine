@@ -16,22 +16,31 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/operators/span_join_operator.h"
 
+#include <sqlite3.h>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "src/trace_processor/containers/string_pool.h"
 #include "src/trace_processor/perfetto_sql/engine/perfetto_sql_engine.h"
+#include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/sqlite_engine.h"
 #include "test/gtest_and_gmock.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 
 class SpanJoinOperatorTableTest : public ::testing::Test {
  public:
   SpanJoinOperatorTableTest() {
-    engine_.sqlite_engine()->RegisterVirtualTableModule<SpanJoinOperatorTable>(
-        "span_join", &engine_, SqliteTable::TableType::kExplicitCreate, false);
-    engine_.sqlite_engine()->RegisterVirtualTableModule<SpanJoinOperatorTable>(
-        "span_left_join", &engine_, SqliteTable::TableType::kExplicitCreate,
-        false);
+    engine_.RegisterVirtualTableModule<SpanJoinOperatorModule>(
+        "span_join",
+        std::make_unique<SpanJoinOperatorModule::Context>(&engine_));
+    engine_.RegisterVirtualTableModule<SpanJoinOperatorModule>(
+        "span_left_join",
+        std::make_unique<SpanJoinOperatorModule::Context>(&engine_));
   }
 
   void PrepareValidStatement(const std::string& sql) {
@@ -48,7 +57,7 @@ class SpanJoinOperatorTableTest : public ::testing::Test {
     ASSERT_EQ(sqlite3_step(stmt_.get()), SQLITE_DONE);
   }
 
-  void AssertNextRow(const std::vector<int64_t> elements) {
+  void AssertNextRow(const std::vector<int64_t>& elements) {
     ASSERT_EQ(sqlite3_step(stmt_.get()), SQLITE_ROW);
     for (size_t i = 0; i < elements.size(); ++i) {
       ASSERT_EQ(sqlite3_column_int64(stmt_.get(), static_cast<int>(i)),
@@ -58,7 +67,7 @@ class SpanJoinOperatorTableTest : public ::testing::Test {
 
  protected:
   StringPool pool_;
-  PerfettoSqlEngine engine_{&pool_};
+  PerfettoSqlEngine engine_{&pool_, nullptr, true};
   ScopedStmt stmt_;
 };
 
@@ -378,6 +387,50 @@ TEST_F(SpanJoinOperatorTableTest, CapitalizedLeftJoin) {
   ASSERT_EQ(sqlite3_step(stmt_.get()), SQLITE_DONE);
 }
 
+TEST_F(SpanJoinOperatorTableTest, NoDurationOnOne) {
+  RunStatement(
+      "CREATE TEMP TABLE f("
+      "ts BIGINT PRIMARY KEY, "
+      "f_val BIGINT"
+      ");");
+  RunStatement(
+      "CREATE TEMP TABLE s("
+      "ts BIGINT PRIMARY KEY, "
+      "dur BIGINT, "
+      "s_val BIGINT"
+      ");");
+  RunStatement("CREATE VIRTUAL TABLE sp USING span_join(f, s);");
+
+  RunStatement("INSERT INTO f VALUES(100, 44444);");
+  RunStatement("INSERT INTO f VALUES(120, 55555);");
+  RunStatement("INSERT INTO f VALUES(140, 66666);");
+  RunStatement("INSERT INTO f VALUES(160, 77777);");
+
+  RunStatement("INSERT INTO s VALUES(100, 5, 11111);");
+  RunStatement("INSERT INTO s VALUES(110, 20, 22222);");
+  RunStatement("INSERT INTO s VALUES(150, 60, 33333);");
+
+  PrepareValidStatement("SELECT * FROM sp");
+  AssertNextRow({100, 0, 44444, 11111});
+  AssertNextRow({120, 0, 55555, 22222});
+  AssertNextRow({160, 0, 77777, 33333});
+  ASSERT_EQ(sqlite3_step(stmt_.get()), SQLITE_DONE);
+}
+
+TEST_F(SpanJoinOperatorTableTest, ErrorIfNoDurationOnEither) {
+  RunStatement(
+      "CREATE TEMP TABLE f("
+      "ts BIGINT PRIMARY KEY, "
+      "f_val BIGINT"
+      ");");
+  RunStatement(
+      "CREATE TEMP TABLE s("
+      "ts BIGINT PRIMARY KEY, "
+      "s_val BIGINT"
+      ");");
+  PrepareValidStatement("CREATE VIRTUAL TABLE sp USING span_join(f, s);");
+  ASSERT_EQ(sqlite3_step(stmt_.get()), SQLITE_ERROR);
+}
+
 }  // namespace
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

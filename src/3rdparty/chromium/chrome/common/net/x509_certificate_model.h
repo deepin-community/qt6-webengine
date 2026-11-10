@@ -6,12 +6,12 @@
 #define CHROME_COMMON_NET_X509_CERTIFICATE_MODEL_H_
 
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/strings/string_piece.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/pki/parse_certificate.h"
 #include "third_party/boringssl/src/pki/parse_name.h"
@@ -25,17 +25,15 @@ struct Extension {
   std::string value;
 };
 
-struct NotPresent : absl::monostate {};
-struct Error : absl::monostate {};
-using OptionalStringOrError = absl::variant<Error, NotPresent, std::string>;
+struct NotPresent : std::monostate {};
+struct Error : std::monostate {};
+using OptionalStringOrError = std::variant<Error, NotPresent, std::string>;
 
 class X509CertificateModel {
  public:
   // Construct an X509CertificateModel from |cert_data|, which must must not be
-  // nullptr.  |nickname| may optionally be provided as a platform-specific
-  // nickname for the certificate, if available.
-  X509CertificateModel(bssl::UniquePtr<CRYPTO_BUFFER> cert_data,
-                       std::string nickname);
+  // nullptr.
+  explicit X509CertificateModel(bssl::UniquePtr<CRYPTO_BUFFER> cert_data);
   X509CertificateModel(X509CertificateModel&& other);
   X509CertificateModel& operator=(X509CertificateModel&& other) = default;
   ~X509CertificateModel();
@@ -49,7 +47,6 @@ class X509CertificateModel {
 
   // Get something that can be used as a title for the certificate, using the
   // following priority:
-  //   |nickname| passed to constructor
   //   subject commonName
   //   full subject
   //   dnsName or email address from subjectAltNames
@@ -99,8 +96,8 @@ class X509CertificateModel {
   // extension.value fields to describe extensions that are critical or
   // non-critical.
   std::vector<Extension> GetExtensions(
-      base::StringPiece critical_label,
-      base::StringPiece non_critical_label) const;
+      std::string_view critical_label,
+      std::string_view non_critical_label) const;
 
   std::string ProcessSecAlgorithmSignature() const;
   std::string ProcessSecAlgorithmSubjectPublicKey() const;
@@ -112,14 +109,11 @@ class X509CertificateModel {
 
  private:
   bool ParseExtensions(const bssl::der::Input& extensions_tlv);
-  std::string ProcessExtension(base::StringPiece critical_label,
-                               base::StringPiece non_critical_label,
+  std::string ProcessExtension(std::string_view critical_label,
+                               std::string_view non_critical_label,
                                const bssl::ParsedExtension& extension) const;
   std::optional<std::string> ProcessExtensionData(
       const bssl::ParsedExtension& extension) const;
-
-  // Externally provided "nickname" for the cert.
-  std::string nickname_;
 
   bool parsed_successfully_ = false;
   bssl::UniquePtr<CRYPTO_BUFFER> cert_data_;

@@ -4,6 +4,8 @@
 
 #include "components/password_manager/core/browser/password_form.h"
 
+#include <algorithm>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -11,10 +13,10 @@
 
 #include "base/json/json_writer.h"
 #include "base/json/values_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 
 namespace password_manager {
@@ -22,6 +24,11 @@ namespace password_manager {
 namespace {
 
 std::string ToString(PasswordForm::Store in_store) {
+  // It is possible that both flags are set for password forms in best matches.
+  if (in_store == (PasswordForm::Store::kProfileStore |
+                   PasswordForm::Store::kAccountStore)) {
+    return "Account and Profile Store";
+  }
   switch (in_store) {
     case PasswordForm::Store::kNotSet:
       return "Not Set";
@@ -63,6 +70,10 @@ std::string ToString(PasswordForm::Type type) {
       return "Imported";
     case PasswordForm::Type::kReceivedViaSharing:
       return "ReceivedViaSharing";
+    case PasswordForm::Type::kImportedViaCredentialExchange:
+      return "ImportedViaCredentialExchange";
+    case PasswordForm::Type::kChangeSubmission:
+      return "Saved with Change Submission";
   }
 
   // In old clients type might contain non-enum values and their mapping is
@@ -81,7 +92,6 @@ std::string ToString(PasswordForm::GenerationUploadStatus status) {
   }
 
   NOTREACHED();
-  return std::string();
 }
 
 std::string ToString(InsecureType insecure_type) {
@@ -109,7 +119,7 @@ std::string ToString(const T& obj) {
 std::u16string AlternativeElementVectorToString(
     const AlternativeElementVector& value_element_pairs) {
   std::vector<std::u16string> pairs(value_element_pairs.size());
-  base::ranges::transform(
+  std::ranges::transform(
       value_element_pairs, pairs.begin(),
       [](const AlternativeElement& p) { return p.value + u"+" + p.name; });
   return base::JoinString(pairs, u", ");
@@ -171,12 +181,16 @@ void PasswordFormToJSON(const PasswordForm& form, base::Value::Dict& target) {
   target.Set("affiliated_web_realm", form.affiliated_web_realm);
   target.Set("app_display_name", form.app_display_name);
   target.Set("app_icon_url", form.app_icon_url.possibly_invalid_spec());
+  target.Set("change_password_url",
+             form.change_password_url.possibly_invalid_spec());
   target.Set("submission_event", ToString(form.submission_event));
   target.Set("only_for_fallback", form.only_for_fallback);
   target.Set("is_gaia_with_skip_save_password_form",
-             form.form_data.is_gaia_with_skip_save_password_form);
-  target.Set("is_new_password_reliable", form.is_new_password_reliable);
+             form.form_data.is_gaia_with_skip_save_password_form());
   target.Set("in_store", ToString(form.in_store));
+  target.Set("form_has_autofilled_value", form.form_has_autofilled_value);
+  target.Set("keychain_identifier", form.keychain_identifier);
+  target.Set("accepts_webauthn_credentials", form.accepts_webauthn_credentials);
 
   std::vector<std::string> hashes;
   hashes.reserve(form.moving_blocked_for_list.size());
@@ -222,11 +236,53 @@ void PasswordFormToJSON(const PasswordForm& form, base::Value::Dict& target) {
              form.sharing_notification_displayed);
 }
 
+// Returns the note with a specified |unique_display_name|.
+// returns nullptr if none exists.
+const PasswordNote* GetNote(const std::vector<PasswordNote>& notes,
+                            const std::u16string& unique_display_name) {
+  auto note_itr = std::ranges::find(notes, unique_display_name,
+                                    &PasswordNote::unique_display_name);
+  return note_itr != notes.end() ? base::to_address(note_itr) : nullptr;
+}
+
+// Updates the note with a specified `unique_display_name`.
+void SetNote(std::vector<PasswordNote>& notes,
+             const std::u16string& unique_display_name,
+             const std::u16string& new_note_value) {
+  auto note_itr = std::ranges::find(notes, unique_display_name,
+                                    &PasswordNote::unique_display_name);
+  // if the old note doesn't exist, the note is just created.
+  if (note_itr == notes.end()) {
+    notes.emplace_back(unique_display_name, new_note_value, base::Time::Now(),
+                       /*hide_by_default=*/false);
+    return;
+  }
+
+  // Note existed, but it was empty, so set date_created in addition to
+  // changing the value.
+  if (note_itr->value.empty()) {
+    note_itr->date_created = base::Time::Now();
+  }
+
+  note_itr->value = new_note_value;
+}
+
+// Deletes the note with a specified `unique_display_name`.
+void DeleteNote(const std::u16string& unique_display_name,
+                std::vector<PasswordNote>& notes) {
+  auto note_itr = std::ranges::find(notes, unique_display_name,
+                                    &PasswordNote::unique_display_name);
+  if (note_itr != notes.end()) {
+    notes.erase(note_itr);
+  }
+}
+
 }  // namespace
 
-AlternativeElement::AlternativeElement(const AlternativeElement::Value& value,
-                           autofill::FieldRendererId field_renderer_id,
-                           const AlternativeElement::Name& name)
+AlternativeElement::AlternativeElement(
+    const AlternativeElement::Value& value,
+    autofill::FieldRendererId field_renderer_id,
+    const AlternativeElement::Name& name)
     : value(value), field_renderer_id(field_renderer_id), name(name) {}
 
 AlternativeElement::AlternativeElement(const AlternativeElement::Value& value)
@@ -325,6 +381,23 @@ bool PasswordForm::IsLikelyResetPasswordForm() const {
          !HasUsernameElement();
 }
 
+autofill::PasswordFormClassification::Type PasswordForm::GetPasswordFormType()
+    const {
+  using enum autofill::PasswordFormClassification::Type;
+  if (IsLikelyLoginForm()) {
+    return kLoginForm;
+  } else if (IsLikelySignupForm()) {
+    return kSignupForm;
+  } else if (IsLikelyChangePasswordForm()) {
+    return kChangePasswordForm;
+  } else if (IsLikelyResetPasswordForm()) {
+    return kResetPasswordForm;
+  } else if (IsSingleUsername()) {
+    return kSingleUsernameForm;
+  }
+  return kNoPasswordForm;
+}
+
 bool PasswordForm::HasUsernameElement() const {
   return !username_element_renderer_id.is_null();
 }
@@ -338,7 +411,7 @@ bool PasswordForm::HasNewPasswordElement() const {
 }
 
 bool PasswordForm::IsFederatedCredential() const {
-  return !federation_origin.opaque();
+  return federation_origin.IsValid();
 }
 
 bool PasswordForm::IsSingleUsername() const {
@@ -359,89 +432,40 @@ bool PasswordForm::HasNonEmptyPasswordValue() const {
 }
 
 std::u16string PasswordForm::GetNoteWithEmptyUniqueDisplayName() const {
-  const auto& note_itr = base::ranges::find_if(
-      notes, &std::u16string::empty, &PasswordNote::unique_display_name);
-  return note_itr != notes.end() ? note_itr->value : std::u16string();
+  const PasswordNote* note = GetNote(notes, std::u16string());
+  return note ? note->value : std::u16string();
 }
 
 void PasswordForm::SetNoteWithEmptyUniqueDisplayName(
     const std::u16string& new_note_value) {
-  const auto& note_itr = base::ranges::find_if(
-      notes, &std::u16string::empty, &PasswordNote::unique_display_name);
-  // if the old note doesn't exist, the note is just created.
-  if (note_itr == notes.end()) {
-    notes.emplace_back(new_note_value, base::Time::Now());
-    return;
-  }
-  // Note existed, but it was empty.
-  if (note_itr->value.empty()) {
-    note_itr->value = new_note_value;
-    note_itr->date_created = base::Time::Now();
-    return;
-  }
-  note_itr->value = new_note_value;
+  SetNote(notes, std::u16string(), new_note_value);
+}
+
+std::optional<std::u16string> PasswordForm::GetPasswordBackup() const {
+  const PasswordNote* note =
+      GetNote(notes, PasswordNote::kPasswordChangeBackupNoteName);
+  return note && !note->value.empty() ? std::make_optional(note->value)
+                                      : std::nullopt;
+}
+
+std::optional<base::Time> PasswordForm::GetPasswordBackupDateCreated() const {
+  const PasswordNote* note =
+      GetNote(notes, PasswordNote::kPasswordChangeBackupNoteName);
+  return note && !note->value.empty() ? std::make_optional(note->date_created)
+                                      : std::nullopt;
+}
+
+void PasswordForm::SetPasswordBackupNote(const std::u16string& new_note_value) {
+  SetNote(notes, PasswordNote::kPasswordChangeBackupNoteName, new_note_value);
+}
+
+void PasswordForm::DeletePasswordBackupNote() {
+  DeleteNote(PasswordNote::kPasswordChangeBackupNoteName, notes);
 }
 
 bool ArePasswordFormUniqueKeysEqual(const PasswordForm& left,
                                     const PasswordForm& right) {
   return PasswordFormUniqueKey(left) == PasswordFormUniqueKey(right);
-}
-
-bool operator==(const PasswordForm& lhs, const PasswordForm& rhs) {
-  // TODO(crbug.com/1330906): Revisit whether we should consider the primary_key
-  // field when comparing forms. This is currently used only in tests, and non
-  // of the existing tests test the equality of primary_keys.
-  return lhs.scheme == rhs.scheme && lhs.signon_realm == rhs.signon_realm &&
-         lhs.url == rhs.url && lhs.action == rhs.action &&
-         lhs.submit_element == rhs.submit_element &&
-         lhs.username_element == rhs.username_element &&
-         lhs.username_element_renderer_id == rhs.username_element_renderer_id &&
-         lhs.username_value == rhs.username_value &&
-         lhs.all_alternative_usernames == rhs.all_alternative_usernames &&
-         lhs.all_alternative_passwords == rhs.all_alternative_passwords &&
-         lhs.form_has_autofilled_value == rhs.form_has_autofilled_value &&
-         lhs.password_element == rhs.password_element &&
-         lhs.password_element_renderer_id == rhs.password_element_renderer_id &&
-         lhs.password_value == rhs.password_value &&
-         lhs.new_password_element == rhs.new_password_element &&
-         lhs.confirmation_password_element ==
-             rhs.confirmation_password_element &&
-         lhs.confirmation_password_element_renderer_id ==
-             rhs.confirmation_password_element_renderer_id &&
-         lhs.new_password_value == rhs.new_password_value &&
-         lhs.date_created == rhs.date_created &&
-         lhs.date_last_used == rhs.date_last_used &&
-         lhs.date_password_modified == rhs.date_password_modified &&
-         lhs.blocked_by_user == rhs.blocked_by_user && lhs.type == rhs.type &&
-         lhs.times_used_in_html_form == rhs.times_used_in_html_form &&
-         lhs.form_data.SameFormAs(rhs.form_data) &&
-         lhs.generation_upload_status == rhs.generation_upload_status &&
-         lhs.display_name == rhs.display_name && lhs.icon_url == rhs.icon_url &&
-         // We compare the serialization of the origins here, as we want unique
-         // origins to compare as '=='.
-         lhs.federation_origin.Serialize() ==
-             rhs.federation_origin.Serialize() &&
-         lhs.skip_zero_click == rhs.skip_zero_click &&
-         lhs.was_parsed_using_autofill_predictions ==
-             rhs.was_parsed_using_autofill_predictions &&
-         lhs.match_type == rhs.match_type &&
-         lhs.affiliated_web_realm == rhs.affiliated_web_realm &&
-         lhs.app_display_name == rhs.app_display_name &&
-         lhs.app_icon_url == rhs.app_icon_url &&
-         lhs.submission_event == rhs.submission_event &&
-         lhs.only_for_fallback == rhs.only_for_fallback &&
-         lhs.is_new_password_reliable == rhs.is_new_password_reliable &&
-         lhs.in_store == rhs.in_store &&
-         lhs.moving_blocked_for_list == rhs.moving_blocked_for_list &&
-         lhs.password_issues == rhs.password_issues && lhs.notes == rhs.notes &&
-         lhs.previously_associated_sync_account_email ==
-             rhs.previously_associated_sync_account_email &&
-         lhs.sender_email == rhs.sender_email &&
-         lhs.sender_name == rhs.sender_name &&
-         lhs.sender_profile_image_url == rhs.sender_profile_image_url &&
-         lhs.date_received == rhs.date_received &&
-         lhs.sharing_notification_displayed ==
-             rhs.sharing_notification_displayed;
 }
 
 std::ostream& operator<<(std::ostream& os, PasswordForm::Scheme scheme) {

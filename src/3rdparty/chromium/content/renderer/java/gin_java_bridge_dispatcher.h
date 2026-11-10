@@ -8,15 +8,16 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 
 #include "base/containers/id_map.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
+#include "components/origin_matcher/origin_matcher.h"
 #include "content/common/android/gin_java_bridge_errors.h"
 #include "content/common/gin_java_bridge.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
@@ -24,16 +25,22 @@ namespace content {
 
 class GinJavaBridgeObject;
 
+struct NamedObject {
+  using ObjectMap = base::IDMap<GinJavaBridgeObject*>;
+  using ObjectID = ObjectMap::KeyType;
+
+  ObjectID object_id;
+  origin_matcher::OriginMatcher matcher;
+};
+
 // This class handles injecting Java objects into the main frame of a
 // RenderView. The 'add' and 'remove' messages received from the browser
 // process modify the entries in a map of 'pending' objects. These objects are
 // bound to the window object of the main frame when that window object is next
 // cleared. These objects remain bound until the window object is cleared
 // again.
-class GinJavaBridgeDispatcher
-    : public base::SupportsWeakPtr<GinJavaBridgeDispatcher>,
-      public mojom::GinJavaBridge,
-      public RenderFrameObserver {
+class GinJavaBridgeDispatcher final : public mojom::GinJavaBridge,
+                                      public RenderFrameObserver {
  public:
   // GinJavaBridgeObjects are managed by gin. An object gets destroyed
   // when it is no more referenced from JS. As GinJavaBridgeObject reports
@@ -50,21 +57,14 @@ class GinJavaBridgeDispatcher
   ~GinJavaBridgeDispatcher() override;
 
   // RenderFrameObserver override:
-  bool OnMessageReceived(const IPC::Message& message) override;
   void DidClearWindowObject() override;
 
-  void GetJavaMethods(ObjectID object_id, std::vector<std::string>* methods);
-
-  bool HasJavaMethod(ObjectID object_id, const std::string& method_name);
-  std::unique_ptr<base::Value> InvokeJavaMethod(
-      ObjectID object_id,
-      const std::string& method_name,
-      base::Value::List arguments,
-      mojom::GinJavaBridgeError* error);
   GinJavaBridgeObject* GetObject(ObjectID object_id);
   void OnGinJavaBridgeObjectDeleted(GinJavaBridgeObject* object);
 
-  void AddNamedObject(const std::string& name, ObjectID object_id) override;
+  void AddNamedObject(const std::string& name,
+                      ObjectID object_id,
+                      const origin_matcher::OriginMatcher& matcher) override;
   void RemoveNamedObject(const std::string& name) override;
   void SetHost(mojo::PendingRemote<mojom::GinJavaBridgeHost> host) override;
 
@@ -74,13 +74,14 @@ class GinJavaBridgeDispatcher
   // RenderFrameObserver implementation.
   void OnDestruct() override;
 
-  typedef std::map<std::string, ObjectID> NamedObjectMap;
+  typedef std::map<std::string, NamedObject> NamedObjectMap;
   NamedObjectMap named_objects_;
   ObjectMap objects_;
   bool inside_did_clear_window_object_ = false;
-  const bool enable_mojo_;
 
   mojo::Remote<mojom::GinJavaBridgeHost> remote_;
+
+  base::WeakPtrFactory<GinJavaBridgeDispatcher> weak_ptr_factory_{this};
 };
 
 }  // namespace content

@@ -4,34 +4,18 @@
 
 #include "ui/gl/gl_surface.h"
 
-#include <utility>
-
 #include "base/check.h"
-#include "base/command_line.h"
-#include "base/lazy_instance.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
-#include "base/trace_event/trace_event.h"
-#include "third_party/abseil-cpp/absl/base/attributes.h"
-#include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/gl/gl_context.h"
-#include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface_format.h"
-#include "ui/gl/gl_switches.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "ui/gl/dc_layer_overlay_params.h"
-#else
-namespace gl {
-struct DCLayerOverlayParams {};
-}  // namespace gl
-#endif
 
 namespace gl {
 
 namespace {
 
-ABSL_CONST_INIT thread_local GLSurface* current_surface = nullptr;
+constinit thread_local GLSurface* current_surface = nullptr;
 
 }  // namespace
 
@@ -61,14 +45,6 @@ bool GLSurface::Recreate() {
   return false;
 }
 
-bool GLSurface::DeferDraws() {
-  return false;
-}
-
-bool GLSurface::SupportsSwapBuffersWithBounds() {
-  return false;
-}
-
 bool GLSurface::SupportsPostSubBuffer() {
   return false;
 }
@@ -85,13 +61,6 @@ void GLSurface::SwapBuffersAsync(SwapCompletionCallback completion_callback,
                                  PresentationCallback presentation_callback,
                                  gfx::FrameData data) {
   NOTREACHED();
-}
-
-gfx::SwapResult GLSurface::SwapBuffersWithBounds(
-    const std::vector<gfx::Rect>& rects,
-    PresentationCallback callback,
-    gfx::FrameData data) {
-  return gfx::SwapResult::SWAP_FAILED;
 }
 
 gfx::SwapResult GLSurface::PostSubBuffer(int x,
@@ -117,13 +86,6 @@ bool GLSurface::OnMakeCurrent(GLContext* context) {
   return true;
 }
 
-bool GLSurface::SetBackbufferAllocation(bool allocated) {
-  return true;
-}
-
-void GLSurface::SetFrontbufferAllocation(bool allocated) {
-}
-
 void* GLSurface::GetShareHandle() {
   NOTIMPLEMENTED();
   return NULL;
@@ -145,16 +107,6 @@ gfx::VSyncProvider* GLSurface::GetVSyncProvider() {
 
 void GLSurface::SetVSyncEnabled(bool enabled) {}
 
-bool GLSurface::ScheduleDCLayer(std::unique_ptr<DCLayerOverlayParams> params) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-bool GLSurface::SetEnableDCLayers(bool enable) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
 bool GLSurface::IsSurfaceless() const {
   return false;
 }
@@ -167,24 +119,8 @@ bool GLSurface::BuffersFlipped() const {
   return false;
 }
 
-bool GLSurface::SupportsDCLayers() const {
-  return false;
-}
-
-bool GLSurface::SupportsProtectedVideo() const {
-  return false;
-}
-
 bool GLSurface::SupportsOverridePlatformSize() const {
   return false;
-}
-
-bool GLSurface::SetDrawRectangle(const gfx::Rect& rect) {
-  return false;
-}
-
-gfx::Vector2d GLSurface::GetDrawOffset() const {
-  return gfx::Vector2d();
 }
 
 bool GLSurface::SupportsSwapTimestamps() const {
@@ -206,22 +142,6 @@ bool GLSurface::SupportsPlaneGpuFences() const {
 EGLTimestampClient* GLSurface::GetEGLTimestampClient() {
   return nullptr;
 }
-
-bool GLSurface::SupportsGpuVSync() const {
-  return false;
-}
-
-bool GLSurface::SupportsDelegatedInk() {
-  return false;
-}
-
-void GLSurface::InitDelegatedInkPointRendererReceiver(
-    mojo::PendingReceiver<gfx::mojom::DelegatedInkPointRenderer>
-        pending_receiver) {
-  NOTREACHED();
-}
-
-void GLSurface::SetGpuVSyncEnabled(bool enabled) {}
 
 GLSurface* GLSurface::GetCurrent() {
   return current_surface;
@@ -247,11 +167,12 @@ GpuPreference GLSurface::AdjustGpuPreference(GpuPreference gpu_preference) {
       return forced_gpu_preference_;
     default:
       NOTREACHED();
-      return GpuPreference::kDefault;
   }
 }
 
 GLSurface::~GLSurface() {
+  // InvalidateWeakPtrs should be called from the most concrete class.
+  CHECK(!weak_ptr_factory_.HasWeakPtrs());
   if (GetCurrent() == this) {
     ClearCurrent();
   }
@@ -263,6 +184,18 @@ void GLSurface::ClearCurrent() {
 
 void GLSurface::SetCurrent() {
   current_surface = this;
+}
+
+base::WeakPtr<GLSurface> GLSurface::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
+void GLSurface::InvalidateWeakPtrs() {
+  weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+bool GLSurface::HasWeakPtrs() {
+  return weak_ptr_factory_.HasWeakPtrs();
 }
 
 bool GLSurface::ExtensionsContain(const char* c_extensions, const char* name) {

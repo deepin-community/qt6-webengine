@@ -4,13 +4,16 @@
 
 #include "ui/gfx/geometry/rrect_f.h"
 
+#include <array>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 
+#include "base/containers/span.h"
 #include "base/values.h"
 #include "third_party/skia/include/core/SkMatrix.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace gfx {
 
@@ -103,7 +106,7 @@ gfx::Vector2dF RRectF::GetCornerRadii(Corner corner) const {
   return gfx::Vector2dF(result.x(), result.y());
 }
 
-void RRectF::GetAllRadii(SkVector radii[4]) const {
+void RRectF::GetAllRadii(base::span<SkVector, 4> radii) const {
   // Unfortunately, the only way to get all radii is one at a time.
   radii[SkRRect::kUpperLeft_Corner] =
       skrrect_.radii(SkRRect::kUpperLeft_Corner);
@@ -117,10 +120,10 @@ void RRectF::GetAllRadii(SkVector radii[4]) const {
 
 void RRectF::SetCornerRadii(Corner corner, float x_rad, float y_rad) {
   // Unfortunately, the only way to set this is to create a new SkRRect.
-  SkVector radii[4];
+  std::array<SkVector, 4> radii;
   GetAllRadii(radii);
   radii[SkRRect::Corner(corner)] = SkPoint::Make(x_rad, y_rad);
-  skrrect_.setRectRadii(skrrect_.rect(), radii);
+  skrrect_.setRectRadii(skrrect_.rect(), radii.data());
 }
 
 gfx::RectF RRectF::CornerBoundingRect(Corner corner) const {
@@ -228,6 +231,13 @@ bool RRectF::ApproximatelyEqual(const RRectF& rect, float tolerance) const {
 // static
 RRectF RRectF::ToEnclosingRRectF(const RRectF& rrect_f) {
   return RRectF(gfx::RectF(ToEnclosingRect(rrect_f.rect())),
+                rrect_f.GetRoundedCorners());
+}
+
+// static
+RRectF RRectF::ToEnclosingRRectFIgnoringError(const RRectF& rrect_f,
+                                              float error) {
+  return RRectF(gfx::RectF(ToEnclosingRectIgnoringError(rrect_f.rect(), error)),
                 rrect_f.GetRoundedCorners());
 }
 

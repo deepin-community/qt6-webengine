@@ -141,6 +141,7 @@ def is_bad_port(port: int) -> bool:
         2049,  # nfs
         3659,  # apple-sasl
         4045,  # lockd
+        4190,  # sieve
         5060,  # sip
         5061,  # sips
         6000,  # x11
@@ -150,6 +151,7 @@ def is_bad_port(port: int) -> bool:
         6667,  # irc (default)
         6668,  # irc (alternate)
         6669,  # irc (alternate)
+        6679,  # osaut
         6697,  # irc+tls
         10080,  # amanda
     ]
@@ -167,7 +169,7 @@ def get_port(host: str = '') -> int:
     return port
 
 def http2_compatible() -> bool:
-    # The HTTP/2.0 server requires OpenSSL 1.0.2+.
+    # The HTTP/2 server requires OpenSSL 1.0.2+.
     #
     # For systems using other SSL libraries (e.g. LibreSSL), we assume they
     # have the necessary support.
@@ -175,7 +177,7 @@ def http2_compatible() -> bool:
     if not ssl.OPENSSL_VERSION.startswith("OpenSSL"):
         logger = get_logger()
         logger.warning(
-            'Skipping HTTP/2.0 compatibility check as system is not using '
+            'Skipping HTTP/2 compatibility check as system is not using '
             'OpenSSL (found: %s)' % ssl.OPENSSL_VERSION)
         return True
 

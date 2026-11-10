@@ -7,9 +7,13 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "quiche/quic/core/http/quic_spdy_session.h"
 #include "quiche/quic/core/http/web_transport_stream_adapter.h"
@@ -18,10 +22,10 @@
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/web_transport_interface.h"
 #include "quiche/quic/core/web_transport_stats.h"
-#include "quiche/common/platform/api/quiche_mem_slice.h"
+#include "quiche/common/http/http_header_block.h"
 #include "quiche/common/quiche_callbacks.h"
+#include "quiche/common/quiche_mem_slice.h"
 #include "quiche/web_transport/web_transport.h"
-#include "quiche/spdy/core/http2_header_block.h"
 
 namespace quic {
 
@@ -48,7 +52,7 @@ class QUICHE_EXPORT WebTransportHttp3
   WebTransportHttp3(QuicSpdySession* session, QuicSpdyStream* connect_stream,
                     WebTransportSessionId id);
 
-  void HeadersReceived(const spdy::Http2HeaderBlock& headers);
+  void HeadersReceived(const quiche::HttpHeaderBlock& headers);
   void SetVisitor(std::unique_ptr<WebTransportVisitor> visitor) {
     visitor_ = std::move(visitor);
   }
@@ -117,6 +121,18 @@ class QUICHE_EXPORT WebTransportHttp3
   void OnGoAwayReceived();
   void OnDrainSessionReceived();
 
+  const std::vector<std::string>& subprotocols_offered() const {
+    return subprotocols_offered_;
+  }
+  void set_subprotocols_offered(std::vector<std::string> subprotocols_offered) {
+    subprotocols_offered_ = std::move(subprotocols_offered);
+  }
+  std::optional<std::string> GetNegotiatedSubprotocol() const override {
+    return subprotocol_selected_;
+  }
+  void MaybeSetSubprotocolFromResponseHeaders(
+      const quiche::HttpHeaderBlock& headers);
+
  private:
   // Notifies the visitor that the connection has been closed.  Ensures that the
   // visitor is only ever called once.
@@ -135,6 +151,12 @@ class QUICHE_EXPORT WebTransportHttp3
   bool close_sent_ = false;
   bool close_received_ = false;
   bool close_notified_ = false;
+
+  // On client side, stores the offered subprotocols.
+  std::vector<std::string> subprotocols_offered_;
+  // Stores the actually selected subprotocol, both on the client and on the
+  // server.
+  std::optional<std::string> subprotocol_selected_;
 
   quiche::SingleUseCallback<void()> drain_callback_ = nullptr;
 

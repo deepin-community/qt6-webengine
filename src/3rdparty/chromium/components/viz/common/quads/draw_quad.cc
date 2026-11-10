@@ -41,11 +41,12 @@ void DrawQuad::SetAll(const SharedQuadState* quad_state,
   DCHECK(material != Material::kInvalid);
 }
 
-DrawQuad::~DrawQuad() {}
+DrawQuad::~DrawQuad() = default;
 
 void DrawQuad::AsValueInto(base::trace_event::TracedValue* value) const {
   value->SetInteger("material", static_cast<int>(material));
-  TracedValue::SetIDRef(shared_quad_state, value, "shared_state");
+  TracedValue::SetIDRef(TracedValue::Id(shared_quad_state), value,
+                        "shared_state");
 
   cc::MathUtil::AddToTracedValue("content_space_rect", rect, value);
 
@@ -74,11 +75,6 @@ void DrawQuad::AsValueInto(base::trace_event::TracedValue* value) const {
   value->SetBoolean("needs_blending", needs_blending);
   value->SetBoolean("should_draw_with_blending", ShouldDrawWithBlending());
   ExtendValue(value);
-}
-
-DrawQuad::Resources::Resources() : count(0) {
-  for (size_t i = 0; i < kMaxResourceIdCount; ++i)
-    ids[i] = kInvalidResourceId;
 }
 
 }  // namespace viz

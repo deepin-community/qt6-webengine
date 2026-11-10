@@ -110,12 +110,8 @@ class MockExtensionCache : public ExtensionCache {
 // TestURLLoaderFactory as a URL factory.
 class ExtensionDownloaderTestHelper {
  public:
-  static constexpr DownloadPingData kNeverPingedData =
-      DownloadPingData(ManifestFetchData::kNeverPinged,
-                       ManifestFetchData::kNeverPinged,
-                       true,
-                       0);
   static constexpr char kEmptyUpdateUrlData[] = "";
+  static const DownloadPingData* GetTestPingData();
 
   ExtensionDownloaderTestHelper();
 
@@ -169,7 +165,7 @@ void AddExtensionToFetchDataForTesting(ManifestFetchData* fetch_data,
                                        const ExtensionId& id,
                                        const std::string& version,
                                        const GURL& update_url,
-                                       DownloadPingData ping_data);
+                                       const DownloadPingData& ping_data);
 
 // Simplified version with fewer arguments.
 void AddExtensionToFetchDataForTesting(ManifestFetchData* fetch_data,
@@ -216,10 +212,18 @@ struct UpdateManifestItem {
     updatecheck_params.emplace("version", std::move(value));
     return std::move(*this);
   }
+  UpdateManifestItem&& size(uint64_t value) && {
+    size_ = value;
+    return std::move(*this);
+  }
 
   ExtensionId id;
   std::map<std::string, std::string> updatecheck_params;
+  uint64_t size_ = 0;
 };
+
+std::string CreateUpdateManifestV4(
+    const std::vector<UpdateManifestItem>& extensions);
 
 // A generic method to create an XML update manifest. For each extension an
 // extension ID should be provided along with parameters of the updatecheck

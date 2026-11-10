@@ -4,12 +4,13 @@
 
 #include "ui/color/color_provider_manager.h"
 
+#include <array>
+#include <optional>
 #include <vector>
 
 #include "base/functional/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/color/color_mixer.h"
 #include "ui/color/color_provider.h"
@@ -107,7 +108,7 @@ TEST_F(ColorProviderManagerTest, LookupWithDeletedMember) {
 }
 
 TEST_F(ColorProviderManagerTest, KeyOrderIsStable) {
-  ColorProviderKey keys[2];
+  std::array<ColorProviderKey, 2> keys;
 
   // Allocate two suppliers.
   std::vector<TestInitializerSupplier> supplier(2);

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <getopt.h>
-
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -11,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "absl/strings/str_cat.h"
 #include "cast/receiver/channel/static_credentials.h"
 #include "cast/standalone_receiver/cast_service.h"
 #include "platform/api/time.h"
@@ -22,7 +19,9 @@
 #include "platform/impl/platform_client_posix.h"
 #include "platform/impl/task_runner.h"
 #include "platform/impl/text_trace_logging_platform.h"
+#include "third_party/getopt/getopt.h"
 #include "util/chrono_helpers.h"
+#include "util/string_util.h"
 #include "util/stringprintf.h"
 #include "util/trace_logging.h"
 
@@ -111,15 +110,6 @@ void RunCastService(TaskRunnerImpl* runner, CastService::Configuration config) {
 }
 
 int RunStandaloneReceiver(int argc, char* argv[]) {
-#if !defined(CAST_ALLOW_DEVELOPER_CERTIFICATE)
-  OSP_LOG_FATAL
-      << "It compiled! However cast_receiver currently only supports using a "
-         "passed-in certificate and private key, and must be built with "
-         "cast_allow_developer_certificate=true set in the GN args to "
-         "actually do anything interesting.";
-  return 1;
-#endif
-
 #if !defined(CAST_STANDALONE_RECEIVER_HAVE_EXTERNAL_LIBS)
   OSP_LOG_INFO
       << "Note: compiled without external libs. The dummy player will "
@@ -132,7 +122,7 @@ int RunStandaloneReceiver(int argc, char* argv[]) {
   // between all Open Screen executables. If it is a platform feature
   // being exposed, consider if it applies to the standalone receiver,
   // standalone sender, osp demo, and test_main argument options.
-  const struct option kArgumentOptions[] = {
+  const get_opt::option kArgumentOptions[] = {
       {"private-key", required_argument, nullptr, 'p'},
       {"developer-certificate", required_argument, nullptr, 'd'},
       {"generate-credentials", no_argument, nullptr, 'g'},
@@ -160,16 +150,16 @@ int RunStandaloneReceiver(int argc, char* argv[]) {
                            nullptr)) != -1) {
     switch (ch) {
       case 'p':
-        private_key_path = optarg;
+        private_key_path = get_opt::optarg;
         break;
       case 'd':
-        developer_certificate_path = optarg;
+        developer_certificate_path = get_opt::optarg;
         break;
       case 'f':
-        friendly_name = optarg;
+        friendly_name = get_opt::optarg;
         break;
       case 'm':
-        model_name = optarg;
+        model_name = get_opt::optarg;
         break;
       case 'g':
         should_generate_credentials = true;
@@ -203,12 +193,12 @@ int RunStandaloneReceiver(int argc, char* argv[]) {
     return 1;
   }
 
-  const char* interface_name = argv[optind];
+  const char* interface_name = argv[get_opt::optind];
   OSP_CHECK(interface_name && strlen(interface_name) > 0)
       << "No interface name provided.";
 
   std::string receiver_id =
-      absl::StrCat("Standalone Receiver on ", interface_name);
+      string_util::StrCat({"Standalone Receiver on ", interface_name});
   ErrorOr<GeneratedCredentials> creds = GenerateCredentials(
       receiver_id, private_key_path, developer_certificate_path);
   OSP_CHECK(creds.is_value()) << creds.error();

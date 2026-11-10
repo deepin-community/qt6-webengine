@@ -14,8 +14,10 @@ BackForwardCacheDisablingFeatureTracker::
         TraceableVariableController* tracing_controller,
         ThreadSchedulerBase* scheduler)
     : opted_out_from_back_forward_cache_{false,
-                                         "FrameScheduler."
-                                         "OptedOutFromBackForwardCache",
+                                         MakeNamedTrack(
+                                             "FrameScheduler."
+                                             "OptedOutFromBackForwardCache",
+                                             this),
                                          tracing_controller,
                                          YesNoStateToString},
       scheduler_{scheduler} {}
@@ -60,7 +62,7 @@ void BackForwardCacheDisablingFeatureTracker::AddFeatureInternal(
 
 void BackForwardCacheDisablingFeatureTracker::AddNonStickyFeature(
     SchedulingPolicy::Feature feature,
-    std::unique_ptr<SourceLocation> source_location,
+    SourceLocation* source_location,
     FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle* handle) {
   DCHECK(!scheduler::IsFeatureSticky(feature));
   AddFeatureInternal(feature);
@@ -75,12 +77,12 @@ void BackForwardCacheDisablingFeatureTracker::AddNonStickyFeature(
 
 void BackForwardCacheDisablingFeatureTracker::AddStickyFeature(
     SchedulingPolicy::Feature feature,
-    std::unique_ptr<SourceLocation> source_location) {
+    SourceLocation* source_location) {
   DCHECK(scheduler::IsFeatureSticky(feature));
   AddFeatureInternal(feature);
 
   sticky_features_and_js_locations_.MaybeAdd(
-      FeatureAndJSLocationBlockingBFCache(feature, source_location.get()));
+      FeatureAndJSLocationBlockingBFCache(feature, source_location));
 
   NotifyDelegateAboutFeaturesAfterCurrentTask(
       BackForwardCacheDisablingFeatureTracker::TracingType::kBegin, feature);
@@ -111,8 +113,9 @@ WTF::HashSet<SchedulingPolicy::Feature>
 BackForwardCacheDisablingFeatureTracker::
     GetActiveFeaturesTrackedForBackForwardCacheMetrics() {
   WTF::HashSet<SchedulingPolicy::Feature> result;
-  for (const auto& it : back_forward_cache_disabling_feature_counts_)
+  for (const auto& it : back_forward_cache_disabling_feature_counts_) {
     result.insert(it.first);
+  }
   return result;
 }
 

@@ -17,27 +17,29 @@
 #ifndef SRC_TRACE_PROCESSOR_UTIL_PROFILE_BUILDER_H_
 #define SRC_TRACE_PROCESSOR_UTIL_PROFILE_BUILDER_H_
 
-#include <optional>
-
-#include "perfetto/ext/base/flat_hash_map.h"
-#include "perfetto/ext/base/string_view.h"
-#include "perfetto/protozero/packed_repeated_fields.h"
-#include "perfetto/protozero/scattered_heap_buffer.h"
-#include "protos/perfetto/trace_processor/stack.pbzero.h"
-#include "protos/third_party/pprof/profile.pbzero.h"
-#include "src/trace_processor/containers/string_pool.h"
-#include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/tables/profiler_tables_py.h"
-#include "src/trace_processor/util/annotated_callsites.h"
-
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <functional>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
-namespace perfetto {
-namespace trace_processor {
+#include "perfetto/ext/base/flat_hash_map.h"
+#include "perfetto/ext/base/fnv_hash.h"
+#include "perfetto/ext/base/string_view.h"
+#include "perfetto/protozero/packed_repeated_fields.h"
+#include "perfetto/protozero/scattered_heap_buffer.h"
+#include "src/trace_processor/containers/string_pool.h"
+#include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/jit_tables_py.h"
+#include "src/trace_processor/tables/profiler_tables_py.h"
+#include "src/trace_processor/tables/v8_tables_py.h"
+#include "src/trace_processor/util/annotated_callsites.h"
+
+#include "protos/perfetto/trace_processor/stack.pbzero.h"
+#include "protos/third_party/pprof/profile.pbzero.h"
+
+namespace perfetto::trace_processor {
 
 class TraceProcessorContext;
 
@@ -126,7 +128,7 @@ class GProfileBuilder {
   struct AnnotatedFrameId {
     struct Hash {
       size_t operator()(const AnnotatedFrameId& id) const {
-        return static_cast<size_t>(perfetto::base::Hasher::Combine(
+        return static_cast<size_t>(perfetto::base::FnvHasher::Combine(
             id.frame_id.value, static_cast<int>(id.annotation)));
       }
     };
@@ -155,7 +157,7 @@ class GProfileBuilder {
   struct Location {
     struct Hash {
       size_t operator()(const Location& loc) const {
-        perfetto::base::Hasher hasher;
+        perfetto::base::FnvHasher hasher;
         hasher.UpdateAll(loc.mapping_id, loc.rel_pc, loc.lines.size());
         for (const auto& line : loc.lines) {
           hasher.UpdateAll(line.function_id, line.line);
@@ -182,10 +184,8 @@ class GProfileBuilder {
   struct MappingKey {
     struct Hash {
       size_t operator()(const MappingKey& mapping) const {
-        perfetto::base::Hasher hasher;
-        hasher.UpdateAll(mapping.size, mapping.file_offset,
-                         mapping.build_id_or_filename);
-        return static_cast<size_t>(hasher.digest());
+        return base::FnvHasher::Combine(mapping.size, mapping.file_offset,
+                                        mapping.build_id_or_filename);
       }
     };
 
@@ -239,7 +239,7 @@ class GProfileBuilder {
   struct Function {
     struct Hash {
       size_t operator()(const Function& func) const {
-        return static_cast<size_t>(perfetto::base::Hasher::Combine(
+        return static_cast<size_t>(perfetto::base::FnvHasher::Combine(
             func.name, func.system_name, func.filename));
       }
     };
@@ -271,7 +271,7 @@ class GProfileBuilder {
     using SerializedLocationId = std::vector<uint8_t>;
     struct Hasher {
       size_t operator()(const SerializedLocationId& data) const {
-        base::Hasher hasher;
+        base::FnvHasher hasher;
         hasher.Update(reinterpret_cast<const char*>(data.data()), data.size());
         return static_cast<size_t>(hasher.digest());
       }
@@ -283,6 +283,11 @@ class GProfileBuilder {
   const protozero::PackedVarInt& GetLocationIdsForCallsite(
       const CallsiteId& callsite_id,
       bool annotated);
+
+  std::vector<Line> GetLinesForJitFrame(
+      const tables::StackProfileFrameTable::ConstRowReference& frame,
+      CallsiteAnnotation annotation,
+      uint64_t mapping_id);
 
   std::vector<Line> GetLinesForSymbolSetId(
       std::optional<uint32_t> symbol_set_id,
@@ -305,10 +310,14 @@ class GProfileBuilder {
                                  CallsiteAnnotation annotation);
   uint64_t WriteFakeLocationIfNeeded(const std::string& name);
 
-  uint64_t WriteFunctionIfNeeded(
-      const tables::SymbolTable::ConstRowReference& symbol,
-      CallsiteAnnotation annotation,
-      uint64_t mapping_id);
+  uint64_t WriteFunctionIfNeeded(base::StringView name,
+                                 StringPool::Id filename,
+                                 CallsiteAnnotation annotation,
+                                 uint64_t mapping_id);
+
+  uint64_t WriteFunctionIfNeeded(const tables::SymbolTable::ConstCursor& symbol,
+                                 CallsiteAnnotation annotation,
+                                 uint64_t mapping_id);
 
   uint64_t WriteFunctionIfNeeded(
       const tables::StackProfileFrameTable::ConstRowReference& frame,
@@ -351,8 +360,8 @@ class GProfileBuilder {
   struct MaybeAnnotatedCallsiteId {
     struct Hash {
       size_t operator()(const MaybeAnnotatedCallsiteId& id) const {
-        return static_cast<size_t>(
-            perfetto::base::Hasher::Combine(id.callsite_id.value, id.annotate));
+        return static_cast<size_t>(perfetto::base::FnvHasher::Combine(
+            id.callsite_id.value, id.annotate));
       }
     };
 
@@ -367,6 +376,15 @@ class GProfileBuilder {
                      protozero::PackedVarInt,
                      MaybeAnnotatedCallsiteId::Hash>
       cached_location_ids_;
+
+  // Cursors to help lookup data in the tables.
+  tables::JitFrameTable::ConstCursor jit_frame_cursor_;
+  tables::V8JsCodeTable::ConstCursor v8_js_code_cursor_;
+  tables::V8WasmCodeTable::ConstCursor v8_wasm_code_cursor_;
+  tables::V8RegexpCodeTable::ConstCursor v8_regexp_code_cursor_;
+  tables::V8InternalCodeTable::ConstCursor v8_internal_code_cursor_;
+  tables::JitCodeTable::ConstCursor jit_code_cursor_;
+  tables::SymbolTable::ConstCursor symbol_cursor_;
 
   // Helpers to map TraceProcessor rows to already written Profile entities
   // (their ids).
@@ -390,7 +408,6 @@ class GProfileBuilder {
   SampleAggregator samples_;
 };
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor
 
 #endif  // SRC_TRACE_PROCESSOR_UTIL_PROFILE_BUILDER_H_

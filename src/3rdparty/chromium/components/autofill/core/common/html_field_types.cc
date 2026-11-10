@@ -99,8 +99,6 @@ std::string_view FieldTypeToStringView(HtmlFieldType type) {
       return "HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR";
     case HtmlFieldType::kCreditCardExp4DigitYear:
       return "HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR";
-    case HtmlFieldType::kUpiVpa:
-      return "HTML_TYPE_UPI_VPA";
     case HtmlFieldType::kOneTimeCode:
       return "HTML_TYPE_ONE_TIME_CODE";
     case HtmlFieldType::kMerchantPromoCode:
@@ -112,7 +110,6 @@ std::string_view FieldTypeToStringView(HtmlFieldType type) {
   }
 
   NOTREACHED();
-  return "";
 }
 
 std::string FieldTypeToString(HtmlFieldType type) {
@@ -129,7 +126,6 @@ std::string_view HtmlFieldModeToStringView(HtmlFieldMode mode) {
       return "shipping";
   }
   NOTREACHED();
-  return "";
 }
 
 std::string HtmlFieldModeToString(HtmlFieldMode mode) {

@@ -16,193 +16,192 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/descendant.h"
 
+#include <algorithm>
+#include <cinttypes>
+#include <cstdint>
+#include <limits>
 #include <memory>
-#include <set>
+#include <optional>
+#include <string>
+#include <vector>
 
+#include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/dataframe/specs.h"
+#include "src/trace_processor/perfetto_sql/intrinsics/table_functions/static_table_function.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/tables_py.h"
-#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/slice_tables_py.h"
 #include "src/trace_processor/types/trace_processor_context.h"
-#include "src/trace_processor/util/status_macros.h"
 
-namespace perfetto {
-namespace trace_processor {
-namespace tables {
-
-DescendantSliceTable::~DescendantSliceTable() = default;
-DescendantSliceByStackTable::~DescendantSliceByStackTable() = default;
-
-}  // namespace tables
-
+namespace perfetto::trace_processor {
 namespace {
 
-template <typename ChildTable, typename ParentTable, typename ConstraintType>
-std::unique_ptr<Table> ExtendWithStartId(
-    ConstraintType constraint_id,
-    const ParentTable& table,
-    std::vector<typename ParentTable::RowNumber> parent_rows) {
-  ColumnStorage<ConstraintType> start_ids;
-  for (uint32_t i = 0; i < parent_rows.size(); ++i)
-    start_ids.Append(constraint_id);
-  return ChildTable::SelectAndExtendParent(table, std::move(parent_rows),
-                                           std::move(start_ids));
-}
-
-base::Status GetDescendants(
+bool GetDescendantsInternal(
     const tables::SliceTable& slices,
+    tables::SliceTable::ConstCursor& cursor,
     SliceId starting_id,
-    std::vector<tables::SliceTable::RowNumber>& row_numbers_accumulator) {
+    std::vector<tables::SliceTable::RowNumber>& row_numbers_accumulator,
+    base::Status& out_status) {
   auto start_ref = slices.FindById(starting_id);
-  // The query gave an invalid ID that doesn't exist in the slice table.
   if (!start_ref) {
-    return base::ErrStatus("no row with id %" PRIu32 "",
-                           static_cast<uint32_t>(starting_id.value));
+    out_status =
+        base::ErrStatus("no row with id %" PRIu32 "", starting_id.value);
+    return false;
   }
-
-  // As an optimization, for any finished slices, we only need to consider
-  // slices which started before the end of this slice (because slices on a
-  // track are always perfectly stacked).
-  // For unfinshed slices (i.e. -1 dur), we need to consider until the end of
-  // the trace so we cannot add any similar constraint.
-  std::vector<Constraint> cs;
-  if (start_ref->dur() >= 0) {
-    cs.emplace_back(slices.ts().le(start_ref->ts() + start_ref->dur()));
+  cursor.SetFilterValueUnchecked(0, start_ref->ts());
+  cursor.SetFilterValueUnchecked(1, start_ref->track_id().value);
+  cursor.SetFilterValueUnchecked(2, start_ref->depth());
+  cursor.SetFilterValueUnchecked(3, start_ref->dur() >= 0
+                                        ? start_ref->ts() + start_ref->dur()
+                                        : std::numeric_limits<int64_t>::max());
+  for (cursor.Execute(); !cursor.Eof(); cursor.Next()) {
+    row_numbers_accumulator.emplace_back(cursor.ToRowNumber());
   }
-
-  // All nested descendents must be on the same track, with a ts greater than
-  // |start_ref.ts| and whose depth is larger than |start_ref|'s.
-  cs.emplace_back(slices.ts().ge(start_ref->ts()));
-  cs.emplace_back(slices.track_id().eq(start_ref->track_id().value));
-  cs.emplace_back(slices.depth().gt(start_ref->depth()));
-
-  // It's important we insert directly into |row_numbers_accumulator| and not
-  // overwrite it because we expect the existing elements in
-  // |row_numbers_accumulator| to be preserved.
-  for (auto it = slices.FilterToIterator(cs); it; ++it) {
-    row_numbers_accumulator.emplace_back(it.row_number());
-  }
-  return base::OkStatus();
-}
-
-uint32_t GetConstraintColumnIndex(Descendant::Type type) {
-  switch (type) {
-    case Descendant::Type::kSlice:
-      return tables::DescendantSliceTable::ColumnIndex::start_id;
-    case Descendant::Type::kSliceByStack:
-      return tables::DescendantSliceByStackTable::ColumnIndex::start_stack_id;
-  }
-  PERFETTO_FATAL("For GCC");
+  return true;
 }
 
 }  // namespace
 
-Descendant::Descendant(Type type, const TraceStorage* storage)
-    : type_(type), storage_(storage) {}
+Descendant::Cursor::Cursor(Type type, TraceStorage* storage)
+    : type_(type),
+      storage_(storage),
+      table_(storage->mutable_string_pool()),
+      slice_cursor_(MakeCursor(storage->slice_table())),
+      stack_cursor_(storage->slice_table().CreateCursor({
+          dataframe::FilterSpec{
+              tables::SliceTable::ColumnIndex::stack_id,
+              0,
+              dataframe::Eq{},
+              std::nullopt,
+          },
+      })) {}
 
-base::Status Descendant::ValidateConstraints(const QueryConstraints& qc) {
-  const auto& cs = qc.constraints();
+bool Descendant::Cursor::Run(const std::vector<SqlValue>& arguments) {
+  PERFETTO_DCHECK(arguments.size() == 1);
 
-  int column = static_cast<int>(GetConstraintColumnIndex(type_));
-  auto id_fn = [column](const QueryConstraints::Constraint& c) {
-    return c.column == column && sqlite_utils::IsOpEq(c.op);
-  };
-  bool has_id_cs = std::find_if(cs.begin(), cs.end(), id_fn) != cs.end();
-  return has_id_cs ? base::OkStatus()
-                   : base::ErrStatus("Failed to find required constraints");
-}
-
-base::Status Descendant::ComputeTable(const std::vector<Constraint>& cs,
-                                      const std::vector<Order>&,
-                                      const BitVector&,
-                                      std::unique_ptr<Table>& table_return) {
-  const auto& slices = storage_->slice_table();
-
-  uint32_t column = GetConstraintColumnIndex(type_);
-  auto constraint_it =
-      std::find_if(cs.begin(), cs.end(), [column](const Constraint& c) {
-        return c.col_idx == column && c.op == FilterOp::kEq;
-      });
-  if (constraint_it == cs.end()) {
-    return base::ErrStatus("no start id specified.");
+  table_.Clear();
+  descendants_.clear();
+  if (arguments[0].is_null()) {
+    return OnSuccess(&table_.dataframe());
   }
-  if (constraint_it->value.type == SqlValue::Type::kNull) {
-    // Nothing matches a null id so return an empty table.
-    switch (type_) {
-      case Type::kSlice:
-        table_return = tables::DescendantSliceTable::SelectAndExtendParent(
-            storage_->slice_table(), {}, {});
-        break;
-      case Type::kSliceByStack:
-        table_return =
-            tables::DescendantSliceByStackTable::SelectAndExtendParent(
-                storage_->slice_table(), {}, {});
-        break;
-    }
-    return base::OkStatus();
-  }
-  if (constraint_it->value.type != SqlValue::Type::kLong) {
-    return base::ErrStatus("start id should be an integer.");
+  if (arguments[0].type != SqlValue::Type::kLong) {
+    return OnFailure(base::ErrStatus("start id should be an integer."));
   }
 
-  int64_t start_id = constraint_it->value.AsLong();
-  std::vector<tables::SliceTable::RowNumber> descendants;
+  const auto& slice_table = storage_->slice_table();
+  int64_t start_val = arguments[0].long_value;
   switch (type_) {
     case Type::kSlice: {
-      // Build up all the children row ids.
-      uint32_t start_id_uint = static_cast<uint32_t>(start_id);
-      RETURN_IF_ERROR(GetDescendants(
-          slices, tables::SliceTable::Id(start_id_uint), descendants));
-      table_return = ExtendWithStartId<tables::DescendantSliceTable>(
-          start_id_uint, slices, std::move(descendants));
-      break;
-    }
-    case Type::kSliceByStack: {
-      auto sbs_cs = {slices.stack_id().eq(start_id)};
-      for (auto it = slices.FilterToIterator(sbs_cs); it; ++it) {
-        RETURN_IF_ERROR(GetDescendants(slices, it.id(), descendants));
+      SliceId start_id(static_cast<uint32_t>(start_val));
+      if (!GetDescendantsInternal(slice_table, slice_cursor_, start_id,
+                                  descendants_, status_)) {
+        return false;
       }
-      table_return = ExtendWithStartId<tables::DescendantSliceByStackTable>(
-          start_id, slices, std::move(descendants));
       break;
     }
+    case Type::kSliceByStack:
+      stack_cursor_.SetFilterValueUnchecked(0, start_val);
+      stack_cursor_.Execute();
+      for (; !stack_cursor_.Eof(); stack_cursor_.Next()) {
+        if (!GetDescendantsInternal(slice_table, slice_cursor_,
+                                    stack_cursor_.id(), descendants_,
+                                    status_)) {
+          return false;
+        }
+      }
+      // Sort to keep the slices in timestamp order, similar to Ancestor.
+      std::sort(descendants_.begin(), descendants_.end());
+      break;
   }
-
-  return base::OkStatus();
+  for (const auto& descendant_row : descendants_) {
+    auto ref = descendant_row.ToRowReference(slice_table);
+    table_.Insert(tables::SliceSubsetTable::Row{
+        ref.id(),
+        ref.ts(),
+        ref.dur(),
+        ref.track_id(),
+        ref.category(),
+        ref.name(),
+        ref.depth(),
+        ref.parent_id(),
+        ref.arg_set_id(),
+        ref.thread_ts(),
+        ref.thread_dur(),
+        ref.thread_instruction_count(),
+        ref.thread_instruction_delta(),
+    });
+  }
+  return OnSuccess(&table_.dataframe());
 }
 
-Table::Schema Descendant::CreateSchema() {
-  switch (type_) {
-    case Type::kSlice:
-      return tables::DescendantSliceTable::ComputeStaticSchema();
-    case Type::kSliceByStack:
-      return tables::DescendantSliceByStackTable::ComputeStaticSchema();
-  }
-  PERFETTO_FATAL("For GCC");
+Descendant::Descendant(Type type, TraceStorage* storage)
+    : type_(type), storage_(storage) {}
+
+std::unique_ptr<StaticTableFunction::Cursor> Descendant::MakeCursor() {
+  return std::make_unique<Cursor>(type_, storage_);
+}
+
+dataframe::DataframeSpec Descendant::CreateSpec() {
+  return tables::SliceSubsetTable::kSpec.ToUntypedDataframeSpec();
 }
 
 std::string Descendant::TableName() {
   switch (type_) {
     case Type::kSlice:
-      return tables::DescendantSliceTable::Name();
+      return "descendant_slice";
     case Type::kSliceByStack:
-      return tables::DescendantSliceByStackTable::Name();
+      return "descendant_slice_by_stack";
   }
   PERFETTO_FATAL("For GCC");
 }
 
-uint32_t Descendant::EstimateRowCount() {
+uint32_t Descendant::GetArgumentCount() const {
   return 1;
 }
 
-// static
-std::optional<std::vector<tables::SliceTable::RowNumber>>
-Descendant::GetDescendantSlices(const tables::SliceTable& slices,
-                                SliceId slice_id) {
-  std::vector<tables::SliceTable::RowNumber> ret;
-  auto status = GetDescendants(slices, slice_id, ret);
-  if (!status.ok())
-    return std::nullopt;
-  return std::move(ret);
+tables::SliceTable::ConstCursor Descendant::MakeCursor(
+    const tables::SliceTable& slices) {
+  // As an optimization, for any finished slices, we only need to consider
+  // slices which started before the end of this slice (because slices on a
+  // track are always perfectly stacked).
+  return slices.CreateCursor({
+      dataframe::FilterSpec{
+          tables::SliceTable::ColumnIndex::ts,
+          0,
+          dataframe::Ge{},
+          std::nullopt,
+      },
+      dataframe::FilterSpec{
+          tables::SliceTable::ColumnIndex::track_id,
+          1,
+          dataframe::Eq{},
+          std::nullopt,
+      },
+      dataframe::FilterSpec{
+          tables::SliceTable::ColumnIndex::depth,
+          2,
+          dataframe::Gt{},
+          std::nullopt,
+      },
+      dataframe::FilterSpec{
+          tables::SliceTable::ColumnIndex::ts,
+          3,
+          dataframe::Le{},
+          std::nullopt,
+      },
+  });
 }
 
-}  // namespace trace_processor
-}  // namespace perfetto
+// static
+bool Descendant::GetDescendantSlices(
+    const tables::SliceTable& slices,
+    tables::SliceTable::ConstCursor& cursor,
+    SliceId slice_id,
+    std::vector<tables::SliceTable::RowNumber>& ret,
+    base::Status& out_status) {
+  return GetDescendantsInternal(slices, cursor, slice_id, ret, out_status);
+}
+
+}  // namespace perfetto::trace_processor

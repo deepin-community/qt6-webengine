@@ -1,13 +1,13 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import '../../../ui/components/icon_button/icon_button.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
-// eslint-disable-next-line rulesdir/es_modules_import
-import inspectorCommonStyles from '../../../ui/legacy/inspectorCommon.css.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as UI from '../../../ui/legacy/legacy.js';
+import * as Lit from '../../../ui/lit/lit.js';
 import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import valueInterpreterDisplayStyles from './valueInterpreterDisplay.css.js';
@@ -47,11 +47,11 @@ const UIStrings = {
    */
   addressOutOfRange: 'Address out of memory range',
 
-};
+} as const;
 const str_ =
     i18n.i18n.registerUIStrings('panels/linear_memory_inspector/components/ValueInterpreterDisplay.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
-const {render, html} = LitHtml;
+const {render, html} = Lit;
 
 const SORTED_VALUE_TYPES = Array.from(getDefaultValueTypeMapping().keys());
 
@@ -88,25 +88,12 @@ export class JumpToPointerAddressEvent extends Event {
 }
 
 export class ValueInterpreterDisplay extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-linear-memory-inspector-interpreter-display`;
-
   readonly #shadow = this.attachShadow({mode: 'open'});
-  #endianness = Endianness.Little;
+  #endianness = Endianness.LITTLE;
   #buffer = new ArrayBuffer(0);
-  #valueTypes: Set<ValueType> = new Set();
+  #valueTypes = new Set<ValueType>();
   #valueTypeModeConfig: Map<ValueType, ValueTypeMode> = getDefaultValueTypeMapping();
   #memoryLength = 0;
-
-  constructor() {
-    super();
-    this.#shadow.adoptedStyleSheets = [
-      inspectorCommonStyles,
-    ];
-  }
-
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [valueInterpreterDisplayStyles];
-  }
 
   set data(data: ValueDisplayData) {
     this.#buffer = data.buffer;
@@ -129,6 +116,8 @@ export class ValueInterpreterDisplay extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
+      <style>${UI.inspectorCommonStyles}</style>
+      <style>${valueInterpreterDisplayStyles}</style>
       <div class="value-types">
         ${SORTED_VALUE_TYPES.map(type => this.#valueTypes.has(type) ? this.#showValue(type) : '')}
       </div>
@@ -137,7 +126,7 @@ export class ValueInterpreterDisplay extends HTMLElement {
     // clang-format on
   }
 
-  #showValue(type: ValueType): LitHtml.TemplateResult {
+  #showValue(type: ValueType): Lit.TemplateResult {
     if (isNumber(type)) {
       return this.#renderNumberValues(type);
     }
@@ -147,7 +136,7 @@ export class ValueInterpreterDisplay extends HTMLElement {
     throw new Error(`No known way to format ${type}`);
   }
 
-  #renderPointerValue(type: ValueType): LitHtml.TemplateResult {
+  #renderPointerValue(type: ValueType): Lit.TemplateResult {
     const unsignedValue = this.#parse({type, signed: false});
     const address = getPointerAddress(type, this.#buffer, this.#endianness);
     const jumpDisabled = Number.isNaN(address) || BigInt(address) >= BigInt(this.#memoryLength);
@@ -163,11 +152,11 @@ export class ValueInterpreterDisplay extends HTMLElement {
           ${
             html`
               <button class="jump-to-button" data-jump="true" title=${buttonTitle} ?disabled=${jumpDisabled}
-                jslog=${VisualLogging.action().track({click: true}).context('linear-memory-inspector.jump-to-address')}
+                jslog=${VisualLogging.action('linear-memory-inspector.jump-to-address').track({click: true})}
                 @click=${this.#onJumpToAddressClicked.bind(this, Number(address))}>
-                <${IconButton.Icon.Icon.litTagName} .data=${
-                  {iconName: 'open-externally', color: iconColor, width: '16px'} as IconButton.Icon.IconWithName}>
-                </${IconButton.Icon.Icon.litTagName}>
+                <devtools-icon .data=${
+                  {iconName: 'open-externally', color: iconColor, width: '16px'}}>
+                </devtools-icon>
               </button>`}
         </div>
       </div>
@@ -179,7 +168,7 @@ export class ValueInterpreterDisplay extends HTMLElement {
     this.dispatchEvent(new JumpToPointerAddressEvent(address));
   }
 
-  #renderNumberValues(type: ValueType): LitHtml.TemplateResult {
+  #renderNumberValues(type: ValueType): Lit.TemplateResult {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     return html`
@@ -187,13 +176,12 @@ export class ValueInterpreterDisplay extends HTMLElement {
       <div>
         <select title=${i18nString(UIStrings.changeValueTypeMode)}
           data-mode-settings="true"
-          class="chrome-select"
-          style="border: none; background-color: transparent; cursor: pointer; color: var(--sys-color-token-subtle);"
-          jslog=${VisualLogging.toggle().track({change: true}).context('linear-memory-inspector.value-type-mode')}
+          jslog=${VisualLogging.dropDown('linear-memory-inspector.value-type-mode').track({change: true})}
           @change=${this.#onValueTypeModeChange.bind(this, type)}>
             ${VALUE_TYPE_MODE_LIST.filter(x => isValidMode(type, x)).map(mode => {
               return html`
-                <option value=${mode} .selected=${this.#valueTypeModeConfig.get(type) === mode}>${
+                <option value=${mode} .selected=${this.#valueTypeModeConfig.get(type) === mode}
+                        jslog=${VisualLogging.item(mode).track({click: true})}>${
                   i18n.i18n.lockedString(mode)}
                 </option>`;
             })}
@@ -204,12 +192,12 @@ export class ValueInterpreterDisplay extends HTMLElement {
     // clang-format on
   }
 
-  #renderSignedAndUnsigned(type: ValueType): LitHtml.TemplateResult {
+  #renderSignedAndUnsigned(type: ValueType): Lit.TemplateResult {
     const unsignedValue = this.#parse({type, signed: false});
     const signedValue = this.#parse({type, signed: true});
     const mode = this.#valueTypeModeConfig.get(type);
     const showSignedAndUnsigned =
-        signedValue !== unsignedValue && mode !== ValueTypeMode.Hexadecimal && mode !== ValueTypeMode.Octal;
+        signedValue !== unsignedValue && mode !== ValueTypeMode.HEXADECIMAL && mode !== ValueTypeMode.OCTAL;
 
     const unsignedRendered = html`<span class="value-type-cell selectable-text"  title=${
         i18nString(UIStrings.unsignedValue)} data-value="true">${unsignedValue}</span>`;
@@ -218,7 +206,7 @@ export class ValueInterpreterDisplay extends HTMLElement {
     }
 
     // Some values are too long to show in one line, we're putting them into the next line.
-    const showInMultipleLines = type === ValueType.Int32 || type === ValueType.Int64;
+    const showInMultipleLines = type === ValueType.INT32 || type === ValueType.INT64;
     const signedRendered = html`<span class="selectable-text" data-value="true" title=${
         i18nString(UIStrings.signedValue)}>${signedValue}</span>`;
 
@@ -254,11 +242,9 @@ export class ValueInterpreterDisplay extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent(
-    'devtools-linear-memory-inspector-interpreter-display', ValueInterpreterDisplay);
+customElements.define('devtools-linear-memory-inspector-interpreter-display', ValueInterpreterDisplay);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-linear-memory-inspector-interpreter-display': ValueInterpreterDisplay;
   }

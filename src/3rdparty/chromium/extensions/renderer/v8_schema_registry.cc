@@ -42,7 +42,7 @@ void DeepFreeze(const v8::Local<v8::Object>& object,
                 const v8::Local<v8::Context>& context) {
   // Don't let the object trace upwards via the prototype.
   v8::Maybe<bool> maybe =
-      object->SetPrototype(context, v8::Null(context->GetIsolate()));
+      object->SetPrototypeV2(context, v8::Null(v8::Isolate::GetCurrent()));
   CHECK(maybe.IsJust() && maybe.FromJust());
   v8::Local<v8::Array> property_names =
       object->GetOwnPropertyNames(context).ToLocalChecked();
@@ -98,15 +98,19 @@ class SchemaRegistryNativeHandler : public ObjectBackedNativeHandler {
   }
 
   std::unique_ptr<ScriptContext> context_;
-  raw_ptr<V8SchemaRegistry, ExperimentalRenderer> registry_;
+  raw_ptr<V8SchemaRegistry> registry_;
 };
 
 }  // namespace
 
-V8SchemaRegistry::V8SchemaRegistry() {
-}
+V8SchemaRegistry::V8SchemaRegistry() = default;
 
 V8SchemaRegistry::~V8SchemaRegistry() {
+  if (!context_holder_) {
+    return;
+  }
+  v8::HandleScope handle_scope(context_holder_->isolate());
+  context_holder_.reset();
 }
 
 std::unique_ptr<NativeHandler> V8SchemaRegistry::AsNativeHandler(
@@ -116,6 +120,7 @@ std::unique_ptr<NativeHandler> V8SchemaRegistry::AsNativeHandler(
                         nullptr,          // no frame
                         mojom::HostID(),  // no host_id
                         nullptr,          // no extension
+                        /*blink_isolated_world_id=*/std::nullopt,
                         mojom::ContextType::kUnspecified,
                         nullptr,  // no effective extension
                         mojom::ContextType::kUnspecified));

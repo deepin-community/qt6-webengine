@@ -1,14 +1,17 @@
 // Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import * as i18n from '../../../core/i18n/i18n.js';
 import * as Diff from '../../../third_party/diff/diff.js';
-import * as LitHtml from '../../lit-html/lit-html.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
+import * as Lit from '../../lit/lit.js';
 import * as CodeHighlighter from '../code_highlighter/code_highlighter.js';
-import * as ComponentHelpers from '../helpers/helpers.js';
 
 import diffViewStyles from './diffView.css.js';
+
+const {html} = Lit;
 
 const UIStrings = {
   /**
@@ -28,7 +31,12 @@ const UIStrings = {
    *@example {2} PH1
    */
   SkippingDMatchingLines: '( … Skipping {PH1} matching lines … )',
-};
+  /**
+   *@description Text in Changes View for the case where the modified file contents are the same with its unmodified state
+   * e.g. the file contents changed from A -> B then B -> A and not saved yet.
+   */
+  noDiff: 'File is identical to its unmodified state',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/components/diff_view/DiffView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -45,10 +53,10 @@ interface Row {
 }
 
 export const enum RowType {
-  Deletion = 'deletion',
-  Addition = 'addition',
-  Equal = 'equal',
-  Spacer = 'spacer',
+  DELETION = 'deletion',
+  ADDITION = 'addition',
+  EQUAL = 'equal',
+  SPACER = 'spacer',
 }
 
 export function buildDiffRows(diff: Diff.Diff.DiffArray): {
@@ -74,7 +82,7 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
         break;
       case Diff.Diff.Operation.Insert:
         for (const line of token[1]) {
-          rows.push(createRow(line, RowType.Addition));
+          rows.push(createRow(line, RowType.ADDITION));
         }
         currentLines.push(...token[1]);
         break;
@@ -86,7 +94,7 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
           currentLines.push(...diff[i][1]);
         } else {
           for (const line of token[1]) {
-            rows.push(createRow(line, RowType.Deletion));
+            rows.push(createRow(line, RowType.DELETION));
           }
         }
         break;
@@ -99,11 +107,11 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
     const equalRows = [];
     if (!atStart) {
       for (let i = 0; i < paddingLines && i < lines.length; i++) {
-        equalRows.push(createRow(lines[i], RowType.Equal));
+        equalRows.push(createRow(lines[i], RowType.EQUAL));
       }
       if (lines.length > paddingLines * 2 + 1 && !atEnd) {
         equalRows.push(createRow(
-            i18nString(UIStrings.SkippingDMatchingLines, {PH1: (lines.length - paddingLines * 2)}), RowType.Spacer));
+            i18nString(UIStrings.SkippingDMatchingLines, {PH1: (lines.length - paddingLines * 2)}), RowType.SPACER));
       }
     }
     if (!atEnd) {
@@ -118,7 +126,7 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
       }
 
       for (let i = start; i < lines.length; i++) {
-        equalRows.push(createRow(lines[i], RowType.Equal));
+        equalRows.push(createRow(lines[i], RowType.EQUAL));
       }
     }
     return equalRows;
@@ -126,8 +134,8 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
 
   function createModifyRows(before: string, after: string): Row[] {
     const internalDiff = Diff.Diff.DiffWrapper.charDiff(before, after, true /* cleanup diff */);
-    const deletionRows = [createRow('', RowType.Deletion)];
-    const insertionRows = [createRow('', RowType.Addition)];
+    const deletionRows = [createRow('', RowType.DELETION)];
+    const insertionRows = [createRow('', RowType.ADDITION)];
 
     for (const token of internalDiff) {
       const text = token[1];
@@ -136,10 +144,10 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
       const lines = text.split('\n');
       for (let i = 0; i < lines.length; i++) {
         if (i > 0 && type !== Diff.Diff.Operation.Insert) {
-          deletionRows.push(createRow('', RowType.Deletion));
+          deletionRows.push(createRow('', RowType.DELETION));
         }
         if (i > 0 && type !== Diff.Diff.Operation.Delete) {
-          insertionRows.push(createRow('', RowType.Addition));
+          insertionRows.push(createRow('', RowType.ADDITION));
         }
         if (!lines[i]) {
           continue;
@@ -156,13 +164,13 @@ export function buildDiffRows(diff: Diff.Diff.DiffArray): {
   }
 
   function createRow(text: string, type: RowType): Row {
-    if (type === RowType.Addition) {
+    if (type === RowType.ADDITION) {
       currentLineNumber++;
     }
-    if (type === RowType.Deletion) {
+    if (type === RowType.DELETION) {
       originalLineNumber++;
     }
-    if (type === RowType.Equal) {
+    if (type === RowType.EQUAL) {
       originalLineNumber++;
       currentLineNumber++;
     }
@@ -189,52 +197,54 @@ class DiffRenderer {
   ) {
   }
 
-  #render(rows: readonly Row[]): LitHtml.TemplateResult {
-    return LitHtml.html`
+  #render(rows: readonly Row[]): Lit.TemplateResult {
+    return html`
+      <style>${diffViewStyles}</style>
+      <style>${CodeHighlighter.codeHighlighterStyles}</style>
       <div class="diff-listing" aria-label=${i18nString(UIStrings.changesDiffViewer)}>
         ${rows.map(row => this.#renderRow(row))}
       </div>`;
   }
 
-  #renderRow(row: Row): LitHtml.TemplateResult {
+  #renderRow(row: Row): Lit.TemplateResult {
     const baseNumber =
-        row.type === RowType.Equal || row.type === RowType.Deletion ? String(row.originalLineNumber) : '';
-    const curNumber = row.type === RowType.Equal || row.type === RowType.Addition ? String(row.currentLineNumber) : '';
+        row.type === RowType.EQUAL || row.type === RowType.DELETION ? String(row.originalLineNumber) : '';
+    const curNumber = row.type === RowType.EQUAL || row.type === RowType.ADDITION ? String(row.currentLineNumber) : '';
     let marker = '', markerClass = 'diff-line-marker', screenReaderText = null;
-    if (row.type === RowType.Addition) {
+    if (row.type === RowType.ADDITION) {
       marker = '+';
       markerClass += ' diff-line-addition';
-      screenReaderText = LitHtml.html`<span class="diff-hidden-text">${i18nString(UIStrings.additions)}</span>`;
-    } else if (row.type === RowType.Deletion) {
+      screenReaderText = html`<span class="diff-hidden-text">${i18nString(UIStrings.additions)}</span>`;
+    } else if (row.type === RowType.DELETION) {
       marker = '-';
       markerClass += ' diff-line-deletion';
-      screenReaderText = LitHtml.html`<span class="diff-hidden-text">${i18nString(UIStrings.deletions)}</span>`;
+      screenReaderText = html`<span class="diff-hidden-text">${i18nString(UIStrings.deletions)}</span>`;
     }
-    return LitHtml.html`
+    return html`
       <div class="diff-line-number" aria-hidden="true">${baseNumber}</div>
       <div class="diff-line-number" aria-hidden="true">${curNumber}</div>
       <div class=${markerClass} aria-hidden="true">${marker}</div>
-      <div class="diff-line-content diff-line-${row.type}" data-line-number=${curNumber}>${screenReaderText}${
+      <div class="diff-line-content diff-line-${row.type}" data-line-number=${curNumber} jslog=${
+        VisualLogging.link('changes.reveal-source').track({click: true})}>${screenReaderText}${
         this.#renderRowContent(row)}</div>`;
   }
 
-  #renderRowContent(row: Row): LitHtml.TemplateResult[] {
-    if (row.type === RowType.Spacer) {
-      return row.tokens.map(tok => LitHtml.html`${tok.text}`);
+  #renderRowContent(row: Row): Lit.TemplateResult[] {
+    if (row.type === RowType.SPACER) {
+      return row.tokens.map(tok => html`${tok.text}`);
     }
-    const [doc, startPos] = row.type === RowType.Deletion ?
+    const [doc, startPos] = row.type === RowType.DELETION ?
         [this.originalHighlighter, this.originalMap.get(row.originalLineNumber) as number] :
         [this.currentHighlighter, this.currentMap.get(row.currentLineNumber) as number];
-    const content: LitHtml.TemplateResult[] = [];
+    const content: Lit.TemplateResult[] = [];
     let pos = startPos;
     for (const token of row.tokens) {
-      const tokenContent: (LitHtml.TemplateResult|string)[] = [];
+      const tokenContent: Array<Lit.TemplateResult|string> = [];
       doc.highlightRange(pos, pos + token.text.length, (text, style) => {
-        tokenContent.push(style ? LitHtml.html`<span class=${style}>${text}</span>` : text);
+        tokenContent.push(style ? html`<span class=${style}>${text}</span>` : text);
       });
       content.push(
-          token.className ? LitHtml.html`<span class=${token.className}>${tokenContent}</span>` :
-                            LitHtml.html`${tokenContent}`);
+          token.className ? html`<span class=${token.className}>${tokenContent}</span>` : html`${tokenContent}`);
       pos += token.text.length;
     }
     return content;
@@ -249,7 +259,7 @@ class DiffRenderer {
         await CodeHighlighter.CodeHighlighter.create(currentLines.join('\n'), mimeType),
         documentMap(currentLines),
     );
-    LitHtml.render(renderer.#render(rows), parent, {host: this});
+    Lit.render(renderer.#render(rows), parent, {host: this});
   }
 }
 
@@ -259,30 +269,42 @@ declare global {
   }
 }
 
-export type DiffViewData = {
-  diff: Diff.Diff.DiffArray,
-  mimeType: string,
-};
+export interface DiffViewData {
+  diff: Diff.Diff.DiffArray;
+  mimeType: string;
+}
+
+function renderNoDiffState(container: HTMLElement|DocumentFragment): void {
+  // clang-format off
+  Lit.render(html`
+    <style>${diffViewStyles}</style>
+    <p class="diff-listing-no-diff" data-testid="no-diff">${i18nString(UIStrings.noDiff)}</p>`,
+  container, {host: container});
+  // clang-format on
+}
 
 export class DiffView extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-diff-view`;
-
   readonly #shadow = this.attachShadow({mode: 'open'});
   loaded: Promise<void>;
 
   constructor(data?: DiffViewData) {
     super();
-    this.#shadow.adoptedStyleSheets = [diffViewStyles, CodeHighlighter.Style.default];
-    if (data) {
-      this.loaded = DiffRenderer.render(data.diff, data.mimeType, this.#shadow);
-    } else {
-      this.loaded = Promise.resolve();
-    }
+
+    this.loaded = this.#render(data);
   }
 
   set data(data: DiffViewData) {
-    this.loaded = DiffRenderer.render(data.diff, data.mimeType, this.#shadow);
+    this.loaded = this.#render(data);
+  }
+
+  async #render(data?: DiffViewData): Promise<void> {
+    if (!data || data.diff.length === 0) {
+      renderNoDiffState(this.#shadow);
+      return;
+    }
+
+    await DiffRenderer.render(data.diff, data.mimeType, this.#shadow);
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-diff-view', DiffView);
+customElements.define('devtools-diff-view', DiffView);

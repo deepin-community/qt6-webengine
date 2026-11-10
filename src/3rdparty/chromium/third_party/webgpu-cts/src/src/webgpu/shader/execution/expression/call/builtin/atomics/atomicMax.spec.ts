@@ -9,7 +9,7 @@ Returns the original value stored in the atomic object.
 `;
 
 import { makeTestGroup } from '../../../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../../../gpu_test.js';
 
 import {
   dispatchSizes,
@@ -19,7 +19,7 @@ import {
   typedArrayCtor,
 } from './harness.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('max_storage')
   .specURL('https://www.w3.org/TR/WGSL/#atomic-rmw')
@@ -35,7 +35,7 @@ fn atomicMax(atomic_ptr: ptr<AS, atomic<T>, read_write>, v: T) -> T
     u
       .combine('workgroupSize', workgroupSizes)
       .combine('dispatchSize', dispatchSizes)
-      .combine('scalarType', ['u32', 'i32'])
+      .combine('scalarType', ['u32', 'i32'] as const)
   )
   .fn(t => {
     const numInvocations = t.params.workgroupSize * t.params.dispatchSize;
@@ -72,7 +72,7 @@ fn atomicMax(atomic_ptr: ptr<AS, atomic<T>, read_write>, v: T) -> T
     u
       .combine('workgroupSize', workgroupSizes)
       .combine('dispatchSize', dispatchSizes)
-      .combine('scalarType', ['u32', 'i32'])
+      .combine('scalarType', ['u32', 'i32'] as const)
   )
   .fn(t => {
     // Allocate one extra element to ensure it doesn't get modified

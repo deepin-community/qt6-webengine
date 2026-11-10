@@ -1,55 +1,37 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import './LinearMemoryValueInterpreter.js';
+import './LinearMemoryHighlightChipList.js';
+import './LinearMemoryViewer.js';
 
 import * as Common from '../../../core/common/common.js';
 import * as i18n from '../../../core/i18n/i18n.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import {html, nothing, render} from '../../../ui/lit/lit.js';
 
+import type {DeleteMemoryHighlightEvent, JumpToHighlightedMemoryEvent} from './LinearMemoryHighlightChipList.js';
 import linearMemoryInspectorStyles from './linearMemoryInspector.css.js';
-
-const {render, html} = LitHtml;
-
+import {formatAddress, parseAddress} from './LinearMemoryInspectorUtils.js';
 import {
-  Mode,
-  Navigation,
-  LinearMemoryNavigator,
   type AddressInputChangedEvent,
   type HistoryNavigationEvent,
-  type LinearMemoryNavigatorData,
+  Mode,
+  Navigation,
   type PageNavigationEvent,
 } from './LinearMemoryNavigator.js';
-
+import type {EndiannessChangedEvent, ValueTypeToggledEvent} from './LinearMemoryValueInterpreter.js';
+import type {ByteSelectedEvent, ResizeEvent} from './LinearMemoryViewer.js';
+import type {HighlightInfo} from './LinearMemoryViewerUtils.js';
+import type {JumpToPointerAddressEvent, ValueTypeModeChangedEvent} from './ValueInterpreterDisplay.js';
 import {
-  LinearMemoryValueInterpreter,
-  type EndiannessChangedEvent,
-  type LinearMemoryValueInterpreterData,
-  type ValueTypeToggledEvent,
-} from './LinearMemoryValueInterpreter.js';
-
-import {
-  VALUE_INTEPRETER_MAX_NUM_BYTES,
   Endianness,
   getDefaultValueTypeMapping,
+  VALUE_INTEPRETER_MAX_NUM_BYTES,
   type ValueType,
   type ValueTypeMode,
 } from './ValueInterpreterDisplayUtils.js';
-import {formatAddress, parseAddress} from './LinearMemoryInspectorUtils.js';
-import {type JumpToPointerAddressEvent, type ValueTypeModeChangedEvent} from './ValueInterpreterDisplay.js';
-import {
-  LinearMemoryViewer,
-  type ByteSelectedEvent,
-  type LinearMemoryViewerData,
-  type ResizeEvent,
-} from './LinearMemoryViewer.js';
-import {
-  LinearMemoryHighlightChipList,
-  type LinearMemoryHighlightChipListData,
-  type DeleteMemoryHighlightEvent,
-  type JumpToHighlightedMemoryEvent,
-} from './LinearMemoryHighlightChipList.js';
-import {type HighlightInfo} from './LinearMemoryViewerUtils.js';
 
 const UIStrings = {
   /**
@@ -58,7 +40,7 @@ const UIStrings = {
    *@example {0x00400000} PH2
    */
   addressHasToBeANumberBetweenSAnd: 'Address has to be a number between {PH1} and {PH2}',
-};
+} as const;
 const str_ =
     i18n.i18n.registerUIStrings('panels/linear_memory_inspector/components/LinearMemoryInspector.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -67,7 +49,7 @@ const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 // on the 1. memoryOffset (at which index this portion starts),
 // and on the 2. outerMemoryLength (length of the original Uint8Array).
 export interface LinearMemoryInspectorData {
-  memory: Uint8Array;
+  memory: Uint8Array<ArrayBuffer>;
   address: number;
   memoryOffset: number;
   outerMemoryLength: number;
@@ -75,13 +57,14 @@ export interface LinearMemoryInspectorData {
   valueTypeModes?: Map<ValueType, ValueTypeMode>;
   endianness?: Endianness;
   highlightInfo?: HighlightInfo;
+  hideValueInspector?: boolean;
 }
 
-export type Settings = {
-  valueTypes: Set<ValueType>,
-  modes: Map<ValueType, ValueTypeMode>,
-  endianness: Endianness,
-};
+export interface Settings {
+  valueTypes: Set<ValueType>;
+  modes: Map<ValueType, ValueTypeMode>;
+  endianness: Endianness;
+}
 
 export class MemoryRequestEvent extends Event {
   static readonly eventName = 'memoryrequest';
@@ -135,7 +118,6 @@ class AddressHistoryEntry implements Common.SimpleHistoryManager.HistoryEntry {
 }
 
 export class LinearMemoryInspector extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-linear-memory-inspector-inspector`;
   readonly #shadow = this.attachShadow({mode: 'open'});
   readonly #history = new Common.SimpleHistoryManager.SimpleHistoryManager(10);
 
@@ -146,18 +128,16 @@ export class LinearMemoryInspector extends HTMLElement {
   #address = -1;
   #highlightInfo?: HighlightInfo;
 
-  #currentNavigatorMode = Mode.Submitted;
+  #currentNavigatorMode = Mode.SUBMITTED;
   #currentNavigatorAddressLine = `${this.#address}`;
 
   #numBytesPerPage = 4;
 
   #valueTypeModes = getDefaultValueTypeMapping();
   #valueTypes = new Set(this.#valueTypeModes.keys());
-  #endianness = Endianness.Little;
+  #endianness = Endianness.LITTLE;
 
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [linearMemoryInspectorStyles];
-  }
+  #hideValueInspector = false;
 
   set data(data: LinearMemoryInspectorData) {
     if (data.address < data.memoryOffset || data.address > data.memoryOffset + data.memory.length || data.address < 0) {
@@ -184,6 +164,7 @@ export class LinearMemoryInspector extends HTMLElement {
     this.#valueTypes = data.valueTypes || this.#valueTypes;
     this.#endianness = data.endianness || this.#endianness;
     this.#highlightInfo = data.highlightInfo;
+    this.#hideValueInspector = data.hideValueInspector ?? this.#hideValueInspector;
     this.#setAddress(data.address);
     this.#render();
   }
@@ -191,7 +172,7 @@ export class LinearMemoryInspector extends HTMLElement {
   #render(): void {
     const {start, end} = this.#getPageRangeForAddress(this.#address, this.#numBytesPerPage);
 
-    const navigatorAddressToShow = this.#currentNavigatorMode === Mode.Submitted ? formatAddress(this.#address) :
+    const navigatorAddressToShow = this.#currentNavigatorMode === Mode.SUBMITTED ? formatAddress(this.#address) :
                                                                                    this.#currentNavigatorAddressLine;
     const navigatorAddressIsValid = this.#isValidAddress(navigatorAddressToShow);
 
@@ -209,44 +190,46 @@ export class LinearMemoryInspector extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
+      <style>${linearMemoryInspectorStyles}</style>
       <div class="view">
-        <${LinearMemoryNavigator.litTagName}
-          .data=${{address: navigatorAddressToShow, valid: navigatorAddressIsValid, mode: this.#currentNavigatorMode, error: errorMsg, canGoBackInHistory, canGoForwardInHistory} as LinearMemoryNavigatorData}
+        <devtools-linear-memory-inspector-navigator
+          .data=${{address: navigatorAddressToShow, valid: navigatorAddressIsValid, mode: this.#currentNavigatorMode, error: errorMsg, canGoBackInHistory, canGoForwardInHistory}}
           @refreshrequested=${this.#onRefreshRequest}
           @addressinputchanged=${this.#onAddressChange}
           @pagenavigation=${this.#navigatePage}
-          @historynavigation=${this.#navigateHistory}></${LinearMemoryNavigator.litTagName}>
-          <${LinearMemoryHighlightChipList.litTagName}
-          .data=${{highlightInfos: highlightedMemoryAreas, focusedMemoryHighlight: focusedMemoryHighlight } as LinearMemoryHighlightChipListData}
+          @historynavigation=${this.#navigateHistory}></devtools-linear-memory-inspector-navigator>
+          <devtools-linear-memory-highlight-chip-list
+          .data=${{highlightInfos: highlightedMemoryAreas, focusedMemoryHighlight }}
           @jumptohighlightedmemory=${this.#onJumpToAddress}>
-          </${LinearMemoryHighlightChipList.litTagName}>
-        <${LinearMemoryViewer.litTagName}
+          </devtools-linear-memory-highlight-chip-list>
+        <devtools-linear-memory-inspector-viewer
           .data=${{
             memory: this.#memory.slice(start - this.#memoryOffset,
             end - this.#memoryOffset),
             address: this.#address, memoryOffset: start,
-            focus: this.#currentNavigatorMode === Mode.Submitted,
+            focus: this.#currentNavigatorMode === Mode.SUBMITTED,
             highlightInfo: this.#highlightInfo,
-            focusedMemoryHighlight: focusedMemoryHighlight } as LinearMemoryViewerData}
+            focusedMemoryHighlight }}
           @byteselected=${this.#onByteSelected}
           @resize=${this.#resize}>
-        </${LinearMemoryViewer.litTagName}>
+        </devtools-linear-memory-inspector-viewer>
       </div>
+      ${this.#hideValueInspector ? nothing : html`
       <div class="value-interpreter">
-        <${LinearMemoryValueInterpreter.litTagName}
+        <devtools-linear-memory-inspector-interpreter
           .data=${{
             value: this.#memory.slice(this.#address - this.#memoryOffset, this.#address + VALUE_INTEPRETER_MAX_NUM_BYTES).buffer,
             valueTypes: this.#valueTypes,
             valueTypeModes: this.#valueTypeModes,
             endianness: this.#endianness,
-            memoryLength: this.#outerMemoryLength } as LinearMemoryValueInterpreterData}
+            memoryLength: this.#outerMemoryLength }}
           @valuetypetoggled=${this.#onValueTypeToggled}
           @valuetypemodechanged=${this.#onValueTypeModeChanged}
           @endiannesschanged=${this.#onEndiannessChanged}
           @jumptopointeraddress=${this.#onJumpToAddress}
           >
-        </${LinearMemoryValueInterpreter.litTagName}/>
-      </div>
+        </devtools-linear-memory-inspector-interpreter/>
+      </div>`}
       `, this.#shadow, {
       host: this,
     });
@@ -256,7 +239,7 @@ export class LinearMemoryInspector extends HTMLElement {
   #onJumpToAddress(e: JumpToPointerAddressEvent|JumpToHighlightedMemoryEvent): void {
     // Stop event from bubbling up, since no element further up needs the event.
     e.stopPropagation();
-    this.#currentNavigatorMode = Mode.Submitted;
+    this.#currentNavigatorMode = Mode.SUBMITTED;
     const addressInRange = Math.max(0, Math.min(e.data, this.#outerMemoryLength - 1));
     this.#jumpToAddress(addressInRange);
   }
@@ -267,7 +250,7 @@ export class LinearMemoryInspector extends HTMLElement {
   }
 
   #onByteSelected(e: ByteSelectedEvent): void {
-    this.#currentNavigatorMode = Mode.Submitted;
+    this.#currentNavigatorMode = Mode.SUBMITTED;
     const addressInRange = Math.max(0, Math.min(e.data, this.#outerMemoryLength - 1));
     this.#jumpToAddress(addressInRange);
   }
@@ -299,10 +282,10 @@ export class LinearMemoryInspector extends HTMLElement {
       return;
     }
 
-    if (mode === Mode.Submitted && !isValid) {
-      this.#currentNavigatorMode = Mode.InvalidSubmit;
+    if (mode === Mode.SUBMITTED && !isValid) {
+      this.#currentNavigatorMode = Mode.INVALID_SUBMIT;
     } else {
-      this.#currentNavigatorMode = Mode.Edit;
+      this.#currentNavigatorMode = Mode.EDIT;
     }
 
     this.#render();
@@ -328,12 +311,12 @@ export class LinearMemoryInspector extends HTMLElement {
   }
 
   #navigateHistory(e: HistoryNavigationEvent): boolean {
-    return e.data === Navigation.Forward ? this.#history.rollover() : this.#history.rollback();
+    return e.data === Navigation.FORWARD ? this.#history.rollover() : this.#history.rollback();
   }
 
   #navigatePage(e: PageNavigationEvent): void {
     const newAddress =
-        e.data === Navigation.Forward ? this.#address + this.#numBytesPerPage : this.#address - this.#numBytesPerPage;
+        e.data === Navigation.FORWARD ? this.#address + this.#numBytesPerPage : this.#address - this.#numBytesPerPage;
     const addressInRange = Math.max(0, Math.min(newAddress, this.#outerMemoryLength - 1));
     this.#jumpToAddress(addressInRange);
   }
@@ -403,7 +386,7 @@ export class LinearMemoryInspector extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-linear-memory-inspector-inspector', LinearMemoryInspector);
+customElements.define('devtools-linear-memory-inspector-inspector', LinearMemoryInspector);
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -411,9 +394,9 @@ declare global {
   }
 
   interface HTMLElementEventMap {
-    'memoryrequest': MemoryRequestEvent;
-    'addresschanged': AddressChangedEvent;
-    'settingschanged': SettingsChangedEvent;
-    'deletememoryhighlight': DeleteMemoryHighlightEvent;
+    memoryrequest: MemoryRequestEvent;
+    addresschanged: AddressChangedEvent;
+    settingschanged: SettingsChangedEvent;
+    deletememoryhighlight: DeleteMemoryHighlightEvent;
   }
 }

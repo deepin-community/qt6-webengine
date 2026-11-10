@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/ash/settings/pages/multidevice/multidevice_section.h"
 
+#include <string_view>
+
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "base/test/scoped_feature_list.h"
@@ -23,6 +25,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 namespace ash::settings {
 
@@ -36,28 +39,25 @@ class MockWebUIDataSource : public content::WebUIDataSource {
   // WebUIDataSource:
   MOCK_METHOD(void,
               AddBoolean,
-              (base::StringPiece name, bool value),
+              (std::string_view name, bool value),
               (override));
-  void AddString(base::StringPiece name, const std::u16string& value) override {
-  }
-  void AddString(base::StringPiece name, const std::string& value) override {}
-  void AddLocalizedString(base::StringPiece name, int ids) override {}
+  void AddString(std::string_view name, std::u16string_view value) override {}
+  void AddString(std::string_view name, std::string_view value) override {}
+  void AddLocalizedString(std::string_view name, int ids) override {}
   void AddLocalizedStrings(
       base::span<const webui::LocalizedString> strings) override {}
   void AddLocalizedStrings(
       const base::Value::Dict& localized_strings) override {}
-  void AddInteger(base::StringPiece name, int32_t value) override {}
-  void AddDouble(base::StringPiece name, double value) override {}
+  void AddInteger(std::string_view name, int32_t value) override {}
+  void AddDouble(std::string_view name, double value) override {}
   void UseStringsJs() override {}
-  void AddResourcePath(base::StringPiece path, int resource_id) override {}
+  void AddResourcePath(std::string_view path, int resource_id) override {}
   void AddResourcePaths(base::span<const webui::ResourcePath> paths) override {}
   void SetDefaultResource(int resource_id) override {}
   void SetRequestFilter(const WebUIDataSource::ShouldHandleRequestCallback&
                             should_handle_request_callback,
                         const WebUIDataSource::HandleRequestCallback&
                             handle_request_callback) override {}
-  void DisableReplaceExistingSource() override {}
-  void DisableContentSecurityPolicy() override {}
   void OverrideContentSecurityPolicy(network::mojom::CSPDirectiveName directive,
                                      const std::string& value) override {}
   void OverrideCrossOriginOpenerPolicy(const std::string& value) override {}
@@ -67,8 +67,9 @@ class MockWebUIDataSource : public content::WebUIDataSource {
   void DisableDenyXFrameOptions() override {}
   void EnableReplaceI18nInJS() override {}
   std::string GetSource() override { return ""; }
+  url::Origin GetOrigin() override { return url::Origin(); }
   void AddFrameAncestor(const GURL& frame_ancestor) override {}
-  void SetSupportedScheme(base::StringPiece scheme) override {}
+  void SetSupportedScheme(std::string_view scheme) override {}
 };
 
 class MultiDeviceSectionTest : public testing::Test {

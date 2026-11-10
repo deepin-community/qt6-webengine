@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -37,7 +38,7 @@ public:
     static void BindPrintManagerHost(mojo::PendingAssociatedReceiver<printing::mojom::PrintManagerHost> receiver,
                                      content::RenderFrameHost *rfh);
 
-    typedef base::OnceCallback<void(QSharedPointer<QByteArray> result)> PrintToPDFCallback;
+    typedef base::OnceCallback<void(std::shared_ptr<QByteArray> result)> PrintToPDFCallback;
     typedef base::OnceCallback<void(bool success)> PrintToPDFFileCallback;
 
     // Method to print a page to a Pdf document with page size \a pageSize in location \a filePath.
@@ -45,14 +46,13 @@ public:
                                     bool printInColor, const QString &filePath, quint64 frameId,
                                     PrintToPDFFileCallback callback);
     void PrintToPDFWithCallback(const QPageLayout &pageLayout, const QPageRanges &pageRanges,
-                                bool printInColor, bool useCustomMargins, quint64 frameId,
-                                PrintToPDFCallback callback);
+                                bool printInColor, quint64 frameId, PrintToPDFCallback callback);
 
 protected:
     explicit PrintViewManagerQt(content::WebContents*);
 
     bool PrintToPDFInternal(const QPageLayout &, const QPageRanges &, bool printInColor,
-                            bool useCustomMargins, quint64 frameId);
+                            quint64 frameId);
 
     // content::WebContentsObserver implementation.
     // Cancels the print job.
@@ -67,8 +67,7 @@ protected:
     void SetupScriptedPrintPreview(SetupScriptedPrintPreviewCallback callback) override;
     void ShowScriptedPrintPreview(bool source_is_modifiable) override;
     void RequestPrintPreview(printing::mojom::RequestPrintPreviewParamsPtr params) override;
-    void CheckForCancel(int32_t preview_ui_id,
-                        int32_t request_id,
+    void CheckForCancel(const base::UnguessableToken &, int32_t request_id,
                         CheckForCancelCallback callback) override;
     void MetafileReadyForPrinting(printing::mojom::DidPreviewDocumentParamsPtr params,
                                   int32_t preview_ui_id) override;
@@ -91,4 +90,3 @@ private:
 
 } // namespace QtWebEngineCore
 #endif // PRINT_VIEW_MANAGER_QT_H
-

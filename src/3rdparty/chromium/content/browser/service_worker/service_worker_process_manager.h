@@ -7,7 +7,6 @@
 
 #include <map>
 #include <memory>
-#include <optional>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -36,7 +35,7 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
  public:
   // The return value for AllocateWorkerProcess().
   struct AllocatedProcessInfo {
-    // Same as RenderProcessHost::GetID().
+    // Same as RenderProcessHost::GetDeprecatedID().
     int process_id;
 
     // This must be one of NEW_PROCESS, EXISTING_UNREADY_PROCESS or

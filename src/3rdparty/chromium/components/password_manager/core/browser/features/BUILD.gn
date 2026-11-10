@@ -7,14 +7,18 @@ source_set("password_features") {
     "password_features.cc",
     "password_features.h",
   ]
-  deps = [ "//base" ]
+
+  deps = [
+    "//base",
+    "//components/password_manager/core/browser:password_manager_buildflags",
+  ]
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
 source_set("utils") {
   sources = [
+    "password_manager_features_util.cc",
     "password_manager_features_util.h",
-    "password_manager_features_util_common.cc",
   ]
 
   deps = [
@@ -26,12 +30,6 @@ source_set("utils") {
   ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
-
-  if (!is_android && !is_ios) {
-    sources += [ "password_manager_features_util_desktop.cc" ]
-  } else {
-    sources += [ "password_manager_features_util_mobile.cc" ]
-  }
 }
 
 source_set("unit_tests") {

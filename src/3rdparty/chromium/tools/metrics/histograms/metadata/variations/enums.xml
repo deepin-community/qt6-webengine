@@ -34,11 +34,6 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Missing clean exit beacon key"/>
 </enum>
 
-<enum name="BooleanFutureSeed">
-  <int value="0" label="Seed fetched before Time::Now()"/>
-  <int value="1" label="Seed fetched after Time::Now()"/>
-</enum>
-
 <enum name="JsonDeserializationError">
   <summary>
     Captures errors codes that can be given by
@@ -136,6 +131,9 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Slots do not divide low entropy domain"/>
   <int value="5" label="Invalid slot bounds"/>
   <int value="6" label="Unknown fields"/>
+  <int value="7" label="Layer ID is not unique"/>
+  <int value="8" label="Limited layer dropped"/>
+  <int value="9" label="Duplicated layer member ID"/>
 </enum>
 
 <enum name="VariationsInvalidStudyReason">
@@ -156,6 +154,21 @@ chromium-metrics-reviews@google.com.
   <int value="12" label="Experiment has an invalid name"/>
   <int value="13" label="Feature has an invalid name"/>
   <int value="14" label="Forcing flag has an invalid name"/>
+</enum>
+
+<enum name="VariationsLimitedEntropySeedRejectionReason">
+  <int value="0" label="Exceeds entropy limit"/>
+  <int value="1" label="More than one active limited layer"/>
+  <int value="2" label="Layer has invalid slot bounds"/>
+  <int value="3" label="Layer does not contain slots"/>
+  <int value="4" label="Invalid Layer ID"/>
+  <int value="5" label="Multiple layers with the same ID"/>
+  <int value="6" label="Invalid layer ID reference"/>
+  <int value="7" label="Dangling layer reference"/>
+  <int value="8" label="Dangling layer member reference"/>
+  <int value="9" label="Empty layer reference"/>
+  <int value="10"
+      label="Incomplete layer validation (errors found post validation)"/>
 </enum>
 
 <enum name="VariationsLogInvalidValue">
@@ -236,6 +249,7 @@ chromium-metrics-reviews@google.com.
   <int value="7" label="Seed Load Timed Out"/>
   <int value="8" label="Seed Load Interrupted"/>
   <int value="9" label="Seed Load Other Failure"/>
+  <int value="10" label="Seed Exceeds Uncompressed Size Limit"/>
 </enum>
 
 <enum name="VariationsSeedStoreResult">
@@ -277,6 +291,17 @@ chromium-metrics-reviews@google.com.
   <int value="11" label="Unloadable safe seed">No seed used</int>
   <int value="12" label="Null seed used">No seed used</int>
 </enum>
+
+<!-- LINT.IfChange(VariationsStateEncryptionStatus) -->
+
+<enum name="VariationsStateEncryptionStatus">
+  <int value="0" label="Success"/>
+  <int value="1" label="Input empty"/>
+  <int value="2" label="Hpke setup failure"/>
+  <int value="3" label="Hpke seal failure"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/variations/net/variations_command_line.h:VariationsStateEncryptionStatus) -->
 
 </enums>
 

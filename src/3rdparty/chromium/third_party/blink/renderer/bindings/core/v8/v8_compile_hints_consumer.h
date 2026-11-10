@@ -6,19 +6,25 @@
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_V8_COMPILE_HINTS_CONSUMER_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_common.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/bloom_filter.h"
-#include "third_party/blink/renderer/platform/wtf/ref_counted.h"
+#include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 
 namespace blink::v8_compile_hints {
 
-class V8CrowdsourcedCompileHintsConsumer
+class CORE_EXPORT V8CrowdsourcedCompileHintsConsumer
     : public GarbageCollected<V8CrowdsourcedCompileHintsConsumer> {
  public:
   V8CrowdsourcedCompileHintsConsumer() = default;
 
+  V8CrowdsourcedCompileHintsConsumer(
+      const V8CrowdsourcedCompileHintsConsumer&) = delete;
+  V8CrowdsourcedCompileHintsConsumer& operator=(
+      const V8CrowdsourcedCompileHintsConsumer&) = delete;
+
   // Set the compile hints data based on raw memory containing int64_t:s.
-  void SetData(const int64_t* memory, size_t int64_count);
+  void SetData(base::span<const int64_t> memory);
 
   static bool CompileHintCallback(int position,
                                   void* raw_data_and_script_name_hash);
@@ -28,7 +34,7 @@ class V8CrowdsourcedCompileHintsConsumer
   // `DataAndScriptNameHash` is such an object. The actual data (the Bloom
   // filter) is in a `Data` object shared by multiple `DataAndScriptNameHash`
   // objects.
-  class Data : public WTF::RefCounted<Data> {
+  class Data : public ThreadSafeRefCounted<Data> {
    public:
     Data() = default;
 
@@ -37,7 +43,7 @@ class V8CrowdsourcedCompileHintsConsumer
 
    private:
     friend class V8CrowdsourcedCompileHintsConsumer;
-    WTF::BloomFilter<kBloomFilterKeySize> bloom_;
+    BloomFilter<kBloomFilterKeySize> bloom_;
   };
 
   class DataAndScriptNameHash {

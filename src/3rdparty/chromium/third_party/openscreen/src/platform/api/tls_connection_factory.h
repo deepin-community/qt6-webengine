@@ -27,15 +27,15 @@ class TlsConnectionFactory {
   // Client callbacks are ran on the provided TaskRunner.
   class Client {
    public:
-    // Provides a new |connection| that resulted from listening on the local
-    // socket. |der_x509_peer_cert| is the DER-encoded X509 certificate from the
+    // Provides a new `connection` that resulted from listening on the local
+    // socket. `der_x509_peer_cert` is the DER-encoded X509 certificate from the
     // peer if present, or empty if the peer didn't provide one.
     virtual void OnAccepted(TlsConnectionFactory* factory,
                             std::vector<uint8_t> der_x509_peer_cert,
                             std::unique_ptr<TlsConnection> connection) = 0;
 
-    // Provides a new |connection| that resulted from connecting to a remote
-    // endpoint. |der_x509_peer_cert| is the DER-encoded X509 certificate from
+    // Provides a new `connection` that resulted from connecting to a remote
+    // endpoint. `der_x509_peer_cert` is the DER-encoded X509 certificate from
     // the peer.
     virtual void OnConnected(TlsConnectionFactory* factory,
                              std::vector<uint8_t> der_x509_peer_cert,
@@ -45,7 +45,7 @@ class TlsConnectionFactory {
                                     const IPEndpoint& remote_address) = 0;
 
     // Called when a non-recoverable error occurs.
-    virtual void OnError(TlsConnectionFactory* factory, Error error) = 0;
+    virtual void OnError(TlsConnectionFactory* factory, const Error& error) = 0;
 
    protected:
     virtual ~Client();
@@ -55,7 +55,7 @@ class TlsConnectionFactory {
   // asynchronously, as well as a task runner it can use to for running
   // callbacks both on the factory and on created TlsConnection instances.
   static std::unique_ptr<TlsConnectionFactory> CreateFactory(
-      Client* client,
+      Client& client,
       TaskRunner& task_runner);
 
   virtual ~TlsConnectionFactory();

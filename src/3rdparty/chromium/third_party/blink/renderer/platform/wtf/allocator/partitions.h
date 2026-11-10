@@ -31,17 +31,17 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_ALLOCATOR_PARTITIONS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_ALLOCATOR_PARTITIONS_H_
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_forward.h"
 #include "base/check.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/checked_math.h"
+#include "partition_alloc/partition_alloc_forward.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
 namespace base {
 class SequencedTaskRunner;
 }
 
-namespace WTF {
+namespace blink {
 
 class WTF_EXPORT Partitions {
  public:
@@ -86,21 +86,24 @@ class WTF_EXPORT Partitions {
   static void DumpMemoryStats(bool is_light_dump,
                               partition_alloc::PartitionStatsDumper*);
 
-  static void* PA_MALLOC_FN BufferMalloc(size_t n, const char* type_name)
-      PA_MALLOC_ALIGNED;
-  static void* BufferTryRealloc(void* p,
-                                size_t n,
-                                const char* type_name) PA_MALLOC_ALIGNED;
+  static void* PA_MALLOC_FN BufferMalloc(size_t n, const char* type_name);
+  static void* BufferTryRealloc(void* p, size_t n, const char* type_name);
+  static void* PA_MALLOC_FN BufferTryAlignedZeroedMalloc(size_t n,
+                                                         size_t alignment,
+                                                         const char* type_name);
   static void BufferFree(void* p);
+  static void BufferAlignedFree(void* p);
   static size_t BufferPotentialCapacity(size_t n);
 
-  static void* PA_MALLOC_FN FastMalloc(size_t n,
-                                       const char* type_name) PA_MALLOC_ALIGNED;
-  static void* PA_MALLOC_FN FastZeroedMalloc(size_t n, const char* type_name)
-      PA_MALLOC_ALIGNED;
+  static void* PA_MALLOC_FN FastMalloc(size_t n, const char* type_name);
+  static void* PA_MALLOC_FN FastZeroedMalloc(size_t n, const char* type_name);
   static void FastFree(void* p);
 
   static void HandleOutOfMemory(size_t size);
+
+  // Adjusts the size of the partitions based on process state.
+  static void AdjustPartitionsForForeground();
+  static void AdjustPartitionsForBackground();
 
  private:
   ALWAYS_INLINE static partition_alloc::PartitionRoot* FastMallocPartition() {
@@ -111,13 +114,12 @@ class WTF_EXPORT Partitions {
   static bool InitializeOnce();
 
   static bool initialized_;
-  static bool scan_is_enabled_;
   // See Allocator.md for a description of these partitions.
   static partition_alloc::PartitionRoot* fast_malloc_root_;
   static partition_alloc::PartitionRoot* array_buffer_root_;
   static partition_alloc::PartitionRoot* buffer_root_;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_ALLOCATOR_PARTITIONS_H_

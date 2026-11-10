@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vmul/neon.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,15 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_qs8_vmul_minmax_fp32_ukernel__neonv8_ld64_u8(
@@ -20,7 +24,7 @@ void xnn_qs8_vmul_minmax_fp32_ukernel__neonv8_ld64_u8(
     const int8_t* input_a,
     const int8_t* input_b,
     int8_t* output,
-    const union xnn_qs8_mul_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_mul_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
@@ -28,12 +32,12 @@ void xnn_qs8_vmul_minmax_fp32_ukernel__neonv8_ld64_u8(
   assert(input_b != NULL);
   assert(output != NULL);
 
-  const int8x8_t va_zero_point = vld1_dup_s8(params->fp32_neonv8.a_zero_point);
-  const int8x8_t vb_zero_point = vld1_dup_s8(params->fp32_neonv8.b_zero_point);
-  const float32x4_t vscale = vld1q_dup_f32(&params->fp32_neonv8.scale);
-  const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->fp32_neonv8.output_zero_point);
-  const int8x8_t voutput_min = vld1_dup_s8(&params->fp32_neonv8.output_min);
-  const int8x8_t voutput_max = vld1_dup_s8(&params->fp32_neonv8.output_max);
+  const int8x8_t va_zero_point = vdup_n_s8(params->scalar.a_zero_point);
+  const int8x8_t vb_zero_point = vdup_n_s8(params->scalar.b_zero_point);
+  const float32x4_t vscale = vdupq_n_f32(params->scalar.scale);
+  const int16x8_t voutput_zero_point = vdupq_n_s16(params->scalar.output_zero_point);
+  const int8x8_t voutput_min = vdup_n_s8(params->scalar.output_min);
+  const int8x8_t voutput_max = vdup_n_s8(params->scalar.output_max);
 
   for (; batch >= 8 * sizeof(int8_t); batch -= 8 * sizeof(int8_t)) {
     const int8x8_t va01234567 = vld1_s8(input_a); input_a += 8;

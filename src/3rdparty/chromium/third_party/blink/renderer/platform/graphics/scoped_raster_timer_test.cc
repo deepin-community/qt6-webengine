@@ -11,8 +11,10 @@
 #include "components/viz/test/test_raster_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
+#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/test/gpu_memory_buffer_test_platform.h"
 #include "third_party/blink/renderer/platform/graphics/test/gpu_test_utils.h"
 #include "third_party/blink/renderer/platform/graphics/web_graphics_context_3d_provider_wrapper.h"
@@ -69,7 +71,7 @@ class ScopedRasterTimerTest : public Test {
     context_provider_wrapper_ = SharedGpuContext::ContextProviderWrapper();
   }
 
-  void TearDown() override { SharedGpuContext::ResetForTesting(); }
+  void TearDown() override { SharedGpuContext::Reset(); }
 
  protected:
   test::TaskEnvironment task_environment_;
@@ -81,14 +83,13 @@ class ScopedRasterTimerTest : public Test {
 
 TEST_F(ScopedRasterTimerTest, UnacceleratedRasterDuration) {
   base::ScopedMockElapsedTimersForTest mock_timer;
-  const SkImageInfo kInfo = SkImageInfo::MakeN32Premul(10, 10);
 
-  const uint32_t shared_image_usage_flags =
+  const gpu::SharedImageUsageSet shared_image_usage_flags =
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
-
   std::unique_ptr<CanvasResourceProvider> provider =
       CanvasResourceProvider::CreateSharedImageProvider(
-          kInfo, cc::PaintFlags::FilterQuality::kMedium,
+          gfx::Size(10, 10), GetN32FormatForCanvas(), kPremul_SkAlphaType,
+          gfx::ColorSpace::CreateSRGB(),
           CanvasResourceProvider::ShouldInitialize::kCallClear,
           context_provider_wrapper_, RasterMode::kCPU,
           shared_image_usage_flags);
@@ -100,7 +101,7 @@ TEST_F(ScopedRasterTimerTest, UnacceleratedRasterDuration) {
   base::HistogramTester histograms;
 
   // Trigger a flush, which will capture a raster duration measurement.
-  provider->Canvas()->clear(SkColors::kBlue);
+  provider->Canvas().clear(SkColors::kBlue);
   provider->ProduceCanvasResource(FlushReason::kTesting);
   provider = nullptr;
 
@@ -114,25 +115,24 @@ TEST_F(ScopedRasterTimerTest, UnacceleratedRasterDuration) {
   histograms.ExpectTotalCount(
       ScopedRasterTimer::kRasterDurationAcceleratedTotalHistogram, 0);
 
-  SharedGpuContext::ResetForTesting();
+  SharedGpuContext::Reset();
 }
 
 TEST_F(ScopedRasterTimerTest, AcceleratedRasterDuration) {
   base::ScopedMockElapsedTimersForTest mock_timer;
-  const SkImageInfo kInfo = SkImageInfo::MakeN32Premul(10, 10);
 
   auto provider = CanvasResourceProvider::CreateSharedImageProvider(
-      kInfo, cc::PaintFlags::FilterQuality::kMedium,
+      gfx::Size(10, 10), GetN32FormatForCanvas(), kPremul_SkAlphaType,
+      gfx::ColorSpace::CreateSRGB(),
       CanvasResourceProvider::ShouldInitialize::kCallClear,
-      context_provider_wrapper_, RasterMode::kGPU,
-      /*shared_image_usage_flags=*/0u);
+      context_provider_wrapper_, RasterMode::kGPU, gpu::SharedImageUsageSet());
 
   ASSERT_TRUE(!!provider);
 
   provider->AlwaysEnableRasterTimersForTesting(true);
 
   // Trigger a flush, which will capture a raster duration measurement.
-  provider->Canvas()->clear(SkColors::kBlue);
+  provider->Canvas().clear(SkColors::kBlue);
   provider->ProduceCanvasResource(FlushReason::kTesting);
 
   base::HistogramTester histograms;

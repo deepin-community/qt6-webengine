@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include <stdint.h>
+
 #include "base/time/time.h"
 #include "build/build_config.h"
 
@@ -14,13 +16,8 @@
 #include <windows.h>
 #endif
 
-#if defined(USE_SYSTEM_MINIZIP)
-#include <minizip/unzip.h>
-#include <minizip/zip.h>
-#else
 #include "third_party/zlib/contrib/minizip/unzip.h"
 #include "third_party/zlib/contrib/minizip/zip.h"
-#endif
 
 namespace base {
 class FilePath;
@@ -79,8 +76,10 @@ bool ZipOpenNewFileInZip(zipFile zip_file,
 // PNG...) then the compression method is simply kStored.
 Compression GetCompressionMethod(const base::FilePath& path);
 
-const int kZipMaxPath = 256;
-const int kZipBufSize = 8192;
+// ZIP file names are up to 2^16 - 1, buffers should be 1 larger (for \0).
+inline constexpr int kZipMaxPath = UINT16_MAX + 1;
+
+inline constexpr int kZipBufSize = 8192;
 
 }  // namespace internal
 }  // namespace zip

@@ -34,8 +34,23 @@ enum class AutofillErrorDialogType {
   // Error shown when the server returns a temporary error for unmasking a
   // server IBAN.
   kMaskedServerIbanUnmaskingTemporaryError = 6,
+  // Error shown when the server returns result for credit card upload as
+  // unsuccessful.
+  kCreditCardUploadError = 7,
+  // Error shown when the server cannot enroll the virtual card.
+  kVirtualCardEnrollmentTemporaryError = 8,
+  // Error shown when the server returns a temporary error for unmasking a
+  // runtime retrieval enrolled card.
+  kCardInfoRetrievalTemporaryError = 9,
+  // Error shown when the server returns a permanent error for unmasking a
+  // runtime retrieval enrolled card.
+  kCardInfoRetrievalPermanentError = 10,
+  // Error shown when the server returns a temporary error for a BNPL flow.
+  kBnplTemporaryError = 11,
+  // Error shown when the server returns a permanent error for a BNPL flow.
+  kBnplPermanentError = 12,
   // kMaxValue is required for logging histograms.
-  kMaxValue = kMaskedServerIbanUnmaskingTemporaryError,
+  kMaxValue = kBnplPermanentError,
 };
 
 // The context for the autofill error dialog.
@@ -46,10 +61,26 @@ struct AutofillErrorDialogContext {
   static AutofillErrorDialogContext WithVirtualCardPermanentOrTemporaryError(
       bool is_permanent_error);
 
+  // Returns an AutofillErrorDialogContext that is type
+  // kCardInfoRetrievalPermanentError if `is_permanent_error` is true, and type
+  // kCardInfoRetrievalTemporaryError if `is_permanent_error` is false.
+  static AutofillErrorDialogContext
+  WithCardInfoRetrievalPermanentOrTemporaryError(bool is_permanent_error);
+
+  // Returns an AutofillErrorDialogContext that is type
+  // kBnplPermanentError if `is_permanent_error` is true, and type
+  // kBnplTemporaryError if `is_permanent_error` is false.
+  static AutofillErrorDialogContext WithBnplPermanentOrTemporaryError(
+      bool is_permanent_error);
+
   AutofillErrorDialogContext();
   AutofillErrorDialogContext(const AutofillErrorDialogContext& other);
+  AutofillErrorDialogContext(AutofillErrorDialogContext&& other);
   AutofillErrorDialogContext& operator=(const AutofillErrorDialogContext&);
+  AutofillErrorDialogContext& operator=(AutofillErrorDialogContext&&);
   ~AutofillErrorDialogContext();
+
+  bool operator==(const AutofillErrorDialogContext& other_context) const;
 
   // The type of autofill error dialog that will be displayed.
   AutofillErrorDialogType type = AutofillErrorDialogType::kTypeUnknown;

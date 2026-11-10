@@ -10,8 +10,10 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
+#include "base/strings/string_util.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
@@ -91,8 +93,6 @@ MediaDeviceType ConvertToMediaDeviceType(MediaStreamType stream_type) {
     default:
       NOTREACHED();
   }
-
-  return MediaDeviceType::kNumMediaDeviceTypes;
 }
 
 }  // namespace
@@ -150,9 +150,7 @@ void GetMediaDeviceSaltAndOrigin(GlobalRenderFrameHostId render_frame_host_id,
   bool has_focus = frame_host->GetView() && frame_host->GetView()->HasFocus();
   std::optional<ukm::SourceId> source_id = frame_host->GetPageUkmSourceId();
   WebContents* web_contents = WebContents::FromRenderFrameHost(frame_host);
-  bool is_background =
-      web_contents && web_contents->GetDelegate() &&
-      web_contents->GetDelegate()->IsNeverComposited(web_contents);
+  bool is_background = web_contents && web_contents->IsNeverComposited();
   std::string frame_salt = frame_host->GetMediaDeviceIDSaltBase();
 
   GetContentClient()->browser()->GetMediaDeviceIDSalt(
@@ -258,7 +256,7 @@ std::string GetHMACForRawMediaDeviceID(
                                           : salt_and_origin.device_id_salt()),
           &digest[0], digest.size());
   DCHECK(result);
-  return base::ToLowerASCII(base::HexEncode(&digest[0], digest.size()));
+  return base::ToLowerASCII(base::HexEncode(digest));
 }
 
 bool DoesRawMediaDeviceIDMatchHMAC(

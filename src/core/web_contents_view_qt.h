@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef WEB_CONTENTS_VIEW_QT_H
 #define WEB_CONTENTS_VIEW_QT_H
@@ -17,6 +18,7 @@ class MimeHandlerViewGuestDelegateQt;
 
 namespace content {
 class WebContents;
+class RenderFrameHost;
 }
 
 namespace QtWebEngineCore {
@@ -52,9 +54,9 @@ public:
 
     gfx::NativeView GetNativeView() const override;
 
-    gfx::NativeView GetContentNativeView() const override { return nullptr; }
+    gfx::NativeView GetContentNativeView() const override { return {}; }
 
-    gfx::NativeWindow GetTopLevelNativeWindow() const override { return nullptr; }
+    gfx::NativeWindow GetTopLevelNativeWindow() const override { return {}; }
 
     gfx::Rect GetContainerBounds() const override;
 
@@ -73,30 +75,26 @@ public:
     void FocusThroughTabTraversal(bool reverse) override;
     void OnCapturerCountChanged() override { QT_NOT_YET_IMPLEMENTED }
     void FullscreenStateChanged(bool) override { }
-    void UpdateWindowControlsOverlay(const gfx::Rect &) override { QT_NOT_YET_IMPLEMENTED }
 
+    content::BackForwardTransitionAnimationManager *GetBackForwardTransitionAnimationManager() override { return nullptr; }
 #if BUILDFLAG(IS_MAC)
     bool CloseTabAfterEventTrackingIfNeeded() override { QT_NOT_YET_IMPLEMENTED return false; }
 #endif
 
     // content::RenderViewHostDelegateView overrides:
-    void StartDragging(const content::DropData& drop_data,
-                       const url::Origin& source_origin,
-                       blink::DragOperationsMask allowed_ops,
-                       const gfx::ImageSkia& image, const gfx::Vector2d& image_offset,
-                       const gfx::Rect& drag_obj_rect,
-                       const blink::mojom::DragEventSourceInfo &event_info,
-                       content::RenderWidgetHostImpl *source_rwh) override;
+    void StartDragging(content::RenderFrameHost &source_rfh, const content::DropData &drop_data,
+                       blink::DragOperationsMask allowed_ops, const gfx::ImageSkia &image,
+                       const gfx::Vector2d &cursor_offset, const gfx::Rect &drag_obj_rect,
+                       const blink::mojom::DragEventSourceInfo &event_info) override;
 
     void UpdateDragOperation(ui::mojom::DragOperation dragOperation, bool document_is_handling_drag) override;
-
-    void TransferDragSecurityInfo(content::WebContentsView *) override {}
 
     void ShowContextMenu(content::RenderFrameHost &, const content::ContextMenuParams &params) override;
 
     void GotFocus(content::RenderWidgetHostImpl *render_widget_host) override;
     void LostFocus(content::RenderWidgetHostImpl *render_widget_host) override;
     void TakeFocus(bool reverse) override;
+    void DestroyBackForwardTransitionAnimationManager() override {}
 
 private:
     static void update(QWebEngineContextMenuRequest *request,

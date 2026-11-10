@@ -8,8 +8,6 @@
 #include <string>
 #include <utility>
 
-#include "absl/strings/str_join.h"
-#include "absl/strings/str_split.h"
 #include "discovery/common/testing/mock_reporting_client.h"
 #include "discovery/dnssd/impl/conversion_layer.h"
 #include "discovery/dnssd/testing/fake_network_interface_config.h"
@@ -90,12 +88,12 @@ using testing::StrictMock;
 class QuerierImplTesting : public QuerierImpl {
  public:
   QuerierImplTesting()
-      : QuerierImpl(&mock_service_,
+      : QuerierImpl(mock_service_,
                     task_runner_,
-                    &reporting_client_,
-                    &network_config_),
+                    reporting_client_,
+                    FakeNetworkInterfaceConfig()),
         clock_(Clock::now()),
-        task_runner_(&clock_) {}
+        task_runner_(clock_) {}
 
   StrictMock<MockMdnsService>& service() { return mock_service_; }
 
@@ -124,7 +122,6 @@ class QuerierImplTesting : public QuerierImpl {
  private:
   FakeClock clock_;
   FakeTaskRunner task_runner_;
-  FakeNetworkInterfaceConfig network_config_;
   StrictMock<MockMdnsService> mock_service_;
   StrictMock<MockReportingClient> reporting_client_;
 

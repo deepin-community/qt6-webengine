@@ -6,8 +6,6 @@
 
 #include <utility>
 
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
 #include "cast/streaming/message_fields.h"
 #include "platform/base/error.h"
 #include "util/json/json_helpers.h"
@@ -19,14 +17,14 @@ namespace {
 
 /// Dimension properties.
 // Width in pixels.
-static constexpr char kWidth[] = "width";
+constexpr char kWidth[] = "width";
 
 // Height in pixels.
-static constexpr char kHeight[] = "height";
+constexpr char kHeight[] = "height";
 
 // Frame rate as a rational decimal number or fraction.
 // E.g. 30 and "3000/1001" are both valid representations.
-static constexpr char kFrameRate[] = "frameRate";
+constexpr char kFrameRate[] = "frameRate";
 
 // Choice of epsilon for double comparison allows for proper comparison
 // for both aspect ratios and frame rates. For frame rates, it is based on the
@@ -53,7 +51,7 @@ bool Resolution::IsValid() const {
 }
 
 Json::Value Resolution::ToJson() const {
-  OSP_DCHECK(IsValid());
+  OSP_CHECK(IsValid());
   Json::Value root;
   root[kWidth] = width;
   root[kHeight] = height;
@@ -88,7 +86,7 @@ bool Dimensions::IsValid() const {
 }
 
 Json::Value Dimensions::ToJson() const {
-  OSP_DCHECK(IsValid());
+  OSP_CHECK(IsValid());
   Json::Value root;
   root[kWidth] = width;
   root[kHeight] = height;

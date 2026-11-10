@@ -14,8 +14,10 @@ export type TestParams = {
 
 type DestroyableObject =
   | { destroy(): void }
+  | { destroyAsync(): Promise<void> }
   | { close(): void }
-  | { getExtension(extensionName: 'WEBGL_lose_context'): WEBGL_lose_context };
+  | { getExtension(extensionName: 'WEBGL_lose_context'): WEBGL_lose_context }
+  | HTMLVideoElement;
 
 export class SubcaseBatchState {
   constructor(
@@ -39,6 +41,18 @@ export class SubcaseBatchState {
    * @internal MAINTENANCE_TODO: Make this not visible to test code?
    */
   async finalize() {}
+
+  /** Throws an exception marking the subcase as skipped. */
+  skip(msg: string): never {
+    throw new SkipTestCase(msg);
+  }
+
+  /** Throws an exception making the subcase as skipped if condition is true */
+  skipIf(cond: boolean, msg: string | (() => string) = '') {
+    if (cond) {
+      this.skip(typeof msg === 'function' ? msg() : msg);
+    }
+  }
 }
 
 /**
@@ -124,8 +138,14 @@ export class Fixture<S extends SubcaseBatchState = SubcaseBatchState> {
         if (WEBGL_lose_context) WEBGL_lose_context.loseContext();
       } else if ('destroy' in o) {
         o.destroy();
-      } else {
+      } else if ('destroyAsync' in o) {
+        await o.destroyAsync();
+      } else if ('close' in o) {
         o.close();
+      } else {
+        // HTMLVideoElement
+        o.src = '';
+        o.srcObject = null;
       }
     }
   }
@@ -133,11 +153,29 @@ export class Fixture<S extends SubcaseBatchState = SubcaseBatchState> {
   /**
    * Tracks an object to be cleaned up after the test finishes.
    *
-   * MAINTENANCE_TODO: Use this in more places. (Will be easier once .destroy() is allowed on
-   * invalid objects.)
+   * Usually when creating buffers/textures/query sets, you can use the helpers in GPUTest instead.
    */
-  trackForCleanup<T extends DestroyableObject>(o: T): T {
-    this.objectsToCleanUp.push(o);
+  trackForCleanup<T extends DestroyableObject | Promise<DestroyableObject>>(o: T): T {
+    if (o instanceof Promise) {
+      this.eventualAsyncExpectation(() =>
+        o.then(
+          o => this.trackForCleanup(o),
+          () => {}
+        )
+      );
+      return o;
+    }
+
+    if (o instanceof GPUDevice) {
+      this.objectsToCleanUp.push({
+        async destroyAsync() {
+          o.destroy();
+          await o.lost;
+        },
+      });
+    } else {
+      this.objectsToCleanUp.push(o);
+    }
     return o;
   }
 
@@ -156,9 +194,27 @@ export class Fixture<S extends SubcaseBatchState = SubcaseBatchState> {
     return o;
   }
 
+  /** Call requestDevice() and track the device for cleanup. */
+  requestDeviceTracked(adapter: GPUAdapter, desc: GPUDeviceDescriptor | undefined = undefined) {
+    // eslint-disable-next-line no-restricted-syntax
+    return this.trackForCleanup(adapter.requestDevice(desc));
+  }
+
   /** Log a debug message. */
-  debug(msg: string): void {
+  debug(msg: string | (() => string)): void {
+    if (!this.rec.debugging) return;
+    if (typeof msg === 'function') {
+      msg = msg();
+    }
     this.rec.debug(new Error(msg));
+  }
+
+  /**
+   * Log an info message.
+   * **Use sparingly. Use `debug()` instead if logs are only needed with debug logging enabled.**
+   */
+  info(msg: string): void {
+    this.rec.info(new Error(msg));
   }
 
   /** Throws an exception marking the subcase as skipped. */
@@ -198,7 +254,7 @@ export class Fixture<S extends SubcaseBatchState = SubcaseBatchState> {
    * Wraps an async function, passing it an `Error` object recording the original stack trace.
    * The async work will be implicitly waited upon before reporting a test status.
    */
-  protected eventualAsyncExpectation<T>(fn: (niceStack: Error) => Promise<T>): void {
+  eventualAsyncExpectation<T>(fn: (niceStack: Error) => Promise<T>): void {
     const promise = fn(new Error());
     this.eventualExpectations.push(promise);
   }
@@ -294,8 +350,22 @@ export class Fixture<S extends SubcaseBatchState = SubcaseBatchState> {
     }
   }
 
-  /** Expect that a condition is true. */
-  expect(cond: boolean, msg?: string): boolean {
+  /**
+   * Expect that a condition is true.
+   *
+   * Note: You can pass a boolean condition, or a function that returns a boolean.
+   * The advantage to passing a function is that if it's short it is self documenting.
+   *
+   * t.expect(size >= maxSize);      // prints Expect OK:
+   * t.expect(() => size >= maxSize) // prints Expect OK: () => size >= maxSize
+   */
+  expect(cond: boolean | (() => boolean), msg?: string): boolean {
+    if (typeof cond === 'function') {
+      if (msg === undefined) {
+        msg = cond.toString();
+      }
+      cond = cond();
+    }
     if (cond) {
       const m = msg ? ': ' + msg : '';
       this.rec.debug(new Error('expect OK' + m));

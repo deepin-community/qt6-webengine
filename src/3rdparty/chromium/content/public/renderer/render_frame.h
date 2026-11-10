@@ -15,10 +15,9 @@
 #include "base/task/single_thread_task_runner.h"
 #include "content/common/buildflags.h"
 #include "content/common/content_export.h"
-#include "ipc/ipc_listener.h"
-#include "ipc/ipc_sender.h"
-#include "ppapi/buildflags/buildflags.h"
+#include "content/public/common/bindings_policy.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/blink/public/common/use_counter/use_counter_feature.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/frame/triggering_event_info.mojom-shared.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -38,18 +37,14 @@ struct WebPreferences;
 class AssociatedInterfaceProvider;
 class AssociatedInterfaceRegistry;
 class BrowserInterfaceBrokerProxy;
-class WebElement;
 class WebFrame;
 class WebLocalFrame;
-class WebPlugin;
-struct WebPluginParams;
 class WebView;
 }  // namespace blink
 
 namespace gfx {
 class Range;
 class Rect;
-class RectF;
 }  // namespace gfx
 
 namespace content {
@@ -57,7 +52,6 @@ namespace content {
 class RenderAccessibility;
 struct RenderFrameMediaPlaybackOptions;
 class RenderFrameVisitor;
-struct WebPluginInfo;
 
 // A class that takes a snapshot of the accessibility tree. Accessibility
 // support in Blink is enabled for the lifetime of this object, which can
@@ -88,19 +82,10 @@ class AXTreeSnapshotter {
 // navigation. It provides communication with a corresponding RenderFrameHost
 // in the browser process.
 class CONTENT_EXPORT RenderFrame :
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-    public IPC::Listener,
-    public IPC::Sender,
-#endif
     public base::SupportsUserData {
  public:
   // Returns the RenderFrame given a WebLocalFrame.
   static RenderFrame* FromWebFrame(blink::WebLocalFrame* web_frame);
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // Returns the RenderFrame given a routing id.
-  static RenderFrame* FromRoutingID(int routing_id);
-#endif
 
   // Visit all live RenderFrames.
   static void ForEach(RenderFrameVisitor* visitor);
@@ -119,11 +104,6 @@ class CONTENT_EXPORT RenderFrame :
   virtual std::unique_ptr<AXTreeSnapshotter> CreateAXTreeSnapshotter(
       ui::AXMode ax_mode) = 0;
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // Get the routing ID of the frame.
-  virtual int GetRoutingID() = 0;
-#endif
-
   // Returns the associated WebView.
   virtual blink::WebView* GetWebView() = 0;
   virtual const blink::WebView* GetWebView() const = 0;
@@ -137,12 +117,6 @@ class CONTENT_EXPORT RenderFrame :
 
   // Issues a request to show the virtual keyboard.
   virtual void ShowVirtualKeyboard() = 0;
-
-  // Create a new Pepper plugin depending on |info|. Returns NULL if no plugin
-  // was found.
-  virtual blink::WebPlugin* CreatePlugin(
-      const WebPluginInfo& info,
-      const blink::WebPluginParams& params) = 0;
 
   // Execute a string of JavaScript in this frame's context.
   virtual void ExecuteJavaScript(const std::u16string& javascript) = 0;
@@ -166,7 +140,8 @@ class CONTENT_EXPORT RenderFrame :
 
   // Returns the BrowserInterfaceBrokerProxy that this process can use to bind
   // interfaces exposed to it by the application running in this frame.
-  virtual blink::BrowserInterfaceBrokerProxy* GetBrowserInterfaceBroker() = 0;
+  virtual const blink::BrowserInterfaceBrokerProxy&
+  GetBrowserInterfaceBroker() = 0;
 
   // Returns the AssociatedInterfaceRegistry this frame can use to expose
   // frame-specific Channel-associated interfaces to the remote RenderFrameHost.
@@ -215,9 +190,8 @@ class CONTENT_EXPORT RenderFrame :
   virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
       blink::TaskType task_type) = 0;
 
-  // Bitwise-ORed set of extra bindings that have been enabled.  See
-  // BindingsPolicy for details.
-  virtual int GetEnabledBindings() = 0;
+  // The extra bindings that have been enabled.
+  virtual BindingsPolicySet GetEnabledBindings() = 0;
 
   // Set the accessibility mode to force creation of RenderAccessibility.
   virtual void SetAccessibilityModeForTest(ui::AXMode new_mode) = 0;
@@ -231,16 +205,11 @@ class CONTENT_EXPORT RenderFrame :
   // Sets that cross browsing instance frame lookup is allowed.
   virtual void SetAllowsCrossBrowsingInstanceFrameLookup() = 0;
 
-  // Returns the bounds of |element| in Window coordinates which are device
-  // scale independent. The bounds have been adjusted to include any
-  // transformations, including page scale. This function will update the layout
-  // if required.
-  virtual gfx::RectF ElementBoundsInWindow(
-      const blink::WebElement& element) = 0;
-
   // Converts the |rect| to Window coordinates which are device scale
-  // independent.
-  virtual void ConvertViewportToWindow(gfx::Rect* rect) = 0;
+  // independent. The bounds have been adjusted to include any transformations,
+  // including page scale.
+  [[nodiscard]] virtual gfx::Rect ConvertViewportToWindow(
+      const gfx::Rect& rect) = 0;
 
   // Returns the device scale factor of the display the render frame is in.
   virtual float GetDeviceScaleFactor() = 0;
@@ -249,6 +218,12 @@ class CONTENT_EXPORT RenderFrame :
   // this RenderFrame.
   virtual blink::scheduler::WebAgentGroupScheduler&
   GetAgentGroupScheduler() = 0;
+
+  // Sets the callback which is called when the renderer observes a new use
+  // counter usage. This is used for UseCounter metrics.
+  using NewFeatureUsageCallback =
+      base::RepeatingCallback<void(const blink::UseCounterFeature&)>;
+  virtual void SetNewFeatureUsageCallback(NewFeatureUsageCallback callback) = 0;
 
  protected:
   ~RenderFrame() override {}

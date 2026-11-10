@@ -1,11 +1,21 @@
 // Copyright 2022 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "string_util.h"
 #include <gtest/gtest.h>
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -99,10 +109,10 @@ TEST(StringUtilTest, StartsWithNoCase) {
 }
 
 TEST(StringUtilTest, HexEncode) {
-  std::string hex(bssl::string_util::HexEncode(nullptr, 0));
+  std::string hex(bssl::string_util::HexEncode({}));
   EXPECT_EQ(hex.length(), 0U);
   uint8_t bytes[] = {0x01, 0xff, 0x02, 0xfe, 0x03, 0x80, 0x81};
-  hex = bssl::string_util::HexEncode(bytes, sizeof(bytes));
+  hex = bssl::string_util::HexEncode(bytes);
   EXPECT_EQ(hex, "01FF02FE038081");
 }
 
@@ -152,4 +162,4 @@ TEST(StringUtilTest, SplitString) {
 
 }  // namespace
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

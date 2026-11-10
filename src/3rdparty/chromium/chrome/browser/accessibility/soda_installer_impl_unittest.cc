@@ -37,6 +37,7 @@ class MockSodaInstallerImpl : public SodaInstallerImpl {
 
   void InstallLanguage(const std::string& language,
                        PrefService* global_prefs) override {
+    SodaInstaller::RegisterLanguage(language, global_prefs);
     OnSodaLanguagePackInstalled(speech::GetLanguageCode(language));
   }
 };
@@ -49,6 +50,8 @@ class SodaInstallerImplTest : public testing::Test {
     soda_installer_impl_->RegisterLocalStatePrefs(pref_service_->registry());
     pref_service_->registry()->RegisterBooleanPref(prefs::kLiveCaptionEnabled,
                                                    true);
+    pref_service_->registry()->RegisterBooleanPref(
+        prefs::kHeadlessCaptionEnabled, false);
     pref_service_->registry()->RegisterStringPref(
         prefs::kLiveCaptionLanguageCode, kUsEnglishLocale);
   }
@@ -85,11 +88,13 @@ class SodaInstallerImplTest : public testing::Test {
 
   void Init() {
     soda_installer_impl_->Init(pref_service_.get(), pref_service_.get());
+    task_environment_.RunUntilIdle();
   }
 
-  void SetUninstallTimer() {
+  void SetUninstallTimer(
+      speech::LanguageCode language_code = speech::LanguageCode::kEnUs) {
     soda_installer_impl_->SetUninstallTimer(pref_service_.get(),
-                                            pref_service_.get());
+                                            GetLanguageName(language_code));
   }
 
   void FastForwardBy(base::TimeDelta delta) {
@@ -98,6 +103,11 @@ class SodaInstallerImplTest : public testing::Test {
 
   void SetLiveCaptionEnabled(bool enabled) {
     pref_service_->SetManagedPref(prefs::kLiveCaptionEnabled,
+                                  std::make_unique<base::Value>(enabled));
+  }
+
+  void SetHeadlessCaptionEnabled(bool enabled) {
+    pref_service_->SetManagedPref(prefs::kHeadlessCaptionEnabled,
                                   std::make_unique<base::Value>(enabled));
   }
 
@@ -158,7 +168,46 @@ TEST_F(SodaInstallerImplTest, UninstallLanguagePacks) {
   ASSERT_TRUE(IsLanguagePackInstalled(kJapaneseLocale));
 }
 
+TEST_F(SodaInstallerImplTest, AvailableLanguagesTest) {
+  auto actual_available_langs = soda_installer_impl_->GetAvailableLanguages();
+  auto expected_available_langs =
+      soda_installer_impl_->GetLiveCaptionEnabledLanguages();
+  EXPECT_THAT(actual_available_langs,
+              ::testing::UnorderedElementsAreArray(expected_available_langs));
+}
+
 TEST_F(SodaInstallerImplTest, UninstallSodaAfterThirtyDays) {
+  Init();
+  ASSERT_TRUE(IsSodaInstalled());
+
+  // Turn off features that use SODA so that the uninstall timer can be set.
+  SetLiveCaptionEnabled(false);
+  InstallLanguage(speech::GetLanguageName(kJapaneseLocale));
+  InstallLanguage(speech::GetLanguageName(kEnglishLocale));
+  SetUninstallTimer(kEnglishLocale);
+  ASSERT_TRUE(IsSodaInstalled(kEnglishLocale));
+  ASSERT_TRUE(IsSodaInstalled(kJapaneseLocale));
+
+  // If 30 days pass without the uninstall time being reset, SODA will be
+  // uninstalled the next time Init() is called.
+  // Set SodaInstaller initialized state to false to mimic a browser shutdown.
+  SetSodaInstallerInitialized(false);
+  FastForwardBy(kSodaUninstallTime / 2);
+
+  // Simulate the usage of the Japanese language pack by pushing the
+  // uninstallation time back.
+  SetUninstallTimer(kJapaneseLocale);
+  FastForwardBy(kSodaUninstallTime / 2);
+  ASSERT_TRUE(IsSodaInstalled(kEnglishLocale));
+  ASSERT_TRUE(IsSodaInstalled(kJapaneseLocale));
+
+  // The uninstallation process doesn't start until Init() is called again.
+  Init();
+  ASSERT_FALSE(IsSodaInstalled(kEnglishLocale));
+  ASSERT_TRUE(IsSodaInstalled(kJapaneseLocale));
+}
+
+TEST_F(SodaInstallerImplTest, ReregisterSodaWithinThirtyDays) {
   Init();
   ASSERT_TRUE(IsSodaInstalled());
 
@@ -167,16 +216,17 @@ TEST_F(SodaInstallerImplTest, UninstallSodaAfterThirtyDays) {
   SetUninstallTimer();
   ASSERT_TRUE(IsSodaInstalled());
 
-  // If 30 days pass without the uninstall time being reset, SODA will be
-  // uninstalled the next time Init() is called.
-  // Set SodaInstaller initialized state to false to mimic a browser shutdown.
+  // Fast forward SODA and manually uninstall SODA to simulate a browser
+  // restart.
   SetSodaInstallerInitialized(false);
-  FastForwardBy(kSodaUninstallTime);
-  ASSERT_TRUE(IsSodaInstalled());
-
-  // The uninstallation process doesn't start until Init() is called again.
-  Init();
+  FastForwardBy(base::Days(1));
+  GetInstance()->UninstallSodaForTesting();
   ASSERT_FALSE(IsSodaInstalled());
+
+  // SODA should be registered because so it recently used within the last 30
+  // days.
+  Init();
+  ASSERT_TRUE(IsSodaInstalled());
 }
 
 // Tests that SODA stays installed if thirty days pass and a feature using SODA
@@ -221,6 +271,22 @@ TEST_F(SodaInstallerImplTest, ReinstallSoda) {
   ASSERT_FALSE(IsSodaInstalled());
 
   SetLiveCaptionEnabled(true);
+  Init();
+  ASSERT_TRUE(IsSodaInstalled());
+}
+
+// Tests that SODA is not installed if nothing is using it.
+TEST_F(SodaInstallerImplTest, NotInstalledIfNoConsumers) {
+  SetLiveCaptionEnabled(false);
+  SetHeadlessCaptionEnabled(false);
+  Init();
+  ASSERT_FALSE(IsSodaInstalled());
+}
+
+// Tests that headless captions installs SODA.
+TEST_F(SodaInstallerImplTest, InstalledForHeadlessCaption) {
+  SetLiveCaptionEnabled(false);
+  SetHeadlessCaptionEnabled(true);
   Init();
   ASSERT_TRUE(IsSodaInstalled());
 }

@@ -29,21 +29,38 @@
 #define SRC_DAWN_NATIVE_OBJECTBASE_H_
 
 #include <mutex>
+#include <optional>
 #include <string>
 
+#include "absl/strings/str_format.h"
 #include "dawn/common/LinkedList.h"
+#include "dawn/common/MutexProtected.h"
 #include "dawn/common/Ref.h"
 #include "dawn/common/RefCounted.h"
 #include "dawn/native/Forward.h"
-
-namespace absl {
-class FormatSink;
-}
+#include "dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
+namespace detail {
+
+template <typename T>
+struct APIRefCountedTraits {
+    static constexpr T* kNullValue = nullptr;
+    static void AddRef(T* value) { value->APIAddRef(); }
+    static void Release(T* value) { value->APIRelease(); }
+};
+
+}  // namespace detail
+
 class ApiObjectBase;
 class DeviceBase;
+
+template <typename T>
+class APIRef : public RefBase<T*, detail::APIRefCountedTraits<T>> {
+  public:
+    using RefBase<T*, detail::APIRefCountedTraits<T>>::RefBase;
+};
 
 class ErrorMonad : public RefCounted {
   public:
@@ -81,12 +98,21 @@ class ApiObjectList {
     // Destroys and removes all the objects tracked in the list.
     void Destroy();
 
+    template <typename F>
+    void ForEach(F fn) const {
+        mObjects.Use([&fn](auto lockedObjects) {
+            for (auto* node = lockedObjects->head(); node != lockedObjects->end();
+                 node = node->next()) {
+                fn(node->value());
+            }
+        });
+    }
+
   private:
     // Boolean used to mark the list so that on subsequent calls to Untrack, we don't need to
-    // reaquire the lock, and Track on new objects immediately destroys them.
-    bool mMarkedDestroyed = false;
-    std::mutex mMutex;
-    LinkedList<ApiObjectBase> mObjects;
+    // reacquire the lock, and Track on new objects immediately destroys them.
+    std::atomic<bool> mMarkedDestroyed{false};
+    MutexProtected<LinkedList<ApiObjectBase>> mObjects;
 };
 
 class ApiObjectBase : public ObjectBase, public LinkNode<ApiObjectBase> {
@@ -97,8 +123,8 @@ class ApiObjectBase : public ObjectBase, public LinkNode<ApiObjectBase> {
     static constexpr UntrackedByDeviceTag kUntrackedByDevice = {};
 
     ApiObjectBase(DeviceBase* device, LabelNotImplementedTag tag);
-    ApiObjectBase(DeviceBase* device, const char* label);
-    ApiObjectBase(DeviceBase* device, ErrorTag tag, const char* label = nullptr);
+    ApiObjectBase(DeviceBase* device, StringView label);
+    ApiObjectBase(DeviceBase* device, ErrorTag tag, StringView label = {});
     ~ApiObjectBase() override;
 
     virtual ObjectType GetType() const = 0;
@@ -115,7 +141,7 @@ class ApiObjectBase : public ObjectBase, public LinkNode<ApiObjectBase> {
     void Destroy();
 
     // Dawn API
-    void APISetLabel(const char* label);
+    void APISetLabel(StringView label);
 
   protected:
     // Overriding of the RefCounted's DeleteThis function ensures that instances of objects
@@ -142,16 +168,27 @@ class ApiObjectBase : public ObjectBase, public LinkNode<ApiObjectBase> {
     // called once through the exposed Destroy function.
     virtual void DestroyImpl() = 0;
 
+    virtual void SetLabelImpl();
+
   private:
     friend class ApiObjectList;
-
-    virtual void SetLabelImpl();
 
     std::string mLabel;
 };
 
+template <typename T>
+class RefCountedWithExternalCountBase;
+
 template <class T>
 T* ReturnToAPI(Ref<T>&& object) {
+    if (object == nullptr) {
+        return nullptr;
+    }
+    if constexpr (T::HasExternalRefCount) {
+        // For an object which has external ref count, just need to increase the external ref count,
+        // and keep the total ref count unchanged.
+        object->IncrementExternalRefCount();
+    }
     return object.Detach();
 }
 

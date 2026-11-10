@@ -16,7 +16,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
-
 namespace {
 
 const char kTestText[] = "test";
@@ -42,34 +41,22 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
 
  private:
   // autofill::mojom::PasswordManagerDriver:
-  void PasswordFormsParsed(
-      const std::vector<autofill::FormData>& form_data) override {}
+  void PasswordFormsParsed(const std::vector<FormData>& form_data) override {}
 
   void PasswordFormsRendered(
-      const std::vector<autofill::FormData>& visible_forms_data) override {}
+      const std::vector<FormData>& visible_forms_data) override {}
 
-  void PasswordFormSubmitted(const autofill::FormData& form_data) override {}
+  void PasswordFormSubmitted(const FormData& form_data) override {}
 
-  void InformAboutUserInput(const autofill::FormData& form_data) override {}
+  void InformAboutUserInput(const FormData& form_data) override {}
 
-  void DynamicFormSubmission(autofill::mojom::SubmissionIndicatorEvent
-                                 submission_indication_event) override {}
+  void DynamicFormSubmission(
+      mojom::SubmissionIndicatorEvent submission_indication_event) override {}
 
-  void PasswordFormCleared(const autofill::FormData& form_data) override {}
+  void PasswordFormCleared(const FormData& form_data) override {}
 
-  void ShowPasswordSuggestions(autofill::FieldRendererId element_id,
-                               const autofill::FormData& form,
-                               uint64_t username_field_index,
-                               uint64_t password_field_index,
-                               base::i18n::TextDirection text_direction,
-                               const std::u16string& typed_username,
-                               int options,
-                               const gfx::RectF& bounds) override {}
-#if BUILDFLAG(IS_ANDROID)
-  void ShowKeyboardReplacingSurface(
-      autofill::mojom::SubmissionReadinessState submission_readiness,
-      bool is_webauthn_form) override {}
-#endif
+  void ShowPasswordSuggestions(
+      const PasswordSuggestionRequest& request) override {}
 
   void RecordSavePasswordProgress(const std::string& log) override {
     called_record_save_ = true;
@@ -78,7 +65,7 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
 
   void UserModifiedPasswordField() override {}
 
-  void UserModifiedNonPasswordField(autofill::FieldRendererId renderer_id,
+  void UserModifiedNonPasswordField(FieldRendererId renderer_id,
                                     const std::u16string& value,
                                     bool autocomplete_attribute_has_username,
                                     bool is_likely_otp) override {}
@@ -87,9 +74,9 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
                                    const GURL& frame_url) override {}
 
   void FocusedInputChanged(
-      autofill::FieldRendererId focused_field_id,
-      autofill::mojom::FocusedFieldType focused_field_type) override {}
-  void LogFirstFillingResult(autofill::FormRendererId form_renderer_id,
+      FieldRendererId focused_field_id,
+      mojom::FocusedFieldType focused_field_type) override {}
+  void LogFirstFillingResult(FormRendererId form_renderer_id,
                              int32_t result) override {}
 
   // Records whether RecordSavePasswordProgress() gets called.
@@ -108,8 +95,6 @@ class TestLogger : public RendererSavePasswordProgressLogger {
   using RendererSavePasswordProgressLogger::SendLog;
 };
 
-}  // namespace
-
 TEST(RendererSavePasswordProgressLoggerTest, SendLog) {
   base::test::SingleThreadTaskEnvironment task_environment;
   FakeContentPasswordManagerDriver fake_driver;
@@ -124,4 +109,5 @@ TEST(RendererSavePasswordProgressLoggerTest, SendLog) {
   EXPECT_EQ(kTestText, sent_log);
 }
 
+}  // namespace
 }  // namespace autofill

@@ -8,6 +8,7 @@
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/stub_devtools_client.h"
 #include "chrome/test/chromedriver/chrome/stub_web_view.h"
+#include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/session.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -55,6 +56,18 @@ class MockResponseWebView : public StubWebView {
   }
 
   const std::string& GetLastCommand() const { return last_command_; }
+
+  bool IsDetached() const override { return false; }
+
+  Status CallFunctionWithTimeout(
+      const std::string& frame,
+      const std::string& function,
+      const base::Value::List& args,
+      const base::TimeDelta& timeout,
+      const CallFunctionOptions& options,
+      std::unique_ptr<base::Value>* result) override {
+    return Status{kOk};
+  }
 
  private:
   FedCmTracker tracker_;

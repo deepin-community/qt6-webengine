@@ -5,7 +5,8 @@
 #ifndef UI_VIEWS_ACCESSIBILITY_VIEWS_UTILITIES_AURA_H_
 #define UI_VIEWS_ACCESSIBILITY_VIEWS_UTILITIES_AURA_H_
 
-#include <string>
+#include <cstdint>
+#include <string_view>
 #include <vector>
 
 #include "ui/views/buildflags.h"
@@ -39,12 +40,12 @@ aura::Window* GetWindowParentIncludingTransient(aura::Window* window);
 
 #if BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
 // Returns the start and end offsets of each word in `text`.
-WordBoundaries ComputeWordBoundaries(const std::u16string& text);
+WordBoundaries ComputeWordBoundaries(std::u16string_view text);
 
 // Retrieves a vector of the rounded starting offsets of each char in all
 // runs. With 3 chars of width 10, the values would be 0, 10, 20, 30.
 // Implementation only supports single line for now.
-// TODO(https://crbug.com/1485632): Support multiline.
+// TODO(crbug.com/40933356): Support multiline.
 std::vector<int32_t> ComputeTextOffsets(gfx::RenderText* render_text);
 #endif  // BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
 

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebenginedownloadrequest.h"
 #include "qquickwebengineview_p.h"
@@ -19,8 +20,11 @@ QQuickWebEngineDownloadRequest::QQuickWebEngineDownloadRequest(QWebEngineDownloa
 
 /*!
     \internal
-    Returns the WebEngineView the download was requested on. If the download was not triggered by content in a WebEngineView,
-    \c nullptr is returned.
+    \property QQuickWebEngineDownloadRequest::view
+    \brief The WebEngineView the download was requested on.
+
+    If the download was not triggered by content in a WebEngineView,
+    returns \nullptr.
 */
 QQuickWebEngineView *QQuickWebEngineDownloadRequest::view() const
 {

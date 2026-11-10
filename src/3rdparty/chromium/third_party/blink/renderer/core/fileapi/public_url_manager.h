@@ -27,7 +27,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FILEAPI_PUBLIC_URL_MANAGER_H_
 
 #include "base/types/pass_key.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/blob/blob_url_store.mojom-blink.h"
@@ -44,20 +43,9 @@ namespace blink {
 
 class KURL;
 class ExecutionContext;
-class StorageAccessHandle;
+class GlobalStorageAccessHandle;
 class URLRegistry;
 class URLRegistrable;
-
-// Execution context ids for usage in metrics. Entries should not be renumbered
-// and numeric values should never be reused. Please keep in sync with
-// "BlobURLExecutionContextId" in
-// src/tools/metrics/histograms/metadata/histogram_suffixes_list.xml and with
-// `kExecutionContextNamesForHistograms` in public_url_manager.cc.
-enum class ExecutionContextIdForHistogram {
-  kFrame = 0,
-  kWorker = 1,
-  kMaxValue = kWorker
-};
 
 class CORE_EXPORT PublicURLManager final
     : public GarbageCollected<PublicURLManager>,
@@ -65,7 +53,7 @@ class CORE_EXPORT PublicURLManager final
  public:
   explicit PublicURLManager(ExecutionContext*);
   explicit PublicURLManager(
-      base::PassKey<StorageAccessHandle>,
+      base::PassKey<GlobalStorageAccessHandle>,
       ExecutionContext*,
       mojo::PendingAssociatedRemote<mojom::blink::BlobURLStore>);
 
@@ -83,7 +71,9 @@ class CORE_EXPORT PublicURLManager final
   // BlobURLToken. This token can be used by the browser process to securely
   // lookup what blob a URL used to refer to, even after the URL is revoked.
   // If the URL fails to resolve the request will simply be disconnected.
-  void Resolve(const KURL&, mojo::PendingReceiver<mojom::blink::BlobURLToken>);
+  void ResolveAsBlobURLToken(const KURL&,
+                             mojo::PendingReceiver<mojom::blink::BlobURLToken>,
+                             bool is_top_level_navigation);
 
   // ExecutionContextLifecycleObserver interface.
   void ContextDestroyed() override;
@@ -105,11 +95,6 @@ class CORE_EXPORT PublicURLManager final
   typedef HashMap<URLString, URLRegistry*> URLToRegistryMap;
   URLToRegistryMap url_to_registry_;
   HashSet<URLString> mojo_urls_;
-
-  // Records which execution context type instantiated this PublicURLManager,
-  // for collecting metrics. This is only set when the SupportPartitionedBlobUrl
-  // feature is enabled, and is only set for frame or worker execution contexts.
-  absl::optional<ExecutionContextIdForHistogram> execution_context_type_;
 
   bool is_stopped_ = false;
 

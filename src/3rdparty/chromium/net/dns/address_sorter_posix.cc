@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/dns/address_sorter_posix.h"
 
 #include <netinet/in.h>
@@ -10,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 
@@ -29,8 +35,8 @@
 #include <netinet/in_var.h>
 #endif  // BUILDFLAG(IS_IOS)
 #endif
+#include <vector>
 
-#include "base/containers/cxx20_erase_vector.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/logging.h"
 #include "net/base/ip_endpoint.h"
@@ -58,10 +64,16 @@ bool ComparePolicy(const AddressSorterPosix::PolicyEntry& p1,
 }
 
 // Creates sorted PolicyTable from |table| with |size| entries.
+// TODO(crbug.com/431824301): Remove unneeded parameter once validated to be
+// redundant in M143.
 AddressSorterPosix::PolicyTable LoadPolicy(
-    const AddressSorterPosix::PolicyEntry* table,
-    size_t size) {
-  AddressSorterPosix::PolicyTable result(table, table + size);
+    base::span<const AddressSorterPosix::PolicyEntry> table,
+    size_t spanification_suspected_redundant_size) {
+  CHECK(spanification_suspected_redundant_size == table.size(),
+        base::NotFatalUntil::M143);
+  AddressSorterPosix::PolicyTable result(
+      table.data(),
+      table.subspan(spanification_suspected_redundant_size).data());
   std::sort(result.begin(), result.end(), ComparePolicy);
   return result;
 }
@@ -78,8 +90,6 @@ unsigned GetPolicyValue(const AddressSorterPosix::PolicyTable& table,
       return entry.value;
   }
   NOTREACHED();
-  // The last entry is the least restrictive, so assume it's default.
-  return table.back().value;
 }
 
 bool IsIPv6Multicast(const IPAddress& address) {
@@ -129,7 +139,6 @@ AddressSorterPosix::AddressScope GetScope(
         GetPolicyValue(ipv4_scope_table, address));
   } else {
     NOTREACHED();
-    return AddressSorterPosix::SCOPE_NODELOCAL;
   }
 }
 
@@ -326,7 +335,7 @@ class AddressSorterPosix::SortContext {
                      info.src.prefix_length);
       }
     }
-    base::EraseIf(sort_list_, [](auto& element) { return element.failed; });
+    std::erase_if(sort_list_, [](auto& element) { return element.failed; });
     std::stable_sort(sort_list_.begin(), sort_list_.end(), CompareDestinations);
 
     std::vector<IPEndPoint> sorted_result;
@@ -402,7 +411,7 @@ void AddressSorterPosix::OnIPAddressChanged() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   source_map_.clear();
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // TODO(crbug.com/1431364): This always returns nullptr on ChromeOS.
+  // TODO(crbug.com/40263501): This always returns nullptr on ChromeOS.
   const AddressMapOwnerLinux* address_map_owner =
       NetworkChangeNotifier::GetAddressMapOwner();
   if (!address_map_owner) {

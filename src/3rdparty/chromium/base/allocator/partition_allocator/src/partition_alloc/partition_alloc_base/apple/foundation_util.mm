@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/apple/foundation_util.h"
 
 #include "partition_alloc/partition_alloc_base/check.h"
@@ -11,19 +16,19 @@ namespace partition_alloc::internal::base::apple {
 #define PA_CF_CAST_DEFN(TypeCF)                                    \
   template <>                                                      \
   TypeCF##Ref CFCast<TypeCF##Ref>(const CFTypeRef& cf_val) {       \
-    if (cf_val == NULL) {                                          \
-      return NULL;                                                 \
+    if (cf_val == nullptr) {                                       \
+      return nullptr;                                              \
     }                                                              \
     if (CFGetTypeID(cf_val) == TypeCF##GetTypeID()) {              \
       return (TypeCF##Ref)(cf_val);                                \
     }                                                              \
-    return NULL;                                                   \
+    return nullptr;                                                \
   }                                                                \
                                                                    \
   template <>                                                      \
   TypeCF##Ref CFCastStrict<TypeCF##Ref>(const CFTypeRef& cf_val) { \
     TypeCF##Ref rv = CFCast<TypeCF##Ref>(cf_val);                  \
-    PA_BASE_DCHECK(cf_val == NULL || rv);                          \
+    PA_BASE_CHECK(cf_val == nullptr || rv);                        \
     return rv;                                                     \
   }
 

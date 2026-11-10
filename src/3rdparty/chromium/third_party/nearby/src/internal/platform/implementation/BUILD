@@ -14,9 +14,68 @@
 licenses(["notice"])
 
 cc_library(
+    name = "auth_status",
+    hdrs = ["auth_status.h"],
+    visibility = [
+        "//internal/auth:__pkg__",
+        "//internal/platform/implementation:__subpackages__",
+        "//location/nearby/cpp/sharing/clients/cpp:__subpackages__",
+    ],
+)
+
+cc_library(
+    name = "account_info",
+    hdrs = ["account_info.h"],
+    visibility = [
+        "//internal/auth:__pkg__",
+        "//internal/platform/implementation:__subpackages__",
+        "//location/nearby/cpp/sharing/clients/cpp:__subpackages__",
+    ],
+)
+
+cc_library(
+    name = "account_manager",
+    hdrs = ["account_manager.h"],
+    visibility = [
+        "//internal/account:__pkg__",
+        "//internal/platform/implementation:__subpackages__",
+        "//internal/test:__subpackages__",
+        "//location/nearby/cpp/sharing/clients/cpp:__subpackages__",
+        "//location/nearby/sharing/sdk/quick_share_server:__pkg__",
+        "//sharing:__subpackages__",
+    ],
+    deps = [
+        ":account_info",
+        ":signin_attempt",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "signin_attempt",
+    hdrs = ["signin_attempt.h"],
+    visibility = [
+        "//internal/account:__pkg__",
+        "//internal/auth:__pkg__",
+        "//internal/platform/implementation:__subpackages__",
+        "//internal/test:__subpackages__",
+        "//location/nearby/cpp/sharing/clients/cpp:__subpackages__",
+        "//location/nearby/sharing/sdk/quick_share_server:__pkg__",
+        "//sharing:__subpackages__",
+    ],
+    deps = [
+        ":account_info",
+        ":auth_status",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "types",
     hdrs = [
-        "account_manager.h",
         "atomic_boolean.h",
         "atomic_reference.h",
         "bluetooth_adapter.h",
@@ -42,25 +101,23 @@ cc_library(
     visibility = [
         "//connections/implementation:__subpackages__",
         "//connections/implementation/analytics:__subpackages__",
-        "//fastpair:__subpackages__",
-        "//internal/account:__pkg__",
         "//internal/crypto_cros:__pkg__",
         "//internal/platform:__pkg__",
         "//internal/platform/implementation:__subpackages__",
         "//internal/preferences:__subpackages__",
         "//internal/test:__subpackages__",
         "//location/nearby/analytics/cpp:__subpackages__",
-        "//location/nearby/cpp/common:__subpackages__",
         "//location/nearby/cpp/sharing:__subpackages__",
         "//presence:__subpackages__",
         "//sharing:__subpackages__",
     ],
     deps = [
+        "//internal/base:file_path",
         "//internal/crypto_cros",
         "//internal/platform:base",
+        "//internal/platform/implementation/shared:crypto",  # Non-chromium impl
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
@@ -69,8 +126,27 @@ cc_library(
 )
 
 cc_library(
+    name = "wifi_utils",
+    srcs = [
+        "wifi_utils.cc",
+    ],
+    hdrs = [
+        "wifi.h",
+        "wifi_utils.h",
+    ],
+    visibility = [
+        "//:__subpackages__",
+    ],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+cc_library(
     name = "comm",
     hdrs = [
+        "awdl.h",
         "ble.h",
         "ble_v2.h",
         "bluetooth_adapter.h",
@@ -78,6 +154,7 @@ cc_library(
         "credential_callbacks.h",
         "credential_storage.h",
         "http_loader.h",
+        "psk_info.h",
         "server_sync.h",
         "webrtc.h",
         "wifi.h",
@@ -88,17 +165,17 @@ cc_library(
     copts = ["-DNO_WEBRTC"],
     visibility = [
         "//connections/implementation:__subpackages__",
-        "//fastpair/internal:__pkg__",
-        "//fastpair/internal/mediums:__pkg__",
         "//internal/network:__subpackages__",
         "//internal/platform:__pkg__",
         "//internal/platform/implementation:__subpackages__",
+        "//presence:__subpackages__",
         "//presence/implementation:__subpackages__",
     ],
     deps = [
         "//connections/implementation/proto:offline_wire_formats_cc_proto",
         "//internal/platform:base",
         "//internal/platform:cancellation_flag",
+        "//internal/platform:mac_address",
         "//internal/platform:uuid",
         "//internal/proto:credential_cc_proto",
         "//internal/proto:local_credential_cc_proto",
@@ -109,6 +186,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:optional",
     ],
 )
 
@@ -125,8 +203,8 @@ cc_library(
         "//internal/platform:__pkg__",
         "//internal/platform/implementation:__subpackages__",
         "//location/nearby/analytics/cpp:__subpackages__",
+        "//location/nearby/apps/better_together/plugins/preferences_native:__subpackages__",
         "//location/nearby/cpp/sharing:__subpackages__",
-        "//sharing:__subpackages__",
     ],
     deps = [
         ":comm",
@@ -134,5 +212,40 @@ cc_library(
         "//internal/platform:base",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "platform_impl",
+    testonly = True,
+    visibility = [
+        "//:__subpackages__",
+        "//connections/implementation:__subpackages__",
+        "//location/nearby/analytics/cpp:__subpackages__",
+        "//location/nearby/apps/better_together/plugins/preferences_native:__subpackages__",
+        "//location/nearby/cpp/sharing:__subpackages__",
+    ],
+    deps = [
+    ] + select({
+        "@platforms//os:windows": [
+            "//internal/platform/implementation/windows",
+        ],
+        "//conditions:default": [
+            "//internal/platform/implementation/g3",
+        ],
+    }),
+)
+
+cc_test(
+    name = "wifi_utils_test",
+    size = "small",
+    timeout = "moderate",
+    srcs = ["wifi_utils_test.cc"],
+    shard_count = 8,
+    deps = [
+        ":wifi_utils",
+        "@com_github_protobuf_matchers//protobuf-matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
     ],
 )

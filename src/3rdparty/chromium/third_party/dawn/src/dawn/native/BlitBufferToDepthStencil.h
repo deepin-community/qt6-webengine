@@ -48,21 +48,20 @@ struct TextureCopy;
 
 MaybeError BlitStagingBufferToDepth(DeviceBase* device,
                                     BufferBase* buffer,
-                                    const TextureDataLayout& src,
+                                    const TexelCopyBufferLayout& src,
                                     const TextureCopy& dst,
                                     const Extent3D& copyExtent);
 
 MaybeError BlitBufferToDepth(DeviceBase* device,
                              CommandEncoder* commandEncoder,
                              BufferBase* buffer,
-                             const TextureDataLayout& src,
+                             const TexelCopyBufferLayout& src,
                              const TextureCopy& dst,
                              const Extent3D& copyExtent);
 
-// BlitBufferToStencil works around issues where copying from a buffer
-// to stencil does not work on some drivers.
+// BlitR8ToStencil works around issues where upload data to stencil aspect
+// is not supported, by copying data from an r8uint texture to dst texture.
 // It does the following:
-//  - Copies buffer data to an r8uint texture.
 //  - Sets the viewport to the copy rect.
 //  - Uploads the copy origin to a uniform buffer.
 //  - For each destination layer:
@@ -71,16 +70,28 @@ MaybeError BlitBufferToDepth(DeviceBase* device,
 //      stencil bit to 1, if the source r8 texture also has that bit set.
 //      If the source r8 texture does not, the fragment is discarded.
 
+MaybeError BlitR8ToStencil(DeviceBase* device,
+                           CommandEncoder* commandEncoder,
+                           TextureBase* dataTexture,
+                           const TextureCopy& dst,
+                           const Extent3D& copyExtent);
+
+// BlitBufferToStencil works around issues where copying from a buffer
+// to stencil does not work on some drivers.
+// It does the following:
+//  - Copies buffer data to an r8uint texture.
+//  - Calls BlitR8ToStencil.
+
 MaybeError BlitStagingBufferToStencil(DeviceBase* device,
                                       BufferBase* buffer,
-                                      const TextureDataLayout& src,
+                                      const TexelCopyBufferLayout& src,
                                       const TextureCopy& dst,
                                       const Extent3D& copyExtent);
 
 MaybeError BlitBufferToStencil(DeviceBase* device,
                                CommandEncoder* commandEncoder,
                                BufferBase* buffer,
-                               const TextureDataLayout& src,
+                               const TexelCopyBufferLayout& src,
                                const TextureCopy& dst,
                                const Extent3D& copyExtent);
 

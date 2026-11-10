@@ -1,3 +1,7 @@
+# Common settings
+common --enable_bzlmod
+build --enable_bzlmod
+
 # Basic build settings
 build --jobs 128
 build --cxxopt='-std=gnu++14'
@@ -55,3 +59,15 @@ build:macos --apple_platform_type=macos
 
 build:macos_arm64 --config=macos
 build:macos_arm64 --cpu=darwin_arm64
+
+# Disable Bzlmod for every Bazel command
+common --enable_bzlmod=false
+
+# Disable some warnings to allow a warning-free build
+build --copt='-Wall'
+build --copt='-Werror'
+build --copt='-Wno-comment'
+build --copt='-Wno-sign-compare'
+
+# Disable all warnings in external code
+build --per_file_copt=external/.*@-w

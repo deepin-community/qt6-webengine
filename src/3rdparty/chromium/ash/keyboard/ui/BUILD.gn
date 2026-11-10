@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/jumbo.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//testing/test.gni")
@@ -10,7 +9,7 @@ import("//third_party/google_input_tools/closure.gni")
 import("//third_party/google_input_tools/inputview.gni")
 import("//tools/grit/grit_rule.gni")
 
-assert(is_chromeos_ash)
+assert(is_chromeos)
 
 jumbo_component("ui") {
   sources = [
@@ -64,7 +63,7 @@ jumbo_component("ui") {
     "//ui/base",
     "//ui/base/ime",
     "//ui/compositor",
-    "//ui/display:display",
+    "//ui/display",
     "//ui/events",
     "//ui/events:dom_keycode_converter",
     "//ui/gfx",

@@ -17,10 +17,23 @@
 #ifndef INCLUDE_PERFETTO_BASE_COMPILER_H_
 #define INCLUDE_PERFETTO_BASE_COMPILER_H_
 
-#include <stddef.h>
+#include <cstddef>
 #include <type_traits>
+#include <variant>
 
 #include "perfetto/public/compiler.h"
+
+#if defined(_MSC_VER)
+#define PERFETTO_ASSUME(x) __assume(x)
+#elif defined(__clang__)
+#define PERFETTO_ASSUME(x) __builtin_assume(x)
+#else
+#define PERFETTO_ASSUME(x)     \
+  do {                         \
+    if (!(x))                  \
+      __builtin_unreachable(); \
+  } while (0)
+#endif
 
 // __has_attribute is supported only by clang and recent versions of GCC.
 // Add a layer to wrap the __has_attribute macro.
@@ -40,16 +53,6 @@
 #define PERFETTO_UNUSED __attribute__((unused))
 #else
 #define PERFETTO_UNUSED
-#endif
-
-#if defined(__clang__)
-#define PERFETTO_ALWAYS_INLINE __attribute__((__always_inline__))
-#define PERFETTO_NO_INLINE __attribute__((__noinline__))
-#else
-// GCC is too pedantic and often fails with the error:
-// "always_inline function might not be inlinable"
-#define PERFETTO_ALWAYS_INLINE
-#define PERFETTO_NO_INLINE
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -76,9 +79,12 @@
 
 #if defined(__GNUC__) || defined(__clang__)
 #define PERFETTO_POPCOUNT(x) __builtin_popcountll(x)
-#else
+#elif defined(__AVX__) || defined(__SSE4_2__) || defined(__POPCNT__)
 #include <intrin.h>
 #define PERFETTO_POPCOUNT(x) __popcnt64(x)
+#else
+#include <bit>
+#define PERFETTO_POPCOUNT(x) std::popcount(x)
 #endif
 
 #if defined(__clang__)
@@ -117,15 +123,6 @@ extern "C" void __asan_unpoison_memory_region(void const volatile*, size_t);
 #define PERFETTO_EXPORT_ENTRYPOINT
 #endif
 
-// Disables thread safety analysis for functions where the compiler can't
-// accurate figure out which locks are being held.
-#if defined(__clang__)
-#define PERFETTO_NO_THREAD_SAFETY_ANALYSIS \
-  __attribute__((no_thread_safety_analysis))
-#else
-#define PERFETTO_NO_THREAD_SAFETY_ANALYSIS
-#endif
-
 // Disables undefined behavior analysis for a function.
 #if defined(__clang__)
 #define PERFETTO_NO_SANITIZE_UNDEFINED __attribute__((no_sanitize("undefined")))
@@ -145,13 +142,23 @@ extern "C" void __asan_unpoison_memory_region(void const volatile*, size_t);
 // Macro for telling -Wimplicit-fallthrough that a fallthrough is intentional.
 #define PERFETTO_FALLTHROUGH [[fallthrough]]
 
-namespace perfetto {
-namespace base {
+// Depending on the version of the compiler, __has_builtin can be provided or
+// not.
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_stack_address)
+#define PERFETTO_HAS_BUILTIN_STACK_ADDRESS() 1
+#else
+#define PERFETTO_HAS_BUILTIN_STACK_ADDRESS() 0
+#endif
+#else
+#define PERFETTO_HAS_BUILTIN_STACK_ADDRESS() 0
+#endif
+
+namespace perfetto::base {
 
 template <typename... T>
 inline void ignore_result(const T&...) {}
 
-}  // namespace base
-}  // namespace perfetto
+}  // namespace perfetto::base
 
 #endif  // INCLUDE_PERFETTO_BASE_COMPILER_H_

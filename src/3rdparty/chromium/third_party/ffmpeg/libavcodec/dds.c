@@ -636,7 +636,9 @@ static int dds_decode(AVCodecContext *avctx, AVFrame *frame,
         ctx->dec.tex_data.in = gbc->buffer;
         ctx->dec.frame_data.out = frame->data[0];
         ctx->dec.stride = frame->linesize[0];
-        avctx->execute2(avctx, ff_texturedsp_decompress_thread, &ctx->dec, NULL, ctx->dec.slice_count);
+        ctx->dec.width  = avctx->coded_width;
+        ctx->dec.height = avctx->coded_height;
+        ff_texturedsp_exec_decompress_threads(avctx, &ctx->dec);
     } else if (!ctx->paletted && ctx->bpp == 4 && avctx->pix_fmt == AV_PIX_FMT_PAL8) {
         uint8_t *dst = frame->data[0];
         int x, y, i;
@@ -651,11 +653,6 @@ static int dds_decode(AVCodecContext *avctx, AVFrame *frame,
                     ((unsigned)frame->data[1][3+i*4]<<24)
             );
         }
-#if FF_API_PALETTE_HAS_CHANGED
-FF_DISABLE_DEPRECATION_WARNINGS
-        frame->palette_has_changed = 1;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
         if (bytestream2_get_bytes_left(gbc) < frame->height * frame->width / 2) {
             av_log(avctx, AV_LOG_ERROR, "Buffer is too small (%d < %d).\n",
@@ -685,12 +682,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
                         (frame->data[1][0+i*4]<<16)+
                         ((unsigned)frame->data[1][3+i*4]<<24)
                 );
-
-#if FF_API_PALETTE_HAS_CHANGED
-FF_DISABLE_DEPRECATION_WARNINGS
-            frame->palette_has_changed = 1;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
         }
 
         if (bytestream2_get_bytes_left(gbc) < frame->height * linesize) {
@@ -709,8 +700,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
         run_postproc(avctx, frame);
 
     /* Frame is ready to be output. */
-    frame->pict_type = AV_PICTURE_TYPE_I;
-    frame->flags |= AV_FRAME_FLAG_KEY;
     *got_frame = 1;
 
     return avpkt->size;

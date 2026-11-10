@@ -6,11 +6,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_TABLE_LAYOUT_TABLE_CAPTION_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 
 namespace blink {
 
-class CORE_EXPORT LayoutTableCaption final : public LayoutNGBlockFlow {
+class LayoutTable;
+
+class CORE_EXPORT LayoutTableCaption final : public LayoutBlockFlow {
  public:
   explicit LayoutTableCaption(Element*);
 
@@ -28,6 +30,12 @@ class CORE_EXPORT LayoutTableCaption final : public LayoutNGBlockFlow {
     NOT_DESTROYED();
     return true;
   }
+
+  void StyleDidChange(StyleDifference diff,
+                      const ComputedStyle* old_style) override;
+
+ private:
+  LayoutTable* Table() const;
 };
 
 // wtf/casting.h helper.

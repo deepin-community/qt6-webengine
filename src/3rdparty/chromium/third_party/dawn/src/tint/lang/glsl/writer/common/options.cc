@@ -29,6 +29,10 @@
 
 namespace tint::glsl::writer {
 
+Bindings::Bindings() = default;
+
+Bindings::~Bindings() = default;
+
 Options::Options() = default;
 
 Options::~Options() = default;

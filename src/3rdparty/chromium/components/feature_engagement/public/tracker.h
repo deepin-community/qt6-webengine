@@ -6,6 +6,7 @@
 #define COMPONENTS_FEATURE_ENGAGEMENT_PUBLIC_TRACKER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/feature_list.h"
@@ -18,8 +19,8 @@
 #include "build/build_config.h"
 #include "components/feature_engagement/public/configuration.h"
 #include "components/feature_engagement/public/configuration_provider.h"
+#include "components/feature_engagement/public/default_session_controller.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/jni_android.h"
@@ -34,9 +35,19 @@ namespace leveldb_proto {
 class ProtoDatabaseProvider;
 }
 
+class PrefService;
+
 namespace feature_engagement {
 
 class Configuration;
+class FeatureActivation;
+class Tracker;
+class SessionController;
+
+// Creates a Tracker that is usable for a demo mode. `feature_activation`
+// decides which features are enabled.
+std::unique_ptr<Tracker> CreateDemoModeTracker(
+    FeatureActivation feature_activation);
 
 // A handle for the display lock. While this is unreleased, no in-product help
 // can be displayed.
@@ -149,14 +160,17 @@ class Tracker : public KeyedService, public base::SupportsUserData {
   // The |background_task_runner| will be used for all disk reads and writes.
   // If `configuration_providers` is not specified, a default set of providers
   // will be provided.
-  static Tracker* Create(
+  static std::unique_ptr<Tracker> Create(
       const base::FilePath& storage_dir,
+      const base::FilePath& device_storage_dir,
+      PrefService* pref_service,
       const scoped_refptr<base::SequencedTaskRunner>& background_task_runner,
       leveldb_proto::ProtoDatabaseProvider* db_provider,
-      base::WeakPtr<TrackerEventExporter> event_exporter,
+      std::unique_ptr<TrackerEventExporter> event_exporter,
       const ConfigurationProviderList& configuration_providers =
-          GetDefaultConfigurationProviders());
-
+          GetDefaultConfigurationProviders(),
+      std::unique_ptr<SessionController> session_controller =
+          std::make_unique<DefaultSessionController>());
   // Possibly adds a command line argument for a child browser process to
   // communicate what IPH are allowed in a testing environment. Has no effect if
   // IPH behavior is not being modified for testing. If specific IPH features
@@ -245,7 +259,7 @@ class Tracker : public KeyedService, public base::SupportsUserData {
   // the Dismissed(..) method.
   virtual void DismissedWithSnooze(
       const base::Feature& feature,
-      absl::optional<SnoozeAction> snooze_action) = 0;
+      std::optional<SnoozeAction> snooze_action) = 0;
 
   // Acquiring a display lock means that no in-product help can be displayed
   // while it is held. To release the lock, delete the handle.
@@ -267,7 +281,7 @@ class Tracker : public KeyedService, public base::SupportsUserData {
   virtual void SetPriorityNotification(const base::Feature& feature) = 0;
 
   // Called to get if there is a pending priority notification to be shown next.
-  virtual absl::optional<std::string> GetPendingPriorityNotification() = 0;
+  virtual std::optional<std::string> GetPendingPriorityNotification() = 0;
 
   // Called by the client to register a handler for priority notifications. This
   // will essentially contain the code to spin up an IPH.
@@ -294,13 +308,26 @@ class Tracker : public KeyedService, public base::SupportsUserData {
   // invoked exactly one time.
   virtual void AddOnInitializedCallback(OnInitializedCallback callback) = 0;
 
+#if BUILDFLAG(IS_CHROMEOS)
+  // Updates the config of a specific feature after initialization. The new
+  // config will replace the existing config.
+  // Calling this method requires the Tracker to already have been initialized.
+  // See IsInitialized() and AddOnInitializedCallback(...) for how to ensure
+  // the call to this is delayed.
+  virtual void UpdateConfig(const base::Feature& feature,
+                            const ConfigurationProvider* provider) = 0;
+#endif
+
   // Returns the configuration associated with the tracker for testing purposes.
   virtual const Configuration* GetConfigurationForTesting() const = 0;
 
   // Set a testing clock for the tracker. It's recommended to use a
-  // SimpleTestClock, so we can advacne the clock in test.
+  // SimpleTestClock, so we can advance the clock in test.
   virtual void SetClockForTesting(const base::Clock& clock,
-                                  base::Time& initial_now) = 0;
+                                  base::Time initial_now) = 0;
+
+  // Returns whether any features are disabled/enabled for testing.
+  virtual bool IsInFeatureTestMode() const = 0;
 
   // Returns the default set of configuration providers.
   static ConfigurationProviderList GetDefaultConfigurationProviders();

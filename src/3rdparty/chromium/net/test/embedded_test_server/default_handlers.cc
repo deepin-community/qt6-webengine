@@ -13,12 +13,12 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
-#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
@@ -26,11 +26,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
+#include "crypto/hash.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/url_util.h"
 #include "net/filter/filter_source_stream_test_util.h"
@@ -137,7 +139,7 @@ std::unique_ptr<HttpResponse> HandleEchoCookieWithStatus(
   return http_response;
 }
 
-// TODO(https://crbug.com/1138913): Remove when request handlers are
+// TODO(crbug.com/40153192): Remove when request handlers are
 // implementable in Android's embedded test server implementation
 std::unique_ptr<HttpResponse> HandleEchoCriticalHeader(
     const HttpRequest& request) {
@@ -191,8 +193,9 @@ std::unique_ptr<HttpResponse> HandleEchoTitle(const HttpRequest& request) {
 // /echoall?QUERY
 // Responds with the list of QUERY and the request headers.
 //
-// Alternative form:
-// /echoall/nocache?QUERY prevents caching of the response.
+// Alternative forms:
+// - /echoall/nocache?QUERY prevents caching of the response.
+// - /echoall/cache?QUERY caches the response using a max-age.
 std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   auto http_response = std::make_unique<BasicHttpResponse>();
 
@@ -224,6 +227,8 @@ std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   if (request.GetURL().path_piece().ends_with("/nocache")) {
     http_response->AddCustomHeader("Cache-Control",
                                    "no-cache, no-store, must-revalidate");
+  } else if (request.GetURL().path_piece().ends_with("/cache")) {
+    http_response->AddCustomHeader("Cache-Control", "max-age=3600");
   }
 
   return http_response;
@@ -320,8 +325,9 @@ std::unique_ptr<HttpResponse> HandleExpectAndSetCookie(
 
 // An internal utility to extract HTTP Headers from a URL in the format of
 // "/url&KEY1: VALUE&KEY2: VALUE2". Returns a header key to header value map.
-std::map<std::string, std::string> ExtractHeadersFromQuery(const GURL& url) {
-  std::map<std::string, std::string> key_to_value;
+std::multimap<std::string, std::string> ExtractHeadersFromQuery(
+    const GURL& url) {
+  std::multimap<std::string, std::string> key_to_value;
   if (url.has_query()) {
     RequestQuery headers = ParseQuery(url);
     for (const auto& header : headers) {
@@ -532,12 +538,16 @@ std::unique_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
   return http_response;
 }
 
+std::string Sha256String(std::string_view input) {
+  return base::ToLowerASCII(base::HexEncode(crypto::hash::Sha256(input)));
+}
+
 // /auth-digest
 // Performs "Digest" HTTP authentication.
 std::unique_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
-  std::string nonce = base::MD5String(
+  std::string nonce = Sha256String(
       base::StringPrintf("privatekey%s", request.relative_url.c_str()));
-  std::string opaque = base::MD5String("opaque");
+  std::string opaque = Sha256String("opaque");
   std::string password = kDefaultPassword;
   std::string realm = kDefaultRealm;
 
@@ -576,22 +586,22 @@ std::unique_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
     } else {
       username = auth_pairs["username"];
 
-      std::string hash1 = base::MD5String(
+      std::string hash1 = Sha256String(
           base::StringPrintf("%s:%s:%s", auth_pairs["username"].c_str(),
                              realm.c_str(), password.c_str()));
-      std::string hash2 = base::MD5String(base::StringPrintf(
+      std::string hash2 = Sha256String(base::StringPrintf(
           "%s:%s", request.method_string.c_str(), auth_pairs["uri"].c_str()));
 
       std::string response;
       if (auth_pairs.find("qop") != auth_pairs.end() &&
           auth_pairs.find("nc") != auth_pairs.end() &&
           auth_pairs.find("cnonce") != auth_pairs.end()) {
-        response = base::MD5String(base::StringPrintf(
+        response = Sha256String(base::StringPrintf(
             "%s:%s:%s:%s:%s:%s", hash1.c_str(), nonce.c_str(),
             auth_pairs["nc"].c_str(), auth_pairs["cnonce"].c_str(),
             auth_pairs["qop"].c_str(), hash2.c_str()));
       } else {
-        response = base::MD5String(base::StringPrintf(
+        response = Sha256String(base::StringPrintf(
             "%s:%s:%s", hash1.c_str(), nonce.c_str(), hash2.c_str()));
       }
 
@@ -608,7 +618,7 @@ std::unique_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
     http_response->set_content_type("text/html");
     std::string auth_header = base::StringPrintf(
         "Digest realm=\"%s\", "
-        "domain=\"/\", qop=\"auth\", algorithm=MD5, nonce=\"%s\", "
+        "domain=\"/\", qop=\"auth\", algorithm=SHA-256, nonce=\"%s\", "
         "opaque=\"%s\"",
         realm.c_str(), nonce.c_str(), opaque.c_str());
     http_response->AddCustomHeader("WWW-Authenticate", auth_header);
@@ -842,21 +852,10 @@ std::unique_ptr<HttpResponse> HandleExabyteResponse(
 // enough memory to contain the body, but DCHECKs if that fails.
 std::unique_ptr<HttpResponse> HandleGzipBody(const HttpRequest& request) {
   std::string uncompressed_body = request.GetURL().query();
-  // Attempt to pick size that's large enough even in the worst case (deflate
-  // block headers should be shorter than 512 bytes, and deflating should never
-  // double size of data, modulo headers).
-  // TODO(mmenke): This is rather awkward. Worth improving CompressGzip?
-  std::vector<char> compressed_body(uncompressed_body.size() * 2 + 512);
-  size_t compressed_size = compressed_body.size();
-  CompressGzip(uncompressed_body.c_str(), uncompressed_body.size(),
-               compressed_body.data(), &compressed_size,
-               true /* gzip_framing */);
-  // CompressGzip should DCHECK itself if this fails, anyways.
-  DCHECK_GE(compressed_body.size(), compressed_size);
+  auto compressed_body = CompressGzip(uncompressed_body);
 
   auto http_response = std::make_unique<BasicHttpResponse>();
-  http_response->set_content(
-      std::string(compressed_body.data(), compressed_size));
+  http_response->set_content(base::as_string_view(compressed_body));
   http_response->AddCustomHeader("Content-Encoding", "gzip");
   http_response->AddCustomHeader("Cache-Control", "max-age=60");
   return http_response;

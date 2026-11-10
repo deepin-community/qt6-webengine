@@ -5,11 +5,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_BLOCK_NODE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_BLOCK_NODE_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
 #include "third_party/blink/renderer/core/layout/layout_input_node.h"
 #include "third_party/blink/renderer/platform/fonts/font_baseline.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
@@ -26,6 +27,7 @@ class PhysicalBoxFragment;
 class PhysicalFragment;
 enum class BaselineAlgorithmType;
 enum class MathScriptType;
+enum class SizeType;
 struct LayoutAlgorithmParams;
 
 // Represents a node to be laid out.
@@ -85,21 +87,6 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // To be called when we're done repeating a node, when at the last fragment.
   void FinishRepeatableRoot() const;
 
-  // This method is just for use within the |OutOfFlowLayoutPart|.
-  //
-  // As OOF-positioned objects have their position, and size computed
-  // pre-layout, we need a way to quickly determine if we need to perform this
-  // work.
-  //
-  // We have this "first-tier" cache explicitly for this purpose.
-  // This method compares the containing-block size to determine if we can skip
-  // the position, and size calculation.
-  //
-  // If the containing-block size hasn't changed, and we are layout-clean we
-  // can reuse the previous layout result.
-  const LayoutResult* CachedLayoutResultForOutOfFlowPositioned(
-      LogicalSize container_content_size) const;
-
   LayoutInputNode NextSibling() const;
 
   // Computes the value of min-content and max-content for this node's border
@@ -122,7 +109,7 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // space is not optional.
   MinMaxSizesResult ComputeMinMaxSizes(
       WritingMode container_writing_mode,
-      const MinMaxSizesType,
+      const SizeType,
       const ConstraintSpace&,
       const MinMaxSizesFloatInput float_input = MinMaxSizesFloatInput()) const;
 
@@ -131,11 +118,13 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   BlockNode GetRenderedLegend() const;
   BlockNode GetFieldsetContent() const;
 
-  bool IsTableCell() const { return box_->IsTableCell(); }
-
   bool IsFrameSet() const { return box_->IsFrameSet(); }
   bool IsParentNGFrameSet() const { return box_->Parent()->IsFrameSet(); }
   bool IsParentGrid() const { return box_->Parent()->IsLayoutGrid(); }
+
+  // Returns true if this node should pass its percentage resolution block-size
+  // to its children. Typically only quirks-mode, auto block-size, block nodes.
+  bool UseParentPercentageResolutionBlockSizeForChildren() const;
 
   // Return true if this block node establishes an inline formatting context.
   // This will only be the case if there is actual inline content. Empty nodes
@@ -146,16 +135,12 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
 
   bool IsInlineLevel() const;
   bool IsAtomicInlineLevel() const;
-  bool HasAspectRatio() const;
   bool IsInTopOrViewTransitionLayer() const;
 
   // Returns the aspect ratio of a replaced element.
-  LogicalSize GetAspectRatio() const;
+  LogicalSize GetReplacedAspectRatio() const;
 
-  // Returns the transform to apply to a child (e.g. for scrollable-overflow).
-  absl::optional<gfx::Transform> GetTransformForChildFragment(
-      const PhysicalBoxFragment& child_fragment,
-      PhysicalSize size) const;
+  bool MayHaveAnchorQuery() const { return box_->MayHaveAnchorQuery(); }
 
   bool HasLeftOverflow() const { return box_->HasLeftOverflow(); }
   bool HasTopOverflow() const { return box_->HasTopOverflow(); }
@@ -191,6 +176,19 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // for the web-developer defined layout is ready).
   bool IsCustomLayoutLoaded() const;
 
+  // Return the ::scroll-marker-group associated with this node, if any.
+  BlockNode GetScrollMarkerGroup() const {
+    return BlockNode(DynamicTo<LayoutBlock>(box_->GetScrollMarkerGroup()));
+  }
+
+  // Search for scroll markers in `scroller` and attach them to this scroll
+  // marker group. Any existing scroll markers will first be removed.
+  void PopulateScrollMarkerGroup(const BlockNode& scroller) const;
+
+  // Populate with scroll markers (and relayout if necessary)
+  // the::scroll-marker-group associated with this node, if any.
+  void HandleScrollMarkerGroup() const;
+
   // Get script type for scripts (msub, msup, msubsup, munder, mover and
   // munderover).
   MathScriptType ScriptType() const;
@@ -205,9 +203,8 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
       bool use_first_line_style,
       BaselineAlgorithmType baseline_algorithm_type);
 
-  // Write the inline-size and number of columns in a multicol container to
-  // legacy.
-  void StoreColumnSizeAndCount(LayoutUnit inline_size, int count);
+  // Write the number of columns in a multicol container to legacy.
+  void StoreColumnCount(int count);
 
   bool ShouldApplyLayoutContainment() const {
     return box_->ShouldApplyLayoutContainment();
@@ -239,6 +236,12 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // legacy flow thread to encompass those extra columns.
   void MakeRoomForExtraColumns(LayoutUnit block_size) const;
 
+  // Page containers and page border boxes are laid out directly by special
+  // algorithms, rather than going via BlockNode::Layout(), so whatever
+  // side-effects Layout() causes needs to be triggered manually from these
+  // algorithms.
+  void FinishPageContainerLayout(const LayoutResult*) const;
+
   bool operator==(const BlockNode& other) const { return box_ == other.box_; }
   bool operator==(const LayoutInputNode& other) const {
     return other.Type() == kBlock && GetLayoutBox() == other.GetLayoutBox();
@@ -258,7 +261,7 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
                     const ConstraintSpace&,
                     const BlockBreakToken*,
                     const LayoutResult*,
-                    const absl::optional<PhysicalSize>& old_box_size) const;
+                    const std::optional<PhysicalSize>& old_box_size) const;
 
   // Update the layout results vector in LayoutBox with the new result.
   void StoreResultInLayoutBox(const LayoutResult*,

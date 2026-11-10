@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-dwconv/unipass-scalar.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/math.h>
-
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 void xnn_qs8_dwconv_minmax_rndnu_ukernel_9p4c__scalar(
     size_t channels,
@@ -22,8 +26,9 @@ void xnn_qs8_dwconv_minmax_rndnu_ukernel_9p4c__scalar(
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
+    size_t input_pixel_stride,
     const int8_t* zero,
-    const union xnn_qs8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qs8_conv_minmax_params* restrict params)
 {
   assert(channels != 0);
   assert(output_width != 0);
@@ -31,8 +36,8 @@ void xnn_qs8_dwconv_minmax_rndnu_ukernel_9p4c__scalar(
   const int32_t vmultiplier = params->rndnu_scalar.multiplier;
   const int64_t vrounding = params->rndnu_scalar.rounding;
   const uint32_t vshift = params->rndnu_scalar.shift;
-  const int32_t voutput_min_less_zero_point = params->rndnu_scalar.output_min_less_zero_point;
-  const int32_t voutput_max_less_zero_point = params->rndnu_scalar.output_max_less_zero_point;
+  const int32_t voutput_min_less_zero_point = (int32_t) params->rndnu_scalar.output_min - (int32_t) params->rndnu_scalar.output_zero_point;
+  const int32_t voutput_max_less_zero_point = (int32_t) params->rndnu_scalar.output_max - (int32_t) params->rndnu_scalar.output_zero_point;
   const int32_t voutput_zero_point = params->rndnu_scalar.output_zero_point;
   do {
     const int8_t* i0 = input[0];
@@ -313,6 +318,7 @@ void xnn_qs8_dwconv_minmax_rndnu_ukernel_9p4c__scalar(
       } while (--c != 0);
     }
 
+    input_offset += input_pixel_stride;
     output = (int8_t*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

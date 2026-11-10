@@ -52,9 +52,9 @@ class CORE_EXPORT ScriptRunner final : public GarbageCollected<ScriptRunner>,
   // Delays script evaluation after `ScriptRunnerDelayer::Activate()` until
   // `ScriptRunnerDelayer::Deactivate()`.
   //
-  // Each `DelayReason` value represents one reason to delay, and there should
-  // be at most one active `ScriptRunnerDelayer` for each `ScriptRunnerDelayer`
-  // for each `ScriptRunner`.
+  // Each `DelayReason` value represents one reason to delay, and for each
+  // `ScriptRunner` there should be at most one active `ScriptRunnerDelayer` for
+  // each `DelayReason`.
   //
   // Each script can choose to wait or not to wait for each `DelayReason`, and
   // are evaluated after all of its relevant `ScriptRunnerDelayer`s are
@@ -70,9 +70,6 @@ class CORE_EXPORT ScriptRunner final : public GarbageCollected<ScriptRunner>,
     kLoad = 1 << 0,
     // Milestone is reached as defined by https://crbug.com/1340837.
     kMilestone = 1 << 1,
-    // Delay async scripts until force-deferred scripts are evaluated
-    // https://crbug.com/1339112.
-    kForceDefer = 1 << 2,
 
     kTest1 = 1 << 6,
     kTest2 = 1 << 7,
@@ -88,12 +85,6 @@ class CORE_EXPORT ScriptRunner final : public GarbageCollected<ScriptRunner>,
     task_runner_ = task_runner;
   }
 
-  // Returns true until all async scripts are evaluated.
-  // pending_async_scripts_ can be empty a little earlier than that.
-  bool HasAsyncScripts() const {
-    return number_of_async_scripts_not_evaluated_yet_ > 0;
-  }
-
   // Returns true until all force in-order scripts are evaluated.
   // pending_force_in_order_scripts_ can be empty a little earlier than that.
   bool HasForceInOrderScripts() const {
@@ -101,7 +92,7 @@ class CORE_EXPORT ScriptRunner final : public GarbageCollected<ScriptRunner>,
   }
 
   void Trace(Visitor*) const override;
-  const char* NameInHeapSnapshot() const override { return "ScriptRunner"; }
+  const char* GetHumanReadableName() const override { return "ScriptRunner"; }
 
   // PendingScriptClient
   void PendingScriptFinished(PendingScript*) override;
@@ -128,11 +119,6 @@ class CORE_EXPORT ScriptRunner final : public GarbageCollected<ScriptRunner>,
   HeapHashMap<Member<PendingScript>, DelayReasons> pending_async_scripts_;
 
   Member<Document> document_;
-
-  // The number of async scripts that aren't yet evaluated. This is different
-  // from pending_async_scripts_.size() == the number of async scripts that
-  // aren't yet scheduled to evaluate.
-  wtf_size_t number_of_async_scripts_not_evaluated_yet_ = 0;
 
   HeapDeque<Member<PendingScript>> pending_force_in_order_scripts_;
   // The number of force in-order scripts that aren't yet evaluated. This is

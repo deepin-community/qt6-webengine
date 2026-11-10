@@ -7,7 +7,6 @@
 #ifndef CORE_FPDFAPI_CMAPS_CNS1_CMAPS_CNS1_H_
 #define CORE_FPDFAPI_CMAPS_CNS1_CMAPS_CNS1_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "core/fpdfapi/cmaps/fpdf_cmaps.h"
@@ -29,9 +28,9 @@ extern const DWordCIDMap kCNS_EUC_V_0_DWord[];
 extern const uint16_t kUniCNS_UCS2_H_3[];
 extern const uint16_t kUniCNS_UCS2_V_3[];
 extern const uint16_t kUniCNS_UTF16_H_0[];
-extern const uint16_t kCNS1CID2Unicode_5[19088];
-extern const CMap kCNS1_cmaps[];
-extern const size_t kCNS1_cmaps_size;
+
+#include "Adobe-CNS1-UCS2_5.inc"
+#include "cmaps_cns1.inc"
 
 }  // namespace fxcmap
 

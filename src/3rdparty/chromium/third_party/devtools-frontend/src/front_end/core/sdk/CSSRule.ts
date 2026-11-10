@@ -9,48 +9,47 @@ import * as Platform from '../platform/platform.js';
 import {CSSContainerQuery} from './CSSContainerQuery.js';
 import {CSSLayer} from './CSSLayer.js';
 import {CSSMedia} from './CSSMedia.js';
-import {type CSSModel, type Edit} from './CSSModel.js';
+import type {CSSModel, Edit} from './CSSModel.js';
 import {CSSScope} from './CSSScope.js';
 import {CSSStyleDeclaration, Type} from './CSSStyleDeclaration.js';
-import {type CSSStyleSheetHeader} from './CSSStyleSheetHeader.js';
+import type {CSSStyleSheetHeader} from './CSSStyleSheetHeader.js';
 import {CSSSupports} from './CSSSupports.js';
+
+function styleSheetHeaderForRule(
+    cssModel: CSSModel, {styleSheetId}: {styleSheetId?: Protocol.CSS.StyleSheetId}): CSSStyleSheetHeader|null {
+  return styleSheetId && cssModel.styleSheetHeaderForId(styleSheetId) || null;
+}
 
 export class CSSRule {
   readonly cssModelInternal: CSSModel;
-  styleSheetId: Protocol.CSS.StyleSheetId|undefined;
-  sourceURL: string|undefined;
-  origin: Protocol.CSS.StyleSheetOrigin;
-  style: CSSStyleDeclaration;
+  readonly origin: Protocol.CSS.StyleSheetOrigin;
+  readonly style: CSSStyleDeclaration;
+  readonly header: CSSStyleSheetHeader|null;
 
   constructor(cssModel: CSSModel, payload: {
     style: Protocol.CSS.CSSStyle,
-    styleSheetId: Protocol.CSS.StyleSheetId|undefined,
     origin: Protocol.CSS.StyleSheetOrigin,
+    header: CSSStyleSheetHeader|null,
   }) {
+    this.header = payload.header;
     this.cssModelInternal = cssModel;
-    this.styleSheetId = payload.styleSheetId;
-
-    if (this.styleSheetId) {
-      const styleSheetHeader = this.getStyleSheetHeader(this.styleSheetId);
-      this.sourceURL = styleSheetHeader.sourceURL;
-    }
     this.origin = payload.origin;
     this.style = new CSSStyleDeclaration(this.cssModelInternal, this, payload.style, Type.Regular);
   }
 
+  get sourceURL(): string|undefined {
+    return this.header?.sourceURL;
+  }
+
   rebase(edit: Edit): void {
-    if (this.styleSheetId !== edit.styleSheetId) {
+    if (this.header?.id !== edit.styleSheetId) {
       return;
     }
     this.style.rebase(edit);
   }
 
   resourceURL(): Platform.DevToolsPath.UrlString {
-    if (!this.styleSheetId) {
-      return Platform.DevToolsPath.EmptyUrlString;
-    }
-    const styleSheetHeader = this.getStyleSheetHeader(this.styleSheetId);
-    return styleSheetHeader.resourceURL();
+    return this.header?.resourceURL() ?? Platform.DevToolsPath.EmptyUrlString;
   }
 
   isUserAgent(): boolean {
@@ -76,18 +75,12 @@ export class CSSRule {
   cssModel(): CSSModel {
     return this.cssModelInternal;
   }
-
-  getStyleSheetHeader(styleSheetId: Protocol.CSS.StyleSheetId): CSSStyleSheetHeader {
-    const styleSheetHeader = this.cssModelInternal.styleSheetHeaderForId(styleSheetId);
-    console.assert(styleSheetHeader !== null);
-    return styleSheetHeader as CSSStyleSheetHeader;
-  }
 }
 
 class CSSValue {
   text: string;
-  range: TextUtils.TextRange.TextRange|undefined;
-  specificity: Protocol.CSS.Specificity|undefined;
+  range?: TextUtils.TextRange.TextRange;
+  specificity?: Protocol.CSS.Specificity;
   constructor(payload: Protocol.CSS.Value) {
     this.text = payload.text;
     if (payload.range) {
@@ -117,7 +110,7 @@ export class CSSStyleRule extends CSSRule {
   ruleTypes: Protocol.CSS.CSSRuleType[];
   wasUsed: boolean;
   constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSRule, wasUsed?: boolean) {
-    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
+    super(cssModel, {origin: payload.origin, style: payload.style, header: styleSheetHeaderForRule(cssModel, payload)});
     this.reinitializeSelectors(payload.selectorList);
     this.nestingSelectors = payload.nestingSelectors;
     this.media = payload.media ? CSSMedia.parseMediaArrayPayload(cssModel, payload.media) : [];
@@ -156,13 +149,13 @@ export class CSSStyleRule extends CSSRule {
   }
 
   setSelectorText(newSelector: string): Promise<boolean> {
-    const styleSheetId = this.styleSheetId;
+    const styleSheetId = this.header?.id;
     if (!styleSheetId) {
-      throw 'No rule stylesheet id';
+      throw new Error('No rule stylesheet id');
     }
     const range = this.selectorRange();
     if (!range) {
-      throw 'Rule selector is not editable';
+      throw new Error('Rule selector is not editable');
     }
     return this.cssModelInternal.setSelectorText(styleSheetId, range, newSelector);
   }
@@ -189,28 +182,26 @@ export class CSSStyleRule extends CSSRule {
 
   lineNumberInSource(selectorIndex: number): number {
     const selector = this.selectors[selectorIndex];
-    if (!selector || !selector.range || !this.styleSheetId) {
+    if (!selector?.range || !this.header) {
       return 0;
     }
-    const styleSheetHeader = this.getStyleSheetHeader(this.styleSheetId);
-    return styleSheetHeader.lineNumberInSource(selector.range.startLine);
+    return this.header.lineNumberInSource(selector.range.startLine);
   }
 
   columnNumberInSource(selectorIndex: number): number|undefined {
     const selector = this.selectors[selectorIndex];
-    if (!selector || !selector.range || !this.styleSheetId) {
+    if (!selector?.range || !this.header) {
       return undefined;
     }
-    const styleSheetHeader = this.getStyleSheetHeader(this.styleSheetId);
-    return styleSheetHeader.columnNumberInSource(selector.range.startLine, selector.range.startColumn);
+    return this.header.columnNumberInSource(selector.range.startLine, selector.range.startColumn);
   }
 
   override rebase(edit: Edit): void {
-    if (this.styleSheetId !== edit.styleSheetId) {
+    if (this.header?.id !== edit.styleSheetId) {
       return;
     }
     const range = this.selectorRange();
-    if (range && range.equal(edit.oldRange)) {
+    if (range?.equal(edit.oldRange)) {
       this.reinitializeSelectors((edit.payload as Protocol.CSS.SelectorList));
     } else {
       for (let i = 0; i < this.selectors.length; ++i) {
@@ -229,7 +220,7 @@ export class CSSStyleRule extends CSSRule {
 export class CSSPropertyRule extends CSSRule {
   #name: CSSValue;
   constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSPropertyRule) {
-    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
+    super(cssModel, {origin: payload.origin, style: payload.style, header: styleSheetHeaderForRule(cssModel, payload)});
     this.#name = new CSSValue(payload.propertyName);
   }
 
@@ -248,7 +239,7 @@ export class CSSPropertyRule extends CSSRule {
     return this.style.getPropertyValue('inherits') === 'true';
   }
   setPropertyName(newPropertyName: string): Promise<boolean> {
-    const styleSheetId = this.styleSheetId;
+    const styleSheetId = this.header?.id;
     if (!styleSheetId) {
       throw new Error('No rule stylesheet id');
     }
@@ -263,7 +254,7 @@ export class CSSPropertyRule extends CSSRule {
 export class CSSFontPaletteValuesRule extends CSSRule {
   readonly #paletteName: CSSValue;
   constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSFontPaletteValuesRule) {
-    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
+    super(cssModel, {origin: payload.origin, style: payload.style, header: styleSheetHeaderForRule(cssModel, payload)});
     this.#paletteName = new CSSValue(payload.fontPaletteName);
   }
 
@@ -277,7 +268,8 @@ export class CSSKeyframesRule {
   readonly #keyframesInternal: CSSKeyframeRule[];
   constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSKeyframesRule) {
     this.#animationName = new CSSValue(payload.animationName);
-    this.#keyframesInternal = payload.keyframes.map(keyframeRule => new CSSKeyframeRule(cssModel, keyframeRule));
+    this.#keyframesInternal =
+        payload.keyframes.map(keyframeRule => new CSSKeyframeRule(cssModel, keyframeRule, this.#animationName.text));
   }
 
   name(): CSSValue {
@@ -291,9 +283,15 @@ export class CSSKeyframesRule {
 
 export class CSSKeyframeRule extends CSSRule {
   #keyText!: CSSValue;
-  constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSKeyframeRule) {
-    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
+  #parentRuleName: string;
+  constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSKeyframeRule, parentRuleName: string) {
+    super(cssModel, {origin: payload.origin, style: payload.style, header: styleSheetHeaderForRule(cssModel, payload)});
     this.reinitializeKey(payload.keyText);
+    this.#parentRuleName = parentRuleName;
+  }
+
+  parentRuleName(): string {
+    return this.#parentRuleName;
   }
 
   key(): CSSValue {
@@ -305,7 +303,7 @@ export class CSSKeyframeRule extends CSSRule {
   }
 
   override rebase(edit: Edit): void {
-    if (this.styleSheetId !== edit.styleSheetId || !this.#keyText.range) {
+    if (this.header?.id !== edit.styleSheetId || !this.#keyText.range) {
       return;
     }
     if (edit.oldRange.equal(this.#keyText.range)) {
@@ -322,33 +320,113 @@ export class CSSKeyframeRule extends CSSRule {
   }
 
   setKeyText(newKeyText: string): Promise<boolean> {
-    const styleSheetId = this.styleSheetId;
+    const styleSheetId = this.header?.id;
     if (!styleSheetId) {
-      throw 'No rule stylesheet id';
+      throw new Error('No rule stylesheet id');
     }
     const range = this.#keyText.range;
     if (!range) {
-      throw 'Keyframe key is not editable';
+      throw new Error('Keyframe key is not editable');
     }
     return this.cssModelInternal.setKeyframeKey(styleSheetId, range, newKeyText);
   }
 }
 
-export class CSSPositionFallbackRule {
+export class CSSPositionTryRule extends CSSRule {
   readonly #name: CSSValue;
-  readonly #tryRules: CSSRule[];
-  constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSPositionFallbackRule) {
+  readonly #active: boolean;
+  constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSPositionTryRule) {
+    super(cssModel, {origin: payload.origin, style: payload.style, header: styleSheetHeaderForRule(cssModel, payload)});
     this.#name = new CSSValue(payload.name);
-    this.#tryRules = payload.tryRules.map(
-        tryRule =>
-            new CSSRule(cssModel, {origin: tryRule.origin, style: tryRule.style, styleSheetId: tryRule.styleSheetId}));
+    this.#active = payload.active;
   }
 
   name(): CSSValue {
     return this.#name;
   }
 
-  tryRules(): CSSRule[] {
-    return this.#tryRules;
+  active(): boolean {
+    return this.#active;
+  }
+}
+
+export interface CSSNestedStyleLeaf {
+  style: CSSStyleDeclaration;
+}
+
+export type CSSNestedStyleCondition = {
+  children: CSSNestedStyle[],
+}&({media: CSSMedia}|{container: CSSContainerQuery}|{supports: CSSSupports});
+
+export type CSSNestedStyle = CSSNestedStyleLeaf|CSSNestedStyleCondition;
+
+export class CSSFunctionRule extends CSSRule {
+  readonly #name: CSSValue;
+  readonly #parameters: string[];
+  readonly #children: CSSNestedStyle[];
+  constructor(cssModel: CSSModel, payload: Protocol.CSS.CSSFunctionRule) {
+    super(cssModel, {
+      origin: payload.origin,
+      style: {cssProperties: [], shorthandEntries: []},
+      header: styleSheetHeaderForRule(cssModel, payload)
+    });
+    this.#name = new CSSValue(payload.name);
+    this.#parameters = payload.parameters.map(({name}) => name);
+    this.#children = this.protocolNodesToNestedStyles(payload.children);
+  }
+
+  functionName(): CSSValue {
+    return this.#name;
+  }
+
+  parameters(): string[] {
+    return this.#parameters;
+  }
+
+  children(): CSSNestedStyle[] {
+    return this.#children;
+  }
+
+  nameWithParameters(): string {
+    return `${this.functionName().text}(${this.parameters().join(', ')})`;
+  }
+
+  protocolNodesToNestedStyles(nodes: Protocol.CSS.CSSFunctionNode[]): CSSNestedStyle[] {
+    const result = [];
+    for (const node of nodes) {
+      const nestedStyle = this.protocolNodeToNestedStyle(node);
+      if (nestedStyle) {
+        result.push(nestedStyle);
+      }
+    }
+    return result;
+  }
+
+  protocolNodeToNestedStyle(node: Protocol.CSS.CSSFunctionNode): CSSNestedStyle|undefined {
+    if (node.style) {
+      return {style: new CSSStyleDeclaration(this.cssModelInternal, this, node.style, Type.Regular)};
+    }
+    if (node.condition) {
+      const children = this.protocolNodesToNestedStyles(node.condition.children);
+      if (node.condition.media) {
+        return {children, media: new CSSMedia(this.cssModelInternal, node.condition.media)};
+      }
+      if (node.condition.containerQueries) {
+        return {
+          children,
+          container: new CSSContainerQuery(this.cssModelInternal, node.condition.containerQueries),
+        };
+      }
+      if (node.condition.supports) {
+        return {
+          children,
+          supports: new CSSSupports(this.cssModelInternal, node.condition.supports),
+        };
+      }
+      console.error('A function rule condition must have a media, container, or supports');
+      return;
+    }
+    console.error('A function rule node must have a style or condition');
+    return;
   }
 }

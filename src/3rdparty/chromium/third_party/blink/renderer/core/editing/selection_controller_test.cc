@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -108,15 +107,16 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
                                          .Build(),
                                      TextGranularity::kCharacter);
   EXPECT_EQ(VisibleSelectionInDOMTree().Start(),
-            VisibleSelectionInDOMTree().Base());
+            VisibleSelectionInDOMTree().Anchor());
   EXPECT_EQ(VisibleSelectionInDOMTree().End(),
-            VisibleSelectionInDOMTree().Extent());
+            VisibleSelectionInDOMTree().Focus());
   EXPECT_EQ(Position(top, 1), VisibleSelectionInDOMTree().Start());
   EXPECT_EQ(Position(top, 3), VisibleSelectionInDOMTree().End());
 
-  EXPECT_EQ(PositionInFlatTree(top, 1), GetVisibleSelectionInFlatTree().Base());
+  EXPECT_EQ(PositionInFlatTree(top, 1),
+            GetVisibleSelectionInFlatTree().Anchor());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
-            GetVisibleSelectionInFlatTree().Extent());
+            GetVisibleSelectionInFlatTree().Focus());
   EXPECT_EQ(PositionInFlatTree(top, 1),
             GetVisibleSelectionInFlatTree().Start());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
@@ -130,16 +130,16 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
           .Build(),
       TextGranularity::kCharacter);
   EXPECT_EQ(VisibleSelectionInDOMTree().End(),
-            VisibleSelectionInDOMTree().Base());
+            VisibleSelectionInDOMTree().Anchor());
   EXPECT_EQ(VisibleSelectionInDOMTree().Start(),
-            VisibleSelectionInDOMTree().Extent());
+            VisibleSelectionInDOMTree().Focus());
   EXPECT_EQ(Position(bottom, 0), VisibleSelectionInDOMTree().Start());
   EXPECT_EQ(Position(bottom, 3), VisibleSelectionInDOMTree().End());
 
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
-            GetVisibleSelectionInFlatTree().Base());
+            GetVisibleSelectionInFlatTree().Anchor());
   EXPECT_EQ(PositionInFlatTree(top, 1),
-            GetVisibleSelectionInFlatTree().Extent());
+            GetVisibleSelectionInFlatTree().Focus());
   EXPECT_EQ(PositionInFlatTree(top, 1),
             GetVisibleSelectionInFlatTree().Start());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
@@ -151,7 +151,7 @@ TEST_F(SelectionControllerTest, setCaretAtHitTestResult) {
   SetBodyContent(body_content);
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "var sample = document.getElementById('sample');"
       "sample.addEventListener('onselectstart', "
       "  event => elem.parentNode.removeChild(elem));");
@@ -172,7 +172,7 @@ TEST_F(SelectionControllerTest, setCaretAtHitTestResultWithNullPosition) {
       "<div id=sample></div>");
   UpdateAllLifecyclePhasesForTest();
 
-  // Hit "&nbsp;" in before pseudo element of "sample".
+  // Hit "&nbsp;" in before pseudo-element of "sample".
   HitTestLocation location((gfx::Point(10, 10)));
   SetCaretAtHitTestResult(
       GetFrame().GetEventHandler().HitTestResultAtLocation(location));
@@ -185,7 +185,7 @@ TEST_F(SelectionControllerTest,
        SetCaretAtHitTestResultWithDisconnectedPosition) {
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.designMode = 'on';"
       "const selection = window.getSelection();"
       "const html = document.getElementsByTagName('html')[0];"
@@ -228,7 +228,7 @@ TEST_F(SelectionControllerTest, AdjustSelectionWithTrailingWhitespace) {
   SetBodyContent(
       "<input type=checkbox>"
       "<div style='user-select:none'>abc</div>");
-  Element* const input = GetDocument().QuerySelector(AtomicString("input"));
+  Element* const input = QuerySelector("input");
 
   const SelectionInFlatTree& selection = ExpandWithGranularity(
       SelectionInFlatTree::Builder()
@@ -538,9 +538,8 @@ TEST_F(SelectionControllerTest, AdjustSelectionByUserSelectWithInput) {
                             TextGranularity::kParagraph);
   SelectionInFlatTree adjust_selection =
       AdjustSelectionByUserSelect(one, selection);
-  EXPECT_EQ(adjust_selection.Base(), selection.Base());
-  EXPECT_EQ(adjust_selection.Extent(),
-            PositionInFlatTree(one->parentNode(), 2));
+  EXPECT_EQ(adjust_selection.Anchor(), selection.Anchor());
+  EXPECT_EQ(adjust_selection.Focus(), PositionInFlatTree(one->parentNode(), 2));
 }
 
 // http://crbug.com/1410448
@@ -563,8 +562,8 @@ TEST_F(SelectionControllerTest, AdjustSelectionByUserSelectWithSpan) {
                             TextGranularity::kParagraph);
   SelectionInFlatTree adjust_selection =
       AdjustSelectionByUserSelect(one, selection);
-  EXPECT_EQ(adjust_selection.Base(), selection.Base());
-  EXPECT_EQ(adjust_selection.Extent(),
+  EXPECT_EQ(adjust_selection.Anchor(), selection.Anchor());
+  EXPECT_EQ(adjust_selection.Focus(),
             PositionInFlatTree::LastPositionInNode(*two->firstChild()));
 }
 
@@ -587,11 +586,11 @@ TEST_F(SelectionControllerTest, AdjustSelectionByUserSelectWithComment) {
                             TextGranularity::kParagraph);
   SelectionInFlatTree adjust_selection =
       AdjustSelectionByUserSelect(one, selection);
-  EXPECT_EQ(adjust_selection.Base(), selection.Base());
-  EXPECT_EQ(adjust_selection.Base(),
+  EXPECT_EQ(adjust_selection.Anchor(), selection.Anchor());
+  EXPECT_EQ(adjust_selection.Anchor(),
             PositionInFlatTree::FirstPositionInNode(*one->firstChild()));
-  EXPECT_EQ(adjust_selection.Extent(), selection.Extent());
-  EXPECT_EQ(adjust_selection.Extent(),
+  EXPECT_EQ(adjust_selection.Focus(), selection.Focus());
+  EXPECT_EQ(adjust_selection.Focus(),
             PositionInFlatTree::LastPositionInNode(*two->firstChild()));
 }
 

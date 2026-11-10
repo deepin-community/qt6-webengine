@@ -12,16 +12,17 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_client.h"
 #include "extensions/buildflags/buildflags.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 class WaitForNetworkCallbackHelper;
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 class ForceSigninVerifier;
 #endif
+class PrefRegistrySimple;
 class Profile;
 
 namespace version_info {
@@ -52,11 +53,9 @@ class ChromeSigninClient : public SigninClient {
   //   destruction (See ChromeSigninClient::PreSignOut(),
   //   PrimaryAccountPolicyManager::EnsurePrimaryAccountAllowedForProfile()).
   // - Supervised users on Android.IsRevokeSyncConsentAllowed
-  // - Lacros main profile: the primary account
-  //   must be the device account and can't be changed/cleared.
   bool IsClearPrimaryAccountAllowed(bool has_sync_account) const override;
 
-  // TODO(crbug.com/1369980): Remove revoke sync restriction when allowing
+  // TODO(crbug.com/40240844): Remove revoke sync restriction when allowing
   // enterprise users to revoke sync fully launches.
   bool IsRevokeSyncConsentAllowed() const override;
   void PreSignOut(
@@ -65,6 +64,7 @@ class ChromeSigninClient : public SigninClient {
       bool has_sync_account) override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   network::mojom::CookieManager* GetCookieManager() override;
+  network::mojom::NetworkContext* GetNetworkContext() override;
   bool AreSigninCookiesAllowed() override;
   bool AreSigninCookiesDeletedOnExit() override;
   void AddContentSettingsObserver(
@@ -77,17 +77,21 @@ class ChromeSigninClient : public SigninClient {
       GaiaAuthConsumer* consumer,
       gaia::GaiaSource source) override;
   version_info::Channel GetClientChannel() override;
-  void OnPrimaryAccountChangedWithEventSource(
-      signin::PrimaryAccountChangeEvent event_details,
-      absl::variant<signin_metrics::AccessPoint, signin_metrics::ProfileSignout>
-          event_source) override;
+  void OnPrimaryAccountChanged(
+      signin::PrimaryAccountChangeEvent event_details) override;
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  std::optional<account_manager::Account> GetInitialPrimaryAccount() override;
-  std::optional<bool> IsInitialPrimaryAccountChild() const override;
-  void RemoveAccount(const account_manager::AccountKey& account_key) override;
-  void RemoveAllAccounts() override;
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  std::unique_ptr<signin::BoundSessionOAuthMultiLoginDelegate>
+  CreateBoundSessionOAuthMultiloginDelegate() const override;
 #endif
+
+  // Adds the users to a synthetic field trial for user that were shown the
+  // Bookmarks Bubble sign in/sync promo. Only adds user that are part of the
+  // experiment associated with `switches::kSyncEnableBookmarksInTransportMode`.
+  // Called when the promo is shown to the user.
+  static void MaybeAddUserToBookmarksBubblePromoShownSyntheticFieldTrial();
+
+  static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
   // Used in tests to override the URLLoaderFactory returned by
   // GetURLLoaderFactory().
@@ -114,21 +118,29 @@ class ChromeSigninClient : public SigninClient {
       const base::FilePath& profile_path);
   void OnCloseBrowsersAborted(const base::FilePath& profile_path);
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_QTWEBENGINE)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_QTWEBENGINE)
   // Used as the `on_token_fetch_complete` callback in the
   // `ForceSigninVerifier`.
   void OnTokenFetchComplete(bool token_is_valid);
 #endif
 
-  // virtual for unit testing: cut down dependency on `BookmarkModel`.
-  // The following two functions will return `std::nullopt` if the
-  // `BookmarkModel` is nullptr.
-  virtual std::optional<size_t> GetAllBookmarksCount();
-  virtual std::optional<size_t> GetBookmarkBarBookmarksCount();
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Returns `std::nullopt` if the `ExtensionRegistry` is nullptr.
-  virtual std::optional<size_t> GetExtensionsCount();
+#if !BUILDFLAG(IS_CHROMEOS)
+  void RecordOpenTabCount(signin_metrics::AccessPoint access_point,
+                          signin::ConsentLevel consent_level);
 #endif
+
+  // Adds the user to a synthetic field trial based on the pref that it is
+  // associated with. The pref is then read on startup to ensure stickiness on
+  // session restart. Only adds user that are part of the experiment associated
+  // with `switches::kSyncEnableBookmarksInTransportMode` from which the group
+  // of the Synthetic Field trials are deduced.
+  static void MaybeAddUserToUnoBookmarksSyntheticFieldTrial(
+      std::string_view synthetic_field_trial_group_pref);
+
+  // Reads the group associated with the Synthetic field trial from prefs and
+  // registers it. Only registers the group if it was previously set in the
+  // pref.
+  static void RegisterSyntheticTrialsFromPrefs();
 
   const std::unique_ptr<WaitForNetworkCallbackHelper>
       wait_for_network_callback_helper_;
@@ -138,7 +150,7 @@ class ChromeSigninClient : public SigninClient {
   base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached_;
 
   bool should_display_user_manager_ = true;
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_QTWEBENGINE)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_QTWEBENGINE)
   std::unique_ptr<ForceSigninVerifier> force_signin_verifier_;
 #endif
 

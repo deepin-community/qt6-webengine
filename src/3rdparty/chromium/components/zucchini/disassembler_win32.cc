@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "components/zucchini/abs32_utils.h"
@@ -52,7 +53,7 @@ const pe::ImageDataDirectory* ReadDataDirectory(
     size_t index) {
   if (index >= optional_header->number_of_rva_and_sizes)
     return nullptr;
-  return &optional_header->data_directory[index];
+  return &UNSAFE_TODO(optional_header->data_directory[index]);
 }
 
 // Decides whether |section| (assumed value) is a section that contains code.
@@ -240,7 +241,8 @@ bool DisassemblerWin32<TRAITS>::ParseHeader() {
       source.GetArray<pe::ImageSectionHeader>(sections_count);
   if (!sections_array)
     return false;
-  sections_.assign(sections_array, sections_array + sections_count);
+  sections_.assign(sections_array,
+                   UNSAFE_TODO(sections_array + sections_count));
 
   // Prepare |units| for offset-RVA translation.
   std::vector<AddressTranslator::Unit> units;

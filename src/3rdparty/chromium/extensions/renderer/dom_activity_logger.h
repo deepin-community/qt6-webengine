@@ -5,14 +5,10 @@
 #ifndef EXTENSIONS_RENDERER_DOM_ACTIVITY_LOGGER_H_
 #define EXTENSIONS_RENDERER_DOM_ACTIVITY_LOGGER_H_
 
-#include <memory>
-#include <string>
-
 #include "base/values.h"
 #include "extensions/common/dom_action_types.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/renderer_host.mojom.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/web/web_dom_activity_logger.h"
 #include "v8/include/v8-forward.h"
 
@@ -28,7 +24,7 @@ namespace extensions {
 class DOMActivityLogger: public blink::WebDOMActivityLogger {
  public:
   static const int kMainWorldId = 0;
-  explicit DOMActivityLogger(const std::string& extension_id);
+  explicit DOMActivityLogger(const ExtensionId& extension_id);
 
   DOMActivityLogger(const DOMActivityLogger&) = delete;
   DOMActivityLogger& operator=(const DOMActivityLogger&) = delete;
@@ -38,7 +34,7 @@ class DOMActivityLogger: public blink::WebDOMActivityLogger {
   // Check (using the WebKit API) if there is no logger attached to the world
   // corresponding to world_id, and if so, construct a new logger and attach it.
   // world_id = 0 indicates the main world.
-  static void AttachToWorld(int32_t world_id, const std::string& extension_id);
+  static void AttachToWorld(int32_t world_id, const ExtensionId& extension_id);
 
  private:
   // blink::WebDOMActivityLogger implementation.
@@ -61,14 +57,12 @@ class DOMActivityLogger: public blink::WebDOMActivityLogger {
   void LogMethod(v8::Isolate* isolate,
                  v8::Local<v8::Context> context,
                  const blink::WebString& api_name,
-                 int argc,
-                 const v8::Local<v8::Value>* argv,
+                 base::span<const v8::Local<v8::Value>> args,
                  const blink::WebURL& url,
                  const blink::WebString& title) override;
   void LogEvent(blink::WebLocalFrame& frame,
                 const blink::WebString& event_name,
-                int argc,
-                const blink::WebString* argv,
+                base::span<const blink::WebString> args,
                 const blink::WebURL& url,
                 const blink::WebString& title) override;
 

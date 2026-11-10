@@ -33,7 +33,6 @@
 
 namespace IPC {
 
-class Listener;
 class UrgentMessageObserver;
 
 //------------------------------------------------------------------------------
@@ -41,8 +40,7 @@ class UrgentMessageObserver;
 // http://www.chromium.org/developers/design-documents/inter-process-communication
 // for overview of IPC in Chromium.
 
-// Channels are implemented using mojo message pipes on all platforms other
-// than NaCl.
+// Channels are implemented using mojo message pipes (via IPC::ChannelMojo).
 
 class COMPONENT_EXPORT(IPC) Channel : public Sender {
   // Security tests need access to the pipe handle.
@@ -105,28 +103,6 @@ class COMPONENT_EXPORT(IPC) Channel : public Sender {
     // Requests an associated interface from the remote endpoint.
     virtual void GetRemoteAssociatedInterface(
         mojo::GenericPendingAssociatedReceiver receiver) = 0;
-
-    // Template helper to add an interface factory to this channel.
-    template <typename Interface>
-    using AssociatedReceiverFactory = base::RepeatingCallback<void(
-        mojo::PendingAssociatedReceiver<Interface>)>;
-    template <typename Interface>
-    void AddAssociatedInterface(
-        const AssociatedReceiverFactory<Interface>& factory) {
-      AddGenericAssociatedInterface(
-          Interface::Name_,
-          base::BindRepeating(&BindPendingAssociatedReceiver<Interface>,
-                              factory));
-    }
-
-   private:
-    template <typename Interface>
-    static void BindPendingAssociatedReceiver(
-        const AssociatedReceiverFactory<Interface>& factory,
-        mojo::ScopedInterfaceEndpointHandle handle) {
-      factory.Run(
-          mojo::PendingAssociatedReceiver<Interface>(std::move(handle)));
-    }
   };
 
   // The maximum message size in bytes. Attempting to receive a message of this
@@ -160,21 +136,6 @@ class COMPONENT_EXPORT(IPC) Channel : public Sender {
   // - Client and named client: In these mode, the Channel merely
   //   connects to the already established IPC object.
   //
-  // Each mode has its own Create*() API to create the Channel object.
-  static std::unique_ptr<Channel> Create(
-      const IPC::ChannelHandle& channel_handle,
-      Mode mode,
-      Listener* listener);
-
-  static std::unique_ptr<Channel> CreateClient(
-      const IPC::ChannelHandle& channel_handle,
-      Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
-
-  static std::unique_ptr<Channel> CreateServer(
-      const IPC::ChannelHandle& channel_handle,
-      Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
 
   ~Channel() override;
 
@@ -235,10 +196,8 @@ class COMPONENT_EXPORT(IPC) Channel : public Sender {
   // Only channel associated mojo interfaces support urgent messages.
   virtual void SetUrgentMessageObserver(UrgentMessageObserver* observer);
 
-#if !BUILDFLAG(IS_NACL)
   // Generates a channel ID that's non-predictable and unique.
   static std::string GenerateUniqueRandomChannelID();
-#endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // Sandboxed processes live in a PID namespace, so when sending the IPC hello

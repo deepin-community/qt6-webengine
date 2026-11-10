@@ -4,11 +4,11 @@
 
 #include "base/strings/string_util_win.h"
 
+#include <algorithm>
+#include <optional>
 #include <string_view>
 
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util_impl_helpers.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -74,11 +74,11 @@ std::wstring CollapseWhitespace(std::wstring_view text,
 }
 
 bool ContainsOnlyChars(std::wstring_view input, std::wstring_view characters) {
-  return input.find_first_not_of(characters) == StringPiece::npos;
+  return input.find_first_not_of(characters) == std::string_view::npos;
 }
 
-bool EqualsASCII(std::wstring_view str, StringPiece ascii) {
-  return ranges::equal(ascii, str);
+bool EqualsASCII(std::wstring_view str, std::string_view ascii) {
+  return std::ranges::equal(ascii, str);
 }
 
 bool StartsWith(std::wstring_view str,
@@ -131,9 +131,9 @@ std::wstring JoinString(std::initializer_list<std::wstring_view> parts,
 }
 
 std::wstring ReplaceStringPlaceholders(std::wstring_view format_string,
-                                       const std::vector<std::wstring>& subst,
+                                       base::span<const std::wstring> subst,
                                        std::vector<size_t>* offsets) {
-  absl::optional<std::wstring> replacement =
+  std::optional<std::wstring> replacement =
       internal::DoReplaceStringPlaceholders(
           format_string, subst,
           /*placeholder_prefix*/ L'$',

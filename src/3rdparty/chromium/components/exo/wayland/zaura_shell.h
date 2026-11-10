@@ -6,10 +6,12 @@
 #define COMPONENTS_EXO_WAYLAND_ZAURA_SHELL_H_
 
 #include <aura-shell-server-protocol.h>
-
 #include <stdint.h>
 
-#include "ash/focus_cycler.h"
+#include <string>
+#include <string_view>
+
+#include "ash/focus/focus_cycler.h"
 #include "ash/shell_observer.h"
 #include "base/memory/raw_ptr.h"
 #include "chromeos/ui/base/window_state_type.h"
@@ -33,9 +35,9 @@ class ShellSurfaceBase;
 namespace wayland {
 class SerialTracker;
 
-// version: 64
+// version: 65
 constexpr uint32_t kZAuraShellVersion =
-    ZAURA_TOPLEVEL_STATE_TRUSTED_PINNED_SINCE_VERSION;
+    ZAURA_TOPLEVEL_CONFIGURE_OCCLUSION_STATE_SINCE_VERSION;
 
 // Adds bindings to the Aura Shell. Normally this implies Ash on ChromeOS
 // builds. On non-ChromeOS builds the protocol provides access to Aura windowing
@@ -81,7 +83,7 @@ class AuraSurface : public SurfaceObserver,
   void Pin(bool trusted);
   void Unpin();
   void SetOrientationLock(uint32_t orientation_lock);
-  void ShowTooltip(const char* text,
+  void ShowTooltip(std::u16string text,
                    const gfx::Point& position,
                    uint32_t trigger,
                    const base::TimeDelta& show_delay,
@@ -96,7 +98,7 @@ class AuraSurface : public SurfaceObserver,
   void OnDeskChanged(Surface* surface, int state) override;
   void ThrottleFrameRate(bool on) override;
   void OnTooltipShown(Surface* surface,
-                      const std::u16string& text,
+                      std::u16string_view text,
                       const gfx::Rect& bounds) override;
   void OnTooltipHidden(Surface* surface) override;
 
@@ -167,6 +169,7 @@ class AuraToplevel {
                    bool resizing,
                    bool activated,
                    float raster_scale,
+                   aura::Window::OcclusionState occlusion_state,
                    std::optional<chromeos::WindowStateType> restore_state_type);
   virtual void OnOriginChange(const gfx::Point& origin);
   void OnOverviewChange(bool in_overview);
@@ -177,7 +180,7 @@ class AuraToplevel {
   void SetFullscreenMode(uint32_t mode);
   void SetScaleFactor(float scale_factor);
   void SetPersistable(bool persistable);
-  void SetShape(absl::optional<cc::Region> shape);
+  void SetShape(std::optional<cc::Region> shape);
   void AckRotateFocus(uint32_t serial, uint32_t handled);
   void OnRotatePaneFocus(uint32_t serial,
                          ash::FocusCycler::Direction direction,

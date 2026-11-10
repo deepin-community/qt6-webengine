@@ -7,9 +7,13 @@
 #include "base/time/time.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/frozen_array.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_xr_handedness.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_xr_target_ray_mode.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/frame.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_frame_element_base.h"
@@ -24,12 +28,13 @@
 #include "third_party/blink/renderer/modules/xr/xr_system.h"
 #include "third_party/blink/renderer/modules/xr/xr_target_ray_space.h"
 #include "third_party/blink/renderer/modules/xr/xr_utils.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
 namespace {
 std::unique_ptr<gfx::Transform> TryGetTransform(
-    const absl::optional<gfx::Transform>& transform) {
+    const std::optional<gfx::Transform>& transform) {
   if (transform) {
     return std::make_unique<gfx::Transform>(*transform);
   }
@@ -140,30 +145,29 @@ XRInputSource::XRInputSource(const XRInputSource& other)
       mojo_from_input_(TryGetTransform(other.mojo_from_input_.get())),
       input_from_pointer_(TryGetTransform(other.input_from_pointer_.get())) {}
 
-const String XRInputSource::handedness() const {
+V8XRHandedness XRInputSource::handedness() const {
   switch (state_.handedness) {
     case device::mojom::XRHandedness::NONE:
-      return "none";
+      return V8XRHandedness(V8XRHandedness::Enum::kNone);
     case device::mojom::XRHandedness::LEFT:
-      return "left";
+      return V8XRHandedness(V8XRHandedness::Enum::kLeft);
     case device::mojom::XRHandedness::RIGHT:
-      return "right";
+      return V8XRHandedness(V8XRHandedness::Enum::kRight);
   }
 
-  NOTREACHED() << "Unknown handedness: " << state_.handedness;
+  NOTREACHED();
 }
 
-const String XRInputSource::targetRayMode() const {
+V8XRTargetRayMode XRInputSource::targetRayMode() const {
   switch (state_.target_ray_mode) {
     case device::mojom::XRTargetRayMode::GAZING:
-      return "gaze";
+      return V8XRTargetRayMode(V8XRTargetRayMode::Enum::kGaze);
     case device::mojom::XRTargetRayMode::POINTING:
-      return "tracked-pointer";
+      return V8XRTargetRayMode(V8XRTargetRayMode::Enum::kTrackedPointer);
     case device::mojom::XRTargetRayMode::TAPPING:
-      return "screen";
+      return V8XRTargetRayMode(V8XRTargetRayMode::Enum::kScreen);
   }
-
-  NOTREACHED() << "Unknown target ray mode: " << state_.target_ray_mode;
+  NOTREACHED();
 }
 
 XRSpace* XRInputSource::targetRaySpace() const {
@@ -228,7 +232,7 @@ void XRInputSource::SetGamepadConnected(bool state) {
 }
 
 void XRInputSource::UpdateGamepad(
-    const absl::optional<device::Gamepad>& gamepad) {
+    const std::optional<device::Gamepad>& gamepad) {
   if (gamepad) {
     if (!gamepad_) {
       gamepad_ = MakeGarbageCollected<Gamepad>(this, -1, state_.base_timestamp,
@@ -257,16 +261,16 @@ void XRInputSource::UpdateHand(
   }
 }
 
-absl::optional<gfx::Transform> XRInputSource::MojoFromInput() const {
+std::optional<gfx::Transform> XRInputSource::MojoFromInput() const {
   if (!mojo_from_input_.get()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return *(mojo_from_input_.get());
 }
 
-absl::optional<gfx::Transform> XRInputSource::InputFromPointer() const {
+std::optional<gfx::Transform> XRInputSource::InputFromPointer() const {
   if (!input_from_pointer_.get()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return *(input_from_pointer_.get());
 }
@@ -518,13 +522,25 @@ void XRInputSource::ProcessOverlayHitTest(
   // the common base class to cover both. (There's no intention to actively
   // support framesets for DOM Overlay, but this helps prevent them from
   // being used as a mechanism for information leaks.)
-  HTMLFrameElementBase* frame = DynamicTo<HTMLFrameElementBase>(hit_element);
-  if (frame) {
-    Document* hit_document = frame->contentDocument();
-    if (hit_document) {
-      Frame* hit_frame = hit_document->GetFrame();
-      DCHECK(hit_frame);
-      if (hit_frame->IsCrossOriginToOutermostMainFrame()) {
+  HTMLFrameElementBase* frame_element =
+      DynamicTo<HTMLFrameElementBase>(hit_element);
+  if (frame_element) {
+    Frame* hit_frame = frame_element->ContentFrame();
+    if (hit_frame) {
+      bool is_cross_origin = false;
+      if (hit_frame->IsRemoteFrame()) {
+        is_cross_origin = true;
+      } else {
+        const SecurityOrigin* hit_origin =
+            hit_frame->GetSecurityContext()->GetSecurityOrigin();
+        const SecurityOrigin* session_origin =
+            session_->GetExecutionContext()->GetSecurityOrigin();
+        if (!hit_origin->IsSameOriginWith(session_origin)) {
+          is_cross_origin = true;
+        }
+      }
+
+      if (is_cross_origin) {
         // Mark the input source as invisible until the primary button is
         // released.
         state_.is_visible = false;

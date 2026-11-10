@@ -52,7 +52,8 @@ class CONTENT_EXPORT CommitDeferringConditionRunner {
     // details.
     virtual void OnCommitDeferringConditionChecksComplete(
         CommitDeferringCondition::NavigationType navigation_type,
-        std::optional<int> candidate_prerender_frame_tree_node_id) = 0;
+        std::optional<FrameTreeNodeId>
+            candidate_prerender_frame_tree_node_id) = 0;
   };
 
   // Creates the runner and adds all the conditions in
@@ -63,7 +64,7 @@ class CONTENT_EXPORT CommitDeferringConditionRunner {
   static std::unique_ptr<CommitDeferringConditionRunner> Create(
       NavigationRequest& navigation_request,
       CommitDeferringCondition::NavigationType navigation_type,
-      std::optional<int> candidate_prerender_frame_tree_node_id);
+      std::optional<FrameTreeNodeId> candidate_prerender_frame_tree_node_id);
 
   CommitDeferringConditionRunner(const CommitDeferringConditionRunner&) =
       delete;
@@ -120,11 +121,11 @@ class CONTENT_EXPORT CommitDeferringConditionRunner {
   CommitDeferringConditionRunner(
       Delegate& delegate,
       CommitDeferringCondition::NavigationType navigation_type,
-      std::optional<int> candidate_prerender_frame_tree_node_id);
+      std::optional<FrameTreeNodeId> candidate_prerender_frame_tree_node_id);
 
-  // Called asynchronously to resume iterating through
-  // CommitDeferringConditions after one has been deferred. A callback for this
-  // method is passed into each condition when WillCommitNavigation is called.
+  // Resume iterating through CommitDeferringConditions after one has been
+  // deferred. A callback for this method is passed into each condition when
+  // WillCommitNavigation is called.
   void ResumeProcessing();
 
   void ProcessConditions();
@@ -148,10 +149,17 @@ class CONTENT_EXPORT CommitDeferringConditionRunner {
   // This is needed as PrerenderHost hasn't been reserved and
   // prerender_frame_tree_node_id() on NavigationRequest is not available yet
   // while CommitDeferringCondition is running.
-  const std::optional<int> candidate_prerender_frame_tree_node_id_;
+  const std::optional<FrameTreeNodeId> candidate_prerender_frame_tree_node_id_;
 
   // True when we're blocked waiting on a call to ResumeProcessing.
   bool is_deferred_ = false;
+
+  // True while the runner is calling WillCommitNavigation on a condition.
+  bool is_in_will_commit_navigation_ = false;
+
+  // True if ResumeProcessing was called synchronously while
+  // `is_in_will_commit_navigation_` is true.
+  bool was_resumed_synchronously_ = false;
 
   base::WeakPtrFactory<CommitDeferringConditionRunner> weak_factory_{this};
 };

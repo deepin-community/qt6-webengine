@@ -5,9 +5,9 @@
 #include "content/browser/network/cross_origin_embedder_policy_reporter.h"
 
 #include <optional>
+#include <string_view>
 #include <vector>
 
-#include "base/strings/string_piece.h"
 #include "base/test/task_environment.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
@@ -52,11 +52,9 @@ class TestNetworkContext : public network::TestNetworkContext {
       const GURL& url,
       const std::optional<base::UnguessableToken>& reporting_source,
       const net::NetworkAnonymizationKey& network_anonymization_key,
-      const std::optional<std::string>& user_agent,
       base::Value::Dict body) override {
-    DCHECK(!user_agent);
-    reports_.emplace_back(
-        Report(type, group, url, network_anonymization_key, std::move(body)));
+    reports_.emplace_back(type, group, url, network_anonymization_key,
+                          std::move(body));
   }
 
   const std::vector<Report>& reports() const { return reports_; }
@@ -99,9 +97,9 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
   void InvalidateWeakPtrs() { storage_partition_.InvalidateWeakPtrs(); }
   const TestNetworkContext& network_context() const { return network_context_; }
-  base::Value::Dict CreateBodyForCorp(base::StringPiece blocked_url,
+  base::Value::Dict CreateBodyForCorp(std::string_view blocked_url,
                                       RequestDestination destination,
-                                      base::StringPiece disposition) const {
+                                      std::string_view disposition) const {
     base::Value::Dict dict;
     for (const auto& pair :
          CreateBodyForCorpInternal(blocked_url, destination, disposition)) {
@@ -110,8 +108,8 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
     return dict;
   }
 
-  base::Value::Dict CreateBodyForNavigation(base::StringPiece blocked_url,
-                                            base::StringPiece disposition) {
+  base::Value::Dict CreateBodyForNavigation(std::string_view blocked_url,
+                                            std::string_view disposition) {
     base::Value::Dict dict;
     for (const auto& pair :
          CreateBodyInternal("navigation", blocked_url, disposition)) {
@@ -121,8 +119,8 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
 
   base::Value::Dict CreateBodyForWorkerInitialization(
-      base::StringPiece blocked_url,
-      base::StringPiece disposition) {
+      std::string_view blocked_url,
+      std::string_view disposition) {
     base::Value::Dict dict;
     for (const auto& pair : CreateBodyInternal("worker initialization",
                                                blocked_url, disposition)) {
@@ -132,9 +130,9 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
 
   blink::mojom::ReportBodyPtr CreateMojomBodyForCorp(
-      base::StringPiece blocked_url,
+      std::string_view blocked_url,
       RequestDestination destination,
-      base::StringPiece disposition) {
+      std::string_view disposition) {
     auto body = blink::mojom::ReportBody::New();
     for (const auto& pair :
          CreateBodyForCorpInternal(blocked_url, destination, disposition)) {
@@ -145,8 +143,8 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
 
   blink::mojom::ReportBodyPtr CreateMojomBodyForNavigation(
-      base::StringPiece blocked_url,
-      base::StringPiece disposition) {
+      std::string_view blocked_url,
+      std::string_view disposition) {
     auto body = blink::mojom::ReportBody::New();
     for (const auto& pair :
          CreateBodyInternal("navigation", blocked_url, disposition)) {
@@ -157,8 +155,8 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
 
   blink::mojom::ReportBodyPtr CreateMojomBodyForWorkerInitialization(
-      base::StringPiece blocked_url,
-      base::StringPiece disposition) {
+      std::string_view blocked_url,
+      std::string_view disposition) {
     auto body = blink::mojom::ReportBody::New();
     for (const auto& pair : CreateBodyInternal("worker initialization",
                                                blocked_url, disposition)) {
@@ -170,9 +168,9 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
 
  private:
   std::vector<std::pair<std::string, std::string>> CreateBodyForCorpInternal(
-      base::StringPiece blocked_url,
+      std::string_view blocked_url,
       RequestDestination destination,
-      base::StringPiece disposition) const {
+      std::string_view disposition) const {
     return {std::make_pair("type", "corp"),
             std::make_pair("blockedURL", std::string(blocked_url)),
             std::make_pair("destination",
@@ -181,9 +179,9 @@ class CrossOriginEmbedderPolicyReporterTest : public testing::Test {
   }
 
   std::vector<std::pair<std::string, std::string>> CreateBodyInternal(
-      base::StringPiece type,
-      base::StringPiece blocked_url,
-      base::StringPiece disposition) const {
+      std::string_view type,
+      std::string_view blocked_url,
+      std::string_view disposition) const {
     return {std::make_pair("type", std::string(type)),
             std::make_pair("blockedURL", std::string(blocked_url)),
             std::make_pair("disposition", std::string(disposition))};
@@ -235,7 +233,7 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, BasicCorp) {
   EXPECT_EQ(r1.group, "e1");
   EXPECT_EQ(r1.url, kContextUrl);
   EXPECT_EQ(r1.network_anonymization_key, kNetworkIsolationKey);
-  EXPECT_EQ(r1.body, CreateBodyForCorp("https://www1.example.com/x#foo?bar=baz",
+  EXPECT_EQ(r1.body, CreateBodyForCorp("https://www1.example.com/x",
                                        RequestDestination::kScript, "enforce"));
   EXPECT_EQ(r2.type, "coep");
   EXPECT_EQ(r2.group, "e2");
@@ -252,12 +250,14 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, UserAndPassForCorp) {
       GetStoragePartition(), kContextUrl, "e1", "e2",
       base::UnguessableToken::Create(), net::NetworkAnonymizationKey());
 
-  reporter.QueueCorpViolationReport(GURL("https://u:p@www1.example.com/x"),
-                                    RequestDestination::kImage,
-                                    /*report_only=*/false);
-  reporter.QueueCorpViolationReport(GURL("https://u:p@www2.example.com/y"),
-                                    RequestDestination::kScript,
-                                    /*report_only=*/true);
+  reporter.QueueCorpViolationReport(
+      GURL("https://u:p@www1.example.com/x#fragment"),
+      RequestDestination::kImage,
+      /*report_only=*/false);
+  reporter.QueueCorpViolationReport(
+      GURL("https://u:p@www2.example.com/y#fragment"),
+      RequestDestination::kScript,
+      /*report_only=*/true);
 
   ASSERT_EQ(2u, network_context().reports().size());
   const Report& r1 = network_context().reports()[0];
@@ -377,8 +377,8 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, BasicNavigation) {
   EXPECT_EQ(r1.type, "coep");
   EXPECT_EQ(r1.group, "e1");
   EXPECT_EQ(r1.url, kContextUrl);
-  EXPECT_EQ(r1.body, CreateBodyForNavigation(
-                         "https://www1.example.com/x#foo?bar=baz", "enforce"));
+  EXPECT_EQ(r1.body,
+            CreateBodyForNavigation("https://www1.example.com/x", "enforce"));
   EXPECT_EQ(r2.type, "coep");
   EXPECT_EQ(r2.group, "e2");
   EXPECT_EQ(r2.url, kContextUrl);
@@ -408,8 +408,8 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, ObserverForNavigation) {
   EXPECT_EQ(r1.type, "coep");
   EXPECT_EQ(r1.url, kContextUrl);
   EXPECT_TRUE(mojo::Equals(
-      r1.body, CreateMojomBodyForNavigation(
-                   "https://www1.example.com/x#foo?bar=baz", "enforce")));
+      r1.body,
+      CreateMojomBodyForNavigation("https://www1.example.com/x", "enforce")));
   EXPECT_EQ(r2.type, "coep");
   EXPECT_EQ(r2.url, kContextUrl);
   EXPECT_TRUE(
@@ -422,10 +422,12 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, UserAndPassForNavigation) {
   CrossOriginEmbedderPolicyReporter reporter(
       GetStoragePartition(), kContextUrl, "e1", "e2",
       base::UnguessableToken::Create(), net::NetworkAnonymizationKey());
-  reporter.QueueNavigationReport(GURL("https://u:p@www1.example.com/x"),
-                                 /*report_only=*/false);
-  reporter.QueueNavigationReport(GURL("https://u:p@www2.example.com/y"),
-                                 /*report_only=*/true);
+  reporter.QueueNavigationReport(
+      GURL("https://u:p@www1.example.com/x#fragment"),
+      /*report_only=*/false);
+  reporter.QueueNavigationReport(
+      GURL("https://u:p@www2.example.com/y#fragment"),
+      /*report_only=*/true);
 
   ASSERT_EQ(2u, network_context().reports().size());
   const Report& r1 = network_context().reports()[0];
@@ -512,9 +514,9 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest, ObserverForWorkerInitialization) {
 
   EXPECT_EQ(r1.type, "coep");
   EXPECT_EQ(r1.url, kContextUrl);
-  EXPECT_TRUE(mojo::Equals(
-      r1.body, CreateMojomBodyForWorkerInitialization(
-                   "https://www1.example.com/x.js#foo?bar=baz", "enforce")));
+  EXPECT_TRUE(
+      mojo::Equals(r1.body, CreateMojomBodyForWorkerInitialization(
+                                "https://www1.example.com/x.js", "enforce")));
   EXPECT_EQ(r2.type, "coep");
   EXPECT_EQ(r2.url, kContextUrl);
   EXPECT_TRUE(mojo::Equals(
@@ -529,10 +531,10 @@ TEST_F(CrossOriginEmbedderPolicyReporterTest,
       GetStoragePartition(), kContextUrl, "e1", "e2",
       base::UnguessableToken::Create(), net::NetworkAnonymizationKey());
   reporter.QueueWorkerInitializationReport(
-      GURL("https://u:p@www1.example.com/x.js"),
+      GURL("https://u:p@www1.example.com/x.js#fragment"),
       /*report_only=*/false);
   reporter.QueueWorkerInitializationReport(
-      GURL("https://u:p@www2.example.com/y.js"),
+      GURL("https://u:p@www2.example.com/y.js#fragment"),
       /*report_only=*/true);
 
   ASSERT_EQ(2u, network_context().reports().size());

@@ -34,6 +34,12 @@
 #include "src/tint/utils/containers/slice.h"
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/text/string_stream.h"
+#include "src/tint/utils/text/text_style.h"
+
+/// Forward declaration
+namespace tint {
+class StyledText;
+}
 
 namespace tint {
 
@@ -93,14 +99,14 @@ std::string ToString(const std::variant<TYs...>& value) {
 /// @param str the input string
 /// @param prefix the prefix string
 /// @returns true iff @p str has the prefix @p prefix
-inline size_t HasPrefix(std::string_view str, std::string_view prefix) {
+inline bool HasPrefix(std::string_view str, std::string_view prefix) {
     return str.length() >= prefix.length() && str.substr(0, prefix.length()) == prefix;
 }
 
 /// @param str the input string
 /// @param suffix the suffix string
 /// @returns true iff @p str has the suffix @p suffix
-inline size_t HasSuffix(std::string_view str, std::string_view suffix) {
+inline bool HasSuffix(std::string_view str, std::string_view suffix) {
     return str.length() >= suffix.length() && str.substr(str.length() - suffix.length()) == suffix;
 }
 
@@ -113,6 +119,8 @@ size_t Distance(std::string_view a, std::string_view b);
 struct SuggestAlternativeOptions {
     /// The prefix to apply to the strings when printing
     std::string_view prefix;
+    /// The text style for alternatives
+    TextStyle alternatives_style = style::Code;
     /// List all the possible values
     bool list_possible_values = true;
 };
@@ -124,7 +132,7 @@ struct SuggestAlternativeOptions {
 /// @param options options for the suggestion
 void SuggestAlternatives(std::string_view got,
                          Slice<const std::string_view> strings,
-                         StringStream& ss,
+                         StyledText& ss,
                          const SuggestAlternativeOptions& options = {});
 
 /// @param str the input string

@@ -34,15 +34,15 @@
 #include <tuple>
 #include <vector>
 
+#include "src/tint/utils/rtti/traits.h"
 #include "src/tint/utils/text/string_stream.h"
-#include "src/tint/utils/traits/traits.h"
 
 namespace tint {
 
 /// Source describes a range of characters within a source file.
 class Source {
   public:
-    /// FileContent describes the content of a source file encoded using utf-8.
+    /// FileContent describes the content of a source file encoded using UTF-8.
     class FileContent {
       public:
         /// Constructs the FileContent with the given file content.
@@ -89,16 +89,37 @@ class Source {
     class Location {
       public:
         /// the 1-based line number. 0 represents no line information.
-        size_t line = 0;
+        uint32_t line = 0;
         /// the 1-based column number in utf8-code units (bytes).
         /// 0 represents no column information.
-        size_t column = 0;
+        uint32_t column = 0;
 
         /// Returns true if `this` location is lexicographically less than `rhs`
         /// @param rhs location to compare against
         /// @returns true if `this` < `rhs`
-        inline bool operator<(const Source::Location& rhs) {
+        inline bool operator<(const Source::Location& rhs) const {
             return std::tie(line, column) < std::tie(rhs.line, rhs.column);
+        }
+
+        /// Returns true if `this` location is lexicographically less than or equal to `rhs`
+        /// @param rhs location to compare against
+        /// @returns true if `this` <= `rhs`
+        inline bool operator<=(const Source::Location& rhs) const {
+            return std::tie(line, column) <= std::tie(rhs.line, rhs.column);
+        }
+
+        /// Returns true if `this` location is lexicographically greater than `rhs`
+        /// @param rhs location to compare against
+        /// @returns true if `this` > `rhs`
+        inline bool operator>(const Source::Location& rhs) const {
+            return std::tie(line, column) > std::tie(rhs.line, rhs.column);
+        }
+
+        /// Returns true if `this` location is lexicographically greater than or equal to `rhs`
+        /// @param rhs location to compare against
+        /// @returns true if `this` >= `rhs`
+        inline bool operator>=(const Source::Location& rhs) const {
+            return std::tie(line, column) >= std::tie(rhs.line, rhs.column);
         }
 
         /// Returns true of `this` location is equal to `rhs`
@@ -130,9 +151,9 @@ class Source {
         inline constexpr Range(const Location& b, const Location& e) : begin(b), end(e) {}
 
         /// Return a column-shifted Range
-        /// @param n the number of characters to shift by
+        /// @param n the number of UTF-8 codepoint to shift by
         /// @returns a Range with a #begin and #end column shifted by `n`
-        inline Range operator+(size_t n) const {
+        inline Range operator+(uint32_t n) const {
             return Range{{begin.line, begin.column + n}, {end.line, end.column + n}};
         }
 
@@ -148,9 +169,16 @@ class Source {
         /// @returns true if `this` == `rhs`
         inline bool operator!=(const Range& rhs) const { return !(*this == rhs); }
 
-        /// The location of the first character in the range.
+        /// @param content the file content that this range belongs to
+        /// @returns the length of the range in UTF-8 codepoints, treating all line-break sequences
+        /// as a single code-point.
+        /// @see https://www.w3.org/TR/WGSL/#blankspace-and-line-breaks for the definition of a line
+        /// break.
+        size_t Length(const FileContent& content) const;
+
+        /// The location of the first UTF-8 codepoint in the range.
         Location begin;
-        /// The location of one-past the last character in the range.
+        /// The location of one-past the last UTF-8 codepoint in the range.
         Location end;
     };
 
@@ -179,7 +207,7 @@ class Source {
     /// Return a column-shifted Source
     /// @param n the number of characters to shift by
     /// @returns a Source with the range's columns shifted by `n`
-    inline Source operator+(size_t n) const { return Source(range + n, file); }
+    inline Source operator+(uint32_t n) const { return Source(range + n, file); }
 
     /// Returns true of `this` Source is lexicographically less than `rhs`
     /// @param rhs source to compare against
@@ -214,7 +242,8 @@ std::string ToString(const Source& source);
 /// @param out the stream to write to
 /// @param loc the location to write
 /// @returns out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, const Source::Location& loc) {
     return out << loc.line << ":" << loc.column;
 }
@@ -223,7 +252,8 @@ auto& operator<<(STREAM& out, const Source::Location& loc) {
 /// @param out the stream to write to
 /// @param range the range to write
 /// @returns out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, const Source::Range& range) {
     return out << "[" << range.begin << ", " << range.end << "]";
 }
@@ -232,7 +262,8 @@ auto& operator<<(STREAM& out, const Source::Range& range) {
 /// @param out the stream to write to
 /// @param source the source to write
 /// @returns out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, const Source& source) {
     return out << ToString(source);
 }
@@ -241,7 +272,8 @@ auto& operator<<(STREAM& out, const Source& source) {
 /// @param out the stream to write to
 /// @param content the file content to write
 /// @returns out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, const Source::FileContent& content) {
     return out << content.data;
 }

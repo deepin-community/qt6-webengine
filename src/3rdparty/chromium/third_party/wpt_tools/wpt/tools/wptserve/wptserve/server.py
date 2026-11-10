@@ -1,9 +1,13 @@
 # mypy: allow-untyped-defs
 
 import errno
+import http
 import http.server
+import ipaddress
 import os
+import platform
 import socket
+import socketserver
 import ssl
 import sys
 import threading
@@ -23,8 +27,8 @@ from h2.utilities import extract_method_header
 
 from urllib.parse import urlsplit, urlunsplit
 
-from mod_pywebsocket import dispatch
-from mod_pywebsocket.handshake import HandshakeException, AbortedByUserException
+from pywebsocket3 import dispatch
+from pywebsocket3.handshake import HandshakeException, AbortedByUserException
 
 from . import routes as default_routes
 from .config import ConfigBuilder
@@ -130,7 +134,9 @@ class RequestRewriter:
 
 class WebTestServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
-    acceptable_errors = (errno.EPIPE, errno.ECONNABORTED)
+    # Older versions of Python might throw `OSError: [Errno 0] Error`
+    # instead of `SSLEOFError`.
+    acceptable_errors = (errno.EPIPE, errno.ECONNABORTED, 0)
     request_queue_size = 2000
 
     # Ensure that we don't hang on shutdown waiting for requests
@@ -214,13 +220,39 @@ class WebTestServer(http.server.ThreadingHTTPServer):
                 ssl_context.load_cert_chain(keyfile=self.key_file, certfile=self.certificate)
                 ssl_context.set_alpn_protocols(['h2'])
                 self.socket = ssl_context.wrap_socket(self.socket,
+                                                      do_handshake_on_connect=False,
                                                       server_side=True)
 
             else:
-                self.socket = ssl.wrap_socket(self.socket,
-                                              keyfile=self.key_file,
-                                              certfile=self.certificate,
-                                              server_side=True)
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain(keyfile=self.key_file, certfile=self.certificate)
+                self.socket = ssl_context.wrap_socket(self.socket,
+                                                      do_handshake_on_connect=False,
+                                                      server_side=True)
+
+    def server_bind(self):
+        if platform.system() != "Darwin":
+            super().server_bind()
+        else:
+            # We override this on macOS to workaround gethostbyaddr triggering the local
+            # network alert even when passed "localhost" (rdar://153097791); this should
+            # be the same as the superclass implementation except for the addition of
+            # our check.
+            socketserver.TCPServer.server_bind(self)
+            host, port = self.server_address[:2]
+            if (
+                ipaddress.ip_address(host).is_loopback and
+                ipaddress.ip_address(socket.gethostbyname("localhost")).is_loopback
+            ):
+                self.server_name = "localhost"
+            else:
+                self.server_name = socket.getfqdn(host)
+            self.server_port = port
+
+    def finish_request(self, request, client_address):
+        if isinstance(self.socket, ssl.SSLSocket):
+            request.do_handshake()
+        super().finish_request(request, client_address)
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -229,7 +261,11 @@ class WebTestServer(http.server.ThreadingHTTPServer):
              isinstance(error.args, tuple) and
              error.args[0] in self.acceptable_errors) or
             (isinstance(error, IOError) and
-             error.errno in self.acceptable_errors)):
+             error.errno in self.acceptable_errors) or
+            # `SSLEOFError` and `SSLError` may occur when a client
+            # (e.g., wptrunner's `TestEnvironment`) tests for connectivity
+            # but doesn't perform the handshake.
+            isinstance(error, ssl.SSLEOFError) or isinstance(error, ssl.SSLError)):
             pass  # remote hang up before the result is sent
         else:
             msg = traceback.format_exc()
@@ -322,12 +358,40 @@ class BaseWebTestRequestHandler(http.server.BaseHTTPRequestHandler):
         response.write()
         if self.server.encrypt_after_connect:
             self.logger.debug("Enabling SSL for connection")
-            self.request = ssl.wrap_socket(self.connection,
-                                           keyfile=self.server.key_file,
-                                           certfile=self.server.certificate,
-                                           server_side=True)
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(keyfile=self.server.key_file, certfile=self.server.certificate)
+            self.request = ssl_context.wrap_socket(self.connection,
+                                                   server_side=True)
             self.setup()
         return
+
+    def log_request(self, code="-", size="-"):
+        if isinstance(code, http.HTTPStatus):
+            code = code.value
+
+        self.logger.debug(
+            "{} - - [{}] {!r} {!s} {!s}".format(
+                self.address_string(),
+                self.log_date_time_string(),
+                self.requestline,
+                code,
+                size,
+            )
+        )
+
+    def log_error(self, format, *args):
+        self.logger.error(
+            "{} - - [{}] {}".format(
+                self.address_string(), self.log_date_time_string(), format % args
+            )
+        )
+
+    def log_message(self, format, *args):
+        self.logger.info(
+            "{} - - [{}] {}".format(
+                self.address_string(), self.log_date_time_string(), format % args
+            )
+        )
 
 
 class Http2WebTestRequestHandler(BaseWebTestRequestHandler):
@@ -335,10 +399,10 @@ class Http2WebTestRequestHandler(BaseWebTestRequestHandler):
 
     def handle_one_request(self):
         """
-        This is the main HTTP/2.0 Handler.
+        This is the main HTTP/2 Handler.
 
         When a browser opens a connection to the server
-        on the HTTP/2.0 port, the server enters this which will initiate the h2 connection
+        on the HTTP/2 port, the server enters this which will initiate the h2 connection
         and keep running throughout the duration of the interaction, and will read/write directly
         from the socket.
 

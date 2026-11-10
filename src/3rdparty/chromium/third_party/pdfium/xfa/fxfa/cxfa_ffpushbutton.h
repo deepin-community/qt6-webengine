@@ -30,10 +30,10 @@ class CXFA_FFPushButton final : public CXFA_FFField {
                     const CFX_Matrix& matrix,
                     HighlightOption highlight) override;
   bool LoadWidget() override;
-  bool PerformLayout() override;
+  void PerformLayout() override;
   void UpdateWidgetProperty() override;
   void OnProcessMessage(CFWL_Message* pMessage) override;
-  void OnProcessEvent(CFWL_Event* pEvent) override;
+  void OnProcessEvent(pdfium::CFWL_Event* pEvent) override;
   void OnDrawWidget(CFGAS_GEGraphics* pGraphics,
                     const CFX_Matrix& matrix) override;
   FormFieldType GetFormFieldType() override;
@@ -48,11 +48,11 @@ class CXFA_FFPushButton final : public CXFA_FFField {
   FX_ARGB GetLineColor();
   FX_ARGB GetFillColor();
 
-  cppgc::Member<CXFA_TextLayout> m_pRolloverTextLayout;
-  cppgc::Member<CXFA_TextLayout> m_pDownTextLayout;
-  cppgc::Member<CXFA_TextProvider> m_pRollProvider;
-  cppgc::Member<CXFA_TextProvider> m_pDownProvider;
-  cppgc::Member<IFWL_WidgetDelegate> m_pOldDelegate;
+  cppgc::Member<CXFA_TextLayout> rollover_text_layout_;
+  cppgc::Member<CXFA_TextLayout> down_text_layout_;
+  cppgc::Member<CXFA_TextProvider> roll_provider_;
+  cppgc::Member<CXFA_TextProvider> down_provider_;
+  cppgc::Member<IFWL_WidgetDelegate> old_delegate_;
   cppgc::Member<CXFA_Button> const button_;
 };
 

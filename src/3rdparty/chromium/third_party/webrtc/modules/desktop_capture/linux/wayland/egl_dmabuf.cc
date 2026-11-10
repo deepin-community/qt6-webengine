@@ -10,17 +10,30 @@
 
 #include "modules/desktop_capture/linux/wayland/egl_dmabuf.h"
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <EGL/eglplatform.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
 #include <asm/ioctl.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <gbm.h>
 #include <libdrm/drm_fourcc.h>
-#include <linux/types.h>
-#include <spa/param/video/format-utils.h>
+#include <spa/param/video/raw.h>
 #include <unistd.h>
 #include <xf86drm.h>
 
-#include "absl/memory/memory.h"
-#include "absl/types/optional.h"
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "absl/strings/string_view.h"
+#include "modules/desktop_capture/desktop_geometry.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/sanitizer.h"
@@ -369,7 +382,7 @@ EglDmaBuf::EglDmaBuf() {
     RTC_LOG(LS_ERROR) << "Failed to obtain default EGL display: "
                       << FormatEGLError(EglGetError()) << "\n"
                       << "Defaulting to using first available render node";
-    absl::optional<std::string> render_node = GetRenderNode();
+    std::optional<std::string> render_node = GetRenderNode();
     if (!render_node) {
       return;
     }
@@ -496,7 +509,7 @@ bool EglDmaBuf::GetClientExtensions(EGLDisplay dpy, EGLint name) {
   }
 
   std::vector<absl::string_view> client_extensions =
-      rtc::split(client_extensions_cstring, ' ');
+      split(client_extensions_cstring, ' ');
   for (const auto& extension : client_extensions) {
     egl_.extensions.push_back(std::string(extension));
   }
@@ -724,19 +737,19 @@ std::vector<uint64_t> EglDmaBuf::QueryDmaBufModifiers(uint32_t format) {
   return modifiers;
 }
 
-absl::optional<std::string> EglDmaBuf::GetRenderNode() {
+std::optional<std::string> EglDmaBuf::GetRenderNode() {
   int max_devices = drmGetDevices2(0, nullptr, 0);
   if (max_devices <= 0) {
     RTC_LOG(LS_ERROR) << "drmGetDevices2() has not found any devices (errno="
                       << -max_devices << ")";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::vector<drmDevicePtr> devices(max_devices);
   int ret = drmGetDevices2(0, devices.data(), max_devices);
   if (ret < 0) {
     RTC_LOG(LS_ERROR) << "drmGetDevices2() returned an error " << ret;
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::string render_node;

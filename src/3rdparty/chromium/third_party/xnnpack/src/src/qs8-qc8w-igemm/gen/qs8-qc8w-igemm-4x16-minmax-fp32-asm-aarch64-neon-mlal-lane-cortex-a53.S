@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/4x16-aarch64-neon-mlal-lane-cortex-a53.S.in
 //   Generator: tools/xngen
@@ -8,7 +9,7 @@
 // LICENSE file in the root directory of this source tree.
 
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 # void xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mlal_lane_cortex_a53(
 #     size_t mr,                 x0
@@ -539,7 +540,6 @@ BEGIN_FUNCTION xnn_qs8_qc8w_igemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mla
         FCVTNS      v29.4s, v29.4s
         FCVTNS      v30.4s, v30.4s
         FCVTNS      v31.4s, v31.4s
-
         SQXTN       v16.4h, v16.4s
         SQXTN       v17.4h, v17.4s
         SQXTN       v18.4h, v18.4s

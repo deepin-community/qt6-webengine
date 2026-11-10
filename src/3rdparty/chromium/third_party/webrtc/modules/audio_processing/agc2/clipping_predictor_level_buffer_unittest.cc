@@ -11,6 +11,7 @@
 #include "modules/audio_processing/agc2/clipping_predictor_level_buffer.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "test/gmock.h"
 #include "test/gtest.h"
@@ -108,9 +109,9 @@ TEST(ClippingPredictorLevelBufferTest, CheckMetricsAfterTooFewItems) {
   buffer.Push({1, 2});
   buffer.Push({3, 6});
   EXPECT_EQ(buffer.ComputePartialMetrics(/*delay=*/0, /*num_items=*/3),
-            absl::nullopt);
+            std::nullopt);
   EXPECT_EQ(buffer.ComputePartialMetrics(/*delay=*/2, /*num_items=*/1),
-            absl::nullopt);
+            std::nullopt);
 }
 
 TEST(ClippingPredictorLevelBufferTest, CheckMetricsAfterReset) {

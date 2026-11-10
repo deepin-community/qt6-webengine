@@ -22,14 +22,13 @@ ExternalClearKeyKeySystemInfo::ExternalClearKeyKeySystemInfo()
           media::kExternalClearKeyKeySystem,
           // Excludes kMediaFoundationClearKeyKeySystem to treat MediaFoundation
           // Clear Key key system as a separate one.
-          {
-            media::kExternalClearKeyInvalidKeySystem,
+          {media::kExternalClearKeyInvalidKeySystem,
 #if BUILDFLAG(IS_WIN)
-            media::kMediaFoundationClearKeyKeySystem
+           media::kMediaFoundationClearKeyKeySystem
 #endif  // BUILDFLAG(IS_WIN)
           },
           media::EME_CODEC_MP4_ALL | media::EME_CODEC_WEBM_ALL,
-          absl::nullopt,
+          std::nullopt,
           media::EmeFeatureSupport::REQUESTABLE,
           media::EmeFeatureSupport::NOT_SUPPORTED) {
 }
@@ -73,10 +72,9 @@ bool ExternalClearKeyKeySystemInfo::IsSupportedInitDataType(
       return false;
   }
   NOTREACHED();
-  return false;
 }
 
-absl::optional<media::EmeConfig>
+std::optional<media::EmeConfig>
 ExternalClearKeyKeySystemInfo::GetEncryptionSchemeConfigRule(
     media::EncryptionScheme encryption_scheme) const {
   switch (encryption_scheme) {
@@ -87,7 +85,6 @@ ExternalClearKeyKeySystemInfo::GetEncryptionSchemeConfigRule(
       break;
   }
   NOTREACHED();
-  return media::EmeConfig::UnsupportedRule();
 }
 
 media::SupportedCodecs ExternalClearKeyKeySystemInfo::GetSupportedCodecs()
@@ -102,7 +99,7 @@ ExternalClearKeyKeySystemInfo::GetSupportedHwSecureCodecs() const {
   return codecs_;
 }
 
-absl::optional<media::EmeConfig>
+std::optional<media::EmeConfig>
 ExternalClearKeyKeySystemInfo::GetRobustnessConfigRule(
     const std::string& key_system,
     media::EmeMediaType media_type,
@@ -120,7 +117,7 @@ ExternalClearKeyKeySystemInfo::GetRobustnessConfigRule(
 }
 
 // Persistent license sessions are faked.
-absl::optional<media::EmeConfig>
+std::optional<media::EmeConfig>
 ExternalClearKeyKeySystemInfo::GetPersistentLicenseSessionSupport() const {
   return media::EmeConfig::SupportedRule();
 }

@@ -17,6 +17,9 @@
 #include "v8/include/cppgc/visitor.h"
 
 class CFGAS_GEGraphics;
+
+namespace pdfium {
+
 class CFWL_App;
 class CFWL_Message;
 class CFWL_Widget;
@@ -92,10 +95,15 @@ class CFWL_WidgetMgr final : public cppgc::GarbageCollected<CFWL_WidgetMgr> {
                     CFGAS_GEGraphics* pGraphics,
                     const CFX_Matrix& mtMatrix);
 
-  cppgc::Member<AdapterIface> const m_pAdapter;
-  cppgc::Member<CFWL_App> const m_pApp;
+  cppgc::Member<AdapterIface> const adapter_;
+  cppgc::Member<CFWL_App> const app_;
   std::map<cppgc::Member<const CFWL_Widget>, cppgc::Member<Item>>
-      m_mapWidgetItem;
+      map_widget_item_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_WidgetMgr;
 
 #endif  // XFA_FWL_CFWL_WIDGETMGR_H_

@@ -25,7 +25,7 @@
 namespace {
 
 RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
-    CPDF_Document* pDoc,
+    CPDF_Document* doc,
     CPDF_PageImageCache* pCache,
     CPDF_TilingPattern* pPattern,
     CPDF_Form* pPatternForm,
@@ -34,8 +34,10 @@ RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
     int height,
     const CPDF_RenderOptions::Options& draw_options) {
   auto pBitmap = pdfium::MakeRetain<CFX_DIBitmap>();
+  // TODO(crbug.com/42271020): Consider adding support for
+  // `FXDIB_Format::kBgraPremul`
   if (!pBitmap->Create(width, height,
-                       pPattern->colored() ? FXDIB_Format::kArgb
+                       pPattern->colored() ? FXDIB_Format::kBgra
                                            : FXDIB_Format::k8bppMask)) {
     return nullptr;
   }
@@ -51,21 +53,17 @@ RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
 
   CFX_Matrix mtPattern2Bitmap = mtObject2Device * mtAdjust;
   CPDF_RenderOptions options;
-  if (!pPattern->colored())
+  if (!pPattern->colored()) {
     options.SetColorMode(CPDF_RenderOptions::kAlpha);
+  }
 
   options.GetOptions() = draw_options;
   options.GetOptions().bForceHalftone = true;
 
-  CPDF_RenderContext context(pDoc, nullptr, pCache);
+  CPDF_RenderContext context(doc, nullptr, pCache);
   context.AppendLayer(pPatternForm, mtPattern2Bitmap);
   context.Render(&bitmap_device, nullptr, &options, nullptr);
 
-#if defined(PDF_USE_SKIA)
-  if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
-    pBitmap->UnPreMultiply();
-  }
-#endif  // defined(PDF_USE_SKIA)
   return pBitmap;
 }
 
@@ -89,17 +87,19 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
   float ceil_width = std::ceil(cell_bbox.Width());
 
   // Validate the float will fit into the int when the conversion is done.
-  if (!pdfium::base::IsValueInRangeForNumericType<int>(ceil_height) ||
-      !pdfium::base::IsValueInRangeForNumericType<int>(ceil_width)) {
+  if (!pdfium::IsValueInRangeForNumericType<int>(ceil_height) ||
+      !pdfium::IsValueInRangeForNumericType<int>(ceil_width)) {
     return nullptr;
   }
 
   int width = static_cast<int>(ceil_width);
   int height = static_cast<int>(ceil_height);
-  if (width <= 0)
+  if (width <= 0) {
     width = 1;
-  if (height <= 0)
+  }
+  if (height <= 0) {
     height = 1;
+  }
 
   CFX_FloatRect clip_box_p =
       mtPattern2Device.GetInverse().TransformRect(CFX_FloatRect(clip_box));
@@ -113,8 +113,9 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
       floor((clip_box_p.top - pPattern->bbox().bottom) / pPattern->y_step()));
 
   // Make sure we can fit the needed width * height into an int.
-  if (height > std::numeric_limits<int>::max() / width)
+  if (height > std::numeric_limits<int>::max() / width) {
     return nullptr;
+  }
 
   CFX_RenderDevice* pDevice = pRenderStatus->GetRenderDevice();
   CPDF_RenderContext* pContext = pRenderStatus->GetContext();
@@ -122,9 +123,15 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
   if (width > clip_box.Width() || height > clip_box.Height() ||
       width * height > clip_box.Width() * clip_box.Height()) {
     std::unique_ptr<CPDF_GraphicStates> pStates;
-    if (!pPattern->colored())
+    if (!pPattern->colored()) {
       pStates = CPDF_RenderStatus::CloneObjStates(&pPageObj->graphic_states(),
                                                   bStroke);
+    } else if (pPageObj->AsPath()) {
+      pStates = std::make_unique<CPDF_GraphicStates>();
+      pStates->SetDefaultStates();
+      pStates->mutable_general_state().SetFillAlpha(
+          pPageObj->general_state().GetFillAlpha());
+    }
 
     RetainPtr<const CPDF_Dictionary> pFormResource =
         pPatternForm->GetDict()->GetDictFor("Resources");
@@ -157,20 +164,24 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
     int orig_x = FXSYS_roundf(mtPattern2Device.e);
     int orig_y = FXSYS_roundf(mtPattern2Device.f);
     min_col = (clip_box.left - orig_x) / width;
-    if (clip_box.left < orig_x)
+    if (clip_box.left < orig_x) {
       min_col--;
+    }
 
     max_col = (clip_box.right - orig_x) / width;
-    if (clip_box.right <= orig_x)
+    if (clip_box.right <= orig_x) {
       max_col--;
+    }
 
     min_row = (clip_box.top - orig_y) / height;
-    if (clip_box.top < orig_y)
+    if (clip_box.top < orig_y) {
       min_row--;
+    }
 
     max_row = (clip_box.bottom - orig_y) / height;
-    if (clip_box.bottom <= orig_y)
+    if (clip_box.bottom <= orig_y) {
       max_row--;
+    }
   }
   float left_offset = cell_bbox.left - mtPattern2Device.e;
   float top_offset = cell_bbox.bottom - mtPattern2Device.f;
@@ -186,18 +197,21 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
         pContext->GetDocument(), pContext->GetPageCache(), pPattern,
         pPatternForm, mtObj2Device, width, height, options.GetOptions());
   }
-  if (!pPatternBitmap)
+  if (!pPatternBitmap) {
     return nullptr;
+  }
 
-  if (options.ColorModeIs(CPDF_RenderOptions::kGray))
+  if (options.ColorModeIs(CPDF_RenderOptions::kGray)) {
     pPatternBitmap->ConvertColorScale(0, 0xffffff);
+  }
 
   FX_ARGB fill_argb = pRenderStatus->GetFillArgb(pPageObj);
   int clip_width = clip_box.right - clip_box.left;
   int clip_height = clip_box.bottom - clip_box.top;
   auto pScreen = pdfium::MakeRetain<CFX_DIBitmap>();
-  if (!pScreen->Create(clip_width, clip_height, FXDIB_Format::kArgb))
+  if (!pScreen->Create(clip_width, clip_height, FXDIB_Format::kBgra)) {
     return nullptr;
+  }
 
   pdfium::span<const uint8_t> src_buf = pPatternBitmap->GetBuffer();
   for (int col = min_col; col <= max_col; col++) {
@@ -218,8 +232,9 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
 
         safeStartX -= clip_box.left;
         safeStartY -= clip_box.top;
-        if (!safeStartX.IsValid() || !safeStartY.IsValid())
+        if (!safeStartX.IsValid() || !safeStartY.IsValid()) {
           return nullptr;
+        }
 
         start_x = safeStartX.ValueOrDie();
         start_y = safeStartY.ValueOrDie();
@@ -229,8 +244,10 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
             start_y >= clip_box.Height()) {
           continue;
         }
-        uint32_t* dest_buf = reinterpret_cast<uint32_t*>(
-            pScreen->GetWritableScanline(start_y).subspan(start_x * 4).data());
+        uint32_t* dest_buf = fxcrt::reinterpret_span<uint32_t>(
+                                 pScreen->GetWritableScanline(start_y))
+                                 .subspan(static_cast<size_t>(start_x))
+                                 .data();
         if (pPattern->colored()) {
           const uint32_t* src_buf32 =
               fxcrt::reinterpret_span<const uint32_t>(src_buf).data();

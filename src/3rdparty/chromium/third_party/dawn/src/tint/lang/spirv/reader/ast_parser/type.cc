@@ -47,6 +47,7 @@ TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::Void);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::Bool);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::U32);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::F32);
+TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::F16);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::I32);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::Pointer);
 TINT_INSTANTIATE_TYPEINFO(tint::spirv::reader::ast_parser::Reference);
@@ -70,55 +71,57 @@ namespace tint::spirv::reader::ast_parser {
 namespace {
 
 struct PointerHasher {
-    size_t operator()(const Pointer& t) const { return Hash(t.address_space, t.type, t.access); }
+    HashCode operator()(const Pointer& t) const { return Hash(t.address_space, t.type, t.access); }
 };
 
 struct ReferenceHasher {
-    size_t operator()(const Reference& t) const { return Hash(t.address_space, t.type, t.access); }
+    HashCode operator()(const Reference& t) const {
+        return Hash(t.address_space, t.type, t.access);
+    }
 };
 
 struct VectorHasher {
-    size_t operator()(const Vector& t) const { return Hash(t.type, t.size); }
+    HashCode operator()(const Vector& t) const { return Hash(t.type, t.size); }
 };
 
 struct MatrixHasher {
-    size_t operator()(const Matrix& t) const { return Hash(t.type, t.columns, t.rows); }
+    HashCode operator()(const Matrix& t) const { return Hash(t.type, t.columns, t.rows); }
 };
 
 struct ArrayHasher {
-    size_t operator()(const Array& t) const { return Hash(t.type, t.size, t.stride); }
+    HashCode operator()(const Array& t) const { return Hash(t.type, t.size, t.stride); }
 };
 
 struct AliasHasher {
-    size_t operator()(const Alias& t) const { return Hash(t.name); }
+    HashCode operator()(const Alias& t) const { return Hash(t.name); }
 };
 
 struct StructHasher {
-    size_t operator()(const Struct& t) const { return Hash(t.name); }
+    HashCode operator()(const Struct& t) const { return Hash(t.name); }
 };
 
 struct SamplerHasher {
-    size_t operator()(const Sampler& s) const { return Hash(s.kind); }
+    HashCode operator()(const Sampler& s) const { return Hash(s.kind); }
 };
 
 struct DepthTextureHasher {
-    size_t operator()(const DepthTexture& t) const { return Hash(t.dims); }
+    HashCode operator()(const DepthTexture& t) const { return Hash(t.dims); }
 };
 
 struct DepthMultisampledTextureHasher {
-    size_t operator()(const DepthMultisampledTexture& t) const { return Hash(t.dims); }
+    HashCode operator()(const DepthMultisampledTexture& t) const { return Hash(t.dims); }
 };
 
 struct MultisampledTextureHasher {
-    size_t operator()(const MultisampledTexture& t) const { return Hash(t.dims, t.type); }
+    HashCode operator()(const MultisampledTexture& t) const { return Hash(t.dims, t.type); }
 };
 
 struct SampledTextureHasher {
-    size_t operator()(const SampledTexture& t) const { return Hash(t.dims, t.type); }
+    HashCode operator()(const SampledTexture& t) const { return Hash(t.dims, t.type); }
 };
 
 struct StorageTextureHasher {
-    size_t operator()(const StorageTexture& t) const { return Hash(t.dims, t.format, t.access); }
+    HashCode operator()(const StorageTexture& t) const { return Hash(t.dims, t.format, t.access); }
 };
 }  // namespace
 
@@ -178,6 +181,10 @@ ast::Type F32::Build(ProgramBuilder& b) const {
     return b.ty.f32();
 }
 
+ast::Type F16::Build(ProgramBuilder& b) const {
+    return b.ty.f16();
+}
+
 ast::Type I32::Build(ProgramBuilder& b) const {
     return b.ty.i32();
 }
@@ -220,6 +227,7 @@ ast::Type Vector::Build(ProgramBuilder& b) const {
         [&](const I32*) { return b.ty(prefix + "i"); },
         [&](const U32*) { return b.ty(prefix + "u"); },
         [&](const F32*) { return b.ty(prefix + "f"); },
+        [&](const F16*) { return b.ty(prefix + "h"); },
         [&](Default) { return b.ty.vec(type->Build(b), size); });
 }
 
@@ -227,9 +235,14 @@ Matrix::Matrix(const Type* t, uint32_t c, uint32_t r) : type(t), columns(c), row
 Matrix::Matrix(const Matrix&) = default;
 
 ast::Type Matrix::Build(ProgramBuilder& b) const {
-    if (type->Is<F32>()) {
+    if (type->IsAnyOf<F32, F16>()) {
         std::ostringstream ss;
-        ss << "mat" << columns << "x" << rows << "f";
+        ss << "mat" << columns << "x" << rows;
+        if (type->Is<F32>()) {
+            ss << "f";
+        } else {
+            ss << "h";
+        }
         return b.ty(ss.str());
     }
     return b.ty.mat(type->Build(b), columns, rows);
@@ -332,6 +345,8 @@ struct TypeManager::State {
     ast_parser::U32 const* u32_ = nullptr;
     /// The lazily-created F32 type
     ast_parser::F32 const* f32_ = nullptr;
+    /// The lazily-created F16 type
+    ast_parser::F16 const* f16_ = nullptr;
     /// The lazily-created I32 type
     ast_parser::I32 const* i32_ = nullptr;
     /// Unique Pointer instances
@@ -403,7 +418,7 @@ const Type* Type::UnwrapAll() const {
 }
 
 bool Type::IsFloatScalar() const {
-    return Is<F32>();
+    return IsAnyOf<F32, F16>();
 }
 
 bool Type::IsFloatScalarOrVector() const {
@@ -423,7 +438,7 @@ bool Type::IsIntegerScalarOrVector() const {
 }
 
 bool Type::IsScalar() const {
-    return IsAnyOf<F32, U32, I32, Bool>();
+    return IsAnyOf<F32, F16, U32, I32, Bool>();
 }
 
 bool Type::IsSignedIntegerVector() const {
@@ -474,6 +489,13 @@ const ast_parser::F32* TypeManager::F32() {
         state->f32_ = state->allocator_.Create<ast_parser::F32>();
     }
     return state->f32_;
+}
+
+const ast_parser::F16* TypeManager::F16() {
+    if (!state->f16_) {
+        state->f16_ = state->allocator_.Create<ast_parser::F16>();
+    }
+    return state->f16_;
 }
 
 const ast_parser::I32* TypeManager::I32() {
@@ -575,6 +597,10 @@ std::string U32::String() const {
 
 std::string F32::String() const {
     return "f32";
+}
+
+std::string F16::String() const {
+    return "f16";
 }
 
 std::string I32::String() const {

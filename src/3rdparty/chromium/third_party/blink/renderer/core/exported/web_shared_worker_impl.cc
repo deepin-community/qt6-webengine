@@ -35,7 +35,9 @@
 
 #include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "net/storage_access_api/status.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/worker_main_script_load_parameters.h"
 #include "third_party/blink/public/mojom/browser_interface_broker.mojom-blink.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom-blink.h"
@@ -53,7 +55,6 @@
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
-#include "third_party/blink/renderer/core/frame/csp/conversion_util.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/worker_devtools_params.h"
 #include "third_party/blink/renderer/core/script/script.h"
@@ -66,6 +67,7 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
+#include "third_party/blink/renderer/platform/loader/fetch/policy_container_utils.h"
 #include "third_party/blink/renderer/platform/network/content_security_policy_parsers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -192,10 +194,11 @@ void WebSharedWorkerImpl::StartWorkerContext(
     network::mojom::CredentialsMode credentials_mode,
     const WebString& name,
     WebSecurityOrigin constructor_origin,
+    WebSecurityOrigin origin_from_browser,
     bool is_constructor_secure_context,
     const WebString& user_agent,
     const UserAgentMetadata& ua_metadata,
-    const WebVector<WebContentSecurityPolicy>& content_security_policies,
+    const std::vector<WebContentSecurityPolicy>& content_security_policies,
     const WebFetchClientSettingsObject& outside_fetch_client_settings_object,
     const base::UnguessableToken& devtools_worker_token,
     CrossVariantMojoRemote<
@@ -207,10 +210,18 @@ void WebSharedWorkerImpl::StartWorkerContext(
         worker_main_script_load_params,
     std::unique_ptr<blink::WebPolicyContainer> policy_container,
     scoped_refptr<WebWorkerFetchContext> web_worker_fetch_context,
-    ukm::SourceId ukm_source_id) {
+    ukm::SourceId ukm_source_id,
+    bool require_cross_site_request_for_cookies,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        coep_reporting_observer,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        dip_reporting_observer) {
   DCHECK(IsMainThread());
   DCHECK(web_worker_fetch_context);
-  CHECK(constructor_origin.Get()->CanAccessSharedWorkers());
+  CHECK(constructor_origin.Get()->CanAccessSharedWorkers() ||
+        (script_request_url.ProtocolIs("data") &&
+         base::FeatureList::IsEnabled(
+             blink::features::kDataUrlWorkerOpaqueOrigin)));
 
   // Creates 'outside settings' used in the "Processing model" algorithm in the
   // HTML spec:
@@ -219,7 +230,8 @@ void WebSharedWorkerImpl::StartWorkerContext(
       MakeGarbageCollected<FetchClientSettingsObjectSnapshot>(
           /*global_object_url=*/script_request_url,
           /*base_url=*/script_request_url, constructor_origin,
-          outside_fetch_client_settings_object.referrer_policy,
+          FromWebPolicyContainerPolicies(
+              outside_fetch_client_settings_object.policy_container_policies),
           outside_fetch_client_settings_object.outgoing_referrer.GetString(),
           CalculateHttpsState(constructor_origin.Get()),
           AllowedByNosniff::MimeTypeCheck::kLaxForWorker,
@@ -243,7 +255,7 @@ void WebSharedWorkerImpl::StartWorkerContext(
   auto creation_params = std::make_unique<GlobalScopeCreationParams>(
       script_request_url, script_type, name, user_agent, ua_metadata,
       std::move(web_worker_fetch_context),
-      ConvertToMojoBlink(content_security_policies),
+      ToVector(content_security_policies, FromWebContentSecurityPolicy),
       Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
       outside_settings_object->GetReferrerPolicy(),
       outside_settings_object->GetSecurityOrigin(),
@@ -258,7 +270,19 @@ void WebSharedWorkerImpl::StartWorkerContext(
       mojo::NullRemote() /* code_cache_host_interface */,
       mojo::NullRemote() /* blob_url_store */, BeginFrameProviderParams(),
       nullptr /* parent_permissions_policy */, base::UnguessableToken(),
-      ukm_source_id);
+      ukm_source_id,
+      /*parent_context_token=*/std::nullopt,
+      /*parent_cross_origin_isolated_capability=*/false,
+      /*parent_is_isolated_context=*/false,
+      /*interface_registry=*/nullptr,
+      /*agent_group_scheduler_compositor_task_runner=*/nullptr,
+      /*top_level_frame_security_origin=*/nullptr,
+      /*parent_storage_access_api_status=*/
+      net::StorageAccessApiStatus::kNone,
+      require_cross_site_request_for_cookies,
+      blink::SecurityOrigin::CreateFromUrlOrigin(
+          url::Origin(origin_from_browser)),
+      std::move(coep_reporting_observer), std::move(dip_reporting_observer));
 
   auto thread_startup_data = WorkerBackingThreadStartupData::CreateDefault();
   thread_startup_data.atomics_wait_mode =
@@ -321,10 +345,11 @@ std::unique_ptr<WebSharedWorker> WebSharedWorker::CreateAndStart(
     network::mojom::CredentialsMode credentials_mode,
     const WebString& name,
     WebSecurityOrigin constructor_origin,
+    WebSecurityOrigin origin_from_browser,
     bool is_constructor_secure_context,
     const WebString& user_agent,
     const UserAgentMetadata& ua_metadata,
-    const WebVector<WebContentSecurityPolicy>& content_security_policies,
+    const std::vector<WebContentSecurityPolicy>& content_security_policies,
     const WebFetchClientSettingsObject& outside_fetch_client_settings_object,
     const base::UnguessableToken& devtools_worker_token,
     CrossVariantMojoRemote<
@@ -338,18 +363,24 @@ std::unique_ptr<WebSharedWorker> WebSharedWorker::CreateAndStart(
     scoped_refptr<WebWorkerFetchContext> web_worker_fetch_context,
     CrossVariantMojoRemote<mojom::SharedWorkerHostInterfaceBase> host,
     WebSharedWorkerClient* client,
-    ukm::SourceId ukm_source_id) {
+    ukm::SourceId ukm_source_id,
+    bool require_cross_site_request_for_cookies,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        coep_reporting_observer,
+    CrossVariantMojoReceiver<mojom::blink::ReportingObserverInterfaceBase>
+        dip_reporting_observer) {
   auto worker =
       base::WrapUnique(new WebSharedWorkerImpl(token, std::move(host), client));
   worker->StartWorkerContext(
       script_request_url, script_type, credentials_mode, name,
-      constructor_origin, is_constructor_secure_context, user_agent,
-      ua_metadata, content_security_policies,
+      constructor_origin, origin_from_browser, is_constructor_secure_context,
+      user_agent, ua_metadata, content_security_policies,
       outside_fetch_client_settings_object, devtools_worker_token,
       std::move(content_settings), std::move(browser_interface_broker),
       pause_worker_context_on_start, std::move(worker_main_script_load_params),
       std::move(policy_container), std::move(web_worker_fetch_context),
-      ukm_source_id);
+      ukm_source_id, require_cross_site_request_for_cookies,
+      std::move(coep_reporting_observer), std::move(dip_reporting_observer));
   return worker;
 }
 

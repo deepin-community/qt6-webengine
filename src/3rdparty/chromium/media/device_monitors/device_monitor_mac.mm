@@ -7,6 +7,7 @@
 #include <AVFoundation/AVFoundation.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <algorithm>
 #include <set>
 #include <string>
 
@@ -16,7 +17,8 @@
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -87,6 +89,8 @@ namespace {
 class SuspendObserverDelegate
     : public base::RefCountedThreadSafe<SuspendObserverDelegate> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   explicit SuspendObserverDelegate(DeviceMonitorMacImpl* monitor);
 
   // Create |suspend_observer_| for all devices and register OnDeviceChanged()
@@ -101,8 +105,7 @@ class SuspendObserverDelegate
 
  private:
   friend class base::RefCountedThreadSafe<SuspendObserverDelegate>;
-
-  virtual ~SuspendObserverDelegate();
+  ~SuspendObserverDelegate();
 
   // Bottom half of StartObserver(), starts |suspend_observer_| for all devices.
   // Assumes that |devices| has been retained prior to being called, and
@@ -188,6 +191,7 @@ class AVFoundationMonitorImpl : public DeviceMonitorMacImpl {
   void OnDeviceChanged() override;
 
  private:
+  bool IsAudioDevice(AVCaptureDevice* device);
   // {Video,AudioInput}DeviceManager's "Device" thread task runner used for
   // posting tasks to |suspend_observer_delegate_|;
   const scoped_refptr<base::SingleThreadTaskRunner> device_task_runner_;
@@ -203,7 +207,8 @@ AVFoundationMonitorImpl::AVFoundationMonitorImpl(
     const scoped_refptr<base::SingleThreadTaskRunner>& device_task_runner)
     : DeviceMonitorMacImpl(monitor),
       device_task_runner_(device_task_runner),
-      suspend_observer_delegate_(new SuspendObserverDelegate(this)) {
+      suspend_observer_delegate_(
+          base::MakeRefCounted<SuspendObserverDelegate>(this)) {
   DCHECK(main_thread_checker_.CalledOnValidThread());
   NSNotificationCenter* nc = NSNotificationCenter.defaultCenter;
   device_arrival_ =
@@ -211,14 +216,18 @@ AVFoundationMonitorImpl::AVFoundationMonitorImpl(
                       object:nil
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
-                    OnDeviceChanged();
+                    if (!IsAudioDevice(notification.object)) {
+                      OnDeviceChanged();
+                    }
                   }];
   device_removal_ =
       [nc addObserverForName:AVCaptureDeviceWasDisconnectedNotification
                       object:nil
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
-                    OnDeviceChanged();
+                    if (!IsAudioDevice(notification.object)) {
+                      OnDeviceChanged();
+                    }
                   }];
   suspend_observer_delegate_->StartObserver(device_task_runner_);
 }
@@ -234,6 +243,11 @@ AVFoundationMonitorImpl::~AVFoundationMonitorImpl() {
 void AVFoundationMonitorImpl::OnDeviceChanged() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
   suspend_observer_delegate_->OnDeviceChanged();
+}
+
+bool AVFoundationMonitorImpl::IsAudioDevice(AVCaptureDevice* device) {
+  DCHECK(main_thread_checker_.CalledOnValidThread());
+  return [device hasMediaType:AVMediaTypeAudio];
 }
 
 }  // namespace
@@ -283,7 +297,7 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
   DCHECK(_mainThreadChecker.CalledOnValidThread());
   DCHECK(device != nil);
 
-  auto found = base::ranges::find(_monitoredDevices, device);
+  auto found = std::ranges::find(_monitoredDevices, device);
   DCHECK(found != _monitoredDevices.end());
   [self removeObservers:*found];
   _monitoredDevices.erase(found);

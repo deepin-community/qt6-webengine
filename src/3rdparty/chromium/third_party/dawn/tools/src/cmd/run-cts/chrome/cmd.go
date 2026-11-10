@@ -38,9 +38,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"dawn.googlesource.com/dawn/tools/src/cmd/run-cts/common"
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"golang.org/x/net/websocket"
@@ -70,13 +72,15 @@ func (cmd) Desc() string {
 }
 
 func (c *cmd) RegisterFlags(ctx context.Context, cfg common.Config) ([]string, error) {
-	c.flags.Register()
+	c.flags.Register(cfg.OsWrapper)
 	flag.StringVar(&c.flags.chrome, "chrome", "", "path to the chrome executable")
 	return []string{"[query]"}, nil
 }
 
+// TODO(crbug.com/416755658): Add unittest coverage once there is a way to fake
+// the Chrome instance.
 func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
-	state, err := c.flags.Process()
+	state, err := c.flags.Process(cfg.OsWrapper)
 	if err != nil {
 		return err
 	}
@@ -92,10 +96,10 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 		return fmt.Errorf("only a single query can be provided")
 	}
 
-	if err := c.state.CTS.Node.BuildIfRequired(c.flags.Verbose); err != nil {
+	if err := c.state.CTS.Node.BuildIfRequired(c.flags.Verbose, cfg.OsWrapper); err != nil {
 		return err
 	}
-	if err := c.state.CTS.Standalone.BuildIfRequired(c.flags.Verbose); err != nil {
+	if err := c.state.CTS.Standalone.BuildIfRequired(c.flags.Verbose, cfg.OsWrapper); err != nil {
 		return err
 	}
 
@@ -108,7 +112,7 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 
 	resultStream := make(chan common.Result, 256)
 	go func() {
-		c.runTestCases(ctx, testCases, resultStream)
+		c.runTestCases(ctx, testCases, resultStream, cfg.OsWrapper)
 		close(resultStream)
 	}()
 
@@ -118,7 +122,8 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 		c.flags.Verbose,
 		/* coverage */ nil,
 		len(testCases),
-		resultStream)
+		resultStream,
+		cfg.OsWrapper)
 	if err != nil {
 		return err
 	}
@@ -130,10 +135,12 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	return nil
 }
 
+// TODO(crbug.com/416755658): Add unittest coverage once there is a way to fake
+// the Chrome instance.
 // runTestCases spawns c.flags.NumRunners Chrome instances to run all the test
 // cases in testCases. The results of the tests are streamed to results.
 // Blocks until all the tests have been run.
-func (c *cmd) runTestCases(ctx context.Context, testCases []common.TestCase, results chan<- common.Result) {
+func (c *cmd) runTestCases(ctx context.Context, testCases []common.TestCase, results chan<- common.Result, fsReader oswrapper.FilesystemReader) {
 	// Create a chan of test indices.
 	// This will be read by the test runner goroutines.
 	testCaseIndices := make(chan int, 256)
@@ -151,7 +158,7 @@ func (c *cmd) runTestCases(ctx context.Context, testCases []common.TestCase, res
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := c.runChromeInstance(ctx, id, testCases, testCaseIndices, results); err != nil {
+			if err := c.runChromeInstance(ctx, id, testCases, testCaseIndices, results, fsReader); err != nil {
 				results <- common.Result{
 					Status: common.Fail,
 					Error:  fmt.Errorf("Test server error: %w", err),
@@ -163,6 +170,8 @@ func (c *cmd) runTestCases(ctx context.Context, testCases []common.TestCase, res
 	wg.Wait()
 }
 
+// TODO(crbug.com/416755658): Add unittest coverage once there is a way to fake
+// the Chrome instance.
 // runChromeInstance starts a Chrome instance, takes case indices from
 // testCaseIndices, and requests the server run the test with the given index.
 // The result of the test run is written to the results chan.
@@ -173,7 +182,8 @@ func (c *cmd) runChromeInstance(
 	id int,
 	testCases []common.TestCase,
 	testCaseIndices <-chan int,
-	results chan<- common.Result) error {
+	results chan<- common.Result,
+	fsReader oswrapper.FilesystemReader) error {
 
 	port := 8800 + id
 
@@ -193,12 +203,12 @@ func (c *cmd) runChromeInstance(
 	errs := make(chan error, 64)
 
 	handler := http.NewServeMux()
-	handler.HandleFunc("/test_page.html", serveFile("webgpu-cts/test_page.html"))
-	handler.HandleFunc("/test_runner.js", serveFile("webgpu-cts/test_runner.js"))
+	handler.HandleFunc("/test_page.html", serveFile("webgpu-cts/test_page.html", fsReader))
+	handler.HandleFunc("/test_runner.js", serveFile("webgpu-cts/test_runner.js", fsReader))
 	handler.HandleFunc("/third_party/webgpu-cts/resources/",
-		serveDir("/third_party/webgpu-cts/resources/", "third_party/webgpu-cts/out/resources/"))
+		serveDir("/third_party/webgpu-cts/resources/", c.flags.CTS+"/out/resources/", fsReader))
 	handler.HandleFunc("/third_party/webgpu-cts/src/",
-		serveDir("/third_party/webgpu-cts/src/", "third_party/webgpu-cts/out/"))
+		serveDir("/third_party/webgpu-cts/src/", c.flags.CTS+"/out/", fsReader))
 	handler.HandleFunc("/", websocket.Handler(func(ws *websocket.Conn) {
 		go func() {
 			d := json.NewDecoder(ws)
@@ -287,7 +297,7 @@ nextTestCase:
 		requests <- Request{Query: string(res.TestCase)}
 
 		for {
-			// TODO(bclayton): Implement timeouts, browser restarting.
+			// Future enhancements: Timeouts, browser restarting.
 			select {
 			case response := <-responses:
 				switch response.Type {
@@ -299,6 +309,7 @@ nextTestCase:
 				case "TEST_HEARTBEAT":
 				case "TEST_STATUS":
 					res.Status = common.Status(response.Status)
+					res.Duration = time.Duration(response.Duration) * time.Millisecond
 				case "TEST_FINISHED":
 					results <- res
 					continue nextTestCase
@@ -322,22 +333,21 @@ nextTestCase:
 	return nil
 }
 
-func serveFile(relPath string) func(http.ResponseWriter, *http.Request) {
-	dawnRoot := fileutils.DawnRoot()
+func serveFile(relPath string, fsReader oswrapper.FilesystemReader) func(http.ResponseWriter, *http.Request) {
+	dawnRoot := fileutils.DawnRoot(fsReader)
 	return func(w http.ResponseWriter, r *http.Request) {
 		fullPath := filepath.Join(dawnRoot, relPath)
-		if !fileutils.IsFile(fullPath) {
+		if !fileutils.IsFile(fullPath, fsReader) {
 			log.Printf("'%v' file does not exist", fullPath)
 		}
 		http.ServeFile(w, r, filepath.Join(dawnRoot, relPath))
 	}
 }
 
-func serveDir(remote, local string) func(http.ResponseWriter, *http.Request) {
-	dawnRoot := fileutils.DawnRoot()
+func serveDir(remote, local string, fsReader oswrapper.FilesystemReader) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fullPath := filepath.Join(dawnRoot, local, strings.TrimPrefix(r.URL.Path, remote))
-		if !fileutils.IsFile(fullPath) {
+		fullPath := filepath.Join(local, strings.TrimPrefix(r.URL.Path, remote))
+		if !fileutils.IsFile(fullPath, fsReader) {
 			log.Printf("'%v' file does not exist", fullPath)
 		}
 		http.ServeFile(w, r, fullPath)

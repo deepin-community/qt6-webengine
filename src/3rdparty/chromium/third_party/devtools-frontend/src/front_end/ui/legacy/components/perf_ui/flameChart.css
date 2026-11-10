@@ -7,12 +7,10 @@
 .flame-chart-main-pane {
   overflow: hidden;
 
-  --selected-group-background: hsl(215deg 85% 98%);
   --selected-group-border: hsl(216deg 68% 54%);
 }
 
-:host-context(.-theme-with-dark-background) .flame-chart-main-pane {
-  --selected-group-background: hsl(215deg 85% 15%);
+:host-context(.theme-with-dark-background) .flame-chart-main-pane {
   --selected-group-border: hsl(216deg 68% 46%);
 }
 
@@ -56,13 +54,14 @@
   bottom: 0;
   z-index: 100;
   width: 2px;
-  background-color: var(--sys-color-primary);
+  background-color: var(--ref-palette-pink50);
   pointer-events: none;
 }
 
 .flame-chart-entry-info:not(:empty) {
   z-index: 2000;
   position: absolute;
+  contain: content;
   background-color: var(--sys-color-cdt-base-container);
   pointer-events: none;
   padding: 4px 8px;
@@ -86,4 +85,10 @@
 
 .flame-chart-entry-info table tr td span {
   margin-right: 5px;
+}
+
+.flame-chart-edit-confirm {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
 }

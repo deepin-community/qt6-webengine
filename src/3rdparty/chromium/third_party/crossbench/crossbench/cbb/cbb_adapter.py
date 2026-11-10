@@ -10,30 +10,54 @@ Any breaking changes in the function definitions here need to be coordinated
 with corresponding changes in CBB in google3
 """
 
-import pathlib
-from typing import List, Optional, Type, Union
+from __future__ import annotations
 
-from selenium import webdriver
+from typing import TYPE_CHECKING, Optional, Type
+
+from typing_extensions import override
 
 import crossbench.benchmarks.all as benchmarks
 import crossbench.browsers.browser
 import crossbench.browsers.webdriver as cb_webdriver
-import crossbench.env
-import crossbench.runner.run
 import crossbench.runner.runner
-from crossbench.benchmarks.base import PressBenchmark
-from crossbench.stories.press_benchmark import PressBenchmarkStory
+from crossbench import path as pth
+from crossbench.cli.config.env import ValidationMode
+from crossbench.runner.run import Run
 
-press_benchmarks = [
+if TYPE_CHECKING:
+  import datetime as dt
+
+  from selenium import webdriver
+
+  from crossbench.action_runner.base import ActionRunner
+  from crossbench.benchmarks.base import PressBenchmark
+  from crossbench.runner.groups.session import BrowserSessionRunGroup
+  from crossbench.stories.press_benchmark import PressBenchmarkStory
+  from crossbench.stories.story import Story
+
+press_benchmarks: list[Type[PressBenchmark]] = [
+    # Speedometer:
     benchmarks.Speedometer20Benchmark,
     benchmarks.Speedometer21Benchmark,
     benchmarks.Speedometer30Benchmark,
+    benchmarks.Speedometer31Benchmark,
+    benchmarks.SpeedometerMainBenchmark,
+    # MotionMark:
     benchmarks.MotionMark12Benchmark,
+    benchmarks.MotionMark13Benchmark,
+    benchmarks.MotionMark131Benchmark,
+    benchmarks.MotionMarkMainBenchmark,
+    # JetStream:
+    benchmarks.JetStream11Benchmark,
     benchmarks.JetStream20Benchmark,
     benchmarks.JetStream21Benchmark,
+    benchmarks.JetStream22Benchmark,
+    benchmarks.JetStreamMainBenchmark,
 ]
 
-press_benchmarks_dict = {cls.NAME: cls for cls in press_benchmarks}
+press_benchmarks_dict: dict[str, Type[PressBenchmark]] = {
+    cls.NAME: cls for cls in press_benchmarks
+}
 
 
 def get_pressbenchmark_cls(
@@ -76,13 +100,12 @@ def create_remote_webdriver(driver: webdriver.Remote
   """
 
   browser = cb_webdriver.RemoteWebDriver("default", driver)
-  browser.version = driver.capabilities["browserVersion"]
   return browser
 
 
 def get_probe_result_file(benchmark_name: str,
                           browser: crossbench.browsers.browser.Browser,
-                          output_dir: Union[str, pathlib.Path],
+                          output_dir: pth.LocalPathLike,
                           probe_name: Optional[str] = None) -> Optional[str]:
   """Returns the path to the probe result file.
 
@@ -94,36 +117,41 @@ def get_probe_result_file(benchmark_name: str,
     probe_name: Optional name of the probe for the result file. If not
                 specified, the first probe from the default benchmark story
                 will be used."""
-  output_dir_path = pathlib.Path(output_dir)
+  output_dir_path = pth.LocalPath(output_dir)
   if probe_name is None:
     if benchmark_name not in press_benchmarks_dict:
       return None
     benchmark_cls = press_benchmarks_dict[benchmark_name]
-    probe_cls = benchmark_cls.DEFAULT_STORY_CLS.PROBES[0]
+    probe_cls = benchmark_cls.PROBES[0]
     probe_name = probe_cls.NAME
 
-  result_file = (
+  result_file: pth.LocalPath = (
       output_dir_path / browser.unique_name / "stories" / f"{probe_name}.json")
   return str(result_file)
 
 
 class CbbRunner(crossbench.runner.runner.Runner):
 
-  def create_run(self, browser_session, story, repetition, temperature, index,
-                 name, timeout, throw) -> crossbench.runner.run.Run:
-    return CbbRun(self, browser_session, story, repetition, temperature, index,
-                  name, timeout, throw)
+  @override
+  def create_run(self, browser_session: BrowserSessionRunGroup, story: Story,
+                 action_runner: ActionRunner, repetition: int, is_warmup: bool,
+                 temperature: str, index: int, name: str, timeout: dt.timedelta,
+                 throw: bool, env_validation_mode: ValidationMode) -> Run:
+    return CbbRun(self, browser_session, story, action_runner, repetition,
+                  is_warmup, temperature, index, name, timeout, throw,
+                  env_validation_mode)
 
 
-class CbbRun(crossbench.runner.run.Run):
+class CbbRun(Run):
 
-  def _create_session_dir(self) -> None:
+  @override
+  def _setup_session_dir(self) -> None:
     # Don't create symlink loops and skip this step
     pass
 
 
-def run_benchmark(output_folder: Union[str, pathlib.Path],
-                  browser_list: List[crossbench.browsers.browser.Browser],
+def run_benchmark(output_folder: pth.LocalPathLike,
+                  browser_list: list[crossbench.browsers.browser.Browser],
                   benchmark: PressBenchmark) -> None:
   """Runs the benchmark using crossbench runner.
 
@@ -134,9 +162,9 @@ def run_benchmark(output_folder: Union[str, pathlib.Path],
     benchmark: The Benchmark instance to run.
   """
   runner = CbbRunner(
-      out_dir=pathlib.Path(output_folder),
+      out_dir=pth.LocalPath(output_folder),
       browsers=browser_list,
       benchmark=benchmark,
-      env_validation_mode=crossbench.env.ValidationMode.SKIP)
+      env_validation_mode=ValidationMode.SKIP)
 
   runner.run()

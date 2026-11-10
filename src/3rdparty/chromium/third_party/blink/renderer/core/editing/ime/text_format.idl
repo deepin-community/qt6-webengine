@@ -7,17 +7,20 @@
 // Spec draft:
 // https://w3c.github.io/edit-context/#textformatupdateevent
 
-enum UnderlineStyle { "none", "solid", "double", "dotted", "dashed", "wavy" };
+enum UnderlineStyle { "none", "solid", "dotted", "dashed", "wavy" };
 enum UnderlineThickness { "none", "thin", "thick" };
 
 [
-    Exposed=Window,
-    RuntimeEnabled=EditContext
+  Exposed=Window
 ] interface TextFormat {
     constructor(optional TextFormatInit options = {});
 
     readonly attribute unsigned long rangeStart;
     readonly attribute unsigned long rangeEnd;
-    readonly attribute UnderlineStyle underlineStyle;
-    readonly attribute UnderlineThickness underlineThickness;
+
+    // https://crbug.com/354497121 These should be UnderlineStyle and
+    // UnderlineThickness enumerations but the values returned by the
+    // implementation do not match what the IDL defines.
+    [MeasureAs=EditContextTextFormatUnderlineStyle] readonly attribute DOMString underlineStyle;
+    [MeasureAs=EditContextTextFormatUnderlineThickness] readonly attribute DOMString underlineThickness;
 };

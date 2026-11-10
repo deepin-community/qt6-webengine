@@ -228,6 +228,13 @@ bool TextureD3D::shouldUseSetData(const ImageD3D *image) const
         return false;
     }
 
+    // Emulated RGBX/BGRX formats must always use the slow path to ensure the alpha channel is set
+    // to 1.0.
+    if (gl::IsRGBXOrBGRXFormat(internalFormat.sizedInternalFormat))
+    {
+        return false;
+    }
+
     // TODO(jmadill): Handle compressed internal formats
     return (mTexStorage && !internalFormat.compressed);
 }
@@ -295,7 +302,7 @@ angle::Result TextureD3D::subImage(const gl::Context *context,
         ImageD3D *image = getImage(index);
         ASSERT(image);
 
-        if (shouldUseSetData(image))
+        if (shouldUseSetData(image) && !mTexStorage->isMultiplanar(context))
         {
             return mTexStorage->setData(context, index, image, &area, type, unpack, pixelData);
         }
@@ -413,7 +420,7 @@ GLint TextureD3D::creationLevels(GLsizei width, GLsizei height, GLsizei depth) c
         mRenderer->getNativeExtensions().textureNpotOES)
     {
         // Maximum number of levels
-        return gl::log2(std::max(std::max(width, height), depth)) + 1;
+        return gl::log2(std::max({width, height, depth})) + 1;
     }
     else
     {
@@ -868,9 +875,23 @@ angle::Result TextureD3D::initializeContents(const gl::Context *context,
     const auto &formatInfo = gl::GetSizedInternalFormatInfo(image->getInternalFormat());
 
     GLuint imageBytes = 0;
-    ANGLE_CHECK_GL_MATH(contextD3D, formatInfo.computeRowPitch(formatInfo.type, image->getWidth(),
-                                                               1, 0, &imageBytes));
-    imageBytes *= image->getHeight() * image->getDepth();
+    if (formatInfo.compressed)
+    {
+        ANGLE_CHECK_GL_MATH(
+            contextD3D, formatInfo.computeCompressedImageSize(
+                            gl::Extents(image->getWidth(), image->getHeight(), image->getDepth()),
+                            &imageBytes));
+    }
+    else
+    {
+        ANGLE_CHECK_GL_MATH(contextD3D, formatInfo.computeRowPitch(
+                                            formatInfo.type, image->getWidth(), 1, 0, &imageBytes));
+
+        angle::CheckedNumeric<GLuint> checkedImageBytes(imageBytes);
+        checkedImageBytes *= image->getHeight();
+        checkedImageBytes *= image->getDepth();
+        ANGLE_CHECK_GL_MATH(contextD3D, checkedImageBytes.AssignIfValid(&imageBytes));
+    }
 
     gl::PixelUnpackState zeroDataUnpackState;
     zeroDataUnpackState.alignment = 1;
@@ -1168,8 +1189,9 @@ angle::Result TextureD3D_2D::copyImage(const gl::Context *context,
             isValidLevel(index.getLevelIndex()))
         {
             ANGLE_TRY(updateStorageLevel(context, index.getLevelIndex()));
-            ANGLE_TRY(mRenderer->copyImage2D(context, source, clippedArea, internalFormat,
-                                             destOffset, mTexStorage, index.getLevelIndex()));
+            ANGLE_TRY(mRenderer->copyImage2D(context, source, clippedArea,
+                                             internalFormatInfo.format, destOffset, mTexStorage,
+                                             index.getLevelIndex()));
         }
     }
 
@@ -1395,8 +1417,7 @@ angle::Result TextureD3D_2D::bindTexImage(const gl::Context *context, egl::Surfa
 {
     GLenum internalformat = surface->getConfig()->renderTargetFormat;
 
-    gl::Extents size(surface->getWidth(), surface->getHeight(), 1);
-    ANGLE_TRY(redefineImage(context, 0, internalformat, size, true));
+    ANGLE_TRY(redefineImage(context, 0, internalformat, surface->getSize(), true));
 
     ANGLE_TRY(releaseTexStorage(context, gl::TexLevelMask()));
 

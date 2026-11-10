@@ -5,19 +5,38 @@
 #ifndef V8_COMPILER_TURBOSHAFT_LATE_LOAD_ELIMINATION_REDUCER_H_
 #define V8_COMPILER_TURBOSHAFT_LATE_LOAD_ELIMINATION_REDUCER_H_
 
+#include <optional>
+
+#include "src/base/compiler-specific.h"
 #include "src/base/doubly-threaded-list.h"
 #include "src/compiler/turboshaft/analyzer-iterator.h"
 #include "src/compiler/turboshaft/assembler.h"
 #include "src/compiler/turboshaft/graph.h"
+#include "src/compiler/turboshaft/index.h"
 #include "src/compiler/turboshaft/loop-finder.h"
+#include "src/compiler/turboshaft/operations.h"
+#include "src/compiler/turboshaft/opmasks.h"
 #include "src/compiler/turboshaft/phase.h"
+#include "src/compiler/turboshaft/representations.h"
+#include "src/compiler/turboshaft/sidetable.h"
 #include "src/compiler/turboshaft/snapshot-table-opindex.h"
 #include "src/compiler/turboshaft/utils.h"
+#include "src/zone/zone-containers.h"
 #include "src/zone/zone.h"
 
 namespace v8::internal::compiler::turboshaft {
 
 #include "src/compiler/turboshaft/define-assembler-macros.inc"
+
+#ifdef DEBUG
+#define TRACE(x)                                    \
+  do {                                              \
+    if (v8_flags.turboshaft_trace_load_elimination) \
+      StdoutStream() << x << std::endl;             \
+  } while (false)
+#else
+#define TRACE(x)
+#endif
 
 // Design doc:
 // https://docs.google.com/document/d/1AEl4dATNLu8GlLyUBQFXJoCxoAT5BeG7RCWxoEtIBJE/edit?usp=sharing
@@ -187,6 +206,7 @@ struct MemoryAddress {
                       mem.element_size_log2, mem.size);
   }
 };
+std::ostream& operator<<(std::ostream& os, const MemoryAddress& mem);
 
 inline size_t hash_value(MemoryAddress const& mem) {
   return fast_hash_combine(mem.base, mem.index, mem.offset,
@@ -226,13 +246,76 @@ struct BaseData {
   v8::base::DoublyThreadedList<Key, BaseListTraits> with_indices;
 };
 
+class LoadEliminationReplacement {
+ public:
+  enum class Kind {
+    kNone,             // We don't replace the operation
+    kLoadElimination,  // We load eliminate a load operation
+    // The following replacements are used for the special case optimization:
+    // TruncateWord64ToWord32(
+    //     BitcastTaggedToWordPtrForTagAndSmiBits(Load(x, Tagged)))
+    // =>
+    // Load(x, Int32)
+    //
+    kTaggedLoadToInt32Load,     // Turn a tagged load into a direct int32 load.
+    kTaggedBitcastElimination,  // Remove this (now unused) bitcast.
+    kInt32TruncationElimination,  // Replace truncation by the updated load.
+  };
+
+  LoadEliminationReplacement() : kind_(Kind::kNone), replacement_() {}
+
+  static LoadEliminationReplacement None() {
+    return LoadEliminationReplacement{};
+  }
+  static LoadEliminationReplacement LoadElimination(OpIndex replacement) {
+    DCHECK(replacement.valid());
+    return LoadEliminationReplacement{Kind::kLoadElimination, replacement};
+  }
+  static LoadEliminationReplacement TaggedLoadToInt32Load() {
+    return LoadEliminationReplacement{Kind::kTaggedLoadToInt32Load, {}};
+  }
+  static LoadEliminationReplacement TaggedBitcastElimination() {
+    return LoadEliminationReplacement{Kind::kTaggedBitcastElimination, {}};
+  }
+  static LoadEliminationReplacement Int32TruncationElimination(
+      OpIndex replacement) {
+    return LoadEliminationReplacement{Kind::kInt32TruncationElimination,
+                                      replacement};
+  }
+
+  bool IsNone() const { return kind_ == Kind::kNone; }
+  bool IsLoadElimination() const { return kind_ == Kind::kLoadElimination; }
+  bool IsTaggedLoadToInt32Load() const {
+    return kind_ == Kind::kTaggedLoadToInt32Load;
+  }
+  bool IsTaggedBitcastElimination() const {
+    return kind_ == Kind::kTaggedBitcastElimination;
+  }
+  bool IsInt32TruncationElimination() const {
+    return kind_ == Kind::kInt32TruncationElimination;
+  }
+  OpIndex replacement() const { return replacement_; }
+
+ private:
+  LoadEliminationReplacement(Kind kind, OpIndex replacement)
+      : kind_(kind), replacement_(replacement) {}
+
+  Kind kind_;
+  OpIndex replacement_;
+};
+
+V8_EXPORT_PRIVATE bool IsInt32TruncatedLoadPattern(
+    const Graph& graph, OpIndex change_idx, const ChangeOp& change,
+    OpIndex* bitcast_idx = nullptr, OpIndex* load_idx = nullptr);
+
 class MemoryContentTable
     : public ChangeTrackingSnapshotTable<MemoryContentTable, OpIndex, KeyData> {
  public:
+  using Replacement = LoadEliminationReplacement;
   explicit MemoryContentTable(
       Zone* zone, SparseOpIndexSnapshotTable<bool>& non_aliasing_objects,
       SparseOpIndexSnapshotTable<MapMaskAndOr>& object_maps,
-      FixedOpIndexSidetable<OpIndex>& replacements)
+      FixedOpIndexSidetable<Replacement>& replacements)
       : ChangeTrackingSnapshotTable(zone),
         non_aliasing_objects_(non_aliasing_objects),
         object_maps_(object_maps),
@@ -264,9 +347,12 @@ class MemoryContentTable
   }
 
   void Invalidate(OpIndex base, OptionalOpIndex index, int32_t offset) {
+    TRACE("> MemoryContentTable: Invalidating based on "
+          << base << ", " << index << ", " << offset);
     base = ResolveBase(base);
 
     if (non_aliasing_objects_.Get(base)) {
+      TRACE(">> base is non-aliasing");
       // Since {base} is non-aliasing, it's enough to just iterate the values at
       // this base.
       auto base_keys = base_keys_.find(base);
@@ -279,6 +365,7 @@ class MemoryContentTable
         if (index.valid() || offset == key.data().mem.offset) {
           // Overwrites {key}.
           it = base_keys->second.with_offsets.RemoveAt(it);
+          TRACE(">>> invalidating " << key.data().mem);
           Set(key, OpIndex::Invalid());
         } else {
           ++it;
@@ -293,9 +380,11 @@ class MemoryContentTable
         Set(key, OpIndex::Invalid());
       }
     } else {
+      TRACE(">> base is maybe-aliasing");
       // {base} could alias with other things, so we iterate the whole state.
       if (index.valid()) {
         // {index} could be anything, so we invalidate everything.
+        TRACE(">> Invalidating everything because of valid index");
         return InvalidateMaybeAliasing();
       }
 
@@ -312,15 +401,18 @@ class MemoryContentTable
       for (auto it = index_keys_.begin(); it != index_keys_.end();) {
         Key key = *it;
         it = index_keys_.RemoveAt(it);
+        TRACE(">>> Invalidating indexed memory " << key.data().mem);
         Set(key, OpIndex::Invalid());
       }
 
+      TRACE(">>> Invalidating everything maybe-aliasing at offset " << offset);
       InvalidateAtOffset(offset, base);
     }
   }
 
   // Invalidates all Keys that are not known as non-aliasing.
   void InvalidateMaybeAliasing() {
+    TRACE(">> InvalidateMaybeAliasing");
     // We find current active keys through {base_keys_} so that we can bail out
     // for whole buckets non-aliasing bases (if we had gone through
     // {offset_keys_} instead, then for each key we would've had to check
@@ -335,12 +427,14 @@ class MemoryContentTable
         // invalid, otherwise OnKeyChange will remove {key} from {base_keys},
         // which will invalidate {it}.
         it = base_keys.second.with_offsets.RemoveAt(it);
+        TRACE(">>> Invalidating " << key.data().mem);
         Set(key, OpIndex::Invalid());
       }
       for (auto it = base_keys.second.with_indices.begin();
            it != base_keys.second.with_indices.end();) {
         Key key = *it;
         it = base_keys.second.with_indices.RemoveAt(it);
+        TRACE(">>> Invalidating " << key.data().mem);
         Set(key, OpIndex::Invalid());
       }
     }
@@ -408,6 +502,22 @@ class MemoryContentTable
   }
 #endif
 
+  void InvalidatePotentialLoadedStringMaps() {
+    constexpr int kOffset = 0;
+    auto offset_keys = offset_keys_.find(kOffset);
+    if (offset_keys == offset_keys_.end()) return;
+    for (auto it = offset_keys->second.begin();
+         it != offset_keys->second.end();) {
+      Key key = *it;
+      DCHECK_EQ(kOffset, key.data().mem.offset);
+      // TODO(dmercadier): check known maps for key.data().mem.base and don't
+      // invalidate if maps cannot be string maps.
+      it = offset_keys->second.RemoveAt(it);
+      TRACE(">>>> InvalidateAtOffset: invalidating " << key.data().mem);
+      Set(key, OpIndex::Invalid());
+    }
+  }
+
  private:
   // To avoid pathological execution times, we cap the maximum number of
   // keys we track. This is safe, because *not* tracking objects (even
@@ -422,13 +532,23 @@ class MemoryContentTable
     DCHECK_EQ(base, ResolveBase(base));
 
     MemoryAddress mem{base, index, offset, element_size_log2, size};
+    TRACE("> MemoryContentTable: will insert " << mem
+                                               << " with value=" << value);
     auto existing_key = all_keys_.find(mem);
     if (existing_key != all_keys_.end()) {
+      TRACE(">> Reusing existing key");
       Set(existing_key->second, value);
       return;
     }
 
-    if (all_keys_.size() > kMaxKeys) return;
+    if (all_keys_.size() > kMaxKeys) {
+      TRACE(">> Bailing out because too many keys");
+      if (V8_UNLIKELY(v8_flags.trace_turbo_bailouts)) {
+        std::cout
+            << "Bailing out in Late Load Elimination because of kMaxKeys [1]\n";
+      }
+      return;
+    }
 
     // Creating a new key.
     Key key = NewKey({mem});
@@ -441,13 +561,23 @@ class MemoryContentTable
     DCHECK_EQ(base, ResolveBase(base));
 
     MemoryAddress mem{base, index, offset, element_size_log2, size};
+    TRACE("> MemoryContentTable: will insert immutable "
+          << mem << " with value=" << value);
     auto existing_key = all_keys_.find(mem);
     if (existing_key != all_keys_.end()) {
+      TRACE(">> Reusing existing key");
       SetNoNotify(existing_key->second, value);
       return;
     }
 
-    if (all_keys_.size() > kMaxKeys) return;
+    if (all_keys_.size() > kMaxKeys) {
+      TRACE(">> Bailing out because too many keys");
+      if (V8_UNLIKELY(v8_flags.trace_turbo_bailouts)) {
+        std::cout
+            << "Bailing out in Late Load Elimination because of kMaxKeys [2]\n";
+      }
+      return;
+    }
 
     // Creating a new key.
     Key key = NewKey({mem});
@@ -475,17 +605,20 @@ class MemoryContentTable
                                    : object_maps_.Get(key.data().mem.base);
       if (!is_empty(base_maps) && !is_empty(this_maps) &&
           !CouldHaveSameMap(base_maps, this_maps)) {
+        TRACE(">>>> InvalidateAtOffset: not invalidating thanks for maps: "
+              << key.data().mem);
         ++it;
         continue;
       }
       it = offset_keys->second.RemoveAt(it);
+      TRACE(">>>> InvalidateAtOffset: invalidating " << key.data().mem);
       Set(key, OpIndex::Invalid());
     }
   }
 
   OpIndex ResolveBase(OpIndex base) {
-    while (replacements_[base] != OpIndex::Invalid()) {
-      base = replacements_[base];
+    while (replacements_[base].IsLoadElimination()) {
+      base = replacements_[base].replacement();
     }
     return base;
   }
@@ -535,7 +668,7 @@ class MemoryContentTable
 
   SparseOpIndexSnapshotTable<bool>& non_aliasing_objects_;
   SparseOpIndexSnapshotTable<MapMaskAndOr>& object_maps_;
-  FixedOpIndexSidetable<OpIndex>& replacements_;
+  FixedOpIndexSidetable<Replacement>& replacements_;
 
   // A map containing all of the keys, for fast lookup of a specific
   // MemoryAddress.
@@ -550,7 +683,7 @@ class MemoryContentTable
   v8::base::DoublyThreadedList<Key, OffsetListTraits> index_keys_;
 };
 
-class LateLoadEliminationAnalyzer {
+class V8_EXPORT_PRIVATE LateLoadEliminationAnalyzer {
  public:
   using AliasTable = SparseOpIndexSnapshotTable<bool>;
   using AliasKey = AliasTable::Key;
@@ -563,15 +696,18 @@ class LateLoadEliminationAnalyzer {
   using MemoryKey = MemoryContentTable::Key;
   using MemorySnapshot = MemoryContentTable::Snapshot;
 
+  using Replacement = LoadEliminationReplacement;
+
   enum class RawBaseAssumption {
     kNoInnerPointer,
     kMaybeInnerPointer,
   };
 
-  LateLoadEliminationAnalyzer(Graph& graph, Zone* phase_zone,
-                              JSHeapBroker* broker,
+  LateLoadEliminationAnalyzer(PipelineData* data, Graph& graph,
+                              Zone* phase_zone, JSHeapBroker* broker,
                               RawBaseAssumption raw_base_assumption)
-      : graph_(graph),
+      : data_(data),
+        graph_(graph),
         phase_zone_(phase_zone),
         broker_(broker),
         raw_base_assumption_(raw_base_assumption),
@@ -582,72 +718,27 @@ class LateLoadEliminationAnalyzer {
         block_to_snapshot_mapping_(graph.block_count(), phase_zone),
         predecessor_alias_snapshots_(phase_zone),
         predecessor_maps_snapshots_(phase_zone),
-        predecessor_memory_snapshots_(phase_zone) {}
-
-  void Run() {
-    LoopFinder loop_finder(phase_zone_, &graph_);
-    AnalyzerIterator iterator(phase_zone_, graph_, loop_finder);
-
-    bool compute_start_snapshot = true;
-    while (iterator.HasNext()) {
-      const Block* block = iterator.Next();
-
-      ProcessBlock(*block, compute_start_snapshot);
-      compute_start_snapshot = true;
-
-      // Consider re-processing for loops.
-      if (const GotoOp* last = block->LastOperation(graph_).TryCast<GotoOp>()) {
-        if (last->destination->IsLoop() &&
-            last->destination->LastPredecessor() == block) {
-          const Block* loop_header = last->destination;
-          // {block} is the backedge of a loop. We recompute the loop header's
-          // initial snapshots, and if they differ from its original snapshot,
-          // then we revisit the loop.
-          if (BeginBlock<true>(loop_header)) {
-            // We set the snapshot of the loop's 1st predecessor to the newly
-            // computed snapshot. It's not quite correct, but this predecessor
-            // is guaranteed to end with a Goto, and we are now visiting the
-            // loop, which means that we don't really care about this
-            // predecessor anymore.
-            // The reason for saving this snapshot is to prevent infinite
-            // looping, since the next time we reach this point, the backedge
-            // snapshot could still invalidate things from the forward edge
-            // snapshot. By restricting the forward edge snapshot, we prevent
-            // this.
-            const Block* loop_1st_pred =
-                loop_header->LastPredecessor()->NeighboringPredecessor();
-            FinishBlock(loop_1st_pred);
-            // And we start a new fresh snapshot from this predecessor.
-            auto pred_snapshots =
-                block_to_snapshot_mapping_[loop_1st_pred->index()];
-            non_aliasing_objects_.StartNewSnapshot(
-                pred_snapshots->alias_snapshot);
-            object_maps_.StartNewSnapshot(pred_snapshots->maps_snapshot);
-            memory_.StartNewSnapshot(pred_snapshots->memory_snapshot);
-
-            iterator.MarkLoopForRevisit();
-            compute_start_snapshot = false;
-          } else {
-            SealAndDiscard();
-          }
-        }
-      }
-    }
+        predecessor_memory_snapshots_(phase_zone) {
+    USE(data_);
   }
 
-  OpIndex Replacement(OpIndex index) {
-    DCHECK(graph_.Get(index).Is<LoadOp>());
-    return replacements_[index];
-  }
+  void Run();
+
+  Replacement GetReplacement(OpIndex index) { return replacements_[index]; }
 
  private:
   void ProcessBlock(const Block& block, bool compute_start_snapshot);
   void ProcessLoad(OpIndex op_idx, const LoadOp& op);
   void ProcessStore(OpIndex op_idx, const StoreOp& op);
+  void ProcessAtomicRMW(OpIndex op_idx, const AtomicRMWOp& op);
   void ProcessAllocate(OpIndex op_idx, const AllocateOp& op);
   void ProcessCall(OpIndex op_idx, const CallOp& op);
-  void ProcessPhi(OpIndex op_idx, const PhiOp& op);
   void ProcessAssumeMap(OpIndex op_idx, const AssumeMapOp& op);
+  void ProcessChange(OpIndex op_idx, const ChangeOp& change);
+
+  void DcheckWordBinop(OpIndex op_idx, const WordBinopOp& binop);
+
+  void WipeAllMaps();
 
   // BeginBlock initializes the various SnapshotTables for {block}, and returns
   // true if {block} is a loop that should be revisited.
@@ -666,18 +757,19 @@ class LateLoadEliminationAnalyzer {
   // it was already visited).
   bool BackedgeHasSnapshot(const Block& loop_header) const;
 
+  void InvalidateAllNonAliasingInputs(const Operation& op);
   void InvalidateIfAlias(OpIndex op_idx);
 
+  PipelineData* data_;
   Graph& graph_;
   Zone* phase_zone_;
   JSHeapBroker* broker_;
   RawBaseAssumption raw_base_assumption_;
 
-#if V8_ENABLE_WEBASSEMBLY
-  bool is_wasm_ = PipelineData::Get().is_wasm();
-#endif
-
-  FixedOpIndexSidetable<OpIndex> replacements_;
+  FixedOpIndexSidetable<Replacement> replacements_;
+  // We map: Load-index -> Change-index -> Bitcast-index
+  std::map<OpIndex, base::SmallMap<std::map<OpIndex, OpIndex>, 4>>
+      int32_truncated_loads_;
 
   // TODO(dmercadier): {non_aliasing_objects_} tends to be weak for
   // backing-stores, because they are often stored into an object right after
@@ -696,7 +788,7 @@ class LateLoadEliminationAnalyzer {
     MapSnapshot maps_snapshot;
     MemorySnapshot memory_snapshot;
   };
-  FixedBlockSidetable<base::Optional<Snapshot>> block_to_snapshot_mapping_;
+  FixedBlockSidetable<std::optional<Snapshot>> block_to_snapshot_mapping_;
 
   // {predecessor_alias_napshots_}, {predecessor_maps_snapshots_} and
   // {predecessor_memory_snapshots_} are used as temporary vectors when starting
@@ -707,53 +799,226 @@ class LateLoadEliminationAnalyzer {
 };
 
 template <class Next>
-class LateLoadEliminationReducer : public Next {
+class V8_EXPORT_PRIVATE LateLoadEliminationReducer : public Next {
  public:
-  TURBOSHAFT_REDUCER_BOILERPLATE()
+  TURBOSHAFT_REDUCER_BOILERPLATE(LateLoadElimination)
+  using Replacement = LoadEliminationReplacement;
 
   void Analyze() {
-    if (is_wasm_ || v8_flags.turboshaft_load_elimination) {
-      DCHECK(AllowHandleDereference::IsAllowed());
+    if (v8_flags.turboshaft_load_elimination) {
       analyzer_.Run();
     }
     Next::Analyze();
   }
 
   OpIndex REDUCE_INPUT_GRAPH(Load)(OpIndex ig_index, const LoadOp& load) {
-    if (is_wasm_ || v8_flags.turboshaft_load_elimination) {
-      OpIndex ig_replacement_index = analyzer_.Replacement(ig_index);
-      if (ig_replacement_index.valid()) {
-        OpIndex replacement = Asm().MapToNewGraph(ig_replacement_index);
-        DCHECK(Asm()
-                   .output_graph()
-                   .Get(replacement)
-                   .outputs_rep()[0]
-                   .AllowImplicitRepresentationChangeTo(load.outputs_rep()[0]));
-        return replacement;
+    if (v8_flags.turboshaft_load_elimination) {
+      Replacement replacement = analyzer_.GetReplacement(ig_index);
+      if (replacement.IsLoadElimination()) {
+        OpIndex replacement_ig_index = replacement.replacement();
+        OpIndex replacement_idx = Asm().MapToNewGraph(replacement_ig_index);
+        // The replacement might itself be a load that int32-truncated.
+        if (analyzer_.GetReplacement(replacement_ig_index)
+                .IsTaggedLoadToInt32Load()) {
+          DCHECK_EQ(Asm().output_graph().Get(replacement_idx).outputs_rep()[0],
+                    RegisterRepresentation::Word32());
+        } else {
+          DCHECK(Asm()
+                     .output_graph()
+                     .Get(replacement_idx)
+                     .outputs_rep()[0]
+                     .AllowImplicitRepresentationChangeTo(
+                         load.outputs_rep()[0],
+                         Asm().output_graph().IsCreatedFromTurbofan()));
+        }
+#if DEBUG_BOOL && V8_STATIC_ROOTS_BOOL
+        // Note that this verification is only enabled on builds with static
+        // roots enabled, because this simplifies the comparison of string maps:
+        // with static roots we can know easily if a tagged value is a string
+        // map, while without static roots, we'd have to load the instance type,
+        // which requires to first check if it's actually a map or not.
+
+        if (v8_flags.turboshaft_verify_load_elimination) {
+          // When the debug flag {turboshaft_verify_load_elimination} is used,
+          // we perform the original load and assert that it's indeed equal to
+          // the replacement that we are using.
+
+          OpIndex actual_idx = Next::ReduceInputGraphLoad(ig_index, load);
+          RegisterRepresentation actual_rep =
+              __ output_graph().Get(actual_idx).outputs_rep()[0];
+          RegisterRepresentation replacement_rep =
+              __ output_graph().Get(replacement_idx).outputs_rep()[0];
+          RegisterRepresentation compare_rep = actual_rep;
+
+          if (actual_rep == RegisterRepresentation::Simd128()) {
+            // TODO(dmercadier): enable verification for Simd128 as well (it's
+            // mainly about changing the `__ Equal` below and using a mix of
+            // Simd128Binop + Simd128ExtractLane + Equal).
+            return replacement_idx;
+          }
+
+          if (actual_rep != replacement_rep) {
+            // The replacement is a load that is int32-truncated. We also
+            // truncate actual to match this.
+            DCHECK_EQ(actual_rep, RegisterRepresentation::Tagged());
+            DCHECK(replacement_rep == any_of(RegisterRepresentation::Word32(),
+                                             RegisterRepresentation::Word64()));
+            actual_idx = __ BitcastTaggedToWordPtrForTagAndSmiBits(actual_idx);
+            if (replacement_rep == RegisterRepresentation::Word32()) {
+              actual_idx = __ TruncateWordPtrToWord32(actual_idx);
+              compare_rep = RegisterRepresentation::Word32();
+            } else {
+              DCHECK_EQ(replacement_rep, RegisterRepresentation::Word64());
+              // Still using {Word32} rather than {Word64} here, since the upper
+              // 32 bits are not initialized.
+              compare_rep = RegisterRepresentation::Word32();
+            }
+          }
+
+          auto abort = [&]() {
+#if V8_ENABLE_WEBASSEMBLY
+            if (__ data()->pipeline_kind() == TurboshaftPipelineKind::kWasm) {
+              __ WasmCallRuntime(
+                  __ phase_zone(), Runtime::kAbort,
+                  {__ TagSmi(static_cast<int>(
+                      AbortReason::kTurboshaftLoadEliminationError))},
+                  __ NoContextConstant());
+            } else {
+#endif
+              __ CallRuntime_Abort(
+                  __ data()->isolate(), __ NoContextConstant(),
+                  __ TagSmi(static_cast<int>(
+                      AbortReason::kTurboshaftLoadEliminationError)));
+#if V8_ENABLE_WEBASSEMBLY
+            }
+#endif
+            __ Unreachable();
+          };
+
+          IF_NOT (__ Equal(actual_idx, replacement_idx, compare_rep)) {
+            if (actual_rep == any_of(RegisterRepresentation::Float32(),
+                                     RegisterRepresentation::Float64())) {
+              // Equality might have returned false because the 2 values are
+              // NaN.
+              DCHECK_EQ(compare_rep, actual_rep);
+              IF (__ Word32BitwiseOr(
+                      __ Equal(actual_idx, actual_idx, actual_rep),
+                      __ Equal(replacement_idx, replacement_idx,
+                               replacement_rep))) {
+                // At least one of {actual_idx} and {reaplcement_idx} is not
+                // NaN.
+                abort();
+              }
+            } else if (compare_rep == RegisterRepresentation::Tagged() &&
+                       !v8_flags.turbolev) {
+              // We are trying to replace a Tagged value by a different Tagged
+              // value. This is generally wrong, but there is one exception: we
+              // are allowed to replace a string map by a different string map
+              // that has the same 1/2-byte encoding. The reason why this is
+              // fine is because we never rely on the exact shape of a string,
+              // as the only operations that look at string maps are:
+              //
+              //  - CheckString (in Turboshaft, this is ObjectIs(kString)): this
+              //  doesn't care about shapes, only about the fact that something
+              //  is a string or not.
+              //
+              //  - StringAt: loading the map is done in a loop that contains a
+              //  runtime call, which is annotated as AnySideEffects, which will
+              //  prevent LoadElimination from ever eliminating the map load.
+              //
+              //  - NewConsString: this only cares about the encoding of the
+              //  input, in order to determine the encoding of the outputs.
+
+              IF_NOT (__ IsStringMap(actual_idx)) {
+                abort();
+              }
+
+              IF_NOT (__ IsStringMap(replacement_idx)) {
+                abort();
+              }
+
+              // Both actual and replacement are strings.
+
+              // Checking that the encoding (1 or 2-byte) remained the same.
+              V<Word32> actual_instance_type =
+                  __ LoadInstanceTypeField(actual_idx);
+              V<Word32> replacement_instance_type =
+                  __ LoadInstanceTypeField(replacement_idx);
+              V<Word32> actual_encoding = __ Word32BitwiseAnd(
+                  actual_instance_type, kStringEncodingMask);
+              V<Word32> replacement_encoding = __ Word32BitwiseAnd(
+                  replacement_instance_type, kStringEncodingMask);
+              IF_NOT (__ Word32Equal(actual_encoding, replacement_encoding)) {
+                abort();
+              }
+
+              // NOT aborting: we replaced a string map with a different string
+              // map, but they have the same encoding.
+            } else {
+              abort();
+            }
+          }
+        }
+#endif  // DEBUG_BOOL && V8_STATIC_ROOTS_BOOL
+        return replacement_idx;
+      } else if (replacement.IsTaggedLoadToInt32Load()) {
+        auto loaded_rep = load.loaded_rep;
+        auto result_rep = load.result_rep;
+        DCHECK_EQ(result_rep, RegisterRepresentation::Tagged());
+        loaded_rep = MemoryRepresentation::Int32();
+        result_rep = RegisterRepresentation::Word32();
+        return Asm().Load(Asm().MapToNewGraph(load.base()),
+                          Asm().MapToNewGraph(load.index()), load.kind,
+                          loaded_rep, result_rep, load.offset,
+                          load.element_size_log2);
       }
     }
     return Next::ReduceInputGraphLoad(ig_index, load);
   }
 
-  OpIndex REDUCE(AssumeMap)(OpIndex, ZoneRefSet<Map>) {
+  OpIndex REDUCE_INPUT_GRAPH(Change)(OpIndex ig_index, const ChangeOp& change) {
+    if (v8_flags.turboshaft_load_elimination) {
+      Replacement replacement = analyzer_.GetReplacement(ig_index);
+      if (replacement.IsInt32TruncationElimination()) {
+        DCHECK(
+            IsInt32TruncatedLoadPattern(Asm().input_graph(), ig_index, change));
+        return Asm().MapToNewGraph(replacement.replacement());
+      }
+    }
+    return Next::ReduceInputGraphChange(ig_index, change);
+  }
+
+  OpIndex REDUCE_INPUT_GRAPH(TaggedBitcast)(OpIndex ig_index,
+                                            const TaggedBitcastOp& bitcast) {
+    if (v8_flags.turboshaft_load_elimination) {
+      Replacement replacement = analyzer_.GetReplacement(ig_index);
+      if (replacement.IsTaggedBitcastElimination()) {
+        return OpIndex::Invalid();
+      }
+    }
+    return Next::ReduceInputGraphTaggedBitcast(ig_index, bitcast);
+  }
+
+  V<None> REDUCE(AssumeMap)(V<HeapObject>, ZoneRefSet<Map>) {
     // AssumeMaps are currently not used after Load Elimination. We thus remove
     // them now. If they ever become needed for later optimizations, we could
     // consider leaving them in the graph and just ignoring them in the
     // Instruction Selector.
-    return OpIndex::Invalid();
+    return {};
   }
 
  private:
-  const bool is_wasm_ = PipelineData::Get().is_wasm();
   using RawBaseAssumption = LateLoadEliminationAnalyzer::RawBaseAssumption;
   RawBaseAssumption raw_base_assumption_ =
-      PipelineData::Get().pipeline_kind() == TurboshaftPipelineKind::kCSA
+      __ data() -> pipeline_kind() == TurboshaftPipelineKind::kCSA
           ? RawBaseAssumption::kMaybeInnerPointer
           : RawBaseAssumption::kNoInnerPointer;
-  LateLoadEliminationAnalyzer analyzer_{
-      Asm().modifiable_input_graph(), Asm().phase_zone(),
-      PipelineData::Get().broker(), raw_base_assumption_};
+  LateLoadEliminationAnalyzer analyzer_{__ data(), __ modifiable_input_graph(),
+                                        __ phase_zone(), __ data()->broker(),
+                                        raw_base_assumption_};
 };
+
+#undef TRACE
 
 #include "src/compiler/turboshaft/undef-assembler-macros.inc"
 

@@ -24,11 +24,18 @@ class VIEWS_EXPORT ViewObserver {
   // Called when |child| is removed as a child of |observed_view|.
   virtual void OnChildViewRemoved(View* observed_view, View* child) {}
 
-  // Called when |observed_view|, an ancestor, or its Widget has its visibility
-  // changed. |starting_view| is who |View::SetVisible()| was called on (or null
-  // if the Widget visibility changed).
+  // Called when `observed_view`, an ancestor, or its Widget has its
+  // visibility changed.
+  //
+  // The `starting_view` parameter is the View on which `SetVisible()` was
+  // actually called, or null if the Widget was shown or hidden.
+  //
+  // Note that when a widget is shown or hidden, `Widget::IsVisible()` may not
+  // update right away and may therefore disagree with the value of `visible`;
+  // in these cases `visible` is the intended Widget visibility.
   virtual void OnViewVisibilityChanged(View* observed_view,
-                                       View* starting_view) {}
+                                       View* starting_view,
+                                       bool visible) {}
 
   // Called from View::PreferredSizeChanged().
   virtual void OnViewPreferredSizeChanged(View* observed_view) {}
@@ -41,7 +48,7 @@ class VIEWS_EXPORT ViewObserver {
   virtual void OnViewLayerBoundsSet(View* observed_view) {}
 
   // Called when the `observed_view`'s layer transform changes.
-  // TODO(crbug.com/1203386): This is temporarily added to support a migration.
+  // TODO(crbug.com/40763515): This is temporarily added to support a migration.
   // Do not use for new call sites, we should instead figure out how to
   // migrate this method (and possibly others) into callbacks.
   virtual void OnViewLayerTransformed(View* observed_view) {}
@@ -88,6 +95,12 @@ class VIEWS_EXPORT ViewObserver {
   virtual void OnViewPropertyChanged(View* observed_view,
                                      const void* key,
                                      int64_t old_value) {}
+
+  // Called when the observed view's layout is invalidated.
+  // This is useful to invalidate other views in response to the observed
+  // view's layout invalidation, for example, when the view to be invalidated
+  // has style dependency on the observed view.
+  virtual void OnViewLayoutInvalidated(View* observed_view) {}
 
  protected:
   virtual ~ViewObserver() = default;

@@ -6,14 +6,20 @@ import("//build/config/android/rules.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
 generate_jni("jni_headers") {
-  sources = [ "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridge.java" ]
+  sources = [
+    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridge.java",
+    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeFactory.java",
+    "java/src/org/chromium/chrome/browser/optimization_guide/PageContentProtoProviderBridge.java",
+  ]
 }
 
 android_library("java") {
   sources = [
     "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridge.java",
     "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeFactory.java",
+    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideDecisionWithMetadata.java",
     "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuidePushNotificationManager.java",
+    "java/src/org/chromium/chrome/browser/optimization_guide/PageContentProtoProviderBridge.java",
   ]
 
   deps = [
@@ -39,10 +45,7 @@ android_library("java") {
 generate_jni("native_j_unittests_jni_headers") {
   testonly = true
 
-  sources = [
-    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeNativeUnitTest.java",
-    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuidePushNotificationTestHelper.java",
-  ]
+  sources = [ "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeNativeUnitTest.java" ]
 }
 
 android_library("native_java_unittests") {
@@ -62,10 +65,7 @@ android_library("native_java_unittests") {
     "//url:gurl_java",
   ]
 
-  sources = [
-    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeNativeUnitTest.java",
-    "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuidePushNotificationTestHelper.java",
-  ]
+  sources = [ "java/src/org/chromium/chrome/browser/optimization_guide/OptimizationGuideBridgeNativeUnitTest.java" ]
 }
 
 android_library("unit_device_javatests") {
@@ -88,9 +88,10 @@ android_library("unit_device_javatests") {
     "//content/public/android:content_full_java",
     "//content/public/test/android:content_java_test_support",
     "//third_party/android_deps:protobuf_lite_runtime_java",
+    "//third_party/androidx:androidx_test_rules_java",
     "//third_party/androidx:androidx_test_runner_java",
     "//third_party/jni_zero:jni_zero_java",
-    "//third_party/junit:junit",
+    "//third_party/junit",
     "//third_party/mockito:mockito_java",
     "//url:gurl_java",
   ]
@@ -115,6 +116,7 @@ android_library("javatests") {
     "//content/public/test/android:content_java_test_support",
     "//third_party/android_deps:protobuf_lite_runtime_java",
     "//third_party/androidx:androidx_test_core_java",
+    "//third_party/androidx:androidx_test_rules_java",
     "//third_party/androidx:androidx_test_runner_java",
     "//third_party/jni_zero:jni_zero_java",
     "//third_party/junit",

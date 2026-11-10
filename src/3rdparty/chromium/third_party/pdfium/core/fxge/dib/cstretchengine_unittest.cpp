@@ -21,7 +21,7 @@ constexpr uint32_t kTooBigDestLen = 32 * 1024 * 1024 + 1;
 
 uint32_t PixelWeightSum(const CStretchEngine::PixelWeight* weights) {
   uint32_t sum = 0;
-  for (int i = weights->m_SrcStart; i <= weights->m_SrcEnd; ++i) {
+  for (int i = weights->src_start_; i <= weights->src_end_; ++i) {
     sum += weights->GetWeightForPosition(i);
   }
   return sum;
@@ -30,7 +30,7 @@ uint32_t PixelWeightSum(const CStretchEngine::PixelWeight* weights) {
 void ExecuteOneStretchTest(int32_t dest_width,
                            int32_t src_width,
                            const FXDIB_ResampleOptions& options) {
-  constexpr uint32_t kExpectedSum = CStretchEngine::kFixedPointOne;
+  static constexpr uint32_t kExpectedSum = CStretchEngine::kFixedPointOne;
   CStretchEngine::WeightTable table;
   ASSERT_TRUE(table.CalculateWeights(dest_width, 0, dest_width, src_width, 0,
                                      src_width, options));
@@ -43,7 +43,7 @@ void ExecuteOneStretchTest(int32_t dest_width,
 void ExecuteOneReversedStretchTest(int32_t dest_width,
                                    int32_t src_width,
                                    const FXDIB_ResampleOptions& options) {
-  constexpr uint32_t kExpectedSum = CStretchEngine::kFixedPointOne;
+  static constexpr uint32_t kExpectedSum = CStretchEngine::kFixedPointOne;
   CStretchEngine::WeightTable table;
   ASSERT_TRUE(table.CalculateWeights(-dest_width, 0, dest_width, src_width, 0,
                                      src_width, options));
@@ -56,8 +56,8 @@ void ExecuteOneReversedStretchTest(int32_t dest_width,
 
 void ExecuteStretchTests(const FXDIB_ResampleOptions& options) {
   // Can't test everything, few random values chosen.
-  constexpr int32_t kDestWidths[] = {1, 2, 337, 512, 808, 2550};
-  constexpr int32_t kSrcWidths[] = {1, 2, 187, 256, 809, 1110};
+  static constexpr int32_t kDestWidths[] = {1, 2, 337, 512, 808, 2550};
+  static constexpr int32_t kSrcWidths[] = {1, 2, 187, 256, 809, 1110};
   for (int32_t src_width : kSrcWidths) {
     for (int32_t dest_width : kDestWidths) {
       ExecuteOneStretchTest(dest_width, src_width, options);
@@ -76,7 +76,7 @@ TEST(CStretchEngine, OverflowInCtor) {
   RetainPtr<CPDF_Stream> stream =
       pdfium::MakeRetain<CPDF_Stream>(std::move(dict_obj));
   auto dib_source = pdfium::MakeRetain<CPDF_DIB>(nullptr, stream);
-  dib_source->Load();
+  EXPECT_FALSE(dib_source->Load());  // Fail to load due to dimensions.
   CStretchEngine engine(nullptr, FXDIB_Format::k8bppRgb, 500, 500, clip_rect,
                         dib_source, FXDIB_ResampleOptions());
   EXPECT_TRUE(engine.GetResampleOptionsForTest().bInterpolateBilinear);

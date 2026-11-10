@@ -17,6 +17,7 @@
 #include "build/build_config.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/bluetooth/web_bluetooth_pairing_manager_delegate.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/bluetooth_delegate.h"
 #include "content/public/browser/bluetooth_scanning_prompt.h"
@@ -156,6 +157,8 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
                            NoShowBluetoothScanningPromptInPrerendering);
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
                            DeferredStartNotifySession);
+  FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
+                           StartNotificationsBlocklisted);
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest, DeviceDisconnected);
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
                            DeviceGattServicesDiscoveryTimeout);
@@ -164,7 +167,19 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
                            TwoWatchAdvertisementsReqFail);
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
+                           WatchAdvertisementsReqAbortedWhenTabHidden);
+  FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
                            SecWatchAdvertisementsReqAfterFirstSuccess);
+  FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTestWithBaseAdapter,
+                           EmulatedAdapterRemovalRestoresOriginalAdapter);
+  FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
+                           ServiceDestroyedDuringAdapterAcquisition);
+  FRIEND_TEST_ALL_PREFIXES(
+      WebBluetoothServiceImplTest,
+      RemoteDescriptorReadValue_ParentCharacteristicBlocklisted);
+  FRIEND_TEST_ALL_PREFIXES(
+      WebBluetoothServiceImplTest,
+      RemoteDescriptorWriteValue_ParentCharacteristicBlocklisted);
 
 #if PAIR_BLUETOOTH_ON_DEMAND()
   FRIEND_TEST_ALL_PREFIXES(WebBluetoothServiceImplTest,
@@ -175,6 +190,8 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
 
   friend class FrameConnectedBluetoothDevicesTest;
   friend class WebBluetoothServiceImplTest;
+  friend class WebBluetoothServiceImplTestWithBaseAdapter;
+
   using PrimaryServicesRequestCallback =
       base::OnceCallback<void(device::BluetoothDevice*)>;
   using ScanFilters = std::vector<blink::mojom::WebBluetoothLeScanFilterPtr>;
@@ -254,7 +271,7 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
       RemoteCharacteristicReadValueCallback callback) override;
   void RemoteCharacteristicWriteValue(
       const std::string& characteristic_instance_id,
-      const std::vector<uint8_t>& value,
+      base::span<const uint8_t> value,
       blink::mojom::WebBluetoothWriteType write_type,
       RemoteCharacteristicWriteValueCallback callback) override;
   void RemoteCharacteristicStartNotifications(
@@ -280,7 +297,7 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
       RemoteDescriptorReadValueCallback callback) override;
   void RemoteDescriptorWriteValue(
       const std::string& descriptor_instance_id,
-      const std::vector<uint8_t>& value,
+      base::span<const uint8_t> value,
       RemoteDescriptorWriteValueCallback callback) override;
   void RequestScanningStart(
       mojo::PendingAssociatedRemote<
@@ -462,6 +479,10 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
   // |watch_advertisements_discovery_session_| is active.
   bool HasActiveDiscoverySession();
 
+  // Prevents the associated RenderFrameHost from entering the back forward
+  // cache and evicts it if it was already added.
+  void PreventBackForwardCache();
+
   // WebBluetoothPairingManagerDelegate implementation:
   blink::WebBluetoothDeviceId GetCharacteristicDeviceID(
       const std::string& characteristic_instance_id) override;
@@ -549,9 +570,18 @@ class CONTENT_EXPORT WebBluetoothServiceImpl
   std::unique_ptr<WebBluetoothPairingManager> pairing_manager_;
 #endif
 
+  // When valid, prevents the frame from entering the back forward cache.
+  RenderFrameHostImpl::BackForwardCacheDisablingFeatureHandle
+      back_forward_cache_feature_handle_;
+
   base::ScopedObservation<BluetoothDelegate,
                           BluetoothDelegate::FramePermissionObserver>
       observer_{this};
+
+  // A set contains device ids that have GATT connection attempt ongoing.
+  std::unordered_set<blink::WebBluetoothDeviceId,
+                     blink::WebBluetoothDeviceIdHash>
+      pending_connection_device_ids_;
 
   base::WeakPtrFactory<WebBluetoothServiceImpl> weak_ptr_factory_{this};
 };

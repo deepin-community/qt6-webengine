@@ -10,10 +10,10 @@ devtools_pre_built("marked") {
   sources_are_release = false
 
   sources = [
-    "../../../node_modules/@types/marked/index.d.ts",
     "marked-tsconfig.json",
     "package/lib/marked.esm.d.ts",
     "package/lib/marked.esm.js",
+    "package/lib/marked.esm.js.map",
   ]
 }
 
@@ -23,11 +23,14 @@ devtools_entrypoint("bundle") {
   deps = [ ":marked" ]
 
   visibility = [
-    "../../../test/unittests/front_end/ui/components/*",
     "../../models/issues_manager/*",
+    "../../panels/ai_assistance/*",
     "../../panels/explain/*",
-    "../../ui/components/docs/markdown_view/*",
+    "../../panels/timeline/*",
+    "../../panels/whats_new/*",
+    "../../ui/components/docs/ai_assistance/*",
     "../../ui/components/docs/console_insight/*",
+    "../../ui/components/docs/markdown_view/*",
     "../../ui/components/markdown_view/*",
   ]
 

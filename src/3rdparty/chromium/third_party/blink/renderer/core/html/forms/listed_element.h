@@ -45,6 +45,16 @@ class Node;
 class ValidationMessageClient;
 class ValidityState;
 
+enum class DisabledChangedReason {
+  // kAttributeChanged means that the disabled attribute was added or removed
+  // from an element.
+  kAttributeChanged,
+  // kFieldsetChildrenChanged means that the disabledness of an element is being
+  // changed due to children being added, removed, or moved from a fieldset
+  // element.
+  kFieldsetChildrenChanged,
+};
+
 // https://html.spec.whatwg.org/C/#category-listed
 class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
  public:
@@ -59,15 +69,17 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   const HTMLElement& ToHTMLElement() const;
   HTMLElement& ToHTMLElement();
 
-  static HTMLFormElement* FindAssociatedForm(const HTMLElement*,
-                                             const AtomicString& form_id,
-                                             HTMLFormElement* form_ancestor);
+  // Returns the associated form element or its host element if the form is
+  // associated through reference target.
+  HTMLElement* RetargetedForm() const;
+  // Returns the associated form element.
   HTMLFormElement* Form() const { return form_.Get(); }
   ValidityState* validity();
 
-  virtual bool IsFormControlElement() const = 0;
+  virtual bool IsFormControlElement() const;
   virtual bool IsFormControlElementWithState() const;
   virtual bool IsElementInternals() const;
+  virtual bool IsObjectElement() const;
   virtual bool IsEnumeratable() const = 0;
 
   // Returns the 'name' attribute value. If this element has no name
@@ -120,6 +132,7 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
                                                 String& sub_message,
                                                 TextDirection& sub_message_dir);
   virtual Element& ValidationAnchor() const;
+  Element& GetHostOrFocusDelegate() const;
   bool ValidationAnchorOrHostIsFocusable() const;
 
   // For Element::IsValidElement(), which is for :valid :invalid selectors.
@@ -136,7 +149,7 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   void SetNeedsValidityCheck();
 
   // This should be called when |disabled| content attribute is changed.
-  virtual void DisabledAttributeChanged();
+  virtual void DisabledAttributeChanged(DisabledChangedReason);
   // This should be called when |readonly| content attribute is changed.
   void ReadonlyAttributeChanged();
   // Override this if you want to know 'disabled' state changes immediately.
@@ -151,8 +164,7 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   void RemovedFrom(ContainerNode&);
   // This should be called in Node::DidMoveToDocument().
   void DidMoveToNewDocument(Document& old_document);
-  // This is for HTMLFieldSetElement class.
-  virtual void AncestorDisabledStateWasChanged();
+  virtual void AncestorDisabledStateWasChanged(DisabledChangedReason);
 
   // https://html.spec.whatwg.org/C/#concept-element-disabled
   bool IsActuallyDisabled() const;
@@ -172,6 +184,15 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   void NotifyFormStateChanged();
   // This should be called in Element::FinishParsingChildren() override.
   void TakeStateAndRestore();
+  // Returns the form that owns this element according to Autofill's definition
+  // of ownership, or nullptr if no form owns it. The form that owns this
+  // element is:
+  // - if this element is associated to a form, the furthest shadow-including
+  //   form ancestor of that form,
+  // - otherwise, the furthest shadow-including form ancestor of this element.
+  // For the definition of ownership in Autofill, see
+  // //components/autofill/content/renderer/README.md.
+  HTMLFormElement* GetOwningFormForAutofill() const;
 
   void Trace(Visitor*) const override;
 
@@ -189,8 +210,14 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   virtual void WillChangeForm();
   virtual void DidChangeForm();
 
+  enum class WillValidateReason {
+    kDefault,
+    kForInsertionOrRemoval,
+  };
+
   // This must be called any time the result of WillValidate() has changed.
-  void UpdateWillValidateCache();
+  void UpdateWillValidateCache(
+      WillValidateReason = WillValidateReason::kDefault);
   virtual bool RecalcWillValidate() const;
 
   String CustomValidationMessage() const;
@@ -206,6 +233,10 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   mutable AncestorDisabledState ancestor_disabled_state_ =
       AncestorDisabledState::kUnknown;
 
+  // exposed so that HTMLFieldSetElement can update the document's cache of
+  // disabled fieldsets.  Should not be used more generally.
+  bool IsSelfDisabledIgnoringAncestors() const { return is_element_disabled_; }
+
  private:
   void UpdateAncestorDisabledState() const;
   void SetFormAttributeTargetObserver(FormAttributeTargetObserver*);
@@ -213,7 +244,8 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   // Requests validity recalc for the form owner, if one exists.
   void FormOwnerSetNeedsValidityCheck();
   // Requests validity recalc for all ancestor fieldsets, if exist.
-  void FieldSetAncestorsSetNeedsValidityCheck(Node*);
+  enum class StartingNodeType { IS_PARENT, IS_INSERTION_POINT };
+  void FieldSetAncestorsSetNeedsValidityCheck(Node*, StartingNodeType);
 
   ValidationMessageClient* GetValidationMessageClient() const;
 

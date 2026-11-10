@@ -25,6 +25,9 @@ namespace {
 // A fake that pretends that all contexts are WebUI.
 class ProcessMapFake : public ProcessMap {
  public:
+  explicit ProcessMapFake(content::BrowserContext* browser_context)
+      : ProcessMap(browser_context) {}
+
   mojom::ContextType GetMostLikelyContextType(const Extension* extension,
                                               int process_id,
                                               const GURL* url) const override {
@@ -45,7 +48,7 @@ std::unique_ptr<KeyedService> BuildSettingsPrivateEventRouter(
 
 std::unique_ptr<KeyedService> BuildProcessMap(
     content::BrowserContext* profile) {
-  return std::make_unique<ProcessMapFake>();
+  return std::make_unique<ProcessMapFake>(profile);
 }
 
 // Tracks event dispatches to a specific process.
@@ -134,9 +137,9 @@ TEST_F(SettingsPrivateEventRouterTest, IncognitoEventRouting) {
       api::settings_private::OnPrefsChanged::kEventName, &otr_rph, kDummyURL);
 
   // Hook up some test observers
-  EventRouterObserver regular_counter(regular_rph.GetID());
+  EventRouterObserver regular_counter(regular_rph.GetDeprecatedID());
   regular_event_router->AddObserverForTesting(&regular_counter);
-  EventRouterObserver otr_counter(otr_rph.GetID());
+  EventRouterObserver otr_counter(otr_rph.GetDeprecatedID());
   otr_event_router->AddObserverForTesting(&otr_counter);
 
   EXPECT_EQ(0, regular_counter.dispatch_count);

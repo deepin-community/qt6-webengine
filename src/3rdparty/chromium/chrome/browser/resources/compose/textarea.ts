@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import './icons.html.js';
-import './strings.m.js';
+import '/strings.m.js';
 import '//resources/cr_elements/cr_shared_vars.css.js';
 import '//resources/cr_elements/cr_icon_button/cr_icon_button.js';
 
@@ -11,7 +11,7 @@ import {loadTimeData} from '//resources/js/load_time_data.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {ComposeTextareaAnimator} from './animations/textarea_animator.js';
-import {ConfigurableParams} from './compose.mojom-webui.js';
+import type {ConfigurableParams} from './compose.mojom-webui.js';
 import {getTemplate} from './textarea.html.js';
 
 export interface ComposeTextareaElement {
@@ -67,19 +67,25 @@ export class ComposeTextareaElement extends PolymerElement {
     };
   }
 
-  allowExitingReadonlyMode: boolean;
+  declare allowExitingReadonlyMode: boolean;
   private animator_: ComposeTextareaAnimator;
-  inputParams: ConfigurableParams;
-  readonly: boolean;
-  private invalidInput_: boolean;
-  private tooLong_: boolean;
-  private tooShort_: boolean;
-  value: string;
+  declare inputParams: ConfigurableParams;
+  declare readonly: boolean;
+  declare private invalidInput_: boolean;
+  declare private tooLong_: boolean;
+  declare private tooShort_: boolean;
+  private placeholderText_: string;
+  declare value: string;
 
   constructor() {
     super();
     this.animator_ = new ComposeTextareaAnimator(
         this, loadTimeData.getBoolean('enableAnimations'));
+  }
+
+  override ready() {
+    super.ready();
+    this.placeholderText_ = this.$.input.placeholder;
   }
 
   focusInput() {
@@ -103,6 +109,14 @@ export class ComposeTextareaElement extends PolymerElement {
     return this.allowExitingReadonlyMode && this.readonly;
   }
 
+  private onChangeTextArea_() {
+    if (this.$.input.value === '') {
+      this.$.input.placeholder = this.placeholderText_;
+    } else {
+      this.$.input.placeholder = '';
+    }
+  }
+
   transitionToEditable() {
     this.animator_.transitionToEditable();
   }
@@ -113,6 +127,10 @@ export class ComposeTextareaElement extends PolymerElement {
 
   transitionToEditing(bodyHeight: number) {
     this.animator_.transitionToEditing(bodyHeight);
+  }
+
+  transitionToResult(bodyHeight: number) {
+    this.animator_.transitionToResult(bodyHeight);
   }
 
   validate() {

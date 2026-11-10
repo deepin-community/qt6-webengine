@@ -24,6 +24,7 @@
 
 #include "url.h"
 
+extern const URLProtocol ff_android_content_protocol;
 extern const URLProtocol ff_async_protocol;
 extern const URLProtocol ff_bluray_protocol;
 extern const URLProtocol ff_cache_protocol;
@@ -61,6 +62,7 @@ extern const URLProtocol ff_subfile_protocol;
 extern const URLProtocol ff_tee_protocol;
 extern const URLProtocol ff_tcp_protocol;
 extern const URLProtocol ff_tls_protocol;
+extern const URLProtocol ff_dtls_protocol;
 extern const URLProtocol ff_udp_protocol;
 extern const URLProtocol ff_udplite_protocol;
 extern const URLProtocol ff_unix_protocol;

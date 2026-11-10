@@ -5,12 +5,18 @@
 // This file contains an implementation of a VP8 raw stream parser,
 // as defined in RFC 6386.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/parsers/vp8_parser.h"
 
 #include <cstring>
 
 #include "base/check_op.h"
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 
 namespace media {
 
@@ -48,20 +54,13 @@ namespace media {
     *out = _out;                                   \
   } while (0)
 
-Vp8FrameHeader::Vp8FrameHeader() {
-  memset(this, 0, sizeof(*this));
-}
+Vp8FrameHeader::Vp8FrameHeader() = default;
 
 Vp8FrameHeader::~Vp8FrameHeader() = default;
 
-Vp8FrameHeader::Vp8FrameHeader(const Vp8FrameHeader& fhdr) {
-  memcpy(this, &fhdr, sizeof(*this));
-}
+Vp8FrameHeader::Vp8FrameHeader(const Vp8FrameHeader& fhdr) = default;
 
-Vp8FrameHeader& Vp8FrameHeader::operator=(const Vp8FrameHeader& fhdr) {
-  memcpy(this, &fhdr, sizeof(*this));
-  return *this;
-}
+Vp8FrameHeader& Vp8FrameHeader::operator=(const Vp8FrameHeader& fhdr) = default;
 
 Vp8Parser::Vp8Parser() : stream_(nullptr), bytes_left_(0) {
 }
@@ -74,7 +73,7 @@ bool Vp8Parser::ParseFrame(const uint8_t* ptr,
   stream_ = ptr;
   bytes_left_ = frame_size;
 
-  memset(fhdr, 0, sizeof(*fhdr));
+  *fhdr = Vp8FrameHeader();
   fhdr->data = stream_;
   fhdr->frame_size = bytes_left_;
 
@@ -226,6 +225,13 @@ bool Vp8Parser::ParseFrameHeader(Vp8FrameHeader* fhdr) {
   if (!keyframe) {
     if (!ParseMVProbs(&fhdr->entropy_hdr, fhdr->refresh_entropy_probs))
       return false;
+  }
+
+  if (fhdr->first_part_size < (bd_.BitOffset() + 7) / 8) {
+    // If a video is created in such a way that the `first_part_size` field in
+    // the bitstream is smaller than the macroblock_bit_offset/8, the frame is
+    // not valid. Calculating the partition size becomes impossible.
+    return false;
   }
 
   fhdr->macroblock_bit_offset = bd_.BitOffset();
@@ -862,8 +868,9 @@ bool Vp8Parser::ParsePartitions(Vp8FrameHeader* fhdr) {
   size_t bytes_left = fhdr->frame_size - first_dct_pos;
 
   // Position ourselves at the beginning of partition size values.
-  const uint8_t* ptr =
-      fhdr->data + fhdr->first_part_offset + fhdr->first_part_size;
+  const uint8_t* ptr = fhdr->data +
+                       base::checked_cast<size_t>(fhdr->first_part_offset) +
+                       fhdr->first_part_size;
 
   // Read sizes from the stream (if present).
   for (size_t i = 0; i < fhdr->num_of_dct_partitions - 1; ++i) {

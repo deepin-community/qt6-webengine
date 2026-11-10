@@ -15,10 +15,15 @@
 #ifndef NEARBY_CONNECTIONS_IMPLEMENTATION_FAKE_ENDPOINT_CHANNEL_H_
 #define NEARBY_CONNECTIONS_IMPLEMENTATION_FAKE_ENDPOINT_CHANNEL_H_
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
+#include "absl/time/time.h"
+#include "connections/implementation/analytics/analytics_recorder.h"
 #include "connections/implementation/endpoint_channel.h"
 #include "internal/platform/byte_array.h"
+#include "internal/platform/exception.h"
 
 namespace nearby {
 namespace connections {
@@ -58,6 +63,13 @@ class FakeEndpointChannel : public EndpointChannel {
     is_closed_ = true;
     disconnection_reason_ = reason;
   }
+  void Close(
+      location::nearby::proto::connections::DisconnectionReason reason,
+      location::nearby::analytics::proto::ConnectionsLog::
+          EstablishedConnection::SafeDisconnectionResult result) override {
+    Close(reason);
+  }
+  bool IsClosed() const override { return is_closed_; }
   location::nearby::proto::connections::ConnectionTechnology GetTechnology()
       const override {
     return location::nearby::proto::connections::ConnectionTechnology::
@@ -86,6 +98,9 @@ class FakeEndpointChannel : public EndpointChannel {
   void Resume() override { is_paused_ = false; }
   absl::Time GetLastReadTimestamp() const override { return read_timestamp_; }
   absl::Time GetLastWriteTimestamp() const override { return write_timestamp_; }
+  uint32_t GetNextKeepAliveSeqNo() const override {
+    return next_keep_alive_seq_no_++;
+  }
   void SetAnalyticsRecorder(analytics::AnalyticsRecorder* analytics_recorder,
                             const std::string& endpoint_id) override {}
 
@@ -108,6 +123,7 @@ class FakeEndpointChannel : public EndpointChannel {
   bool is_paused_ = false;
   location::nearby::proto::connections::DisconnectionReason
       disconnection_reason_;
+  mutable uint32_t next_keep_alive_seq_no_ = 0;
 };
 
 }  // namespace connections

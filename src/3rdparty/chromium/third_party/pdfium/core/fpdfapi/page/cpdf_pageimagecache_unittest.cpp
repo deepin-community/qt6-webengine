@@ -19,13 +19,15 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/utils/path_service.h"
 
+namespace pdfium {
+
 TEST(CPDFPageImageCache, RenderBug1924) {
   // If you render a page with a JPEG2000 image as a thumbnail (small picture)
   // first, the image that gets cached has a low resolution. If you afterwards
   // render it full-size, you should get a larger image - the image cache will
   // be regenerate.
 
-  CPDF_PageModule::Create();
+  InitializePageModule();
   {
     std::string file_path = PathService::GetTestFilePath("jpx_lzw.pdf");
     ASSERT_FALSE(file_path.empty());
@@ -57,8 +59,9 @@ TEST(CPDFPageImageCache, RenderBug1924) {
     bool should_continue = page_image_cache->StartGetCachedBitmap(
         image->GetImage(), nullptr, page->GetMutablePageResources(), true,
         CPDF_ColorSpace::Family::kICCBased, false, {50, 50});
-    while (should_continue)
+    while (should_continue) {
       should_continue = page_image_cache->Continue(nullptr);
+    }
 
     RetainPtr<CFX_DIBBase> bitmap_small = page_image_cache->DetachCurBitmap();
 
@@ -66,8 +69,9 @@ TEST(CPDFPageImageCache, RenderBug1924) {
     should_continue = page_image_cache->StartGetCachedBitmap(
         image->GetImage(), nullptr, page->GetMutablePageResources(), true,
         CPDF_ColorSpace::Family::kICCBased, false, {100, 100});
-    while (should_continue)
+    while (should_continue) {
       should_continue = page_image_cache->Continue(nullptr);
+    }
 
     RetainPtr<CFX_DIBBase> bitmap_large = page_image_cache->DetachCurBitmap();
 
@@ -77,5 +81,7 @@ TEST(CPDFPageImageCache, RenderBug1924) {
     ASSERT_TRUE(page->AsPDFPage());
     page->AsPDFPage()->ClearView();
   }
-  CPDF_PageModule::Destroy();
+  DestroyPageModule();
 }
+
+}  // namespace pdfium

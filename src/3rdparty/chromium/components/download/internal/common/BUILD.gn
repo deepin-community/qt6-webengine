@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/jumbo.gni")
+import("//components/enterprise/buildflags/buildflags.gni")
 import("//components/safe_browsing/buildflags.gni")
 
 if (is_android) {
@@ -29,10 +30,13 @@ jumbo_source_set("internal") {
     "download_db_cache.h",
     "download_file_factory.cc",
     "download_file_impl.cc",
+    "download_file_with_copy.cc",
+    "download_file_with_copy.h",
     "download_interrupt_reasons_impl.cc",
     "download_interrupt_reasons_utils.cc",
     "download_item_impl.cc",
     "download_item_impl_delegate.cc",
+    "download_item_rename_handler.cc",
     "download_job.cc",
     "download_job_factory.cc",
     "download_job_impl.cc",
@@ -64,6 +68,7 @@ jumbo_source_set("internal") {
   ]
 
   public_deps = [
+    "//components/enterprise/buildflags",
     "//components/services/quarantine/public/mojom",
     "//mojo/public/cpp/bindings",
     "//services/network/public/mojom",
@@ -79,24 +84,31 @@ jumbo_source_set("internal") {
     "//components/services/quarantine",
     "//mojo/public/c/system",
     "//net",
-    "//services/device/public/mojom:mojom",
+    "//services/device/public/mojom",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
     "//services/network/public/cpp",
-    "//services/service_manager/public/cpp:cpp",
+    "//services/service_manager/public/cpp",
   ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
-  # TODO(crbug/1056278): Enable this on Fuchsia
+  # TODO(crbug.com/40120259): Enable this on Fuchsia
   if (safe_browsing_mode > 0 && !is_fuchsia) {
     deps += [ "//components/safe_browsing/content/common:file_type_policies" ]
+  }
+
+  if (enterprise_cloud_content_analysis) {
+    deps +=
+        [ "//components/enterprise/obfuscation/core:enterprise_obfuscation" ]
   }
 
   if (is_android) {
     sources += [
       "android/download_collection_bridge.cc",
       "android/download_collection_bridge.h",
+      "in_memory_download_file.cc",
+      "in_memory_download_file.h",
     ]
 
     deps += [ ":jni_headers" ]
@@ -117,6 +129,7 @@ if (is_android) {
     sources = [
       "android/java/src/org/chromium/components/download/DownloadCollectionBridge.java",
       "android/java/src/org/chromium/components/download/DownloadDelegate.java",
+      "android/java/src/org/chromium/components/download/InMemoryDownloadFile.java",
     ]
 
     deps = [
@@ -130,7 +143,10 @@ if (is_android) {
 
   generate_jni("jni_headers") {
     visibility = [ ":*" ]
-    sources = [ "android/java/src/org/chromium/components/download/DownloadCollectionBridge.java" ]
+    sources = [
+      "android/java/src/org/chromium/components/download/DownloadCollectionBridge.java",
+      "android/java/src/org/chromium/components/download/InMemoryDownloadFile.java",
+    ]
   }
 }
 
@@ -169,7 +185,6 @@ source_set("unit_tests") {
   deps = [
     ":for_tests",
     "//base/test:test_support",
-    "//build:chromeos_buildflags",
     "//components/download/database",
     "//components/download/public/common:test_support",
     "//components/leveldb_proto",

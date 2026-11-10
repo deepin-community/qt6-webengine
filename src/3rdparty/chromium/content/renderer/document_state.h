@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "net/http/http_response_info.h"
 #include "third_party/blink/public/web/web_document_loader.h"
@@ -28,6 +29,13 @@ class CONTENT_EXPORT DocumentState
       blink::WebDocumentLoader* document_loader) {
     return static_cast<DocumentState*>(document_loader->GetExtraData());
   }
+
+  // Clones this. Passed to the document loader of a newly committed empty
+  // document that replaces an existing document. This is done for discard
+  // operations or javascript URL navigations such that the new document loader
+  // behaves simiarly to the previous one. `navigation_state_` is not cloned
+  // as this is specific to the original document.
+  std::unique_ptr<blink::WebDocumentLoader::ExtraData> Clone() override;
 
   // For LoadDataWithBaseURL navigations, |was_load_data_with_base_url_request_|
   // is set to true and |data_url_| is set to the data URL of the navigation.
@@ -65,12 +73,17 @@ class CONTENT_EXPORT DocumentState
   void set_navigation_state(std::unique_ptr<NavigationState> navigation_state);
   void clear_navigation_state() { navigation_state_.reset(); }
 
+  base::WeakPtr<DocumentState> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
  private:
   bool was_load_data_with_base_url_request_ = false;
   GURL data_url_;
   bool is_overriding_user_agent_ = false;
   int request_id_ = -1;
   std::unique_ptr<NavigationState> navigation_state_;
+  base::WeakPtrFactory<DocumentState> weak_factory_{this};
 };
 
 }  // namespace content

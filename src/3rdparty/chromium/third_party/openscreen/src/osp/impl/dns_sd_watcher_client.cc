@@ -12,6 +12,7 @@
 #include "discovery/dnssd/public/dns_sd_instance_endpoint.h"
 #include "discovery/dnssd/public/dns_sd_txt_record.h"
 #include "discovery/public/dns_sd_service_factory.h"
+#include "osp/public/osp_constants.h"
 #include "platform/base/error.h"
 #include "platform/base/interface_info.h"
 #include "util/osp_logging.h"
@@ -22,33 +23,45 @@ using State = ServiceListener::State;
 
 namespace {
 
-constexpr char kFriendlyNameTxtKey[] = "fn";
-
 ErrorOr<ServiceInfo> DnsSdInstanceEndpointToServiceInfo(
     const discovery::DnsSdInstanceEndpoint& endpoint) {
   if (endpoint.service_id() != kOpenScreenServiceName) {
     return {Error::Code::kParameterInvalid, "Not a Open Screen receiver."};
   }
+
   if (endpoint.network_interface() == kInvalidNetworkInterfaceIndex) {
     return {Error::Code::kParameterInvalid, "Invalid network inferface index."};
   }
-  std::string friendly_name =
-      endpoint.txt().GetStringValue(kFriendlyNameTxtKey).value("");
-  if (friendly_name.empty()) {
+
+  // TODO(Wei): Add additional validation to check and discard records with
+  // invalid fingerprints early. There's a specific format for the fingerprint
+  // defined by the spec:
+  // https://w3c.github.io/openscreenprotocol/#agent-fingerprint
+  std::string fingerprint =
+      endpoint.txt().GetStringValue(kFingerprint).value("");
+  if (fingerprint.empty()) {
     return {Error::Code::kParameterInvalid,
-            "Missing receiver friendly name in record."};
+            "Missing agent fingerprint in record."};
   }
 
-  ServiceInfo service_info{endpoint.service_id(), friendly_name,
-                           endpoint.network_interface()};
+  std::string auth_token = endpoint.txt().GetStringValue(kAuthToken).value("");
+  if (auth_token.empty()) {
+    return {Error::Code::kParameterInvalid,
+            "Missing authentication token in record."};
+  }
+
+  ServiceInfo service_info{endpoint.instance_id(), std::move(fingerprint),
+                           std::move(auth_token), endpoint.network_interface()};
   for (const IPEndpoint& record : endpoint.endpoints()) {
     if (!service_info.v4_endpoint && record.address.IsV4()) {
       service_info.v4_endpoint = record;
     }
+
     if (!service_info.v6_endpoint && record.address.IsV6()) {
       service_info.v6_endpoint = record;
     }
   }
+
   if (!service_info.v4_endpoint && !service_info.v6_endpoint) {
     return {Error::Code::kParameterInvalid,
             "No IPv4 nor IPv6 address in record."};
@@ -84,19 +97,19 @@ void DnsSdWatcherClient::StopListener() {
 }
 
 void DnsSdWatcherClient::SuspendListener() {
-  OSP_DCHECK(dns_sd_watcher_);
+  OSP_CHECK(dns_sd_watcher_);
   dns_sd_watcher_->StopDiscovery();
   SetState(State::kSuspended);
 }
 
 void DnsSdWatcherClient::ResumeListener() {
-  OSP_DCHECK(dns_sd_watcher_);
+  OSP_CHECK(dns_sd_watcher_);
   dns_sd_watcher_->StartDiscovery();
   SetState(State::kRunning);
 }
 
 void DnsSdWatcherClient::SearchNow(State from) {
-  OSP_DCHECK(dns_sd_watcher_);
+  OSP_CHECK(dns_sd_watcher_);
   if (from == State::kSuspended) {
     dns_sd_watcher_->StartDiscovery();
   }
@@ -105,9 +118,17 @@ void DnsSdWatcherClient::SearchNow(State from) {
   SetState(State::kSearching);
 }
 
+void DnsSdWatcherClient::OnFatalError(const Error& error) {
+  listener_->OnError(error);
+}
+
+void DnsSdWatcherClient::OnRecoverableError(const Error& error) {
+  listener_->OnError(error);
+}
+
 void DnsSdWatcherClient::StartWatcherInternal(
     const ServiceListener::Config& config) {
-  OSP_DCHECK(!dns_sd_watcher_);
+  OSP_CHECK(!dns_sd_watcher_);
   if (!dns_sd_service_) {
     dns_sd_service_ = CreateDnsSdServiceInternal(config);
   }
@@ -119,8 +140,7 @@ void DnsSdWatcherClient::StartWatcherInternal(
       });
 }
 
-std::unique_ptr<discovery::DnsSdService, TaskRunnerDeleter>
-DnsSdWatcherClient::CreateDnsSdServiceInternal(
+discovery::DnsSdServicePtr DnsSdWatcherClient::CreateDnsSdServiceInternal(
     const ServiceListener::Config& config) {
   // NOTE: With the current API, the client cannot customize the behavior of
   // DNS-SD beyond the interface list.
@@ -137,7 +157,7 @@ DnsSdWatcherClient::CreateDnsSdServiceInternal(
   // discovery::DnsSdService, e.g. through a ref-counting handle, so that the
   // OSP publisher and the OSP listener don't have to coordinate through an
   // additional object.
-  return CreateDnsSdService(task_runner_, listener_, dns_sd_config);
+  return CreateDnsSdService(task_runner_, *this, dns_sd_config);
 }
 
 void DnsSdWatcherClient::OnDnsWatcherUpdated(

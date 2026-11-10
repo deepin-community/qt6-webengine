@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "media/audio/win/audio_low_latency_output_win.h"
+
+#include <windows.h>
 
 #include <mmsystem.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <windows.h>
 
 #include <memory>
 
@@ -16,6 +18,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
@@ -32,6 +35,7 @@
 #include "media/audio/mock_audio_source_callback.h"
 #include "media/audio/test_audio_thread.h"
 #include "media/audio/win/core_audio_util_win.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/seekable_buffer.h"
 #include "media/base/test_data_util.h"
@@ -111,7 +115,7 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
       ++elements_to_write_;
     }
 
-    int max_size = dest->frames() * dest->channels() * kBitsPerSample / 8;
+    size_t max_size = dest->frames() * dest->channels() * kBitsPerSample / 8;
 
     // Use samples read from a data file and fill up the audio buffer
     // provided to us in the callback.
@@ -121,7 +125,9 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
     if (max_size) {
       static_assert(kBitsPerSample == 16, "FromInterleaved expects 2 bytes.");
       dest->FromInterleaved<SignedInt16SampleTypeTraits>(
-          reinterpret_cast<const int16_t*>(file_->data() + pos_), frames);
+          reinterpret_cast<const int16_t*>(
+              base::span(*file_).subspan(pos_).data()),
+          frames);
       pos_ += max_size;
     }
     return frames;
@@ -129,12 +135,12 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
 
   void OnError(ErrorType type) override {}
 
-  int file_size() { return file_->data_size(); }
+  size_t file_size() { return base::checked_cast<int>(file_->size()); }
 
  private:
   scoped_refptr<DecoderBuffer> file_;
   std::unique_ptr<int[]> delta_times_;
-  int pos_;
+  size_t pos_;
   base::TimeTicks previous_call_time_;
   raw_ptr<FILE> text_file_;
   size_t elements_to_write_;
@@ -189,6 +195,20 @@ class AudioOutputStreamWrapper {
     return CreateOutputStream();
   }
 
+  // Creates AudioOutputStream object using non-default parameters where the
+  // sample rate, frame size and audio offload are modified.
+  AudioOutputStream* Create(int sample_rate,
+                            int samples_per_packet,
+                            bool audio_offload) {
+    sample_rate_ = sample_rate;
+    samples_per_packet_ = samples_per_packet;
+    AudioParameters::HardwareCapabilities hardware_cap(0, true);
+    hardware_cap.require_audio_offload = true;
+    hardware_capabilities_ = hardware_cap;
+
+    return CreateOutputStream();
+  }
+
   AudioParameters::Format format() const { return format_; }
   int channels() const { return channels_; }
   int sample_rate() const { return sample_rate_; }
@@ -198,6 +218,9 @@ class AudioOutputStreamWrapper {
   AudioOutputStream* CreateOutputStream() {
     AudioParameters params(format_, {channel_layout_, channels_}, sample_rate_,
                            samples_per_packet_);
+    if (hardware_capabilities_) {
+      params.set_hardware_capabilities(hardware_capabilities_.value());
+    }
     DVLOG(1) << params.AsHumanReadableString();
     AudioOutputStream* aos = audio_man_->MakeAudioOutputStream(
         params, std::string(), AudioManager::LogCallback());
@@ -211,6 +234,7 @@ class AudioOutputStreamWrapper {
   ChannelLayout channel_layout_;
   int sample_rate_;
   int samples_per_packet_;
+  std::optional<AudioParameters::HardwareCapabilities> hardware_capabilities_;
 };
 
 // Convenience method which creates a default AudioOutputStream object.
@@ -376,6 +400,23 @@ TEST_F(WASAPIAudioOutputStreamTest, ValidPacketSize) {
       FROM_HERE, loop.QuitWhenIdleClosure(), TestTimeouts::action_timeout());
   loop.Run();
   aos->Stop();
+  aos->Close();
+}
+
+// Verify that we are not allowed to open the output stream with audio offload
+// enabled in exclusive mode.
+TEST_F(WASAPIAudioOutputStreamTest, ExclusiveModeWithAudioOffload) {
+  ABORT_AUDIO_TEST_IF_NOT(HasCoreAudioAndOutputDevices(audio_manager_.get()) &&
+                          ExclusiveModeIsEnabled());
+
+  // Create exclusive-mode WASAPI output stream which plays out in stereo
+  // using the minimum buffer size at 48kHz sample rate.
+  AudioOutputStreamWrapper aosw(audio_manager_.get());
+
+  // Open should fail with offload stream in exclusive mode.
+  AudioOutputStream* aos = aosw.Create(48000, 160, true);
+  EXPECT_FALSE(aos->Open());
+
   aos->Close();
 }
 

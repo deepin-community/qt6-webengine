@@ -32,6 +32,7 @@
 
 #include "dawn/common/Constants.h"
 #include "dawn/common/TypedInteger.h"
+#include "dawn/native/dawn_platform.h"
 
 namespace dawn::ityp {
 template <typename Index, typename Value, size_t Size>
@@ -67,6 +68,14 @@ using BindGroupMask = ityp::bitset<BindGroupIndex, kMaxBindGroups>;
 template <typename Value>
 using PerBindGroup = ityp::array<BindGroupIndex, Value, kMaxBindGroups>;
 
+// Immediate data constant index get mapped to a packed range of indices
+using ImmediateConstantIndex = TypedInteger<struct ImmediateConstantIndexT, uint32_t>;
+constexpr ImmediateConstantIndex kMaxImmediateConstantIndexTyped =
+    ImmediateConstantIndex(kMaxImmediateConstantsPerPipeline);
+
+using ImmediateConstantMask =
+    ityp::bitset<ImmediateConstantIndex, kMaxImmediateConstantsPerPipeline>;
+
 // Color attachment indices represent the index in the wgpu::FragmentState::targets array, the
 // wgpu::RenderPassDescriptor::colorAttachments arry and other similar arrays.
 using ColorAttachmentIndex = TypedInteger<struct ColorAttachmentIndexT, uint8_t>;
@@ -95,6 +104,10 @@ using VertexAttributeMask = ityp::bitset<VertexAttributeLocation, kMaxVertexAttr
 template <typename Value>
 using PerVertexAttribute = ityp::array<VertexAttributeLocation, Value, kMaxVertexAttributes>;
 
+// Indices of queries in a QuerySet.
+using QueryIndex = TypedInteger<struct QueryIndexT, uint32_t>;
+constexpr QueryIndex kQuerySetIndexUndefinedTyped = QueryIndex{wgpu::kQuerySetIndexUndefined};
+
 // Serials are 64bit integers that are incremented by one each time to produce unique values.
 // Some serials (like queue serials) are compared numerically to know which one is before
 // another, while some serials are only checked for equality. We call serials only checked
@@ -122,8 +135,13 @@ constexpr ExecutionSerial kBeginningOfGPUTime = ExecutionSerial(0);
 // token, which prevents them (and any BindGroups created with them) from being used with any
 // other pipelines.
 using PipelineCompatibilityToken = TypedInteger<struct PipelineCompatibilityTokenT, uint64_t>;
+constexpr PipelineCompatibilityToken kExplicitPCT = PipelineCompatibilityToken(0);
 
 using Nanoseconds = TypedInteger<struct NanosecondsT, uint64_t>;
+
+// An identifier that indicates the index of a RenderPass or ComputePass in a command buffer.
+// Used to look up additional information related to the pass, such a resource usages.
+using PassIndex = TypedInteger<struct PassIndexT, uint32_t>;
 
 }  // namespace dawn::native
 

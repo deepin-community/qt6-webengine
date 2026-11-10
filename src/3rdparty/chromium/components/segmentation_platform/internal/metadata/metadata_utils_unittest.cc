@@ -4,13 +4,16 @@
 
 #include "components/segmentation_platform/internal/metadata/metadata_utils.h"
 
+#include "base/compiler_specific.h"
 #include "base/metrics/metrics_hashes.h"
 #include "components/segmentation_platform/internal/database/ukm_types.h"
 #include "components/segmentation_platform/internal/execution/processing/query_processor.h"
+#include "components/segmentation_platform/internal/metadata/metadata_writer.h"
 #include "components/segmentation_platform/internal/post_processor/post_processing_test_utils.h"
 #include "components/segmentation_platform/public/proto/aggregation.pb.h"
 #include "components/segmentation_platform/public/proto/model_metadata.pb.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
+#include "components/segmentation_platform/public/types/processed_value.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,10 +27,10 @@ void AddDiscreteMapping(proto::SegmentationModelMetadata* metadata,
   auto* discrete_mappings_map = metadata->mutable_discrete_mappings();
   auto& discrete_mappings = (*discrete_mappings_map)[discrete_mapping_key];
   for (int i = 0; i < num_pairs; i++) {
-    auto* pair = mappings[i];
+    auto* pair = UNSAFE_TODO(mappings[i]);
     auto* entry = discrete_mappings.add_entries();
     entry->set_min_result(pair[0]);
-    entry->set_rank(pair[1]);
+    entry->set_rank(UNSAFE_TODO(pair[1]));
   }
 }
 
@@ -913,6 +916,41 @@ TEST_F(MetadataUtilsTest, GetAllUmaFeaturesWithUMAOutput) {
       model_metadata, /*include_outputs=*/true);
   EXPECT_EQ(1u, expected.size());
   EXPECT_EQ("output", expected[0].name());
+}
+
+TEST_F(MetadataUtilsTest, GetInputKeysForMetadata) {
+  constexpr char kSqlQuery[] = "some sql query with three bind value ? ? ?";
+  std::array<MetadataWriter::CustomInput::Arg, 1> kBindValueArg1{
+      std::make_pair("name", "sql_input_1")};
+  std::array<MetadataWriter::CustomInput::Arg, 1> kBindValueArg2{
+      std::make_pair("name", "sql_input_2")};
+  MetadataWriter::BindValue custom_input1{
+      proto::SqlFeature::BindValue::DOUBLE,
+      {.tensor_length = 1,
+       .fill_policy = proto::CustomInput::FILL_FROM_INPUT_CONTEXT,
+       .arg = kBindValueArg1.data(),
+       .arg_size = kBindValueArg1.size()}};
+  MetadataWriter::BindValue custom_input2{
+      proto::SqlFeature::BindValue::BOOL,
+      {.tensor_length = 2,
+       .fill_policy = proto::CustomInput::FILL_FROM_INPUT_CONTEXT,
+       .arg = kBindValueArg2.data(),
+       .arg_size = kBindValueArg2.size()}};
+
+  proto::SegmentationModelMetadata metadata;
+  MetadataWriter writer(&metadata);
+  MetadataWriter::SqlFeature feature{.sql = kSqlQuery};
+  writer.AddSqlFeature(feature, {custom_input1, custom_input2});
+
+  writer.AddFromInputContext("input_id", "custom_input1");
+  writer.AddFromInputContext("input_id", "custom_input2");
+
+  std::set<std::string> all_inputs =
+      metadata_utils::GetInputKeysForMetadata(metadata);
+
+  EXPECT_THAT(all_inputs,
+              testing::UnorderedElementsAre("sql_input_1", "sql_input_2",
+                                            "custom_input1", "custom_input2"));
 }
 
 TEST_F(MetadataUtilsTest, ConfigUsesLegacyOutput) {

@@ -20,7 +20,7 @@ bool TrustedRange::InitReservation(size_t requested) {
 
   auto page_allocator = GetPlatformPageAllocator();
 
-  const size_t kPageSize = MemoryChunk::kPageSize;
+  const size_t kPageSize = MutablePageMetadata::kPageSize;
   CHECK(IsAligned(kPageSize, page_allocator->AllocatePageSize()));
 
   // We want the trusted range to be allocated above 4GB, for a few reasons:
@@ -47,8 +47,35 @@ bool TrustedRange::InitReservation(size_t requested) {
   params.page_size = kPageSize;
   params.base_alignment = base_alignment;
   params.requested_start_hint = requested_start_hint;
-  params.jit = JitPermission::kNoJit;
-  return VirtualMemoryCage::InitReservation(params);
+  params.permissions = PageAllocator::Permission::kNoAccess;
+  params.page_initialization_mode =
+      base::PageInitializationMode::kAllocatedPagesCanBeUninitialized;
+  params.page_freeing_mode = base::PageFreeingMode::kMakeInaccessible;
+  bool success = VirtualMemoryCage::InitReservation(params);
+
+  if (success) {
+    // Reserve the null page to mitigate (compressed) nullptr dereference bugs.
+    //
+    // We typically use Smi::zero()/nullptr for protected pointer fields
+    // (compressed pointers in trusted space) if the field is empty.
+    // As such, we can have the equivalent of nullptr deref bugs if either some
+    // code doesn't handle empty fields or if objects aren't correctly
+    // initialized and fields are left empty. To mitigate these, we make the
+    // first pages of trusted space inaccessible so that any access is
+    // guaranteed to crash safely.
+    size_t guard_region_size = 1 * MB;
+    DCHECK(IsAligned(guard_region_size, page_allocator_->AllocatePageSize()));
+    CHECK(page_allocator_->AllocatePagesAt(base(), guard_region_size,
+                                           PageAllocator::kNoAccess));
+  }
+
+#ifdef V8_ENABLE_SANDBOX_HARDWARE_SUPPORT
+  // Sandboxed code should never write to trusted memory.
+  SandboxHardwareSupport::RegisterOutOfSandboxMemory(
+      base(), size(), PagePermissions::kNoAccess);
+#endif  // V8_ENABLE_SANDBOX_HARDWARE_SUPPORT
+
+  return success;
 }
 
 namespace {

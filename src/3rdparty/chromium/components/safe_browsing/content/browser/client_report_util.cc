@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "components/safe_browsing/content/browser/client_report_util.h"
-#include "components/safe_browsing/content/browser/unsafe_resource_util.h"
+
+#include "components/safe_browsing/content/browser/content_unsafe_resource_util.h"
+#include "components/safe_browsing/core/common/web_ui_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 
@@ -14,8 +16,6 @@ CSBRR::SafeBrowsingUrlApiType GetUrlApiTypeForThreatSource(
   switch (source) {
     case safe_browsing::ThreatSource::LOCAL_PVER4:
       return CSBRR::PVER4_NATIVE;
-    case safe_browsing::ThreatSource::REMOTE:
-      return CSBRR::ANDROID_SAFETYNET;
     case safe_browsing::ThreatSource::URL_REAL_TIME_CHECK:
       return CSBRR::REAL_TIME;
     case safe_browsing::ThreatSource::NATIVE_PVER5_REAL_TIME:
@@ -24,13 +24,16 @@ CSBRR::SafeBrowsingUrlApiType GetUrlApiTypeForThreatSource(
       return CSBRR::ANDROID_SAFEBROWSING_REAL_TIME;
     case safe_browsing::ThreatSource::ANDROID_SAFEBROWSING:
       return CSBRR::ANDROID_SAFEBROWSING;
-    case safe_browsing::ThreatSource::UNKNOWN:
     case safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION:
+      return CSBRR::CLIENT_SIDE_DETECTION;
+    case safe_browsing::ThreatSource::UNKNOWN:
       return CSBRR::SAFE_BROWSING_URL_API_TYPE_UNSPECIFIED;
   }
 }
 
 CSBRR::ReportType GetReportTypeFromSBThreatType(SBThreatType threat_type) {
+  using enum SBThreatType;
+
   switch (threat_type) {
     case SB_THREAT_TYPE_URL_PHISHING:
       return CSBRR::URL_PHISHING;
@@ -61,7 +64,6 @@ CSBRR::ReportType GetReportTypeFromSBThreatType(SBThreatType threat_type) {
     case SB_THREAT_TYPE_SAFE:
     case SB_THREAT_TYPE_URL_BINARY_MALWARE:
     case SB_THREAT_TYPE_EXTENSION:
-    case SB_THREAT_TYPE_BLOCKLISTED_RESOURCE:
     case SB_THREAT_TYPE_API_ABUSE:
     case SB_THREAT_TYPE_SUBRESOURCE_FILTER:
     case SB_THREAT_TYPE_CSD_ALLOWLIST:
@@ -72,13 +74,14 @@ CSBRR::ReportType GetReportTypeFromSBThreatType(SBThreatType threat_type) {
     case SB_THREAT_TYPE_MANAGED_POLICY_BLOCK:
       // Gated by SafeBrowsingBlockingPage::ShouldReportThreatDetails.
       NOTREACHED() << "We should not send report for threat type: "
-                   << threat_type;
-      return CSBRR::UNKNOWN;
+                   << static_cast<int>(threat_type);
   }
 }
 
 CSBRR::WarningShownInfo::WarningUXType GetWarningUXTypeFromSBThreatType(
     SBThreatType threat_type) {
+  using enum SBThreatType;
+
   switch (threat_type) {
     case SB_THREAT_TYPE_URL_PHISHING:
       return CSBRR::WarningShownInfo::PHISHING_INTERSTITIAL;
@@ -103,7 +106,6 @@ CSBRR::WarningShownInfo::WarningUXType GetWarningUXTypeFromSBThreatType(
     case SB_THREAT_TYPE_SAFE:
     case SB_THREAT_TYPE_URL_BINARY_MALWARE:
     case SB_THREAT_TYPE_EXTENSION:
-    case SB_THREAT_TYPE_BLOCKLISTED_RESOURCE:
     case SB_THREAT_TYPE_API_ABUSE:
     case SB_THREAT_TYPE_SUBRESOURCE_FILTER:
     case SB_THREAT_TYPE_CSD_ALLOWLIST:
@@ -113,69 +115,7 @@ CSBRR::WarningShownInfo::WarningUXType GetWarningUXTypeFromSBThreatType(
     case SB_THREAT_TYPE_MANAGED_POLICY_WARN:
     case SB_THREAT_TYPE_MANAGED_POLICY_BLOCK:
       NOTREACHED() << "We should not send report for threat type: "
-                   << threat_type;
-      return CSBRR::WarningShownInfo::UNKNOWN;
-  }
-}
-
-CSBRR::UrlRequestDestination
-GetUrlRequestDestinationFromMojomRequestDestination(
-    network::mojom::RequestDestination request_destination) {
-  switch (request_destination) {
-    case network::mojom::RequestDestination::kEmpty:
-      return CSBRR::EMPTY;
-    case network::mojom::RequestDestination::kAudio:
-      return CSBRR::AUDIO;
-    case network::mojom::RequestDestination::kAudioWorklet:
-      return CSBRR::AUDIO_WORKLET;
-    case network::mojom::RequestDestination::kDocument:
-      return CSBRR::DOCUMENT;
-    case network::mojom::RequestDestination::kEmbed:
-      return CSBRR::EMBED;
-    case network::mojom::RequestDestination::kFont:
-      return CSBRR::FONT;
-    case network::mojom::RequestDestination::kFrame:
-      return CSBRR::FRAME;
-    case network::mojom::RequestDestination::kIframe:
-      return CSBRR::IFRAME;
-    case network::mojom::RequestDestination::kImage:
-      return CSBRR::IMAGE;
-    case network::mojom::RequestDestination::kJson:
-      return CSBRR::JSON;
-    case network::mojom::RequestDestination::kManifest:
-      return CSBRR::MANIFEST;
-    case network::mojom::RequestDestination::kObject:
-      return CSBRR::OBJECT;
-    case network::mojom::RequestDestination::kPaintWorklet:
-      return CSBRR::PAINT_WORKLET;
-    case network::mojom::RequestDestination::kReport:
-      return CSBRR::REPORT;
-    case network::mojom::RequestDestination::kScript:
-      return CSBRR::SCRIPT;
-    case network::mojom::RequestDestination::kServiceWorker:
-      return CSBRR::SERVICE_WORKER;
-    case network::mojom::RequestDestination::kSharedWorker:
-      return CSBRR::SHARED_WORKER;
-    case network::mojom::RequestDestination::kStyle:
-      return CSBRR::STYLE;
-    case network::mojom::RequestDestination::kTrack:
-      return CSBRR::TRACK;
-    case network::mojom::RequestDestination::kVideo:
-      return CSBRR::VIDEO;
-    case network::mojom::RequestDestination::kWebBundle:
-      return CSBRR::WEB_BUNDLE;
-    case network::mojom::RequestDestination::kWorker:
-      return CSBRR::WORKER;
-    case network::mojom::RequestDestination::kXslt:
-      return CSBRR::XSLT;
-    case network::mojom::RequestDestination::kFencedframe:
-      return CSBRR::FENCED_FRAME;
-    case network::mojom::RequestDestination::kWebIdentity:
-      return CSBRR::WEB_IDENTITY;
-    case network::mojom::RequestDestination::kDictionary:
-      return CSBRR::DICTIONARY;
-    case network::mojom::RequestDestination::kSpeculationRules:
-      return CSBRR::SPECULATION_RULES;
+                   << static_cast<int>(threat_type);
   }
 }
 
@@ -220,6 +160,7 @@ GetSecurityInterstitialInteractionFromCommand(
     case security_interstitials::CMD_TEXT_NOT_FOUND:
     case security_interstitials::CMD_ERROR:
     case security_interstitials::CMD_REQUEST_SITE_ACCESS_PERMISSION:
+    case security_interstitials::CMD_OPEN_ANDROID_ADVANCED_PROTECTION_SETTINGS:
       break;
   }
   return CSBRR::InterstitialInteraction::UNSPECIFIED;
@@ -227,7 +168,9 @@ GetSecurityInterstitialInteractionFromCommand(
 
 bool IsReportableUrl(const GURL& url) {
   // TODO(panayiotis): also skip internal urls.
-  return url.SchemeIs("http") || url.SchemeIs("https");
+  // chrome://safe-browsing/match?type=${THREAT_TYPE} is used for local tests.
+  return url.SchemeIs("http") || url.SchemeIs("https") ||
+         safe_browsing::IsSafeBrowsingWebUIUrl(url);
 }
 
 GURL GetPageUrl(const security_interstitials::UnsafeResource& resource) {
@@ -270,9 +213,7 @@ void FillReportBasicResourceDetails(
   if (IsReportableUrl(resource.url)) {
     report->set_url(resource.url.spec());
     report->set_type(GetReportTypeFromSBThreatType(resource.threat_type));
-    report->set_url_request_destination(
-        GetUrlRequestDestinationFromMojomRequestDestination(
-            resource.request_destination));
+    report->set_url_request_destination(CSBRR::DOCUMENT);
   }
 
   // With committed interstitials, the information is pre-filled into the
@@ -287,6 +228,11 @@ void FillReportBasicResourceDetails(
   if (IsReportableUrl(referrer_url)) {
     report->set_referrer_url(referrer_url.spec());
   }
+  report->mutable_client_properties()->set_url_api_type(
+      client_report_utils::GetUrlApiTypeForThreatSource(
+          resource.threat_source));
+  report->mutable_client_properties()->set_is_async_check(
+      resource.is_async_check);
 }
 
 void FillInterstitialInteractionsHelper(

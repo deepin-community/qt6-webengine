@@ -20,15 +20,24 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace centipede {
+#include "absl/base/nullability.h"
 
-void PrintErrorAndExitIf(bool condition, const char *error) {
+namespace fuzztest::internal {
+
+void PrintErrorAndExitIf(bool condition, const char* absl_nonnull error) {
   if (!condition) return;
   fprintf(stderr, "error: %s\n", error);
   exit(1);
 }
 
 uintptr_t GetCurrentThreadStackRegionLow() {
+#ifdef __APPLE__
+  pthread_t self = pthread_self();
+  const auto stack_addr =
+      reinterpret_cast<uintptr_t>(pthread_get_stackaddr_np(self));
+  const auto stack_size = pthread_get_stacksize_np(self);
+  return stack_addr - stack_size;
+#else   // __APPLE__
   pthread_attr_t attr = {};
   if (pthread_getattr_np(pthread_self(), &attr) != 0) {
     fprintf(stderr, "Failed to get the pthread attr of the current thread.\n");
@@ -46,6 +55,7 @@ uintptr_t GetCurrentThreadStackRegionLow() {
   RunnerCheck(stack_region_low != 0,
               "the current thread stack region starts from 0 - unexpected!");
   return stack_region_low;
+#endif  // __APPLE__
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

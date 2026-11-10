@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef FILE_SYSTEM_ACCESS_PERMISSION_REQUEST_CONTROLLER_H
 #define FILE_SYSTEM_ACCESS_PERMISSION_REQUEST_CONTROLLER_H
@@ -16,6 +17,7 @@ class FileSystemAccessPermissionRequestController : public RequestController
 {
 public:
     FileSystemAccessPermissionRequestController(const QUrl &origin, const QUrl &filePath,
+                                                const QString &displayName,
                                                 HandleType handleType, AccessFlags accessType)
         : RequestController(origin)
         , m_filePath(filePath)
@@ -25,11 +27,13 @@ public:
     }
 
     QUrl filePath() const { return m_filePath; }
+    QString displayName() const { return m_displayName; }
     HandleType handleType() const { return m_handleType; }
     AccessFlags accessFlags() const { return m_accessType; }
 
 private:
     QUrl m_filePath;
+    QString m_displayName;
     HandleType m_handleType;
     AccessFlags m_accessType;
 };

@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
+import("//build/config/ml.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//media/gpu/args.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
@@ -11,28 +11,32 @@ mojom("gl") {
   sources = [
     "context_lost_reason.mojom",
     "gpu_host.mojom",
+    "gpu_logging.mojom",
     "gpu_service.mojom",
   ]
 
   parser_deps = [ "//components/viz/common:buildflags" ]
 
-  deps = [ "//gpu/ipc/common:gmb_interface" ]
-
   public_deps = [
-    "//components/ml/webnn:features",
     "//gpu/ipc/common:interfaces",
     "//gpu/ipc/common:surface_handle",
     "//media/mojo/mojom",
-    "//services/webnn/public/mojom",
-    "//third_party/blink/public/mojom/tokens:tokens",
+    "//third_party/blink/public/mojom/tokens",
     "//ui/gfx/geometry/mojom",
     "//ui/gfx/mojom",
     "//ui/gl/mojom",
     "//url/mojom:url_mojom_gurl",
   ]
-  if (is_chromeos_ash) {
+
+  if (use_ml) {
     public_deps += [
-      "//ash/components/arc/mojom:media",
+      "//services/webnn/public/mojom",
+    ]
+  }
+
+  if (is_chromeos) {
+    public_deps += [
+      "//chromeos/ash/experiences/arc/mojom:media",
       "//components/chromeos_camera/common",
     ]
   }
@@ -42,16 +46,18 @@ mojom("gl") {
     public_deps += [ "//ui/gfx/mojom:dxgi_info" ]
   }
 
+  # Used for conditional imports in gpu_service.mojom
   enabled_features = []
-  if (!is_android) {
-    enabled_features += [ "is_not_android" ]
+
+  if (use_ml) {
+    enabled_features += [ "use_ml" ]
   }
 
   if (use_clang_profiling_inside_sandbox) {
     enabled_features += [ "use_clang_profiling_inside_sandbox" ]
   }
 
-  if (is_chromeos_ash && (use_vaapi || use_v4l2_codec)) {
+  if (is_chromeos && use_linux_video_acceleration) {
     enabled_features += [ "enable_arc_media" ]
   }
 
@@ -66,17 +72,6 @@ mojom("gl") {
       traits_headers =
           [ "//services/viz/privileged/cpp/context_lost_reason_traits.h" ]
       traits_public_deps = [ "//gpu/command_buffer/common" ]
-    },
-    {
-      types = [
-        {
-          mojom = "viz.mojom.OverlayStrategy"
-          cpp = "::viz::OverlayStrategy"
-        },
-      ]
-      traits_headers =
-          [ "//services/viz/privileged/cpp/overlay_strategy_mojom_traits.h" ]
-      traits_public_deps = [ "//components/viz/common" ]
     },
   ]
 }

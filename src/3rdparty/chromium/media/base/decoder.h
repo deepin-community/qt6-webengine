@@ -26,9 +26,10 @@ enum class AudioDecoderType : int {
   kAudioToolbox = 7,     // AudioToolbox (macOS)
   kMediaFoundation = 8,  // MediaFoundationAudioDecoder
   kPassthroughDTS = 9,   // Passthrough DTS audio
+  kSymphonia = 10,       // Symphonia Rust-backed SymphoniaAudioDecoder.
 
   // Keep this at the end and equal to the last entry.
-  kMaxValue = kPassthroughDTS,
+  kMaxValue = kSymphonia,
 };
 
 // List of known VideoDecoder implementations; recorded to UKM, always add new
@@ -76,7 +77,7 @@ class MEDIA_EXPORT Decoder {
 
   // Returns true if the implementation supports decoding configs with
   // encryption.
-  // TODO(crbug.com/1099488): Sometimes it's not possible to give a definitive
+  // TODO(crbug.com/40137516): Sometimes it's not possible to give a definitive
   // yes or no answer unless more context is given. While this doesn't pose any
   // problems, it does allow incompatible decoders to pass the filtering step in
   // |DecoderSelector| potentially slowing down the selection process.

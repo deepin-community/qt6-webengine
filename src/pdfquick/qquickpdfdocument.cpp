@@ -7,8 +7,10 @@
 #include <QtCore/qstandardpaths.h>
 #include <QtQml/qqmlcontext.h>
 #include <QtQml/qqmlengine.h>
+#include <QtQml/qqmlinfo.h>
 #include <QtQuick/qquickitem.h>
 #include <QtQml/qqmlfile.h>
+#include <QThread>
 
 QT_BEGIN_NAMESPACE
 
@@ -63,7 +65,13 @@ void QQuickPdfDocument::classBegin()
 
     This property holds a URL pointing to the PDF file to be loaded.
 
-    \note At this time, only local filesystem URLs are supported.
+    \note At this time, only local filesystem and
+    \l {The Qt Resource System} {resource} URLs are supported. Nevertheless,
+    the \c source property is a \l {QUrl}{URL}, not merely a filesystem path.
+    PdfDocument resolves it via QQmlContext::resolvedUrl(). You should
+    typically ensure that the URL starts with a \c {file://} scheme, unless you
+    mean to load the PDF file from resources, or it comes from some component
+    (such as \l {QtQuick.Controls::}{FileDialog}) that resolves it in advance.
 */
 void QQuickPdfDocument::setSource(QUrl source)
 {
@@ -72,14 +80,20 @@ void QQuickPdfDocument::setSource(QUrl source)
 
     m_source = source;
     m_maxPageWidthHeight = QSizeF();
-    if (m_carrierFile)
-        m_carrierFile->deleteLater();
+    if (m_carrierFile) {
+        if (m_carrierFile->thread())
+            m_carrierFile->deleteLater(); // to be done in that thread
+        else
+            delete m_carrierFile; // avoid leaking if there's no thread affinity
+    }
     m_carrierFile = nullptr;
     emit sourceChanged();
     const QQmlContext *context = qmlContext(this);
     m_resolvedSource = context ? context->resolvedUrl(source) : source;
     if (m_resolvedSource.isValid())
         m_doc->load(QQmlFile::urlToLocalFileOrQrc(m_resolvedSource));
+    else
+        qmlWarning(this) << QQuickPdfDocument::tr("Cannot open: %1").arg(m_resolvedSource.toString());
 }
 
 /*!

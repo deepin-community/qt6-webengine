@@ -17,8 +17,6 @@
 #include "components/lookalikes/core/safety_tips.pb.h"
 #include "components/lookalikes/core/safety_tips_config.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 const base::FilePath::CharType kSafetyTipsConfigBinaryPbFileName[] =
@@ -118,9 +116,8 @@ base::FilePath SafetyTipsComponentInstallerPolicy::GetRelativeInstallDir()
 
 void SafetyTipsComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(
-      kSafetyTipsPublicKeySHA256,
-      kSafetyTipsPublicKeySHA256 + std::size(kSafetyTipsPublicKeySHA256));
+  hash->assign(std::begin(kSafetyTipsPublicKeySHA256),
+               std::end(kSafetyTipsPublicKeySHA256));
 }
 
 std::string SafetyTipsComponentInstallerPolicy::GetName() const {

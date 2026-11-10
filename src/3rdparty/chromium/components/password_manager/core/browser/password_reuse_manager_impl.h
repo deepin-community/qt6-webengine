@@ -10,6 +10,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_reuse_manager.h"
@@ -17,7 +18,6 @@
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_change_event.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace password_manager {
 
@@ -31,16 +31,15 @@ class PasswordReuseManagerImpl : public PasswordReuseManager,
 
   // Immediately called after |Init()| to retrieve password hash data for
   // reuse detection.
-  // TODO(crbug.com/1469280): This might need to be called from all platforms,
-  // including ios.
   void PreparePasswordHashData(
-      metrics_util::SignInState sign_in_state_for_metrics);
+      std::optional<metrics_util::SignInState> sign_in_state_for_metrics);
 
   // Implements KeyedService interface.
   void Shutdown() override;
 
   // Implements PasswordReuseManager interface.
   void Init(PrefService* prefs,
+            PrefService* local_prefs,
             PasswordStoreInterface* profile_store,
             PasswordStoreInterface* account_store,
             std::unique_ptr<PasswordReuseDetector> password_reuse_detector,
@@ -68,8 +67,8 @@ class PasswordReuseManagerImpl : public PasswordReuseManager,
   base::CallbackListSubscription RegisterStateCallbackOnHashPasswordManager(
       const base::RepeatingCallback<void(const std::string& username)>&
           callback) override;
-  void SetPasswordStoreSigninNotifier(
-      std::unique_ptr<PasswordStoreSigninNotifier> notifier) override;
+  void SetPasswordReuseManagerSigninNotifier(
+      std::unique_ptr<PasswordReuseManagerSigninNotifier> notifier) override;
   void ScheduleEnterprisePasswordURLUpdate() override;
   void MaybeSavePasswordHash(const PasswordForm* submitted_form,
                              PasswordManagerClient* client) override;
@@ -125,10 +124,19 @@ class PasswordReuseManagerImpl : public PasswordReuseManager,
   raw_ptr<PrefService> prefs_ = nullptr;
 
   scoped_refptr<PasswordStoreInterface> profile_store_;
+  base::ScopedObservation<PasswordStoreInterface,
+                          PasswordStoreInterface::Observer>
+      profile_store_observation_{this};
 
   scoped_refptr<PasswordStoreInterface> account_store_;
+  base::ScopedObservation<PasswordStoreInterface,
+                          PasswordStoreInterface::Observer>
+      account_store_observation_{this};
 
   raw_ptr<signin::IdentityManager> identity_manager_ = nullptr;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
 
   std::unique_ptr<SharedPreferencesDelegate> shared_pref_delegate_;
 
@@ -142,7 +150,7 @@ class PasswordReuseManagerImpl : public PasswordReuseManager,
   std::unique_ptr<PasswordReuseDetector> reuse_detector_;
 
   // Notifies PasswordReuseManager about sign-in events.
-  std::unique_ptr<PasswordStoreSigninNotifier> notifier_;
+  std::unique_ptr<PasswordReuseManagerSigninNotifier> notifier_;
 
   // Responsible for saving, clearing, retrieving and encryption of a password
   // hash data in preferences.

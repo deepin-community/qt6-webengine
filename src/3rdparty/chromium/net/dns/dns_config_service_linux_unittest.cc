@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <resolv.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -14,6 +15,7 @@
 
 #include "base/cancelable_callback.h"
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -42,19 +44,19 @@ namespace net {
 namespace {
 
 // MAXNS is normally 3, but let's test 4 if possible.
-const char* const kNameserversIPv4[] = {
+constexpr auto kNameserversIPv4 = std::to_array<const char*>({
     "8.8.8.8",
     "192.168.1.1",
     "63.1.2.4",
     "1.0.0.1",
-};
+});
 
-const char* const kNameserversIPv6[] = {
+constexpr auto kNameserversIPv6 = std::to_array<const char*>({
     nullptr,
     "2001:db8::42",
     nullptr,
     "::FFFF:129.144.52.38",
-};
+});
 
 const std::vector<NsswitchReader::ServiceSpecification> kBasicNsswitchConfig = {
     NsswitchReader::ServiceSpecification(NsswitchReader::Service::kFiles),
@@ -66,7 +68,7 @@ void DummyConfigCallback(const DnsConfig& config) {
 
 // Fills in |res| with sane configuration.
 void InitializeResState(res_state res) {
-  memset(res, 0, sizeof(*res));
+  UNSAFE_TODO(memset(res, 0, sizeof(*res)));
   res->options =
       RES_INIT | RES_RECURSE | RES_DEFNAMES | RES_DNSRCH | RES_ROTATE;
   res->ndots = 2;
@@ -77,16 +79,16 @@ void InitializeResState(res_state res) {
       "chromium.org"
       "\0"
       "example.com";
-  memcpy(res->defdname, kDnsrch, sizeof(kDnsrch));
+  UNSAFE_TODO(memcpy(res->defdname, kDnsrch, sizeof(kDnsrch)));
   res->dnsrch[0] = res->defdname;
-  res->dnsrch[1] = res->defdname + sizeof("chromium.org");
+  res->dnsrch[1] = UNSAFE_TODO(res->defdname + sizeof("chromium.org"));
 
   for (unsigned i = 0; i < std::size(kNameserversIPv4) && i < MAXNS; ++i) {
     struct sockaddr_in sa;
     sa.sin_family = AF_INET;
     sa.sin_port = base::HostToNet16(NS_DEFAULTPORT + i);
     inet_pton(AF_INET, kNameserversIPv4[i], &sa.sin_addr);
-    res->nsaddr_list[i] = sa;
+    UNSAFE_TODO(res->nsaddr_list[i]) = sa;
     ++res->nscount;
   }
 
@@ -99,11 +101,12 @@ void InitializeResState(res_state res) {
     // `TestResolvReader::CloseResState()`.
     struct sockaddr_in6* sa6;
     sa6 = static_cast<sockaddr_in6*>(malloc(sizeof(*sa6)));
+    UNSAFE_TODO(memset(sa6, 0, sizeof(*sa6)));
     sa6->sin6_family = AF_INET6;
     sa6->sin6_port = base::HostToNet16(NS_DEFAULTPORT - i);
     inet_pton(AF_INET6, kNameserversIPv6[i], &sa6->sin6_addr);
-    res->_u._ext.nsaddrs[i] = sa6;
-    memset(&res->nsaddr_list[i], 0, sizeof res->nsaddr_list[i]);
+    UNSAFE_TODO(res->_u._ext.nsaddrs[i]) = sa6;
+    UNSAFE_TODO(memset(&res->nsaddr_list[i], 0, sizeof res->nsaddr_list[i]));
     ++nscount6;
   }
   res->_u._ext.nscount6 = nscount6;
@@ -235,8 +238,9 @@ class TestScopedResState : public ScopedResState {
       // Assume `res->_u._ext.nsaddrs` memory allocated via malloc, e.g. by
       // `InitializeResState()`.
       for (int i = 0; i < res_->nscount; ++i) {
-        if (res_->_u._ext.nsaddrs[i] != nullptr)
-          free(res_->_u._ext.nsaddrs[i]);
+        if (UNSAFE_TODO(res_->_u._ext.nsaddrs[i]) != nullptr) {
+          free(UNSAFE_TODO(res_->_u._ext.nsaddrs[i]));
+        }
       }
     }
   }
@@ -274,9 +278,18 @@ class TestResolvReader : public ResolvReader {
     blocking_helper_ = blocking_helper;
   }
 
+  bool IsLikelySystemdResolved() override {
+    return is_likely_systemd_resolved_;
+  }
+
+  void set_is_likely_systemd_resolved(bool value) {
+    is_likely_systemd_resolved_ = value;
+  }
+
  private:
   std::unique_ptr<TestScopedResState> value_;
   raw_ptr<BlockingHelper> blocking_helper_ = nullptr;
+  bool is_likely_systemd_resolved_ = false;
 };
 
 class TestNsswitchReader : public NsswitchReader {
@@ -348,7 +361,7 @@ TEST_F(DnsConfigServiceLinuxTest, RejectEmptyNameserver) {
   auto res = std::make_unique<struct __res_state>();
   res->options = RES_INIT | RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
   const char kDnsrch[] = "chromium.org";
-  memcpy(res->defdname, kDnsrch, sizeof(kDnsrch));
+  UNSAFE_TODO(memcpy(res->defdname, kDnsrch, sizeof(kDnsrch)));
   res->dnsrch[0] = res->defdname;
 
   struct sockaddr_in sa = {};
@@ -376,7 +389,7 @@ TEST_F(DnsConfigServiceLinuxTest, AcceptNonEmptyNameserver) {
   auto res = std::make_unique<struct __res_state>();
   res->options = RES_INIT | RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
   const char kDnsrch[] = "chromium.org";
-  memcpy(res->defdname, kDnsrch, sizeof(kDnsrch));
+  UNSAFE_TODO(memcpy(res->defdname, kDnsrch, sizeof(kDnsrch)));
   res->dnsrch[0] = res->defdname;
 
   struct sockaddr_in sa = {};
@@ -877,6 +890,48 @@ TEST_F(DnsConfigServiceLinuxTest, RejectsNsswitchResolve) {
   ASSERT_TRUE(config.has_value());
   EXPECT_TRUE(config->IsValid());
   EXPECT_TRUE(config->unhandled_options);
+}
+
+TEST_F(DnsConfigServiceLinuxTest,
+       AcceptsNsswitchResolveWithResolvConfRedirect) {
+  auto res = std::make_unique<struct __res_state>();
+  InitializeResState(res.get());
+  resolv_reader_->set_value(std::move(res));
+  resolv_reader_->set_is_likely_systemd_resolved(true);
+
+  nsswitch_reader_->set_value(
+      {NsswitchReader::ServiceSpecification(NsswitchReader::Service::kFiles),
+       NsswitchReader::ServiceSpecification(
+           NsswitchReader::Service::kResolve)});
+
+  CallbackHelper callback_helper;
+  service_.ReadConfig(callback_helper.GetCallback());
+  std::optional<DnsConfig> config = callback_helper.WaitForResult();
+  EXPECT_TRUE(resolv_reader_->closed());
+
+  ASSERT_TRUE(config.has_value());
+  EXPECT_TRUE(config->IsValid());
+  EXPECT_FALSE(config->unhandled_options);
+}
+
+TEST_F(DnsConfigServiceLinuxTest,
+       AcceptsNsswitchResolveWithResolvConfRedirectNoFiles) {
+  auto res = std::make_unique<struct __res_state>();
+  InitializeResState(res.get());
+  resolv_reader_->set_value(std::move(res));
+  resolv_reader_->set_is_likely_systemd_resolved(true);
+
+  nsswitch_reader_->set_value({NsswitchReader::ServiceSpecification(
+      NsswitchReader::Service::kResolve)});
+
+  CallbackHelper callback_helper;
+  service_.ReadConfig(callback_helper.GetCallback());
+  std::optional<DnsConfig> config = callback_helper.WaitForResult();
+  EXPECT_TRUE(resolv_reader_->closed());
+
+  ASSERT_TRUE(config.has_value());
+  EXPECT_TRUE(config->IsValid());
+  EXPECT_FALSE(config->unhandled_options);
 }
 
 TEST_F(DnsConfigServiceLinuxTest, RejectsNsswitchNis) {

@@ -11,6 +11,8 @@
 
 #include "content/public/browser/web_contents_delegate.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/interaction/element_identifier.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/web_dialogs/web_dialogs_export.h"
@@ -46,19 +48,29 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // Returns the modal type for this dialog. Only called once, during
   // WebDialogView creation. If you can, prefer using set_modal_type() to
   // overriding GetDialogModalType().
-  virtual ModalType GetDialogModalType() const;
-  void set_dialog_modal_type(ModalType modal_type) { modal_type_ = modal_type; }
+  virtual mojom::ModalType GetDialogModalType() const;
+  void set_dialog_modal_type(mojom::ModalType modal_type) {
+    modal_type_ = modal_type;
+  }
 
   // Returns the title of the dialog. If you can, prefer to use set_title()
   // rather than overriding GetDialogTitle().
   virtual std::u16string GetDialogTitle() const;
-  void set_dialog_title(std::u16string title) { title_ = title; }
+  void set_dialog_title(std::u16string title) {
+    title_ = title;
+    if (title_changed_callback_) {
+      title_changed_callback_.Run();
+    }
+  }
 
   // Returns the title to be read with screen readers. If you can, prefer to use
   // set_accessible_title() rather than overriding GetAccessibleDialogTitle().
   virtual std::u16string GetAccessibleDialogTitle() const;
   void set_accessible_dialog_title(std::u16string accessible_title) {
     accessible_title_ = accessible_title;
+    if (accessible_title_changed_callback_) {
+      accessible_title_changed_callback_.Run();
+    }
   }
 
   // Returns the dialog's name identifier. Used to identify this dialog for
@@ -111,6 +123,16 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   bool can_minimize() const { return can_minimize_; }
   void set_can_minimize(bool can_minimize) { can_minimize_ = can_minimize; }
 
+  // Gets the element identifier that should be used for the web view that
+  // `this` is a delegate of.
+  ui::ElementIdentifier web_view_element_id() const {
+    return web_view_element_id_;
+  }
+  void set_web_view_element_id(
+      const ui::ElementIdentifier web_view_element_id) {
+    web_view_element_id_ = web_view_element_id;
+  }
+
   // A callback to notify the delegate that |source|'s loading state has
   // changed.
   virtual void OnLoadingStateChanged(content::WebContents* source) {}
@@ -130,6 +152,10 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // a window, while OnDialogWillClose is called as soon as it is known for
   // certain that the window is about to be closed.
   virtual void OnDialogWillClose() {}
+
+  // A callback to notify the delegate that the dialog is about to close due to
+  // the user pressing the ESC key.
+  virtual void OnDialogClosingFromKeyEvent() {}
 
   // A callback to notify the delegate that the dialog closed.
   // IMPORTANT: Implementations should delete |this| here (unless they've
@@ -210,9 +236,17 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // A callback to allow the delegate to open a new URL inside |source|.
   // On return |out_new_contents| should contain the WebContents the URL
   // is opened in. Return false to use the default handler.
-  virtual bool HandleOpenURLFromTab(content::WebContents* source,
-                                    const content::OpenURLParams& params,
-                                    content::WebContents** out_new_contents);
+  // If a `navigation_handle_callback` function is provided, it should be called
+  // with the pending navigation (if any) when the navigation handle become
+  // available. This allows callers to observe or attach their specific data.
+  // `navigation_handle_callback` may not be called if the navigation fails for
+  // any reason.
+  virtual bool HandleOpenURLFromTab(
+      content::WebContents* source,
+      const content::OpenURLParams& params,
+      base::OnceCallback<void(content::NavigationHandle&)>
+          navigation_handle_callback,
+      content::WebContents** out_new_contents);
 
   // A callback to control whether a WebContents will be created. Returns
   // true to disallow the creation. Return false to use the default handler.
@@ -251,11 +285,15 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
 
   // Whether to use dialog frame view for non client frame view.
   virtual FrameKind GetWebDialogFrameKind() const;
+  void SetTitleChangedCallback(base::RepeatingCallback<void()> callback);
+  void SetAccessibleTitleChangedCallback(
+      base::RepeatingCallback<void()> callback);
+
   void set_dialog_frame_kind(FrameKind frame_kind) { frame_kind_ = frame_kind; }
 
  private:
   base::flat_map<Accelerator, AcceleratorHandler> accelerators_;
-  absl::optional<std::u16string> accessible_title_;
+  std::optional<std::u16string> accessible_title_;
   bool allow_default_context_menu_ = true;
   bool allow_web_contents_creation_ = true;
   std::string args_;
@@ -269,15 +307,21 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // TODO(ellyjones): Make this default to false.
   bool delete_on_close_ = true;
   FrameKind frame_kind_ = FrameKind::kNonClient;
-  absl::optional<gfx::Size> minimum_size_;
-  ModalType modal_type_ = ui::MODAL_TYPE_NONE;
+  std::optional<gfx::Size> minimum_size_;
+  mojom::ModalType modal_type_ = mojom::ModalType::kNone;
   std::string name_;
   bool show_close_button_ = true;
   bool show_title_ = true;
   gfx::Size size_;
   std::u16string title_;
+  // The value that should be used for the element ID of the web view that this
+  // is a delegate for.
+  ui::ElementIdentifier web_view_element_id_;
 
   OnDialogClosedCallback closed_callback_;
+
+  base::RepeatingCallback<void()> title_changed_callback_;
+  base::RepeatingCallback<void()> accessible_title_changed_callback_;
 
   std::vector<std::unique_ptr<content::WebUIMessageHandler>>
       added_message_handlers_;

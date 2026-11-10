@@ -98,7 +98,6 @@ MixedContent::ContextTypeFromRequestContext(
       NOTREACHED();
   }
   NOTREACHED();
-  return mojom::blink::MixedContentContextType::kBlockable;
 }
 
 }  // namespace blink

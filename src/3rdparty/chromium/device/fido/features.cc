@@ -4,11 +4,19 @@
 
 #include "device/fido/features.h"
 
-#include <vector>
-
 #include "base/feature_list.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+
+namespace {
+
+// Default maximum number of immediate requests allowed per origin (eTLD+1).
+constexpr int kDefaultMaxRequests = 10;
+// Default time window (in seconds) for the immediate request rate limit.
+constexpr int kDefaultWindowSeconds = 60;
+// Default timeout for immediate mediation requests (in milliseconds).
+constexpr int kDefaultImmediateMediationTimeoutMs = 500;
+
+}  // namespace
 
 namespace device {
 
@@ -40,36 +48,14 @@ BASE_FEATURE(kWebAuthCableExtensionAnywhere,
              "WebAuthenticationCableExtensionAnywhere",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kWebAuthnGoogleCorpRemoteDesktopClientPrivilege,
-             "WebAuthenticationGoogleCorpRemoteDesktopClientPrivilege",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 #if BUILDFLAG(IS_ANDROID)
-// Added in M114. Not yet enabled by default.
-BASE_FEATURE(kWebAuthnAndroidCredMan,
-             "WebAuthenticationAndroidCredMan",
+
+// Not yet enabled by default.
+BASE_FEATURE(kWebAuthnAndroidPasskeyCacheMigration,
+             "WebAuthenticationAndroidPasskeyCacheMigration",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enabled in M118. Remove in or after M121.
-BASE_FEATURE(kWebAuthnAndroidCredManForHybrid,
-             "WebAuthenticationAndroidCredManForHybrid",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_ANDROID)
-
-// Added in M115. Remove in or after M118
-BASE_FEATURE(kWebAuthnHybridLinkWithoutNotifications,
-             "WebAuthenticationHybridLinkWithoutNotifications",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enabled in M118. Remove in or after M121.
-BASE_FEATURE(kWebAuthnRequireUpToDateJSONForRemoteDesktop,
-             "WebAuthenticationRequireUpToDateJSONForRemoteDesktop",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Enabled in M118. Remove in or after M121.
-BASE_FEATURE(kWebAuthnICloudKeychain,
-             "WebAuthenticationICloudKeychain",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enabled in M118. Remove in or after M121.
 BASE_FEATURE(kWebAuthnICloudKeychainForGoogle,
@@ -96,77 +82,148 @@ BASE_FEATURE(kWebAuthnICloudKeychainForInactiveWithoutDrive,
              "WebAuthenticationICloudKeychainForInactiveWithoutDrive",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enabled in M117. Remove in or after M120.
-BASE_FEATURE(kWebAuthConditionalUIExperimentation,
-             "WebAuthenticationConditionalUIExperimentation",
+// Default enabled in M135. Remove in or after M138.
+COMPONENT_EXPORT(DEVICE_FIDO)
+BASE_FEATURE(kWebAuthnRetryU2FErrors,
+             "WebAuthenticationRetryU2FErrors",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enabled in M117. Remove in or after M120.
-BASE_FEATURE(kWebAuthnLinkingExperimentation,
-             "WebAuthenticationLinkingExperimentation",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Not yet enabled by default.
-BASE_FEATURE(kWebAuthnEnclaveAuthenticator,
-             "WebAuthenticationEnclaveAuthenticator",
+// Development flag. Must not be enabled by default once
+// kWebAuthnEnclaveAuthenticator is enabled.
+BASE_FEATURE(kWebAuthnUseInsecureSoftwareUnexportableKeys,
+             "WebAuthenticationUseInsecureSoftwareUnexportableKeys",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enabled in M120. Remove in or after M123.
-BASE_FEATURE(kWebAuthnNewPasskeyUI,
-             "WebAuthenticationNewPasskeyUI",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Enabled in M118 on all platforms except ChromeOS. Enabled on M121 for
-// ChromeOS. Remove in or after M124.
-BASE_FEATURE(kWebAuthnFilterGooglePasskeys,
-             "WebAuthenticationFilterGooglePasskeys",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Enabled in M119. Remove in or after M122.
-BASE_FEATURE(kWebAuthnAndroidIncognitoConfirmation,
-             "WebAuthenticationAndroidIncognitoConfirmation",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Enabled in M120. Remove in or after M123.
-BASE_FEATURE(kWebAuthnPRFEvalDuringCreate,
-             "WebAuthenticationPRFEvalDuringCreate",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-#if BUILDFLAG(IS_CHROMEOS)
-// Not yet enabled by default.
-BASE_FEATURE(kChromeOsPasskeys,
-             "WebAuthenticationCrosPasskeys",
+// Development flag. Must not be enabled by default.
+BASE_FEATURE(kWebAuthnEnclaveAuthenticatorDelay,
+             "WebAuthnEnclaveAuthenticatorDelay",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Not yet enabled by default.
+BASE_FEATURE(kWebAuthnAmbientSignin,
+             "WebAuthenticationAmbientSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// This is a deprecation flag. It is now enabled by default, but we want to
+// disable it eventually.
+// Must not be disabled until kWebAuthnHybridLinking is disabled by default.
+#if BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kWebAuthnPublishPrelinkingInfo,
+             "WebAuthenticationPublishPrelinkingInfo",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_ANDROID)
+
+// Disabled by default.
+BASE_FEATURE(kWebAuthnHelloSignal,
+             "WebAuthenticationHelloSignal",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Default enabled in M132. Remove in or after M135.
+BASE_FEATURE(kWebAuthnSkipHybridConfigIfSystemSupported,
+             "WebAuthenticationSkipHybridConfigIfSystemSupported",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Disabled by default.
+BASE_FEATURE(kDigitalCredentialsHybridLinking,
+             "DigitalCredentialsHybridLinking",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Default enabled in M136. Remove in or after M139.
+#if BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kWebAuthnPasskeyUpgrade,
+             "WebAuthenticationPasskeyUpgrade",
+             base::FEATURE_DISABLED_BY_DEFAULT
+);
+#else
+BASE_FEATURE(kWebAuthnPasskeyUpgrade,
+             "WebAuthenticationPasskeyUpgrade",
+             base::FEATURE_ENABLED_BY_DEFAULT
+);
 #endif
 
-// Enabled in M121. Remove in or after M124.
-BASE_FEATURE(kWebAuthnScreenReaderMode,
-             "WebAuthenticationScreenReaderMode",
+// Disabled by default.
+BASE_FEATURE(kWebAuthnEnclaveAttestation,
+             "WebAuthenticationEnclaveAttestation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Default enabled in M134. Remove in or after M137.
+BASE_FEATURE(kWebAuthnNewBfCacheHandling,
+             "WebAuthenticationNewBfCacheHandling",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enabled in M120. Remove in or after M123.
-BASE_FEATURE(kWebAuthnAccessibleTimeouts,
-             "WebAuthenticationAccessibleTimeouts",
+// Default enabled in M135. Remove in or after M138.
+BASE_FEATURE(kWebAuthnMicrosoftSoftwareUnexportableKeyProvider,
+             "WebAuthenticationMicrosoftSoftwareUnexportableKeyProvider",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Not yet enabled by default.
-BASE_FEATURE(kWebAuthnRelatedOrigin,
-             "WebAuthenticationRelatedOrigin",
+BASE_FEATURE(kWebAuthnSignalApiHidePasskeys,
+             "WebAuthenticationSignalApiHidePasskeys",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enabled in M122. Remove in or after M125.
-BASE_FEATURE(kWebAuthnChromeImplementedInvariant,
-             "WebAuthenticationChromeImplementedInvariant",
+// Enabled by default as part of the WebAuthenticationImmediateGet feature. Do
+// not remove before WebAuthenticationImmediateGet is removed.
+BASE_FEATURE(kWebAuthnImmediateRequestRateLimit,
+             "WebAuthnImmediateRequestRateLimit",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enabled in M122. Remove in or after M125.
-BASE_FEATURE(kAllowExtensionsToSetWebAuthnRpIds,
-             "AllowExtensionsToSetWebAuthnRpIds",
+BASE_FEATURE_PARAM(int,
+                   kWebAuthnImmediateRequestRateLimitMaxRequests,
+                   &kWebAuthnImmediateRequestRateLimit,
+                   "max_requests",
+                   kDefaultMaxRequests);
+
+BASE_FEATURE_PARAM(int,
+                   kWebAuthnImmediateRequestRateLimitWindowSeconds,
+                   &kWebAuthnImmediateRequestRateLimit,
+                   "window_seconds",
+                   kDefaultWindowSeconds);
+
+// Enabled by default on Desktop for the Origin Trial. Do not remove until the
+// Origin Trial expires.
+#if BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kWebAuthnImmediateGet,
+             "WebAuthenticationImmediateGet",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kWebAuthnImmediateGet,
+             "WebAuthenticationImmediateGet",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_ANDROID)
+
+BASE_FEATURE_PARAM(int,
+                   kWebAuthnImmediateMediationTimeoutMilliseconds,
+                   &kWebAuthnImmediateGet,
+                   "timeout_ms",
+                   kDefaultImmediateMediationTimeoutMs);
+
+// Enabled by default. Remove the flag and the logic (as if the flag is in
+// disabled state) when the WebAuthenticationImmediateGet origin trial is over.
+BASE_FEATURE(kWebAuthnImmediateGetAutoselect,
+             "WebAuthenticationImmediateGetAutoselect",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Default enabled in M122. Remove in or after M125.
-BASE_FEATURE(kWebAuthnAndroidFidoJson,
-             "WebAuthenticationAndroidFidoJson",
+#if BUILDFLAG(IS_MAC)
+// Default enabled in M139. Remove in or after M142.
+BASE_FEATURE(kWebAuthnLargeBlobForICloudKeychain,
+             "WebAuthenticationLargeBlobICloudKeychain",
              base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_MAC)
+
+// Default enabled in M140. Remove in or after M143.
+BASE_FEATURE(kWebAuthnLargeBlobForGPM,
+             "WebAuthenticationLargeBlobGPM",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Deprecation flag. Intended to be disabled once the enclave no longer requires
+// a PIN generation number.
+BASE_FEATURE(kWebAuthnSendPinGeneration,
+             "WebAuthenticationSendPinGeneration",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Not yet enabled by default.
+BASE_FEATURE(kWebAuthnWrapCohortData,
+             "WebAuthenticationWrapCohortData",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace device

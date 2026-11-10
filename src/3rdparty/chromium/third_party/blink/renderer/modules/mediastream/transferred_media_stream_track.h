@@ -26,7 +26,6 @@
 
 namespace blink {
 
-class MediaStreamTrackVideoStats;
 class MediaTrackCapabilities;
 class MediaTrackConstraints;
 class MediaTrackSettings;
@@ -50,16 +49,18 @@ class MODULES_EXPORT TransferredMediaStreamTrack : public MediaStreamTrack {
   bool muted() const override;
   String ContentHint() const override;
   void SetContentHint(const String&) override;
-  String readyState() const override;
+  V8MediaStreamTrackState readyState() const override;
   MediaStreamTrack* clone(ExecutionContext*) override;
   void stopTrack(ExecutionContext*) override;
   MediaTrackCapabilities* getCapabilities() const override;
   MediaTrackConstraints* getConstraints() const override;
   MediaTrackSettings* getSettings() const override;
-  MediaStreamTrackVideoStats* stats() override;
+  V8UnionMediaStreamTrackAudioStatsOrMediaStreamTrackVideoStats* stats()
+      override;
   CaptureHandle* getCaptureHandle() const override;
-  ScriptPromise applyConstraints(ScriptState*,
-                                 const MediaTrackConstraints*) override;
+  ScriptPromise<IDLUndefined> applyConstraints(
+      ScriptState*,
+      const MediaTrackConstraints*) override;
 
   bool HasImplementation() const { return !!track_; }
   // TODO(1288839): access to track_ is a baby-step toward removing
@@ -83,20 +84,7 @@ class MODULES_EXPORT TransferredMediaStreamTrack : public MediaStreamTrack {
 
   void RegisterMediaStream(MediaStream*) override;
   void UnregisterMediaStream(MediaStream*) override;
-
-#if !BUILDFLAG(IS_ANDROID)
-  void SendWheel(
-      double relative_x,
-      double relative_y,
-      int wheel_delta_x,
-      int wheel_delta_y,
-      base::OnceCallback<void(bool, const String&)> callback) override;
-  void GetZoomLevel(base::OnceCallback<void(absl::optional<int>, const String&)>
-                        callback) override;
-  void SetZoomLevel(
-      int zoom_level,
-      base::OnceCallback<void(bool, const String&)> callback) override;
-#endif
+  void RegisterSink(SpeechRecognitionMediaStreamAudioSink*) override;
 
   // EventTarget
   const AtomicString& InterfaceName() const override;
@@ -108,10 +96,11 @@ class MODULES_EXPORT TransferredMediaStreamTrack : public MediaStreamTrack {
   bool HasPendingActivity() const override;
 
   std::unique_ptr<AudioSourceProvider> CreateWebAudioSource(
-      int context_sample_rate) override;
+      int context_sample_rate,
+      base::TimeDelta platform_buffer_duration) override;
 
   ImageCapture* GetImageCapture() override;
-  absl::optional<const MediaStreamDevice> device() const override;
+  std::optional<const MediaStreamDevice> device() const override;
   void BeingTransferred(const base::UnguessableToken& transfer_id) override;
   bool TransferAllowed(String& message) const override;
 
@@ -128,7 +117,7 @@ class MODULES_EXPORT TransferredMediaStreamTrack : public MediaStreamTrack {
     CLONE
   };
 
-  void applyConstraints(ScriptPromiseResolver*,
+  void applyConstraints(ScriptPromiseResolver<IDLUndefined>*,
                         const MediaTrackConstraints*) override;
 
   // Helper class to register as an event listener on the underlying
@@ -146,20 +135,20 @@ class MODULES_EXPORT TransferredMediaStreamTrack : public MediaStreamTrack {
   };
 
   struct ConstraintsPair : GarbageCollected<ConstraintsPair> {
-    ConstraintsPair(ScriptPromiseResolver* resolver,
+    ConstraintsPair(ScriptPromiseResolver<IDLUndefined>* resolver,
                     const MediaTrackConstraints* constraints);
     void Trace(Visitor*) const;
 
-    const Member<ScriptPromiseResolver> resolver;
+    const Member<ScriptPromiseResolver<IDLUndefined>> resolver;
     const Member<const MediaTrackConstraints> constraints;
   };
 
   Member<TransferredMediaStreamComponent> transferred_component_;
   Member<MediaStreamTrack> track_;
   Vector<SetterFunction> setter_call_order_;
-  WTF::Deque<String> content_hint_list_;
+  Deque<String> content_hint_list_;
   HeapDeque<Member<ConstraintsPair>> constraints_list_;
-  WTF::Deque<bool> enabled_state_list_;
+  Deque<bool> enabled_state_list_;
   HeapDeque<Member<TransferredMediaStreamTrack>> clone_list_;
   WeakMember<ExecutionContext> execution_context_;
   TransferredValues data_;

@@ -21,12 +21,12 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "./centipede/centipede_callbacks.h"
-#include "./centipede/defs.h"
 #include "./centipede/environment.h"
 #include "./centipede/runner_result.h"
-#include "./centipede/test_util.h"
+#include "./common/defs.h"
+#include "./common/test_util.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 using ::testing::AllOf;
@@ -57,7 +57,8 @@ std::string GetTargetPath() {
 
 TEST(BatchFuzzWithExecutionResults, SucceedsToCollectCoverageForTwoInputs) {
   const std::string target_path = GetTargetPath();
-  Environment env = {.binary = target_path};
+  Environment env;
+  env.binary = target_path;
   CustomizedCallbacks callbacks(env, /*feature_only_feedback=*/false);
 
   BatchResult batch_result;
@@ -70,7 +71,8 @@ TEST(BatchFuzzWithExecutionResults, SucceedsToCollectCoverageForTwoInputs) {
 
 TEST(BatchFuzzWithExecutionResults, CollectsTheSameCoverageForSameInputs) {
   const std::string target_path = GetTargetPath();
-  const Environment env = {.binary = GetTargetPath()};
+  Environment env;
+  env.binary = target_path;
   CustomizedCallbacks callbacks(env, /*feature_only_feedback=*/false);
 
   BatchResult batch_result;
@@ -95,7 +97,8 @@ MATCHER_P(HasFeaturesOnly, features_matcher, "") {
 
 TEST(BatchFuzzWithCoverageData, SucceedsToCollectCoverageForTwoInputs) {
   const std::string target_path = GetTargetPath();
-  const Environment env = {.binary = GetTargetPath()};
+  Environment env;
+  env.binary = target_path;
   CustomizedCallbacks callbacks(env, /*feature_only_feedback=*/true);
 
   BatchResult batch_result;
@@ -107,7 +110,8 @@ TEST(BatchFuzzWithCoverageData, SucceedsToCollectCoverageForTwoInputs) {
 
 TEST(BatchFuzzWithCoverageData, CollectsTheSameCoverageForSameInputs) {
   const std::string target_path = GetTargetPath();
-  const Environment env = {.binary = target_path};
+  Environment env;
+  env.binary = target_path;
   CustomizedCallbacks callbacks(env, /*feature_only_feedback=*/true);
 
   BatchResult batch_result;
@@ -120,4 +124,4 @@ TEST(BatchFuzzWithCoverageData, CollectsTheSameCoverageForSameInputs) {
 }
 
 }  // namespace
-}  // namespace centipede
+}  // namespace fuzztest::internal

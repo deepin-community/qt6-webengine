@@ -5,6 +5,7 @@
 #include "content/browser/devtools/protocol/service_worker_handler.h"
 
 #include <memory>
+#include <variant>
 
 #include "base/containers/flat_set.h"
 #include "base/functional/bind.h"
@@ -57,7 +58,6 @@ const std::string GetVersionRunningStatusString(
     default:
       NOTREACHED();
   }
-  return std::string();
 }
 
 const std::string GetVersionStatusString(
@@ -78,7 +78,6 @@ const std::string GetVersionStatusString(
     default:
       NOTREACHED();
   }
-  return std::string();
 }
 
 Response CreateDomainNotEnabledErrorResponse() {
@@ -132,9 +131,8 @@ void DidFindRegistrationForDispatchPeriodicSyncEvent(
 
 }  // namespace
 
-ServiceWorkerHandler::ServiceWorkerHandler(bool allow_inspect_worker)
+ServiceWorkerHandler::ServiceWorkerHandler()
     : DevToolsDomainHandler(ServiceWorker::Metainfo::domainName),
-      allow_inspect_worker_(allow_inspect_worker),
       enabled_(false),
       browser_context_(nullptr),
       storage_partition_(nullptr) {}
@@ -273,26 +271,6 @@ Response ServiceWorkerHandler::UpdateRegistration(
   return Response::Success();
 }
 
-Response ServiceWorkerHandler::InspectWorker(const std::string& version_id) {
-  if (!enabled_)
-    return CreateDomainNotEnabledErrorResponse();
-  if (!context_)
-    return CreateContextErrorResponse();
-  if (!allow_inspect_worker_)
-    return Response::ServerError("Permission denied");
-  int64_t id = blink::mojom::kInvalidServiceWorkerVersionId;
-  if (!base::StringToInt64(version_id, &id))
-    return CreateInvalidVersionIdErrorResponse();
-
-  if (content::ServiceWorkerVersion* version = context_->GetLiveVersion(id)) {
-    OpenNewDevToolsWindow(
-        version->embedded_worker()->process_id(),
-        version->embedded_worker()->worker_devtools_agent_route_id());
-  }
-
-  return Response::Success();
-}
-
 Response ServiceWorkerHandler::SetForceUpdateOnPageLoad(
     bool force_update_on_page_load) {
   if (!context_)
@@ -406,9 +384,9 @@ void ServiceWorkerHandler::OnWorkerVersionUpdated(
     base::flat_set<std::string> client_set;
 
     for (const auto& client : version.clients) {
-      if (absl::holds_alternative<GlobalRenderFrameHostId>(client.second)) {
+      if (std::holds_alternative<GlobalRenderFrameHostId>(client.second)) {
         WebContents* web_contents = WebContentsImpl::FromRenderFrameHostID(
-            absl::get<GlobalRenderFrameHostId>(client.second));
+            std::get<GlobalRenderFrameHostId>(client.second));
         // There is a possibility that the frame is already deleted
         // because of the thread hopping.
         if (!web_contents)

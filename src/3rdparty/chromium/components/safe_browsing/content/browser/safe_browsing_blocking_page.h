@@ -43,10 +43,6 @@ namespace network {
 class SharedURLLoaderFactory;
 }
 
-namespace weblayer {
-class WebLayerSafeBrowsingBlockingPageFactory;
-}
-
 namespace safe_browsing {
 
 class SafeBrowsingNavigationObserverManager;
@@ -73,7 +69,6 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
 
  protected:
   friend class ChromeSafeBrowsingBlockingPageFactory;
-  friend class weblayer::WebLayerSafeBrowsingBlockingPageFactory;
   friend class SafeBrowsingBlockingPageTestBase;
   friend class SafeBrowsingBlockingPageBrowserTest;
   friend class SafeBrowsingBlockingQuietPageFactoryImpl;
@@ -118,6 +113,8 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
       bool is_safe_browsing_surveys_enabled,
       base::OnceCallback<void(bool, SBThreatType)>
           trust_safety_sentiment_service_trigger,
+      base::OnceCallback<void(bool, SBThreatType)>
+          ignore_auto_revocation_notifications_trigger,
       network::SharedURLLoaderFactory* url_loader_for_testing = nullptr);
 
   // Called when an interstitial is closed, either due to a click through or a
@@ -142,6 +139,12 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
                            bool did_proceed,
                            int num_visits) override;
 
+  // Log UKM for the user bypassing a safe browsing interstitial.
+  void LogSafeBrowsingInterstitialBypassedUKM();
+
+  // Log UKM for the safe browsing interstitial being shown to the user.
+  void LogSafeBrowsingInterstitialShownUKM();
+
   // Whether ThreatDetails collection is in progress as part of this
   // interstitial.
   bool threat_details_in_progress_;
@@ -151,9 +154,6 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
 
   // The threat type of the resource that triggered the blocking page.
   SBThreatType threat_type_;
-
-  // Whether the blocking page is triggered by subresource.
-  bool is_subresource_;
 
  private:
   raw_ptr<history::HistoryService> history_service_ = nullptr;
@@ -170,6 +170,10 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
   // Triggers trust and safety sentiment service when interstitial closes.
   base::OnceCallback<void(bool, SBThreatType)>
       trust_safety_sentiment_service_trigger_ = base::NullCallback();
+  // Triggers callback for ignoring the url for future auto abusive notification
+  // revocation.
+  base::OnceCallback<void(bool, SBThreatType)>
+      ignore_auto_revocation_notifications_trigger_ = base::NullCallback();
   // Timestamp of when the safe browsing blocking page was shown to the user.
   int64_t warning_shown_ts_;
 };

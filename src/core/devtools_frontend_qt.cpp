@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // based on content/shell/browser/shell_devtools_frontend.cc:
 // Copyright 2013 The Chromium Authors. All rights reserved.
@@ -21,12 +22,13 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/site_instance.h"
+#include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
 
 using namespace QtWebEngineCore;
 
 namespace {
-static const char kScreencastEnabled[] = "screencastEnabled";
+static const char kScreencastEnabled[] = "screencast-enabled";
 
 static std::string GetFrontendURL()
 {
@@ -175,7 +177,7 @@ void DevToolsFrontendQt::OpenInNewTab(const std::string &url)
                                   WindowOpenDisposition::NEW_FOREGROUND_TAB,
                                   ui::PAGE_TRANSITION_LINK, false);
 
-    m_inspectedContents->OpenURL(params);
+    m_inspectedContents->OpenURL(params, base::DoNothing());
 }
 
 void DevToolsFrontendQt::SetEyeDropperActive(bool active)
@@ -206,6 +208,11 @@ void DevToolsFrontendQt::InspectedContentsClosing()
     // Called for already destroyed guest views
     m_inspectedContents = nullptr;
     web_contents()->ClosePage();
+}
+
+content::WebContents* DevToolsFrontendQt::GetInspectedWebContents()
+{
+    return m_inspectedContents;
 }
 
 std::string DevToolsFrontendQt::GetId(content::WebContents *inspectedContents)

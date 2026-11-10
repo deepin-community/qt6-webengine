@@ -10,10 +10,13 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/containers/to_vector.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
@@ -32,19 +35,20 @@
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/chrome_urls/chrome_urls_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/about_ui/credit_utils.h"
 #include "components/grit/components_resources.h"
 #include "components/strings/grit/components_locale_settings.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/webui/about/credit_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
@@ -60,35 +64,26 @@
 #include "chrome/browser/ui/webui/theme_source.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include <map>
 
 #include "base/base64.h"
 #include "base/strings/strcat.h"
 #include "chrome/browser/ash/borealis/borealis_credits.h"
-#include "chrome/browser/ash/crosapi/browser_manager.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/ash/crostini/crostini_features.h"
 #include "chrome/browser/ash/crostini/crostini_manager.h"
 #include "chrome/browser/ash/customization/customization_document.h"
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
-#include "chrome/browser/component_updater/cros_component_manager.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chromeos/ash/components/system/statistics_provider.h"
+#include "components/component_updater/ash/component_manager_ash.h"
 #include "components/language/core/common/locale_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "third_party/zlib/google/compression_utils.h"
 #endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chrome/browser/lacros/lacros_url_handling.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/common/webui_url_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using content::BrowserThread;
 
@@ -99,7 +94,7 @@ constexpr char kCreditsCssPath[] = "credits.css";
 constexpr char kStatsJsPath[] = "stats.js";
 constexpr char kStringsJsPath[] = "strings.js";
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 
 constexpr char kTerminaCreditsPath[] = "about_os_credits.html";
 
@@ -130,7 +125,7 @@ class ChromeOSTermsHandler
         // Previously we were using "initial locale" http://crbug.com/145142
         locale_(g_browser_process->GetApplicationLocale()) {}
 
-  virtual ~ChromeOSTermsHandler() {}
+  virtual ~ChromeOSTermsHandler() = default;
 
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -146,7 +141,6 @@ class ChromeOSTermsHandler
       LOG(WARNING) << "Could not load offline Play Store privacy policy.";
     } else {
       NOTREACHED();
-      ResponseOnUIThread();
     }
   }
 
@@ -156,8 +150,9 @@ class ChromeOSTermsHandler
 
     const ash::StartupCustomizationDocument* customization =
         ash::StartupCustomizationDocument::GetInstance();
-    if (!customization->IsReady())
+    if (!customization->IsReady()) {
       return;
+    }
 
     base::FilePath oem_eula_file_path;
     if (net::FileURLToFilePath(GURL(customization->GetEULAPage(locale_)),
@@ -217,7 +212,7 @@ class ChromeOSCreditsHandler
                          const base::FilePath& prefix)
       : path_(path), callback_(std::move(callback)), prefix_(prefix) {}
 
-  virtual ~ChromeOSCreditsHandler() {}
+  virtual ~ChromeOSCreditsHandler() = default;
 
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -325,7 +320,7 @@ class CrostiniCreditsHandler
                          content::URLDataSource::GotDataCallback callback)
       : path_(path), callback_(std::move(callback)), profile_(profile) {}
 
-  virtual ~CrostiniCreditsHandler() {}
+  virtual ~CrostiniCreditsHandler() = default;
 
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -404,193 +399,21 @@ void AppendHeader(std::string* output, const std::string& unescaped_title) {
   }
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
-// This function returns true if Lacros is the primary browser - or if the
-// calling browser is Lacros.
-bool isLacrosPrimaryOrCurrentBrowser() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return crosapi::browser_util::IsLacrosEnabled();
-#else
-  return true;
-#endif
-}
-
 void AppendBody(std::string* output) {
-  if (isLacrosPrimaryOrCurrentBrowser()) {
-    output->append(
-        "<link rel='stylesheet' href='chrome://resources/css/os_header.css'>\n"
-
-        "</head>\n<body>\n"
-
-        "<div class='os-link-container-container' id='os-link-container'>\n"
-        "<div class='os-link-container'>\n"
-        "<span class='os-link-icon'></span>\n"
-        "<span aria-hidden='true' id='os-link-desc'>" +
-        l10n_util::GetStringUTF8(IDS_ABOUT_OS_TEXT1_LABEL) +
-        "</span>\n"
-        "<a href='#' id='os-link-href' aria-describedby='os-link-desc'>" +
-        l10n_util::GetStringUTF8(IDS_ABOUT_OS_LINK) +
-        "</a>\n<span aria-hidden='true'>" +
-        l10n_util::GetStringUTF8(IDS_ABOUT_OS_TEXT2_LABEL) +
-        "</span>\n</div>\n</div>\n");
-  } else {
-    output->append("</head>\n<body>\n");
-  }
-}
-
-void AppendFooter(std::string* output) {
-  if (isLacrosPrimaryOrCurrentBrowser()) {
-    output->append(
-        "<script type='module' src='chrome://resources/js/os_about.js'>"
-        "</script>\n");
-  }
-
-  output->append("</body>\n</html>\n");
-}
-
-#else  // BUILDFLAG(IS_CHROMEOS)
-
-void AppendBody(std::string *output) {
   output->append("</head>\n<body>\n");
 }
 
-void AppendFooter(std::string *output) {
+void AppendFooter(std::string* output) {
   output->append("</body>\n</html>\n");
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 }  // namespace about_ui
 
-using about_ui::AppendHeader;
 using about_ui::AppendBody;
 using about_ui::AppendFooter;
+using about_ui::AppendHeader;
 
 namespace {
-
-bool CompareConfigInfos(const content::WebUIConfigInfo& config1,
-                        const content::WebUIConfigInfo& config2) {
-  // Schemes must be either chrome:// or chrome-untrusted://
-  CHECK(config1.origin.scheme() == content::kChromeUIScheme ||
-        config1.origin.scheme() == content::kChromeUIUntrustedScheme);
-  CHECK(config2.origin.scheme() == content::kChromeUIScheme ||
-        config2.origin.scheme() == content::kChromeUIUntrustedScheme);
-  // Sort chrome:// before chrome-untrusted://. If the schemes are not equal,
-  // given the check above one must be chrome:// and one chrome-untrusted://.
-  if (config1.origin.scheme() != config2.origin.scheme()) {
-    return config1.origin.scheme() == content::kChromeUIScheme;
-  }
-  return config1.origin.host() < config2.origin.host();
-}
-
-std::string ChromeURLs(content::BrowserContext* browser_context) {
-  std::string html;
-  AppendHeader(&html, "Chrome URLs");
-  AppendBody(&html);
-
-  html += "<h2>List of Chrome URLs</h2>\n<ul>\n";
-  std::vector<std::string> hosts(
-      chrome::kChromeHostURLs,
-      chrome::kChromeHostURLs + chrome::kNumberOfChromeHostURLs);
-  std::vector<content::WebUIConfigInfo> infos;
-  for (const std::string& host : hosts) {
-    GURL url(base::StrCat(
-        {content::kChromeUIScheme, url::kStandardSchemeSeparator, host}));
-    infos.push_back({.origin = url::Origin::Create(url), .enabled = true});
-  }
-
-  // Add any extra hosts found in the config map
-  auto& map = content::WebUIConfigMap::GetInstance();
-  for (const content::WebUIConfigInfo& config_info :
-       map.GetWebUIConfigList(browser_context)) {
-    if (config_info.origin.scheme() == content::kChromeUIUntrustedScheme ||
-        std::find(hosts.begin(), hosts.end(), config_info.origin.host()) ==
-            hosts.end()) {
-      infos.push_back(config_info);
-    }
-  }
-
-  // Sort the URLs.
-  std::sort(infos.begin(), infos.end(), &CompareConfigInfos);
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  const bool is_lacros_primary = about_ui::isLacrosPrimaryOrCurrentBrowser();
-  // If Lacros is active, the user can navigate by hand to os:// URL's but
-  // internally we will still navigate to chrome:// URL's. Note also that
-  // only a subset of URLs might be available in this mode - so we have to
-  // make sure that only allowed URLs are being presented.
-  if (is_lacros_primary) {
-    auto* WebUiControllerFactory = ChromeWebUIControllerFactory::GetInstance();
-    for (const std::string& host : hosts) {
-      // TODO(crbug/1271718): The refactor should make sure that the provided
-      // list can be shown as is without filtering.
-      if (WebUiControllerFactory->CanHandleUrl(GURL("os://" + host)) ||
-          WebUiControllerFactory->CanHandleUrl(GURL("chrome://" + host))) {
-        html +=
-            "<li><a href='chrome://" + host + "/'>os://" + host + "</a></li>\n";
-      }
-    }
-  } else {
-#else
-  {
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-    for (const content::WebUIConfigInfo& info : infos) {
-      std::string host = info.origin.host();
-      std::string scheme = info.origin.scheme();
-      std::string url =
-          base::StrCat({scheme, url::kStandardSchemeSeparator, host});
-      html +=
-          info.enabled
-              ? base::StrCat({"<li><a href='", url, "/'>", url, "</a></li>\n"})
-              : base::StrCat({"<li>", url, "</li>\n"});
-    }
-
-    html +=
-        "</ul><a id=\"internals\"><h2>List of chrome://internals "
-        "pages</h2></a>\n<ul>\n";
-    std::vector<std::string> internals_paths(
-        chrome::kChromeInternalsPathURLs,
-        chrome::kChromeInternalsPathURLs +
-            chrome::kNumberOfChromeInternalsPathURLs);
-    std::sort(internals_paths.begin(), internals_paths.end());
-    for (const std::string& path : internals_paths) {
-      html += "<li><a href='chrome://internals/" + path +
-              "'>chrome://internals/" + path + "</a></li>\n";
-    }
-  }
-
-  html += "</ul>\n<h2>For Debug</h2>\n"
-      "<p>The following pages are for debugging purposes only. Because they "
-      "crash or hang the renderer, they're not linked directly; you can type "
-      "them into the address bar if you need them.</p>\n<ul>";
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // If Lacros is active, the user can navigate by hand to os:// URL's but
-  // internally we will still navigate to chrome:// URL's. Note also that
-  // only a subset of URLs might be available in this mode - so we have to
-  // make sure that only allowed URLs are being presented.
-  if (is_lacros_primary) {
-    auto* WebUiControllerFactory = ChromeWebUIControllerFactory::GetInstance();
-    for (size_t i = 0; i < chrome::kNumberOfChromeDebugURLs; i++) {
-      // TODO(crbug/1271718): The refactor should make sure that the provided
-      // list can be shown as is without filtering.
-      const std::string host = GURL(chrome::kChromeDebugURLs[i]).host();
-      if (WebUiControllerFactory->CanHandleUrl(GURL("os://" + host)) ||
-          WebUiControllerFactory->CanHandleUrl(GURL("chrome://" + host))) {
-        html += "<li>os://" + host + "</li>\n";
-      }
-    }
-  } else {
-#else
-  {
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-    for (size_t i = 0; i < chrome::kNumberOfChromeDebugURLs; i++)
-      html += "<li>" + std::string(chrome::kChromeDebugURLs[i]) + "</li>\n";
-  }
-  html += "</ul>\n";
-
-  AppendFooter(&html);
-  return html;
-}
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OPENBSD)
 std::string AboutLinuxProxyConfig() {
@@ -611,14 +434,40 @@ std::string AboutLinuxProxyConfig() {
 
 }  // namespace
 
+AboutUIConfigBase::AboutUIConfigBase(std::string_view host)
+    : DefaultWebUIConfig(content::kChromeUIScheme, host) {}
+
+CreditsUIConfig::CreditsUIConfig()
+    : AboutUIConfigBase(chrome::kChromeUICreditsHost) {}
+
+#if !BUILDFLAG(IS_ANDROID)
+TermsUIConfig::TermsUIConfig()
+    : AboutUIConfigBase(chrome::kChromeUITermsHost) {}
+#endif
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OPENBSD)
+LinuxProxyConfigUI::LinuxProxyConfigUI()
+    : AboutUIConfigBase(chrome::kChromeUILinuxProxyConfigHost) {}
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+OSCreditsUI::OSCreditsUI()
+    : AboutUIConfigBase(chrome::kChromeUIOSCreditsHost) {}
+
+BorealisCreditsUI::BorealisCreditsUI()
+    : AboutUIConfigBase(chrome::kChromeUIBorealisCreditsHost) {}
+
+CrostiniCreditsUI::CrostiniCreditsUI()
+    : AboutUIConfigBase(chrome::kChromeUICrostiniCreditsHost) {}
+#endif
+
 // AboutUIHTMLSource ----------------------------------------------------------
 
 AboutUIHTMLSource::AboutUIHTMLSource(const std::string& source_name,
                                      Profile* profile)
-    : source_name_(source_name),
-      profile_(profile) {}
+    : source_name_(source_name), profile_(profile) {}
 
-AboutUIHTMLSource::~AboutUIHTMLSource() {}
+AboutUIHTMLSource::~AboutUIHTMLSource() = default;
 
 std::string AboutUIHTMLSource::GetSource() {
   return source_name_;
@@ -628,18 +477,18 @@ void AboutUIHTMLSource::StartDataRequest(
     const GURL& url,
     const content::WebContents::Getter& wc_getter,
     content::URLDataSource::GotDataCallback callback) {
-  // TODO(crbug/1009127): Simplify usages of |path| since |url| is available.
+  // TODO(crbug.com/40050262): Simplify usages of |path| since |url| is
+  // available.
   const std::string path = content::URLDataSource::URLToRequestPath(url);
   std::string response;
   // Add your data source here, in alphabetical order.
-  if (source_name_ == chrome::kChromeUIChromeURLsHost) {
-    response = ChromeURLs(profile_);
-  } else if (source_name_ == chrome::kChromeUICreditsHost) {
+  if (source_name_ == chrome::kChromeUICreditsHost) {
     int idr = IDR_ABOUT_UI_CREDITS_HTML;
-    if (path == kCreditsJsPath)
+    if (path == kCreditsJsPath) {
       idr = IDR_ABOUT_UI_CREDITS_JS;
-    else if (path == kCreditsCssPath)
+    } else if (path == kCreditsCssPath) {
       idr = IDR_ABOUT_UI_CREDITS_CSS;
+    }
     if (idr == IDR_ABOUT_UI_CREDITS_HTML) {
       response = about_ui::GetCredits(true /*include_scripts*/);
     } else {
@@ -650,7 +499,7 @@ void AboutUIHTMLSource::StartDataRequest(
   } else if (source_name_ == chrome::kChromeUILinuxProxyConfigHost) {
     response = AboutLinuxProxyConfig();
 #endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   } else if (source_name_ == chrome::kChromeUIOSCreditsHost ||
              source_name_ == chrome::kChromeUICrostiniCreditsHost ||
              source_name_ == chrome::kChromeUIBorealisCreditsHost) {
@@ -679,7 +528,7 @@ void AboutUIHTMLSource::StartDataRequest(
 #endif
 #if !BUILDFLAG(IS_ANDROID)
   } else if (source_name_ == chrome::kChromeUITermsHost) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     if (!path.empty()) {
       ChromeOSTermsHandler::Start(path, std::move(callback));
       return;
@@ -701,7 +550,7 @@ void AboutUIHTMLSource::FinishDataRequest(
 }
 
 std::string AboutUIHTMLSource::GetMimeType(const GURL& url) {
-  const base::StringPiece path = url.path_piece().substr(1);
+  const std::string_view path = url.path_piece().substr(1);
   if (path == kCreditsJsPath || path == kStatsJsPath ||
       path == kStringsJsPath) {
     return "application/javascript";
@@ -716,7 +565,7 @@ std::string AboutUIHTMLSource::GetMimeType(const GURL& url) {
 
 std::string AboutUIHTMLSource::GetAccessControlAllowOriginForOrigin(
     const std::string& origin) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Allow chrome://oobe to load chrome://terms via XHR.
   if (source_name_ == chrome::kChromeUITermsHost &&
       base::StartsWith(chrome::kChromeUIOobeURL, origin,
@@ -727,7 +576,7 @@ std::string AboutUIHTMLSource::GetAccessControlAllowOriginForOrigin(
   return content::URLDataSource::GetAccessControlAllowOriginForOrigin(origin);
 }
 
-AboutUI::AboutUI(content::WebUI* web_ui, const std::string& host)
+AboutUI::AboutUI(content::WebUI* web_ui, const GURL& url)
     : WebUIController(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
 
@@ -737,27 +586,5 @@ AboutUI::AboutUI(content::WebUI* web_ui, const std::string& host)
 #endif
 
   content::URLDataSource::Add(
-      profile, std::make_unique<AboutUIHTMLSource>(host, profile));
+      profile, std::make_unique<AboutUIHTMLSource>(url.host(), profile));
 }
-
-#if BUILDFLAG(IS_CHROMEOS)
-
-bool AboutUI::OverrideHandleWebUIMessage(const GURL& source_url,
-                                         const std::string& message,
-                                         const base::Value::List& args) {
-  if (message != "crosUrlAboutRedirect")
-    return false;
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  lacros_url_handling::NavigateInAsh(GURL(chrome::kChromeUIAboutURL));
-#else
-  // Note: This will only be called by the UI when Lacros is available.
-  DCHECK(crosapi::BrowserManager::Get());
-  crosapi::BrowserManager::Get()->SwitchToTab(
-      GURL(chrome::kChromeUIAboutURL),
-      /*path_behavior=*/NavigateParams::RESPECT);
-#endif
-  return true;
-}
-
-#endif  // BUILDFLAG(IS_CHROMEOS)

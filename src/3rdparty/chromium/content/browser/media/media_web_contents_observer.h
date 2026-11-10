@@ -12,6 +12,7 @@
 #include <optional>
 
 #include "base/containers/flat_map.h"
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -20,6 +21,7 @@
 #include "content/browser/media/media_power_experiment_manager.h"
 #include "content/browser/media/session/media_session_controllers_manager.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/document_user_data.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/media_player_id.h"
 #include "content/public/browser/render_frame_host.h"
@@ -28,6 +30,7 @@
 #include "media/mojo/mojom/media_player.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -57,6 +60,29 @@ namespace content {
 
 class AudibleMetrics;
 class WebContentsImpl;
+
+// Used to authorize a frame to bypass the browser's audio service for
+// audibility, when using `MediaFoundationRenderer`. This is stored as
+// `DocumentUserData` on the `RenderFrameHost`. The authorization is now tied to
+// a specific player instance and is no longer document-wide for the lifetime of
+// the document.
+class CONTENT_EXPORT AudibilityBypassTracker
+    : public DocumentUserData<AudibilityBypassTracker> {
+ public:
+  ~AudibilityBypassTracker() override;
+
+  static void AddGrant(RenderFrameHost* rfh);
+  static bool ClaimGrant(const MediaPlayerId& id);
+  static void ReleaseGrant(const MediaPlayerId& id);
+
+ private:
+  friend class DocumentUserData<AudibilityBypassTracker>;
+  explicit AudibilityBypassTracker(RenderFrameHost* rfh);
+  DOCUMENT_USER_DATA_KEY_DECL();
+
+  size_t pending_grants_ = 0;
+  base::flat_set<MediaPlayerId> authorized_players_;
+};
 
 // This class manages all RenderFrame based media related managers at the
 // browser side. It receives IPC messages from media RenderFrameObservers and
@@ -96,6 +122,9 @@ class CONTENT_EXPORT MediaWebContentsObserver
   void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
   void MediaPictureInPictureChanged(bool is_picture_in_picture) override;
   void DidUpdateAudioMutingState(bool muted) override;
+  void DidStartNavigation(NavigationHandle* navigation_handle) override;
+  void RenderFrameHostChanged(RenderFrameHost* old_host,
+                              RenderFrameHost* new_host) override;
 
   // MediaPlayerObserverClient implementation.
   void GetHasPlayedBefore(GetHasPlayedBeforeCallback callback) override;
@@ -109,6 +138,9 @@ class CONTENT_EXPORT MediaWebContentsObserver
   // merging the logic of effectively fullscreen, hiding media controls and
   // fullscreening video element to the same place.
   void RequestPersistentVideo(bool value);
+
+  // Returns the number of active players with video content.
+  int GetCurrentlyPlayingVideoCount() const;
 
   // Returns whether or not the given player id is active.
   bool IsPlayerActive(const MediaPlayerId& player_id) const;
@@ -215,6 +247,7 @@ class CONTENT_EXPORT MediaWebContentsObserver
     void OnRemotePlaybackMetadataChange(
         media_session::mojom::RemotePlaybackMetadataPtr
             remote_playback_metadata) override;
+    void OnVideoVisibilityChanged(bool meets_visibility_threshold) override;
 
    private:
     PlayerInfo* GetPlayerInfo();

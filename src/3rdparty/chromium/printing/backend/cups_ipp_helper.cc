@@ -8,17 +8,16 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include <optional>
 #include "base/containers/contains.h"
+#include "base/containers/fixed_flat_map.h"
 #include "base/containers/fixed_flat_set.h"
-#include "base/containers/flat_map.h"
 #include "base/logging.h"
 #include "base/numerics/clamped_math.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "printing/backend/cups_connection.h"
@@ -31,6 +30,7 @@
 #include "printing/units.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
@@ -50,43 +50,30 @@ namespace {
 constexpr double kMMPerInch = 25.4;
 constexpr double kCmPerInch = kMMPerInch * 0.1;
 
-struct ColorMap {
-  const char* color;
-  mojom::ColorModel model;
-};
+constexpr auto kColorMap =
+    base::MakeFixedFlatMap<std::string_view, mojom::ColorModel>({
+        {CUPS_PRINT_COLOR_MODE_COLOR, mojom::ColorModel::kColorModeColor},
+        {CUPS_PRINT_COLOR_MODE_MONOCHROME,
+         mojom::ColorModel::kColorModeMonochrome},
+    });
 
-struct DuplexMap {
-  const char* name;
-  mojom::DuplexMode mode;
-};
+constexpr auto kDuplexMap =
+    base::MakeFixedFlatMap<std::string_view, mojom::DuplexMode>({
+        {CUPS_SIDES_ONE_SIDED, mojom::DuplexMode::kSimplex},
+        {CUPS_SIDES_TWO_SIDED_PORTRAIT, mojom::DuplexMode::kLongEdge},
+        {CUPS_SIDES_TWO_SIDED_LANDSCAPE, mojom::DuplexMode::kShortEdge},
+    });
 
-const ColorMap kColorList[]{
-    {CUPS_PRINT_COLOR_MODE_COLOR, mojom::ColorModel::kColorModeColor},
-    {CUPS_PRINT_COLOR_MODE_MONOCHROME, mojom::ColorModel::kColorModeMonochrome},
-};
-
-const DuplexMap kDuplexList[]{
-    {CUPS_SIDES_ONE_SIDED, mojom::DuplexMode::kSimplex},
-    {CUPS_SIDES_TWO_SIDED_PORTRAIT, mojom::DuplexMode::kLongEdge},
-    {CUPS_SIDES_TWO_SIDED_LANDSCAPE, mojom::DuplexMode::kShortEdge},
-};
-
-mojom::ColorModel ColorModelFromIppColor(base::StringPiece ippColor) {
-  for (const ColorMap& color : kColorList) {
-    if (ippColor.compare(color.color) == 0) {
-      return color.model;
-    }
-  }
-
-  return mojom::ColorModel::kUnknownColorModel;
+mojom::ColorModel ColorModelFromIppColor(std::string_view ipp_color) {
+  auto it = kColorMap.find(ipp_color);
+  return it != kColorMap.end() ? it->second
+                               : mojom::ColorModel::kUnknownColorModel;
 }
 
-mojom::DuplexMode DuplexModeFromIpp(base::StringPiece ipp_duplex) {
-  for (const DuplexMap& entry : kDuplexList) {
-    if (base::EqualsCaseInsensitiveASCII(ipp_duplex, entry.name))
-      return entry.mode;
-  }
-  return mojom::DuplexMode::kUnknownDuplexMode;
+mojom::DuplexMode DuplexModeFromIpp(std::string_view ipp_duplex) {
+  auto it = kDuplexMap.find(ipp_duplex);
+  return it != kDuplexMap.end() ? it->second
+                                : mojom::DuplexMode::kUnknownDuplexMode;
 }
 
 mojom::ColorModel DefaultColorModel(const CupsOptionProvider& printer) {
@@ -104,9 +91,9 @@ std::vector<mojom::ColorModel> SupportedColorModels(
     const CupsOptionProvider& printer) {
   std::vector<mojom::ColorModel> colors;
 
-  std::vector<base::StringPiece> color_modes =
+  std::vector<std::string_view> color_modes =
       printer.GetSupportedOptionValueStrings(kIppColor);
-  for (base::StringPiece color : color_modes) {
+  for (std::string_view color : color_modes) {
     mojom::ColorModel color_model = ColorModelFromIppColor(color);
     if (color_model != mojom::ColorModel::kUnknownColorModel) {
       colors.push_back(color_model);
@@ -149,24 +136,24 @@ void ExtractColor(const CupsOptionProvider& printer,
 
 void ExtractDuplexModes(const CupsOptionProvider& printer,
                         PrinterSemanticCapsAndDefaults* printer_info) {
-  std::vector<base::StringPiece> duplex_modes =
+  printer_info->duplex_default = mojom::DuplexMode::kUnknownDuplexMode;
+  printer_info->duplex_modes.clear();
+
+  std::vector<std::string_view> duplex_modes =
       printer.GetSupportedOptionValueStrings(kIppDuplex);
-  for (base::StringPiece duplex : duplex_modes) {
+  for (std::string_view duplex : duplex_modes) {
     mojom::DuplexMode duplex_mode = DuplexModeFromIpp(duplex);
     if (duplex_mode != mojom::DuplexMode::kUnknownDuplexMode)
       printer_info->duplex_modes.push_back(duplex_mode);
   }
 
   ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppDuplex);
-  if (!attr) {
-    printer_info->duplex_default = mojom::DuplexMode::kUnknownDuplexMode;
-    return;
+  if (attr) {
+    const char* const attr_str = ippGetString(attr, 0, nullptr);
+    if (attr_str) {
+      printer_info->duplex_default = DuplexModeFromIpp(attr_str);
+    }
   }
-
-  const char* const attr_str = ippGetString(attr, 0, nullptr);
-  printer_info->duplex_default = attr_str
-                                     ? DuplexModeFromIpp(attr_str)
-                                     : mojom::DuplexMode::kUnknownDuplexMode;
 }
 
 void CopiesRange(const CupsOptionProvider& printer,
@@ -220,6 +207,9 @@ void ExtractResolutions(const CupsOptionProvider& printer,
 #else
   constexpr gfx::Size kDefaultMissingDpi(kDefaultPdfDpi, kDefaultPdfDpi);
 #endif
+
+  printer_info->dpis.clear();
+  printer_info->default_dpi = gfx::Size();
 
   ipp_attribute_t* attr = printer.GetSupportedOptionValues(kIppResolution);
   if (!attr) {
@@ -303,7 +293,15 @@ PaperFromMediaColDatabaseEntry(ipp_t* db_entry) {
 
   return PrinterSemanticCapsAndDefaults::Paper(
       /*display_name=*/"", /*vendor_id=*/"", size_um, printable_area_um,
-      max_height_um);
+      max_height_um, /*has_borderless_variant=*/false
+#if BUILDFLAG(IS_CHROMEOS)
+      ,
+      PaperMargins(size->top_margin * kMicronsPerPwgUnit,
+                   size->right_margin * kMicronsPerPwgUnit,
+                   size->bottom_margin * kMicronsPerPwgUnit,
+                   size->left_margin * kMicronsPerPwgUnit)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  );
 }
 
 bool PaperIsBorderless(const PrinterSemanticCapsAndDefaults::Paper& paper) {
@@ -365,19 +363,34 @@ PrinterSemanticCapsAndDefaults::Papers SupportedPapers(
   return parsed_papers;
 }
 
-// Initializes `printer_info->media_types` with available media types and
-// `printer_info->default_media_type` with default media type provided by
-// `printer`.
+// Overrides the given printer's default media type as needed.
+void CorrectDefaultMediaType(PrinterSemanticCapsAndDefaults*& printer_info) {
+  // Some Canon printers give a proprietary default media type that's frequently
+  // unavailable to users.
+  if (base::StartsWith(printer_info->default_media_type.vendor_id, "com.canon",
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+    for (const auto& media_type : printer_info->media_types) {
+      if (media_type.vendor_id == "stationery") {
+        printer_info->default_media_type = media_type;
+        break;
+      }
+    }
+  }
+}
+
 void ExtractMediaTypes(const CupsOptionProvider& printer,
                        PrinterSemanticCapsAndDefaults* printer_info) {
-  std::vector<base::StringPiece> names =
+  printer_info->media_types.clear();
+  printer_info->default_media_type =
+      PrinterSemanticCapsAndDefaults::MediaType();
+  std::vector<std::string_view> names =
       printer.GetSupportedOptionValueStrings(kIppMediaType);
   if (names.empty()) {
     return;
   }
   printer_info->media_types.reserve(names.size());
 
-  for (base::StringPiece vendor_id : names) {
+  for (std::string_view vendor_id : names) {
     PrinterSemanticCapsAndDefaults::MediaType type;
     type.vendor_id = std::string(vendor_id);
 
@@ -402,7 +415,7 @@ void ExtractMediaTypes(const CupsOptionProvider& printer,
   ipp_t* media_col_default =
       ippGetCollection(printer.GetDefaultOptionValue(kIppMediaCol), 0);
   const char* media_type_default = ippGetString(
-      ippFindAttribute(media_col_default, "media-type", IPP_TAG_KEYWORD), 0,
+      ippFindAttribute(media_col_default, kIppMediaType, IPP_TAG_KEYWORD), 0,
       nullptr);
   if (media_type_default) {
     // Don't set the "default" media type if it isn't in the list of supported
@@ -413,10 +426,12 @@ void ExtractMediaTypes(const CupsOptionProvider& printer,
       }
     }
   }
+
+  CorrectDefaultMediaType(printer_info);
 }
 
 bool CollateCapable(const CupsOptionProvider& printer) {
-  std::vector<base::StringPiece> values =
+  std::vector<std::string_view> values =
       printer.GetSupportedOptionValueStrings(kIppCollate);
   return base::Contains(values, kCollated) &&
          base::Contains(values, kUncollated);
@@ -428,7 +443,7 @@ bool CollateDefault(const CupsOptionProvider& printer) {
     return false;
 
   const char* const name = ippGetString(attr, 0, nullptr);
-  return name && !base::StringPiece(name).compare(kCollated);
+  return name && !std::string_view(name).compare(kCollated);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -440,7 +455,7 @@ bool PinSupported(const CupsOptionProvider& printer) {
   if (password_maximum_length_supported < kPinMinimumLength)
     return false;
 
-  std::vector<base::StringPiece> values =
+  std::vector<std::string_view> values =
       printer.GetSupportedOptionValueStrings(kIppPinEncryption);
   return base::Contains(values, kPinEncryptionNone);
 }
@@ -458,7 +473,7 @@ size_t AddAttributes(const CupsOptionProvider& printer,
   static const base::NoDestructor<HandlerMap> handlers(GenerateHandlers());
   // The names of attributes that we know are not supported (b/266573545).
   static constexpr auto kOptionsToIgnore =
-      base::MakeFixedFlatSet<base::StringPiece>(
+      base::MakeFixedFlatSet<std::string_view>(
           {"finishings-col", "ipp-attribute-fidelity", "job-name",
            "number-up-layout"});
   std::vector<std::string> unknown_options;
@@ -491,17 +506,75 @@ size_t AddAttributes(const CupsOptionProvider& printer,
 size_t AddInputTray(const CupsOptionProvider& printer,
                     AdvancedCapabilities* caps) {
   size_t previous_size = caps->size();
-  KeywordHandler(printer, "media-source", caps);
+  KeywordHandler(printer, kIppMediaSource, caps);
   return caps->size() - previous_size;
 }
 
 void ExtractAdvancedCapabilities(const CupsOptionProvider& printer,
                                  PrinterSemanticCapsAndDefaults* printer_info) {
   AdvancedCapabilities* options = &printer_info->advanced_capabilities;
+  options->clear();
   size_t attr_count = AddInputTray(printer, options);
   attr_count += AddAttributes(printer, kIppJobAttributes, options);
   attr_count += AddAttributes(printer, kIppDocumentAttributes, options);
   base::UmaHistogramCounts1000("Printing.CUPS.IppAttributesCount", attr_count);
+}
+
+// Convert string value to mojom::PrintScalingType
+mojom::PrintScalingType PrintScalingTypeFromString(
+    const std::string_view value) {
+  if (value == "auto") {
+    return mojom::PrintScalingType::kAuto;
+  }
+  if (value == "auto-fit") {
+    return mojom::PrintScalingType::kAutoFit;
+  }
+  if (value == "fill") {
+    return mojom::PrintScalingType::kFill;
+  }
+  if (value == "fit") {
+    return mojom::PrintScalingType::kFit;
+  }
+  if (value == "none") {
+    return mojom::PrintScalingType::kNone;
+  }
+
+  // Default to unknown for any unrecognized values.
+  return mojom::PrintScalingType::kUnknownPrintScalingType;
+}
+
+void ExtractPrintScaling(const CupsOptionProvider& printer,
+                         PrinterSemanticCapsAndDefaults* printer_info) {
+  printer_info->print_scaling_types.clear();
+  printer_info->print_scaling_type_default =
+      mojom::PrintScalingType::kUnknownPrintScalingType;
+
+  std::vector<std::string_view> values =
+      printer.GetSupportedOptionValueStrings(kIppPrintScaling);
+  for (const auto& value : values) {
+    auto type = PrintScalingTypeFromString(value);
+    if (type != mojom::PrintScalingType::kUnknownPrintScalingType) {
+      printer_info->print_scaling_types.emplace_back(type);
+    }
+  }
+
+  if (printer_info->print_scaling_types.empty()) {
+    return;
+  }
+
+  // Get default value
+  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppPrintScaling);
+  if (const char* const name = ippGetString(attr, 0, nullptr)) {
+    printer_info->print_scaling_type_default = PrintScalingTypeFromString(name);
+  }
+
+  if (printer_info->print_scaling_type_default ==
+          mojom::PrintScalingType::kUnknownPrintScalingType &&
+      !printer_info->print_scaling_types.empty()) {
+    // If no default is provided, use the first value.
+    printer_info->print_scaling_type_default =
+        printer_info->print_scaling_types[0];
+  }
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -534,6 +607,9 @@ void CapsAndDefaultsFromPrinter(const CupsPrinter& printer,
 #if BUILDFLAG(IS_CHROMEOS)
   printer_info->pin_supported = PinSupported(printer);
   ExtractAdvancedCapabilities(printer, printer_info);
+  if (base::FeatureList::IsEnabled(features::kApiPrintingMarginsAndScale)) {
+    ExtractPrintScaling(printer, printer_info);
+  }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   ExtractCopies(printer, printer_info);
@@ -812,7 +888,7 @@ void FilterMediaColSizes(ScopedIppPtr& attributes) {
   // Finally, update the attribute that was passed in with the new entries.
   ippDeleteAttribute(attributes.get(), media_col_db);
   std::vector<const ipp_t*> raw_entries(new_entries.size());
-  base::ranges::transform(new_entries, raw_entries.begin(), &ScopedIppPtr::get);
+  std::ranges::transform(new_entries, raw_entries.begin(), &ScopedIppPtr::get);
   ippAddCollections(attributes.get(), IPP_TAG_PRINTER, kIppMediaColDatabase,
                     raw_entries.size(), raw_entries.data());
 }

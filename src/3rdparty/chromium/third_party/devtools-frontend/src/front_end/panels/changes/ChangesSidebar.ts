@@ -1,14 +1,15 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
-import * as Platform from '../../core/platform/platform.js';
 import * as Workspace from '../../models/workspace/workspace.js';
 import * as WorkspaceDiff from '../../models/workspace_diff/workspace_diff.js';
 import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 import * as Snippets from '../snippets/snippets.js';
 
 import changesSidebarStyles from './changesSidebar.css.js';
@@ -19,7 +20,7 @@ const UIStrings = {
    *@example {compile.html} PH1
    */
   sFromSourceMap: '{PH1} (from source map)',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/changes/ChangesSidebar.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -29,11 +30,12 @@ export class ChangesSidebar extends Common.ObjectWrapper.eventMixin<EventTypes, 
   private readonly treeElements: Map<Workspace.UISourceCode.UISourceCode, UISourceCodeTreeElement>;
   private readonly workspaceDiff: WorkspaceDiff.WorkspaceDiff.WorkspaceDiffImpl;
   constructor(workspaceDiff: WorkspaceDiff.WorkspaceDiff.WorkspaceDiffImpl) {
-    super();
-    this.treeoutline = new UI.TreeOutline.TreeOutlineInShadow();
-    this.treeoutline.setFocusable(false);
+    super({jslog: `${VisualLogging.pane('sidebar').track({resize: true})}`});
 
-    this.treeoutline.setComparator((a, b) => Platform.StringUtilities.compare(a.titleAsText(), b.titleAsText()));
+    this.treeoutline = new UI.TreeOutline.TreeOutlineInShadow(UI.TreeOutline.TreeVariant.NAVIGATION_TREE);
+    this.treeoutline.registerRequiredCSS(changesSidebarStyles);
+    this.treeoutline.setFocusable(false);
+    this.treeoutline.hideOverflow();
     this.treeoutline.addEventListener(UI.TreeOutline.Events.ElementSelected, this.selectionChanged, this);
     UI.ARIAUtils.markAsTablist(this.treeoutline.contentElement);
 
@@ -43,27 +45,19 @@ export class ChangesSidebar extends Common.ObjectWrapper.eventMixin<EventTypes, 
     this.workspaceDiff = workspaceDiff;
     this.workspaceDiff.modifiedUISourceCodes().forEach(this.addUISourceCode.bind(this));
     this.workspaceDiff.addEventListener(
-        WorkspaceDiff.WorkspaceDiff.Events.ModifiedStatusChanged, this.uiSourceCodeMofiedStatusChanged, this);
-  }
-
-  selectUISourceCode(uiSourceCode: Workspace.UISourceCode.UISourceCode, omitFocus?: boolean|undefined): void {
-    const treeElement = this.treeElements.get(uiSourceCode);
-    if (!treeElement) {
-      return;
-    }
-    treeElement.select(omitFocus);
+        WorkspaceDiff.WorkspaceDiff.Events.MODIFIED_STATUS_CHANGED, this.uiSourceCodeModifiedStatusChanged, this);
   }
 
   selectedUISourceCode(): Workspace.UISourceCode.UISourceCode|null {
-    // @ts-ignore uiSourceCode seems to be dynamically attached.
+    // @ts-expect-error uiSourceCode seems to be dynamically attached.
     return this.treeoutline.selectedTreeElement ? this.treeoutline.selectedTreeElement.uiSourceCode : null;
   }
 
   private selectionChanged(): void {
-    this.dispatchEventToListeners(Events.SelectedUISourceCodeChanged);
+    this.dispatchEventToListeners(Events.SELECTED_UI_SOURCE_CODE_CHANGED);
   }
 
-  private uiSourceCodeMofiedStatusChanged(
+  private uiSourceCodeModifiedStatusChanged(
       event: Common.EventTarget.EventTargetEvent<WorkspaceDiff.WorkspaceDiff.ModifiedStatusChangedEvent>): void {
     if (event.data.isModified) {
       this.addUISourceCode(event.data.uiSourceCode);
@@ -98,23 +92,16 @@ export class ChangesSidebar extends Common.ObjectWrapper.eventMixin<EventTypes, 
     this.treeElements.set(uiSourceCode, treeElement);
     this.treeoutline.setFocusable(true);
     this.treeoutline.appendChild(treeElement);
-    if (!this.treeoutline.selectedTreeElement) {
-      treeElement.select(true);
-    }
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.treeoutline.registerCSSFiles([changesSidebarStyles]);
   }
 }
 
 export const enum Events {
-  SelectedUISourceCodeChanged = 'SelectedUISourceCodeChanged',
+  SELECTED_UI_SOURCE_CODE_CHANGED = 'SelectedUISourceCodeChanged',
 }
 
-export type EventTypes = {
-  [Events.SelectedUISourceCodeChanged]: void,
-};
+export interface EventTypes {
+  [Events.SELECTED_UI_SOURCE_CODE_CHANGED]: void;
+}
 
 export class UISourceCodeTreeElement extends UI.TreeOutline.TreeElement {
   uiSourceCode: Workspace.UISourceCode.UISourceCode;

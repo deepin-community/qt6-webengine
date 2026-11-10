@@ -2,17 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/accessibility/features/mojo/mojo_handle.h"
 
 #include <memory>
 
 #include "base/logging.h"
+#include "base/types/fixed_array.h"
 #include "gin/arguments.h"
 #include "gin/array_buffer.h"
 #include "gin/converter.h"
 #include "gin/data_object_builder.h"
 #include "gin/dictionary.h"
-#include "gin/handle.h"
 #include "gin/public/context_holder.h"
 #include "gin/public/wrapper_info.h"
 #include "mojo/public/c/system/types.h"
@@ -20,26 +25,29 @@
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/accessibility/features/mojo/mojo_watch_callback.h"
 #include "services/accessibility/features/mojo/mojo_watcher.h"
-#include "services/accessibility/features/registered_wrappable.h"
+#include "v8/include/cppgc/allocation.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-cppgc.h"
 
 namespace ax {
 
 // static
-gin::WrapperInfo MojoHandle::kWrapperInfo = {gin::kEmbedderNativeGin};
-
-// static
-gin::Handle<MojoHandle> MojoHandle::Create(v8::Local<v8::Context> context,
-                                           mojo::ScopedHandle handle) {
-  return gin::CreateHandle(context->GetIsolate(),
-                           new MojoHandle(context, std::move(handle)));
+v8::Local<v8::Object> MojoHandle::Create(v8::Isolate* isolate,
+                                         mojo::ScopedHandle handle) {
+  auto* mojo_handle = cppgc::MakeGarbageCollected<MojoHandle>(
+      isolate->GetCppHeap()->GetAllocationHandle(), std::move(handle));
+  return mojo_handle->GetWrapper(isolate).ToLocalChecked();
 }
 
 MojoHandle::~MojoHandle() = default;
+
+void MojoHandle::Dispose() {
+  handle_.reset();
+}
 
 gin::ObjectTemplateBuilder MojoHandle::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
@@ -48,6 +56,10 @@ gin::ObjectTemplateBuilder MojoHandle::GetObjectTemplateBuilder(
       .SetMethod("close", &MojoHandle::Close)
       .SetMethod("readMessage", &MojoHandle::ReadMessage)
       .SetMethod("writeMessage", &MojoHandle::WriteMessage);
+}
+
+const gin::WrapperInfo* MojoHandle::wrapper_info() const {
+  return &kWrapperInfo;
 }
 
 void MojoHandle::Watch(gin::Arguments* arguments) {
@@ -161,10 +173,10 @@ void MojoHandle::ReadMessage(gin::Arguments* arguments) {
   }
   result_dict.Set("buffer", array_buffer);
 
-  std::vector<gin::Handle<MojoHandle>> handles(num_handles);
+  std::vector<v8::Local<v8::Object>> handles(num_handles);
   for (uint32_t i = 0; i < num_handles; ++i) {
     handles[i] = MojoHandle::Create(
-        arguments->GetHolderCreationContext(),
+        isolate,
         mojo::MakeScopedHandle(mojo::Handle(raw_handles[i])));
   }
   result_dict.Set("handles", handles);
@@ -187,44 +199,47 @@ void MojoHandle::WriteMessage(gin::Arguments* arguments) {
 
   v8::Local<v8::Array> v8_handles = args[1].As<v8::Array>();
 
-  std::vector<gin::Handle<MojoHandle>> handles;
-  if (!gin::ConvertFromV8(isolate, v8_handles, &handles)) {
-    arguments->Return(MOJO_RESULT_INVALID_ARGUMENT);
-    return;
-  }
-
+  uint32_t length = v8_handles->Length();
   std::vector<mojo::ScopedHandle> scoped_handles;
-  scoped_handles.reserve(handles.size());
+  scoped_handles.reserve(length);
   bool has_invalid_handles = false;
-  for (auto& handle : handles) {
+  for (uint32_t i = 0; i < length; ++i) {
+    v8::Local<v8::Value> v8_item;
+    if (!v8_handles->Get(isolate->GetCurrentContext(), i).ToLocal(&v8_item)) {
+      arguments->Return(MOJO_RESULT_INVALID_ARGUMENT);
+      return;
+    }
+    MojoHandle* handle;
+    if (!gin::Converter<MojoHandle*>::FromV8(isolate, v8_item, &handle)) {
+      arguments->Return(MOJO_RESULT_INVALID_ARGUMENT);
+      return;
+    }
+
     if (!handle->handle_.is_valid()) {
       has_invalid_handles = true;
     } else {
       scoped_handles.emplace_back(std::move(handle->handle_));
     }
   }
+
   if (has_invalid_handles) {
     arguments->Return(MOJO_RESULT_INVALID_ARGUMENT);
     return;
   }
 
-  const void* bytes = nullptr;
-  size_t num_bytes = 0;
+  base::span<const uint8_t> bytes;
   if (args[0]->IsArrayBuffer()) {
     v8::Local<v8::ArrayBuffer> array = args[0].As<v8::ArrayBuffer>();
-    bytes = array->Data();
-    num_bytes = array->ByteLength();
+    bytes = base::span(static_cast<const uint8_t*>(array->Data()),
+                       array->ByteLength());
   } else {
     v8::Local<v8::ArrayBufferView> view = args[0].As<v8::ArrayBufferView>();
-    num_bytes = view->ByteLength();
-    void* bites[num_bytes];
-    view->CopyContents(bites, num_bytes);
-    bytes = bites;
+    base::FixedArray<uint8_t> bites(view->ByteLength());
+    view->CopyContents(bites.data(), bites.size());
+    bytes = base::span(bites);
   }
 
-  auto message = mojo::Message(
-      base::make_span(static_cast<const uint8_t*>(bytes), num_bytes),
-      base::make_span(scoped_handles));
+  auto message = mojo::Message(bytes, base::span(scoped_handles));
   DCHECK(!message.IsNull());
   MojoResult result = mojo::WriteMessageNew(
       mojo::MessagePipeHandle(handle_.get().value()), message.TakeMojoMessage(),
@@ -236,8 +251,6 @@ mojo::ScopedHandle MojoHandle::TakeHandle() {
   return std::move(handle_);
 }
 
-MojoHandle::MojoHandle(v8::Local<v8::Context> context,
-                       mojo::ScopedHandle handle)
-    : RegisteredWrappable(context), handle_(std::move(handle)) {}
+MojoHandle::MojoHandle(mojo::ScopedHandle handle) : handle_(std::move(handle)) {}
 
 }  // namespace ax

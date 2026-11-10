@@ -8,17 +8,24 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "api/array_view.h"
+#include "api/rtp_headers.h"
+#include "api/rtp_parameters.h"
+#include "call/audio_receive_stream.h"
+#include "call/audio_send_stream.h"
 #include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
 #include "modules/rtp_rtcp/source/rtp_header_extensions.h"
 #include "modules/rtp_rtcp/source/rtp_packet.h"
+#include "rtc_base/logging.h"
 #include "test/call_test.h"
-#include "test/field_trial.h"
 #include "test/gtest.h"
 #include "test/rtcp_packet_parser.h"
+#include "test/rtp_rtcp_observer.h"
 #include "test/video_test_constants.h"
 
 namespace webrtc {
@@ -49,7 +56,7 @@ TEST_F(AudioSendStreamCallTest, SupportsCName) {
     CNameObserver() = default;
 
    private:
-    Action OnSendRtcp(rtc::ArrayView<const uint8_t> packet) override {
+    Action OnSendRtcp(ArrayView<const uint8_t> packet) override {
       RtcpPacketParser parser;
       EXPECT_TRUE(parser.Parse(packet));
       if (parser.sdes()->num_packets() > 0) {
@@ -64,7 +71,7 @@ TEST_F(AudioSendStreamCallTest, SupportsCName) {
 
     void ModifyAudioConfigs(AudioSendStream::Config* send_config,
                             std::vector<AudioReceiveStreamInterface::Config>*
-                                receive_configs) override {
+                            /* receive_configs */) override {
       send_config->rtp.c_name = kCName;
     }
 
@@ -82,10 +89,10 @@ TEST_F(AudioSendStreamCallTest, NoExtensionsByDefault) {
     NoExtensionsObserver() = default;
 
    private:
-    Action OnSendRtp(rtc::ArrayView<const uint8_t> packet) override {
+    Action OnSendRtp(ArrayView<const uint8_t> packet) override {
       RtpPacket rtp_packet;
-      EXPECT_TRUE(rtp_packet.Parse(packet));          // rtp packet is valid.
-      EXPECT_EQ(packet[0] & 0b0001'0000, 0);          // extension bit not set.
+      EXPECT_TRUE(rtp_packet.Parse(packet));  // rtp packet is valid.
+      EXPECT_EQ(packet[0] & 0b0001'0000, 0);  // extension bit not set.
 
       observation_complete_.Set();
       return SEND_PACKET;
@@ -93,7 +100,7 @@ TEST_F(AudioSendStreamCallTest, NoExtensionsByDefault) {
 
     void ModifyAudioConfigs(AudioSendStream::Config* send_config,
                             std::vector<AudioReceiveStreamInterface::Config>*
-                                receive_configs) override {
+                            /* receive_configs */) override {
       send_config->rtp.extensions.clear();
     }
 
@@ -109,17 +116,16 @@ TEST_F(AudioSendStreamCallTest, SupportsAudioLevel) {
   class AudioLevelObserver : public AudioSendTest {
    public:
     AudioLevelObserver() : AudioSendTest() {
-      extensions_.Register<AudioLevel>(kAudioLevelExtensionId);
+      extensions_.Register<AudioLevelExtension>(kAudioLevelExtensionId);
     }
 
-    Action OnSendRtp(rtc::ArrayView<const uint8_t> packet) override {
+    Action OnSendRtp(ArrayView<const uint8_t> packet) override {
       RtpPacket rtp_packet(&extensions_);
       EXPECT_TRUE(rtp_packet.Parse(packet));
 
-      uint8_t audio_level = 0;
-      bool voice = false;
-      EXPECT_TRUE(rtp_packet.GetExtension<AudioLevel>(&voice, &audio_level));
-      if (audio_level != 0) {
+      AudioLevel audio_level;
+      EXPECT_TRUE(rtp_packet.GetExtension<AudioLevelExtension>(&audio_level));
+      if (audio_level.level() != 0) {
         // Wait for at least one packet with a non-zero level.
         observation_complete_.Set();
       } else {
@@ -132,7 +138,7 @@ TEST_F(AudioSendStreamCallTest, SupportsAudioLevel) {
 
     void ModifyAudioConfigs(AudioSendStream::Config* send_config,
                             std::vector<AudioReceiveStreamInterface::Config>*
-                                receive_configs) override {
+                            /* receive_configs */) override {
       send_config->rtp.extensions.clear();
       send_config->rtp.extensions.push_back(
           RtpExtension(RtpExtension::kAudioLevelUri, kAudioLevelExtensionId));
@@ -158,7 +164,7 @@ class TransportWideSequenceNumberObserver : public AudioSendTest {
   }
 
  private:
-  Action OnSendRtp(rtc::ArrayView<const uint8_t> packet) override {
+  Action OnSendRtp(ArrayView<const uint8_t> packet) override {
     RtpPacket rtp_packet(&extensions_);
     EXPECT_TRUE(rtp_packet.Parse(packet));
 
@@ -174,7 +180,7 @@ class TransportWideSequenceNumberObserver : public AudioSendTest {
 
   void ModifyAudioConfigs(AudioSendStream::Config* send_config,
                           std::vector<AudioReceiveStreamInterface::Config>*
-                              receive_configs) override {
+                          /* receive_configs */) override {
     send_config->rtp.extensions.clear();
     send_config->rtp.extensions.push_back(
         RtpExtension(RtpExtension::kTransportSequenceNumberUri,
@@ -204,7 +210,7 @@ TEST_F(AudioSendStreamCallTest, SendDtmf) {
     DtmfObserver() = default;
 
    private:
-    Action OnSendRtp(rtc::ArrayView<const uint8_t> packet) override {
+    Action OnSendRtp(ArrayView<const uint8_t> packet) override {
       RtpPacket rtp_packet;
       EXPECT_TRUE(rtp_packet.Parse(packet));
 
@@ -226,7 +232,7 @@ TEST_F(AudioSendStreamCallTest, SendDtmf) {
 
     void OnAudioStreamsCreated(AudioSendStream* send_stream,
                                const std::vector<AudioReceiveStreamInterface*>&
-                                   receive_streams) override {
+                               /* receive_streams */) override {
       // Need to start stream here, else DTMF events are dropped.
       send_stream->Start();
       for (int event = kDtmfEventFirst; event <= kDtmfEventLast; ++event) {

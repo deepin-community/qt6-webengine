@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "partition_alloc/partition_alloc_base/fuchsia/fuchsia_logging.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
 #include <fuchsia/logger/cpp/fidl.h>
 #include <lib/fidl/cpp/binding.h>
 #include <lib/sys/cpp/component_context.h>
 
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/buildflags.h"
+#include "partition_alloc/partition_alloc_base/fuchsia/fuchsia_logging.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -28,7 +32,7 @@ class MockLogSource {
 TEST(FuchsiaLoggingTestPA, FuchsiaLogging) {
   MockLogSource mock_log_source;
   constexpr int kTimes =
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
       2;
 #else
       1;
@@ -40,7 +44,7 @@ TEST(FuchsiaLoggingTestPA, FuchsiaLogging) {
   logging::SetMinLogLevel(logging::LOGGING_INFO);
 
   EXPECT_TRUE(PA_LOG_IS_ON(INFO));
-  EXPECT_EQ(BUILDFLAG(PA_DCHECK_IS_ON), PA_DLOG_IS_ON(INFO));
+  EXPECT_EQ(PA_BUILDFLAG(DCHECKS_ARE_ON), PA_DLOG_IS_ON(INFO));
 
   PA_ZX_LOG(INFO, ZX_ERR_INTERNAL) << mock_log_source.Log();
   PA_ZX_DLOG(INFO, ZX_ERR_INTERNAL) << mock_log_source.Log();

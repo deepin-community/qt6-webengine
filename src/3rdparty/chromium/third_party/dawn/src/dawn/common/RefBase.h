@@ -28,7 +28,8 @@
 #ifndef SRC_DAWN_COMMON_REFBASE_H_
 #define SRC_DAWN_COMMON_REFBASE_H_
 
-#include <type_traits>
+#include <concepts>
+#include <cstddef>
 #include <utility>
 
 #include "dawn/common/Assert.h"
@@ -42,7 +43,7 @@ namespace dawn {
 //
 //   struct {
 //      static constexpr T kNullValue = ...;
-//      static void Reference(T value) { ... }
+//      static void AddRef(T value) { ... }
 //      static void Release(T value) { ... }
 //   };
 //
@@ -66,7 +67,7 @@ class RefBase {
 
     // Constructors from a value T.
     // NOLINTNEXTLINE(runtime/explicit)
-    RefBase(T value) : mValue(value) { Reference(value); }
+    RefBase(T value) : mValue(value) { AddRef(value); }
 
     RefBase<T, Traits>& operator=(const T& value) {
         Set(value);
@@ -74,7 +75,7 @@ class RefBase {
     }
 
     // Constructors from a RefBase<T>
-    RefBase(const RefBase<T, Traits>& other) : mValue(other.mValue) { Reference(other.mValue); }
+    RefBase(const RefBase<T, Traits>& other) : mValue(other.mValue) { AddRef(other.mValue); }
 
     RefBase<T, Traits>& operator=(const RefBase<T, Traits>& other) {
         Set(other.mValue);
@@ -94,33 +95,40 @@ class RefBase {
     // Constructors from a RefBase<U>. Note that in the *-assignment operators this cannot be the
     // same as `other` because overload resolution rules would have chosen the *-assignement
     // operators defined with `other` == RefBase<T, Traits>.
-    template <typename U, typename UTraits, typename = typename std::is_convertible<U, T>::type>
+    template <typename U, typename UTraits>
+        requires std::convertible_to<U, T>
     RefBase(const RefBase<U, UTraits>& other) : mValue(other.mValue) {
-        Reference(other.mValue);
+        AddRef(other.mValue);
     }
 
-    template <typename U, typename UTraits, typename = typename std::is_convertible<U, T>::type>
+    template <typename U, typename UTraits>
+        requires std::convertible_to<U, T>
     RefBase<T, Traits>& operator=(const RefBase<U, UTraits>& other) {
         Set(other.mValue);
         return *this;
     }
 
-    template <typename U, typename UTraits, typename = typename std::is_convertible<U, T>::type>
+    template <typename U, typename UTraits>
+        requires std::convertible_to<U, T>
     RefBase(RefBase<U, UTraits>&& other) {
         mValue = other.Detach();
     }
 
-    template <typename U, typename UTraits, typename = typename std::is_convertible<U, T>::type>
+    template <typename U, typename UTraits>
+        requires std::convertible_to<U, T>
     RefBase<T, Traits>& operator=(RefBase<U, UTraits>&& other) {
         Release(mValue);
         mValue = other.Detach();
         return *this;
     }
 
+    explicit operator bool() const { return !!mValue; }
+
     // Comparison operators.
     bool operator==(const T& other) const { return mValue == other; }
-
     bool operator!=(const T& other) const { return mValue != other; }
+
+    bool operator==(const RefBase<T, Traits>& other) const = default;
 
     const T operator->() const { return mValue; }
     T operator->() { return mValue; }
@@ -147,15 +155,29 @@ class RefBase {
         return &mValue;
     }
 
+    // Cast operator.
+    template <typename Other>
+    Other Cast() && {
+        Other other;
+        CastImpl(this, &other);
+        return other;
+    }
+
   private:
-    // Friend is needed so that instances of RefBase<U> can call Reference and Release on
+    // Friend is needed so that instances of RefBase<U> can call AddRef and Release on
     // RefBase<T>.
     template <typename U, typename UTraits>
     friend class RefBase;
 
-    static void Reference(T value) {
+    template <typename U, typename UTraits>
+        requires std::convertible_to<U, T>
+    static void CastImpl(RefBase<T, Traits>* ref, RefBase<U, UTraits>* other) {
+        other->Acquire(static_cast<U>(ref->Detach()));
+    }
+
+    static void AddRef(T value) {
         if (value != Traits::kNullValue) {
-            Traits::Reference(value);
+            Traits::AddRef(value);
         }
     }
     static void Release(T value) {
@@ -168,7 +190,7 @@ class RefBase {
         if (mValue != value) {
             // Ensure that the new value is referenced before the old is released to prevent any
             // transitive frees that may affect the new value.
-            Reference(value);
+            AddRef(value);
             Release(mValue);
             mValue = value;
         }

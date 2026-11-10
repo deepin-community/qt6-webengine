@@ -3,7 +3,7 @@
 _Everything you always wanted to know but were afraid to ask_
 
 This document covers the `String` type in Blink, often written with an
-explicit namespace as `WTF::String` to disambiguate from string
+explicit namespace as `blink::String` to disambiguate from string
 concepts or other types. It also briefly covers associated classes
 used for constructing strings (`StringBuilder`, `StringBuffer`), the
 internal `StringImpl` class, and the special `AtomicString` variant.
@@ -12,7 +12,7 @@ encodings, views, line endings, etc).
 
 ## Overview
 
-A `WTF::String` represents a sequence of zero or more Unicode code
+A `blink::String` represents a sequence of zero or more Unicode code
 points. A `String` can also represent one of two zero-length strings:
 the empty string and the null string. These correspond to "" and
 `null` in JavaScript, respectively. Both the empty and the null string
@@ -25,6 +25,9 @@ reference counted character buffer. This design makes it easier to
 share the underlying character buffer between different consumers
 because multiple consumers can reference the same underlying buffer.
 
+Nevertheless, since `String` is an atomically ref-counted pointer, it
+should be passed as function argument by const reference and not by
+value where possible.
 
 ## Storage
 

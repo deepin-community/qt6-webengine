@@ -10,20 +10,28 @@
 
 #include "test/testsupport/file_utils_override.h"
 
-#include <limits.h>
 #include <stdio.h>
 
+#include <cstdio>
+#include <iterator>
+#include <optional>
+#include <string>
+
+#include "absl/strings/string_view.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/strings/string_builder.h"
+
 #if defined(WEBRTC_WIN)
+#include <Shlwapi.h>
+#include <WinDef.h>
 #include <direct.h>
 #include <tchar.h>
 #include <windows.h>
 
 #include <algorithm>
-#include <codecvt>
 #include <locale>
 
-#include "Shlwapi.h"
-#include "WinDef.h"
+#include "rtc_base/string_utils.h"
 #include "rtc_base/win32.h"
 
 #define GET_CURRENT_DIR _getcwd
@@ -41,12 +49,9 @@
 #include "test/testsupport/mac_file_utils.h"
 #endif
 
-#include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
-#include "rtc_base/arraysize.h"
-#include "rtc_base/checks.h"
-#include "rtc_base/string_utils.h"
-#include "rtc_base/strings/string_builder.h"
+#if defined(WEBRTC_POSIX) && !defined(WEBRTC_MAC) && !defined(WEBRTC_FUCHSIA)
+#include <linux/limits.h>
+#endif
 
 namespace webrtc {
 namespace test {
@@ -81,7 +86,7 @@ const absl::string_view kResourcesDirName = "resources";
 
 // Finds the WebRTC src dir.
 // The returned path always ends with a path separator.
-absl::optional<std::string> ProjectRootPath() {
+std::optional<std::string> ProjectRootPath() {
 #if defined(WEBRTC_ANDROID)
   return std::string(kAndroidChromiumTestsRoot);
 #elif defined WEBRTC_IOS
@@ -100,10 +105,10 @@ absl::optional<std::string> ProjectRootPath() {
   return std::string(kFuchsiaTestRoot);
 #else
   char buf[PATH_MAX];
-  ssize_t count = ::readlink("/proc/self/exe", buf, arraysize(buf));
+  ssize_t count = ::readlink("/proc/self/exe", buf, std::size(buf));
   if (count <= 0) {
     RTC_DCHECK_NOTREACHED() << "Unable to resolve /proc/self/exe.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   // On POSIX, tests execute in out/Whatever, so src is two levels up.
   std::string exe_dir = DirName(absl::string_view(buf, count));
@@ -113,9 +118,9 @@ absl::optional<std::string> ProjectRootPath() {
   wchar_t buf[MAX_PATH];
   buf[0] = 0;
   if (GetModuleFileNameW(NULL, buf, MAX_PATH) == 0)
-    return absl::nullopt;
+    return std::nullopt;
 
-  std::string exe_path = rtc::ToUtf8(std::wstring(buf));
+  std::string exe_path = webrtc::ToUtf8(std::wstring(buf));
   std::string exe_dir = DirName(exe_path);
   return DirName(DirName(exe_dir)) + std::string(kPathDelimiter);
 #endif
@@ -129,7 +134,7 @@ std::string OutputPath() {
 #elif defined(WEBRTC_FUCHSIA)
   return std::string(kFuchsiaTempWritableDir);
 #else
-  absl::optional<std::string> path_opt = ProjectRootPath();
+  std::optional<std::string> path_opt = ProjectRootPath();
   RTC_DCHECK(path_opt);
   std::string path = *path_opt + "out";
   if (!CreateDir(path)) {
@@ -157,9 +162,9 @@ std::string ResourcePath(absl::string_view name, absl::string_view extension) {
 #if defined(WEBRTC_IOS)
   return IOSResourcePath(name, extension);
 #else
-  absl::optional<std::string> path_opt = ProjectRootPath();
+  std::optional<std::string> path_opt = ProjectRootPath();
   RTC_DCHECK(path_opt);
-  rtc::StringBuilder os(*path_opt);
+  StringBuilder os(*path_opt);
   os << kResourcesDirName << kPathDelimiter << name << "." << extension;
   return os.Release();
 #endif

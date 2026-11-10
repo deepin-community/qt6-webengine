@@ -19,6 +19,7 @@ package privacy.ppn;
 import "anonymous_tokens/proto/anonymous_tokens.proto";
 
 option java_multiple_files = true;
+option java_package = "com.google.privacy.ppn.proto";
 
 // Contains fields which will be cryptographically linked to a blinded token and
 // visible to client, signer, and verifier. Clients should validate/set fields
@@ -35,6 +36,7 @@ message PublicMetadata {
     // City region geo id if requested by the client.
     string city_geo_id = 2;
   }
+
   Location exit_location = 1;
 
   // Indicates which service this token is associated with.
@@ -47,7 +49,9 @@ message PublicMetadata {
   enum DebugMode {
     UNSPECIFIED_DEBUG_MODE = 0;
     DEBUG_ALL = 1;
+    ADMIN = 2;
   }
+
   DebugMode debug_mode = 4;
 }
 

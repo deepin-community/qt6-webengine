@@ -11,6 +11,8 @@
 #ifndef COMMON_AUDIO_MOCKS_MOCK_SMOOTHING_FILTER_H_
 #define COMMON_AUDIO_MOCKS_MOCK_SMOOTHING_FILTER_H_
 
+#include <optional>
+
 #include "common_audio/smoothing_filter.h"
 #include "test/gmock.h"
 
@@ -19,7 +21,7 @@ namespace webrtc {
 class MockSmoothingFilter : public SmoothingFilter {
  public:
   MOCK_METHOD(void, AddSample, (float), (override));
-  MOCK_METHOD(absl::optional<float>, GetAverage, (), (override));
+  MOCK_METHOD(std::optional<float>, GetAverage, (), (override));
   MOCK_METHOD(bool, SetTimeConstantMs, (int), (override));
 };
 

@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "partition_alloc/partition_alloc_buildflags.h"
+#ifndef PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_
+#define PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#include "partition_alloc/buildflags.h"
+
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
 #include "partition_alloc/page_allocator_constants.h"
 
@@ -32,13 +37,13 @@
 #define PA_THREAD_ISOLATED_ARRAY_PAD_SZ(Type, count) \
   PA_THREAD_ISOLATED_ARRAY_PAD_SZ_WITH_OFFSET(Type, count, 0)
 
-#else  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#else  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
 #define PA_THREAD_ISOLATED_ALIGN
 #define PA_THREAD_ISOLATED_FILL_PAGE_SZ(size) 0
 #define PA_THREAD_ISOLATED_ARRAY_PAD_SZ(Type, size) 0
 #define PA_THREAD_ISOLATED_ARRAY_PAD_SZ_WITH_OFFSET(Type, size, offset) 0
 
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_
+#endif  // PARTITION_ALLOC_THREAD_ISOLATION_ALIGNMENT_H_

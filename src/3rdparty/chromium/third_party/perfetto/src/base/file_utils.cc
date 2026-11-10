@@ -36,7 +36,8 @@
 #include "perfetto/ext/base/utils.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-#include <Windows.h>
+#include <windows.h>
+
 #include <direct.h>
 #include <io.h>
 #include <stringapiset.h>
@@ -106,7 +107,7 @@ bool ReadFileDescriptor(int fd, std::string* out) {
   // Do not override existing data in string.
   size_t i = out->size();
 
-  struct stat buf {};
+  struct stat buf{};
   if (fstat(fd, &buf) != -1) {
     if (buf.st_size > 0)
       out->resize(i + static_cast<size_t>(buf.st_size));
@@ -143,7 +144,7 @@ bool ReadPlatformHandle(PlatformHandle h, std::string* out) {
       out->resize(i);
       const bool is_eof = res && bytes_read == 0;
       auto err = res ? 0 : GetLastError();
-      // The "Broken pipe" error on Windows is slighly different than Unix:
+      // The "Broken pipe" error on Windows is slightly different than Unix:
       // On Unix: a "broken pipe" error can happen only on the writer side. On
       // the reader there is no broken pipe, just a EOF.
       // On windows: the reader also sees a broken pipe error.
@@ -339,10 +340,12 @@ base::Status ListFilesRecursive(const std::string& dir_path,
           strcmp(dirent->d_name, "..") == 0) {
         continue;
       }
-      if (dirent->d_type == DT_DIR) {
-        dir_queue.push_back(cur_dir + dirent->d_name + '/');
-      } else if (dirent->d_type == DT_REG) {
-        const std::string full_path = cur_dir + dirent->d_name;
+      struct stat dirstat;
+      std::string full_path = cur_dir + dirent->d_name;
+      PERFETTO_CHECK(stat(full_path.c_str(), &dirstat) == 0);
+      if (S_ISDIR(dirstat.st_mode)) {
+        dir_queue.push_back(full_path + '/');
+      } else if (S_ISREG(dirstat.st_mode)) {
         PERFETTO_CHECK(full_path.length() > root_dir_path.length());
         output.push_back(full_path.substr(root_dir_path.length()));
       }
@@ -405,6 +408,40 @@ base::Status SetFilePermissions(const std::string& file_path,
   base::ignore_result(mode_bits);
   return base::ErrStatus(
       "Setting file permissions is not supported on this platform");
+#endif
+}
+
+std::optional<uint64_t> GetFileSize(const std::string& file_path) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  // This does not use base::OpenFile to avoid getting an exclusive lock.
+  base::ScopedPlatformHandle fd(
+      CreateFileA(file_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+#else
+  base::ScopedFile fd(base::OpenFile(file_path, O_RDONLY | O_CLOEXEC));
+#endif
+  if (!fd) {
+    return std::nullopt;
+  }
+  return GetFileSize(*fd);
+}
+
+std::optional<uint64_t> GetFileSize(PlatformHandle fd) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  LARGE_INTEGER file_size;
+  file_size.QuadPart = 0;
+  if (!GetFileSizeEx(fd, &file_size)) {
+    return std::nullopt;
+  }
+  static_assert(sizeof(decltype(file_size.QuadPart)) <= sizeof(uint64_t));
+  return static_cast<uint64_t>(file_size.QuadPart);
+#else
+  struct stat buf{};
+  if (fstat(fd, &buf) == -1) {
+    return std::nullopt;
+  }
+  static_assert(sizeof(decltype(buf.st_size)) <= sizeof(uint64_t));
+  return static_cast<uint64_t>(buf.st_size);
 #endif
 }
 

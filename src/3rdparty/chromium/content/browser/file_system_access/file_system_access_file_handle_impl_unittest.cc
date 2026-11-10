@@ -6,6 +6,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -28,6 +30,7 @@
 #include "content/browser/file_system_access/features.h"
 #include "content/browser/file_system_access/fixed_file_system_access_permission_grant.h"
 #include "content/browser/file_system_access/mock_file_system_access_permission_grant.h"
+#include "content/public/browser/file_system_access_permission_context.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
@@ -54,24 +57,51 @@
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom-shared.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/content_uri_utils.h"
+#include "base/android/path_utils.h"
+#include "base/strings/escape.h"
+#include "base/test/android/content_uri_test_utils.h"
+#endif
+
 namespace content {
 
 using blink::mojom::PermissionStatus;
 using storage::FileSystemURL;
+using testing::_;
+using testing::FieldsAre;
 
-class FileSystemAccessFileHandleImplTest : public testing::Test {
- public:
-  FileSystemAccessFileHandleImplTest()
-      : task_environment_(base::test::TaskEnvironment::MainThreadType::IO) {
-    scoped_feature_list.InitAndEnableFeature(
-        blink::features::kFileSystemAccessLockingScheme);
+// A matcher to check if a `RequestPermission()` call is successful and
+// returns the expected permission status.
+MATCHER_P(IsOkAndPermissionStatus, status, "") {
+  if (arg.first->status != blink::mojom::FileSystemAccessStatus::kOk) {
+    *result_listener << "FileSystemAccessStatus is " << arg.first->status;
+    return false;
   }
+  if (arg.second != status) {
+    *result_listener << "PermissionStatus is " << arg.second;
+    return false;
+  }
+  return true;
+}
+
+// Test fixture for FileSystemAccessFileHandleImpl.
+//
+// The permission context in this fixture is always null, so the relevant
+// permission checks are skipped.
+//
+// Tests with mock permission context are in
+// FileSystemAccessFileHandleImplMovePermissionsTest.
+class FileSystemAccessFileHandleImplTestBase : public testing::Test {
+ public:
+  FileSystemAccessFileHandleImplTestBase() = default;
 
   void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
 
-    SetupHelper(storage::kFileSystemTypeTest, /*is_incognito=*/false);
+    SetupHelper(storage::kFileSystemTypeTest, /*is_incognito=*/false,
+                /*use_content_uri=*/false);
   }
 
   void TearDown() override { task_environment_.RunUntilIdle(); }
@@ -99,37 +129,36 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
     }
   }
 
-  std::unique_ptr<FileSystemAccessFileHandleImpl>
-  GetHandleWithPermissions(const base::FilePath& path, bool read, bool write) {
-    auto url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kLocal, path);
+  std::unique_ptr<FileSystemAccessFileHandleImpl> GetHandleWithPermissions(
+      const base::FilePath& path,
+      scoped_refptr<FixedFileSystemAccessPermissionGrant> read_grant,
+      scoped_refptr<FixedFileSystemAccessPermissionGrant> write_grant) {
+    auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
     auto handle = std::make_unique<FileSystemAccessFileHandleImpl>(
         manager_.get(),
         FileSystemAccessManagerImpl::BindingContext(
             test_src_storage_key_, test_src_url_,
             web_contents_->GetPrimaryMainFrame()->GetGlobalId()),
-        url,
-        FileSystemAccessManagerImpl::SharedHandleState(
-            /*read_grant=*/read ? allow_grant_ : deny_grant_,
-            /*write_grant=*/write ? allow_grant_ : deny_grant_));
+        url, path.BaseName().AsUTF8Unsafe(),
+        FileSystemAccessManagerImpl::SharedHandleState(std::move(read_grant),
+                                                       std::move(write_grant)));
     return handle;
   }
 
   std::unique_ptr<FileSystemAccessDirectoryHandleImpl>
-  GetDirectoryHandleWithPermissions(const base::FilePath& path,
-                                    bool read,
-                                    bool write) {
-    auto url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kLocal, path);
+  GetDirectoryHandleWithPermissions(
+      const base::FilePath& path,
+      scoped_refptr<FixedFileSystemAccessPermissionGrant> read_grant,
+      scoped_refptr<FixedFileSystemAccessPermissionGrant> write_grant) {
+    auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
     auto handle = std::make_unique<FileSystemAccessDirectoryHandleImpl>(
         manager_.get(),
         FileSystemAccessManagerImpl::BindingContext(
             test_src_storage_key_, test_src_url_,
             web_contents_->GetPrimaryMainFrame()->GetGlobalId()),
         url,
-        FileSystemAccessManagerImpl::SharedHandleState(
-            /*read_grant=*/read ? allow_grant_ : deny_grant_,
-            /*write_grant=*/write ? allow_grant_ : deny_grant_));
+        FileSystemAccessManagerImpl::SharedHandleState(std::move(read_grant),
+                                                       std::move(write_grant)));
     return handle;
   }
 
@@ -138,7 +167,6 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
         bucket_future;
     quota_manager_proxy_->CreateBucketForTesting(
         test_src_storage_key_, "custom_bucket",
-        blink::mojom::StorageType::kTemporary,
         base::SequencedTaskRunner::GetCurrentDefault(),
         bucket_future.GetCallback());
     return bucket_future.Take().transform(
@@ -146,7 +174,9 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
   }
 
  protected:
-  void SetupHelper(storage::FileSystemType type, bool is_incognito) {
+  void SetupHelper(storage::FileSystemType type,
+                   bool is_incognito,
+                   bool use_content_uri = false) {
     ASSERT_TRUE(dir_.CreateUniqueTempDir());
 #if BUILDFLAG(IS_WIN)
     // Convert path to long format to avoid mixing long and 8.3 formats in test.
@@ -180,6 +210,19 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
     auto test_file_path = type == storage::kFileSystemTypeLocal
                               ? dir_.GetPath().AppendASCII("test")
                               : base::FilePath::FromUTF8Unsafe("test");
+#if BUILDFLAG(IS_ANDROID)
+    if (use_content_uri) {
+      base::FilePath parent =
+          *base::test::android::GetInMemoryContentTreeUriFromCacheDirDirectory(
+              dir_.GetPath());
+      base::FilePath content_uri = base::ContentUriGetChildDocumentOrQuery(
+          parent, test_file_path.BaseName().value(), "text/plain",
+          /*is_directory=*/false,
+          /*create=*/true);
+      ASSERT_TRUE(base::ContentUriIsCreateChildDocumentQuery(content_uri));
+      test_file_path = content_uri;
+    }
+#endif
     test_file_url_ = file_system_context_->CreateCrackedFileSystemURL(
         test_src_storage_key_, type, test_file_path);
     if (type == storage::kFileSystemTypeTemporary) {
@@ -205,7 +248,7 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
         FileSystemAccessManagerImpl::BindingContext(
             test_src_storage_key_, test_src_url_,
             web_contents_->GetPrimaryMainFrame()->GetGlobalId()),
-        test_file_url_,
+        test_file_url_, "test",
         FileSystemAccessManagerImpl::SharedHandleState(allow_grant_,
                                                        allow_grant_));
   }
@@ -214,7 +257,8 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
   const blink::StorageKey test_src_storage_key_ =
       blink::StorageKey::CreateFromStringForTesting("http://example.com/foo");
 
-  BrowserTaskEnvironment task_environment_;
+  BrowserTaskEnvironment task_environment_{
+      base::test::TaskEnvironment::MainThreadType::IO};
 
   base::ScopedTempDir dir_;
 
@@ -225,6 +269,7 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
   scoped_refptr<storage::MockQuotaManagerProxy> quota_manager_proxy_;
   scoped_refptr<storage::FileSystemContext> file_system_context_;
   scoped_refptr<ChromeBlobStorageContext> chrome_blob_context_;
+  testing::NiceMock<MockFileSystemAccessPermissionContext> permission_context_;
   scoped_refptr<FileSystemAccessManagerImpl> manager_;
 
   raw_ptr<WebContents> web_contents_ = nullptr;
@@ -234,22 +279,27 @@ class FileSystemAccessFileHandleImplTest : public testing::Test {
   scoped_refptr<FixedFileSystemAccessPermissionGrant> allow_grant_ =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           FixedFileSystemAccessPermissionGrant::PermissionStatus::GRANTED,
-          base::FilePath());
+          PathInfo());
+  scoped_refptr<FixedFileSystemAccessPermissionGrant> ask_grant_ =
+      base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
+          FixedFileSystemAccessPermissionGrant::PermissionStatus::ASK,
+          PathInfo());
   scoped_refptr<FixedFileSystemAccessPermissionGrant> deny_grant_ =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           FixedFileSystemAccessPermissionGrant::PermissionStatus::DENIED,
-          base::FilePath());
+          PathInfo());
   std::unique_ptr<FileSystemAccessFileHandleImpl> handle_;
 
   base::test::ScopedFeatureList scoped_feature_list;
 };
 
 class FileSystemAccessAccessHandleTest
-    : public FileSystemAccessFileHandleImplTest {
+    : public FileSystemAccessFileHandleImplTestBase {
  public:
   void SetUp() override {
     // AccessHandles are only allowed for temporary file systems.
-    SetupHelper(storage::kFileSystemTypeTemporary, /*is_incognito=*/false);
+    SetupHelper(storage::kFileSystemTypeTemporary, /*is_incognito=*/false,
+                /*use_content_uri=*/false);
   }
 
   std::tuple<
@@ -279,9 +329,24 @@ class FileSystemAccessAccessHandleIncognitoTest
     : public FileSystemAccessAccessHandleTest {
   void SetUp() override {
     // AccessHandles are only allowed for temporary file systems.
-    SetupHelper(storage::kFileSystemTypeTemporary, /*is_incognito=*/true);
+    SetupHelper(storage::kFileSystemTypeTemporary, /*is_incognito=*/true,
+                /*use_content_uri=*/false);
   }
 };
+
+#if BUILDFLAG(IS_ANDROID)
+class FileSystemAccessAccessHandleContentUriTest
+    : public FileSystemAccessAccessHandleTest {
+  void SetUp() override {
+    // AccessHandles are only allowed for temporary file systems.
+    SetupHelper(storage::kFileSystemTypeLocal, /*is_incognito=*/false,
+                /*use_content_uri=*/true);
+  }
+};
+#endif
+
+class FileSystemAccessFileHandleImplTest
+    : public FileSystemAccessFileHandleImplTestBase {};
 
 TEST_F(FileSystemAccessFileHandleImplTest, CreateFileWriterOverLimitNotOK) {
   int max_files = 5;
@@ -489,11 +554,40 @@ TEST_F(FileSystemAccessFileHandleImplTest,
   EXPECT_TRUE(writer_remote.is_valid());
 }
 
+#if BUILDFLAG(IS_ANDROID)
+TEST_F(FileSystemAccessAccessHandleContentUriTest, CreateFileWriter) {
+  base::test::TestFuture<
+      blink::mojom::FileSystemAccessErrorPtr,
+      mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter>>
+      future;
+  handle_->CreateFileWriter(
+      /*keep_existing_data=*/false,
+      /*auto_close=*/false,
+      blink::mojom::FileSystemAccessWritableFileStreamLockMode::kSiloed,
+      future.GetCallback());
+  blink::mojom::FileSystemAccessErrorPtr result;
+  mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter> writer_remote;
+  std::tie(result, writer_remote) = future.Take();
+  EXPECT_EQ(result->status, blink::mojom::FileSystemAccessStatus::kOk);
+  EXPECT_TRUE(writer_remote.is_valid());
+
+  // Swap file should be created in cache dir.
+  base::FilePath cache_dir;
+  EXPECT_TRUE(base::android::GetCacheDirectory(&cache_dir));
+  auto escaped = base::EscapeAllExceptUnreserved(test_file_url_.path().value());
+  base::FilePath swap = cache_dir.Append("FileSystemAPISwap")
+                            .Append(escaped)
+                            .AddExtension(".crswap");
+  EXPECT_TRUE(base::PathExists(swap));
+}
+#endif
+
 TEST_F(FileSystemAccessFileHandleImplTest, Remove_NoWriteAccess) {
   base::FilePath file;
   ASSERT_TRUE(base::CreateTemporaryFileInDir(dir_.GetPath(), &file));
 
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/false);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/deny_grant_);
 
   base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
   handle->Remove(future.GetCallback());
@@ -506,7 +600,8 @@ TEST_F(FileSystemAccessFileHandleImplTest, Remove_HasWriteAccess) {
   base::FilePath file;
   ASSERT_TRUE(base::CreateTemporaryFileInDir(dir_.GetPath(), &file));
 
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/true);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/allow_grant_);
 
   base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
   handle->Remove(future.GetCallback());
@@ -528,7 +623,7 @@ TEST_F(FileSystemAccessAccessHandleTest, OpenAccessHandle) {
       std::move(file->get_regular_file());
   EXPECT_TRUE(regular_file->os_file.IsValid());
   EXPECT_EQ(regular_file->file_size, 0);
-  EXPECT_TRUE(regular_file->capacity_allocation_host.is_valid());
+  EXPECT_TRUE(regular_file->file_modification_host.is_valid());
   EXPECT_TRUE(access_handle_remote.is_valid());
 }
 
@@ -633,7 +728,8 @@ TEST_F(FileSystemAccessFileHandleImplTest, Rename_NoWriteAccess) {
   ASSERT_TRUE(base::CreateTemporaryFileInDir(dir_.GetPath(), &file));
   base::FilePath renamed_file = file.DirName().AppendASCII("new_name.txt");
 
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/false);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/ask_grant_);
 
   base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
   handle->Rename(renamed_file.BaseName().AsUTF8Unsafe(), future.GetCallback());
@@ -648,7 +744,8 @@ TEST_F(FileSystemAccessFileHandleImplTest, Rename_HasWriteAccess) {
   ASSERT_TRUE(base::CreateTemporaryFileInDir(dir_.GetPath(), &file));
   base::FilePath renamed_file = file.DirName().AppendASCII("new_name.txt");
 
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/true);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/allow_grant_);
 
   base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
   handle->Rename(renamed_file.BaseName().AsUTF8Unsafe(), future.GetCallback());
@@ -666,9 +763,10 @@ TEST_F(FileSystemAccessFileHandleImplTest, Move_NoWriteAccess) {
   base::FilePath renamed_file = dest_dir.AppendASCII("new_name.txt");
 
   auto dest_dir_handle =
-      GetDirectoryHandleWithPermissions(dest_dir, /*read=*/true,
-                                        /*write=*/true);
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/false);
+      GetDirectoryHandleWithPermissions(dest_dir, /*read_grant=*/allow_grant_,
+                                        /*write_grant=*/allow_grant_);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/deny_grant_);
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
   manager_->CreateTransferToken(*dest_dir_handle,
@@ -692,9 +790,10 @@ TEST_F(FileSystemAccessFileHandleImplTest, Move_NoDestWriteAccess) {
   base::FilePath renamed_file = dest_dir.AppendASCII("new_name.txt");
 
   auto dest_dir_handle =
-      GetDirectoryHandleWithPermissions(dest_dir, /*read=*/true,
-                                        /*write=*/false);
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/true);
+      GetDirectoryHandleWithPermissions(dest_dir, /*read_grant=*/allow_grant_,
+                                        /*write_grant=*/deny_grant_);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/allow_grant_);
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
   manager_->CreateTransferToken(*dest_dir_handle,
@@ -718,9 +817,10 @@ TEST_F(FileSystemAccessFileHandleImplTest, Move_HasDestWriteAccess) {
   base::FilePath renamed_file = dest_dir.AppendASCII("new_name.txt");
 
   auto dest_dir_handle =
-      GetDirectoryHandleWithPermissions(dest_dir, /*read=*/true,
-                                        /*write=*/true);
-  auto handle = GetHandleWithPermissions(file, /*read=*/true, /*write=*/true);
+      GetDirectoryHandleWithPermissions(dest_dir, /*read_grant=*/allow_grant_,
+                                        /*write_grant=*/allow_grant_);
+  auto handle = GetHandleWithPermissions(file, /*read_grant=*/allow_grant_,
+                                         /*write_grant=*/allow_grant_);
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
   manager_->CreateTransferToken(*dest_dir_handle,
@@ -734,12 +834,58 @@ TEST_F(FileSystemAccessFileHandleImplTest, Move_HasDestWriteAccess) {
   EXPECT_TRUE(base::PathExists(renamed_file));
 }
 
+#if BUILDFLAG(IS_ANDROID)
+TEST_F(FileSystemAccessFileHandleImplTest, ContentUriRenameMoveNotSupported) {
+  base::FilePath dest_dir;
+  ASSERT_TRUE(base::CreateTemporaryDirInDir(
+      dir_.GetPath(), FILE_PATH_LITERAL("dest"), &dest_dir));
+  base::FilePath file;
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(dir_.GetPath(), &file));
+  base::FilePath renamed_file = file.DirName().AppendASCII("new_name.txt");
+  base::FilePath moved_file = dest_dir.AppendASCII("new_name.txt");
+
+  base::FilePath content_uri_dest_dir =
+      *base::test::android::GetContentUriFromCacheDirFilePath(dest_dir);
+  base::FilePath content_uri_file =
+      *base::test::android::GetContentUriFromCacheDirFilePath(file);
+
+  auto dest_dir_handle = GetDirectoryHandleWithPermissions(
+      content_uri_dest_dir, /*read_grant=*/allow_grant_,
+      /*write_grant=*/allow_grant_);
+  auto handle =
+      GetHandleWithPermissions(content_uri_file, /*read_grant=*/allow_grant_,
+                               /*write_grant=*/allow_grant_);
+
+  mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
+  manager_->CreateTransferToken(*dest_dir_handle,
+                                dir_remote.InitWithNewPipeAndPassReceiver());
+
+  // Rename is not supported.
+  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> rename_future;
+  handle->Rename(renamed_file.BaseName().AsUTF8Unsafe(),
+                 rename_future.GetCallback());
+  EXPECT_EQ(rename_future.Get()->status,
+            blink::mojom::FileSystemAccessStatus::kInvalidModificationError);
+  EXPECT_TRUE(base::PathExists(file));
+  EXPECT_FALSE(base::PathExists(renamed_file));
+
+  // Move is not supported.
+  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> move_future;
+  handle->Move(std::move(dir_remote), moved_file.BaseName().AsUTF8Unsafe(),
+               move_future.GetCallback());
+  EXPECT_EQ(move_future.Get()->status,
+            blink::mojom::FileSystemAccessStatus::kInvalidModificationError);
+  EXPECT_TRUE(base::PathExists(file));
+  EXPECT_FALSE(base::PathExists(moved_file));
+}
+#endif
+
 #if BUILDFLAG(IS_MAC)
 // Tests that swap file cloning (i.e. creating a swap file using underlying
 // platform support for copy-on-write files) behaves as expected. Swap file
 // cloning requires storage::kFileSystemTypeLocal.
 class FileSystemAccessFileHandleSwapFileCloningTest
-    : public FileSystemAccessFileHandleImplTest {
+    : public FileSystemAccessFileHandleImplTestBase {
  public:
   enum class CloneFileResult {
     kDidNotAttempt,
@@ -749,7 +895,8 @@ class FileSystemAccessFileHandleSwapFileCloningTest
   };
 
   void SetUp() override {
-    SetupHelper(storage::kFileSystemTypeLocal, /*is_incognito=*/false);
+    SetupHelper(storage::kFileSystemTypeLocal, /*is_incognito=*/false,
+                /*use_content_uri=*/false);
   }
 
   CloneFileResult GetCloneFileResult(
@@ -868,29 +1015,37 @@ TEST_F(FileSystemAccessFileHandleSwapFileCloningTest, HandleCloneFailure) {
 }
 #endif  // BUILDFLAG(IS_MAC)
 
+struct MovePermissionsTestCase {
+  // Is there a file to be overwritten?
+  bool target_present;
+  // Does the site have user activation?
+  bool gesture_present;
+};
+
 // Uses a mock permission context to ensure the correct permission grant for the
 // target file (and parent, for renames) is used, since moves retrieve the
-// target's permission grant via GetSharedHandleStateForPath() which always
-// returns GRANTED for tests without a permission context.
+// target's permission grant via GetSharedHandleStateForNonSandboxedPath() which
+// always returns GRANTED for tests without a permission context.
 //
-// Moves do not call GetSharedHandleStateForPath() on the destination directory,
-// so the above tests are sufficient to test moves without access to the
-// destination directory. These tests always grant write access to the
-// destination directory.
+// Moves do not call GetSharedHandleStateForNonSandboxedPath() on the
+// destination directory, so the above tests are sufficient to test moves
+// without access to the destination directory. These tests always grant write
+// access to the destination directory.
 class FileSystemAccessFileHandleImplMovePermissionsTest
-    : public FileSystemAccessFileHandleImplTest,
-      public testing::WithParamInterface<std::tuple<bool, bool>> {
+    : public FileSystemAccessFileHandleImplTestBase,
+      public testing::WithParamInterface<MovePermissionsTestCase> {
  public:
   void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
 
-    SetupHelper(storage::kFileSystemTypeLocal, /*is_incognito=*/false);
+    SetupHelper(storage::kFileSystemTypeLocal, /*is_incognito=*/false,
+                /*use_content_uri=*/false);
     manager_->SetPermissionContextForTesting(&permission_context_);
   }
 
-  bool target_present() const { return std::get<0>(GetParam()); }
-  bool gesture_present() const { return std::get<1>(GetParam()); }
+  bool target_present() const { return GetParam().target_present; }
+  bool gesture_present() const { return GetParam().gesture_present; }
 
   std::pair<base::FilePath, base::FilePath> CreateSourceAndMaybeTarget() {
     base::FilePath source;
@@ -907,55 +1062,62 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
   }
 
   void ExpectFileRenameSuccess(
-      const base::FilePath& parent,
       const base::FilePath& source,
       const base::FilePath& target,
-      scoped_refptr<FixedFileSystemAccessPermissionGrant> parent_grant,
       scoped_refptr<FixedFileSystemAccessPermissionGrant> target_grant) {
-    auto handle =
-        GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
+    auto source_handle =
+        GetHandleWithPermissions(source, /*read_grant=*/allow_grant_,
+                                 /*write_grant=*/allow_grant_);
+    auto target_handle =
+        GetHandleWithPermissions(target, /*read_grant=*/target_grant,
+                                 /*write_grant=*/target_grant);
+    auto origin = test_src_storage_key_.origin();
+    auto target_basename = target.BaseName();
 
     EXPECT_CALL(permission_context_,
-                GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), parent,
-                    FileSystemAccessPermissionContext::HandleType::kDirectory,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(parent_grant));
-    EXPECT_CALL(permission_context_,
-                GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), parent,
-                    FileSystemAccessPermissionContext::HandleType::kDirectory,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(parent_grant));
+                IsFileTypeDangerous_(target_basename, origin))
+        .WillOnce(testing::Return(false));
     EXPECT_CALL(permission_context_,
                 GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), target,
+                    origin, content::PathInfo(target),
                     FileSystemAccessPermissionContext::HandleType::kFile,
                     FileSystemAccessPermissionContext::UserAction::kNone))
         .WillOnce(testing::Return(target_grant));
     EXPECT_CALL(permission_context_,
                 GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), target,
+                    origin, content::PathInfo(target),
                     FileSystemAccessPermissionContext::HandleType::kFile,
                     FileSystemAccessPermissionContext::UserAction::kNone))
         .WillOnce(testing::Return(target_grant));
+    EXPECT_CALL(
+        permission_context_,
+        ConfirmSensitiveEntryAccess_(
+            origin, content::PathInfo(target),
+            FileSystemAccessPermissionContext::HandleType::kFile,
+            FileSystemAccessPermissionContext::UserAction::kSave,
+            web_contents_->GetPrimaryMainFrame()->GetGlobalId(), testing::_))
+        .WillOnce(base::test::RunOnceCallback<5>(
+            FileSystemAccessPermissionContext::SensitiveEntryResult::kAllowed));
 
     // These checks should only be called if the file is successfully moved.
 
-    // On Windows, CreateTemporaryFileInDir() creates files with the '.tmp'
-    // extension. When this feature flag is enabled, Safe Browsing checks are
-    // not run on same-file-system moves in which the extension does not change.
-    if (source.Extension() != FILE_PATH_LITERAL(".tmp") ||
-        target.Extension() != FILE_PATH_LITERAL(".tmp")) {
-      EXPECT_CALL(permission_context_,
-                  PerformAfterWriteChecks_(testing::_, testing::_, testing::_))
-          .WillOnce(base::test::RunOnceCallback<2>(
-              FileSystemAccessPermissionContext::AfterWriteCheckResult::
-                  kAllow));
+    if (source != target) {
+      // On Windows, CreateTemporaryFileInDir() creates files with the '.tmp'
+      // extension. Safe Browsing checks are not run on same-file-system moves
+      // in which the extension does not change. For more context, see
+      // FileSystemAccessSafeMoveHelper::RequireAfterWriteChecks().
+      if (source.Extension() != FILE_PATH_LITERAL(".tmp") ||
+          target.Extension() != FILE_PATH_LITERAL(".tmp")) {
+        EXPECT_CALL(
+            permission_context_,
+            PerformAfterWriteChecks_(testing::_, testing::_, testing::_))
+            .WillOnce(base::test::RunOnceCallback<2>(
+                FileSystemAccessPermissionContext::AfterWriteCheckResult::
+                    kAllow));
+      }
     }
-    EXPECT_CALL(
-        permission_context_,
-        NotifyEntryMoved(test_src_storage_key_.origin(), source, target));
+    EXPECT_CALL(permission_context_,
+                NotifyEntryMoved(origin, PathInfo(source), PathInfo(target)));
 
     if (gesture_present()) {
       static_cast<TestRenderFrameHost*>(web_contents_->GetPrimaryMainFrame())
@@ -963,46 +1125,60 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
     }
 
     base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-    handle->Rename(target.BaseName().AsUTF8Unsafe(), future.GetCallback());
+    source_handle->Rename(target_basename.AsUTF8Unsafe(), future.GetCallback());
     EXPECT_EQ(future.Get()->status, blink::mojom::FileSystemAccessStatus::kOk);
-    EXPECT_FALSE(base::PathExists(source));
+    if (source != target) {
+      EXPECT_FALSE(base::PathExists(source));
+    }
     EXPECT_TRUE(base::PathExists(target));
   }
 
   void ExpectFileRenameFailure(
-      const base::FilePath& parent,
       const base::FilePath& source,
       const base::FilePath& target,
-      scoped_refptr<FixedFileSystemAccessPermissionGrant> parent_grant,
       scoped_refptr<FixedFileSystemAccessPermissionGrant> target_grant,
-      blink::mojom::FileSystemAccessStatus result) {
-    auto handle =
-        GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
+      blink::mojom::FileSystemAccessStatus result,
+      bool expects_safe_name = true,
+      std::optional<FileSystemAccessPermissionContext::SensitiveEntryResult>
+          expected_sensitive_entry_result = std::nullopt) {
+    auto source_handle =
+        GetHandleWithPermissions(source, /*read_grant=*/allow_grant_,
+                                 /*write_grant=*/allow_grant_);
+    auto target_handle =
+        GetHandleWithPermissions(target, /*read_grant=*/target_grant,
+                                 /*write_grant=*/target_grant);
+    auto origin = test_src_storage_key_.origin();
+    auto target_basename = target.BaseName();
 
     EXPECT_CALL(permission_context_,
-                GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), parent,
-                    FileSystemAccessPermissionContext::HandleType::kDirectory,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(parent_grant));
-    EXPECT_CALL(permission_context_,
-                GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), parent,
-                    FileSystemAccessPermissionContext::HandleType::kDirectory,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(parent_grant));
-    EXPECT_CALL(permission_context_,
-                GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
-    EXPECT_CALL(permission_context_,
-                GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
+                IsFileTypeDangerous_(target_basename, origin))
+        .WillRepeatedly(testing::Return(!expects_safe_name));
+    if (expected_sensitive_entry_result.has_value()) {
+      EXPECT_CALL(
+          permission_context_,
+          ConfirmSensitiveEntryAccess_(
+              origin, content::PathInfo(target),
+              FileSystemAccessPermissionContext::HandleType::kFile,
+              FileSystemAccessPermissionContext::UserAction::kSave,
+              web_contents_->GetPrimaryMainFrame()->GetGlobalId(), testing::_))
+          .WillOnce(
+              base::test::RunOnceCallback<5>(*expected_sensitive_entry_result));
+    }
+    if (expects_safe_name) {
+      // If safe name check has passed, it should be expected to get grants.
+      EXPECT_CALL(permission_context_,
+                  GetReadPermissionGrant(
+                      origin, content::PathInfo(target),
+                      FileSystemAccessPermissionContext::HandleType::kFile,
+                      FileSystemAccessPermissionContext::UserAction::kNone))
+          .WillOnce(testing::Return(target_grant));
+      EXPECT_CALL(permission_context_,
+                  GetWritePermissionGrant(
+                      origin, content::PathInfo(target),
+                      FileSystemAccessPermissionContext::HandleType::kFile,
+                      FileSystemAccessPermissionContext::UserAction::kNone))
+          .WillOnce(testing::Return(target_grant));
+    }
 
     // No after-write checks needed since the file should not have been moved.
 
@@ -1012,7 +1188,7 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
     }
 
     base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-    handle->Rename(target.BaseName().AsUTF8Unsafe(), future.GetCallback());
+    source_handle->Rename(target_basename.AsUTF8Unsafe(), future.GetCallback());
     EXPECT_EQ(future.Get()->status, result);
 
     // The source file should not have been removed.
@@ -1022,86 +1198,97 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
     EXPECT_EQ(target_present(), base::PathExists(target));
   }
 
-  void ExpectFileMoveSuccess(
-      const base::FilePath& parent,
-      const base::FilePath& source,
-      const base::FilePath& target,
-      scoped_refptr<FixedFileSystemAccessPermissionGrant> target_grant) {
-    // The site has write access to the destination directory.
-    auto dest_dir_handle =
-        GetDirectoryHandleWithPermissions(parent, /*read=*/true,
-                                          /*write=*/true);
-    auto handle =
-        GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
+  void ExpectFileMoveSuccess(const base::FilePath& source,
+                             const base::FilePath& target) {
+    base::FilePath target_parent = target.DirName();
+    // File move cannot succeed if the site does not have write access to the
+    // destination directory.
+    auto dest_dir_handle = GetDirectoryHandleWithPermissions(
+        target_parent, /*read_grant=*/allow_grant_,
+        /*write_grant=*/allow_grant_);
+    auto handle = GetHandleWithPermissions(source, /*read_grant=*/allow_grant_,
+                                           /*write_grant=*/allow_grant_);
+    auto origin = test_src_storage_key_.origin();
+    auto target_basename = target.BaseName();
 
     EXPECT_CALL(permission_context_,
-                GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
-    EXPECT_CALL(permission_context_,
-                GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
-
-    // These checks should only be called if the file is successfully moved.
-
-    // On Windows, CreateTemporaryFileInDir() creates files with the '.tmp'
-    // extension. Safe Browsing checks are not run on same-file-system moves in
-    // which the extension does not change. For more context, see
-    // FileSystemAccessSafeMoveHelper::RequireAfterWriteChecks().
-    if (source.Extension() != FILE_PATH_LITERAL(".tmp") ||
-        target.Extension() != FILE_PATH_LITERAL(".tmp")) {
-      EXPECT_CALL(permission_context_,
-                  PerformAfterWriteChecks_(testing::_, testing::_, testing::_))
-          .WillOnce(base::test::RunOnceCallback<2>(
-              FileSystemAccessPermissionContext::AfterWriteCheckResult::
-                  kAllow));
-    }
+                IsFileTypeDangerous_(target_basename, origin))
+        .WillRepeatedly(testing::Return(false));
     EXPECT_CALL(
         permission_context_,
-        NotifyEntryMoved(test_src_storage_key_.origin(), source, target));
+        ConfirmSensitiveEntryAccess_(
+            origin, content::PathInfo(target),
+            FileSystemAccessPermissionContext::HandleType::kFile,
+            FileSystemAccessPermissionContext::UserAction::kSave,
+            web_contents_->GetPrimaryMainFrame()->GetGlobalId(), testing::_))
+        .WillOnce(base::test::RunOnceCallback<5>(
+            FileSystemAccessPermissionContext::SensitiveEntryResult::kAllowed));
+
+    // These checks should only be called if the file is successfully moved.
+    if (source != target) {
+      // On Windows, CreateTemporaryFileInDir() creates files with the '.tmp'
+      // extension. Safe Browsing checks are not run on same-file-system moves
+      // in which the extension does not change. For more context, see
+      // FileSystemAccessSafeMoveHelper::RequireAfterWriteChecks().
+      if (source.Extension() != FILE_PATH_LITERAL(".tmp") ||
+          target.Extension() != FILE_PATH_LITERAL(".tmp")) {
+        EXPECT_CALL(
+            permission_context_,
+            PerformAfterWriteChecks_(testing::_, testing::_, testing::_))
+            .WillOnce(base::test::RunOnceCallback<2>(
+                FileSystemAccessPermissionContext::AfterWriteCheckResult::
+                    kAllow));
+      }
+    }
+    EXPECT_CALL(permission_context_,
+                NotifyEntryMoved(origin, PathInfo(source), PathInfo(target)));
 
     mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
     manager_->CreateTransferToken(*dest_dir_handle,
                                   dir_remote.InitWithNewPipeAndPassReceiver());
 
     base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-    handle->Move(std::move(dir_remote), target.BaseName().AsUTF8Unsafe(),
+    handle->Move(std::move(dir_remote), target_basename.AsUTF8Unsafe(),
                  future.GetCallback());
     EXPECT_EQ(future.Get()->status, blink::mojom::FileSystemAccessStatus::kOk);
-    EXPECT_FALSE(base::PathExists(source));
+    if (source != target) {
+      EXPECT_FALSE(base::PathExists(source));
+    }
     EXPECT_TRUE(base::PathExists(target));
   }
 
   void ExpectFileMoveFailure(
-      const base::FilePath& parent,
       const base::FilePath& source,
       const base::FilePath& target,
       scoped_refptr<FixedFileSystemAccessPermissionGrant> target_grant,
-      blink::mojom::FileSystemAccessStatus result) {
+      blink::mojom::FileSystemAccessStatus result,
+      bool expects_safe_name = true,
+      std::optional<FileSystemAccessPermissionContext::SensitiveEntryResult>
+          expected_sensitive_entry_result = std::nullopt) {
+    base::FilePath target_parent = target.DirName();
     // The site has write access to the destination directory.
-    auto dest_dir_handle =
-        GetDirectoryHandleWithPermissions(parent, /*read=*/true,
-                                          /*write=*/true);
-    auto handle =
-        GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
+    auto dest_dir_handle = GetDirectoryHandleWithPermissions(
+        target_parent, /*read_grant=*/target_grant,
+        /*write_grant=*/target_grant);
+    auto handle = GetHandleWithPermissions(source, /*read_grant=*/allow_grant_,
+                                           /*write_grant=*/allow_grant_);
+    auto origin = test_src_storage_key_.origin();
+    auto target_basename = target.BaseName();
 
     EXPECT_CALL(permission_context_,
-                GetReadPermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
-    EXPECT_CALL(permission_context_,
-                GetWritePermissionGrant(
-                    test_src_storage_key_.origin(), target,
-                    FileSystemAccessPermissionContext::HandleType::kFile,
-                    FileSystemAccessPermissionContext::UserAction::kNone))
-        .WillOnce(testing::Return(target_grant));
+                IsFileTypeDangerous_(target_basename, origin))
+        .WillRepeatedly(testing::Return(!expects_safe_name));
+    if (expected_sensitive_entry_result.has_value()) {
+      EXPECT_CALL(
+          permission_context_,
+          ConfirmSensitiveEntryAccess_(
+              origin, content::PathInfo(target),
+              FileSystemAccessPermissionContext::HandleType::kFile,
+              FileSystemAccessPermissionContext::UserAction::kSave,
+              web_contents_->GetPrimaryMainFrame()->GetGlobalId(), testing::_))
+          .WillOnce(
+              base::test::RunOnceCallback<5>(*expected_sensitive_entry_result));
+    }
 
     // No after-write checks needed since the file should not have been moved.
 
@@ -1110,7 +1297,7 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
                                   dir_remote.InitWithNewPipeAndPassReceiver());
 
     base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-    handle->Move(std::move(dir_remote), target.BaseName().AsUTF8Unsafe(),
+    handle->Move(std::move(dir_remote), target_basename.AsUTF8Unsafe(),
                  future.GetCallback());
     EXPECT_EQ(future.Get()->status, result);
 
@@ -1119,68 +1306,60 @@ class FileSystemAccessFileHandleImplMovePermissionsTest
   }
 
  protected:
-  scoped_refptr<FixedFileSystemAccessPermissionGrant> ask_grant_ =
-      base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
-          FixedFileSystemAccessPermissionGrant::PermissionStatus::ASK,
-          base::FilePath());
-
   testing::StrictMock<MockFileSystemAccessPermissionContext>
       permission_context_;
 };
 
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    FileSystemAccessFileHandleImplMovePermissionsTest,
+    ::testing::Values(MovePermissionsTestCase{.target_present = false,
+                                              .gesture_present = false},
+                      MovePermissionsTestCase{.target_present = false,
+                                              .gesture_present = true},
+                      MovePermissionsTestCase{.target_present = true,
+                                              .gesture_present = false},
+                      MovePermissionsTestCase{.target_present = true,
+                                              .gesture_present = true}),
+    [](const testing::TestParamInfo<
+        FileSystemAccessFileHandleImplMovePermissionsTest::ParamType>& info) {
+      return base::StrCat(
+          {(info.param.target_present ? "" : "No"), "TargetPresent_",
+           (info.param.gesture_present ? "" : "No"), "GesturePresent"});
+    });
+
 TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Rename_HasTargetNoParentWriteAccess) {
+       Rename_HasTargetWriteAccess) {
   auto [source, target] = CreateSourceAndMaybeTarget();
-
-  auto parent_grant = deny_grant_;
-  auto target_grant = allow_grant_;
-
-  ExpectFileRenameSuccess(
-      /*parent=*/dir_.GetPath(), source, target, parent_grant, target_grant);
+  ExpectFileRenameSuccess(source, target, /*target_grant=*/allow_grant_);
 }
 
 TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Rename_HasTargetAndParentWriteAccess) {
-  auto [source, target] = CreateSourceAndMaybeTarget();
-
-  auto parent_grant = allow_grant_;
-  auto target_grant = allow_grant_;
-
-  ExpectFileRenameSuccess(
-      /*parent=*/dir_.GetPath(), source, target, parent_grant, target_grant);
-}
-
-TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Rename_NoTargetHasParentWriteAccessFails) {
-  auto [source, target] = CreateSourceAndMaybeTarget();
-
-  // The user has explicitly denied access to the target entry.
-  auto parent_grant = allow_grant_;
-  auto target_grant = deny_grant_;
-
-  ExpectFileRenameFailure(
-      /*parent=*/dir_.GetPath(), source, target, parent_grant, target_grant,
-      blink::mojom::FileSystemAccessStatus::kPermissionDenied);
-}
-
-TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Rename_AskTargetAskParentWriteAccess) {
+       Rename_AskTargetWriteAccess) {
   auto [source, target] = CreateSourceAndMaybeTarget();
 
   // The site has not yet asked for access to the target entry.
-  auto parent_grant = ask_grant_;
   auto target_grant = ask_grant_;
 
-  // Cannot overwrite a file without a user gesture or explicit access to the
-  // parent or target (even if overwrites are enabled). Reject with a
-  // permission error.
-  if (target_present() || !gesture_present()) {
+  if (!gesture_present()) {
+    // The rename should fail because write access to the target is not granted.
     ExpectFileRenameFailure(
-        /*parent=*/dir_.GetPath(), source, target, parent_grant, target_grant,
-        blink::mojom::FileSystemAccessStatus::kPermissionDenied);
+        source, target, target_grant,
+        blink::mojom::FileSystemAccessStatus::kPermissionDenied
+        // No user activation, so the sensitive entry access check is not
+        // performed.
+    );
+  } else if (target_present()) {
+    // The rename should fail because write access to the target is not granted.
+    ExpectFileRenameFailure(
+        source, target, target_grant,
+        blink::mojom::FileSystemAccessStatus::kInvalidModificationError,
+        /*expects_safe_name=*/true,
+        // With user activation, the sensitive entry access check should be
+        // performed and allowed.
+        FileSystemAccessPermissionContext::SensitiveEntryResult::kAllowed);
   } else {
-    ExpectFileRenameSuccess(
-        /*parent=*/dir_.GetPath(), source, target, parent_grant, target_grant);
+    ExpectFileRenameSuccess(source, target, target_grant);
   }
 }
 
@@ -1189,96 +1368,349 @@ TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Rename_SameFile) {
 
   target = source;
 
-  auto parent_grant = allow_grant_;
+  ExpectFileRenameSuccess(source, target, /*target_grant=*/allow_grant_);
+}
 
-  // We want ExpectFileRenameSuccess(), but without most EXPECT_CALLs since we
-  // should exit early if we detect that the target is the source.
-  auto handle = GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
+TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Rename_UnsafeName) {
+  auto [source, target] = CreateSourceAndMaybeTarget();
 
-  EXPECT_CALL(permission_context_,
-              GetReadPermissionGrant(
-                  test_src_storage_key_.origin(), dir_.GetPath(),
-                  FileSystemAccessPermissionContext::HandleType::kDirectory,
-                  FileSystemAccessPermissionContext::UserAction::kNone))
-      .WillOnce(testing::Return(parent_grant));
-  EXPECT_CALL(permission_context_,
-              GetWritePermissionGrant(
-                  test_src_storage_key_.origin(), dir_.GetPath(),
-                  FileSystemAccessPermissionContext::HandleType::kDirectory,
-                  FileSystemAccessPermissionContext::UserAction::kNone))
-      .WillOnce(testing::Return(parent_grant));
-
-  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-  handle->Rename(target.BaseName().AsUTF8Unsafe(), future.GetCallback());
-  EXPECT_EQ(future.Get()->status, blink::mojom::FileSystemAccessStatus::kOk);
-  EXPECT_TRUE(base::PathExists(source));
+  ExpectFileRenameFailure(
+      source, target, /*target_grant=*/allow_grant_,
+      blink::mojom::FileSystemAccessStatus::kInvalidArgument,
+      /*expects_safe_name=*/false
+      // The access is already granted to the target, so the sensitive entry
+      // access check should not be performed.
+  );
 }
 
 TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Move_HasTargetWriteAccess) {
+       Rename_SensitiveName) {
   auto [source, target] = CreateSourceAndMaybeTarget();
 
-  // The site has not yet asked for access to the target entry.
-  auto target_grant = ask_grant_;
+  ExpectFileRenameFailure(
+      source, target, /*target_grant=*/allow_grant_,
+      blink::mojom::FileSystemAccessStatus::kInvalidArgument,
+      /*expects_safe_name=*/true,
+      // Let the test fail because the sensitive entry access check is aborted.
+      FileSystemAccessPermissionContext::SensitiveEntryResult::kAbort);
+}
 
-  ExpectFileMoveSuccess(
-      /*parent=*/dir_.GetPath(), source, target, target_grant);
+TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Move) {
+  auto [source, target] = CreateSourceAndMaybeTarget();
+
+  ExpectFileMoveSuccess(source, target);
 }
 
 TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
        Move_NoTargetWriteAccessFails) {
   auto [source, target] = CreateSourceAndMaybeTarget();
-
-  // The user has explicitly denied access to the target entry.
-  auto target_grant = deny_grant_;
-
   ExpectFileMoveFailure(
-      /*parent=*/dir_.GetPath(), source, target, target_grant,
+      source, target, /*target_grant=*/ask_grant_,
       blink::mojom::FileSystemAccessStatus::kPermissionDenied);
 }
 
-TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest,
-       Move_AskTargetWriteAccess) {
-  auto [source, target] = CreateSourceAndMaybeTarget();
-
-  // The site has not yet asked for access to the target entry, but since it has
-  // access to the parent, the move should still succeed.
-  auto target_grant = ask_grant_;
-
-  ExpectFileMoveSuccess(
-      /*parent=*/dir_.GetPath(), source, target, target_grant);
-}
-
 TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Move_SameFile) {
-  auto [source, target] = CreateSourceAndMaybeTarget();
+  auto [source, unused] = CreateSourceAndMaybeTarget();
 
-  target = source;
-
-  // We want ExpectFileMoveSuccess(), but without any EXPECT_CALLs since we
-  // should exit early if we detect that the target is the source.
-  auto dest_dir_handle =
-      GetDirectoryHandleWithPermissions(dir_.GetPath(), /*read=*/true,
-                                        /*write=*/true);
-  auto handle = GetHandleWithPermissions(source, /*read=*/true, /*write=*/true);
-
-  mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dir_remote;
-  manager_->CreateTransferToken(*dest_dir_handle,
-                                dir_remote.InitWithNewPipeAndPassReceiver());
-
-  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
-  handle->Move(std::move(dir_remote), target.BaseName().AsUTF8Unsafe(),
-               future.GetCallback());
-  EXPECT_EQ(future.Get()->status, blink::mojom::FileSystemAccessStatus::kOk);
-  EXPECT_TRUE(base::PathExists(source));
+  ExpectFileMoveSuccess(source, source);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    FileSystemAccessFileHandleImplMovePermissionsTest,
-    ::testing::Combine(
-        // Is there a file to be overwritten?
-        ::testing::Bool(),
-        // Does the site have user activation?
-        ::testing::Bool()));
+TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Move_UnsafeName) {
+  auto [source, target] = CreateSourceAndMaybeTarget();
+
+  ExpectFileMoveFailure(source, target, /*target_grant=*/allow_grant_,
+                        blink::mojom::FileSystemAccessStatus::kInvalidArgument,
+                        /*expects_safe_name=*/false
+                        // The access is already granted to the target, so the
+                        // sensitive entry access check should not be performed.
+  );
+}
+
+TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Move_SensitiveName) {
+  auto [source, target] = CreateSourceAndMaybeTarget();
+
+  ExpectFileMoveFailure(
+      source, target, /*target_grant=*/allow_grant_,
+      blink::mojom::FileSystemAccessStatus::kInvalidArgument,
+      /*expects_safe_name=*/true,
+      // Let the test fail because the sensitive entry access check is aborted.
+      FileSystemAccessPermissionContext::SensitiveEntryResult::kAbort);
+}
+
+class FileSystemAccessFileHandleImplPermissionTest
+    : public FileSystemAccessFileHandleImplTestBase {
+ public:
+  void SetUp() override {
+    FileSystemAccessFileHandleImplTestBase::SetUp();
+    mock_read_grant_ = base::MakeRefCounted<
+        testing::StrictMock<MockFileSystemAccessPermissionGrant>>();
+    mock_write_grant_ = base::MakeRefCounted<
+        testing::StrictMock<MockFileSystemAccessPermissionGrant>>();
+  }
+
+ protected:
+  // Creates a handle to a file named "test_file" in the test directory.
+  std::unique_ptr<FileSystemAccessFileHandleImpl> CreateHandle() {
+    auto test_path = dir_.GetPath().AppendASCII("test_file");
+    EXPECT_TRUE(base::WriteFile(test_path, ""));
+    auto url = manager_->CreateFileSystemURLFromPath(PathInfo(test_path));
+    return std::make_unique<FileSystemAccessFileHandleImpl>(
+        manager_.get(), kFrameBindingContext, url, "test_file",
+        FileSystemAccessManagerImpl::SharedHandleState(mock_read_grant_,
+                                                       mock_write_grant_));
+  }
+
+  // Calls GetPermissionStatus() on the given `handle` and waits for the result.
+  void GetPermissionStatus(FileSystemAccessFileHandleImpl* handle,
+                           blink::mojom::FileSystemAccessPermissionMode mode,
+                           blink::mojom::PermissionStatus* out_status) {
+    base::test::TestFuture<blink::mojom::PermissionStatus> future;
+    handle->GetPermissionStatus(mode, future.GetCallback());
+    *out_status = future.Get();
+  }
+
+  // Calls RequestPermission() on the given `handle` and waits for the result.
+  std::pair<blink::mojom::FileSystemAccessErrorPtr,
+            blink::mojom::PermissionStatus>
+  RequestPermission(FileSystemAccessFileHandleImpl* handle,
+                    blink::mojom::FileSystemAccessPermissionMode mode) {
+    base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr,
+                           blink::mojom::PermissionStatus>
+        future;
+    handle->RequestPermission(mode, future.GetCallback());
+    return future.Take();
+  }
+
+  // Sets up expectations for a call to `RequestPermission()` on a mock grant.
+  void SetUpGrantExpectations(
+      testing::StrictMock<MockFileSystemAccessPermissionGrant>& grant,
+      PermissionStatus new_status,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome outcome) {
+    EXPECT_CALL(grant, GetStatus())
+        .WillRepeatedly(testing::Return(PermissionStatus::ASK));
+    EXPECT_CALL(
+        grant,
+        RequestPermission_(
+            kFrameId,
+            FileSystemAccessPermissionGrant::UserActivationState::kRequired, _))
+        .WillOnce(
+            testing::DoAll(testing::InvokeWithoutArgs([&grant, new_status]() {
+                             EXPECT_CALL(grant, GetStatus())
+                                 .WillRepeatedly(testing::Return(new_status));
+                           }),
+                           base::test::RunOnceCallback<2>(outcome)));
+  }
+
+  const int kProcessId = 1;
+  const int kFrameRoutingId = 2;
+  const GlobalRenderFrameHostId kFrameId{kProcessId, kFrameRoutingId};
+  const FileSystemAccessManagerImpl::BindingContext kFrameBindingContext = {
+      test_src_storage_key_, test_src_url_, kFrameId};
+
+  scoped_refptr<testing::StrictMock<MockFileSystemAccessPermissionGrant>>
+      mock_read_grant_;
+  scoped_refptr<testing::StrictMock<MockFileSystemAccessPermissionGrant>>
+      mock_write_grant_;
+};
+
+class FileSystemAccessFileHandleImplGetPermissionStatusTest
+    : public FileSystemAccessFileHandleImplPermissionTest {};
+
+TEST_F(FileSystemAccessFileHandleImplGetPermissionStatusTest, ReadHandle) {
+  auto test_path = dir_.GetPath().AppendASCII("test_file");
+  ASSERT_TRUE(base::WriteFile(test_path, ""));
+
+  auto read_only_handle =
+      GetHandleWithPermissions(test_path, allow_grant_, deny_grant_);
+
+  blink::mojom::PermissionStatus status;
+  GetPermissionStatus(read_only_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kRead,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::GRANTED);
+
+  {
+    base::test::ScopedFeatureList features;
+    features.InitAndEnableFeature(blink::features::kFileSystemAccessWriteMode);
+    GetPermissionStatus(read_only_handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kWrite,
+                        &status);
+    EXPECT_EQ(status, blink::mojom::PermissionStatus::DENIED);
+  }
+
+  GetPermissionStatus(read_only_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kReadWrite,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::DENIED);
+}
+
+TEST_F(FileSystemAccessFileHandleImplGetPermissionStatusTest, WriteHandle) {
+  auto test_path = dir_.GetPath().AppendASCII("test_file");
+  ASSERT_TRUE(base::WriteFile(test_path, ""));
+
+  auto write_handle =
+      GetHandleWithPermissions(test_path, deny_grant_, allow_grant_);
+
+  blink::mojom::PermissionStatus status;
+  GetPermissionStatus(write_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kRead,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::DENIED);
+
+  {
+    base::test::ScopedFeatureList features;
+    features.InitAndEnableFeature(blink::features::kFileSystemAccessWriteMode);
+    GetPermissionStatus(write_handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kWrite,
+                        &status);
+    EXPECT_EQ(status, blink::mojom::PermissionStatus::GRANTED);
+  }
+
+  GetPermissionStatus(write_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kReadWrite,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::DENIED);
+}
+
+TEST_F(FileSystemAccessFileHandleImplGetPermissionStatusTest, ReadWriteHandle) {
+  auto test_path = dir_.GetPath().AppendASCII("test_file");
+  ASSERT_TRUE(base::WriteFile(test_path, ""));
+
+  auto read_write_handle =
+      GetHandleWithPermissions(test_path, allow_grant_, allow_grant_);
+
+  blink::mojom::PermissionStatus status;
+  GetPermissionStatus(read_write_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kRead,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::GRANTED);
+
+  {
+    base::test::ScopedFeatureList features;
+    features.InitAndEnableFeature(blink::features::kFileSystemAccessWriteMode);
+    GetPermissionStatus(read_write_handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kWrite,
+                        &status);
+    EXPECT_EQ(status, blink::mojom::PermissionStatus::GRANTED);
+  }
+
+  GetPermissionStatus(read_write_handle.get(),
+                      blink::mojom::FileSystemAccessPermissionMode::kReadWrite,
+                      &status);
+  EXPECT_EQ(status, blink::mojom::PermissionStatus::GRANTED);
+}
+
+class FileSystemAccessFileHandleImplRequestPermissionTest
+    : public FileSystemAccessFileHandleImplPermissionTest {};
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestRead_Granted) {
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_read_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  EXPECT_THAT(
+      RequestPermission(handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kRead),
+      IsOkAndPermissionStatus(PermissionStatus::GRANTED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestRead_Denied) {
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_read_grant_, PermissionStatus::DENIED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserDenied);
+
+  EXPECT_THAT(
+      RequestPermission(handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kRead),
+      IsOkAndPermissionStatus(PermissionStatus::DENIED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestReadWrite_Granted) {
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_read_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  EXPECT_THAT(RequestPermission(
+                  handle.get(),
+                  blink::mojom::FileSystemAccessPermissionMode::kReadWrite),
+              IsOkAndPermissionStatus(PermissionStatus::GRANTED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestReadWrite_ReadDenied) {
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_read_grant_, PermissionStatus::DENIED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserDenied);
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  EXPECT_THAT(RequestPermission(
+                  handle.get(),
+                  blink::mojom::FileSystemAccessPermissionMode::kReadWrite),
+              IsOkAndPermissionStatus(PermissionStatus::DENIED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestReadWrite_WriteDenied) {
+  auto handle = CreateHandle();
+
+  EXPECT_CALL(*mock_read_grant_, GetStatus())
+      .WillRepeatedly(testing::Return(PermissionStatus::GRANTED));
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::DENIED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserDenied);
+
+  EXPECT_THAT(RequestPermission(
+                  handle.get(),
+                  blink::mojom::FileSystemAccessPermissionMode::kReadWrite),
+              IsOkAndPermissionStatus(PermissionStatus::DENIED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestWrite_Granted) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(blink::features::kFileSystemAccessWriteMode);
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  EXPECT_THAT(
+      RequestPermission(handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kWrite),
+      IsOkAndPermissionStatus(PermissionStatus::GRANTED));
+}
+
+TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
+       RequestWrite_Denied) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(blink::features::kFileSystemAccessWriteMode);
+  auto handle = CreateHandle();
+
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::DENIED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserDenied);
+
+  EXPECT_THAT(
+      RequestPermission(handle.get(),
+                        blink::mojom::FileSystemAccessPermissionMode::kWrite),
+      IsOkAndPermissionStatus(PermissionStatus::DENIED));
+}
 
 }  // namespace content

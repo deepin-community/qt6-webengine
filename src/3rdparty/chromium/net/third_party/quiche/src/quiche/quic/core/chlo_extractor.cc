@@ -4,6 +4,9 @@
 
 #include "quiche/quic/core/chlo_extractor.h"
 
+#include <memory>
+#include <optional>
+
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "quiche/quic/core/crypto/crypto_framer.h"
@@ -12,6 +15,8 @@
 #include "quiche/quic/core/crypto/quic_decrypter.h"
 #include "quiche/quic/core/crypto/quic_encrypter.h"
 #include "quiche/quic/core/frames/quic_ack_frequency_frame.h"
+#include "quiche/quic/core/frames/quic_immediate_ack_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
 #include "quiche/quic/core/quic_framer.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_utils.h"
@@ -77,7 +82,9 @@ class ChloFramerVisitor : public QuicFramerVisitorInterface,
   bool OnPaddingFrame(const QuicPaddingFrame& frame) override;
   bool OnMessageFrame(const QuicMessageFrame& frame) override;
   bool OnHandshakeDoneFrame(const QuicHandshakeDoneFrame& frame) override;
-  bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& farme) override;
+  bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) override;
+  bool OnImmediateAckFrame(const QuicImmediateAckFrame& frame) override;
+  bool OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) override;
   void OnPacketComplete() override {}
   bool IsValidStatelessResetToken(
       const StatelessResetToken& token) const override;
@@ -207,6 +214,11 @@ bool ChloFramerVisitor::OnAckFrameStart(QuicPacketNumber /*largest_acked*/,
   return true;
 }
 
+bool ChloFramerVisitor::OnResetStreamAtFrame(
+    const QuicResetStreamAtFrame& /*frame*/) {
+  return true;
+}
+
 bool ChloFramerVisitor::OnAckRange(QuicPacketNumber /*start*/,
                                    QuicPacketNumber /*end*/) {
   return true;
@@ -298,6 +310,11 @@ bool ChloFramerVisitor::OnHandshakeDoneFrame(
 
 bool ChloFramerVisitor::OnAckFrequencyFrame(
     const QuicAckFrequencyFrame& /*frame*/) {
+  return true;
+}
+
+bool ChloFramerVisitor::OnImmediateAckFrame(
+    const QuicImmediateAckFrame& /*frame*/) {
   return true;
 }
 

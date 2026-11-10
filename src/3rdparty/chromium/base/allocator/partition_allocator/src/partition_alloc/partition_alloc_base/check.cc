@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/check.h"
 
 #include "partition_alloc/partition_alloc_base/logging.h"
 
 namespace partition_alloc::internal::logging {
 
-// TODO(1151236): Make CheckError not to allocate memory. So we can use
-// CHECK() inside PartitionAllocator when PartitionAllocator-Everywhere is
+// TODO(crbug.com/40158212): Make CheckError not to allocate memory. So we can
+// use CHECK() inside PartitionAllocator when PartitionAllocator-Everywhere is
 // enabled. (Also need to modify LogMessage).
 
 CheckError::CheckError(const char* file,
@@ -73,11 +78,11 @@ CheckError::~CheckError() {
   if (!has_errno) {
     log_message_.~LogMessage();
   } else {
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
     errno_log_message_.~Win32ErrorLogMessage();
-#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+#elif PA_BUILDFLAG(IS_POSIX) || PA_BUILDFLAG(IS_FUCHSIA)
     errno_log_message_.~ErrnoLogMessage();
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
   }
 }
 

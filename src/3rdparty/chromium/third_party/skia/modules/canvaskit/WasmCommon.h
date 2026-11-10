@@ -11,8 +11,14 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include "include/core/SkColor.h"
+#include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
 #include "include/private/base/SkMalloc.h"
+
+#include <memory>
+
+class SkData;
+class SkCodec;
 
 using namespace emscripten;
 
@@ -25,6 +31,7 @@ using SkPathOrNull = emscripten::val;
 using TypedArray = emscripten::val;
 using Uint8Array = emscripten::val;
 using Uint16Array = emscripten::val;
+using Int32Array = emscripten::val;
 using Uint32Array = emscripten::val;
 using Float32Array = emscripten::val;
 
@@ -71,6 +78,8 @@ template <typename T> TypedArray MakeTypedArray(int count, const T src[]) {
 }
 
 SkColor4f ptrToSkColor4f(WASMPointerF32);
+
+std::unique_ptr<SkCodec> DecodeImageData(sk_sp<SkData>);
 
 /**
  *  Gives read access to a JSArray

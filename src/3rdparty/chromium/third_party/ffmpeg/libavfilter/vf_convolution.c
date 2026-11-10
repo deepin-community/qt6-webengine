@@ -24,12 +24,13 @@
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "convolution.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 #define OFFSET(x) offsetof(ConvolutionContext, x)
@@ -40,21 +41,21 @@ static const AVOption convolution_options[] = {
     { "1m", "set matrix for 2nd plane", OFFSET(matrix_str[1]), AV_OPT_TYPE_STRING, {.str="0 0 0 0 1 0 0 0 0"}, 0, 0, FLAGS },
     { "2m", "set matrix for 3rd plane", OFFSET(matrix_str[2]), AV_OPT_TYPE_STRING, {.str="0 0 0 0 1 0 0 0 0"}, 0, 0, FLAGS },
     { "3m", "set matrix for 4th plane", OFFSET(matrix_str[3]), AV_OPT_TYPE_STRING, {.str="0 0 0 0 1 0 0 0 0"}, 0, 0, FLAGS },
-    { "0rdiv", "set rdiv for 1st plane", OFFSET(rdiv[0]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
-    { "1rdiv", "set rdiv for 2nd plane", OFFSET(rdiv[1]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
-    { "2rdiv", "set rdiv for 3rd plane", OFFSET(rdiv[2]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
-    { "3rdiv", "set rdiv for 4th plane", OFFSET(rdiv[3]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
+    { "0rdiv", "set rdiv for 1st plane", OFFSET(user_rdiv[0]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
+    { "1rdiv", "set rdiv for 2nd plane", OFFSET(user_rdiv[1]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
+    { "2rdiv", "set rdiv for 3rd plane", OFFSET(user_rdiv[2]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
+    { "3rdiv", "set rdiv for 4th plane", OFFSET(user_rdiv[3]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
     { "0bias", "set bias for 1st plane", OFFSET(bias[0]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
     { "1bias", "set bias for 2nd plane", OFFSET(bias[1]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
     { "2bias", "set bias for 3rd plane", OFFSET(bias[2]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
     { "3bias", "set bias for 4th plane", OFFSET(bias[3]), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, INT_MAX, FLAGS},
-    { "0mode", "set matrix mode for 1st plane", OFFSET(mode[0]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, "mode" },
-    { "1mode", "set matrix mode for 2nd plane", OFFSET(mode[1]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, "mode" },
-    { "2mode", "set matrix mode for 3rd plane", OFFSET(mode[2]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, "mode" },
-    { "3mode", "set matrix mode for 4th plane", OFFSET(mode[3]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, "mode" },
-    { "square", "square matrix",     0, AV_OPT_TYPE_CONST, {.i64=MATRIX_SQUARE}, 0, 0, FLAGS, "mode" },
-    { "row",    "single row matrix", 0, AV_OPT_TYPE_CONST, {.i64=MATRIX_ROW}   , 0, 0, FLAGS, "mode" },
-    { "column", "single column matrix", 0, AV_OPT_TYPE_CONST, {.i64=MATRIX_COLUMN}, 0, 0, FLAGS, "mode" },
+    { "0mode", "set matrix mode for 1st plane", OFFSET(mode[0]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, .unit = "mode" },
+    { "1mode", "set matrix mode for 2nd plane", OFFSET(mode[1]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, .unit = "mode" },
+    { "2mode", "set matrix mode for 3rd plane", OFFSET(mode[2]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, .unit = "mode" },
+    { "3mode", "set matrix mode for 4th plane", OFFSET(mode[3]), AV_OPT_TYPE_INT, {.i64=MATRIX_SQUARE}, 0, MATRIX_NBMODES-1, FLAGS, .unit = "mode" },
+    { "square", "square matrix",     0, AV_OPT_TYPE_CONST, {.i64=MATRIX_SQUARE}, 0, 0, FLAGS, .unit = "mode" },
+    { "row",    "single row matrix", 0, AV_OPT_TYPE_CONST, {.i64=MATRIX_ROW}   , 0, 0, FLAGS, .unit = "mode" },
+    { "column", "single column matrix", 0, AV_OPT_TYPE_CONST, {.i64=MATRIX_COLUMN}, 0, 0, FLAGS, .unit = "mode" },
     { NULL }
 };
 
@@ -674,7 +675,7 @@ static int param_init(AVFilterContext *ctx)
             p = orig = av_strdup(s->matrix_str[i]);
             if (p) {
                 s->matrix_length[i] = 0;
-                s->rdiv[i] = 0.f;
+                s->rdiv[i] = s->user_rdiv[i];
                 sum = 0.f;
 
                 while (s->matrix_length[i] < 49) {
@@ -760,8 +761,10 @@ static int param_init(AVFilterContext *ctx)
             s->rdiv[i] = s->scale;
             s->bias[i] = s->delta;
         }
+#if CONFIG_SOBEL_FILTER
     } else if (!strcmp(ctx->filter->name, "sobel")) {
         ff_sobel_init(s, s->depth, s->nb_planes);
+#endif
     } else if (!strcmp(ctx->filter->name, "kirsch")) {
         for (i = 0; i < 4; i++) {
             s->filter[i] = filter_kirsch;
@@ -874,15 +877,15 @@ static const AVFilterPad convolution_inputs[] = {
 
 #if CONFIG_CONVOLUTION_FILTER
 
-const AVFilter ff_vf_convolution = {
-    .name          = "convolution",
-    .description   = NULL_IF_CONFIG_SMALL("Apply convolution filter."),
+const FFFilter ff_vf_convolution = {
+    .p.name        = "convolution",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply convolution filter."),
+    .p.priv_class  = &convolution_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &convolution_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -900,15 +903,15 @@ AVFILTER_DEFINE_CLASS_EXT(common, "kirsch/prewitt/roberts/scharr/sobel",
 
 #if CONFIG_PREWITT_FILTER
 
-const AVFilter ff_vf_prewitt = {
-    .name          = "prewitt",
-    .description   = NULL_IF_CONFIG_SMALL("Apply prewitt operator."),
+const FFFilter ff_vf_prewitt = {
+    .p.name        = "prewitt",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply prewitt operator."),
+    .p.priv_class  = &common_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &common_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -916,15 +919,15 @@ const AVFilter ff_vf_prewitt = {
 
 #if CONFIG_SOBEL_FILTER
 
-const AVFilter ff_vf_sobel = {
-    .name          = "sobel",
-    .description   = NULL_IF_CONFIG_SMALL("Apply sobel operator."),
+const FFFilter ff_vf_sobel = {
+    .p.name        = "sobel",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply sobel operator."),
+    .p.priv_class  = &common_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &common_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -932,15 +935,15 @@ const AVFilter ff_vf_sobel = {
 
 #if CONFIG_ROBERTS_FILTER
 
-const AVFilter ff_vf_roberts = {
-    .name          = "roberts",
-    .description   = NULL_IF_CONFIG_SMALL("Apply roberts cross operator."),
+const FFFilter ff_vf_roberts = {
+    .p.name        = "roberts",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply roberts cross operator."),
+    .p.priv_class  = &common_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &common_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -948,15 +951,15 @@ const AVFilter ff_vf_roberts = {
 
 #if CONFIG_KIRSCH_FILTER
 
-const AVFilter ff_vf_kirsch = {
-    .name          = "kirsch",
-    .description   = NULL_IF_CONFIG_SMALL("Apply kirsch operator."),
+const FFFilter ff_vf_kirsch = {
+    .p.name        = "kirsch",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply kirsch operator."),
+    .p.priv_class  = &common_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &common_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 
@@ -964,15 +967,15 @@ const AVFilter ff_vf_kirsch = {
 
 #if CONFIG_SCHARR_FILTER
 
-const AVFilter ff_vf_scharr = {
-    .name          = "scharr",
-    .description   = NULL_IF_CONFIG_SMALL("Apply scharr operator."),
+const FFFilter ff_vf_scharr = {
+    .p.name        = "scharr",
+    .p.description = NULL_IF_CONFIG_SMALL("Apply scharr operator."),
+    .p.priv_class  = &common_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ConvolutionContext),
-    .priv_class    = &common_class,
     FILTER_INPUTS(convolution_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };
 

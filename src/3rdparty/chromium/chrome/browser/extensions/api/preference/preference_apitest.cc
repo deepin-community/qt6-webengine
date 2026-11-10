@@ -10,17 +10,17 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/api/preference/cookie_controls_mode_transformer.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/prefetch/pref_names.h"
 #include "chrome/browser/preloading/preloading_prefs.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/pref_names.h"
@@ -29,11 +29,13 @@
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_devtools_protocol_client.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/test/extension_test_message_listener.h"
@@ -44,7 +46,7 @@
 
 using CookieControlsMode = content_settings::CookieControlsMode;
 
-using ContextType = extensions::ExtensionBrowserTest::ContextType;
+using ContextType = extensions::browser_test_util::ContextType;
 
 class ExtensionPreferenceApiTest
     : public extensions::ExtensionApiTest,
@@ -55,7 +57,10 @@ class ExtensionPreferenceApiTest
       delete;
 
  protected:
-  ExtensionPreferenceApiTest() : ExtensionApiTest(GetParam()) {}
+  ExtensionPreferenceApiTest() : ExtensionApiTest(GetParam()) {
+    feature_list_.InitAndEnableFeature(
+        privacy_sandbox::kAlwaysBlock3pcsIncognito);
+  }
   ~ExtensionPreferenceApiTest() override = default;
 
   void SetCookieControlsMode(PrefService* prefs, CookieControlsMode mode) {
@@ -78,7 +83,7 @@ class ExtensionPreferenceApiTest
     EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillEnabledDeprecated));
     EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled));
     EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillProfileEnabled));
-    EXPECT_EQ(CookieControlsMode::kOff, GetCookieControlsMode(prefs));
+    EXPECT_EQ(GetCookieControlsMode(prefs), CookieControlsMode::kOff);
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableReferrers));
     EXPECT_TRUE(prefs->GetBoolean(translate::prefs::kOfferTranslateEnabled));
@@ -115,8 +120,8 @@ class ExtensionPreferenceApiTest
     EXPECT_FALSE(
         prefs->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled));
     EXPECT_FALSE(prefs->GetBoolean(autofill::prefs::kAutofillProfileEnabled));
-    EXPECT_EQ(CookieControlsMode::kBlockThirdParty,
-              GetCookieControlsMode(prefs));
+    EXPECT_EQ(GetCookieControlsMode(prefs),
+              CookieControlsMode::kBlockThirdParty);
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableReferrers));
     EXPECT_FALSE(prefs->GetBoolean(translate::prefs::kOfferTranslateEnabled));
@@ -163,33 +168,44 @@ class ExtensionPreferenceApiTest
 
     // The browser might get closed later (and therefore be destroyed), so we
     // save the profile.
-    profile_ = browser()->profile();
+    profile_ = profile();
 
+#if !BUILDFLAG(IS_ANDROID)
     // Closing the last browser window also releases a module reference. Make
     // sure it's not the last one, so the message loop doesn't quit
-    // unexpectedly.
+    // unexpectedly. On Android KeepAlive is not supported nor required.
     keep_alive_ = std::make_unique<ScopedKeepAlive>(
         KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
+#endif
   }
 
   void TearDownOnMainThread() override {
+#if !BUILDFLAG(IS_ANDROID)
     // BrowserProcess::Shutdown() needs to be called in a message loop, so we
     // post a task to release the keep alive, then run the message loop.
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&std::unique_ptr<ScopedKeepAlive>::reset,
                                   base::Unretained(&keep_alive_), nullptr));
     content::RunAllPendingInMessageLoop();
+#endif
 
     extensions::ExtensionApiTest::TearDownOnMainThread();
   }
 
   raw_ptr<Profile, DanglingUntriaged> profile_ = nullptr;
+  base::test::ScopedFeatureList feature_list_;
+#if !BUILDFLAG(IS_ANDROID)
+  // KeepAlive is not supported nor required on Android.
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
+#endif
 };
 
+// Desktop Android only supports manifest V3 / service worker.
+#if !BUILDFLAG(IS_ANDROID)
 INSTANTIATE_TEST_SUITE_P(BackgroundPage,
                          ExtensionPreferenceApiTest,
                          ::testing::Values(ContextType::kPersistentBackground));
+#endif
 
 INSTANTIATE_TEST_SUITE_P(ServiceWorker,
                          ExtensionPreferenceApiTest,
@@ -220,11 +236,12 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, Standard) {
   prefs->SetBoolean(prefs::kPrivacySandboxM1AdMeasurementEnabled, true);
   prefs->SetBoolean(prefs::kPrivacySandboxRelatedWebsiteSetsEnabled, true);
 
-  // The 'protectedContentEnabled' pref is only available on ChromeOS and
-  // Windows, so pass a JSON array object with any unsupported prefs into
-  // the test , so it can skip those.
+  // The 'protectedContentEnabled' pref is only available as browser pref
+  // associated with browser profile on ChromeOS and Windows, so pass a JSON
+  // array object with any unsupported prefs into the test , so it can skip
+  // those.
   static constexpr char kMissingPrefs[] =
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
       "[ ]";
 #else
       "[ \"protectedContentEnabled\" ]";
@@ -271,9 +288,20 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, Standard) {
   CheckPreferencesCleared();
 }
 
+IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
+                       ThirdPartyCookiesAllowedIncognito) {
+  PrefService* prefs = profile_->GetPrefs();
+  SetCookieControlsMode(prefs, CookieControlsMode::kBlockThirdParty);
+
+  EXPECT_TRUE(
+      RunExtensionTest("preference/third_party_cookies_allowed_incognito", {},
+                       {.allow_in_incognito = true}))
+      << message_;
+}
+
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, PersistentIncognito) {
   PrefService* prefs = profile_->GetPrefs();
-  SetCookieControlsMode(prefs, CookieControlsMode::kOff);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, true);
 
   EXPECT_TRUE(RunExtensionTest("preference/persistent_incognito", {},
                                {.allow_in_incognito = true}))
@@ -284,25 +312,27 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, PersistentIncognito) {
 
   PrefService* otr_prefs =
       profile_->GetPrimaryOTRProfile(/*create_if_needed=*/true)->GetPrefs();
-  auto* otr_pref = otr_prefs->FindPreference(prefs::kCookieControlsMode);
+  auto* otr_pref = otr_prefs->FindPreference(prefs::kEnableHyperlinkAuditing);
   ASSERT_TRUE(otr_pref);
   EXPECT_TRUE(otr_pref->IsExtensionControlled());
-  EXPECT_EQ(CookieControlsMode::kBlockThirdParty,
-            GetCookieControlsMode(otr_prefs));
+  EXPECT_FALSE(otr_prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
 
-  auto* pref = prefs->FindPreference(prefs::kCookieControlsMode);
+  auto* pref = prefs->FindPreference(prefs::kEnableHyperlinkAuditing);
   ASSERT_TRUE(pref);
   EXPECT_FALSE(pref->IsExtensionControlled());
-  EXPECT_EQ(CookieControlsMode::kOff, GetCookieControlsMode(prefs));
+  EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
 }
 
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, IncognitoDisabled) {
   EXPECT_FALSE(RunExtensionTest("preference/persistent_incognito"));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/371432155): Enable on desktop Android when the chrome.windows
+// API is available.
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, SessionOnlyIncognito) {
   PrefService* prefs = profile_->GetPrefs();
-  SetCookieControlsMode(prefs, CookieControlsMode::kOff);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, true);
 
   EXPECT_TRUE(RunExtensionTest("preference/session_only_incognito", {},
                                {.allow_in_incognito = true}))
@@ -312,16 +342,17 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, SessionOnlyIncognito) {
 
   PrefService* otr_prefs =
       profile_->GetPrimaryOTRProfile(/*create_if_needed=*/true)->GetPrefs();
-  auto* otr_pref = otr_prefs->FindPreference(prefs::kCookieControlsMode);
+  auto* otr_pref = otr_prefs->FindPreference(prefs::kEnableHyperlinkAuditing);
   ASSERT_TRUE(otr_pref);
   EXPECT_TRUE(otr_pref->IsExtensionControlled());
-  EXPECT_EQ(CookieControlsMode::kOff, GetCookieControlsMode(otr_prefs));
+  EXPECT_TRUE(otr_prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
 
-  auto* pref = prefs->FindPreference(prefs::kCookieControlsMode);
+  auto* pref = prefs->FindPreference(prefs::kEnableHyperlinkAuditing);
   ASSERT_TRUE(pref);
   EXPECT_FALSE(pref->IsExtensionControlled());
-  EXPECT_EQ(CookieControlsMode::kOff, GetCookieControlsMode(prefs));
+  EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, Clear) {
   PrefService* prefs = profile_->GetPrefs();
@@ -350,7 +381,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
       profile_->GetPrimaryOTRProfile(/*create_if_needed=*/true));
 
   // Open an incognito window.
-  OpenURLOffTheRecord(profile_, GURL("chrome://newtab/"));
+  PlatformOpenURLOffTheRecord(profile_, GURL("chrome://newtab/"));
 
   // changeDefault listeners.
   ExtensionTestMessageListener listener1("changeDefault regular ready",
@@ -408,15 +439,15 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
   ASSERT_TRUE(LoadExtension(extension_data_dir, {.allow_in_incognito = true}));
 
   // Test 1 - changeDefault
-  EXPECT_TRUE(listener1.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito1.WaitUntilSatisfied()); // Incognito ready
+  EXPECT_TRUE(listener1.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito1.WaitUntilSatisfied());  // Incognito ready
   listener1.Reply("ok");
   listener_incognito1.Reply("ok");
 
   // Test 2 - changeIncognitoOnly
-  EXPECT_TRUE(listener2.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito2.WaitUntilSatisfied()); // Incognito ready
-  EXPECT_TRUE(listener3.WaitUntilSatisfied()); // Regular listening
+  EXPECT_TRUE(listener2.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito2.WaitUntilSatisfied());  // Incognito ready
+  EXPECT_TRUE(listener3.WaitUntilSatisfied());            // Regular listening
   listener2.Reply("ok");
   listener_incognito2.Reply("ok");
   // Incognito preference set -- notify the regular listener
@@ -424,9 +455,9 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
   listener3.Reply("ok");
 
   // Test 3 - changeDefaultOnly
-  EXPECT_TRUE(listener4.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito4.WaitUntilSatisfied()); // Incognito ready
-  EXPECT_TRUE(listener_incognito5.WaitUntilSatisfied()); // Incognito listening
+  EXPECT_TRUE(listener4.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito4.WaitUntilSatisfied());  // Incognito ready
+  EXPECT_TRUE(listener_incognito5.WaitUntilSatisfied());  // Incognito listening
   listener4.Reply("ok");
   listener_incognito4.Reply("ok");
   // Regular preference set - notify the incognito listener
@@ -434,9 +465,9 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
   listener_incognito5.Reply("ok");
 
   // Test 4 - changeIncognitoOnlyBack
-  EXPECT_TRUE(listener6.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito6.WaitUntilSatisfied()); // Incognito ready
-  EXPECT_TRUE(listener7.WaitUntilSatisfied()); // Regular listening
+  EXPECT_TRUE(listener6.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito6.WaitUntilSatisfied());  // Incognito ready
+  EXPECT_TRUE(listener7.WaitUntilSatisfied());            // Regular listening
   listener6.Reply("ok");
   listener_incognito6.Reply("ok");
   // Incognito preference set -- notify the regular listener
@@ -444,9 +475,9 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
   listener7.Reply("ok");
 
   // Test 5 - clearIncognito
-  EXPECT_TRUE(listener8.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito8.WaitUntilSatisfied()); // Incognito ready
-  EXPECT_TRUE(listener9.WaitUntilSatisfied()); // Regular listening
+  EXPECT_TRUE(listener8.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito8.WaitUntilSatisfied());  // Incognito ready
+  EXPECT_TRUE(listener9.WaitUntilSatisfied());            // Regular listening
   listener8.Reply("ok");
   listener_incognito8.Reply("ok");
   // Incognito preference cleared -- notify the regular listener
@@ -454,8 +485,8 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
   listener9.Reply("ok");
 
   // Test 6 - clearDefault
-  EXPECT_TRUE(listener10.WaitUntilSatisfied()); // Regular ready
-  EXPECT_TRUE(listener_incognito10.WaitUntilSatisfied()); // Incognito ready
+  EXPECT_TRUE(listener10.WaitUntilSatisfied());            // Regular ready
+  EXPECT_TRUE(listener_incognito10.WaitUntilSatisfied());  // Incognito ready
   listener10.Reply("ok");
   listener_incognito10.Reply("ok");
 
@@ -466,7 +497,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, OnChangeSplit) {
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
                        OnChangeSplitWithNoOTRProfile) {
   PrefService* prefs = profile_->GetPrefs();
-  SetCookieControlsMode(prefs, CookieControlsMode::kBlockThirdParty);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, false);
 
   extensions::ResultCatcher catcher;
   ExtensionTestMessageListener loaded_incognito_test_listener(
@@ -479,7 +510,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
                             {.allow_in_incognito = true}));
 
   ASSERT_TRUE(change_pref_listener.WaitUntilSatisfied());
-  SetCookieControlsMode(prefs, CookieControlsMode::kOff);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, true);
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   EXPECT_FALSE(loaded_incognito_test_listener.was_satisfied());
@@ -489,10 +520,10 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
 IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
                        OnChangeSplitWithoutIncognitoAccess) {
   PrefService* prefs = profile_->GetPrefs();
-  SetCookieControlsMode(prefs, CookieControlsMode::kBlockThirdParty);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, false);
 
   // Open an incognito window.
-  OpenURLOffTheRecord(profile_, GURL("chrome://newtab/"));
+  PlatformOpenURLOffTheRecord(profile_, GURL("chrome://newtab/"));
   EXPECT_TRUE(profile_->HasPrimaryOTRProfile());
 
   extensions::ResultCatcher catcher;
@@ -505,7 +536,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest,
                                 .AppendASCII("onchange_split_regular_only")));
 
   ASSERT_TRUE(change_pref_listener.WaitUntilSatisfied());
-  SetCookieControlsMode(prefs, CookieControlsMode::kOff);
+  prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, true);
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   EXPECT_FALSE(loaded_incognito_test_listener.was_satisfied());
@@ -636,3 +667,37 @@ IN_PROC_BROWSER_TEST_P(ExtensionPreferenceApiTest, ThirdPartyCookiesAllowed) {
           content_settings::CookieControlsMode::kIncognitoOnly)),
       /* expected_controlled */ false);
 }
+
+class AlwaysBlock3pcsIncognitoExtensionApiTest
+    : public extensions::ExtensionApiTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  AlwaysBlock3pcsIncognitoExtensionApiTest() {
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          privacy_sandbox::kAlwaysBlock3pcsIncognito);
+    } else {
+      feature_list_.InitAndDisableFeature(
+          privacy_sandbox::kAlwaysBlock3pcsIncognito);
+    }
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_P(AlwaysBlock3pcsIncognitoExtensionApiTest,
+                       Blocks3pcsWhenInIncognitoWithCookieControlsModeOff) {
+  bool feature_enabled = GetParam();
+  EXPECT_EQ(extensions::CookieControlsModeTransformer()
+                .BrowserToExtensionPref(
+                    base::Value(static_cast<int>(
+                        content_settings::CookieControlsMode::kOff)),
+                    /*is_incognito_profile=*/true)
+                ->GetBool(),
+            !feature_enabled);
+}
+
+INSTANTIATE_TEST_SUITE_P(TestAlwaysBlock3pcsIncognito,
+                         AlwaysBlock3pcsIncognitoExtensionApiTest,
+                         testing::Bool());

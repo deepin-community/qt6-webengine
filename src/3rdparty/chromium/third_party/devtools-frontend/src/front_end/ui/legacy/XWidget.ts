@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import * as ComponentHelpers from '../components/helpers/helpers.js';
-
 import {XElement} from './XElement.js';
 
 let observer: ResizeObserver|null = null;
@@ -15,8 +13,7 @@ const storedScrollPositions = new WeakMap<Element, {
 
 export class XWidget extends XElement {
   private visible: boolean;
-  private readonly shadowRootInternal!: DocumentFragment|null;
-  private defaultFocusedElement: Element|null;
+  defaultFocusedElement: Element|null;
   private elementsToRestoreScrollPositionsFor: Element[];
   private onShownCallback!: (() => void)|null;
   private onHiddenCallback!: (() => void)|null;
@@ -52,18 +49,6 @@ export class XWidget extends XElement {
 
   isShowing(): boolean {
     return this.visible;
-  }
-
-  setOnShown(callback: (() => void)|null): void {
-    this.onShownCallback = callback;
-  }
-
-  setOnHidden(callback: (() => void)|null): void {
-    this.onHiddenCallback = callback;
-  }
-
-  setOnResized(callback: (() => void)|null): void {
-    this.onResizedCallback = callback;
   }
 
   setElementsToRestoreScrollPositionsFor(elements: Element[]): void {
@@ -145,4 +130,4 @@ export class XWidget extends XElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('x-widget', XWidget);
+customElements.define('x-widget', XWidget);

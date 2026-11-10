@@ -1,7 +1,6 @@
 import { Float16Array } from '../../external/petamoriken/float16/float16.js';
 import { SkipTestCase } from '../framework/fixture.js';
 import { globalTestConfig } from '../framework/test_config.js';
-import { Logger } from '../internal/logging/logger.js';
 
 import { keysOf } from './data_tables.js';
 import { timeout } from './timeout.js';
@@ -24,7 +23,7 @@ export class ErrorWithExtra extends Error {
     super(message);
 
     const oldExtras = baseOrMessage instanceof ErrorWithExtra ? baseOrMessage.extra : {};
-    this.extra = Logger.globalDebugMode
+    this.extra = globalTestConfig.enableDebugLogs
       ? { ...oldExtras, ...newExtra() }
       : { omitted: 'pass ?debug=1' };
   }
@@ -58,19 +57,20 @@ export async function assertReject(
   p: Promise<unknown>,
   { allowMissingStack = false, message }: ExceptionCheckOptions = {}
 ): Promise<void> {
-  try {
-    await p;
-    unreachable(message);
-  } catch (ex) {
-    // Asserted as expected
-    if (!allowMissingStack) {
-      const m = message ? ` (${message})` : '';
-      assert(
-        ex instanceof Error && typeof ex.stack === 'string',
-        'threw as expected, but missing stack' + m
-      );
+  await p.then(
+    () => {
+      unreachable(message);
+    },
+    ex => {
+      assert(ex instanceof Error, 'rejected with a non-Error object');
+      assert(ex.name === expectedName, `rejected with name ${ex.name} instead of ${expectedName}`);
+      // Asserted as expected
+      if (!allowMissingStack) {
+        const m = message ? ` (${message})` : '';
+        assert(typeof ex.stack === 'string', 'threw as expected, but missing stack' + m);
+      }
     }
-  }
+  );
 }
 
 /**
@@ -91,6 +91,7 @@ export function skipTestCase(msg: string): never {
  * The `performance` interface.
  * It is available in all browsers, but it is not in scope by default in Node.
  */
+/* eslint-disable-next-line n/no-restricted-require */
 const perf = typeof performance !== 'undefined' ? performance : require('perf_hooks').performance;
 
 /**
@@ -258,6 +259,15 @@ export function mapLazy<T, R>(xs: Iterable<T>, f: (x: T) => R): Iterable<R> {
   };
 }
 
+/** Count the number of elements `x` for which `predicate(x)` is true. */
+export function count<T>(xs: Iterable<T>, predicate: (x: T) => boolean): number {
+  let count = 0;
+  for (const x of xs) {
+    if (predicate(x)) count++;
+  }
+  return count;
+}
+
 const ReorderOrders = {
   forward: true,
   backward: true,
@@ -304,6 +314,8 @@ const TypedArrayBufferViewInstances = [
   new Float16Array(),
   new Float32Array(),
   new Float64Array(),
+  new BigInt64Array(),
+  new BigUint64Array(),
 ] as const;
 
 export type TypedArrayBufferView = (typeof TypedArrayBufferViewInstances)[number];

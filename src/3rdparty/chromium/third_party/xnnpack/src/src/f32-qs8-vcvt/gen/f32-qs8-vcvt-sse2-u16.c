@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-qs8-vcvt/sse.c.in
 //   Generator: tools/xngen
@@ -8,29 +9,37 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <emmintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/unaligned.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_f32_qs8_vcvt_ukernel__sse2_u16(
     size_t batch,
     const float* input,
     int8_t* output,
-    const union xnn_f32_qs8_cvt_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_qs8_cvt_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m128 vscale = _mm_load_ps(params->sse2.scale);
-  const __m128 voutput_max_less_zero_point = _mm_load_ps(params->sse2.output_max_less_zero_point);
-  const __m128i voutput_zero_point = _mm_load_si128((const __m128i*) params->sse2.output_zero_point);
-  const __m128i voutput_min = _mm_load_si128((const __m128i*) params->sse2.output_min);
+  // *cvtps_epi32 maps all floats out of bounds of int to INT_MIN, so we need to clamp at the max to avoid overflow.
+  // INT16_MAX is exactly representable as a float, and is plenty large (this clamp is applied after scaling).
+  const __m128 voverflow_max = _mm_set1_ps((float) INT16_MAX);
+  XNN_FORCE_REALIZATION(voverflow_max);
+
+  const __m128 vscale = _mm_set1_ps(params->scalar.scale);
+  const __m128i voutput_zero_point = _mm_set1_epi16(params->scalar.output_zero_point);
+  XNN_FORCE_REALIZATION(vscale);
+  XNN_FORCE_REALIZATION(voutput_zero_point);
 
   for (; batch >= 16 * sizeof(float); batch -= 16 * sizeof(float)) {
     __m128 vx0123 = _mm_loadu_ps(input);
@@ -44,10 +53,10 @@ void xnn_f32_qs8_vcvt_ukernel__sse2_u16(
     vx89AB = _mm_mul_ps(vx89AB, vscale);
     vxCDEF = _mm_mul_ps(vxCDEF, vscale);
 
-    vx0123 = _mm_min_ps(vx0123, voutput_max_less_zero_point);
-    vx4567 = _mm_min_ps(vx4567, voutput_max_less_zero_point);
-    vx89AB = _mm_min_ps(vx89AB, voutput_max_less_zero_point);
-    vxCDEF = _mm_min_ps(vxCDEF, voutput_max_less_zero_point);
+    vx0123 = _mm_min_ps(vx0123, voverflow_max);
+    vx4567 = _mm_min_ps(vx4567, voverflow_max);
+    vx89AB = _mm_min_ps(vx89AB, voverflow_max);
+    vxCDEF = _mm_min_ps(vxCDEF, voverflow_max);
 
     const __m128i vy0123 = _mm_cvtps_epi32(vx0123);
     const __m128i vy4567 = _mm_cvtps_epi32(vx4567);
@@ -60,11 +69,7 @@ void xnn_f32_qs8_vcvt_ukernel__sse2_u16(
     vy01234567 = _mm_adds_epi16(vy01234567, voutput_zero_point);
     vy89ABCDEF = _mm_adds_epi16(vy89ABCDEF, voutput_zero_point);
 
-    vy01234567 = _mm_max_epi16(vy01234567, voutput_min);
-    vy89ABCDEF = _mm_max_epi16(vy89ABCDEF, voutput_min);
-
     __m128i vy0123456789ABCDEF = _mm_packs_epi16(vy01234567, vy89ABCDEF);
-
 
     _mm_storeu_si128((__m128i*) output, vy0123456789ABCDEF);
     output += 16;
@@ -77,15 +82,14 @@ void xnn_f32_qs8_vcvt_ukernel__sse2_u16(
     vx_lo = _mm_mul_ps(vx_lo, vscale);
     vx_hi = _mm_mul_ps(vx_hi, vscale);
 
-    vx_lo = _mm_min_ps(vx_lo, voutput_max_less_zero_point);
-    vx_hi = _mm_min_ps(vx_hi, voutput_max_less_zero_point);
+    vx_lo = _mm_min_ps(vx_lo, voverflow_max);
+    vx_hi = _mm_min_ps(vx_hi, voverflow_max);
 
     const __m128i vy_lo = _mm_cvtps_epi32(vx_lo);
     const __m128i vy_hi = _mm_cvtps_epi32(vx_hi);
 
     __m128i vy = _mm_packs_epi32(vy_lo, vy_hi);
     vy = _mm_adds_epi16(vy, voutput_zero_point);
-    vy = _mm_max_epi16(vy, voutput_min);
     vy = _mm_packs_epi16(vy, vy);
 
     _mm_storel_epi64((__m128i*) output, vy);
@@ -99,15 +103,14 @@ void xnn_f32_qs8_vcvt_ukernel__sse2_u16(
     vx_lo = _mm_mul_ps(vx_lo, vscale);
     vx_hi = _mm_mul_ps(vx_hi, vscale);
 
-    vx_lo = _mm_min_ps(vx_lo, voutput_max_less_zero_point);
-    vx_hi = _mm_min_ps(vx_hi, voutput_max_less_zero_point);
+    vx_lo = _mm_min_ps(vx_lo, voverflow_max);
+    vx_hi = _mm_min_ps(vx_hi, voverflow_max);
 
     const __m128i vy_lo = _mm_cvtps_epi32(vx_lo);
     const __m128i vy_hi = _mm_cvtps_epi32(vx_hi);
 
     __m128i vy = _mm_packs_epi32(vy_lo, vy_hi);
     vy = _mm_adds_epi16(vy, voutput_zero_point);
-    vy = _mm_max_epi16(vy, voutput_min);
     vy = _mm_packs_epi16(vy, vy);
 
     if (batch & (4 * sizeof(float))) {

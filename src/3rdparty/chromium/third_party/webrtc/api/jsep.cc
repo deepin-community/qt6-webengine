@@ -10,16 +10,11 @@
 
 #include "api/jsep.h"
 
+#include <cstddef>
+#include <optional>
+#include <string>
+
 namespace webrtc {
-
-std::string IceCandidateInterface::server_url() const {
-  return "";
-}
-
-size_t SessionDescriptionInterface::RemoveCandidates(
-    const std::vector<cricket::Candidate>& candidates) {
-  return 0;
-}
 
 const char SessionDescriptionInterface::kOffer[] = "offer";
 const char SessionDescriptionInterface::kPrAnswer[] = "pranswer";
@@ -40,7 +35,7 @@ const char* SdpTypeToString(SdpType type) {
   return "";
 }
 
-absl::optional<SdpType> SdpTypeFromString(const std::string& type_str) {
+std::optional<SdpType> SdpTypeFromString(const std::string& type_str) {
   if (type_str == SessionDescriptionInterface::kOffer) {
     return SdpType::kOffer;
   } else if (type_str == SessionDescriptionInterface::kPrAnswer) {
@@ -50,7 +45,7 @@ absl::optional<SdpType> SdpTypeFromString(const std::string& type_str) {
   } else if (type_str == SessionDescriptionInterface::kRollback) {
     return SdpType::kRollback;
   } else {
-    return absl::nullopt;
+    return std::nullopt;
   }
 }
 

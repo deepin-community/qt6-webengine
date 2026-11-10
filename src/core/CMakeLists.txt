@@ -1,10 +1,10 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION ${QT_CONFIGURE_CHECK_cmake_version})
 
-find_package(Ninja 1.7.2 REQUIRED)
-find_package(Nodejs 14.19 REQUIRED)
+find_package(Ninja ${QT_CONFIGURE_CHECK_ninja_version} REQUIRED)
+find_package(Nodejs ${QT_CONFIGURE_CHECK_nodejs_version} REQUIRED)
 find_package(Perl)
 find_package(PkgConfig)
 if(PkgConfig_FOUND)
@@ -21,7 +21,7 @@ add_subdirectory(tools/qwebengine_convert_dict)
 #   TOOLCHAIN SETUP
 ##
 
-if(LINUX)
+if(LINUX OR WIN32)
     setup_toolchains()
 endif()
 
@@ -33,6 +33,8 @@ addSyncTargets(core)
 
 get_configs(configs)
 get_architectures(archs)
+
+qt_webengine_set_apple_archiver_flags()
 
 foreach(arch ${archs})
     foreach(config ${configs})
@@ -55,6 +57,8 @@ foreach(arch ${archs})
 
         set(gnCxxCompileOptions "")
         if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+            get_gn_arch(cpu ${TEST_architecture_arch})
+
             # Silence warning in boringssl headers.
             list(APPEND gnCxxCompileOptions -Wno-ignored-qualifiers)
 
@@ -62,6 +66,12 @@ foreach(arch ${archs})
                 # GCC 11.1 has a regression in the integrated preprocessor, so disable it as a workaround (QTBUG-93360)
                 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100796
                 list(APPEND gnCxxCompileOptions -no-integrated-cpp)
+            endif()
+
+            if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "15.1.0" AND cpu STREQUAL "arm")
+                # GCC 15.1 workaround for invalid use of NEON registers,
+                # see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120351
+                list(APPEND gnCxxCompileOptions -fno-late-combine-instructions)
             endif()
         endif()
 
@@ -73,7 +83,6 @@ foreach(arch ${archs})
                 QT_USE_QSTRINGBUILDER
                 QTWEBENGINECORE_VERSION_STR=${QT_REPO_MODULE_VERSION}
                 QTWEBENGINEPROCESS_NAME=${qtWebEngineProcessName}
-                BUILDING_CHROMIUM
                 "${forwardDeclarationMacro}"
             CXX_COMPILE_OPTIONS
                 ${gnCxxCompileOptions}
@@ -85,7 +94,6 @@ foreach(arch ${archs})
                 autofill_popup_controller.cpp autofill_popup_controller.h autofill_popup_controller_p.h
                 browser_accessibility_manager_qt.cpp browser_accessibility_manager_qt.h
                 browser_main_parts_qt.cpp browser_main_parts_qt.h
-                browser_message_filter_qt.cpp browser_message_filter_qt.h
                 browsing_data_remover_delegate_qt.cpp browsing_data_remover_delegate_qt.h
                 build_config_qt.h
                 certificate_error_controller.cpp certificate_error_controller.h
@@ -96,7 +104,6 @@ foreach(arch ${archs})
                 clipboard_qt.cpp clipboard_qt.h
                 color_chooser_controller.cpp color_chooser_controller.h color_chooser_controller_p.h
                 color_chooser_qt.cpp color_chooser_qt.h
-                common/qt_messages.cpp common/qt_messages.h
                 compositor/compositor.cpp compositor/compositor.h
                 compositor/display_overrides.cpp
                 compositor/display_software_output_surface.cpp compositor/display_software_output_surface.h
@@ -126,6 +133,7 @@ foreach(arch ${archs})
                 file_system_access/file_system_access_permission_request_manager_qt.cpp file_system_access/file_system_access_permission_request_manager_qt.h
                 find_text_helper.cpp find_text_helper.h
                 global_descriptors_qt.h
+                gpu/content_gpu_client_qt.cpp gpu/content_gpu_client_qt.h
                 javascript_dialog_controller.cpp javascript_dialog_controller.h javascript_dialog_controller_p.h
                 javascript_dialog_manager_qt.cpp javascript_dialog_manager_qt.h
                 login_delegate_qt.cpp login_delegate_qt.h
@@ -172,6 +180,7 @@ foreach(arch ${archs})
                 renderer_host/web_engine_page_host.cpp renderer_host/web_engine_page_host.h
                 request_controller.h
                 resource_bundle_qt.cpp
+                rhi_gpu_info.cpp rhi_gpu_info.h
                 select_file_dialog_factory_qt.cpp select_file_dialog_factory_qt.h
                 touch_handle_drawable_client.h
                 touch_handle_drawable_qt.cpp touch_handle_drawable_qt.h
@@ -182,7 +191,7 @@ foreach(arch ${archs})
                 user_script.cpp user_script.h
                 visited_links_manager_qt.cpp visited_links_manager_qt.h
                 web_contents_adapter.cpp web_contents_adapter.h
-                web_contents_adapter_client.h
+                web_contents_adapter_client.cpp web_contents_adapter_client.h
                 web_contents_delegate_qt.cpp web_contents_delegate_qt.h
                 web_contents_view_qt.cpp web_contents_view_qt.h
                 web_engine_context.cpp web_engine_context.h
@@ -193,6 +202,12 @@ foreach(arch ${archs})
                 web_usb_detector_qt.cpp web_usb_detector_qt.h
                 authenticator_request_client_delegate_qt.cpp authenticator_request_client_delegate_qt.h
                 authenticator_request_dialog_controller.cpp authenticator_request_dialog_controller.h authenticator_request_dialog_controller_p.h
+                content_settings_manager_qt.cpp content_settings_manager_qt.h
+        )
+
+        extend_gn_target(${buildGn} CONDITION config STREQUAL "Debug"
+            DEFINES
+                QT_USE_DEBUG_RESOURCES
         )
 
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_accessibility
@@ -200,32 +215,33 @@ foreach(arch ${archs})
                 accessibility_activation_observer.cpp accessibility_activation_observer.h
         )
 
-        extend_gn_target(${buildGn} CONDITION LINUX OR WIN32
-            SOURCES
-                compositor/content_gpu_client_qt.cpp compositor/content_gpu_client_qt.h
-                ozone/gl_context_qt.cpp ozone/gl_context_qt.h
-                ozone/gl_share_context_qt.cpp ozone/gl_share_context_qt.h
-                ozone/gl_surface_qt.cpp ozone/gl_surface_qt.h
-        )
-
-        extend_gn_target(${buildGn} CONDITION WIN32
-            SOURCES
-                ozone/gl_surface_wgl_qt.cpp ozone/gl_surface_wgl_qt.h
-        )
-
         extend_gn_target(${buildGn} CONDITION LINUX
             SOURCES
-                ozone/gl_ozone_angle_qt.cpp ozone/gl_ozone_angle_qt.h
-                ozone/gl_ozone_egl_qt.cpp ozone/gl_ozone_egl_qt.h
-                ozone/gl_surface_egl_qt.cpp ozone/gl_surface_egl_qt.h
+                ozone/gl_ozone_qt.cpp ozone/gl_ozone_qt.h
+                ozone/ozone_util_qt.cpp ozone/ozone_util_qt.h
                 ozone/platform_window_qt.cpp ozone/platform_window_qt.h
                 ozone/surface_factory_qt.cpp ozone/surface_factory_qt.h
         )
 
-        extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_ozone_x11
+        extend_gn_target(${buildGn} CONDITION LINUX AND QT_FEATURE_opengl
             SOURCES
-                ozone/gl_ozone_glx_qt.cpp ozone/gl_ozone_glx_qt.h
-                ozone/gl_surface_glx_qt.cpp ozone/gl_surface_glx_qt.h
+                ozone/gbm_buffer_factory.cpp ozone/gbm_buffer_factory.h
+                ozone/gl_helper.cpp ozone/gl_helper.h
+        )
+
+        extend_gn_target(${buildGn} CONDITION LINUX AND QT_FEATURE_opengl AND QT_FEATURE_webengine_ozone_x11 AND QT_FEATURE_xcb_glx_plugin
+            SOURCES
+                ozone/glx_helper.cpp ozone/glx_helper.h
+        )
+
+        extend_gn_target(${buildGn} CONDITION LINUX AND QT_FEATURE_opengl AND QT_FEATURE_egl
+            SOURCES
+                ozone/egl_helper.cpp ozone/egl_helper.h
+        )
+
+        extend_gn_target(${buildGn} CONDITION QT_FEATURE_opengl
+            SOURCES
+                compositor/native_skia_output_device_opengl.cpp compositor/native_skia_output_device_opengl.h
         )
 
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_vulkan
@@ -234,24 +250,12 @@ foreach(arch ${archs})
                 compositor/vulkan_implementation_qt.cpp compositor/vulkan_implementation_qt.h
         )
 
-        extend_gn_target(${buildGn} CONDITION QT_FEATURE_opengl
-            SOURCES
-                compositor/compositor_resource_fence.cpp compositor/compositor_resource_fence.h
-                compositor/display_skia_output_device.cpp compositor/display_skia_output_device.h
-                compositor/native_skia_output_device_opengl.cpp compositor/native_skia_output_device_opengl.h
-        )
-
         extend_gn_target(${buildGn} CONDITION MACOS
             SOURCES
                 native_web_keyboard_event_qt_mac.mm
                 compositor/native_skia_output_device_mac.mm
                 compositor/native_skia_output_device_metal.cpp compositor/native_skia_output_device_metal.h
-        )
-
-        extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_pepper_plugins
-            SOURCES
-                renderer/pepper/pepper_renderer_host_factory_qt.cpp renderer/pepper/pepper_renderer_host_factory_qt.h
-                renderer/plugins/loadable_plugin_placeholder_qt.cpp renderer/plugins/loadable_plugin_placeholder_qt.h
+                cursor_utils_qt_mac.mm cursor_utils_qt_mac.h
         )
 
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_printing_and_pdf
@@ -273,11 +277,12 @@ foreach(arch ${archs})
                 renderer/web_channel_ipc_transport.cpp renderer/web_channel_ipc_transport.h
                 renderer_host/web_channel_ipc_transport_host.cpp renderer_host/web_channel_ipc_transport_host.h
         )
-
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_extensions
             SOURCES
                 common/extensions/extensions_api_provider_qt.cpp common/extensions/extensions_api_provider_qt.h
                 common/extensions/extensions_client_qt.cpp common/extensions/extensions_client_qt.h
+                extensions/api/display_info_provider_qt.cpp extensions/api/display_info_provider_qt.h
+                extensions/api/runtime_api_delegate_qt.cpp extensions/api/runtime_api_delegate_qt.h
                 extensions/component_extension_resource_manager_qt.cpp extensions/component_extension_resource_manager_qt.h
                 extensions/extension_host_delegate_qt.cpp extensions/extension_host_delegate_qt.h
                 extensions/extension_system_factory_qt.cpp extensions/extension_system_factory_qt.h
@@ -288,15 +293,25 @@ foreach(arch ${archs})
                 extensions/file_system_delegate_qt.cpp extensions/file_system_delegate_qt.h
                 extensions/messaging_delegate_qt.cpp extensions/messaging_delegate_qt.h
                 extensions/mime_handler_view_guest_delegate_qt.cpp extensions/mime_handler_view_guest_delegate_qt.h
+                extensions/plugin_info_host_qt.cpp extensions/plugin_info_host_qt.h
                 extensions/plugin_service_filter_qt.cpp extensions/plugin_service_filter_qt.h
+                extensions/unpacked_extension_installer.h extensions/unpacked_extension_installer.cpp
                 net/plugin_response_interceptor_url_loader_throttle.cpp net/plugin_response_interceptor_url_loader_throttle.h
-                renderer/extensions/extensions_dispatcher_delegate_qt.cpp renderer/extensions/extensions_dispatcher_delegate_qt.h
+                renderer/extensions/extensions_renderer_api_provider_qt.cpp renderer/extensions/extensions_renderer_api_provider_qt.h
                 renderer/extensions/extensions_renderer_client_qt.cpp renderer/extensions/extensions_renderer_client_qt.h
-                renderer/extensions/renderer_permissions_policy_delegate_qt.cpp renderer/extensions/renderer_permissions_policy_delegate_qt.h
                 renderer/extensions/resource_request_policy_qt.cpp renderer/extensions/resource_request_policy_qt.h
+                renderer/plugins/loadable_plugin_placeholder_qt.cpp renderer/plugins/loadable_plugin_placeholder_qt.h
+                extensions/api/management_api_delegate_qt.cpp extensions/api/management_api_delegate_qt.h
+                extensions/extension_manager.cpp extensions/extension_manager.h
+                extensions/extension_loader.cpp extensions/extension_loader.h
+                extensions/extension_installer.cpp extensions/extension_installer.h
+                extensions/webui/extensions_ui_page_handler_qt.cpp extensions/webui/extensions_ui_page_handler_qt.h
+                extensions/webui/extensions_ui_qt.cpp extensions/webui/extensions_ui_qt.h
+                extensions/webui/select_file_dialog.cpp extensions/webui/select_file_dialog.h
         )
 
-        extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_extensions AND QT_FEATURE_webengine_printing_and_pdf
+        extend_gn_target(${buildGn}
+            CONDITION QT_FEATURE_webengine_printing_and_pdf AND QT_FEATURE_webengine_extensions
             SOURCES
                 extensions/pdf_iframe_navigation_throttle_qt.cpp extensions/pdf_iframe_navigation_throttle_qt.h
                 printing/pdf_stream_delegate_qt.cpp printing/pdf_stream_delegate_qt.h
@@ -307,6 +322,11 @@ foreach(arch ${archs})
             SOURCES
                 clipboard_util_win.cpp
                 compositor/native_skia_output_device_direct3d11.cpp compositor/native_skia_output_device_direct3d11.h
+        )
+
+        extend_gn_target(${buildGn} CONDITION WIN32 AND QT_FEATURE_opengl
+            SOURCES
+                compositor/wgl_helper.cpp compositor/wgl_helper.h
         )
 
         ##
@@ -325,15 +345,23 @@ foreach(arch ${archs})
             qtwebengine_target="${buildDir}/${config}/${arch}:QtWebEngineCore"
             build_dawn_tests=false
             build_with_tflite_lib=false
+            webnn_use_tflite=false
+            is_qtwebengine=true
+            is_qtpdf=false
+            chrome_pgo_phase=0
+            disable_fieldtrial_testing_config=true
             enable_background_contents=false
             enable_background_mode=false
+            enable_bluetooth_emulation=false
+            enable_compose=false
             enable_ipc_fuzzer=false
             enable_ipc_logging=false
             enable_java_templates=false
+            enable_library_cdms=true
             enable_media_remoting=false
             enable_message_center=false
-            enable_nacl=false
             enable_oop_printing=false
+            enable_plugins=true
             enable_remoting=false
             enable_reporting=false
             enable_resource_allowlist_generation=false
@@ -342,49 +370,37 @@ foreach(arch ${archs})
             enable_supervised_users=false
             enable_swiftshader=false
             enable_swiftshader_vulkan=false
+            enable_nocompile_tests=false
             angle_enable_swiftshader=false
             dawn_use_swiftshader=false
             enable_vr=false
             enable_web_speech=false
             enable_widevine=true
-            enable_library_cdms=true
+            enable_bound_session_credentials=false
             fatal_linker_warnings=false
             has_native_accessibility=false
-            safe_browsing_mode=0
-            toolkit_views=false
-            chrome_pgo_phase=0
             optimize_webui=false
+            safe_browsing_mode=0
             strip_absolute_paths_from_debug_symbols=false
+            toolkit_views=false
             pdf_use_skia=true
             use_cups=false
             use_dawn=false
             skia_use_dawn=false
-            devtools_fast_bundle=false
-            devtools_skip_typecheck=false
+            dawn_use_built_dxc=false
             use_static_angle=true
-            use_perfetto_client_library=false
-            content_enable_legacy_ipc=true
-            enable_extensions_legacy_ipc=true
-            enable_bound_session_credentials=false
+            devtools_skip_typecheck=false
+            headless_use_policy=false
         )
         extend_gn_list(gnArgArg
             ARGS use_v8_context_snapshot v8_use_external_startup_data
             CONDITION QT_FEATURE_webengine_v8_context_snapshot
         )
         extend_gn_list(gnArgArg
-            ARGS enable_printing enable_basic_printing enable_print_preview enable_pdf
+            ARGS enable_printing enable_print_preview enable_pdf
             CONDITION QT_FEATURE_webengine_printing_and_pdf
         )
         extend_gn_list(gnArgArg
-            ARGS enable_plugins
-            CONDITION QT_FEATURE_webengine_printing_and_pdf OR
-            QT_FEATURE_webengine_pepper_plugins
-        )
-        extend_gn_list(gnArgArg
-            ARGS enable_ppapi
-            CONDITION QT_FEATURE_webengine_pepper_plugins
-        )
-         extend_gn_list(gnArgArg
             ARGS enable_spellcheck
             CONDITION QT_FEATURE_webengine_spellchecker
         )
@@ -405,10 +421,6 @@ foreach(arch ${archs})
             CONDITION QT_FEATURE_webengine_webrtc_pipewire
         )
         extend_gn_list(gnArgArg
-            ARGS enable_extensions
-            CONDITION QT_FEATURE_webengine_extensions
-        )
-        extend_gn_list(gnArgArg
             ARGS enable_vulkan
             CONDITION QT_FEATURE_webengine_vulkan
         )
@@ -417,7 +429,7 @@ foreach(arch ${archs})
             CONDITION QT_FEATURE_webengine_kerberos
         )
         extend_gn_list(gnArgArg
-            ARGS proprietary_codecs
+            ARGS proprietary_codecs rtc_use_h264
             CONDITION QT_FEATURE_webengine_proprietary_codecs
         )
         if(QT_FEATURE_webengine_proprietary_codecs)
@@ -435,17 +447,19 @@ foreach(arch ${archs})
             ARGS enable_webenginedriver
             CONDITION QT_FEATURE_webenginedriver
         )
+        extend_gn_list(gnArgArg
+            ARGS enable_extensions
+            CONDITION QT_FEATURE_webengine_extensions
+        )
 
         if(LINUX)
             list(APPEND gnArgArg
-                angle_enable_gl=true
                 use_gtk=false # GTK toolkit bindings
-                use_qt=false # Qt5 toolkit bindings
+                use_qt5=false # Qt5 toolkit bindings
                 use_gio=false
                 use_bundled_fontconfig=false
                 use_glib=false
                 use_bluez=false
-                use_udev=true
                 is_cfi=false
                 use_ozone=true
                 ozone_auto_platforms=false
@@ -454,8 +468,8 @@ foreach(arch ${archs})
                 ozone_platform="qt"
                 ozone_extra_path="${CMAKE_CURRENT_LIST_DIR}/ozone/ozone_extra.gni"
             )
-            set(systemLibs libjpeg libpng freetype harfbuzz libevent libwebp libxml
-                opus snappy icu ffmpeg re2 lcms2 libopenjpeg2 libvpx
+            set(systemLibs libjpeg libpng freetype harfbuzz libwebp libxml
+                opus snappy icu ffmpeg re2 lcms2 libopenjpeg2 libvpx openh264
             )
             foreach(slib ${systemLibs})
                 extend_gn_list(gnArgArg
@@ -469,6 +483,10 @@ foreach(arch ${archs})
                    CONDITION Perl_FOUND
             )
             endif()
+            extend_gn_list(gnArgArg
+                ARGS angle_enable_gl
+                CONDITION QT_FEATURE_opengl
+            )
             extend_gn_list(gnArgArg
                 ARGS use_system_libxslt
                 CONDITION QT_FEATURE_webengine_system_libxml
@@ -510,6 +528,10 @@ foreach(arch ${archs})
                 CONDITION QT_FEATURE_webengine_system_gbm
             )
             extend_gn_list(gnArgArg
+                ARGS rtc_system_openh264
+                CONDITION QT_FEATURE_webengine_webrtc_system_openh264
+            )
+            extend_gn_list(gnArgArg
                 ARGS use_vaapi
                 CONDITION QT_FEATURE_webengine_vaapi
             )
@@ -518,8 +540,16 @@ foreach(arch ${archs})
                 CONDITION QT_FEATURE_webengine_ozone_x11
             )
             extend_gn_list(gnArgArg
+                ARGS angle_use_x11_glx
+                CONDITION QT_FEATURE_webengine_ozone_x11 AND QT_FEATURE_xcb_glx_plugin
+            )
+             extend_gn_list(gnArgArg
                 ARGS rtc_use_x11
                 CONDITION QT_FEATURE_webengine_ozone_x11 AND QT_FEATURE_webengine_webrtc
+            )
+            extend_gn_list(gnArgArg
+                ARGS use_udev
+                CONDITION QT_FEATURE_webengine_system_libudev
             )
 
             if(QT_FEATURE_webengine_kerberos)
@@ -528,11 +558,24 @@ foreach(arch ${archs})
                 )
             endif()
             get_gn_arch(cpu ${TEST_architecture_arch})
-            if(CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm")
+
+            if(cpu STREQUAL "arm" AND
+               CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+               CMAKE_CXX_COMPILER_VERSION VERSION_LESS "11.0.0")
+                list(APPEND gnArgArg libyuv_use_neon=false)
+                #TODO check if libyuv really uses udot in case of arm32
+            endif()
+            if(cpu STREQUAL "arm64" AND NOT QT_FEATURE_webengine_arm64_udot_support)
+                list(APPEND gnArgArg libyuv_use_neon=false)
+            endif()
+            if(cpu STREQUAL "arm")
                 check_thumb(armThumb)
                 if(NOT armThumb AND NOT QT_FEATURE_webengine_system_ffmpeg)
                     list(APPEND gnArgArg media_use_ffmpeg=false use_webaudio_ffmpeg=false)
                 endif()
+                # sme and sve depend on armv9
+                list(APPEND gnArgArg libyuv_use_sme=false
+                                     libyuv_use_sve=false)
             endif()
 
             if(CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm64")
@@ -542,6 +585,14 @@ foreach(arch ${archs})
                         v8_enable_sandbox=false
                         arm_control_flow_integrity="none"
                     )
+                endif()
+            endif()
+            if(cpu STREQUAL "arm64")
+                if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "14.0.0")
+                    list(APPEND gnArgArg libyuv_use_sme=false)
+                endif()
+                if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12.0.0")
+                    list(APPEND gnArgArg libyuv_use_sve=false)
                 endif()
             endif()
             unset(cpu)
@@ -556,7 +607,6 @@ foreach(arch ${archs})
 
         if(WIN32)
             list(APPEND gnArgArg
-                ninja_use_custom_environment_files=false
                 com_init_check_hook_disabled=true
                 heterogeneous_executables=true
             )
@@ -589,18 +639,20 @@ target_include_directories(WebEngineCore PRIVATE
 )
 
 set(stamps QtWebEngineCore.stamp)
+set(dataStampOption "")
 if(QT_FEATURE_webengine_v8_context_snapshot)
-    set(dataStamp obj/tools/v8_context_snapshot/v8_context_snapshot.stamp)
+    set(dataStampOption NINJA_DATA_STAMP obj/tools/v8_context_snapshot/v8_context_snapshot.stamp)
 endif()
 
 add_gn_build_artifacts_to_target(
     CMAKE_TARGET WebEngineCore
     NINJA_TARGET QtWebEngineCore
     MODULE core
+    DEPENDS WebEngineCore_sync_headers
     BUILDDIR ${buildDir}
     COMPLETE_STATIC FALSE
     NINJA_STAMP QtWebEngineCore.stamp
-    NINJA_DATA_STAMP ${dataStamp}
+    ${dataStampOption}
 )
 add_dependencies(WebEngineCore run_core_NinjaDone)
 if(COIN_BUG_699)
@@ -619,8 +671,10 @@ if(WIN32)
             TARGET QtWebEngineCoreSandbox
             OUTPUT QtWebEngineCoreSandbox.lib
             BUILDDIR ${buildDir}/${config}/${arch}
+            DEPENDS WebEngineCore_sync_headers
             MODULE core
         )
+        qt_webengine_add_gn_target_to_sbom(QtWebEngineCoreSandbox ${buildDir}/${config}/${arch})
         set(sandboxLibraryPath ${buildDir}/${config}/${arch}/QtWebEngineCoreSandbox.lib)
         set_property(TARGET WebEngineCoreSandbox
             PROPERTY IMPORTED_LOCATION_${cfg} ${sandboxLibraryPath}
@@ -668,6 +722,7 @@ if(QT_FEATURE_webenginedriver)
         BUILDDIR ${buildDir}/$<CONFIG>/${arch}
         MODULE core
     )
+    qt_webengine_add_gn_target_to_sbom(webenginedriver_group ${buildDir}/$<CONFIG>/${arch})
     add_custom_target(webenginedriver
         DEPENDS
             ${buildDir}/$<CONFIG>/${arch}/${WEBENGINEDRIVER_EXECUTABLE})

@@ -6,6 +6,7 @@
 #define NET_SOCKET_CONNECT_JOB_H_
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -17,6 +18,7 @@
 #include "base/timer/timer.h"
 #include "net/base/load_states.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
 #include "net/dns/public/host_resolver_results.h"
@@ -29,7 +31,6 @@
 #include "net/socket/ssl_client_socket.h"
 #include "net/ssl/ssl_config.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
@@ -60,7 +61,7 @@ class WebSocketEndpointLockManager;
 // ConnectJobs that wrap other ConnectJobs typically have different values for
 // those.
 struct NET_EXPORT_PRIVATE CommonConnectJobParams {
-  // TODO(https://crbug.com/1505765): Look into passing in HttpNetworkSession
+  // TODO(crbug.com/40946406): Look into passing in HttpNetworkSession
   // instead.
   CommonConnectJobParams(
       ClientSocketFactory* client_socket_factory,
@@ -114,7 +115,7 @@ struct NET_EXPORT_PRIVATE CommonConnectJobParams {
 
 // When a host resolution completes, OnHostResolutionCallback() is invoked. If
 // it returns |kContinue|, the ConnectJob can continue immediately. If it
-// returns |kMayBeDeletedAsync|, the ConnectJob may be slated for asychronous
+// returns |kMayBeDeletedAsync|, the ConnectJob may be slated for asynchronous
 // destruction, so should post a task before continuing, in case it will be
 // deleted. The purpose of kMayBeDeletedAsync is to avoid needlessly creating
 // and connecting a socket when it might not be needed.
@@ -171,6 +172,19 @@ class NET_EXPORT_PRIVATE ConnectJob {
                                   HttpAuthController* auth_controller,
                                   base::OnceClosure restart_with_auth_callback,
                                   ConnectJob* job) = 0;
+
+    // Invoked when DNS aliases are resolved for the final endpoint during host
+    // resolution. This allows the delegate to associate aliases with the job
+    // and query higher layers to check if further action is needed for the DNS
+    // aliases. If no host is resolved for the endpoint, this will not be
+    // called.
+    //
+    // A return value of OK causes the ConnectJob to continue. An error value
+    // causes the ConnectJob to fail with that error. ERR_IO_PENDING may not be
+    // returned.
+    virtual Error OnDestinationDnsAliasesResolved(
+        const std::set<std::string>& aliases,
+        ConnectJob* job) = 0;
   };
 
   // A |timeout_duration| of 0 corresponds to no timeout.
@@ -215,10 +229,6 @@ class NET_EXPORT_PRIVATE ConnectJob {
   // |delegate_| via OnConnectJobComplete.  In both asynchronous and synchronous
   // completion, ReleaseSocket() can be called to acquire the connected socket
   // if it succeeded.
-  //
-  // On completion, the ConnectJob must be destroyed synchronously, since it
-  // doesn't bother to stop its timer when complete.
-  // TODO(mmenke): Can that be fixed?
   int Connect();
 
   // Returns the current LoadState of the ConnectJob. Each ConnectJob class must
@@ -254,9 +264,9 @@ class NET_EXPORT_PRIVATE ConnectJob {
   // Returns the `HostResolverEndpointResult` structure corresponding to the
   // chosen route. Should only be called on a successful connect. If the
   // `ConnectJob` does not make DNS queries, or does not use the SVCB/HTTPS
-  // record, it may return `absl::nullopt`, to avoid callers getting confused by
+  // record, it may return `std::nullopt`, to avoid callers getting confused by
   // an empty `IPEndPoint` list.
-  virtual absl::optional<HostResolverEndpointResult>
+  virtual std::optional<HostResolverEndpointResult>
   GetHostResolverEndpointResult() const;
 
   const LoadTimingInfo::ConnectTiming& connect_timing() const {
@@ -299,11 +309,15 @@ class NET_EXPORT_PRIVATE ConnectJob {
   }
 
   void SetSocket(std::unique_ptr<StreamSocket> socket,
-                 absl::optional<std::set<std::string>> dns_aliases);
+                 std::optional<std::set<std::string>> dns_aliases);
   void NotifyDelegateOfCompletion(int rv);
   void NotifyDelegateOfProxyAuth(const HttpResponseInfo& response,
                                  HttpAuthController* auth_controller,
                                  base::OnceClosure restart_with_auth_callback);
+
+  // Calls `Delegate::OnDestinationDnsAliasesResolved()` and returns the result.
+  // See documentation of that function for return value meaning.
+  Error HandleDnsAliasesResolved(const std::set<std::string>& aliases);
 
   // If |remaining_time| is base::TimeDelta(), stops the timeout timer, if it's
   // running. Otherwise, Starts / restarts the timeout timer to trigger in the
@@ -324,7 +338,7 @@ class NET_EXPORT_PRIVATE ConnectJob {
   virtual void ChangePriorityInternal(RequestPriority priority) = 0;
 
   void LogConnectStart();
-  void LogConnectCompletion(int net_error);
+  void StopTimerAndLogConnectCompletion(int net_error);
 
   // Alerts the delegate that the ConnectJob has timed out.
   void OnTimeout();

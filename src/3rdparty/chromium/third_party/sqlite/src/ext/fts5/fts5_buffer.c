@@ -68,6 +68,7 @@ void sqlite3Fts5BufferAppendBlob(
 ){
   if( nData ){
     if( fts5BufferGrow(pRc, pBuf, nData) ) return;
+    assert( pBuf->p!=0 );
     memcpy(&pBuf->p[pBuf->n], pData, nData);
     pBuf->n += nData;
   }
@@ -169,6 +170,7 @@ int sqlite3Fts5PoslistNext64(
   i64 *piOff                      /* IN/OUT: Current offset */
 ){
   int i = *pi;
+  assert( a!=0 || i==0 );
   if( i>=n ){
     /* EOF */
     *piOff = -1;
@@ -176,6 +178,7 @@ int sqlite3Fts5PoslistNext64(
   }else{
     i64 iOff = *piOff;
     u32 iVal;
+    assert( a!=0 );
     fts5FastGetVarint32(a, i, iVal);
     if( iVal<=1 ){
       if( iVal==0 ){
@@ -305,7 +308,7 @@ char *sqlite3Fts5Strndup(int *pRc, const char *pIn, int nIn){
 **   * The 52 upper and lower case ASCII characters, and
 **   * The 10 integer ASCII characters.
 **   * The underscore character "_" (0x5F).
-**   * The unicode "subsitute" character (0x1A).
+**   * The unicode "substitute" character (0x1A).
 */
 int sqlite3Fts5IsBareword(char t){
   u8 aBareword[128] = {

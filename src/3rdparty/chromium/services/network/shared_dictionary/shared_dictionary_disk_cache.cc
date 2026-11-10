@@ -94,7 +94,6 @@ disk_cache::EntryResult SharedDictionaryDiskCache::OpenOrCreateEntry(
   switch (state_) {
     case State::kBeforeInitialize:
       NOTREACHED();
-      return disk_cache::EntryResult::MakeError(net::ERR_FAILED);
     case State::kInitializing:
       // It is safe to use Unretained() below because
       // `pending_disk_cache_tasks_` is owned by `this` and the passed task
@@ -121,7 +120,6 @@ int SharedDictionaryDiskCache::DoomEntry(const std::string& key,
   switch (state_) {
     case State::kBeforeInitialize:
       NOTREACHED();
-      return net::ERR_FAILED;
     case State::kInitializing:
       // It is safe to use Unretained() below because
       // `pending_disk_cache_tasks_` is owned by `this` and the passed task
@@ -145,7 +143,6 @@ int SharedDictionaryDiskCache::ClearAll(net::CompletionOnceCallback callback) {
   switch (state_) {
     case State::kBeforeInitialize:
       NOTREACHED();
-      return net::ERR_FAILED;
     case State::kInitializing:
       // It is safe to use Unretained() below because
       // `pending_disk_cache_tasks_` is owned by `this` and the passed task
@@ -171,7 +168,6 @@ void SharedDictionaryDiskCache::CreateIterator(
   switch (state_) {
     case State::kBeforeInitialize:
       NOTREACHED();
-      return;
     case State::kInitializing:
       // It is safe to use Unretained() below because
       // `pending_disk_cache_tasks_` is owned by `this` and the passed task

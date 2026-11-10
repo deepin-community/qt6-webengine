@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/convert.h"
-#include "gtest/gtest-spi.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
 namespace tint::core::ir {
@@ -34,23 +33,24 @@ namespace {
 
 using namespace tint::core::number_suffixes;  // NOLINT
 using IR_ConvertTest = IRTestHelper;
+using IR_ConvertDeathTest = IR_ConvertTest;
 
-TEST_F(IR_ConvertTest, Fail_NullToType) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(IR_ConvertDeathTest, Fail_NullToType) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Module mod;
             Builder b{mod};
             b.Convert(nullptr, 1_u);
         },
-        "");
+        "internal compiler error");
 }
 
 TEST_F(IR_ConvertTest, Results) {
     auto* c = b.Convert(mod.Types().i32(), 1_u);
 
     EXPECT_EQ(c->Results().Length(), 1u);
-    EXPECT_TRUE(c->Result(0)->Is<InstructionResult>());
-    EXPECT_EQ(c->Result(0)->Instruction(), c);
+    EXPECT_TRUE(c->Result()->Is<InstructionResult>());
+    EXPECT_EQ(c->Result()->Instruction(), c);
 }
 
 TEST_F(IR_ConvertTest, Clone) {
@@ -59,8 +59,8 @@ TEST_F(IR_ConvertTest, Clone) {
     auto* new_c = clone_ctx.Clone(c);
 
     EXPECT_NE(c, new_c);
-    EXPECT_NE(c->Result(0), new_c->Result(0));
-    EXPECT_EQ(mod.Types().f32(), new_c->Result(0)->Type());
+    EXPECT_NE(c->Result(), new_c->Result());
+    EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
 
     auto args = new_c->Args();
     EXPECT_EQ(1u, args.Length());

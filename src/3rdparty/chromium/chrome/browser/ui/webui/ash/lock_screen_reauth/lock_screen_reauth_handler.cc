@@ -12,20 +12,22 @@
 #include "base/notreached.h"
 #include "base/uuid.h"
 #include "base/values.h"
+#include "chrome/browser/ash/login/lock/online_reauth/lock_screen_reauth_manager.h"
+#include "chrome/browser/ash/login/lock/online_reauth/lock_screen_reauth_manager_factory.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
-#include "chrome/browser/ash/login/saml/in_session_password_sync_manager.h"
-#include "chrome/browser/ash/login/saml/in_session_password_sync_manager_factory.h"
 #include "chrome/browser/ash/login/signin_partition_manager.h"
-#include "chrome/browser/ash/login/ui/login_display_host_webui.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/ui/ash/login/login_display_host_webui.h"
 #include "chrome/browser/ui/webui/ash/lock_screen_reauth/lock_screen_reauth_dialogs.h"
 #include "chrome/browser/ui/webui/ash/login/check_passwords_against_cryptohome_helper.h"
 #include "chrome/browser/ui/webui/ash/login/online_login_utils.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/installer/util/google_update_settings.h"
 #include "chromeos/ash/components/login/auth/challenge_response/cert_utils.h"
@@ -34,13 +36,14 @@
 #include "chromeos/ash/components/login/auth/public/cryptohome_key_constants.h"
 #include "chromeos/version/version_loader.h"
 #include "components/account_id/account_id.h"
-#include "components/signin/public/identity_manager/account_info.h"
 #include "components/user_manager/known_user.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/net_errors.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -49,7 +52,15 @@ namespace ash {
 namespace {
 
 bool ShouldDoSamlRedirect(const std::string& email) {
-  if (features::IsGaiaReauthEndpointEnabled()) {
+  // TODO(b/335388700): If automatic re-authentication start is configured we
+  // have to skip any user verification notice page. For SAML this is currently
+  // only possible with redirect endpoint. Once reauth endpoint enables this,
+  // remove auto_start_reauth from this function.
+  const PrefService* prefs =
+      user_manager::UserManager::Get()->GetPrimaryUser()->GetProfilePrefs();
+  bool auto_start_reauth =
+      prefs && prefs->GetBoolean(::prefs::kLockScreenAutoStartOnlineReauth);
+  if (!auto_start_reauth) {
     return false;
   }
 
@@ -72,24 +83,6 @@ bool ShouldDoSamlRedirect(const std::string& email) {
   return user && user->using_saml();
 }
 
-Profile* GetActiveUserProfile() {
-  const user_manager::User* user =
-      user_manager::UserManager::Get()->GetActiveUser();
-  Profile* profile = ProfileHelper::Get()->GetProfileByUser(user);
-  return profile;
-}
-
-std::string GetHostedDomain(const std::string& gaia_id) {
-  Profile* profile = GetActiveUserProfile();
-  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
-  if (!identity_manager) {
-    return std::string();
-  }
-  const AccountInfo account_info =
-      identity_manager->FindExtendedAccountInfoByGaiaId(gaia_id);
-  return account_info.hosted_domain;
-}
-
 std::string GetSSOProfile() {
   policy::BrowserPolicyConnectorAsh* connector =
       g_browser_process->platform_part()->browser_policy_connector_ash();
@@ -98,7 +91,7 @@ std::string GetSSOProfile() {
 
 std::string GetDeviceId(const user_manager::KnownUser& known_user) {
   const user_manager::User* user =
-      user_manager::UserManager::Get()->GetActiveUser();
+      user_manager::UserManager::Get()->GetPrimaryUser();
   CHECK(user) << "Could not find an active user for lock screen";
 
   std::string device_id = known_user.GetDeviceId(user->GetAccountId());
@@ -113,7 +106,6 @@ std::string GetDeviceId(const user_manager::KnownUser& known_user) {
 }
 
 const char kMainElement[] = "$(\'main-element\').";
-const char kIdpTestingDomain[] = "example.com";
 
 }  // namespace
 
@@ -122,10 +114,14 @@ LockScreenReauthHandler::LockScreenReauthHandler(const std::string& email)
 
 LockScreenReauthHandler::~LockScreenReauthHandler() = default;
 
-void LockScreenReauthHandler::HandleInitialize(const base::Value::List& value) {
+void LockScreenReauthHandler::HandleStartOnlineAuth(
+    const base::Value::List& value) {
   AllowJavascript();
   OnReauthDialogReadyForTesting();
-  LoadAuthenticatorParam();
+
+  CHECK_EQ(1u, value.size());
+  const bool force_reauth_gaia_page = value[0].GetBool();
+  LoadAuthenticatorParam(force_reauth_gaia_page);
 }
 
 void LockScreenReauthHandler::HandleAuthenticatorLoaded(
@@ -137,13 +133,27 @@ void LockScreenReauthHandler::HandleAuthenticatorLoaded(
     std::move(waiting_caller_).Run();
   }
 
+  ActivateAutoReload();
+
   // Recreate the client cert usage observer, in order to track only the certs
   // used during the current sign-in attempt.
   extension_provided_client_cert_usage_observer_ =
       std::make_unique<LoginClientCertUsageObserver>();
 }
 
-void LockScreenReauthHandler::LoadAuthenticatorParam() {
+void LockScreenReauthHandler::ActivateAutoReload() {
+  auth_flow_auto_reload_manager_.Activate(base::BindOnce(
+      &LockScreenReauthHandler::LoadAuthenticatorParam,
+      weak_factory_.GetWeakPtr(), /*force_reauth_gaia_page=*/false));
+}
+
+ash::AuthenticationFlowAutoReloadManager&
+LockScreenReauthHandler::GetAutoReloadManager() {
+  return auth_flow_auto_reload_manager_;
+}
+
+void LockScreenReauthHandler::LoadAuthenticatorParam(
+    const bool force_reauth_gaia_page) {
   if (authenticator_state_ == AuthenticatorState::LOADING) {
     VLOG(1) << "Skip loading the Authenticator as it's already being loaded ";
     return;
@@ -151,24 +161,23 @@ void LockScreenReauthHandler::LoadAuthenticatorParam() {
 
   authenticator_state_ = AuthenticatorState::LOADING;
   login::GaiaContext context;
-  context.force_reload = true;
   context.email = email_;
+  context.gaia_id = user_manager::UserManager::Get()
+                        ->GetPrimaryUser()
+                        ->GetAccountId()
+                        .GetGaiaId();
 
   user_manager::KnownUser known_user(g_browser_process->local_state());
   if (!context.email.empty()) {
-    if (const std::string* gaia_id =
-            known_user.FindGaiaID(AccountId::FromUserEmail(context.email))) {
-      context.gaia_id = *gaia_id;
-    }
-
     context.gaps_cookie = known_user.GetGAPSCookie(
         AccountId::FromUserEmail(gaia::CanonicalizeEmail(context.email)));
   }
 
-  LoadGaia(context);
+  LoadGaia(context, force_reauth_gaia_page);
 }
 
-void LockScreenReauthHandler::LoadGaia(const login::GaiaContext& context) {
+void LockScreenReauthHandler::LoadGaia(const login::GaiaContext& context,
+                                       const bool force_reauth_gaia_page) {
   LOG_ASSERT(Profile::FromWebUI(web_ui()) ==
              ProfileHelper::Get()->GetLockScreenProfile());
   // Start a new session with SigninPartitionManager, generating a unique
@@ -182,15 +191,18 @@ void LockScreenReauthHandler::LoadGaia(const login::GaiaContext& context) {
   signin_partition_manager->StartSigninSession(
       web_ui()->GetWebContents(),
       base::BindOnce(&LockScreenReauthHandler::LoadGaiaWithPartition,
-                     weak_factory_.GetWeakPtr(), context));
+                     weak_factory_.GetWeakPtr(), context,
+                     force_reauth_gaia_page));
 }
 
 void LockScreenReauthHandler::LoadGaiaWithPartition(
     const login::GaiaContext& context,
+    const bool force_reauth_gaia_page,
     const std::string& partition_name) {
   auto callback = base::BindOnce(
       &LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition,
-      weak_factory_.GetWeakPtr(), context, partition_name);
+      weak_factory_.GetWeakPtr(), context, force_reauth_gaia_page,
+      partition_name);
   if (context.gaps_cookie.empty()) {
     std::move(callback).Run(net::CookieAccessResult());
     return;
@@ -209,6 +221,7 @@ void LockScreenReauthHandler::LoadGaiaWithPartition(
 
 void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
     const login::GaiaContext& context,
+    const bool force_reauth_gaia_page,
     const std::string& partition_name,
     net::CookieAccessResult result) {
   base::Value::Dict params;
@@ -220,9 +233,8 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
   params.Set("gaiaUrl", gaia_urls.gaia_url().spec());
   params.Set("clientId", gaia_urls.oauth2_chrome_client_id());
 
-  std::string hosted_domain = GetHostedDomain(context.gaia_id);
   bool do_saml_redirect =
-      force_saml_redirect_for_testing_ || ShouldDoSamlRedirect(context.email);
+      !force_reauth_gaia_page && ShouldDoSamlRedirect(context.email);
   params.Set("doSamlRedirect", do_saml_redirect);
 
   // Path without the leading slash, as expected by authenticator.js.
@@ -232,20 +244,19 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
   if (do_saml_redirect) {
     params.Set("gaiaPath",
                gaia_urls.saml_redirect_chromeos_url().path().substr(1));
-  } else if (features::IsGaiaReauthEndpointEnabled() &&
-             !context.email.empty()) {
+  } else if (!context.email.empty()) {
     params.Set("gaiaPath",
                gaia_urls.embedded_reauth_chromeos_url().path().substr(1));
   } else {
     params.Set("gaiaPath", default_gaia_path);
   }
 
-  if (force_saml_redirect_for_testing_) {
-    params.Set("enterpriseEnrollmentDomain", kIdpTestingDomain);
-  } else if (!hosted_domain.empty()) {
-    params.Set("enterpriseEnrollmentDomain", hosted_domain);
+  const std::string domain = enterprise_util::GetDomainFromEmail(context.email);
+  if (!domain.empty()) {
+    params.Set("enterpriseEnrollmentDomain", domain);
   } else {
-    LOG(ERROR) << "Couldn't get hosted_domain from account info.";
+    // TODO(b/332481266): add proper error handling.
+    LOG(ERROR) << "Couldn't get domain for account.";
   }
   params.Set("enableGaiaActionButtons", !do_saml_redirect);
   const std::string sso_profile(GetSSOProfile());
@@ -257,9 +268,8 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
   DCHECK(!app_locale.empty());
   params.Set("hl", app_locale);
   params.Set("email", context.email);
-  params.Set("gaiaId", context.gaia_id);
-  params.Set("extractSamlPasswordAttributes",
-             login::ExtractSamlPasswordAttributesEnabled());
+  params.Set("gaiaId", context.gaia_id.ToString());
+  params.Set("extractSamlPasswordAttributes", true);
   params.Set("clientVersion", version_info::GetVersionNumber());
   params.Set("readOnlyEmail", true);
   PrefService* local_state = g_browser_process->local_state();
@@ -270,10 +280,10 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
         local_state->GetString(prefs::kUrlParameterToAutofillSAMLUsername));
   }
 
+  // TODO(crbug.com/377862442) Add autoreload url param.
+
   CallJavascript("loadAuthenticator", params);
-  if (features::IsNewLockScreenReauthLayoutEnabled()) {
-    UpdateOrientationAndWidth();
-  }
+  UpdateOrientationAndWidth();
 }
 
 void LockScreenReauthHandler::UpdateOrientationAndWidth() {
@@ -293,12 +303,15 @@ void LockScreenReauthHandler::CallJavascript(const std::string& function,
 
 void LockScreenReauthHandler::HandleCompleteAuthentication(
     const base::Value::List& params) {
+  absl::Cleanup run_callback_on_return = [this] {
+    auth_flow_auto_reload_manager_.Terminate();
+  };
+
   CHECK_EQ(params.size(), 7u);
-  std::string gaia_id, email, password;
   bool using_saml;
-  gaia_id = params[0].GetString();
-  email = params[1].GetString();
-  password = params[2].GetString();
+  GaiaId gaia_id(params[0].GetString());
+  const std::string& email = params[1].GetString();
+  const std::string& password = params[2].GetString();
   auto scraped_saml_passwords =
       ::login::ConvertToStringList(params[3].GetList());
   using_saml = params[4].GetBool();
@@ -322,22 +335,19 @@ void LockScreenReauthHandler::HandleCompleteAuthentication(
         *extension_provided_client_cert_usage_observer_);
     if (!challenge_response_key_or_error.has_value()) {
       NOTREACHED();
-      return;
     }
     challenge_response_key = challenge_response_key_or_error.value();
   }
 
-  // Build UserContext
-  user_context_ = std::make_unique<UserContext>();
-  login::BuildUserContextForGaiaSignIn(
+  // Build UserContext.
+  user_context_ = login::BuildUserContextForGaiaSignIn(
       login::GetUsertypeFromServicesString(services),
       AccountId::FromUserEmailGaiaId(gaia::CanonicalizeEmail(email), gaia_id),
       using_saml, false /* using_saml_api */, password,
       SamlPasswordAttributes::FromJs(password_attributes),
-      /*sync_trusted_vault_keys=*/std::nullopt, challenge_response_key,
-      user_context_.get());
+      /*sync_trusted_vault_keys=*/std::nullopt, challenge_response_key);
 
-  // Create GaiaCookiesRetriever
+  // Create GaiaCookiesRetriever.
   login::SigninPartitionManager* signin_partition_manager =
       login::SigninPartitionManager::Factory::GetForBrowserContext(
           Profile::FromWebUI(web_ui()));
@@ -375,7 +385,6 @@ void LockScreenReauthHandler::FinishAuthentication(
 
 void LockScreenReauthHandler::OnCookieWaitTimeout() {
   NOTREACHED() << "Cookie has timed out while attempting to login in.";
-  LockScreenStartReauthDialog::Dismiss();
 }
 
 void LockScreenReauthHandler::OnReauthDialogReadyForTesting() {
@@ -395,17 +404,18 @@ void LockScreenReauthHandler::CheckCredentials(
   auto password_changed_callback =
       base::BindRepeating(&LockScreenReauthHandler::ShowPasswordChangedScreen,
                           weak_factory_.GetWeakPtr());
-  password_sync_manager_ =
-      InSessionPasswordSyncManagerFactory::GetForProfile(profile);
-  password_sync_manager_->CheckCredentials(*user_context,
-                                           password_changed_callback);
+  lock_screen_reauth_manager_ =
+      LockScreenReauthManagerFactory::GetForProfile(profile);
+  CHECK(lock_screen_reauth_manager_);
+  lock_screen_reauth_manager_->CheckCredentials(*user_context,
+                                                password_changed_callback);
 }
 
 void LockScreenReauthHandler::HandleUpdateUserPassword(
     const base::Value::List& value) {
   DCHECK(!value.empty());
-  std::string old_password = value[0].GetString();
-  password_sync_manager_->UpdateUserPassword(old_password);
+  const std::string& old_password = value[0].GetString();
+  lock_screen_reauth_manager_->UpdateUserPassword(old_password);
 }
 
 void LockScreenReauthHandler::ShowPasswordChangedScreen() {
@@ -454,7 +464,7 @@ void LockScreenReauthHandler::SamlConfirmPassword(
     return;
   }
 
-  // TODO(https://crbug.com/1295294) Eliminate redundant cryptohome check.
+  // TODO(crbug.com/40214270) Eliminate redundant cryptohome check.
   check_passwords_against_cryptohome_helper_ =
       std::make_unique<CheckPasswordsAgainstCryptohomeHelper>(
           *user_context_.get(), scraped_saml_passwords_,
@@ -491,49 +501,49 @@ void LockScreenReauthHandler::HandleWebviewLoadAborted(int error_code) {
 
 void LockScreenReauthHandler::HandleGetDeviceId(
     const std::string& callback_id) {
-  if (!IsJavascriptAllowed()) {
-    return;
-  }
-
   user_manager::KnownUser known_user{g_browser_process->local_state()};
   ResolveJavascriptCallback(callback_id, GetDeviceId(known_user));
 }
 
-void LockScreenReauthHandler::ReloadGaia() {
+void LockScreenReauthHandler::ReloadGaiaAuthenticator() {
   CallJavascriptFunction(std::string(kMainElement) + "reloadAuthenticator");
 }
 
 void LockScreenReauthHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "initialize",
-      base::BindRepeating(&LockScreenReauthHandler::HandleInitialize,
-                          weak_factory_.GetWeakPtr()));
+      "startOnlineAuth",
+      base::BindRepeating(&LockScreenReauthHandler::HandleStartOnlineAuth,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "authenticatorLoaded",
       base::BindRepeating(&LockScreenReauthHandler::HandleAuthenticatorLoaded,
-                          weak_factory_.GetWeakPtr()));
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "completeAuthentication",
       base::BindRepeating(
           &LockScreenReauthHandler::HandleCompleteAuthentication,
-          weak_factory_.GetWeakPtr()));
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "updateUserPassword",
       base::BindRepeating(&LockScreenReauthHandler::HandleUpdateUserPassword,
-                          weak_factory_.GetWeakPtr()));
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "onPasswordTyped",
       base::BindRepeating(&LockScreenReauthHandler::HandleOnPasswordTyped,
-                          weak_factory_.GetWeakPtr()));
+                          base::Unretained(this)));
   web_ui()->RegisterHandlerCallback(
       "webviewLoadAborted",
       base::BindRepeating(&LockScreenReauthHandler::HandleWebviewLoadAborted,
-                          weak_factory_.GetWeakPtr()));
+                          base::Unretained(this)));
   web_ui()->RegisterHandlerCallback(
       "getDeviceId",
       base::BindRepeating(&LockScreenReauthHandler::HandleGetDeviceId,
-                          weak_factory_.GetWeakPtr()));
+                          base::Unretained(this)));
+}
+
+void LockScreenReauthHandler::OnJavascriptDisallowed() {
+  weak_factory_.InvalidateWeakPtrs();
 }
 
 bool LockScreenReauthHandler::IsAuthenticatorLoaded(

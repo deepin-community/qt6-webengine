@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
@@ -22,8 +23,19 @@ class Profile;
 
 namespace ash::cloud_upload {
 
+// The state of the user's OneDrive account. Matches the enum in ODFS.
+enum class OdfsAccountState {
+  kNormal = 0,
+  kReauthenticationRequired = 1,
+  kFrozenAccount = 2,
+};
+
 struct ODFSMetadata {
+  // TODO(b/330786891): Remove reauthentication_required and make the
+  // account_state non-optional once no longer needed for backwards
+  // compatibility with ODFS.
   bool reauthentication_required = false;
+  std::optional<OdfsAccountState> account_state;
   std::string user_email;
 };
 
@@ -93,7 +105,13 @@ enum class OfficeDriveOpenErrors {
   kNoDriveService = 9,
   kDriveAuthenticationNotReady = 10,
   kMeteredConnection = 11,
-  kMaxValue = kMeteredConnection,
+  kEmptyAlternateUrl = 12,
+  kWaitingForUpload = 13,
+  kDisableDrivePreferenceSet = 14,
+  kDriveDisabledForAccountType = 15,
+  kCannotGetRelativePath = 16,
+  kDriveFsUnavailable = 17,
+  kMaxValue = kDriveFsUnavailable,
 };
 
 // List of UMA enum values for opening Office files from OneDrive, with the
@@ -113,7 +131,11 @@ enum class OfficeOneDriveOpenErrors {
   kGetActionsNoEmail = 10,
   kConversionToODFSUrlError = 11,
   kEmailsDoNotMatch = 12,
-  kMaxValue = kEmailsDoNotMatch,
+  kAndroidOneDriveUnsupportedLocation = 13,
+  kAndroidOneDriveInvalidUrl = 14,
+  kFailedToLaunch = 15,
+  kMS365NotInstalled = 16,
+  kMaxValue = kMS365NotInstalled,
 };
 
 // Records the source volume that an office file is opened from. The values up
@@ -158,7 +180,17 @@ enum class OfficeTaskResult {
   kLocalFileTask = 10,
   kFileAlreadyBeingUploaded = 11,
   kCannotGetFallbackChoice = 12,
-  kMaxValue = kCannotGetFallbackChoice,
+  kCannotShowSetupDialog = 13,
+  kCannotShowMoveConfirmation = 14,
+  kNoFilesToOpen = 15,
+  kOkAtFallback = 16,
+  kOkAtFallbackAfterOpen = 17,
+  kFallbackQuickOfficeAfterOpen = 18,
+  kCancelledAtFallbackAfterOpen = 19,
+  kCannotGetFallbackChoiceAfterOpen = 20,
+  kFileAlreadyBeingOpened = 21,
+  kCannotGetSourceType = 22,
+  kMaxValue = kCannotGetSourceType,
 };
 
 // The result of the "Upload to cloud" workflow for Office files.
@@ -194,96 +226,111 @@ enum class OfficeFilesUploadResult {
   kSyncCancelledAndTrashed = 22,
   kUploadNotStartedReauthenticationRequired = 23,
   kSuccessAfterReauth = 24,
-  kMaxValue = kSuccessAfterReauth,
+  kFileNotAnOfficeFile = 25,
+  kMaxValue = kFileNotAnOfficeFile,
 };
 
-constexpr char kGoogleDriveTaskResultMetricName[] =
+inline constexpr char kGoogleDriveTaskResultMetricName[] =
     "FileBrowser.OfficeFiles.TaskResult.Drive";
-constexpr char kGoogleDriveTaskResultMetricStateMetricName[] =
+inline constexpr char kGoogleDriveTaskResultMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.TaskResult.GoogleDrive.MetricState";
 
-constexpr char kOneDriveTaskResultMetricName[] =
+inline constexpr char kOneDriveTaskResultMetricName[] =
     "FileBrowser.OfficeFiles.TaskResult.OneDrive";
-constexpr char kOneDriveTaskResultMetricStateMetricName[] =
+inline constexpr char kOneDriveTaskResultMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.TaskResult.OneDrive.MetricState";
 
-constexpr char kGoogleDriveUploadResultMetricName[] =
+inline constexpr char kGoogleDriveUploadResultMetricName[] =
     "FileBrowser.OfficeFiles.Open.UploadResult.GoogleDrive";
-constexpr char kGoogleDriveUploadResultMetricStateMetricName[] =
+inline constexpr char kGoogleDriveUploadResultMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.UploadResult.GoogleDrive.MetricState";
 
-constexpr char kOneDriveUploadResultMetricName[] =
+inline constexpr char kOneDriveUploadResultMetricName[] =
     "FileBrowser.OfficeFiles.Open.UploadResult.OneDrive";
-constexpr char kOneDriveUploadResultMetricStateMetricName[] =
+inline constexpr char kOneDriveUploadResultMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.UploadResult.OneDrive.MetricState";
 
-constexpr char kGoogleDriveMoveErrorMetricName[] =
+inline constexpr char kGoogleDriveMoveErrorMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.GoogleDrive.Move";
-constexpr char kGoogleDriveMoveErrorMetricStateMetricName[] =
+inline constexpr char kGoogleDriveMoveErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.GoogleDrive.Move.MetricState";
 
-constexpr char kGoogleDriveCopyErrorMetricName[] =
+inline constexpr char kGoogleDriveCopyErrorMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.GoogleDrive.Copy";
-constexpr char kGoogleDriveCopyErrorMetricStateMetricName[] =
+inline constexpr char kGoogleDriveCopyErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.GoogleDrive.Copy.MetricState";
 
-constexpr char kOneDriveMoveErrorMetricName[] =
+inline constexpr char kOneDriveMoveErrorMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.OneDrive.Move";
-constexpr char kOneDriveMoveErrorMetricStateMetricName[] =
+inline constexpr char kOneDriveMoveErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.OneDrive.Move.MetricState";
 
-constexpr char kOneDriveCopyErrorMetricName[] =
+inline constexpr char kOneDriveCopyErrorMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.OneDrive.Copy";
-constexpr char kOneDriveCopyErrorMetricStateMetricName[] =
+inline constexpr char kOneDriveCopyErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Open.IOTaskError.OneDrive.Copy.MetricState";
 
-constexpr char kDriveOpenSourceVolumeMetric[] =
+inline constexpr char kDriveOpenSourceVolumeMetric[] =
     "FileBrowser.OfficeFiles.Open.SourceVolume.GoogleDrive";
-constexpr char kDriveOpenSourceVolumeMetricStateMetric[] =
+inline constexpr char kDriveOpenSourceVolumeMetricStateMetric[] =
     "FileBrowser.OfficeFiles.Open.SourceVolume.GoogleDrive.MetricState";
 
-constexpr char kOneDriveOpenSourceVolumeMetric[] =
+inline constexpr char kOneDriveOpenSourceVolumeMetric[] =
     "FileBrowser.OfficeFiles.Open.SourceVolume.MicrosoftOneDrive";
-constexpr char kOneDriveOpenSourceVolumeMetricStateMetric[] =
+inline constexpr char kOneDriveOpenSourceVolumeMetricStateMetric[] =
     "FileBrowser.OfficeFiles.Open.SourceVolume.OneDrive.MetricState";
 
-constexpr char kOpenInitialCloudProviderMetric[] =
+inline constexpr char kNumberOfFilesToOpenWithGoogleDriveMetric[] =
+    "FileBrowser.OfficeFiles.Open.NumberOfFiles.GoogleDrive";
+
+inline constexpr char kNumberOfFilesToOpenWithOneDriveMetric[] =
+    "FileBrowser.OfficeFiles.Open.NumberOfFiles.OneDrive";
+
+inline constexpr char kOpenInitialCloudProviderMetric[] =
     "FileBrowser.OfficeFiles.Open.CloudProvider";
 
-constexpr char kDriveTransferRequiredMetric[] =
+inline constexpr char kDriveTransferRequiredMetric[] =
     "FileBrowser.OfficeFiles.Open.TransferRequired.GoogleDrive";
-constexpr char kDriveTransferRequiredMetricStateMetric[] =
+inline constexpr char kDriveTransferRequiredMetricStateMetric[] =
     "FileBrowser.OfficeFiles.Open.TransferRequired.GoogleDrive.MetricState";
 
-constexpr char kOneDriveTransferRequiredMetric[] =
+inline constexpr char kOneDriveTransferRequiredMetric[] =
     "FileBrowser.OfficeFiles.Open.TransferRequired.OneDrive";
-constexpr char kOneDriveTransferRequiredMetricStateMetric[] =
+inline constexpr char kOneDriveTransferRequiredMetricStateMetric[] =
     "FileBrowser.OfficeFiles.Open.TransferRequired.OneDrive.MetricState";
 
-constexpr char kDriveErrorMetricName[] = "FileBrowser.OfficeFiles.Errors.Drive";
-constexpr char kDriveErrorMetricStateMetricName[] =
+inline constexpr char kDriveErrorMetricName[] =
+    "FileBrowser.OfficeFiles.Errors.Drive";
+inline constexpr char kDriveErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Errors.GoogleDrive.MetricState";
 
-constexpr char kOneDriveErrorMetricName[] =
+inline constexpr char kOneDriveErrorMetricName[] =
     "FileBrowser.OfficeFiles.Errors.OneDrive";
-constexpr char kOneDriveErrorMetricStateMetricName[] =
+inline constexpr char kOneDriveErrorMetricStateMetricName[] =
     "FileBrowser.OfficeFiles.Errors.OneDrive.MetricState";
 
 // Query actions for this path to get ODFS Metadata.
-const char kODFSMetadataQueryPath[] = "/";
+inline constexpr char kODFSMetadataQueryPath[] = "/";
 
 // Custom action ids passed from ODFS.
-const char kOneDriveUrlActionId[] = "HIDDEN_ONEDRIVE_URL";
-const char kUserEmailActionId[] = "HIDDEN_ONEDRIVE_USER_EMAIL";
-const char kReauthenticationRequiredId[] =
+inline constexpr char kOneDriveUrlActionId[] = "HIDDEN_ONEDRIVE_URL";
+inline constexpr char kUserEmailActionId[] = "HIDDEN_ONEDRIVE_USER_EMAIL";
+// TODO(b/330786891): Remove this once it's no longer needed for backwards
+// compatibility with ODFS.
+inline constexpr char kReauthenticationRequiredId[] =
     "HIDDEN_ONEDRIVE_REAUTHENTICATION_REQUIRED";
+inline constexpr char kAccountStateId[] = "HIDDEN_ONEDRIVE_ACCOUNT_STATE";
 
 // Get generic error message for uploading office files.
 std::string GetGenericErrorMessage();
 // Get Microsoft authentication error message for uploading office files.
 std::string GetReauthenticationRequiredMessage();
-// Get access denied error message.
-std::string GetGenericOneDriveAccessErrorMessage();
+// Get error message for when the file is not a valid document.
+std::string GetNotAValidDocumentErrorMessage();
+// Get message for when a file is already being opened.
+std::string GetAlreadyBeingOpenedMessage();
+// Get title for when a file is already being opened.
+std::string GetAlreadyBeingOpenedTitle();
 
 // Converts an absolute FilePath into a filesystem URL.
 storage::FileSystemURL FilePathToFileSystemURL(
@@ -304,13 +351,13 @@ OfficeFilesSourceVolume VolumeTypeToSourceVolume(
 
 // Returns the type of the source location from which the file is getting
 // uploaded (see SourceType values).
-SourceType GetSourceType(Profile* profile,
-                         const storage::FileSystemURL& source_path);
+std::optional<SourceType> GetSourceType(
+    Profile* profile,
+    const storage::FileSystemURL& source_path);
 
 // Returns the upload type (move or copy) for the upload flow based on the
-// source path of the file to upload.
-UploadType GetUploadType(Profile* profile,
-                         const storage::FileSystemURL& source_path);
+// source type.
+UploadType SourceTypeToUploadType(SourceType source_type);
 
 // Request ODFS be mounted. If there is an existing mount, ODFS will unmount
 // that one after authentication of the new mount.
@@ -325,13 +372,21 @@ std::optional<file_system_provider::ProvidedFileSystemInfo> GetODFSInfo(
 // Get currently provided ODFS, or null if not mounted.
 file_system_provider::ProvidedFileSystemInterface* GetODFS(Profile* profile);
 
+// Get Fusebox path of ODFS mount, or empty if not mounted.
+base::FilePath GetODFSFuseboxMount(Profile* profile);
+
 bool IsODFSMounted(Profile* profile);
 bool IsODFSInstalled(Profile* profile);
 bool IsOfficeWebAppInstalled(Profile* profile);
 
+// Returns true if the IsMicrosoftOfficeOneDriveIntegrationAllowed() returns
+// true and if the ODFS extension is installed. It returns false otherwise.
+bool IsMicrosoftOfficeOneDriveIntegrationAllowedAndOdfsInstalled(
+    Profile* profile);
+
 // Returns true if url refers to an entry on any current mount provided by the
 // ODFS file system provider.
-bool UrlIsOnODFS(Profile* profile, const storage::FileSystemURL& url);
+bool UrlIsOnODFS(const storage::FileSystemURL& url);
 
 // Get ODFS metadata as actions by doing a special GetActions request (for the
 // root directory) and return the actions to |OnODFSMetadataActions| which will

@@ -34,6 +34,7 @@
 namespace blink {
 
 class CSSImageSetOptionValue;
+class CSSLengthResolver;
 class StyleImage;
 
 class CORE_EXPORT CSSImageSetValue : public CSSValueList {
@@ -45,9 +46,10 @@ class CORE_EXPORT CSSImageSetValue : public CSSValueList {
   StyleImage* CachedImage(const float device_scale_factor) const;
   StyleImage* CacheImage(StyleImage*, const float device_scale_factor);
 
-  const CSSImageSetOptionValue* GetBestOption(const float device_scale_factor);
+  const CSSImageSetOptionValue* GetBestOption(const CSSLengthResolver&,
+                                              const float device_scale_factor);
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool HasFailedOrCanceledSubresources() const;
 

@@ -31,14 +31,10 @@ class CLContextImpl : angle::NonCopyable
                                              CLCommandQueueImpl::Ptr *commandQueueOut) = 0;
 
     virtual angle::Result createBuffer(const cl::Buffer &buffer,
-                                       size_t size,
                                        void *hostPtr,
                                        CLMemoryImpl::Ptr *bufferOut) = 0;
 
     virtual angle::Result createImage(const cl::Image &image,
-                                      cl::MemFlags flags,
-                                      const cl_image_format &format,
-                                      const cl::ImageDescriptor &desc,
                                       void *hostPtr,
                                       CLMemoryImpl::Ptr *imageOut) = 0;
 

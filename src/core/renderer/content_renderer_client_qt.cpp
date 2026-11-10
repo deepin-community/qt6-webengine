@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "renderer/content_renderer_client_qt.h"
 
@@ -14,6 +15,7 @@
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 #include "components/autofill/content/renderer/password_generation_agent.h"
 #include "components/cdm/renderer/external_clear_key_key_system_info.h"
+#include "components/cdm/renderer/key_system_support_update.h"
 #include "components/cdm/renderer/widevine_key_system_info.h"
 #include "components/error_page/common/error.h"
 #include "components/error_page/common/localized_error.h"
@@ -21,16 +23,14 @@
 #include "components/network_hints/renderer/web_prescient_networking_impl.h"
 #include "components/visitedlink/renderer/visitedlink_reader.h"
 #include "components/web_cache/renderer/web_cache_impl.h"
-#include "content/public/renderer/render_frame.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/buildflags/buildflags.h"
-#include "media/base/key_system_info.h"
-#include "media/cdm/cdm_capability.h"
 #include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "net/base/net_errors.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/platform/web_url_error.h"
@@ -46,8 +46,8 @@
 #if QT_CONFIG(webengine_printing_and_pdf)
 #include "renderer/print_web_view_helper_delegate_qt.h"
 
+#include "chrome/common/webui_url_constants.h"
 #include "components/pdf/renderer/internal_plugin_renderer_helpers.h"
-#include "components/pdf/renderer/pdf_internal_plugin_delegate.h"
 #include "components/printing/renderer/print_render_frame_helper.h"
 #endif
 
@@ -57,9 +57,12 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "common/extensions/extensions_client_qt.h"
+#include "extensions/extensions_renderer_api_provider_qt.h"
 #include "extensions/extensions_renderer_client_qt.h"
 
 #include "extensions/common/constants.h"
+#include "extensions/renderer/api/core_extensions_renderer_api_provider.h"
+#include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container_manager.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
@@ -68,6 +71,7 @@
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/renderer/render_frame_impl.h"
+#include "qtwebengine/common/plugin.mojom.h"
 #include "plugins/loadable_plugin_placeholder_qt.h"
 #endif // ENABLE_PLUGINS
 
@@ -125,7 +129,13 @@ void ContentRendererClientQt::RenderThreadStarted()
             network::mojom::CorsDomainMatchMode::kAllowSubdomains, network::mojom::CorsPortMatchMode::kAllowAnyPort,
             network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 
-    ExtensionsRendererClientQt::GetInstance()->RenderThreadStarted();
+    auto *extensions_renderer_client = extensions::ExtensionsRendererClient::Get();
+    extensions_renderer_client->AddAPIProvider(
+            std::make_unique<extensions::CoreExtensionsRendererAPIProvider>());
+    extensions_renderer_client->AddAPIProvider(
+            std::make_unique<extensions::ExtensionsRendererAPIProviderQt>());
+
+    extensions_renderer_client->RenderThreadStarted();
 #endif
 }
 
@@ -202,8 +212,6 @@ void ContentRendererClientQt::RenderFrameCreated(content::RenderFrame *render_fr
 
     new autofill::AutofillAgent(
             render_frame,
-            { autofill::AutofillAgent::UsesKeyboardAccessoryForSuggestions(false),
-              autofill::AutofillAgent::ExtractAllDatalists(false) },
             std::move(password_autofill_agent), std::move(password_generation_agent),
             associated_interfaces);
 }
@@ -296,12 +304,16 @@ void ContentRendererClientQt::GetNavigationErrorStringsInternal(content::RenderF
                 error_page::LocalizedError::GetPageState(
                         error.reason(), error.domain(), error.url(), isPost, false,
                         error.stale_copy_in_cache(), false,
-                        RenderConfiguration::is_incognito_process(), false, false, false, locale, false, &error_page_params);
+                        RenderConfiguration::is_incognito_process(),
+                        false, false,
+                        locale,
+                        false,
+                        &error_page_params);
 
         resourceId = IDR_NET_ERROR_HTML;
 
         std::string extracted_string = ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(resourceId);
-        const base::StringPiece template_html(extracted_string.data(), extracted_string.size());
+        const std::string_view template_html(extracted_string.data(), extracted_string.size());
         if (template_html.empty())
             NOTREACHED() << "unable to load template. ID: " << resourceId;
         else // "t" is the id of the templates root node.
@@ -337,15 +349,15 @@ bool IsPdfExtensionOrigin(const url::Origin &origin)
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 void AppendParams(const std::vector<content::WebPluginMimeType::Param> &additional_params,
-                  blink::WebVector<blink::WebString> *existing_names,
-                  blink::WebVector<blink::WebString> *existing_values)
+                  std::vector<blink::WebString> *existing_names,
+                  std::vector<blink::WebString> *existing_values)
 {
     DCHECK(existing_names->size() == existing_values->size());
     size_t existing_size = existing_names->size();
     size_t total_size = existing_size + additional_params.size();
 
-    blink::WebVector<blink::WebString> names(total_size);
-    blink::WebVector<blink::WebString> values(total_size);
+    std::vector<blink::WebString> names(total_size);
+    std::vector<blink::WebString> values(total_size);
 
     for (size_t i = 0; i < existing_size; ++i) {
         names[i] = (*existing_names)[i];
@@ -363,23 +375,9 @@ void AppendParams(const std::vector<content::WebPluginMimeType::Param> &addition
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 #if QT_CONFIG(webengine_printing_and_pdf)
-// based on chrome/renderer/pdf/chrome_pdf_internal_plugin_delegate.cc:
-class PdfInternalPluginDelegateQt final
-    : public pdf::PdfInternalPluginDelegate
+std::vector<url::Origin> GetAdditionalPdfInternalPluginAllowedOrigins()
 {
-public:
-    PdfInternalPluginDelegateQt() = default;
-    PdfInternalPluginDelegateQt(const PdfInternalPluginDelegateQt &) = delete;
-    PdfInternalPluginDelegateQt& operator=(const PdfInternalPluginDelegateQt &) = delete;
-    ~PdfInternalPluginDelegateQt() override = default;
-
-    // `pdf::PdfInternalPluginDelegate`:
-    bool IsAllowedOrigin(const url::Origin &origin) const override;
-};
-
-bool PdfInternalPluginDelegateQt::IsAllowedOrigin(const url::Origin &origin) const
-{
-    return IsPdfExtensionOrigin(origin);
+    return {url::Origin::Create(GURL(chrome::kChromeUIPrintURL))};
 }
 #endif
 } // namespace
@@ -390,21 +388,23 @@ bool ContentRendererClientQt::IsPluginHandledExternally(content::RenderFrame *re
                                    const std::string &original_mime_type)
 {
 #if BUILDFLAG(ENABLE_EXTENSIONS) && BUILDFLAG(ENABLE_PLUGINS)
-    bool found = false;
-    content::WebPluginInfo plugin_info;
-    std::string mime_type;
+    mojo::AssociatedRemote<qtwebengine::mojom::PluginInfoHost> plugin_info_host;
+    render_frame->GetRemoteAssociatedInterfaces()->GetInterface(
+            &plugin_info_host);
+    qtwebengine::mojom::PluginInfoPtr plugin_info = qtwebengine::mojom::PluginInfo::New();
+    plugin_info_host->GetPluginInfo(
+            original_url, render_frame->GetWebFrame()->Top()->GetSecurityOrigin(),
+            original_mime_type, &plugin_info);
 
-    static_cast<content::RenderFrameImpl *>(render_frame)->GetPepperHost()->GetPluginInfo(
-                original_url, original_mime_type, &found, &plugin_info, &mime_type);
-    if (!found)
-        return false;
+#if QT_CONFIG(webengine_printing_and_pdf)
     if (IsPdfExtensionOrigin(render_frame->GetWebFrame()->GetSecurityOrigin()))
         return true;
+#endif
     return extensions::MimeHandlerViewContainerManager::Get(
                 content::RenderFrame::FromWebFrame(
                     plugin_element.GetDocument().GetFrame()),
                 true /* create_if_does_not_exist */)
-                    ->CreateFrameContainer(plugin_element, original_url, mime_type, plugin_info);
+                    ->CreateFrameContainer(plugin_element, original_url, plugin_info->actual_mime_type, plugin_info->plugin);
 #else
     return false;
 #endif
@@ -420,37 +420,35 @@ bool ContentRendererClientQt::OverrideCreatePlugin(content::RenderFrame *render_
 #endif // ENABLE_EXTENSIONS
 
 #if BUILDFLAG(ENABLE_PLUGINS)
-    content::WebPluginInfo info;
-    std::string mime_type;
-    bool found = false;
+    std::string orig_mime_type = params.mime_type.Utf8();
+    GURL url(params.url);
+    mojo::AssociatedRemote<qtwebengine::mojom::PluginInfoHost> plugin_info_host;
+    render_frame->GetRemoteAssociatedInterfaces()->GetInterface(&plugin_info_host);
 
-    static_cast<content::RenderFrameImpl *>(render_frame)->GetPepperHost()->GetPluginInfo(
-                params.url, params.mime_type.Utf8(), &found, &info, &mime_type);
-    if (!found) {
-        *plugin = LoadablePluginPlaceholderQt::CreateLoadableMissingPlugin(render_frame, params)->plugin();
-        return true;
-    }
-    if (info.name == u"Chromium PDF Viewer") {
+    qtwebengine::mojom::PluginInfoPtr plugin_info = qtwebengine::mojom::PluginInfo::New();
+    plugin_info_host->GetPluginInfo(url, render_frame->GetWebFrame()->Top()->GetSecurityOrigin(),
+                                    orig_mime_type, &plugin_info);
+#if QT_CONFIG(webengine_printing_and_pdf)
+    if (plugin_info->plugin.name == u"Chromium PDF Viewer") {
         blink::WebPluginParams new_params(params);
-        for (const auto& mime_type : info.mime_types) {
-          if (mime_type.mime_type == params.mime_type.Utf8()) {
-            AppendParams(mime_type.additional_params, &new_params.attribute_names,
-                         &new_params.attribute_values);
-            break;
-          }
+        for (const auto& mime_type : plugin_info->plugin.mime_types) {
+            if (mime_type.mime_type == params.mime_type.Utf8()) {
+                AppendParams(mime_type.additional_params, &new_params.attribute_names,
+                             &new_params.attribute_values);
+                break;
+            }
         }
 
-        *plugin = pdf::CreateInternalPlugin(std::move(new_params), render_frame, std::make_unique<PdfInternalPluginDelegateQt>());
+        *plugin = pdf::CreateInternalPlugin(std::move(new_params), render_frame, GetAdditionalPdfInternalPluginAllowedOrigins());
         return true;
     }
-    *plugin = render_frame->CreatePlugin(info, params);
+#endif
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    *plugin = LoadablePluginPlaceholderQt::CreateLoadableMissingPlugin(render_frame, params)
+                      ->plugin();
+#endif // ENABLE_EXTENSIONS
 #endif // BUILDFLAG(ENABLE_PLUGINS)
     return true;
-}
-
-bool ContentRendererClientQt::IsOriginIsolatedPepperPlugin(const base::FilePath& plugin_path)
-{
-    return plugin_path.value() == FILE_PATH_LITERAL("internal-pdf-viewer");
 }
 
 #if QT_CONFIG(webengine_webrtc) && QT_CONFIG(webengine_extensions)
@@ -464,228 +462,63 @@ chrome::WebRtcLoggingAgentImpl *ContentRendererClientQt::GetWebRtcLoggingAgent()
 }
 #endif // QT_CONFIG(webengine_webrtc) && QT_CONFIG(webengine_extensions)
 
+#if QT_CONFIG(webengine_extensions)
+void ContentRendererClientQt::WillEvaluateServiceWorkerOnWorkerThread(
+        blink::WebServiceWorkerContextProxy *context_proxy, v8::Local<v8::Context> v8_context,
+        int64_t service_worker_version_id, const GURL &service_worker_scope, const GURL &script_url,
+        const blink::ServiceWorkerToken &service_worker_token)
+{
+    ExtensionsRendererClientQt::GetInstance()
+            ->dispatcher()
+            ->WillEvaluateServiceWorkerOnWorkerThread(
+                    context_proxy, v8_context, service_worker_version_id, service_worker_scope,
+                    script_url, service_worker_token);
+}
+
+void ContentRendererClientQt::DidInitializeServiceWorkerContextOnWorkerThread(
+        blink::WebServiceWorkerContextProxy *context_proxy, const GURL &service_worker_scope,
+        const GURL &script_url)
+{
+    extensions::ExtensionsRendererClient::Get()
+            ->dispatcher()
+            ->DidInitializeServiceWorkerContextOnWorkerThread(context_proxy, service_worker_scope,
+                                                              script_url);
+}
+
+void ContentRendererClientQt::DidStartServiceWorkerContextOnWorkerThread(
+        int64_t service_worker_version_id, const GURL &service_worker_scope, const GURL &script_url)
+{
+    extensions::ExtensionsRendererClient::Get()
+            ->dispatcher()
+            ->DidStartServiceWorkerContextOnWorkerThread(service_worker_version_id,
+                                                         service_worker_scope, script_url);
+}
+
+void ContentRendererClientQt::WillDestroyServiceWorkerContextOnWorkerThread(
+        v8::Local<v8::Context> context, int64_t service_worker_version_id,
+        const GURL &service_worker_scope, const GURL &script_url)
+{
+    extensions::ExtensionsRendererClient::Get()
+            ->dispatcher()
+            ->WillDestroyServiceWorkerContextOnWorkerThread(context, service_worker_version_id,
+                                                            service_worker_scope, script_url);
+}
+
+bool ContentRendererClientQt::AllowScriptExtensionForServiceWorker(const url::Origin &script_origin)
+{
+    return script_origin.scheme() == extensions::kExtensionScheme;
+}
+
+#endif // QT_CONFIG(webengine_extensions)
+
 void ContentRendererClientQt::GetInterface(const std::string &interface_name, mojo::ScopedMessagePipeHandle interface_pipe)
 {
     content::RenderThread::Get()->BindHostReceiver(mojo::GenericPendingReceiver(interface_name, std::move(interface_pipe)));
 }
 
-// The following is based on chrome/renderer/media/chrome_key_systems.cc:
-// Copyright 2013 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE.Chromium file.
-
-#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-// External Clear Key (used for testing).
-static void AddExternalClearKey(const media::mojom::KeySystemCapabilityPtr &capability,
-                                media::KeySystemInfos* key_systems)
+std::unique_ptr<media::KeySystemSupportRegistration> ContentRendererClientQt::GetSupportedKeySystems(content::RenderFrame *render_frame, media::GetSupportedKeySystemsCB cb)
 {
-    Q_UNUSED(capability);
-    if (!base::FeatureList::IsEnabled(media::kExternalClearKeyForTesting)) {
-        DLOG(ERROR) << "ExternalClearKey supported despite not enabled.";
-        return;
-    }
-
-    // TODO(xhwang): Actually use `capability` to determine capabilities.
-    key_systems->push_back(std::make_unique<cdm::ExternalClearKeyKeySystemInfo>());
-}
-
-#if BUILDFLAG(ENABLE_WIDEVINE)
-media::SupportedCodecs GetVP9Codecs(const base::flat_set<media::VideoCodecProfile> &profiles)
-{
-    if (profiles.empty()) {
-        // If no profiles are specified, then all are supported.
-        return media::EME_CODEC_VP9_PROFILE0 | media::EME_CODEC_VP9_PROFILE2;
-    }
-
-    media::SupportedCodecs supported_vp9_codecs = media::EME_CODEC_NONE;
-    for (const auto& profile : profiles) {
-        switch (profile) {
-        case media::VP9PROFILE_PROFILE0:
-            supported_vp9_codecs |= media::EME_CODEC_VP9_PROFILE0;
-            break;
-        case media::VP9PROFILE_PROFILE2:
-            supported_vp9_codecs |= media::EME_CODEC_VP9_PROFILE2;
-            break;
-        default:
-            DVLOG(1) << "Unexpected " << media::GetCodecName(media::VideoCodec::kVP9)
-                     << " profile: " << media::GetProfileName(profile);
-            break;
-        }
-    }
-
-    return supported_vp9_codecs;
-}
-
-#if BUILDFLAG(ENABLE_PLATFORM_HEVC)
-media::SupportedCodecs GetHevcCodecs(const base::flat_set<media::VideoCodecProfile> &profiles)
-{
-    // If no profiles are specified, then all are supported.
-    if (profiles.empty()) {
-        return media::EME_CODEC_HEVC_PROFILE_MAIN |
-               media::EME_CODEC_HEVC_PROFILE_MAIN10;
-    }
-
-    media::SupportedCodecs supported_hevc_codecs = media::EME_CODEC_NONE;
-    for (const auto& profile : profiles) {
-        switch (profile) {
-        case media::HEVCPROFILE_MAIN:
-            supported_hevc_codecs |= media::EME_CODEC_HEVC_PROFILE_MAIN;
-            break;
-        case media::HEVCPROFILE_MAIN10:
-            supported_hevc_codecs |= media::EME_CODEC_HEVC_PROFILE_MAIN10;
-            break;
-        default:
-            DVLOG(1) << "Unexpected " << media::GetCodecName(media::VideoCodec::kHEVC)
-                     << " profile: " << media::GetProfileName(profile);
-            break;
-        }
-    }
-
-    return supported_hevc_codecs;
-}
-#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
-
-static media::SupportedCodecs GetSupportedCodecs(const media::CdmCapability& capability,
-                                                 bool is_secure)
-{
-    media::SupportedCodecs supported_codecs = media::EME_CODEC_NONE;
-
-    for (const auto& codec : capability.audio_codecs) {
-        switch (codec) {
-        case media::AudioCodec::kOpus:
-            supported_codecs |= media::EME_CODEC_OPUS;
-            break;
-        case media::AudioCodec::kVorbis:
-            supported_codecs |= media::EME_CODEC_VORBIS;
-            break;
-        case media::AudioCodec::kFLAC:
-            supported_codecs |= media::EME_CODEC_FLAC;
-            break;
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-        case media::AudioCodec::kAAC:
-            supported_codecs |= media::EME_CODEC_AAC;
-            break;
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
-        default:
-            DVLOG(1) << "Unexpected supported codec: " << GetCodecName(codec);
-            break;
-        }
-    }
-
-    for (const auto &codec : capability.video_codecs) {
-        switch (codec.first) {
-        case media::VideoCodec::kVP8:
-            supported_codecs |= media::EME_CODEC_VP8;
-            break;
-        case media::VideoCodec::kVP9:
-            supported_codecs |= GetVP9Codecs(codec.second.supported_profiles);
-            break;
-        case media::VideoCodec::kAV1:
-            supported_codecs |= media::EME_CODEC_AV1;
-            break;
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-        case media::VideoCodec::kH264:
-            supported_codecs |= media::EME_CODEC_AVC1;
-            break;
-#endif // BUILDFLAG(USE_PROPRIETARY_CODECS)
-#if BUILDFLAG(ENABLE_PLATFORM_HEVC)
-        case media::VideoCodec::kHEVC:
-            supported_codecs |= GetHevcCodecs(codec.second.supported_profiles);
-            break;
-#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
-        default:
-            DVLOG(1) << "Unexpected supported codec: " << GetCodecName(codec.first);
-            break;
-        }
-    }
-
-    return supported_codecs;
-}
-
-static void AddWidevine(const media::mojom::KeySystemCapabilityPtr &capability,
-                        media::KeySystemInfos *key_systems)
-{
-    // Codecs and encryption schemes.
-    media::SupportedCodecs codecs = media::EME_CODEC_NONE;
-    media::SupportedCodecs hw_secure_codecs = media::EME_CODEC_NONE;
-    base::flat_set<media::EncryptionScheme> encryption_schemes;
-    base::flat_set<media::EncryptionScheme> hw_secure_encryption_schemes;
-    base::flat_set<media::CdmSessionType> session_types;
-    base::flat_set<media::CdmSessionType> hw_secure_session_types;
-    if (capability->sw_secure_capability) {
-        codecs = GetSupportedCodecs(capability->sw_secure_capability.value(), /*is_secure=*/false);
-        encryption_schemes = capability->sw_secure_capability->encryption_schemes;
-        if (!base::Contains(capability->sw_secure_capability->session_types, media::CdmSessionType::kTemporary)) {
-            DVLOG(1) << "Temporary sessions must be supported.";
-            return;
-        }
-    }
-
-    if (capability->hw_secure_capability) {
-        hw_secure_codecs = GetSupportedCodecs(capability->hw_secure_capability.value(), /*is_secure=*/true);
-        hw_secure_encryption_schemes = capability->hw_secure_capability->encryption_schemes;
-        if (!base::Contains(capability->hw_secure_capability->session_types, media::CdmSessionType::kTemporary)) {
-            DVLOG(1) << "Temporary sessions must be supported.";
-            return;
-        }
-    }
-
-    // Robustness.
-    using Robustness = cdm::WidevineKeySystemInfo::Robustness;
-    auto max_audio_robustness = Robustness::SW_SECURE_CRYPTO;
-    auto max_video_robustness = Robustness::SW_SECURE_DECODE;
-
-    if (base::FeatureList::IsEnabled(media::kHardwareSecureDecryption)) {
-        max_audio_robustness = Robustness::HW_SECURE_CRYPTO;
-        max_video_robustness = Robustness::HW_SECURE_ALL;
-    }
-
-    // Others.
-    auto persistent_state_support = media::EmeFeatureSupport::REQUESTABLE;
-    auto distinctive_identifier_support = media::EmeFeatureSupport::NOT_SUPPORTED;
-
-    key_systems->emplace_back(new cdm::WidevineKeySystemInfo(
-                                  codecs, std::move(encryption_schemes), std::move(session_types),
-                                  hw_secure_codecs, std::move(hw_secure_encryption_schemes),
-                                  std::move(hw_secure_session_types),
-                                  max_audio_robustness, max_video_robustness,
-                                  persistent_state_support,
-                                  distinctive_identifier_support));
-}
-#endif // BUILDFLAG(ENABLE_WIDEVINE)
-#endif // BUILDFLAG(ENABLE_LIBRARY_CDMS)
-
-void OnKeySystemSupportUpdated(media::GetSupportedKeySystemsCB cb,
-                               content::KeySystemCapabilityPtrMap key_system_capabilities)
-{
-    media::KeySystemInfos key_systems;
-    for (const auto &entry : key_system_capabilities) {
-#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-        const auto &key_system = entry.first;
-        const auto &capability = entry.second;
-#if BUILDFLAG(ENABLE_WIDEVINE)
-        if (key_system == kWidevineKeySystem) {
-            AddWidevine(capability, &key_systems);
-            continue;
-        }
-#endif // BUILDFLAG(ENABLE_WIDEVINE)
-
-        if (key_system == media::kExternalClearKeyKeySystem) {
-            AddExternalClearKey(capability, &key_systems);
-            continue;
-        }
-
-        DLOG(ERROR) << "Unrecognized key system: " << key_system;
-#endif // BUILDFLAG(ENABLE_LIBRARY_CDMS)
-    }
-
-    cb.Run(std::move(key_systems));
-}
-
-void ContentRendererClientQt::GetSupportedKeySystems(media::GetSupportedKeySystemsCB cb)
-{
-    content::ObserveKeySystemSupportUpdate(
-        base::BindRepeating(&OnKeySystemSupportUpdated, std::move(cb)));
+    return cdm::GetSupportedKeySystemsUpdates(render_frame, /*can_persist_data=*/false, std::move(cb));
 }
 
 #if QT_CONFIG(webengine_spellchecker)
@@ -697,13 +530,14 @@ void ContentRendererClientQt::InitSpellCheck()
 
 void ContentRendererClientQt::WillSendRequest(blink::WebLocalFrame *frame,
                                               ui::PageTransition transition_type,
-                                              const blink::WebURL &url,
+                                              const blink::WebURL &upstream_url,
+                                              const blink::WebURL &target_url,
                                               const net::SiteForCookies &site_for_cookies,
                                               const url::Origin *initiator_origin,
                                               GURL *new_url)
 {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-    ExtensionsRendererClientQt::GetInstance()->WillSendRequest(frame, transition_type, url, site_for_cookies,
+    ExtensionsRendererClientQt::GetInstance()->WillSendRequest(frame, transition_type, target_url, site_for_cookies,
                                                                initiator_origin, new_url);
     if (!new_url->is_empty())
         return;

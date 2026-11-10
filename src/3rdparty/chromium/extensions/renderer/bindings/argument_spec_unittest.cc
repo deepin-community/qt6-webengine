@@ -62,13 +62,13 @@ class ArgumentSpecUnitTest : public gin::V8Test {
                   TestResult result)
         : spec(spec), script_source(script_source), expected_result(result) {}
 
-    const raw_ref<const ArgumentSpec, ExperimentalRenderer> spec;
+    const raw_ref<const ArgumentSpec> spec;
     std::string_view script_source;
     TestResult expected_result;
     std::string_view expected_json;
     std::string_view expected_error;
     std::string_view expected_thrown_message;
-    raw_ptr<const base::Value, ExperimentalRenderer> expected_value = nullptr;
+    raw_ptr<const base::Value> expected_value = nullptr;
     bool should_convert_to_base = true;
     bool should_convert_to_v8 = false;
     V8Validator validate_v8;
@@ -420,7 +420,7 @@ TEST_F(ArgumentSpecUnitTest, Test) {
     {
       // Actual data.
       const uint8_t kBuffer[] = {'p', 'i', 'n', 'g'};
-      base::Value expected_value(base::make_span(kBuffer));
+      base::Value expected_value{base::span(kBuffer)};
       ExpectSuccess(spec,
                     "var b = new ArrayBuffer(4);\n"
                     "var v = new Uint8Array(b);\n"
@@ -660,6 +660,41 @@ TEST_F(ArgumentSpecUnitTest, AdditionalPropertiesTest) {
     ExpectFailure(spec, "({prop1: 'alpha', prop2: 42})",
                   api_errors::PropertyError(
                       "prop2", InvalidType(kTypeString, kTypeInteger)));
+  }
+}
+
+TEST_F(ArgumentSpecUnitTest, IgnoreAdditionalPropertiesTest) {
+  {
+    constexpr char kPropertiesWithIgnoreAdditionalProperties[] =
+        R"({
+             'type': 'object',
+             'properties': {
+               'prop1': {'type': 'string'}
+             },
+             'ignoreAdditionalProperties': true
+           })";
+    ArgumentSpec spec(
+        DictValueFromString(kPropertiesWithIgnoreAdditionalProperties));
+    ExpectSuccess(spec, "({prop1: 'alpha', prop2: 42, prop3: {foo: 'bar'}})",
+                  "{'prop1':'alpha'}");
+    ExpectSuccess(spec, "({prop1: 'foo'})", "{'prop1':'foo'}");
+    ExpectFailure(spec, "({prop2: 42, prop3: {foo: 'bar'}})",
+                  MissingRequiredProperty("prop1"));
+    ExpectFailure(spec, "({prop1: 42})",
+                  api_errors::PropertyError(
+                      "prop1", InvalidType(kTypeString, kTypeInteger)));
+  }
+  {
+    constexpr char kEmptyPropertiesWithIgnoreAdditionalProperties[] =
+        R"({
+             'type': 'object',
+             'properties': {},
+             'ignoreAdditionalProperties': true
+           })";
+    ArgumentSpec spec(
+        DictValueFromString(kEmptyPropertiesWithIgnoreAdditionalProperties));
+    ExpectSuccess(spec, "({prop1: 'alpha', prop2: {foo: 'bar'}})", "{}");
+    ExpectSuccess(spec, "({})", "{}");
   }
 }
 
@@ -905,9 +940,7 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
                   base::BindOnce([](v8::Local<v8::Value> value) {
                     ASSERT_TRUE(value->IsObject());
                     v8::Local<v8::Object> object = value.As<v8::Object>();
-                    v8::Local<v8::Context> context =
-                        object->GetCreationContextChecked();
-                    gin::Dictionary dict(context->GetIsolate(), object);
+                    gin::Dictionary dict(v8::Isolate::GetCurrent(), object);
                     std::string result;
                     ASSERT_TRUE(dict.Get("str", &result));
                     EXPECT_EQ("a string", result);
@@ -944,11 +977,10 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
     ExpectSuccess(*spec, "({})", base::BindOnce([](v8::Local<v8::Value> value) {
       ASSERT_TRUE(value->IsObject());
       v8::Local<v8::Object> object = value.As<v8::Object>();
-      v8::Local<v8::Context> context = object->GetCreationContextChecked();
       // We expect a null prototype to ensure we avoid tricky getters/setters on
       // the Object prototype.
-      EXPECT_TRUE(object->GetPrototype()->IsNull());
-      gin::Dictionary dict(context->GetIsolate(), object);
+      EXPECT_TRUE(object->GetPrototypeV2()->IsNull());
+      gin::Dictionary dict(v8::Isolate::GetCurrent(), object);
       v8::Local<v8::Value> result;
       ASSERT_TRUE(dict.Get("str", &result));
       EXPECT_TRUE(result->IsUndefined());
@@ -973,7 +1005,8 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
           v8::Local<v8::Context> context = object->GetCreationContextChecked();
           v8::Local<v8::Value> prop =
               object
-                  ->Get(context, gin::StringToV8(context->GetIsolate(), "prop"))
+                  ->Get(context,
+                        gin::StringToV8(v8::Isolate::GetCurrent(), "prop"))
                   .ToLocalChecked();
           EXPECT_TRUE(prop->IsNull());
         }));

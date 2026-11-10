@@ -10,10 +10,8 @@ import("//content/public/common/zygote/features.gni")
 import("//ipc/features.gni")
 import("//media/media_options.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
-import("//ppapi/buildflags/buildflags.gni")
 import("//sandbox/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
-import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
 import("features.gni")
 
 # For feature flags internal to content. See content/public/common:features
@@ -27,10 +25,9 @@ buildflag_header("buildflags") {
   flags = [
     "USE_EXTERNAL_POPUP_MENU=$use_external_popup_menu",
     "ALLOW_CRITICAL_MEMORY_PRESSURE_HANDLING_IN_FOREGROUND=$allow_critical_memory_pressure_handling_in_foreground",
-    "ENABLE_SCREEN_CAPTURE=$enable_screen_capture",
     "MBI_MODE_PER_RENDER_PROCESS_HOST=$_mbi_mode_per_render_process_host",
     "MBI_MODE_PER_SITE_INSTANCE=$_mbi_mode_per_site_instance",
-    "CONTENT_ENABLE_LEGACY_IPC=$content_enable_legacy_ipc",
+    "CONTENT_ENABLE_LEGACY_IPC=0",
   ]
 }
 
@@ -67,25 +64,17 @@ jumbo_source_set("common") {
   # In addition, targets outside of the content component (shell and tests)
   # must not link to this because it will duplicate the code in the component
   # build.
-  visibility = [
-    "//content/*",
-    "//tools/ipc_fuzzer/message_replay:ipc_fuzzer_replay",
-  ]
+  visibility = [ "//content/*" ]
 
   sources = [
-    "all_messages.h",
     "background_fetch/background_fetch_types.cc",
     "background_fetch/background_fetch_types.h",
     "color_parser.cc",
     "common_param_traits.cc",
     "common_param_traits.h",
     "common_param_traits_macros.h",
-    "content_constants_internal.cc",
     "content_constants_internal.h",
     "content_export.h",
-    "content_ipc_logging.cc",
-    "content_message_generator.cc",
-    "content_message_generator.h",
     "content_navigation_policy.cc",
     "content_navigation_policy.h",
     "content_param_traits.cc",
@@ -109,33 +98,10 @@ jumbo_source_set("common") {
     "font_list.cc",
     "font_list.h",
     "font_list_fontconfig.cc",
-    "gin_java_bridge_messages.h",
     "in_process_child_thread_params.cc",
     "in_process_child_thread_params.h",
     "input/actions_parser.cc",
     "input/actions_parser.h",
-    "input/event_with_latency_info.h",
-    "input/fling_controller.cc",
-    "input/fling_controller.h",
-    "input/fling_scheduler_base.h",
-    "input/gesture_event_queue.cc",
-    "input/gesture_event_queue.h",
-    "input/gesture_event_stream_validator.cc",
-    "input/gesture_event_stream_validator.h",
-    "input/input_disposition_handler.h",
-    "input/input_event_ack_state.cc",
-    "input/input_event_stream_validator.cc",
-    "input/input_event_stream_validator.h",
-    "input/input_router.h",
-    "input/input_router_client.h",
-    "input/input_router_config_helper.cc",
-    "input/input_router_config_helper.h",
-    "input/input_router_impl.cc",
-    "input/input_router_impl.h",
-    "input/mouse_wheel_event_queue.cc",
-    "input/mouse_wheel_event_queue.h",
-    "input/passthrough_touch_event_queue.cc",
-    "input/passthrough_touch_event_queue.h",
     "input/synthetic_gesture.cc",
     "input/synthetic_gesture.h",
     "input/synthetic_gesture_controller.cc",
@@ -179,28 +145,7 @@ jumbo_source_set("common") {
     "input/synthetic_touchpad_pinch_gesture.h",
     "input/synthetic_touchscreen_pinch_gesture.cc",
     "input/synthetic_touchscreen_pinch_gesture.h",
-    "input/tap_suppression_controller.cc",
-    "input/tap_suppression_controller.h",
-    "input/timeout_monitor.cc",
-    "input/timeout_monitor.h",
-    "input/touch_action_filter.cc",
-    "input/touch_action_filter.h",
-    "input/touch_event_stream_validator.cc",
-    "input/touch_event_stream_validator.h",
-    "input/touch_timeout_handler.cc",
-    "input/touch_timeout_handler.h",
-    "input/touchpad_pinch_event_queue.cc",
-    "input/touchpad_pinch_event_queue.h",
-    "input/touchpad_tap_suppression_controller.cc",
-    "input/touchpad_tap_suppression_controller.h",
-    "input/touchscreen_tap_suppression_controller.cc",
-    "input/touchscreen_tap_suppression_controller.h",
-    "input/web_touch_event_traits.cc",
-    "input/web_touch_event_traits.h",
     "media/cdm_info.cc",
-    "mojo_core_library_support.cc",
-    "mojo_core_library_support.h",
-    "native_web_keyboard_event_aura.cc",
     "navigation_gesture.h",
     "navigation_params_utils.h",
     "origin_util.cc",
@@ -209,8 +154,14 @@ jumbo_source_set("common") {
     "process_visibility_tracker.h",
     "pseudonymization_salt.cc",
     "pseudonymization_salt.h",
+    "scheduler_loop_quarantine_task_observer.cc",
+    "scheduler_loop_quarantine_task_observer.h",
     "service_worker/forwarded_race_network_request_url_loader_factory.cc",
     "service_worker/forwarded_race_network_request_url_loader_factory.h",
+    "service_worker/race_network_request_read_buffer_manager.cc",
+    "service_worker/race_network_request_read_buffer_manager.h",
+    "service_worker/race_network_request_simple_buffer_manager.cc",
+    "service_worker/race_network_request_simple_buffer_manager.h",
     "service_worker/race_network_request_url_loader_client.cc",
     "service_worker/race_network_request_url_loader_client.h",
     "service_worker/race_network_request_write_buffer_manager.cc",
@@ -219,8 +170,6 @@ jumbo_source_set("common") {
     "service_worker/service_worker_resource_loader.h",
     "service_worker/service_worker_router_evaluator.cc",
     "service_worker/service_worker_router_evaluator.h",
-    "set_process_title.cc",
-    "set_process_title.h",
     "skia_utils.cc",
     "skia_utils.h",
     "thread_pool_util.cc",
@@ -228,17 +177,17 @@ jumbo_source_set("common") {
     "trace_utils.h",
     "url_schemes.cc",
     "url_schemes.h",
-    "user_agent.cc",
     "user_level_memory_pressure_signal_features.cc",
     "user_level_memory_pressure_signal_features.h",
     "web_package/signed_exchange_utils.cc",
     "web_package/signed_exchange_utils.h",
+    "web_ui_loading_util.cc",
+    "web_ui_loading_util.h",
     "webid/identity_url_loader_throttle.cc",
     "webid/identity_url_loader_throttle.h",
   ]
   jumbo_excluded_sources = [
     "common_param_traits.cc",
-    "content_message_generator.cc",
     "content_param_traits.cc",
   ]
 
@@ -262,27 +211,24 @@ jumbo_source_set("common") {
     "//ui/accessibility",
     "//ui/accessibility/mojom",
     "//ui/base/cursor",
-    "//ui/events/gestures/blink",
     "//ui/events/ipc",
   ]
   deps = [
     ":buildflags",
     "//base",
     "//base/allocator:buildflags",
-    "//base/third_party/dynamic_annotations",
     "//build:branding_buildflags",
-    "//build:chromeos_buildflags",
-    "//build/util:chromium_git_revision",
     "//components/discardable_memory/common",
+    "//components/input",
     "//components/services/filesystem/public/mojom",
-    "//components/tracing:startup_tracing",
+    "//components/tracing:tracing_config",
     "//content:content_resources",
     "//content/common/fetch:fetch_api_request_proto",
+    "//content/common/memory_coordinator/mojom",
     "//content/public/common:interfaces",
     "//content/public/common/zygote:buildflags",
     "//device/base/synchronization",
     "//device/bluetooth",
-    "//gpu",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/client:gles2_interface",
     "//gpu/command_buffer/service",
@@ -291,7 +237,6 @@ jumbo_source_set("common") {
     "//gpu/skia_bindings",
     "//ipc",
     "//media",
-    "//media:shared_memory_support",
     "//media/base/ipc",
     "//media/capture",
     "//media/gpu:buildflags",
@@ -300,7 +245,6 @@ jumbo_source_set("common") {
     "//media/midi:mojo",
     "//mojo/public/cpp/system",
     "//net",
-    "//ppapi/buildflags",
     "//sandbox",
     "//sandbox:sandbox_buildflags",
     "//services/network/public/cpp",
@@ -373,9 +317,6 @@ jumbo_source_set("common") {
       "android/sync_compositor_statics.h",
       "cursors/webcursor_android.cc",
       "font_list_android.cc",
-      "input/web_input_event_builders_android.cc",
-      "input/web_input_event_builders_android.h",
-      "native_web_keyboard_event_android.cc",
     ]
 
     if (use_seccomp_bpf) {
@@ -385,23 +326,15 @@ jumbo_source_set("common") {
 
   if (is_ios) {
     # TOOD: Create ios file instead of stealing android
-    sources += [
-      "cursors/webcursor_android.cc",
-      "input/web_input_event_builders_ios.h",
-      "input/web_input_event_builders_ios.mm",
-      "native_web_keyboard_event_ios.mm",
-    ]
+    sources += [ "cursors/webcursor_android.cc" ]
   }
 
   if (is_mac) {
     sources += [
-      "input/web_input_event_builders_mac.h",
-      "input/web_input_event_builders_mac.mm",
       "mac/attributed_string_type_converters.h",
       "mac/attributed_string_type_converters.mm",
-      "mac/task_port_policy.cc",
-      "mac/task_port_policy.h",
-      "native_web_keyboard_event_mac.mm",
+      "mac/system_policy.cc",
+      "mac/system_policy.h",
     ]
     deps += [ "//sandbox/mac:seatbelt" ]
   }
@@ -421,17 +354,11 @@ jumbo_source_set("common") {
   if (is_android) {
     deps += [
       "//content/public/android:common_aidl",
-      "//content/public/android:jni",
+      "//content/public/android:common_jni",
+      "//content/public/android:jar_jni",
     ]
 
     libs += [ "android" ]
-  }
-
-  if (is_debug && !is_component_build && enable_ppapi) {
-    # Content depends on the PPAPI message logging stuff; if this isn't here,
-    # some unit test binaries won't compile. This only worked in release mode
-    # because logging is disabled there.
-    deps += [ "//ppapi/proxy:ipc_sources" ]
   }
 
   if (enable_webrtc) {
@@ -443,12 +370,17 @@ jumbo_source_set("common") {
       "//third_party/webrtc_overrides:webrtc_component",
     ]
   }
-  if (!is_chromeos_ash) {
+
+  if (!is_chromeos) {
     sources -= [ "cursors/webcursor_ash.cc" ]
   }
 
   if (use_aura) {
     deps += [ "//ui/wm" ]
+  }
+
+  if (is_qtwebengine) {
+     sources -= [ "cursors/webcursor_aura.cc" ]
   }
 
   if (is_linux || is_chromeos) {
@@ -459,7 +391,6 @@ jumbo_source_set("common") {
     public_deps += [ "//sandbox/policy" ]
     deps += [
       ":sandbox_support_linux",
-      ":set_process_title_linux",
       "//media/gpu:buildflags",
       "//sandbox/linux:sandbox_services",
       "//sandbox/linux:seccomp_bpf",
@@ -483,31 +414,8 @@ jumbo_source_set("common") {
     deps += [ "//third_party/fontconfig" ]
   }
 
-  if (enable_ppapi) {
-    sources += [
-      "pepper_file_util.cc",
-      "pepper_file_util.h",
-      "pepper_plugin_list.cc",
-      "pepper_plugin_list.h",
-      "pepper_renderer_instance_data.cc",
-      "pepper_renderer_instance_data.h",
-    ]
-    deps += [
-      "//ppapi/proxy:ipc",
-      "//ppapi/shared_impl",
-    ]
-  }
-
   if (is_mac) {
     deps += [ "//media/gpu" ]
-  }
-
-  if (enable_ipc_fuzzer) {
-    configs += [ "//tools/ipc_fuzzer:ipc_fuzzer_config" ]
-    sources += [
-      "external_ipc_dumper.cc",
-      "external_ipc_dumper.h",
-    ]
   }
 
   if (is_fuchsia) {
@@ -517,13 +425,6 @@ jumbo_source_set("common") {
 
   if (use_clang_profiling_inside_sandbox) {
     sources += [ "profiling_utils.cc" ]
-  }
-
-  if (is_qtwebengine) {
-    sources -= [ "cursors/webcursor_aura.cc", "native_web_keyboard_event_aura.cc" ]
-    if (is_mac) {
-      sources -= [ "native_web_keyboard_event_mac.mm" ]
-    }
   }
 }
 
@@ -535,15 +436,7 @@ component("main_frame_counter") {
     "main_frame_counter.cc",
     "main_frame_counter.h",
   ]
-  deps = [ "//base:base" ]
-}
-
-if (is_linux || is_chromeos) {
-  source_set("set_process_title_linux") {
-    public = [ "set_process_title_linux.h" ]
-    sources = [ "set_process_title_linux.cc" ]
-    deps = [ "//base" ]
-  }
+  deps = [ "//base" ]
 }
 
 # See comment at the top of //content/BUILD.gn for how this works.
@@ -573,7 +466,6 @@ mojom("mojo_bindings") {
     "field_trial_recorder.mojom",
     "frame.mojom",
     "frame_messages.mojom",
-    "histogram_fetcher.mojom",
     "input/input_injector.mojom",
     "media/media_log_records.mojom",
     "native_types.mojom",
@@ -594,19 +486,16 @@ mojom("mojo_bindings") {
     sources += [ "gin_java_bridge.mojom" ]
   }
 
-  enabled_features = []
-  if (enable_ipc_logging) {
-    enabled_features += [ "ipc_logging" ]
+  if (is_win) {
+    sources += [ "sandbox_support.mojom" ]
   }
+
+  enabled_features = []
   if (use_clang_profiling_inside_sandbox) {
     enabled_features += [ "clang_profiling_inside_sandbox" ]
   }
   if (is_posix && !is_android) {
     enabled_features += [ "is_non_android_posix" ]
-  }
-
-  if (enable_plugins) {
-    sources += [ "pepper_plugin.mojom" ]
   }
 
   cpp_typemaps = [
@@ -623,14 +512,6 @@ mojom("mojo_bindings") {
         {
           mojom = "content.mojom.NetworkConnectionType"
           cpp = "::net::NetworkChangeNotifier::ConnectionType"
-        },
-        {
-          mojom = "content.mojom.Impression"
-          cpp = "::blink::Impression"
-        },
-        {
-          mojom = "content.mojom.ScrollGranularity"
-          cpp = "::ui::ScrollGranularity"
         },
         {
           mojom = "content.mojom.SyntheticPinch"
@@ -655,10 +536,6 @@ mojom("mojo_bindings") {
         {
           mojom = "content.mojom.SystemThemeColor"
           cpp = "::ui::NativeTheme::SystemThemeColor"
-        },
-        {
-          mojom = "content.mojom.VisualProperties"
-          cpp = "::blink::VisualProperties"
         },
       ]
 
@@ -697,7 +574,6 @@ mojom("mojo_bindings") {
         # transitive allowance, so those targets' own public_deps aren't included in
         # the set of implied dependencies.
         "//content/common:buildflags",
-        "//ppapi/buildflags",
         "//ui/events/blink",
       ]
     },
@@ -720,9 +596,26 @@ mojom("mojo_bindings") {
     },
   ]
 
+  if (is_mac) {
+    cpp_typemaps += [
+      {
+        types = [
+          {
+            mojom = "remote_cocoa.mojom.ChildProcessId"
+            cpp = "::content::ChildProcessId"
+            copyable_pass_by_value = true
+          },
+        ]
+        traits_headers = [ "child_process_id_mojom_traits.h" ]
+        traits_public_deps = [ "//base" ]
+      },
+    ]
+  }
+
   public_deps = [
     "//cc/mojom",
     "//components/attribution_reporting:mojom",
+    "//components/metrics/public/mojom:histogram_fetcher_mojo_bindings",
     "//components/variations:variations_mojom",
     "//content/public/common:interfaces",
     "//ipc:mojom",
@@ -732,6 +625,7 @@ mojom("mojo_bindings") {
     "//mojo/public/mojom/base",
     "//services/audio/public/mojom",
     "//services/network/public/mojom",
+    "//services/network/public/mojom:mojom_permissions_policy",
     "//services/service_manager/public/mojom",
     "//services/tracing/public/mojom",
     "//services/video_capture/public/mojom",
@@ -744,7 +638,6 @@ mojom("mojo_bindings") {
     "//ui/accessibility/mojom",
     "//ui/base/ime/mojom",
     "//ui/base/mojom",
-    "//ui/color:mojom",
     "//ui/display/mojom",
     "//ui/events/mojom",
     "//ui/events/mojom:event_latency_metadata_mojom",
@@ -757,10 +650,14 @@ mojom("mojo_bindings") {
     "//url/mojom:url_mojom_origin",
   ]
 
+  if (is_android) {
+    public_deps += [ "//components/origin_matcher:mojom" ]
+  }
+
   if (is_mac) {
     sources += [
       "render_widget_host_ns_view.mojom",
-      "sandbox_support_mac.mojom",
+      "sandbox_support.mojom",
       "web_contents_ns_view_bridge.mojom",
     ]
     public_deps += [
@@ -794,11 +691,17 @@ mojom("mojo_bindings") {
   export_header = "content/common/content_export.h"
 }
 
-fuzzer_test("content_input_actions_parser_fuzzer") {
-  sources = [ "input/actions_parser_fuzzer.cc" ]
-  deps = [
-    "//base",
-    "//content/public/common",
-    "//third_party/abseil-cpp:absl",
-  ]
+if (is_android) {
+  java_cpp_features("java_features_srcjar") {
+    # External code should depend on ":common_java" instead.
+    visibility = [ ":*" ]
+    sources = [ "//content/common/features.cc" ]
+    class_name = "org.chromium.content.common.ContentInternalFeatures"
+  }
+
+  android_library("common_java") {
+    # Right now, this only includes the Java features. But if we need more Java
+    # files, they should be added here as necessary.
+    srcjar_deps = [ ":java_features_srcjar" ]
+  }
 }

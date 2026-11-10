@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginefilesystemaccessrequest.h"
 
@@ -46,6 +47,9 @@ QT_BEGIN_NAMESPACE
    \value Directory
 */
 
+QWebEngineFileSystemAccessRequest::QWebEngineFileSystemAccessRequest()
+    = default;
+
 QWebEngineFileSystemAccessRequest::QWebEngineFileSystemAccessRequest(
         const QWebEngineFileSystemAccessRequest &other) = default;
 QWebEngineFileSystemAccessRequest &QWebEngineFileSystemAccessRequest::operator=(
@@ -72,7 +76,8 @@ QWebEngineFileSystemAccessRequest::QWebEngineFileSystemAccessRequest(
 */
 void QWebEngineFileSystemAccessRequest::reject()
 {
-    d_ptr->reject();
+    if (Q_LIKELY(d_ptr))
+        d_ptr->reject();
 }
 
 /*!
@@ -80,7 +85,8 @@ void QWebEngineFileSystemAccessRequest::reject()
 */
 void QWebEngineFileSystemAccessRequest::accept()
 {
-    d_ptr->accept();
+    if (Q_LIKELY(d_ptr))
+        d_ptr->accept();
 }
 
 /*!
@@ -90,7 +96,9 @@ void QWebEngineFileSystemAccessRequest::accept()
 
 QUrl QWebEngineFileSystemAccessRequest::origin() const
 {
-    return d_ptr->origin();
+    if (Q_LIKELY(d_ptr))
+        return d_ptr->origin();
+    return QUrl();
 }
 
 /*!
@@ -100,7 +108,9 @@ QUrl QWebEngineFileSystemAccessRequest::origin() const
 
 QUrl QWebEngineFileSystemAccessRequest::filePath() const
 {
-    return d_ptr->filePath();
+    if (Q_LIKELY(d_ptr))
+        return d_ptr->filePath();
+    return QUrl();
 }
 
 /*!
@@ -109,7 +119,9 @@ QUrl QWebEngineFileSystemAccessRequest::filePath() const
  */
 HandleType QWebEngineFileSystemAccessRequest::handleType() const
 {
-    return d_ptr->handleType();
+    if (Q_LIKELY(d_ptr))
+        return d_ptr->handleType();
+    return File;
 }
 
 /*!
@@ -118,7 +130,9 @@ HandleType QWebEngineFileSystemAccessRequest::handleType() const
  */
 AccessFlags QWebEngineFileSystemAccessRequest::accessFlags() const
 {
-    return d_ptr->accessFlags();
+    if (Q_LIKELY(d_ptr))
+        return d_ptr->accessFlags();
+    return {};
 }
 
 QT_END_NAMESPACE

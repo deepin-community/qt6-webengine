@@ -7,16 +7,17 @@
 
 #include <atlcomcli.h>
 #include <iwscapi.h>
-#include <wbemidl.h>
+
 #include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_variant.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/win/wbemidl_shim.h"
 
 namespace device_signals {
 
@@ -61,7 +62,7 @@ class FakeEnumWbemClassObject : public IEnumWbemClassObject {
   IFACEMETHODIMP Skip(long lTimeout, ULONG nCount) override;
 
   std::vector<std::pair<IWbemClassObject*, ULONG>> items_;
-  absl::optional<std::vector<std::pair<IWbemClassObject*, ULONG>>::iterator>
+  std::optional<std::vector<std::pair<IWbemClassObject*, ULONG>>::iterator>
       iterator_;
 };
 
@@ -151,7 +152,6 @@ class FakeWscProduct : public IWscProduct {
  public:
   FakeWscProduct();
   FakeWscProduct(const wchar_t* name,
-                 const wchar_t* id,
                  WSC_SECURITY_PRODUCT_STATE state);
 
   FakeWscProduct(const FakeWscProduct& copy) = delete;
@@ -163,8 +163,7 @@ class FakeWscProduct : public IWscProduct {
 
   enum class FailureStep {
     kProductName = 0,
-    kProductId = 1,
-    kProductState = 2,
+    kProductState = 1,
   };
 
   // IWscProduct:
@@ -187,7 +186,7 @@ class FakeWscProduct : public IWscProduct {
 
   bool ShouldFail(FailureStep step);
 
-  absl::optional<FailureStep> failed_step_;
+  std::optional<FailureStep> failed_step_;
 
   base::win::ScopedBstr name_;
   base::win::ScopedBstr id_;
@@ -216,7 +215,7 @@ class FakeWSCProductList : public IWSCProductList {
   // represented by `step`.
   void set_failed_step(FailureStep step) { failed_step_ = step; }
 
-  const absl::optional<ULONG>& provider() { return provider_; }
+  const std::optional<ULONG>& provider() { return provider_; }
 
  private:
   // IWSCProductList:
@@ -224,9 +223,9 @@ class FakeWSCProductList : public IWSCProductList {
 
   bool ShouldFail(FailureStep step);
 
-  absl::optional<FailureStep> failed_step_;
+  std::optional<FailureStep> failed_step_;
 
-  absl::optional<ULONG> provider_;
+  std::optional<ULONG> provider_;
   std::vector<raw_ptr<IWscProduct, VectorExperimental>> products_;
 };
 

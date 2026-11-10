@@ -3,8 +3,11 @@
 // found in the LICENSE file.
 
 #include "components/content_settings/core/browser/content_settings_provider.h"
+
 #include "base/feature_list.h"
+#include "base/time/default_clock.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
+#include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/common/features.h"
 
 namespace content_settings {
@@ -22,9 +25,8 @@ std::unique_ptr<Rule> ProviderInterface::GetRule(
     auto rule = it->Next();
     if (rule->primary_pattern.Matches(primary_url) &&
         rule->secondary_pattern.Matches(secondary_url) &&
-        (base::FeatureList::IsEnabled(
-             content_settings::features::kActiveContentSettingExpiry) ||
-         !rule->metadata.IsExpired())) {
+        (content_settings::ShouldTypeExpireActively(content_type) ||
+         !rule->metadata.IsExpired(base::DefaultClock::GetInstance()))) {
       return rule;
     }
   }

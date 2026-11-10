@@ -117,9 +117,9 @@ CHROMIUM_PAGE_SETS_TO_PREFIX = {
 }
 
 PAGE_SETS_TO_EXCLUSIONS = {
-    # See skbug.com/7348
+    # See skbug.com/40038594
     'key_mobile_sites_smooth.py': '"(digg|worldjournal|twitter|espn)"',
-    # See skbug.com/7421
+    # See skbug.com/40038670
     'top_25_smooth.py': '"(mail\.google\.com)"',
 }
 
@@ -142,7 +142,7 @@ class SkPicturePlayback(object):
     """Constructs a SkPicturePlayback BuildStep instance."""
     assert parse_options.browser_executable, 'Must specify --browser_executable'
     self._browser_executable = parse_options.browser_executable
-    self._browser_args = '--disable-setuid-sandbox'
+    self._browser_args = '--disable-setuid-sandbox --disable-field-trial-config'
     if parse_options.browser_extra_args:
       self._browser_args = '%s %s' % (
           self._browser_args, parse_options.browser_extra_args)

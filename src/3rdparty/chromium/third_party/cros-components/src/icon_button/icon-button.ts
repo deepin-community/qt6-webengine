@@ -9,6 +9,7 @@ import '@material/web/iconbutton/filled-tonal-icon-button.js';
 import '@material/web/iconbutton/icon-button.js';
 
 import {css, CSSResultGroup, html, LitElement} from 'lit';
+import {ifDefined} from 'lit/directives/if-defined';
 
 /**
  * Icon buttons have different variants depending on the container
@@ -64,21 +65,23 @@ const LARGE_CONTAINER_HEIGHT = css`56px`;
  */
 export class IconButton extends LitElement {
   /** @export */
-  buttonStyle: 'filled'|'floating'|'toggle';
+  declare buttonStyle: 'filled'|'floating'|'toggle';
   /** @export */
-  size: 'small'|'default'|'large';
+  declare size: 'small'|'default'|'large';
   /** @export */
-  shape: 'circle'|'square';
+  declare shape: 'circle'|'square';
   /**
    * @export
    * The background the icon button sits on. This will change the background and
    * icon color of the icon-button.
    */
-  surface: 'base'|'prominent'|'subtle'|'image';
+  declare surface: 'base'|'prominent'|'subtle'|'image';
   /** @export */
-  disabled: boolean;
+  declare disabled: boolean;
   /** @export */
-  selected: boolean;
+  declare selected: boolean;
+  /** @export */
+  declare href: string;
 
   /** @nocollapse */
   static override styles: CSSResultGroup = css`
@@ -315,6 +318,8 @@ export class IconButton extends LitElement {
   /** @nocollapse */
   static override properties = {
     ariaLabel: {type: String, reflect: true, attribute: 'aria-label'},
+    ariaExpanded: {type: String, reflect: true, attribute: 'aria-expanded'},
+    ariaHasPopup: {type: String, reflect: true, attribute: 'aria-haspopup'},
     prominent: {type: Boolean, reflect: true},
     buttonStyle: {type: String},
     size: {type: String, reflect: true},
@@ -322,6 +327,7 @@ export class IconButton extends LitElement {
     surface: {type: String, reflect: true},
     disabled: {type: Boolean},
     selected: {type: Boolean},
+    href: {type: String},
   };
 
   constructor() {
@@ -333,6 +339,7 @@ export class IconButton extends LitElement {
     this.surface = 'base';
     this.disabled = false;
     this.selected = false;
+    this.href = '';
   }
 
   override connectedCallback() {
@@ -346,14 +353,21 @@ export class IconButton extends LitElement {
 
   override render() {
     const ariaLabel = this.ariaLabel || '';
+    const ariaExpanded = this.ariaExpanded as 'true' | 'false';
+    const ariaHasPopup = this.ariaHasPopup as 'false' | 'true' | 'menu' |
+        'listbox' | 'tree' | 'grid' | 'dialog';
+
     if (this.buttonStyle === 'toggle') {
       return html`
           <md-filled-icon-button
-              aria-label=${ariaLabel}
+              aria-expanded=${ifDefined(ariaExpanded)}
+              aria-haspopup=${ifDefined(ariaHasPopup)}
+              aria-label=${ifDefined(ariaLabel)}
               toggle
               ?selected=${this.selected}
               ?disabled=${this.disabled}
-              aria-disabled=${this.disabled}>
+              aria-disabled=${this.disabled}
+              href=${this.href}>
             <slot name="icon"></slot>
             <slot name="selectedIcon" slot="selected"></slot>
           </md-filled-icon-button>`;
@@ -363,8 +377,11 @@ export class IconButton extends LitElement {
       return html`
           <md-icon-button
               ?disabled=${this.disabled}
-              aria-label=${ariaLabel}
-              aria-disabled=${this.disabled}>
+              aria-expanded=${ifDefined(ariaExpanded)}
+              aria-haspopup=${ifDefined(ariaHasPopup)}
+              aria-label=${ifDefined(ariaLabel)}
+              aria-disabled=${this.disabled}
+              href=${this.href}>
             <slot name="icon"></slot>
           </md-icon-button>`;
     }
@@ -372,8 +389,11 @@ export class IconButton extends LitElement {
     return html`
           <md-filled-tonal-icon-button
               ?disabled=${this.disabled}
-              aria-label=${ariaLabel}
-              aria-disabled=${this.disabled}>
+              aria-expanded=${ifDefined(ariaExpanded)}
+              aria-haspopup=${ifDefined(ariaHasPopup)}
+              aria-label=${ifDefined(ariaLabel)}
+              aria-disabled=${this.disabled}
+              href=${this.href}>
             <slot name="icon"></slot>
           </md-filled-tonal-icon-button>`;
   }

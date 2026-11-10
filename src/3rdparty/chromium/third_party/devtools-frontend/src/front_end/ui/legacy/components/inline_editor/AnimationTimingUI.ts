@@ -1,22 +1,23 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Platform from '../../../../core/platform/platform.js';
+import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 import * as UI from '../../legacy.js';
 
+import type {AnimationTimingModel} from './AnimationTimingModel.js';
 import {BezierUI} from './BezierUI.js';
-
-import {type AnimationTimingModel} from './AnimationTimingModel.js';
-import {type Point, CSSLinearEasingModel} from './CSSLinearEasingModel.js';
+import {CSSLinearEasingModel, type Point} from './CSSLinearEasingModel.js';
 
 const DOUBLE_CLICK_DELAY = 500;
 
-type Params = {
-  container: Element,
-  bezier: UI.Geometry.CubicBezier,
-  onBezierChange: (bezier: UI.Geometry.CubicBezier) => void,
-};
+interface Params {
+  container: Element;
+  bezier: UI.Geometry.CubicBezier;
+  onBezierChange: (bezier: UI.Geometry.CubicBezier) => void;
+}
 
 class BezierCurveUI {
   #curveUI: BezierUI;
@@ -94,16 +95,16 @@ class BezierCurveUI {
   }
 }
 
-type LinearEasingPresentationParams = {
-  width: number,
-  height: number,
-  marginTop: number,
-  pointRadius: number,
-};
-type Position = {
-  x: number,
-  y: number,
-};
+interface LinearEasingPresentationParams {
+  width: number;
+  height: number;
+  marginTop: number;
+  pointRadius: number;
+}
+interface Position {
+  x: number;
+  y: number;
+}
 class LinearEasingPresentation {
   params: LinearEasingPresentationParams;
   renderedPositions?: Position[];
@@ -122,6 +123,8 @@ class LinearEasingPresentation {
 
   #drawControlPoint(parentElement: Element, controlX: number, controlY: number, index: number): void {
     const circle = UI.UIUtils.createSVGChild(parentElement, 'circle', 'bezier-control-circle');
+    circle.setAttribute(
+        'jslog', `${VisualLogging.controlPoint('bezier.linear-control-circle').track({drag: true, dblclick: true})}`);
     circle.setAttribute('data-point-index', String(index));
     circle.setAttribute('cx', String(controlX));
     circle.setAttribute('cy', String(controlY));

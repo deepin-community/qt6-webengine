@@ -11,14 +11,15 @@
 #ifndef MODULES_DESKTOP_CAPTURE_LINUX_WAYLAND_SHARED_SCREENCAST_STREAM_H_
 #define MODULES_DESKTOP_CAPTURE_LINUX_WAYLAND_SHARED_SCREENCAST_STREAM_H_
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 
-#include "absl/types/optional.h"
 #include "api/ref_counted_base.h"
 #include "api/scoped_refptr.h"
 #include "modules/desktop_capture/desktop_capturer.h"
+#include "modules/desktop_capture/desktop_geometry.h"
 #include "modules/desktop_capture/mouse_cursor.h"
-#include "modules/desktop_capture/screen_capture_frame_queue.h"
 #include "modules/desktop_capture/shared_desktop_frame.h"
 #include "rtc_base/system/rtc_export.h"
 
@@ -27,7 +28,7 @@ namespace webrtc {
 class SharedScreenCastStreamPrivate;
 
 class RTC_EXPORT SharedScreenCastStream
-    : public rtc::RefCountedNonVirtual<SharedScreenCastStream> {
+    : public RefCountedNonVirtual<SharedScreenCastStream> {
  public:
   class Observer {
    public:
@@ -35,6 +36,9 @@ class RTC_EXPORT SharedScreenCastStream
     virtual void OnCursorShapeChanged() = 0;
     virtual void OnDesktopFrameChanged() = 0;
     virtual void OnFailedToProcessBuffer() = 0;
+    virtual void OnBufferCorruptedMetadata() = 0;
+    virtual void OnBufferCorruptedData() = 0;
+    virtual void OnEmptyBuffer() = 0;
     virtual void OnStreamConfigured() = 0;
     virtual void OnFrameRateChanged(uint32_t frame_rate) = 0;
 
@@ -43,7 +47,7 @@ class RTC_EXPORT SharedScreenCastStream
     virtual ~Observer() = default;
   };
 
-  static rtc::scoped_refptr<SharedScreenCastStream> CreateDefault();
+  static scoped_refptr<SharedScreenCastStream> CreateDefault();
 
   bool StartScreenCastStream(uint32_t stream_node_id);
   bool StartScreenCastStream(uint32_t stream_node_id,
@@ -78,7 +82,7 @@ class RTC_EXPORT SharedScreenCastStream
 
   // Returns the most recent mouse cursor position. Will not return a value in
   // case we didn't manage to get it from PipeWire buffer.
-  absl::optional<DesktopVector> CaptureCursorPosition();
+  std::optional<DesktopVector> CaptureCursorPosition();
 
   ~SharedScreenCastStream();
 

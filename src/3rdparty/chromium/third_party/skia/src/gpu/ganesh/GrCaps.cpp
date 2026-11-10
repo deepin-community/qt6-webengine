@@ -12,8 +12,8 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkTextureCompressionType.h"
 #include "include/gpu/GpuTypes.h"
-#include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContextOptions.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
 #include "include/private/base/SkDebug.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkCompressedDataUtils.h"
@@ -43,6 +43,8 @@ GrCaps::GrCaps(const GrContextOptions& options) {
     fUsePrimitiveRestart = false;
     fPreferClientSideDynamicBuffers = false;
     fPreferFullscreenClears = false;
+    fDiscardStencilValuesAfterRenderPass = false;
+    fClearsAreFasterThanLoads = false;
     fTwoSidedStencilRefsAndMasksMustMatch = false;
     fMustClearUploadedBufferData = false;
     fShouldInitializeTextures = false;
@@ -82,7 +84,7 @@ GrCaps::GrCaps(const GrContextOptions& options) {
     fInternalMultisampleCount = 0;
 
     fSuppressPrints = options.fSuppressPrints;
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     fWireframeMode = options.fWireframeMode;
 #else
     fWireframeMode = false;
@@ -143,7 +145,7 @@ void GrCaps::applyOptionsOverrides(const GrContextOptions& options) {
     }
 
     fMaxTextureSize = std::min(fMaxTextureSize, options.fMaxTextureSizeOverride);
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     if (options.fSuppressAdvancedBlendEquations) {
         fBlendEquationSupport = kBasic_BlendEquationSupport;
     }
@@ -227,7 +229,10 @@ void GrCaps::dumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("MSAA Resolves Automatically", fMSAAResolvesAutomatically);
     writer->appendBool("Use primitive restart", fUsePrimitiveRestart);
     writer->appendBool("Prefer client-side dynamic buffers", fPreferClientSideDynamicBuffers);
-    writer->appendBool("Prefer fullscreen clears (and stencil discard)", fPreferFullscreenClears);
+    writer->appendBool("Prefer fullscreen clears", fPreferFullscreenClears);
+    writer->appendBool("Discard stencil values after renderpass",
+                       fDiscardStencilValuesAfterRenderPass);
+    writer->appendBool("Clears are faster than loads", fClearsAreFasterThanLoads);
     writer->appendBool("Two-sided Stencil Refs And Masks Must Match",
                        fTwoSidedStencilRefsAndMasksMustMatch);
     writer->appendBool("Must clear buffer memory", fMustClearUploadedBufferData);
@@ -490,6 +495,8 @@ static inline GrColorType color_type_fallback(GrColorType ct) {
         case GrColorType::kAlpha_F16:
             return GrColorType::kRGBA_F16;
         case GrColorType::kGray_8:
+        case GrColorType::kRGB_F16F16F16x:
+        case GrColorType::kRGB_101010x:
             return GrColorType::kRGB_888x;
         default:
             return GrColorType::kUnknown;

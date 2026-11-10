@@ -27,6 +27,7 @@
 
 #include "src/tint/lang/wgsl/reader/parser/lexer.h"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -34,6 +35,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <utility>
 
@@ -58,7 +60,10 @@ static_assert(sizeof(decltype(tint::Source::FileContent::data[0])) == sizeof(uin
 // programs and being a bit bigger then those need (atan2-const-eval is the outlier here).
 static constexpr size_t kDefaultListSize = 4092;
 
-bool read_blankspace(std::string_view str, size_t i, bool* is_blankspace, size_t* blankspace_size) {
+bool read_blankspace(std::string_view str,
+                     size_t i,
+                     bool* is_blankspace,
+                     uint32_t* blankspace_size) {
     // See https://www.w3.org/TR/WGSL/#blankspace
 
     auto* utf8 = reinterpret_cast<const uint8_t*>(&str[i]);
@@ -75,7 +80,7 @@ bool read_blankspace(std::string_view str, size_t i, bool* is_blankspace, size_t
 
     if (cp == kSpace || cp == kHTab || cp == kL2R || cp == kR2L) {
         *is_blankspace = true;
-        *blankspace_size = n;
+        *blankspace_size = static_cast<uint32_t>(n);
         return true;
     }
 
@@ -139,17 +144,17 @@ std::string_view Lexer::line() const {
     return file_->content.lines[location_.line - 1];
 }
 
-size_t Lexer::pos() const {
+uint32_t Lexer::pos() const {
     return location_.column - 1;
 }
 
-size_t Lexer::length() const {
-    return line().size();
+uint32_t Lexer::length() const {
+    return static_cast<uint32_t>(line().size());
 }
 
-const char& Lexer::at(size_t pos) const {
-    auto l = line();
-    // Unlike for std::string, if pos == l.size(), indexing `l[pos]` is UB for
+const char& Lexer::at(uint32_t pos) const {
+    const auto& l = line();
+    // Unlike for std::string, if pos == line().size(), indexing `l[pos]` is UB for
     // std::string_view.
     if (pos >= l.size()) {
         static const char zero = 0;
@@ -158,15 +163,23 @@ const char& Lexer::at(size_t pos) const {
     return l[pos];
 }
 
-std::string_view Lexer::substr(size_t offset, size_t count) {
+// This pointer is passed into std::from_chars which requires a pointer beyond the end of contiguous
+// range, not an end iterator, so will always hit this warning.
+TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
+const char* Lexer::line_end() const {
+    return &(line()[length() - 1]) + 1;
+}
+TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
+
+std::string_view Lexer::substr(uint32_t offset, uint32_t count) {
     return line().substr(offset, count);
 }
 
-void Lexer::advance(size_t offset) {
+void Lexer::advance(uint32_t offset) {
     location_.column += offset;
 }
 
-void Lexer::set_pos(size_t pos) {
+void Lexer::set_pos(uint32_t pos) {
     location_.column = pos + 1;
 }
 
@@ -212,8 +225,13 @@ Token Lexer::next() {
         return std::move(t.value());
     }
 
-    return {Token::Type::kError, begin_source(),
-            (is_null() ? "null character found" : "invalid character found")};
+    if (is_null()) {
+        return {Token::Type::kError, begin_source(), "null character found"};
+    }
+    if (is_bom()) {
+        return {Token::Type::kError, begin_source(), "invalid character (UTF-8 BOM) found"};
+    }
+    return {Token::Type::kError, begin_source(), "invalid character found"};
 }
 
 Source Lexer::begin_source() const {
@@ -232,22 +250,30 @@ bool Lexer::is_null() const {
     return (pos() < length()) && (at(pos()) == 0);
 }
 
+bool Lexer::is_bom() const {
+    if (pos() + 2 >= length()) {
+        return false;
+    }
+    return (static_cast<unsigned char>(at(pos())) == 0xEF &&
+            static_cast<unsigned char>(at(pos() + 1)) == 0xBB &&
+            static_cast<unsigned char>(at(pos() + 2)) == 0xBF);
+}
+
 bool Lexer::is_digit(char ch) const {
-    return std::isdigit(static_cast<unsigned char>(ch));
+    return std::isdigit(static_cast<unsigned char>(ch)) != 0;
 }
-
 bool Lexer::is_hex(char ch) const {
-    return std::isxdigit(static_cast<unsigned char>(ch));
+    return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
 }
 
-bool Lexer::matches(size_t pos, std::string_view sub_string) {
+bool Lexer::matches(uint32_t pos, std::string_view sub_string) {
     if (pos >= length()) {
         return false;
     }
-    return substr(pos, sub_string.size()) == sub_string;
+    return substr(pos, static_cast<uint32_t>(sub_string.size())) == sub_string;
 }
 
-bool Lexer::matches(size_t pos, char ch) {
+bool Lexer::matches(uint32_t pos, char ch) {
     if (pos >= length()) {
         return false;
     }
@@ -264,7 +290,7 @@ std::optional<Token> Lexer::skip_blankspace_and_comments() {
             }
 
             bool is_blankspace;
-            size_t blankspace_size;
+            uint32_t blankspace_size;
             if (!read_blankspace(line(), pos(), &is_blankspace, &blankspace_size)) {
                 return Token{Token::Type::kError, begin_source(), "invalid UTF-8"};
             }
@@ -383,7 +409,7 @@ std::optional<Token> Lexer::try_float() {
     }
 
     // Parse the exponent if one exists
-    std::optional<size_t> exponent_value_position;
+    std::optional<uint32_t> exponent_value_position;
     bool negative_exponent = false;
     if (end < length() && (matches(end, 'e') || matches(end, 'E'))) {
         end++;
@@ -421,14 +447,6 @@ std::optional<Token> Lexer::try_float() {
         return {};
     }
 
-    // Note, the `at` method will return a static `0` if the provided position is >= length. We
-    // actually need the end pointer to point to the correct memory location to use `from_chars`.
-    // So, handle the case where we point past the length specially.
-    auto* end_ptr = &at(end);
-    if (end >= length()) {
-        end_ptr = &at(length() - 1) + 1;
-    }
-
     auto ret = tint::strconv::ParseDouble(std::string_view(&at(start), end - start));
     double value = ret == Success ? ret.Get() : 0.0;
     bool overflow =
@@ -447,7 +465,15 @@ std::optional<Token> Lexer::try_float() {
             size_t exp_value = 0;
             bool exp_conversion_succeeded = true;
             if (exponent_value_position.has_value()) {
-                auto exp_end_ptr = end_ptr - (has_f_suffix || has_h_suffix ? 1 : 0);
+                // Note, the `at` method will return a static `0` if the provided position is >=
+                // length. The end pointer need to point to the correct memory location in the
+                // current line to use `from_chars`.
+                // So, handle the case where end points past the length specially.
+                auto exp_end = std::min(end, length()) - (has_f_suffix || has_h_suffix ? 1 : 0);
+                auto* exp_end_ptr = &at(exp_end);
+                if (exp_end >= length()) {
+                    exp_end_ptr = line_end();
+                }
                 auto exp_ret = std::from_chars(&at(exponent_value_position.value()), exp_end_ptr,
                                                exp_value, 10);
 
@@ -893,8 +919,8 @@ std::optional<Token> Lexer::try_hex_float() {
 }
 
 Token Lexer::build_token_from_int_if_possible(Source source,
-                                              size_t start,
-                                              size_t prefix_count,
+                                              uint32_t start,
+                                              uint32_t prefix_count,
                                               int32_t base) {
     const char* start_ptr = &at(start);
     // The call to `from_chars` will return the pointer to just after the last parsed character.
@@ -902,12 +928,12 @@ Token Lexer::build_token_from_int_if_possible(Source source,
     // characters to find the last possible and using that, we just provide the end of the string.
     // We then calculate the count based off the provided end pointer and the start pointer. The
     // extra `prefix_count` is to handle a `0x` which is not included in the `start` value.
-    const char* end_ptr = &at(length() - 1) + 1;
+    const char* end_ptr = line_end();
 
     int64_t value = 0;
     auto res = std::from_chars(start_ptr, end_ptr, value, base);
     const bool overflow = res.ec != std::errc();
-    advance(static_cast<size_t>(res.ptr - start_ptr) + prefix_count);
+    advance(static_cast<uint32_t>(res.ptr - start_ptr) + prefix_count);
 
     if (matches(pos(), 'u')) {
         if (!overflow && core::CheckedConvert<u32>(AInt(value)) == Success) {
@@ -993,7 +1019,7 @@ std::optional<Token> Lexer::try_ident() {
             return {};
         }
         // Consume start codepoint
-        advance(n);
+        advance(static_cast<uint32_t>(n));
     }
 
     while (!is_eol()) {
@@ -1009,19 +1035,17 @@ std::optional<Token> Lexer::try_ident() {
         }
 
         // Consume continuing codepoint
-        advance(n);
-
-        if (pos() - start == 2 && substr(start, 2) == "__") {
-            // Identifiers prefixed with two or more underscores are not allowed.
-            // We check for these in the loop to bail early and prevent quadratic parse time for
-            // long sequences of ____.
-            set_pos(start);
-            return {};
-        }
+        advance(static_cast<uint32_t>(n));
     }
 
     auto str = substr(start, pos() - start);
     end_source(source);
+
+    if (str.length() > 1 && substr(start, 2) == "__") {
+        // Identifiers prefixed with two or more underscores are not allowed.
+        return Token{Token::Type::kError, source,
+                     "identifiers must not start with two or more underscores"};
+    }
 
     if (auto t = parse_keyword(str); t.has_value()) {
         return Token{t.value(), source, str};
@@ -1212,9 +1236,6 @@ std::optional<Token> Lexer::try_punctuation() {
 std::optional<Token::Type> Lexer::parse_keyword(std::string_view str) {
     if (str == "alias") {
         return Token::Type::kAlias;
-    }
-    if (str == "bitcast") {
-        return Token::Type::kBitcast;
     }
     if (str == "break") {
         return Token::Type::kBreak;

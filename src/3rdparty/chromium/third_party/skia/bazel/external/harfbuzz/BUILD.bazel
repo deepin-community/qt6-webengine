@@ -1,19 +1,7 @@
 # This file will be copied into //third_party/externals/harfbuzz via the new_local_repository
 # rule in WORKSPACE.bazel, so all files should be relative to that path.
 
-genrule(
-    name = "copy_config_override",
-    srcs = [
-        "@harfbuzz_config//:config-override.h",
-    ],
-    outs = [
-        # Putting this in the root of the harfbuzz directory makes it easiest to include.
-        "config-override.h",
-    ],
-    # $< is the one and only input file.
-    # $@ is the one and only output location.
-    cmd = "cp $< $@",
-)
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 HARFBUZZ_HDRS = [
     "src/hb-aat-layout.h",
@@ -31,18 +19,19 @@ HARFBUZZ_HDRS = [
     "src/hb-ot-shape.h",
     "src/hb-ot-var.h",
     "src/hb-ot.h",
+    "src/hb-script-list.h",
     "src/hb-set.h",
     "src/hb-shape-plan.h",
     "src/hb-shape.h",
     "src/hb-style.h",
     "src/hb-subset.h",
+    "src/hb-subset-serialize.h",
     "src/hb-unicode.h",
     "src/hb-version.h",
     "src/hb.h",
 ]
 
 HARFBUZZ_SRCS = [
-    "config-override.h",
     "src/OT/Color/CBDT/CBDT.hh",
     "src/OT/Color/COLR/COLR.hh",
     "src/OT/Color/COLR/colrv1-closure.hh",
@@ -109,14 +98,15 @@ HARFBUZZ_SRCS = [
     "src/OT/Layout/GSUB/SubstLookup.hh",
     "src/OT/Layout/GSUB/SubstLookupSubTable.hh",
     "src/OT/Layout/types.hh",
+    "src/OT/Var/VARC/VARC.cc",
+    "src/OT/Var/VARC/VARC.hh",
+    "src/OT/Var/VARC/coord-setter.hh",
     "src/OT/glyf/CompositeGlyph.hh",
     "src/OT/glyf/Glyph.hh",
     "src/OT/glyf/GlyphHeader.hh",
     "src/OT/glyf/SimpleGlyph.hh",
     "src/OT/glyf/SubsetGlyph.hh",
-    "src/OT/glyf/VarCompositeGlyph.hh",
     "src/OT/glyf/composite-iter.hh",
-    "src/OT/glyf/coord-setter.hh",
     "src/OT/glyf/glyf-helpers.hh",
     "src/OT/glyf/glyf.hh",
     "src/OT/glyf/loca.hh",
@@ -154,6 +144,7 @@ HARFBUZZ_SRCS = [
     "src/hb-bit-page.hh",
     "src/hb-bit-set-invertible.hh",
     "src/hb-bit-set.hh",
+    "src/hb-bit-vector.hh",
     "src/hb-blob.cc",
     "src/hb-blob.hh",
     "src/hb-buffer-deserialize-json.hh",
@@ -173,6 +164,7 @@ HARFBUZZ_SRCS = [
     "src/hb-config.hh",
     "src/hb-cplusplus.hh",
     "src/hb-debug.hh",
+    "src/hb-decycler.hh",
     "src/hb-dispatch.hh",
     "src/hb-draw.cc",
     "src/hb-draw.h",
@@ -182,6 +174,7 @@ HARFBUZZ_SRCS = [
     "src/hb-face.hh",
     "src/hb-font.cc",
     "src/hb-font.hh",
+    "src/hb-geometry.hh",
     "src/hb-iter.hh",
     "src/hb-kern.hh",
     "src/hb-limits.hh",
@@ -291,6 +284,7 @@ HARFBUZZ_SRCS = [
     "src/hb-ot-var-gvar-table.hh",
     "src/hb-ot-var-hvar-table.hh",
     "src/hb-ot-var-mvar-table.hh",
+    "src/hb-ot-var-varc-table.hh",
     "src/hb-ot-var.cc",
     "src/hb-ot-vorg-table.hh",
     "src/hb-outline.cc",
@@ -300,6 +294,8 @@ HARFBUZZ_SRCS = [
     "src/hb-paint.cc",
     "src/hb-paint.h",
     "src/hb-paint.hh",
+    "src/hb-paint-bounded.hh",
+    "src/hb-paint-bounded.cc",
     "src/hb-pool.hh",
     "src/hb-priority-queue.hh",
     "src/hb-repacker.hh",
@@ -324,13 +320,16 @@ HARFBUZZ_SRCS = [
     "src/hb-subset-cff2.cc",
     "src/hb-subset-input.cc",
     "src/hb-subset-input.hh",
+    "src/hb-subset-instancer-iup.cc",
+    "src/hb-subset-instancer-iup.hh",
     "src/hb-subset-instancer-solver.cc",
     "src/hb-subset-instancer-solver.hh",
     "src/hb-subset-plan-member-list.hh",
     "src/hb-subset-plan.cc",
     "src/hb-subset-plan.hh",
-    "src/hb-subset-repacker.cc",
-    "src/hb-subset-repacker.h",
+    "src/hb-subset-plan-layout.cc",
+    "src/hb-subset-plan-var.cc",
+    "src/hb-subset-serialize.cc",
     "src/hb-subset.cc",
     "src/hb-subset.hh",
     "src/hb-ucd-table.hh",
@@ -341,6 +340,8 @@ HARFBUZZ_SRCS = [
     "src/hb-utf.hh",
     "src/hb-vector.hh",
     "src/hb.hh",
+    # We expect this to be copied in via the repository_rule that checks out harfbuzz
+    "config-override.h",
 ]
 
 cc_library(

@@ -13,16 +13,13 @@
 // limitations under the License.
 
 import {createPopper, Instance, OptionsGeneric} from '@popperjs/core';
-import type {Modifier, StrictModifiers} from '@popperjs/core';
+import type {Modifier} from '@popperjs/core';
 import m from 'mithril';
 import {MountOptions, Portal, PortalAttrs} from './portal';
 import {classNames} from '../base/classnames';
 import {findRef, isOrContains, toHTMLElement} from '../base/dom_utils';
 import {assertExists} from '../base/logging';
-import {scheduleFullRedraw} from './raf';
-
-type CustomModifier = Modifier<'sameWidth', {}>;
-type ExtendedModifiers = StrictModifiers|CustomModifier;
+import {ExtendedModifiers} from './popper_utils';
 
 // Note: We could just use the Placement type from popper.js instead, which is a
 // union of string literals corresponding to the values in this enum, but having
@@ -97,6 +94,11 @@ export interface PopupAttrs {
   // of the popup.
   // If position is not *-end or *-start, this setting has no effect.
   edgeOffset?: number;
+  // If true, the popup will not have a maximum width and will instead fit its
+  // content. This is useful for popups that have a lot of buttons or other
+  // content that should not be constrained by a maximum width.
+  // Defaults to false.
+  fitContent?: boolean;
 }
 
 // A popup is a portal whose position is dynamically updated so that it floats
@@ -128,26 +130,29 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
       closeOnOutsideClick = true,
     } = attrs;
 
-    this.isOpen = isOpen;
     this.onChange = onChange;
     this.closeOnEscape = closeOnEscape;
     this.closeOnOutsideClick = closeOnOutsideClick;
 
     return [
-      this.renderTrigger(trigger),
+      this.renderTrigger(trigger, isOpen),
       isOpen && this.renderPopup(attrs, children),
     ];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private renderTrigger(trigger: m.Vnode<any, any>): m.Children {
+  private renderTrigger(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    trigger: m.Vnode<any, any>,
+    isOpen: boolean,
+  ): m.Children {
     trigger.attrs = {
       ...trigger.attrs,
       ref: Popup.TRIGGER_REF,
-      onclick: () => {
+      onclick: (e: MouseEvent) => {
         this.togglePopup();
+        e.preventDefault();
       },
-      active: this.isOpen,
+      active: isOpen,
     };
     return trigger;
   }
@@ -160,22 +165,32 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
       createNewGroup = true,
       onPopupMount = () => {},
       onPopupUnMount = () => {},
+      matchWidth,
+      fitContent,
     } = attrs;
 
     const portalAttrs: PortalAttrs = {
       className: 'pf-popup-portal',
       onBeforeContentMount: (dom: Element): MountOptions => {
-        // Check to see if dom is a descendant of a popup
+        // Check to see if dom is a descendant of a popup or modal
         // If so, get the popup's "container" and put it in there instead
         // This handles the case where popups are placed inside the other popups
         // we nest outselves in their containers instead of document body which
         // means we become part of their hitbox for mouse events.
         const closestPopup = dom.closest(`[ref=${Popup.POPUP_REF}]`);
-        return {container: closestPopup ?? undefined};
+        if (closestPopup) {
+          return {container: closestPopup};
+        }
+        const closestModal = dom.closest('.modal-dialog');
+        if (closestModal) {
+          return {container: closestModal};
+        }
+        return {container: undefined};
       },
       onContentMount: (dom: HTMLElement) => {
-        const popupElement =
-            toHTMLElement(assertExists(findRef(dom, Popup.POPUP_REF)));
+        const popupElement = toHTMLElement(
+          assertExists(findRef(dom, Popup.POPUP_REF)),
+        );
         this.popupElement = popupElement;
         this.createOrUpdatePopper(attrs);
         document.addEventListener('mousedown', this.handleDocMouseDown);
@@ -202,16 +217,22 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
     };
 
     return m(
-        Portal,
-        portalAttrs,
-        m('.pf-popup',
-          {
-            class: classNames(
-                className, createNewGroup && Popup.POPUP_GROUP_CLASS),
-            ref: Popup.POPUP_REF,
-          },
-          showArrow && m('.pf-popup-arrow[data-popper-arrow]'),
-          m('.pf-popup-content', children)),
+      Portal,
+      portalAttrs,
+      m(
+        '.pf-popup',
+        {
+          class: classNames(
+            className,
+            createNewGroup && Popup.POPUP_GROUP_CLASS,
+            matchWidth && 'pf-popup--match-width',
+            fitContent && 'pf-popup--fit-content',
+          ),
+          ref: Popup.POPUP_REF,
+        },
+        showArrow && m('.pf-popup-arrow[data-popper-arrow]'),
+        m('.pf-popup-content', children),
+      ),
     );
   }
 
@@ -240,19 +261,21 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
 
     let matchWidthModifier: Modifier<'sameWidth', {}>[];
     if (matchWidth) {
-      matchWidthModifier = [{
-        name: 'sameWidth',
-        enabled: true,
-        phase: 'beforeWrite',
-        requires: ['computeStyles'],
-        fn: ({state}) => {
-          state.styles.popper.width = `${state.rects.reference.width}px`;
+      matchWidthModifier = [
+        {
+          name: 'sameWidth',
+          enabled: true,
+          phase: 'beforeWrite',
+          requires: ['computeStyles'],
+          fn: ({state}) => {
+            state.styles.popper.width = `${state.rects.reference.width}px`;
+          },
+          effect: ({state}) => {
+            const trigger = state.elements.reference as HTMLElement;
+            state.elements.popper.style.width = `${trigger.offsetWidth}px`;
+          },
         },
-        effect: ({state}) => {
-          const trigger = state.elements.reference as HTMLElement;
-          state.elements.popper.style.width = `${trigger.offsetWidth}px`;
-        },
-      }];
+      ];
     } else {
       matchWidthModifier = [];
     }
@@ -289,7 +312,10 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
     } else {
       if (this.popupElement && this.triggerElement) {
         this.popper = createPopper<ExtendedModifiers>(
-            this.triggerElement, this.popupElement, options);
+          this.triggerElement,
+          this.popupElement,
+          options,
+        );
       }
     }
   }
@@ -309,8 +335,9 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
 
   private handleDocKeyPress = (e: KeyboardEvent) => {
     // Close on escape keypress if we are in the toplevel group
-    const nextGroupElement =
-        this.popupElement?.querySelector(`.${Popup.POPUP_GROUP_CLASS}`);
+    const nextGroupElement = this.popupElement?.querySelector(
+      `.${Popup.POPUP_GROUP_CLASS}`,
+    );
     if (!nextGroupElement) {
       if (this.closeOnEscape && e.key === 'Escape') {
         this.closePopup();
@@ -323,8 +350,9 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
     // - Is in the same group as this class
     // - Has the magic class
     const target = e.target as HTMLElement;
-    const childPopup =
-        this.popupElement?.querySelector(`.${Popup.POPUP_GROUP_CLASS}`);
+    const childPopup = this.popupElement?.querySelector(
+      `.${Popup.POPUP_GROUP_CLASS}`,
+    );
     if (childPopup) {
       if (childPopup.contains(target)) {
         return;
@@ -336,16 +364,13 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
   };
 
   private closePopup() {
-    if (this.isOpen) {
-      this.isOpen = false;
-      this.onChange(this.isOpen);
-      scheduleFullRedraw();
-    }
+    this.isOpen = false;
+    this.onChange(false);
+    m.redraw();
   }
 
   private togglePopup() {
     this.isOpen = !this.isOpen;
     this.onChange(this.isOpen);
-    scheduleFullRedraw();
   }
 }

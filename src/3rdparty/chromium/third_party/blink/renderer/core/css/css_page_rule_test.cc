@@ -5,10 +5,15 @@
 #include "third_party/blink/renderer/core/css/css_page_rule.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_css_style_sheet_init.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
+#include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
+#include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
@@ -49,7 +54,7 @@ TEST(CSSPageRule, selectorText) {
   page_rule->setSelectorText(context, "right { bla");
   EXPECT_EQ(":left", page_rule->selectorText());
 
-  // set page pseudo class selector.
+  // set page pseudo-class selector.
   page_rule->setSelectorText(context, ":right");
   EXPECT_EQ(":right", page_rule->selectorText());
 
@@ -61,7 +66,6 @@ TEST(CSSPageRule, selectorText) {
 }
 
 TEST(CSSPageRule, MarginRules) {
-  ScopedPageMarginBoxesForTest enabled(true);
   test::TaskEnvironment task_environment;
   css_test_helpers::TestStyleSheet sheet;
 
@@ -77,7 +81,6 @@ TEST(CSSPageRule, MarginRules) {
 }
 
 TEST(CSSPageRule, MarginRulesInvalidPrelude) {
-  ScopedPageMarginBoxesForTest enabled(true);
   test::TaskEnvironment task_environment;
   css_test_helpers::TestStyleSheet sheet;
 
@@ -90,22 +93,34 @@ TEST(CSSPageRule, MarginRulesInvalidPrelude) {
   EXPECT_EQ(CSSRule::kPageRule, sheet.CssRules()->item(0)->GetType());
 }
 
-TEST(CSSPageRule, MarginRulesIgnoredWhenDisabled) {
-  ScopedPageMarginBoxesForTest enabled(false);
-  test::TaskEnvironment task_environment;
-  css_test_helpers::TestStyleSheet sheet;
+class CSSPageRuleTest : public PageTestBase {};
 
-  const char* css_rule =
-      "@page { size: auto; @top-right { content: \"fisk\"; margin-bottom: 1cm; "
-      "} margin-top: 2cm; }";
-  sheet.AddCSSRules(css_rule);
-  ASSERT_TRUE(sheet.CssRules());
-  EXPECT_EQ(1u, sheet.CssRules()->length());
-  EXPECT_EQ("@page { size: auto; margin-top: 2cm; }",
-            sheet.CssRules()->item(0)->cssText());
-  EXPECT_EQ(CSSRule::kPageRule, sheet.CssRules()->item(0)->GetType());
-  auto* page_rule = To<CSSPageRule>(sheet.CssRules()->item(0));
-  EXPECT_EQ("", page_rule->selectorText());
+TEST_F(CSSPageRuleTest, UseCounter) {
+  DummyExceptionStateForTesting exception_state;
+  auto* sheet = CSSStyleSheet::Create(
+      GetDocument(), CSSStyleSheetInit::Create(), exception_state);
+  sheet->insertRule("@page {}", 0, exception_state);
+  CSSRuleList* rules = sheet->cssRules(exception_state);
+  ASSERT_TRUE(rules);
+  ASSERT_EQ(1u, rules->length());
+
+  GetDocument().ClearUseCounterForTesting(WebFeature::kCSSPageRule);
+  rules->item(0);
+  EXPECT_TRUE(GetDocument().IsUseCounted(WebFeature::kCSSPageRule));
+}
+
+TEST_F(CSSPageRuleTest, NoUseCounter) {
+  DummyExceptionStateForTesting exception_state;
+  auto* sheet = CSSStyleSheet::Create(
+      GetDocument(), CSSStyleSheetInit::Create(), exception_state);
+  sheet->insertRule("@page {}", 0, exception_state);
+  CSSRuleList* rules = sheet->cssRules(exception_state);
+  ASSERT_TRUE(rules);
+  ASSERT_EQ(1u, rules->length());
+
+  GetDocument().ClearUseCounterForTesting(WebFeature::kCSSPageRule);
+  rules->ItemInternal(0);
+  EXPECT_FALSE(GetDocument().IsUseCounted(WebFeature::kCSSPageRule));
 }
 
 }  // namespace blink

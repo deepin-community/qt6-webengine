@@ -7,16 +7,19 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string_view>
 
 #include "base/containers/queue.h"
 #include "base/functional/callback.h"
-#include "base/strings/string_piece.h"
 #include "base/types/id_type.h"
+#include "media/base/data_source.h"
 #include "media/base/media_export.h"
 #include "media/base/status.h"
+#include "media/formats/hls/security_metadata.h"
 #include "media/formats/hls/types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace media {
 
@@ -49,7 +52,8 @@ class MEDIA_EXPORT HlsDataSourceProvider {
   // multiple URIs or from multiple disjoing ranges on the same URI.
   struct UrlDataSegment {
     const GURL uri;
-    const absl::optional<hls::types::ByteRange> range;
+    const std::optional<hls::types::ByteRange> range;
+    const DataSource::CacheMode cache_mode;
   };
   using SegmentQueue = base::queue<UrlDataSegment>;
 
@@ -100,11 +104,41 @@ class MEDIA_EXPORT HlsDataSourceStream {
 
   size_t buffer_size() const { return buffer_.size(); }
 
-  absl::optional<size_t> max_read_position() const {
-    return max_read_position_;
+  std::optional<size_t> max_read_position() const { return max_read_position_; }
+
+  base::span<const uint8_t> data() const { return buffer_; }
+
+  uint64_t memory_usage() const { return memory_usage_; }
+
+  const hls::SecurityMetadata& SecurityInfo() const { return security_info_; }
+
+  void SetSecurityInfoForTesting(hls::SecurityMetadata inf) {
+    security_info_ = inf;
   }
 
-  const uint8_t* raw_data() const { return buffer_.data(); }
+  // Merge another security metadata into the current one. This combines the
+  // origin sets and merges the security flags.
+  void MergeSecurityMetadata(const hls::SecurityMetadata& other);
+
+  // A stream's origin is considered tainted if any backing data source involved
+  // in this playback is tainted.
+  void set_would_taint_origin() { security_info_.would_taint_origin = true; }
+
+  // A stream is considered to require a range request if any of the sub-URIs
+  // in the stream use range requests.
+  void set_requires_range_request() { security_info_.has_range_request = true; }
+
+  // A stream in which any constituent request had a redirect is considered to
+  // have a redirect. This state must never unset for security reasons.
+  void set_did_redirect() { security_info_.did_redirect = true; }
+
+  // Track all included security origins that are part of this request in order
+  // to make sure that we aren't merging cross origin data.
+  void TrackOrigin(const url::Origin& origin);
+
+  // Allows the stream creator to update memory usage after the first or after
+  // subsequent reads.
+  void set_total_memory_usage(uint64_t usage) { memory_usage_ = usage; }
 
   // Often the network data for HLS consists of plain-text manifest files, so
   // this supports accessing the fetched data as a string view.
@@ -115,9 +149,16 @@ class MEDIA_EXPORT HlsDataSourceStream {
   bool RequiresNextDataSource() const;
 
   // Gets the next segment URI from the queue of segments. It is invalid to call
-  // this method if `RequiresResetForNewSegment` does not return true. This
-  // method will also update the internal range if the segment has one set.
+  // this method if `RequiresNextDataSource` does not return true. This
+  // method will also update the internal range if the segment has one.
   GURL GetNextSegmentURI();
+
+  // Gets the next segment URI and its cache bypass option from the queue of
+  // segments. It is invalid to call this method if `RequiresNextDataSource`
+  // does not return true. This method will also update the internal range if
+  // the segment has one.
+  std::tuple<GURL, DataSource::CacheMode, DataSource::RangeMode>
+  GetNextSegmentURIAndCacheStatus();
 
   // Has the stream read all possible data?
   bool CanReadMore() const;
@@ -138,12 +179,19 @@ class MEDIA_EXPORT HlsDataSourceStream {
  private:
   const StreamId stream_id_;
 
+  // Critital info regarding the security of requests.
+  hls::SecurityMetadata security_info_;
+
   // Active buffer data. Reading without clearing will append new data
   // to the end of the buffer. Clearing will not reset the read-head, but will
   // empty this buffer.
-  // TODO(crbug/1266991): Consider swapping out the vector with a more
+  // TODO(crbug.com/40057824): Consider swapping out the vector with a more
   // size-flexible data structure to avoid resizing.
   std::vector<uint8_t> buffer_;
+
+  // The memory usage represents the total memory usage for _all_ streams used
+  // in this playback.
+  uint64_t memory_usage_ = 0;
 
   size_t read_position_ = 0;
 
@@ -152,7 +200,7 @@ class MEDIA_EXPORT HlsDataSourceStream {
 
   // If this optional value is set, then data can't be read past this maximum
   // value.
-  absl::optional<size_t> max_read_position_;
+  std::optional<size_t> max_read_position_;
 
   // The data source read response indicated that the stream has ended.
   bool reached_end_of_stream_ = false;

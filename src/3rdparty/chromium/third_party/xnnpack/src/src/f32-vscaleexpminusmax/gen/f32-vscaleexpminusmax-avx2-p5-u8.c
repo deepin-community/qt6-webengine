@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vscaleexpminusmax/avx2-p5.c.in
 //   Generator: tools/xngen
@@ -8,14 +9,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vscaleexpminusmax.h>
+#include "src/xnnpack/vscaleexpminusmax.h"
 
-
-static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
 void xnn_f32_vscaleexpminusmax_ukernel__avx2_p5_u8(
     size_t batch,
@@ -28,6 +28,8 @@ void xnn_f32_vscaleexpminusmax_ukernel__avx2_p5_u8(
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
+
+  static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
   const __m256 vmagic_bias = _mm256_set1_ps(0x1.8000FEp23f);
   // The smallest x for which expf(x) is normalized.

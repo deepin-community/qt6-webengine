@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -167,7 +167,8 @@ int main(int argc, char **argv) {
   printf("Using %s\n", aom_codec_iface_name(encoder));
 
   res = aom_codec_enc_config_default(encoder, &cfg, usage);
-  if (res) die_codec(&codec, "Failed to get default codec config.");
+  if (res)
+    die("Failed to get default codec config: %s", aom_codec_err_to_string(res));
 
   cfg.g_w = info.frame_width;
   cfg.g_h = info.frame_height;

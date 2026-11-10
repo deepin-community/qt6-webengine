@@ -37,11 +37,15 @@ QuerySet::QuerySet(const ObjectBaseParams& params, const WGPUQuerySetDescriptor*
 
 QuerySet::~QuerySet() = default;
 
-WGPUQueryType QuerySet::GetType() const {
+ObjectType QuerySet::GetObjectType() const {
+    return ObjectType::QuerySet;
+}
+
+WGPUQueryType QuerySet::APIGetType() const {
     return mType;
 }
 
-uint32_t QuerySet::GetCount() const {
+uint32_t QuerySet::APIGetCount() const {
     return mCount;
 }
 

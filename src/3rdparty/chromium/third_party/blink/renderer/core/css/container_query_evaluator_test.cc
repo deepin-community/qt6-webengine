@@ -7,8 +7,8 @@
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/container_query.h"
 #include "third_party/blink/renderer/core/css/css_container_rule.h"
-#include "third_party/blink/renderer/core/css/css_custom_property_declaration.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
+#include "third_party/blink/renderer/core/css/css_unparsed_declaration_value.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_impl.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
@@ -21,7 +21,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -35,7 +34,7 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
  public:
   void SetUp() override {
     PageTestBase::SetUp();
-    GetDocument().body()->setInnerHTML(R"HTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <div id="container-parent">
         <div id="container"></div>
       </div>
@@ -80,28 +79,24 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
   bool Eval(String query,
             String custom_property_name,
             String custom_property_value) {
-    CSSTokenizer tokenizer(custom_property_value);
-    CSSParserTokenStream stream(tokenizer);
-    CSSTokenizedValue tokenized_value =
-        CSSParserImpl::ConsumeUnrestrictedPropertyValue(stream);
     const CSSParserContext* context =
         StrictCSSParserContext(SecureContextMode::kSecureContext);
-    CSSCustomPropertyDeclaration* value =
-        CSSVariableParser::ParseDeclarationValue(tokenized_value, false,
+    CSSUnparsedDeclarationValue* value =
+        CSSVariableParser::ParseDeclarationValue(custom_property_value, false,
                                                  *context);
     DCHECK(value);
 
     ComputedStyleBuilder builder =
         GetDocument().GetStyleResolver().InitialStyleBuilderForElement();
-    builder.SetVariableData(AtomicString(custom_property_name), &value->Value(),
-                            false);
+    builder.SetVariableData(AtomicString(custom_property_name),
+                            value->VariableDataValue(), false);
     ContainerElement().SetComputedStyle(builder.TakeStyle());
 
     auto* evaluator =
         MakeGarbageCollected<ContainerQueryEvaluator>(ContainerElement());
     evaluator->SizeContainerChanged(
         PhysicalSize(LayoutUnit(100), LayoutUnit(100)),
-        PhysicalAxes{kPhysicalAxisNone});
+        PhysicalAxes{kPhysicalAxesNone});
 
     ContainerQuery* container_query = ParseContainer(query);
     return evaluator->Eval(*container_query).value;
@@ -129,6 +124,20 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
     builder.SetContainerType(container_type);
     ContainerElement().SetComputedStyle(builder.TakeStyle());
     return evaluator->StickyContainerChanged(stuck_horizontal, stuck_vertical);
+  }
+
+  Change SnapContainerChanged(ContainerQueryEvaluator* evaluator,
+                              ContainerSnappedFlags snapped,
+                              unsigned container_type) {
+    ComputedStyleBuilder builder(
+        *GetDocument().GetStyleResolver().InitialStyleForElement());
+    builder.SetContainerType(container_type);
+    ContainerElement().SetComputedStyle(builder.TakeStyle());
+    return evaluator->SnapContainerChanged(snapped);
+  }
+
+  Change StyleContainerChanged(ContainerQueryEvaluator* evaluator) {
+    return evaluator->StyleContainerChanged();
   }
 
   bool EvalAndAdd(ContainerQueryEvaluator* evaluator,
@@ -160,10 +169,10 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
                                    ContainerQueryEvaluator::kStyleContainer);
   }
 
-  const PhysicalAxes none{kPhysicalAxisNone};
-  const PhysicalAxes both{kPhysicalAxisBoth};
-  const PhysicalAxes horizontal{kPhysicalAxisHorizontal};
-  const PhysicalAxes vertical{kPhysicalAxisVertical};
+  const PhysicalAxes none{kPhysicalAxesNone};
+  const PhysicalAxes both{kPhysicalAxesBoth};
+  const PhysicalAxes horizontal{kPhysicalAxesHorizontal};
+  const PhysicalAxes vertical{kPhysicalAxesVertical};
 
   const unsigned type_normal = kContainerTypeNormal;
   const unsigned type_size = kContainerTypeSize;
@@ -227,8 +236,8 @@ TEST_F(ContainerQueryEvaluatorTest, SizeContainerChanged) {
   EXPECT_FALSE(EvalAndAdd(evaluator, *container_query_200));
   EXPECT_EQ(2u, GetResults(evaluator).size());
 
-  // Calling SizeContainerChanged the values we already have should not produce
-  // a Change.
+  // Calling SizeContainerChanged with the values we already have should not
+  // produce a Change.
   EXPECT_EQ(Change::kNone,
             SizeContainerChanged(evaluator, size_100, type_size, horizontal));
   EXPECT_EQ(2u, GetResults(evaluator).size());
@@ -248,8 +257,8 @@ TEST_F(ContainerQueryEvaluatorTest, SizeContainerChanged) {
   EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_200));
   EXPECT_EQ(2u, GetResults(evaluator).size());
 
-  // Calling SizeContainerChanged the values we already have should not produce
-  // a Change.
+  // Calling SizeContainerChanged with the values we already have should not
+  // produce a Change.
   EXPECT_EQ(Change::kNone,
             SizeContainerChanged(evaluator, size_200, type_size, horizontal));
   EXPECT_EQ(2u, GetResults(evaluator).size());
@@ -325,7 +334,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
 
   // Calling StyleContainerChanged without changing the style should not produce
   // a change.
-  EXPECT_EQ(Change::kNone, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNone, StyleContainerChanged(evaluator));
   EXPECT_EQ(3u, GetResults(evaluator).size());
 
   const bool inherited = true;
@@ -338,7 +347,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNone, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNone, StyleContainerChanged(evaluator));
   EXPECT_EQ(3u, GetResults(evaluator).size());
 
   // Set --foo: bar. Should trigger change.
@@ -348,7 +357,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNearestContainer, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNearestContainer, StyleContainerChanged(evaluator));
   EXPECT_EQ(0u, GetResults(evaluator).size());
 
   // Set --bar: foo. Should trigger change because size part also matches.
@@ -359,7 +368,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNearestContainer, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNearestContainer, StyleContainerChanged(evaluator));
   EXPECT_EQ(0u, GetResults(evaluator).size());
 }
 
@@ -380,7 +389,7 @@ TEST_F(ContainerQueryEvaluatorTest, StickyContainerChanged) {
   EXPECT_FALSE(EvalAndAdd(evaluator, *container_query_bottom));
   EXPECT_EQ(2u, GetResults(evaluator).size());
 
-  // Calling StickyContainerChanged the values we already have should not
+  // Calling StickyContainerChanged with the values we already have should not
   // produce a Change.
   EXPECT_EQ(Change::kNone, StickyContainerChanged(
                                evaluator, ContainerStuckPhysical::kLeft,
@@ -402,6 +411,53 @@ TEST_F(ContainerQueryEvaluatorTest, StickyContainerChanged) {
   // Now both left and bottom queries should return true.
   EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_left));
   EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_bottom));
+  EXPECT_EQ(2u, GetResults(evaluator).size());
+}
+
+TEST_F(ContainerQueryEvaluatorTest, SnapContainerChanged) {
+  ContainerQuery* container_query_snap_block =
+      ParseContainer("scroll-state(snapped: block)");
+  ContainerQuery* container_query_snap_inline =
+      ParseContainer("scroll-state(snapped: inline)");
+  ASSERT_TRUE(container_query_snap_block);
+  ASSERT_TRUE(container_query_snap_inline);
+
+  ContainerQueryEvaluator* evaluator =
+      CreateEvaluatorForType(type_scroll_state);
+  SnapContainerChanged(evaluator,
+                       static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+                       type_scroll_state);
+
+  EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_snap_block));
+  EXPECT_FALSE(EvalAndAdd(evaluator, *container_query_snap_inline));
+  EXPECT_EQ(2u, GetResults(evaluator).size());
+
+  // Calling SnapContainerChanged with the values we already have should not
+  // produce a Change.
+  EXPECT_EQ(
+      Change::kNone,
+      SnapContainerChanged(
+          evaluator, static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+          type_scroll_state));
+  EXPECT_EQ(2u, GetResults(evaluator).size());
+
+  // EvalAndAdding the same queries again is allowed.
+  EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_snap_block));
+  EXPECT_FALSE(EvalAndAdd(evaluator, *container_query_snap_inline));
+  EXPECT_EQ(2u, GetResults(evaluator).size());
+
+  // Add inline snapped.
+  EXPECT_EQ(Change::kNearestContainer,
+            SnapContainerChanged(
+                evaluator,
+                static_cast<ContainerSnappedFlags>(ContainerSnapped::kX) |
+                    static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+                type_scroll_state));
+  EXPECT_EQ(0u, GetResults(evaluator).size());
+
+  // Now both block and inline queries should return true.
+  EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_snap_block));
+  EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_snap_inline));
   EXPECT_EQ(2u, GetResults(evaluator).size());
 }
 
@@ -716,7 +772,7 @@ TEST_F(ContainerQueryEvaluatorTest, Printing) {
       Color(0, 128, 0));
 
   constexpr gfx::SizeF initial_page_size(400, 400);
-  GetDocument().GetFrame()->StartPrinting(initial_page_size);
+  GetDocument().GetFrame()->StartPrinting(WebPrintParams(initial_page_size));
   GetDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   EXPECT_EQ(
@@ -872,9 +928,7 @@ TEST_F(ContainerQueryEvaluatorTest, FindSnapContainer) {
 }
 
 TEST_F(ContainerQueryEvaluatorTest, ScopedCaching) {
-  GetDocument()
-      .documentElement()
-      ->setInnerHTMLWithDeclarativeShadowDOMForTesting(R"HTML(
+  GetDocument().documentElement()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id="host" style="container-name: n1">
       <template shadowrootmode=open>
         <div style="container-name: n1">

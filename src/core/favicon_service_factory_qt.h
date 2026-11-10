@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -59,6 +60,7 @@ class HistoryServiceFactoryQt : public BrowserContextKeyedServiceFactory
 public:
     static history::HistoryService *GetForBrowserContext(content::BrowserContext *context);
     static HistoryServiceFactoryQt *GetInstance();
+    static void RemoveFromBrowserContext(content::BrowserContext *context);
 
 private:
     friend struct base::DefaultSingletonTraits<HistoryServiceFactoryQt>;
@@ -69,7 +71,7 @@ private:
     // BrowserContextKeyedServiceFactory:
     content::BrowserContext *
     GetBrowserContextToUse(content::BrowserContext *context) const override;
-    KeyedService *BuildServiceInstanceFor(content::BrowserContext *context) const override;
+    std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(content::BrowserContext *context) const override;
 };
 
 class FaviconClientQt : public favicon::FaviconClient
@@ -93,6 +95,7 @@ class FaviconServiceFactoryQt : public BrowserContextKeyedServiceFactory
 public:
     static favicon::FaviconService *GetForBrowserContext(content::BrowserContext *context);
     static FaviconServiceFactoryQt *GetInstance();
+    static void RemoveFromBrowserContext(content::BrowserContext *context);
 
 private:
     friend struct base::DefaultSingletonTraits<FaviconServiceFactoryQt>;
@@ -103,7 +106,7 @@ private:
     // BrowserContextKeyedServiceFactory:
     content::BrowserContext *
     GetBrowserContextToUse(content::BrowserContext *context) const override;
-    KeyedService *BuildServiceInstanceFor(content::BrowserContext *context) const override;
+    std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(content::BrowserContext *context) const override;
 };
 
 } // namespace QtWebEngineCore

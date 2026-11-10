@@ -7,13 +7,14 @@
 #include <utility>
 
 #include "build/build_config.h"
+#include "core/fxcrt/check.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/dib/fx_dib.h"
+#include "public/cpp/fpdf_scopers.h"
 #include "public/fpdf_progressive.h"
 #include "testing/embedder_test.h"
 #include "testing/embedder_test_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/check.h"
 
 namespace {
 
@@ -153,8 +154,10 @@ bool FPDFProgressiveRenderEmbedderTest::StartRenderPageWithFlags(
   progressive_render_bitmap_ =
       ScopedFPDFBitmap(FPDFBitmap_Create(width, height, alpha));
   FPDF_DWORD fill_color = alpha ? 0x00000000 : 0xFFFFFFFF;
-  FPDFBitmap_FillRect(progressive_render_bitmap_.get(), 0, 0, width, height,
-                      fill_color);
+  if (!FPDFBitmap_FillRect(progressive_render_bitmap_.get(), 0, 0, width,
+                           height, fill_color)) {
+    return false;
+  }
   int rv = FPDF_RenderPageBitmap_Start(progressive_render_bitmap_.get(), page,
                                        0, 0, width, height, 0,
                                        progressive_render_flags_, pause);
@@ -175,8 +178,10 @@ bool FPDFProgressiveRenderEmbedderTest::
   progressive_render_bitmap_ =
       ScopedFPDFBitmap(FPDFBitmap_Create(width, height, alpha));
   DCHECK(progressive_render_bitmap_);
-  FPDFBitmap_FillRect(progressive_render_bitmap_.get(), 0, 0, width, height,
-                      background_color);
+  if (!FPDFBitmap_FillRect(progressive_render_bitmap_.get(), 0, 0, width,
+                           height, background_color)) {
+    return false;
+  }
   int rv = FPDF_RenderPageBitmapWithColorScheme_Start(
       progressive_render_bitmap_.get(), page, 0, 0, width, height, 0,
       progressive_render_flags_, color_scheme, pause);
@@ -232,70 +237,67 @@ TEST_F(FPDFProgressiveRenderEmbedderTest, RenderWithoutPause) {
   // Test rendering of page content using progressive render APIs
   // without pausing the rendering.
   ASSERT_TRUE(OpenDocument("annotation_stamp_with_ap.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
   FakePause pause(false);
-  EXPECT_TRUE(StartRenderPage(page, &pause));
-  ScopedFPDFBitmap bitmap = FinishRenderPage(page);
+  EXPECT_TRUE(StartRenderPage(page.get(), &pause));
+  ScopedFPDFBitmap bitmap = FinishRenderPage(page.get());
   CompareBitmap(bitmap.get(), 595, 842,
                 AnnotationStampWithApBaseContentChecksum());
-  UnloadPage(page);
 }
 
 TEST_F(FPDFProgressiveRenderEmbedderTest, RenderWithPause) {
   // Test rendering of page content using progressive render APIs
   // with pause in rendering.
   ASSERT_TRUE(OpenDocument("annotation_stamp_with_ap.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
   FakePause pause(true);
-  bool render_done = StartRenderPage(page, &pause);
+  bool render_done = StartRenderPage(page.get(), &pause);
   EXPECT_FALSE(render_done);
 
   while (!render_done) {
-    render_done = ContinueRenderPage(page, &pause);
+    render_done = ContinueRenderPage(page.get(), &pause);
   }
-  ScopedFPDFBitmap bitmap = FinishRenderPage(page);
+  ScopedFPDFBitmap bitmap = FinishRenderPage(page.get());
   CompareBitmap(bitmap.get(), 595, 842,
                 AnnotationStampWithApBaseContentChecksum());
-  UnloadPage(page);
 }
 
 TEST_F(FPDFProgressiveRenderEmbedderTest, RenderAnnotWithPause) {
   // Test rendering of the page with annotations using progressive render APIs
   // with pause in rendering.
   ASSERT_TRUE(OpenDocument("annotation_stamp_with_ap.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
   FakePause pause(true);
-  bool render_done = StartRenderPageWithFlags(page, &pause, FPDF_ANNOT);
+  bool render_done = StartRenderPageWithFlags(page.get(), &pause, FPDF_ANNOT);
   EXPECT_FALSE(render_done);
 
   while (!render_done) {
-    render_done = ContinueRenderPage(page, &pause);
+    render_done = ContinueRenderPage(page.get(), &pause);
   }
-  ScopedFPDFBitmap bitmap = FinishRenderPage(page);
+  ScopedFPDFBitmap bitmap = FinishRenderPage(page.get());
   CompareBitmap(bitmap.get(), 595, 842,
                 pdfium::AnnotationStampWithApChecksum());
-  UnloadPage(page);
 }
 
 TEST_F(FPDFProgressiveRenderEmbedderTest, RenderFormsWithPause) {
   // Test rendering of the page with forms using progressive render APIs
   // with pause in rendering.
   ASSERT_TRUE(OpenDocument("text_form.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
   FakePause pause(true);
-  bool render_done = StartRenderPage(page, &pause);
+  bool render_done = StartRenderPage(page.get(), &pause);
   EXPECT_FALSE(render_done);
 
   while (!render_done) {
-    render_done = ContinueRenderPage(page, &pause);
+    render_done = ContinueRenderPage(page.get(), &pause);
   }
-  ScopedFPDFBitmap bitmap = FinishRenderPageWithForms(page, form_handle());
+  ScopedFPDFBitmap bitmap =
+      FinishRenderPageWithForms(page.get(), form_handle());
   CompareBitmap(bitmap.get(), 300, 300, pdfium::TextFormChecksum());
-  UnloadPage(page);
 }
 
 void FPDFProgressiveRenderEmbedderTest::VerifyRenderingWithColorScheme(
@@ -308,14 +310,13 @@ void FPDFProgressiveRenderEmbedderTest::VerifyRenderingWithColorScheme(
     const char* md5) {
   ASSERT_TRUE(document());
 
-  FPDF_PAGE page = LoadPage(page_num);
+  ScopedPage page = LoadScopedPage(page_num);
   ASSERT_TRUE(page);
 
   ScopedFPDFBitmap bitmap = RenderPageWithForcedColorScheme(
-      page, form_handle(), flags, color_scheme, background_color);
+      page.get(), form_handle(), flags, color_scheme, background_color);
   ASSERT_TRUE(bitmap);
   CompareBitmap(bitmap.get(), bitmap_width, bitmap_height, md5);
-  UnloadPage(page);
 }
 
 TEST_F(FPDFProgressiveRenderEmbedderTest, RenderTextWithColorScheme) {
@@ -379,6 +380,51 @@ TEST_F(FPDFProgressiveRenderEmbedderTest,
                                  rectangles_checksum);
 }
 
+TEST_F(FPDFProgressiveRenderEmbedderTest, RenderPathObjectUsability) {
+  // Test rendering of paths with one of the page objects active vs. inactive.
+  const char* all_rectangles_used_checksum = []() {
+    if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
+      return "b4e411a6b5ffa59a50efede2efece597";
+    }
+    return "0a90de37f52127619c3dfb642b5fa2fe";
+  }();
+  const char* one_rectangle_inactive_checksum = []() {
+    if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
+      return "cf5bb4e61609162c03f4c8a6d9791230";
+    }
+    return "0481e8936b35ac9484b51a0966ab4ab6";
+  }();
+
+  ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  // Check rendering result before modifications.
+  {
+    ScopedFPDFBitmap bitmap = RenderPage(page.get());
+    CompareBitmap(bitmap.get(), 200, 300, all_rectangles_used_checksum);
+  }
+
+  ASSERT_EQ(FPDFPage_CountObjects(page.get()), 8);
+  FPDF_PAGEOBJECT page_obj = FPDFPage_GetObject(page.get(), 4);
+  ASSERT_TRUE(page_obj);
+
+  // Check rendering result after a page object is made inactive.
+  // Contents do not need to be regenerated to observe an effect.
+  ASSERT_TRUE(FPDFPageObj_SetIsActive(page_obj, /*active=*/false));
+  {
+    ScopedFPDFBitmap bitmap = RenderPage(page.get());
+    CompareBitmap(bitmap.get(), 200, 300, one_rectangle_inactive_checksum);
+  }
+
+  // Check rendering result after the same page object is active again.
+  ASSERT_TRUE(FPDFPageObj_SetIsActive(page_obj, /*active=*/true));
+  {
+    ScopedFPDFBitmap bitmap = RenderPage(page.get());
+    CompareBitmap(bitmap.get(), 200, 300, all_rectangles_used_checksum);
+  }
+}
+
 TEST_F(FPDFProgressiveRenderEmbedderTest, RenderHighlightWithColorScheme) {
   // Test rendering of highlight with forced color scheme on.
   //
@@ -388,11 +434,11 @@ TEST_F(FPDFProgressiveRenderEmbedderTest, RenderHighlightWithColorScheme) {
   const char* content_with_highlight_fill_checksum = []() {
     if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
 #if BUILDFLAG(IS_WIN)
-      return "8ed2cbc6a362752fabdf9b50d3358c96";
+      return "092f1ee8785ad74457022d6282784cb1";
 #elif BUILDFLAG(IS_APPLE)
-      return "fcd4dd021656f692f346780acaa24895";
+      return "c6e53a5348d8869a79d86a1f4745fcaa";
 #else
-      return "49dcfcfdc38d200bb3d57a2ca3086034";
+      return "c6b3aa2787f557726d6ac0fa7cd4fbfa";
 #endif
     }
 #if BUILDFLAG(IS_APPLE)
@@ -422,11 +468,11 @@ TEST_F(FPDFProgressiveRenderEmbedderTest,
   const char* md5_content_with_highlight = []() {
     if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
 #if BUILDFLAG(IS_WIN)
-      return "9389330c006d3e6054057992624684a8";
+      return "718af2604bd171f2af09019d7a2a16bb";
 #elif BUILDFLAG(IS_APPLE)
-      return "b7039f73f2d8a3ac3e1ef1492e425b99";
+      return "168c22e6aa255b7616579a468fb7e311";
 #else
-      return "c609e8810fba2f12db8f8a2b043d97bd";
+      return "12d37e0ae880cf2c5743a69467d19756";
 #endif
     }
 #if BUILDFLAG(IS_APPLE)
@@ -449,14 +495,14 @@ TEST_F(FPDFProgressiveRenderEmbedderTest, RenderInkWithColorScheme) {
   const char* content_with_ink_checksum = []() {
     if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
 #if BUILDFLAG(IS_WIN)
-      return "f6dfec1a38800973e57bba5da4fe77fe";
+      return "0b9e2044a71465ed8af639527c3cc94a";
 #elif BUILDFLAG(IS_APPLE)
-      return "5108aa537b6ecc37b3f0a35b76c1b379";
+      return "62c1dddb6440dd8180abf51d986141e4";
 #else
-      return "b39d9f68ff71963d82c43eb20caa8f4d";
+      return "32678124d0789c09aa61028de3a8cbcf";
 #endif
     }
-    return "797bce7dc6c50ee86b095405df9fe5aa";
+    return "546c99e50c4f2c66fc7ac02e1a834e57";
   }();
 
   ASSERT_TRUE(OpenDocument("annotation_ink_multiple.pdf"));
@@ -471,17 +517,17 @@ TEST_F(FPDFProgressiveRenderEmbedderTest, RenderStampWithColorScheme) {
   const char* content_with_stamp_checksum = []() {
     if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
 #if BUILDFLAG(IS_WIN)
-      return "9365cd179a0109640bb2b7456f211524";
+      return "b7a0695040864e87065f74310f3f1ac5";
 #elif BUILDFLAG(IS_APPLE)
-      return "42d4d73d939cb4a1b40d003985eaf11e";
+      return "741700c77d8bf8b4f61dbf3cc6a17019";
 #else
-      return "6e028012a4854ebfd9ee92da862bf679";
+      return "3e153a54caa24e13178facd47c147679";
 #endif
     }
 #if BUILDFLAG(IS_APPLE)
-    return "8170c539e95f22f14eb8f266a5f1bbed";
+    return "ed794dc3e110ddb60aab788bd3d63598";
 #else
-    return "d1fd087e59d4dcebf47b56570bdb8c22";
+    return "f61b2f70101073cc9e8905e16e3923ed";
 #endif
   }();
 

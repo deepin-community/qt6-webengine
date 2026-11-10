@@ -14,6 +14,7 @@
 #include "extensions/browser/api/web_request/permission_helper.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
+#include "ipc/constants.mojom.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_util.h"
@@ -47,8 +48,7 @@ class ShutdownNotifierFactory
 
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override {
-    return ExtensionsBrowserClient::Get()->GetContextOwnInstance(
-        context, /*force_guest_profile=*/true);
+    return ExtensionsBrowserClient::Get()->GetContextOwnInstance(context);
   }
 };
 
@@ -72,7 +72,7 @@ WebRequestProxyingWebSocket::WebRequestProxyingWebSocket(
       response_(network::mojom::URLResponseHead::New()),
       has_extra_headers_(has_extra_headers),
       info_(WebRequestInfoInitParams(
-          request_id_generator->Generate(MSG_ROUTING_NONE, 0),
+          request_id_generator->Generate(IPC::mojom::kRoutingIdNone, 0),
           process_id,
           render_frame_id,
           nullptr,
@@ -131,7 +131,7 @@ void WebRequestProxyingWebSocket::Start() {
 
   // It doesn't make sense to collapse WebSocket requests since they won't be
   // associated with a DOM element.
-  DCHECK(!should_collapse_initiator);
+  CHECK(!should_collapse_initiator);
 
   if (result == net::ERR_BLOCKED_BY_CLIENT) {
     OnError(result);
@@ -160,10 +160,16 @@ void WebRequestProxyingWebSocket::ContinueToHeadersReceived() {
   auto continuation = base::BindRepeating(
       &WebRequestProxyingWebSocket::OnHeadersReceivedComplete,
       weak_factory_.GetWeakPtr());
-  int result = WebRequestEventRouter::Get(browser_context_)
-                   ->OnHeadersReceived(browser_context_, &info_, continuation,
-                                       response_->headers.get(),
-                                       &override_headers_, &redirect_url_);
+  bool should_collapse_initiator = false;
+  int result =
+      WebRequestEventRouter::Get(browser_context_)
+          ->OnHeadersReceived(browser_context_, &info_, continuation,
+                              response_->headers.get(), &override_headers_,
+                              &redirect_url_, &should_collapse_initiator);
+
+  // It doesn't make sense to collapse WebSocket requests since they won't be
+  // associated with a DOM element.
+  CHECK(!should_collapse_initiator);
 
   if (result == net::ERR_BLOCKED_BY_CLIENT) {
     OnError(result);
@@ -171,8 +177,9 @@ void WebRequestProxyingWebSocket::ContinueToHeadersReceived() {
   }
 
   PauseIncomingMethodCallProcessing();
-  if (result == net::ERR_IO_PENDING)
+  if (result == net::ERR_IO_PENDING) {
     return;
+  }
 
   DCHECK_EQ(net::OK, result);
   OnHeadersReceivedComplete(net::OK);
@@ -208,8 +215,9 @@ void WebRequestProxyingWebSocket::OnConnectionEstablished(
           handshake_response_->http_version.minor_value(),
           handshake_response_->status_code,
           handshake_response_->status_text.c_str()));
-  for (const auto& header : handshake_response_->headers)
+  for (const auto& header : handshake_response_->headers) {
     response_->headers->AddHeader(header->name, header->value);
+  }
 
   ContinueToHeadersReceived();
 }
@@ -245,10 +253,16 @@ void WebRequestProxyingWebSocket::OnAuthRequired(
   auto continuation = base::BindRepeating(
       &WebRequestProxyingWebSocket::OnHeadersReceivedCompleteForAuth,
       weak_factory_.GetWeakPtr(), auth_info);
-  int result = WebRequestEventRouter::Get(browser_context_)
-                   ->OnHeadersReceived(browser_context_, &info_, continuation,
-                                       response_->headers.get(),
-                                       &override_headers_, &redirect_url_);
+  bool should_collapse_initiator = false;
+  int result =
+      WebRequestEventRouter::Get(browser_context_)
+          ->OnHeadersReceived(browser_context_, &info_, continuation,
+                              response_->headers.get(), &override_headers_,
+                              &redirect_url_, &should_collapse_initiator);
+
+  // It doesn't make sense to collapse WebSocket requests since they won't be
+  // associated with a DOM element.
+  CHECK(!should_collapse_initiator);
 
   if (result == net::ERR_BLOCKED_BY_CLIENT) {
     OnError(result);
@@ -256,8 +270,9 @@ void WebRequestProxyingWebSocket::OnAuthRequired(
   }
 
   PauseIncomingMethodCallProcessing();
-  if (result == net::ERR_IO_PENDING)
+  if (result == net::ERR_IO_PENDING) {
     return;
+  }
 
   DCHECK_EQ(net::OK, result);
   OnHeadersReceivedCompleteForAuth(auth_info, net::OK);
@@ -283,6 +298,11 @@ void WebRequestProxyingWebSocket::OnHeadersReceived(
   response_->headers = base::MakeRefCounted<net::HttpResponseHeaders>(headers);
 
   ContinueToHeadersReceived();
+}
+
+void WebRequestProxyingWebSocket::OnDNRExtensionUnloaded(
+    const Extension* extension) {
+  info_.EraseDNRActionsForExtension(extension->id());
 }
 
 void WebRequestProxyingWebSocket::StartProxying(
@@ -340,8 +360,9 @@ void WebRequestProxyingWebSocket::OnBeforeRequestComplete(int error_code) {
     return;
   }
 
-  if (result == net::ERR_IO_PENDING)
+  if (result == net::ERR_IO_PENDING) {
     return;
+  }
 
   DCHECK_EQ(net::OK, result);
   OnBeforeSendHeadersComplete(std::set<std::string>(), std::set<std::string>(),
@@ -368,8 +389,9 @@ void WebRequestProxyingWebSocket::OnBeforeSendHeadersComplete(
   WebRequestEventRouter::Get(browser_context_)
       ->OnSendHeaders(browser_context_, &info_, request_headers_);
 
-  if (!receiver_as_header_client_.is_bound())
+  if (!receiver_as_header_client_.is_bound()) {
     ContinueToStartRequest(net::OK);
+  }
 }
 
 void WebRequestProxyingWebSocket::ContinueToStartRequest(int error_code) {
@@ -425,8 +447,9 @@ void WebRequestProxyingWebSocket::OnHeadersReceivedComplete(int error_code) {
 
   if (on_headers_received_callback_) {
     std::optional<std::string> headers;
-    if (override_headers_)
+    if (override_headers_) {
       headers = override_headers_->raw_headers();
+    }
     std::move(on_headers_received_callback_)
         .Run(net::OK, headers, std::nullopt);
   }
@@ -441,8 +464,9 @@ void WebRequestProxyingWebSocket::OnHeadersReceivedComplete(int error_code) {
   WebRequestEventRouter::Get(browser_context_)
       ->OnResponseStarted(browser_context_, &info_, net::OK);
 
-  if (!receiver_as_header_client_.is_bound())
+  if (!receiver_as_header_client_.is_bound()) {
     ContinueToCompleted();
+  }
 }
 
 void WebRequestProxyingWebSocket::OnAuthRequiredComplete(
@@ -464,7 +488,6 @@ void WebRequestProxyingWebSocket::OnAuthRequiredComplete(
     case WebRequestEventRouter::AuthRequiredResponse::
         AUTH_REQUIRED_RESPONSE_IO_PENDING:
       NOTREACHED();
-      break;
   }
 }
 
@@ -497,15 +520,17 @@ void WebRequestProxyingWebSocket::OnHeadersReceivedCompleteForAuth(
 void WebRequestProxyingWebSocket::PauseIncomingMethodCallProcessing() {
   receiver_as_handshake_client_.Pause();
   receiver_as_auth_handler_.Pause();
-  if (receiver_as_header_client_.is_bound())
+  if (receiver_as_header_client_.is_bound()) {
     receiver_as_header_client_.Pause();
+  }
 }
 
 void WebRequestProxyingWebSocket::ResumeIncomingMethodCallProcessing() {
   receiver_as_handshake_client_.Resume();
   receiver_as_auth_handler_.Resume();
-  if (receiver_as_header_client_.is_bound())
+  if (receiver_as_header_client_.is_bound()) {
     receiver_as_header_client_.Resume();
+  }
 }
 
 void WebRequestProxyingWebSocket::OnError(int error_code) {

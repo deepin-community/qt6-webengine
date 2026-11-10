@@ -6,10 +6,12 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_INTERPOLABLE_VALUE_H_
 
 #include <array>
+#include <concepts>
 #include <memory>
 #include <utility>
 
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/css/css_math_expression_node.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
@@ -34,6 +36,7 @@ class CORE_EXPORT InterpolableValue
                            const double progress,
                            InterpolableValue& result) const = 0;
 
+  virtual bool IsDouble() const { return false; }
   virtual bool IsNumber() const { return false; }
   virtual bool IsBool() const { return false; }
   virtual bool IsColor() const { return false; }
@@ -51,6 +54,12 @@ class CORE_EXPORT InterpolableValue
   virtual bool IsGridTrackSize() const { return false; }
   virtual bool IsFontPalette() const { return false; }
   virtual bool IsDynamicRangeLimit() const { return false; }
+  virtual bool IsGapLengthRepeater() const { return false; }
+  virtual bool IsGapColorRepeater() const { return false; }
+
+  bool IsGapDataRepeater() const {
+    return IsGapLengthRepeater() || IsGapColorRepeater();
+  }
 
   // TODO(alancutter): Remove Equals().
   virtual bool Equals(const InterpolableValue&) const = 0;
@@ -82,40 +91,26 @@ class CORE_EXPORT InterpolableValue
   virtual InterpolableValue* RawCloneAndZero() const = 0;
 };
 
-class CORE_EXPORT InlinedInterpolableNumber final {
-  DISALLOW_NEW();
-
- public:
-  InlinedInterpolableNumber() = default;
-  explicit InlinedInterpolableNumber(double d) : value_(d) {}
-
-  double Value() const { return value_; }
-  void Set(double value) { value_ = value; }
-
-  double Interpolate(double to, const double progress) const;
-
-  void Scale(double scale) { value_ *= scale; }
-  void Add(double other) { value_ += other; }
-  void ScaleAndAdd(double scale, double other) {
-    value_ = value_ * scale + other;
-  }
-
-  void Trace(Visitor*) const {}
-
- private:
-  double value_ = 0.;
+template <typename T>
+  requires(std::derived_from<T, InterpolableValue>)
+struct ThreadingTrait<T> {
+  static constexpr ThreadAffinity kAffinity = kMainThreadOnly;
 };
 
 class CORE_EXPORT InterpolableNumber final : public InterpolableValue {
  public:
   InterpolableNumber() = default;
-  explicit InterpolableNumber(double value) : value_(value) {
-    static_assert(std::is_trivially_destructible_v<InterpolableNumber>,
-                  "Require trivial destruction for faster sweeping");
-  }
+  explicit InterpolableNumber(double value,
+                              CSSPrimitiveValue::UnitType unit_type =
+                                  CSSPrimitiveValue::UnitType::kNumber);
+  explicit InterpolableNumber(const CSSMathExpressionNode& expression);
+  explicit InterpolableNumber(const CSSPrimitiveValue& value);
 
-  double Value() const { return value_.Value(); }
-  void Set(double value) { value_.Set(value); }
+  // TODO(crbug.com/1521261): Remove this, once the bug is fixed.
+  double Value() const { return value_; }
+  double Value(const CSSLengthResolver& length_resolver) const;
+
+  static double Interpolate(double from, double to, double progress);
 
   // InterpolableValue
   void Interpolate(const InterpolableValue& to,
@@ -124,6 +119,7 @@ class CORE_EXPORT InterpolableNumber final : public InterpolableValue {
   bool IsNumber() const final { return true; }
   bool Equals(const InterpolableValue& other) const final;
   void Scale(double scale) final;
+  void Scale(const InterpolableNumber& other);
   void Add(const InterpolableValue& other) final;
   void AssertCanInterpolateWith(const InterpolableValue& other) const final;
 
@@ -132,19 +128,39 @@ class CORE_EXPORT InterpolableNumber final : public InterpolableValue {
 
   void Trace(Visitor* v) const override {
     InterpolableValue::Trace(v);
-    v->Trace(value_);
+    v->Trace(expression_);
   }
 
  private:
   InterpolableNumber* RawClone() const final {
-    return MakeGarbageCollected<InterpolableNumber>(value_.Value());
+    if (IsDoubleValue()) {
+      return MakeGarbageCollected<InterpolableNumber>(value_, unit_type_);
+    }
+    return MakeGarbageCollected<InterpolableNumber>(*expression_);
   }
   InterpolableNumber* RawCloneAndZero() const final {
-    return MakeGarbageCollected<InterpolableNumber>(0);
+    return MakeGarbageCollected<InterpolableNumber>(0, unit_type_);
   }
 
-  InlinedInterpolableNumber value_;
+  bool IsDoubleValue() const { return type_ == Type::kDouble; }
+  bool IsExpression() const { return type_ == Type::kExpression; }
+
+  void SetDouble(double value, CSSPrimitiveValue::UnitType unit_type);
+  void SetExpression(const CSSMathExpressionNode& expression);
+  const CSSMathExpressionNode& AsExpression() const;
+  CSSPrimitiveValue::UnitType ResolvedUnitType() const {
+    return IsDouble() ? unit_type_ : expression_->ResolvedUnitType();
+  }
+
+  enum class Type { kDouble, kExpression };
+  Type type_;
+  double value_;
+  CSSPrimitiveValue::UnitType unit_type_;
+  Member<const CSSMathExpressionNode> expression_;
 };
+
+static_assert(std::is_trivially_destructible_v<InterpolableNumber>,
+              "Require trivial destruction for faster sweeping");
 
 class CORE_EXPORT InterpolableList final : public InterpolableValue {
  public:

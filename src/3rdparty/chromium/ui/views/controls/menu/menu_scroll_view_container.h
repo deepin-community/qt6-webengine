@@ -41,12 +41,12 @@ class VIEWS_EXPORT MenuScrollViewContainer : public View {
 
   // View:
   gfx::Insets GetInsets() const override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   void OnPaintBackground(gfx::Canvas* canvas) override;
   void OnThemeChanged() override;
 
-  void SetBorderColorId(absl::optional<ui::ColorId> border_color_id) {
+  void SetBorderColorId(std::optional<ui::ColorId> border_color_id) {
     border_color_id_ = border_color_id;
   }
 
@@ -104,8 +104,7 @@ class VIEWS_EXPORT MenuScrollViewContainer : public View {
   // If set the currently set border is a bubble border.
   BubbleBorder::Arrow arrow_ = BubbleBorder::NONE;
 
-  // Corner radius of the background.
-  int corner_radius_ = 0;
+  gfx::RoundedCornersF background_rounded_corners_;
 
   // The portion of GetInsets() that represent the region outside the border
   // (e.g. any shadows).
@@ -117,7 +116,7 @@ class VIEWS_EXPORT MenuScrollViewContainer : public View {
   // Whether the menu uses ash system UI layout.
   const bool use_ash_system_ui_layout_;
 
-  absl::optional<ui::ColorId> border_color_id_;
+  std::optional<ui::ColorId> border_color_id_;
 };
 
 }  // namespace views

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:data-parser
 
 #include "qquickwebengineaction_p.h"
 #include "qquickwebengineaction_p_p.h"
@@ -10,7 +11,6 @@
 #include "qquickwebengineprofile.h"
 #include "qquickwebengineprofile_p.h"
 #include "qquickwebenginescriptcollection_p.h"
-#include "qquickwebenginescriptcollection_p_p.h"
 #include "qquickwebenginesettings_p.h"
 #include "qquickwebenginetouchhandleprovider_p_p.h"
 #include "qquickwebenginetouchhandle_p.h"
@@ -307,7 +307,7 @@ QQuickWebEngineViewPrivate::QQuickWebEngineViewPrivate()
     : m_profile(nullptr)
     , adapter(QSharedPointer<WebContentsAdapter>::create())
     , m_history(new QWebEngineHistory(new QWebEngineHistoryPrivate(this, [] (const QUrl &url) {
-        return QQuickWebEngineFaviconProvider::faviconProviderUrl(url);
+        return QQuickWebEngineFaviconDBProvider::faviconProviderUrl(url);
     })))
     , contextMenuExtraItems(nullptr)
     , loadProgress(0)
@@ -345,13 +345,8 @@ void QQuickWebEngineViewPrivate::initializeProfile()
         Q_ASSERT(!adapter->isInitialized());
         m_profileInitialized = true;
 
-        if (!m_profile) {
+        if (!m_profile)
             m_profile = QQuickWebEngineProfile::defaultProfile();
-
-            // MEMO first ever call to default profile will create one without context
-            // it needs something to get qml engine from (and view is created in qml land)
-            m_profile->ensureQmlContext(q_ptr);
-        }
 
         m_profile->d_ptr->addWebContentsAdapterClient(this);
         m_settings.reset(new QQuickWebEngineSettings(m_profile->settings()));
@@ -414,8 +409,6 @@ void QQuickWebEngineViewPrivate::contextMenuRequested(QWebEngineContextMenuReque
     m_contextMenuRequest = request;
 
     QQmlEngine *engine = qmlEngine(q);
-
-    // TODO: this is a workaround for QTBUG-65044
     if (!engine)
         return;
 
@@ -448,11 +441,21 @@ void QQuickWebEngineViewPrivate::contextMenuRequested(QWebEngineContextMenuReque
     ui()->showMenu(menu);
 }
 
-void QQuickWebEngineViewPrivate::navigationRequested(int navigationType, const QUrl &url, bool &accepted, bool isMainFrame, bool hasFrameData)
+void QQuickWebEngineViewPrivate::navigationRequested(int navigationType, const QUrl &url,
+                                                     bool &accepted, bool isMainFrame,
+                                                     bool hasFrameData, bool userInitiated)
 {
     Q_Q(QQuickWebEngineView);
-    auto request = new QWebEngineNavigationRequest(url, static_cast<QWebEngineNavigationRequest::NavigationType>(navigationType), isMainFrame, hasFrameData);
-    qmlEngine(q)->newQObject(request);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
+    auto request = new QWebEngineNavigationRequest(
+            url, static_cast<QWebEngineNavigationRequest::NavigationType>(navigationType),
+            isMainFrame, hasFrameData, userInitiated);
+
+    engine->newQObject(request);
     Q_EMIT q->navigationRequested(request);
 
     accepted = request->isAccepted();
@@ -463,9 +466,14 @@ void QQuickWebEngineViewPrivate::navigationRequested(int navigationType, const Q
 void QQuickWebEngineViewPrivate::javascriptDialog(QSharedPointer<JavaScriptDialogController> dialog)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineJavaScriptDialogRequest *request = new QQuickWebEngineJavaScriptDialogRequest(dialog);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->javaScriptDialogRequested(request);
     if (!request->isAccepted())
         ui()->showDialog(dialog);
@@ -481,9 +489,14 @@ void QQuickWebEngineViewPrivate::selectClientCert(
         const QSharedPointer<QtWebEngineCore::ClientCertSelectController> &controller)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineClientCertificateSelection *certSelection = new QQuickWebEngineClientCertificateSelection(controller);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(certSelection);
+    engine->newQObject(certSelection);
     Q_EMIT q->selectClientCertificate(certSelection);
 }
 
@@ -516,36 +529,48 @@ static QQuickWebEngineView::Feature toDeprecatedFeature(QWebEnginePermission::Pe
         break;
     }
 
-    Q_UNREACHABLE();
-    return QQuickWebEngineView::Feature(-1);
+    Q_UNREACHABLE_RETURN(QQuickWebEngineView::Feature(-1));
 }
 QT_WARNING_POP
 #endif // QT_DEPRECATED_SINCE(6, 8)
 
-void QQuickWebEngineViewPrivate::runFeaturePermissionRequest(QWebEnginePermission::PermissionType permissionType, const QUrl &securityOrigin)
+void QQuickWebEngineViewPrivate::runFeaturePermissionRequest(
+        QWebEnginePermission::PermissionType permissionType,
+        const QUrl &securityOrigin,
+        int childId, const std::string &serializedToken)
 {
     Q_Q(QQuickWebEngineView);
 
-    if (QWebEnginePermission::isPersistent(permissionType)) {
-        Q_EMIT q->permissionRequested(createFeaturePermissionObject(securityOrigin, permissionType));
-#if QT_DEPRECATED_SINCE(6, 8)
-        QT_WARNING_PUSH
-        QT_WARNING_DISABLE_DEPRECATED
-        Q_EMIT q->featurePermissionRequested(securityOrigin, toDeprecatedFeature(permissionType));
-        QT_WARNING_POP
-#endif // QT_DEPRECATED_SINCE(6, 8)
+    if (permissionType == QWebEnginePermission::PermissionType::MouseLock) {
+        // Not supported in Qt Quick
+        auto permission = QWebEnginePermission(
+            new QWebEnginePermissionPrivate(securityOrigin, permissionType, profileAdapter(), childId, serializedToken));
+        permission.deny();
         return;
     }
 
-    Q_UNREACHABLE();
+    Q_EMIT q->permissionRequested(QWebEnginePermission(
+        new QWebEnginePermissionPrivate(securityOrigin, permissionType, profileAdapter(), childId, serializedToken)));
+#if QT_DEPRECATED_SINCE(6, 8)
+    QT_WARNING_PUSH
+    QT_WARNING_DISABLE_DEPRECATED
+    Q_EMIT q->featurePermissionRequested(securityOrigin, toDeprecatedFeature(permissionType));
+    QT_WARNING_POP
+#endif // QT_DEPRECATED_SINCE(6, 8)
+    return;
 }
 
 void QQuickWebEngineViewPrivate::showColorDialog(QSharedPointer<ColorChooserController> controller)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineColorDialogRequest *request = new QQuickWebEngineColorDialogRequest(controller);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->colorDialogRequested(request);
     if (!request->isAccepted())
         ui()->showColorDialog(controller);
@@ -554,9 +579,14 @@ void QQuickWebEngineViewPrivate::showColorDialog(QSharedPointer<ColorChooserCont
 void QQuickWebEngineViewPrivate::runFileChooser(QSharedPointer<FilePickerController> controller)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineFileDialogRequest *request = new QQuickWebEngineFileDialogRequest(controller);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->fileDialogRequested(request);
     if (!request->isAccepted())
         ui()->showFilePicker(controller);
@@ -802,60 +832,17 @@ void QQuickWebEngineViewPrivate::javaScriptConsoleMessage(JavaScriptConsoleMessa
 void QQuickWebEngineViewPrivate::authenticationRequired(QSharedPointer<AuthenticationDialogController> controller)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineAuthenticationDialogRequest *request = new QQuickWebEngineAuthenticationDialogRequest(controller);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->authenticationDialogRequested(request);
     if (!request->isAccepted())
         ui()->showDialog(controller);
-}
-
-void QQuickWebEngineViewPrivate::runMediaAccessPermissionRequest(const QUrl &securityOrigin, WebContentsAdapterClient::MediaRequestFlags requestFlags)
-{
-    Q_Q(QQuickWebEngineView);
-    if (!requestFlags)
-        return;
-    QWebEnginePermission::PermissionType permissionType;
-    if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture) && requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaAudioVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaAudioCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopAudioCapture) &&
-             requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::DesktopAudioVideoCapture;
-    else // if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::DesktopVideoCapture;
-    Q_EMIT q->permissionRequested(createFeaturePermissionObject(securityOrigin, permissionType));
-
-#if QT_DEPRECATED_SINCE(6, 8)
-    QT_WARNING_PUSH
-    QT_WARNING_DISABLE_DEPRECATED
-    QQuickWebEngineView::Feature deprecatedFeature;
-
-    if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        deprecatedFeature = QQuickWebEngineView::MediaAudioVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture))
-        deprecatedFeature = QQuickWebEngineView::MediaAudioCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        deprecatedFeature = QQuickWebEngineView::MediaVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        deprecatedFeature = QQuickWebEngineView::DesktopAudioVideoCapture;
-    else // if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        deprecatedFeature = QQuickWebEngineView::DesktopVideoCapture;
-
-    Q_EMIT q->featurePermissionRequested(securityOrigin, deprecatedFeature);
-    QT_WARNING_POP
-#endif // QT_DEPRECATED_SINCE(6, 8)
-}
-
-void QQuickWebEngineViewPrivate::runMouseLockPermissionRequest(const QUrl &securityOrigin)
-{
-    // TODO: Add mouse lock support
-    adapter->grantMouseLockPermission(securityOrigin, false);
 }
 
 void QQuickWebEngineViewPrivate::runRegisterProtocolHandlerRequest(QWebEngineRegisterProtocolHandlerRequest request)
@@ -879,6 +866,7 @@ QObject *QQuickWebEngineViewPrivate::accessibilityParentObject()
 
 ProfileAdapter *QQuickWebEngineViewPrivate::profileAdapter()
 {
+    initializeProfile();
     return m_profile->d_ptr->profileAdapter();
 }
 
@@ -899,7 +887,7 @@ void QQuickWebEngineViewPrivate::printRequestedByFrame(quint64 frameId)
 {
     Q_Q(QQuickWebEngineView);
     QTimer::singleShot(0, q, [this, q, frameId]() {
-        Q_EMIT q->printRequestedByFrame(QWebEngineFrame(this->adapter, frameId));
+        Q_EMIT q->printRequestedByFrame(QQuickWebEngineFrame(this->adapter, frameId));
     });
 }
 
@@ -1201,16 +1189,12 @@ void QQuickWebEngineViewPrivate::updateEditActions()
 
 QQuickWebEngineScriptCollection *QQuickWebEngineViewPrivate::getUserScripts()
 {
-    Q_Q(QQuickWebEngineView);
     if (!m_scriptCollection)
         m_scriptCollection.reset(
             new QQuickWebEngineScriptCollection(
-                new QQuickWebEngineScriptCollectionPrivate(
+                new QWebEngineScriptCollection(
                     new QWebEngineScriptCollectionPrivate(
                         profileAdapter()->userResourceController(), adapter))));
-
-    if (!m_scriptCollection->qmlEngine())
-        m_scriptCollection->setQmlEngine(qmlEngine(q));
 
     return m_scriptCollection.data();
 }
@@ -1364,10 +1348,10 @@ bool QQuickWebEngineView::activeFocusOnPress() const
 
 void QQuickWebEngineViewPrivate::runJavaScript(
         const QString &script, quint32 worldId, quint64 frameId,
-        const std::function<void(const QVariant &)> &callback)
+        QtPrivate::SlotObjUniquePtr callback)
 {
     ensureContentsAdapter();
-    adapter->runJavaScript(script, worldId, frameId, callback);
+    adapter->runJavaScript(script, worldId, frameId, std::move(callback));
 }
 
 void QQuickWebEngineViewPrivate::printToPdf(const QString &filePath, const QPageLayout &layout,
@@ -1377,11 +1361,11 @@ void QQuickWebEngineViewPrivate::printToPdf(const QString &filePath, const QPage
 }
 
 void QQuickWebEngineViewPrivate::printToPdf(
-        std::function<void(QSharedPointer<QByteArray>)> &&callback, const QPageLayout &layout,
+        QtPrivate::SlotObjUniquePtr callback, const QPageLayout &layout,
         const QPageRanges &ranges, quint64 frameId)
 {
     adapter->printToPDFCallbackResult(std::move(callback), layout, ranges, /*colorMode*/ true,
-                                      /*useCustomMargins*/ true, frameId);
+                                      frameId);
 }
 
 void QQuickWebEngineViewPrivate::didPrintPageToPdf(const QString &filePath, bool success)
@@ -1437,9 +1421,14 @@ bool QQuickWebEngineViewPrivate::isEnabled() const
 void QQuickWebEngineViewPrivate::setToolTip(const QString &toolTipText)
 {
     Q_Q(QQuickWebEngineView);
+
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     QQuickWebEngineTooltipRequest *request = new QQuickWebEngineTooltipRequest(toolTipText, q);
     // mark the object for gc by creating temporary jsvalue
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->tooltipRequested(request);
     if (!request->isAccepted())
         ui()->showToolTip(toolTipText);
@@ -1450,8 +1439,9 @@ QQuickWebEngineViewPrivate::createTouchHandleDelegate(const QMap<int, QImage> &i
 {
     Q_Q(QQuickWebEngineView);
     // lifecycle managed by Chromium's TouchHandleDrawable
-    QQuickWebEngineTouchHandle *handle = new QQuickWebEngineTouchHandle();
+    QQuickWebEngineTouchHandle *handle(nullptr);
     if (m_touchHandleDelegate) {
+        handle = new QQuickWebEngineTouchHandle();
         QQmlContext *qmlContext = QQmlEngine::contextForObject(q);
         QQmlContext *context = new QQmlContext(qmlContext, handle);
         context->setContextObject(handle);
@@ -1462,7 +1452,9 @@ QQuickWebEngineViewPrivate::createTouchHandleDelegate(const QMap<int, QImage> &i
         handle->setItem(item, false);
     } else {
         QQuickItem *item = ui()->createTouchHandle();
-        Q_ASSERT(item);
+        if (!item) {
+            return nullptr;
+        }
         QQmlEngine *engine = qmlEngine(item);
         Q_ASSERT(engine);
         QQuickWebEngineTouchHandleProvider *touchHandleProvider =
@@ -1470,6 +1462,7 @@ QQuickWebEngineViewPrivate::createTouchHandleDelegate(const QMap<int, QImage> &i
                         engine->imageProvider(QQuickWebEngineTouchHandleProvider::identifier()));
         Q_ASSERT(touchHandleProvider);
         touchHandleProvider->init(images);
+        handle = new QQuickWebEngineTouchHandle();
         handle->setItem(item, true);
     }
     return handle;
@@ -1480,13 +1473,17 @@ void QQuickWebEngineViewPrivate::showTouchSelectionMenu(QtWebEngineCore::TouchSe
     Q_UNUSED(handleSize);
     Q_Q(QQuickWebEngineView);
 
+    QQmlEngine *engine = qmlEngine(q);
+    if (!engine)
+        return;
+
     const int kSpacingBetweenButtons = 2;
     const int kMenuButtonMinWidth = 63;
     const int kMenuButtonMinHeight = 38;
 
     QQuickWebEngineTouchSelectionMenuRequest *request = new QQuickWebEngineTouchSelectionMenuRequest(
                 selectionBounds, menuController);
-    qmlEngine(q)->newQObject(request);
+    engine->newQObject(request);
     Q_EMIT q->touchSelectionMenuRequested(request);
 
     if (request->isAccepted()) {
@@ -1519,12 +1516,6 @@ void QQuickWebEngineViewPrivate::showWebAuthDialog(QWebEngineWebAuthUxRequest *r
     Q_EMIT q->webAuthUxRequested(request);
 }
 
-QWebEnginePermission QQuickWebEngineViewPrivate::createFeaturePermissionObject(const QUrl &securityOrigin, QWebEnginePermission::PermissionType permissionType)
-{
-    auto *returnPrivate = new QWebEnginePermissionPrivate(securityOrigin, permissionType, adapter, profileAdapter());
-    return QWebEnginePermission(returnPrivate);
-}
-
 bool QQuickWebEngineView::isLoading() const
 {
     Q_D(const QQuickWebEngineView);
@@ -1555,23 +1546,47 @@ bool QQuickWebEngineView::canGoForward() const
     return d->adapter->canGoForward();
 }
 
+void QQuickWebEngineView::runJavaScript(const QString &script, QtPrivate::QSlotObjectBase *resultCallback)
+{
+    Q_D(QQuickWebEngineView);
+    if (resultCallback) {
+        QtPrivate::SlotObjUniquePtr callback(resultCallback);
+        d->runJavaScript(script, QWebEngineScript::MainWorld, WebContentsAdapter::kUseMainFrameId, std::move(callback));
+    } else {
+        d->runJavaScript(script, QWebEngineScript::MainWorld, WebContentsAdapter::kUseMainFrameId, nullptr);
+    }
+}
+
+void QQuickWebEngineView::runJavaScript(const QString &script, const std::function<void(const QVariant &)> &resultCallback)
+{
+    Q_D(QQuickWebEngineView);
+    if (resultCallback) {
+        QtPrivate::SlotObjUniquePtr callback(QtPrivate::makeCallableObject<void(*)(const QVariant &)>(resultCallback));
+        d->runJavaScript(script, QWebEngineScript::MainWorld, WebContentsAdapter::kUseMainFrameId, std::move(callback));
+    } else {
+        d->runJavaScript(script, QWebEngineScript::MainWorld, WebContentsAdapter::kUseMainFrameId, nullptr);
+    }
+}
+
 void QQuickWebEngineView::runJavaScript(const QString &script, const QJSValue &callback)
 {
     runJavaScript(script, QWebEngineScript::MainWorld, callback);
 }
 
-void QQuickWebEngineView::runJavaScript(const QString &script, quint32 worldId, const QJSValue &callback)
+void QQuickWebEngineView::runJavaScript(const QString &script, quint32 worldId, const QJSValue &resultCallback)
 {
     Q_D(QQuickWebEngineView);
-    std::function<void(const QVariant &)> wrappedCallback;
-    if (!callback.isUndefined()) {
-        wrappedCallback = [this, callback](const QVariant &result) {
+    if (!resultCallback.isUndefined()) {
+        auto wrappedCallback = [this, resultCallback](const QVariant &result) {
             QJSValueList args;
             args.append(qmlEngine(this)->toScriptValue(result));
-            callback.call(args);
+            resultCallback.call(args);
         };
+        QtPrivate::SlotObjUniquePtr callback(QtPrivate::makeCallableObject<void(*)(const QVariant &)>(std::move(wrappedCallback)));
+        d->runJavaScript(script, worldId, WebContentsAdapter::kUseMainFrameId, std::move(callback));
+    } else {
+        d->runJavaScript(script, worldId, WebContentsAdapter::kUseMainFrameId, nullptr);
     }
-    d->runJavaScript(script, worldId, WebContentsAdapter::kUseMainFrameId, wrappedCallback);
 }
 
 qreal QQuickWebEngineView::zoomFactor() const
@@ -1663,17 +1678,18 @@ void QQuickWebEngineView::printToPdf(const QJSValue &callback, PrintedPageSizeId
     QPageLayout pageLayout(layoutSize, layoutOrientation, QMarginsF(0.0, 0.0, 0.0, 0.0));
     QPageRanges ranges;
 
-    if (callback.isUndefined())
+    if (!callback.isCallable())
         return;
 
     d->ensureContentsAdapter();
-    std::function wrappedCallback = [this, callback](QSharedPointer<QByteArray> result) {
+    std::function wrappedCallback = [this, callback](std::shared_ptr<QByteArray> result) {
         QJSValueList args;
         args.append(qmlEngine(this)->toScriptValue(*result));
         callback.call(args);
     };
-
-    d->printToPdf(std::move(wrappedCallback), pageLayout, ranges,
+    QtPrivate::SlotObjUniquePtr slotCallback(
+            QtPrivate::makeCallableObject<void(*)(std::shared_ptr<QByteArray>)>(std::move(wrappedCallback)));
+    d->printToPdf(std::move(slotCallback), pageLayout, ranges,
                   WebContentsAdapter::kUseMainFrameId);
 #else
     Q_UNUSED(pageSizeId);
@@ -1681,7 +1697,7 @@ void QQuickWebEngineView::printToPdf(const QJSValue &callback, PrintedPageSizeId
 
     // Call back with null result.
     QJSValueList args;
-    args.append(QJSValue(QByteArray().data()));
+    args.append(QJSValue(QLatin1String("")));
     QJSValue callbackCopy = callback;
     callbackCopy.call(args);
 #endif
@@ -1781,6 +1797,7 @@ void QQuickWebEngineView::setInspectedView(QQuickWebEngineView *view)
     if (oldView)
         oldView->setDevToolsView(nullptr);
     d->inspectedView = view;
+    d->ensureContentsAdapter();
     if (view)
         view->setDevToolsView(this);
     Q_EMIT inspectedViewChanged();
@@ -1898,19 +1915,47 @@ void QQuickWebEngineView::geometryChange(const QRectF &newGeometry, const QRectF
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     Q_D(QQuickWebEngineView);
-    if (d->delegateItem)
+    if (d->delegateItem) {
         d->delegateItem->setSize(newGeometry.size());
+        // this handles notifications of local offset changes
+        d->delegateItem->polish();
+    }
 }
 
 void QQuickWebEngineView::itemChange(ItemChange change, const ItemChangeData &value)
 {
-    Q_D(QQuickWebEngineView);
-    if (d && d->profileInitialized() && d->adapter->isInitialized()
+    QQuickItem::itemChange(change, value);
+    if (!d_ptr) // see releaseProfile()
+        return;
+    if (d_ptr->profileInitialized() && d_ptr->adapter->isInitialized()
             && (change == ItemSceneChange || change == ItemVisibleHasChanged)) {
         if (window())
-            d->adapter->setVisible(isVisible());
+            d_ptr->adapter->setVisible(isVisible());
     }
-    QQuickItem::itemChange(change, value);
+    if (change == ItemParentHasChanged) {
+        // track global offset changes
+        QQuickItem *item = value.item;
+        // detach
+        while (item) {
+            disconnect(item, nullptr, this, nullptr);
+            item = item->parentItem();
+        }
+        // attach
+        item = parentItem();
+        while (item) {
+            connect(item, &QQuickItem::xChanged, this, [this]() {
+                if (d_ptr && d_ptr->delegateItem)
+                    d_ptr->delegateItem->polish();
+            });
+            connect(item, &QQuickItem::yChanged, this, [this]() {
+                if (d_ptr && d_ptr->delegateItem)
+                    d_ptr->delegateItem->polish();
+            });
+            item = item->parentItem();
+        }
+        if (d_ptr->delegateItem)
+            d_ptr->delegateItem->polish();
+    }
 }
 
 void QQuickWebEngineView::acceptAsNewWindow(QWebEngineNewWindowRequest *request)
@@ -2595,17 +2640,17 @@ QQmlComponent *QQuickWebEngineView::touchHandleDelegate() const
     return d_ptr->m_touchHandleDelegate;
 }
 
-QWebEngineFrame QQuickWebEngineView::mainFrame()
+QQuickWebEngineFrame QQuickWebEngineView::mainFrame()
 {
     Q_D(QQuickWebEngineView);
-    return QWebEngineFrame(d->adapter, d->adapter->mainFrameId());
+    return QQuickWebEngineFrame(d->adapter, d->adapter->mainFrameId());
 }
 
-QWebEngineFrame QQuickWebEngineView::findFrameByName(const QString &name)
+QQuickWebEngineFrame QQuickWebEngineView::findFrameByName(const QString &name)
 {
     Q_D(QQuickWebEngineView);
     auto maybeId = d->adapter->findFrameIdByName(name);
-    return QWebEngineFrame(d->adapter, maybeId.value_or(WebContentsAdapter::kInvalidFrameId));
+    return QQuickWebEngineFrame(d->adapter, maybeId.value_or(WebContentsAdapter::kInvalidFrameId));
 }
 
 void QQuickWebEngineView::save(const QString &filePath,

@@ -29,7 +29,6 @@
 #define SRC_DAWN_COMMON_ITYP_VECTOR_H_
 
 #include <limits>
-#include <type_traits>
 #include <vector>
 
 #include "dawn/common/TypedInteger.h"
@@ -43,6 +42,8 @@ template <typename Index, typename Value>
 class vector : public std::vector<Value> {
     using I = UnderlyingType<Index>;
     using Base = std::vector<Value>;
+    using Reference = std::vector<Value>::reference;
+    using ConstReference = std::vector<Value>::const_reference;
 
   private:
     // Disallow access to base constructors and untyped index/size-related operators.
@@ -77,23 +78,19 @@ class vector : public std::vector<Value> {
         return *this;
     }
 
-    Value& operator[](Index i) {
-        DAWN_ASSERT(i >= Index(0) && i < size());
+    Reference operator[](Index i) {
         return Base::operator[](static_cast<I>(i));
     }
 
-    constexpr const Value& operator[](Index i) const {
-        DAWN_ASSERT(i >= Index(0) && i < size());
+    constexpr ConstReference operator[](Index i) const {
         return Base::operator[](static_cast<I>(i));
     }
 
-    Value& at(Index i) {
-        DAWN_ASSERT(i >= Index(0) && i < size());
+    Reference at(Index i) {
         return Base::at(static_cast<I>(i));
     }
 
-    constexpr const Value& at(Index i) const {
-        DAWN_ASSERT(i >= Index(0) && i < size());
+    constexpr ConstReference at(Index i) const {
         return Base::at(static_cast<I>(i));
     }
 

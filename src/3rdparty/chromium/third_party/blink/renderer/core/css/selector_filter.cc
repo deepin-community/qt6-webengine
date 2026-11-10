@@ -42,7 +42,7 @@ namespace {
 
 // Salt to separate otherwise identical string hashes so a class-selector like
 // .article won't match <article> elements.
-enum { kTagNameSalt = 13, kIdSalt = 17, kClassSalt = 19, kAttributeSalt = 23 };
+enum { kTagNameSalt = 1, kIdSalt = 3, kClassSalt = 5, kAttributeSalt = 7 };
 
 inline bool IsExcludedAttribute(const AtomicString& name) {
   return name == html_names::kClassAttr.LocalName() ||
@@ -59,10 +59,8 @@ inline void CollectElementIdentifierHashes(const Element& element,
   }
 
   if (element.IsStyledElement() && element.HasClass()) {
-    const SpaceSplitString& class_names = element.ClassNames();
-    wtf_size_t count = class_names.size();
-    for (wtf_size_t i = 0; i < count; ++i) {
-      func(class_names[i].Hash() * kClassSalt);
+    for (const AtomicString& class_name : element.ClassNames()) {
+      func(class_name.Hash() * kClassSalt);
     }
   }
   AttributeCollection attributes = element.AttributesWithoutUpdate();
@@ -83,12 +81,12 @@ void CollectDescendantCompoundSelectorIdentifierHashes(
     const CSSSelector* selector,
     CSSSelector::RelationType relation,
     const StyleScope* style_scope,
-    Vector<unsigned>& hashes);
+    Vector<uint16_t>& hashes);
 
 inline void CollectDescendantSelectorIdentifierHashes(
     const CSSSelector& selector,
     const StyleScope* style_scope,
-    Vector<unsigned>& hashes) {
+    Vector<uint16_t>& hashes) {
   switch (selector.Match()) {
     case CSSSelector::kId:
       if (!selector.Value().empty()) {
@@ -101,10 +99,7 @@ inline void CollectDescendantSelectorIdentifierHashes(
       }
       break;
     case CSSSelector::kTag:
-      if (selector.TagQName().LocalName() !=
-          CSSSelector::UniversalSelectorAtom()) {
-        hashes.push_back(selector.TagQName().LocalName().Hash() * kTagNameSalt);
-      }
+      hashes.push_back(selector.TagQName().LocalName().Hash() * kTagNameSalt);
       break;
     case CSSSelector::kAttributeExact:
     case CSSSelector::kAttributeSet:
@@ -161,7 +156,7 @@ void CollectDescendantCompoundSelectorIdentifierHashes(
     const CSSSelector* selector,
     CSSSelector::RelationType relation,
     const StyleScope* style_scope,
-    Vector<unsigned>& hashes) {
+    Vector<uint16_t>& hashes) {
   // Skip the rightmost compound. It is handled quickly by the rule hashes.
   bool skip_over_subselectors = true;
   for (const CSSSelector* current = selector; current;
@@ -169,7 +164,6 @@ void CollectDescendantCompoundSelectorIdentifierHashes(
     // Only collect identifiers that match ancestors.
     switch (relation) {
       case CSSSelector::kSubSelector:
-      case CSSSelector::kScopeActivation:
         if (!skip_over_subselectors) {
           CollectDescendantSelectorIdentifierHashes(*current, style_scope,
                                                     hashes);
@@ -193,38 +187,65 @@ void CollectDescendantCompoundSelectorIdentifierHashes(
       case CSSSelector::kRelativeDirectAdjacent:
       case CSSSelector::kRelativeIndirectAdjacent:
         NOTREACHED();
-        break;
     }
     relation = current->Relation();
   }
 }
 
-}  // namespace
+void CollectSubjectIdentifierHashes(const CSSSelector* selector,
+                                    Element::TinyBloomFilter& subject_filter) {
+  for (const CSSSelector* current = selector; current;
+       current = current->NextSimpleSelector()) {
+    switch (current->Match()) {
+      case CSSSelector::kClass:
+        if (!current->Value().empty()) {
+          subject_filter |= Element::FilterForString(current->Value());
+        }
+        break;
+      case CSSSelector::kAttributeExact:
+      case CSSSelector::kAttributeSet:
+      case CSSSelector::kAttributeList:
+      case CSSSelector::kAttributeContain:
+      case CSSSelector::kAttributeBegin:
+      case CSSSelector::kAttributeEnd:
+      case CSSSelector::kAttributeHyphen: {
+        auto attribute_name = current->Attribute().LocalName();
+        if (IsExcludedAttribute(attribute_name)) {
+          break;
+        }
+        subject_filter |= Element::FilterForAttribute(current->Attribute());
+        break;
+      }
+      case CSSSelector::kPseudoClass:
+        switch (current->GetPseudoType()) {
+          case CSSSelector::kPseudoIs:
+          case CSSSelector::kPseudoWhere:
+          case CSSSelector::kPseudoParent: {
+            // If we have a one-element :is(), :where() or &, treat
+            // as if the given list was written out as a normal subject.
+            const CSSSelector* selector_list = current->SelectorListOrParent();
+            if (selector_list &&
+                CSSSelectorList::Next(*selector_list) == nullptr) {
+              CollectSubjectIdentifierHashes(selector_list, subject_filter);
+            }
+            break;
+          }
+          default:
+            break;
+        }
+        break;
+      default:
+        break;
+    }
 
-void SelectorFilter::PushParentStackFrame(Element& parent) {
-  DCHECK(ancestor_identifier_filter_);
-  parent_stack_.push_back(parent);
-  // Mix tags, class names and ids into some sort of weird bouillabaisse.
-  // The filter is used for fast rejection of child and descendant selectors.
-  CollectElementIdentifierHashes(parent, [this](unsigned hash) {
-    ancestor_identifier_filter_->Add(hash);
-  });
-}
-
-void SelectorFilter::PopParentStackFrame() {
-  DCHECK(!parent_stack_.empty());
-  DCHECK(ancestor_identifier_filter_);
-  CollectElementIdentifierHashes(*parent_stack_.back(), [this](unsigned hash) {
-    ancestor_identifier_filter_->Remove(hash);
-  });
-  parent_stack_.pop_back();
-  if (parent_stack_.empty()) {
-#if DCHECK_IS_ON()
-    DCHECK(ancestor_identifier_filter_->LikelyEmpty());
-#endif
-    ancestor_identifier_filter_.reset();
+    // Don't look past the subject.
+    if (current->Relation() != CSSSelector::kSubSelector) {
+      break;
+    }
   }
 }
+
+}  // namespace
 
 void SelectorFilter::PushAllParentsOf(TreeScope& tree_scope) {
   PushAncestors(tree_scope.RootNode());
@@ -239,17 +260,11 @@ void SelectorFilter::PushAncestors(const Node& node) {
 }
 
 void SelectorFilter::PushParent(Element& parent) {
+#if DCHECK_IS_ON()
   if (parent_stack_.empty()) {
     DCHECK_EQ(parent, parent.GetDocument().documentElement());
-    DCHECK(!ancestor_identifier_filter_);
-    ancestor_identifier_filter_ = std::make_unique<IdentifierFilter>();
-    PushParentStackFrame(parent);
-    return;
-  }
-  DCHECK(ancestor_identifier_filter_);
-#if DCHECK_IS_ON()
-  if (parent_stack_.back() != FlatTreeTraversal::ParentElement(parent) &&
-      parent_stack_.back() != parent.ParentOrShadowHostElement()) {
+  } else if (parent_stack_.back() != FlatTreeTraversal::ParentElement(parent) &&
+             parent_stack_.back() != parent.ParentOrShadowHostElement()) {
     LOG(DFATAL) << "Parent stack must be consistent; pushed " << parent
                 << " with parent " << parent.ParentOrShadowHostElement()
                 << " and flat-tree parent "
@@ -258,21 +273,28 @@ void SelectorFilter::PushParent(Element& parent) {
                 << ", which is neither";
   }
 #endif
-  PushParentStackFrame(parent);
-}
-
-void SelectorFilter::PopParent(Element& parent) {
-  DCHECK(ParentStackIsConsistent(&parent));
-  PopParentStackFrame();
+  parent_stack_.push_back(parent);
+  // Mix tags, class names and ids into some sort of weird bouillabaisse.
+  // The filter is used for fast rejection of child and descendant selectors.
+  CollectElementIdentifierHashes(parent, [this](unsigned hash) {
+    hash &= kFilterMask;
+    if (!ancestor_identifier_filter_.test(hash)) {
+      ancestor_identifier_filter_.set(hash);
+      set_bits_.push_back(hash);
+    }
+  });
 }
 
 void SelectorFilter::CollectIdentifierHashes(
     const CSSSelector& selector,
     const StyleScope* style_scope,
-    Vector<unsigned>& bloom_hash_backing) {
+    Vector<uint16_t>& bloom_hash_backing,
+    Element::TinyBloomFilter& subject_filter) {
   CollectDescendantCompoundSelectorIdentifierHashes(
       selector.NextSimpleSelector(), selector.Relation(), style_scope,
       bloom_hash_backing);
+  subject_filter = 0;
+  CollectSubjectIdentifierHashes(&selector, subject_filter);
 }
 
 void SelectorFilter::Trace(Visitor* visitor) const {

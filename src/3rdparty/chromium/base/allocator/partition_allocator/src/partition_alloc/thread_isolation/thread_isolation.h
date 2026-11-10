@@ -2,24 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "partition_alloc/partition_alloc_buildflags.h"
+#ifndef PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_
+#define PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#include "partition_alloc/buildflags.h"
+
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
 #include <cstddef>
 #include <cstdint>
 
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
 
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
 #include "partition_alloc/thread_isolation/pkey.h"
 #endif
 
-#if !BUILDFLAG(HAS_64_BIT_POINTERS)
+#if !PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 #error "thread isolation support requires 64 bit pointers"
 #endif
 
@@ -29,21 +33,21 @@ struct ThreadIsolationOption {
   constexpr ThreadIsolationOption() = default;
   explicit ThreadIsolationOption(bool enabled) : enabled(enabled) {}
 
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
   explicit ThreadIsolationOption(int pkey) : pkey(pkey) {
     enabled = pkey != internal::kInvalidPkey;
   }
   int pkey = -1;
-#endif  // BUILDFLAG(ENABLE_PKEYS)
+#endif  // PA_BUILDFLAG(ENABLE_PKEYS)
 
   bool enabled = false;
 
   bool operator==(const ThreadIsolationOption& other) const {
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
     if (pkey != other.pkey) {
       return false;
     }
-#endif  // BUILDFLAG(ENABLE_PKEYS)
+#endif  // PA_BUILDFLAG(ENABLE_PKEYS)
     return enabled == other.enabled;
   }
 };
@@ -52,19 +56,21 @@ struct ThreadIsolationOption {
 
 namespace partition_alloc::internal {
 
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
+    PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK)
 
 struct PA_THREAD_ISOLATED_ALIGN ThreadIsolationSettings {
   bool enabled = false;
-  static ThreadIsolationSettings settings PA_CONSTINIT;
+  PA_CONSTINIT static ThreadIsolationSettings settings;
 };
 
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
 
 using LiftThreadIsolationScope = LiftPkeyRestrictionsScope;
 
-#endif  // BUILDFLAG(ENABLE_PKEYS)
-#endif  // BUILDFLAG(PA_DCHECK_IS_ON)
+#endif  // PA_BUILDFLAG(ENABLE_PKEYS)
+#endif  // PA_BUILDFLAG(DCHECKS_ARE_ON) ||
+        // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK)
 
 void WriteProtectThreadIsolatedGlobals(ThreadIsolationOption thread_isolation);
 void UnprotectThreadIsolatedGlobals();
@@ -76,6 +82,6 @@ void UnprotectThreadIsolatedGlobals();
 
 }  // namespace partition_alloc::internal
 
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_
+#endif  // PARTITION_ALLOC_THREAD_ISOLATION_THREAD_ISOLATION_H_

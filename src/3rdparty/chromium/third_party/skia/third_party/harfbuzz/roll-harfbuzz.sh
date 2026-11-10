@@ -25,8 +25,14 @@ rolldeps() {
 
 rollbazel() {
   STEP="roll-bazel" &&
-  sed -i'' -e "s!commit = \"${HB_PREVIOUS_REV}\",!commit = \"${HB_NEXT_REV}\",!" bazel/deps.bzl &&
-  git add bazel/deps.bzl
+  sed -i'' -e "s!\"${HB_PREVIOUS_REV}\",!\"${HB_NEXT_REV}\",!" bazel/deps.json &&
+  git add bazel/deps.json
+}
+
+rolldepsgen() {
+  STEP="roll-depsgen" &&
+  sed -i'' -e "s!Version: \"${HB_PREVIOUS_REV}\",!Version: \"${HB_NEXT_REV}\",!" infra/bots/deps/deps_gen.go &&
+  git add infra/bots/deps/deps_gen.go
 }
 
 check_all_files_are_categorized() {
@@ -71,11 +77,17 @@ check_all_files_are_categorized() {
     done &&
 
     GN_SOURCE_DUPLICATES=$(sort ${HB_BUILD_DIR_REL}/BUILD.gn | uniq -d | grep -oE "\"\\\$_src/[^\"]+\"")
-    if [ ! -z ${GN_SOURCE_DUPLICATES} ]; then
+    if [ -n "${GN_SOURCE_DUPLICATES}" ]; then
       echo "Is listed more than once in BUILD.gn:" &&
       echo ${GN_SOURCE_DUPLICATES}
     fi
   )
+}
+
+update_bazel_patch() {
+  STEP="Update Bazel patch" &&
+  python3 tools/generate_patches.py "${HB_BUILD_DIR}/config-override.h" config-override.h > bazel/external/harfbuzz/config_files.patch &&
+  git add bazel/external/harfbuzz/config_files.patch
 }
 
 commit() {
@@ -94,6 +106,8 @@ previousrev &&
 nextrev &&
 rolldeps "$@" &&
 rollbazel &&
+rolldepsgen &&
 check_all_files_are_categorized &&
+update_bazel_patch &&
 commit &&
 true || { echo "Failed step ${STEP}"; exit 1; }

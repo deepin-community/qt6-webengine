@@ -10,21 +10,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
-#include <utility>
 
 #include "absl/strings/string_view.h"
 #include "quiche/quic/core/frames/quic_frame.h"
 #include "quiche/quic/core/quic_ack_listener_interface.h"
 #include "quiche/quic/core/quic_bandwidth.h"
-#include "quiche/quic/core/quic_constants.h"
-#include "quiche/quic/core/quic_error_codes.h"
+#include "quiche/quic/core/quic_connection_id.h"
+#include "quiche/quic/core/quic_packet_number.h"
 #include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_versions.h"
-#include "quiche/quic/platform/api/quic_export.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
+#include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/quiche_endian.h"
 
 namespace quic {
 
@@ -104,6 +105,11 @@ QUICHE_EXPORT size_t GetStartOfEncryptedData(
     QuicByteCount retry_token_length,
     quiche::QuicheVariableLengthIntegerLength length_length);
 
+// This struct is organized so that the first cacheline contains fields relevant
+// to short headers. Thus, for most packets only one line will be loaded into
+// the cache.
+// TODO(martinduke): Scrub the code to eliminate unnecessary access to cold
+// cachelines.
 struct QUICHE_EXPORT QuicPacketHeader {
   QuicPacketHeader();
   QuicPacketHeader(const QuicPacketHeader& other);
@@ -114,12 +120,21 @@ struct QUICHE_EXPORT QuicPacketHeader {
   QUICHE_EXPORT friend std::ostream& operator<<(std::ostream& os,
                                                 const QuicPacketHeader& header);
 
-  // Universal header. All QuicPacket headers will have a connection_id and
-  // public flags.
+  // Universal header. All QuicPacket headers will have a destination
+  // connection_id and type byte. This fits in one cacheline.
   QuicConnectionId destination_connection_id;
+  // Only valid if |has_possible_stateless_reset_token| is true.
+  // Stores last 16 bytes of a this packet, used to check whether this packet is
+  // a stateless reset packet on decryption failure.
+  StatelessResetToken possible_stateless_reset_token;
+  QuicPacketNumber packet_number;
+  QuicPacketNumberLength packet_number_length;
+  // Format of this header.
+  PacketHeaderFormat form;
+  uint8_t type_byte;
   QuicConnectionIdIncluded destination_connection_id_included;
-  QuicConnectionId source_connection_id;
   QuicConnectionIdIncluded source_connection_id_included;
+  // TODO(martinduke): Compress these into bitfields.
   // This is only used for Google QUIC.
   bool reset_flag;
   // For Google QUIC, version flag in packets from the server means version
@@ -128,37 +143,43 @@ struct QUICHE_EXPORT QuicPacketHeader {
   // Indicates whether |possible_stateless_reset_token| contains a valid value
   // parsed from the packet buffer. IETF QUIC only, always false for GQUIC.
   bool has_possible_stateless_reset_token;
-  QuicPacketNumberLength packet_number_length;
-  uint8_t type_byte;
+
+  // There are 8 bytes still available in the first cacheline.  Start with long
+  // header stuff.
+  // TODO(martinduke): Compress ParsedQuicVersion to 1 Byte.
   ParsedQuicVersion version;
-  // nonce contains an optional, 32-byte nonce value. If not included in the
-  // packet, |nonce| will be empty.
-  DiversificationNonce* nonce;
-  QuicPacketNumber packet_number;
-  // Format of this header.
-  PacketHeaderFormat form;
-  // Short packet type is reflected in packet_number_length.
-  QuicLongHeaderType long_packet_type;
-  // Only valid if |has_possible_stateless_reset_token| is true.
-  // Stores last 16 bytes of a this packet, used to check whether this packet is
-  // a stateless reset packet on decryption failure.
-  StatelessResetToken possible_stateless_reset_token;
-  // Length of the retry token length variable length integer field,
-  // carried only by v99 IETF Initial packets.
-  quiche::QuicheVariableLengthIntegerLength retry_token_length_length;
-  // Retry token, carried only by v99 IETF Initial packets.
-  absl::string_view retry_token;
-  // Length of the length variable length integer field,
-  // carried only by v99 IETF Initial, 0-RTT and Handshake packets.
-  quiche::QuicheVariableLengthIntegerLength length_length;
-  // Length of the packet number and payload, carried only by v99 IETF Initial,
+
+  // END FIRST CACHELINE
+
+  QuicConnectionId source_connection_id;
+  // Length of the packet number and payload, carried only by IETF Initial,
   // 0-RTT and Handshake packets. Also includes the length of the
   // diversification nonce in server to client 0-RTT packets.
   QuicByteCount remaining_packet_length;
+  // Retry token, carried only by v99 IETF Initial packets.
+  absl::string_view retry_token;
+  // nonce contains an optional, 32-byte nonce value. If not included in the
+  // packet, |nonce| will be empty.
+  DiversificationNonce* nonce;
+  // Short packet type is reflected in packet_number_length.
+  QuicLongHeaderType long_packet_type;
+  // TODO(martinduke): Compress these into bitfields.
+  // Length of the length variable length integer field,
+  // carried only by v99 IETF Initial, 0-RTT and Handshake packets.
+  quiche::QuicheVariableLengthIntegerLength length_length;
+  // Length of the retry token length variable length integer field,
+  // carried only by v99 IETF Initial packets.
+  quiche::QuicheVariableLengthIntegerLength retry_token_length_length;
+  // 64-bit compilers will add five bytes of padding here.
+  // END SECOND CACHELINE
 
   bool operator==(const QuicPacketHeader& other) const;
   bool operator!=(const QuicPacketHeader& other) const;
 };
+static_assert(offsetof(struct QuicPacketHeader, version) <= 64,
+              "all short header fields must fit in a single cacheline");
+static_assert(sizeof(QuicPacketHeader) <= 128,
+              "QuicPacketHeader is too large.");
 
 struct QUICHE_EXPORT QuicPublicResetPacket {
   QuicPublicResetPacket();
@@ -300,6 +321,11 @@ class QUICHE_EXPORT QuicReceivedPacket : public QuicEncryptedPacket {
                      bool owns_buffer, int ttl, bool ttl_valid,
                      char* packet_headers, size_t headers_length,
                      bool owns_header_buffer, QuicEcnCodepoint ecn_codepoint);
+  QuicReceivedPacket(const char* buffer, size_t length, QuicTime receipt_time,
+                     bool owns_buffer, int ttl, bool ttl_valid,
+                     char* packet_headers, size_t headers_length,
+                     bool owns_header_buffer, QuicEcnCodepoint ecn_codepoint,
+                     std::optional<uint8_t> tos, uint32_t ipv6_flow_label);
   ~QuicReceivedPacket();
   QuicReceivedPacket(const QuicReceivedPacket&) = delete;
   QuicReceivedPacket& operator=(const QuicReceivedPacket&) = delete;
@@ -319,14 +345,19 @@ class QUICHE_EXPORT QuicReceivedPacket : public QuicEncryptedPacket {
   // Length of packet headers.
   int headers_length() const { return headers_length_; }
 
+  QuicEcnCodepoint ecn_codepoint() const { return ecn_codepoint_; }
+
+  std::optional<uint8_t> tos() const { return tos_; }
+
+  // Returns the IPv6 flow label in host byte order if present, or 0 otherwise.
+  uint32_t ipv6_flow_label() const { return ipv6_flow_label_; }
+
   // By default, gtest prints the raw bytes of an object. The bool data
   // member (in the base class QuicData) causes this object to have padding
   // bytes, which causes the default gtest object printer to read
   // uninitialize memory. So we need to teach gtest how to print this object.
   QUICHE_EXPORT friend std::ostream& operator<<(std::ostream& os,
                                                 const QuicReceivedPacket& s);
-
-  QuicEcnCodepoint ecn_codepoint() const { return ecn_codepoint_; }
 
  private:
   friend class test::QuicReceivedPacketPeer;
@@ -339,7 +370,12 @@ class QUICHE_EXPORT QuicReceivedPacket : public QuicEncryptedPacket {
   int headers_length_;
   // Whether owns the buffer for packet headers.
   bool owns_header_buffer_;
+  // The contents of the TOS byte in the IP header.
+  std::optional<uint8_t> tos_;
+  // The ECN code point extracted from the TOS byte.
   QuicEcnCodepoint ecn_codepoint_;
+  // IPv6 flow label.
+  uint32_t ipv6_flow_label_;
 };
 
 // SerializedPacket contains information of a serialized(encrypted) packet.
@@ -449,6 +485,19 @@ struct QUICHE_EXPORT ReceivedPacketInfo {
   QuicConnectionId destination_connection_id;
   QuicConnectionId source_connection_id;
   std::optional<absl::string_view> retry_token;
+};
+
+// Information about a packet sent by the dispatcher.
+struct QUICHE_EXPORT DispatcherSentPacket {
+  // The packet number sent, in response to |received_packet_number|.
+  QuicPacketNumber packet_number;
+  // The packet number received.
+  QuicPacketNumber received_packet_number;
+  // The largest acked packet number in all received packets, including
+  // |received_packet_number|.
+  QuicPacketNumber largest_acked;
+  QuicTime sent_time = QuicTime::Zero();
+  QuicPacketLength bytes_sent = 0;
 };
 
 }  // namespace quic

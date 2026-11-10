@@ -8,42 +8,13 @@ lucicfg.check_version("1.30.9")
 LIBYUV_GIT = "https://chromium.googlesource.com/libyuv/libyuv"
 LIBYUV_GERRIT = "https://chromium-review.googlesource.com/libyuv/libyuv"
 
-GOMA_BACKEND_RBE_PROD = {
-    "server_host": "goma.chromium.org",
-    "use_luci_auth": True,
-}
-
-GOMA_BACKEND_RBE_ATS_PROD = {
-    "server_host": "goma.chromium.org",
-    "use_luci_auth": True,
-    "enable_ats": True,
-}
-
-# Disable ATS on Windows CQ/try.
-GOMA_BACKEND_RBE_NO_ATS_PROD = {
-    "server_host": "goma.chromium.org",
-    "use_luci_auth": True,
-    "enable_ats": False,
-}
-
-RECLIENT_CI = {
-    "instance": "rbe-webrtc-trusted",
-    "metrics_project": "chromium-reclient-metrics",
-}
-
-RECLIENT_CQ = {
-    "instance": "rbe-webrtc-untrusted",
-    "metrics_project": "chromium-reclient-metrics",
+RBE_PROJECT = {
+    "ci": "rbe-webrtc-trusted",
+    "try": "rbe-webrtc-untrusted",
 }
 
 # Use LUCI Scheduler BBv2 names and add Scheduler realms configs.
 lucicfg.enable_experiment("crbug.com/1182002")
-
-luci.builder.defaults.experiments.set(
-    {
-        "luci.recipes.use_python3": 100,
-    },
-)
 
 lucicfg.config(
     lint_checks = ["default"],
@@ -80,7 +51,7 @@ luci.project(
     ],
     bindings = [
         luci.binding(
-            roles = "role/swarming.taskTriggerer", # for LED tasks.
+            roles = "role/swarming.taskTriggerer",  # for LED tasks.
             groups = "project-libyuv-admins",
         ),
         luci.binding(
@@ -193,6 +164,32 @@ luci.cq_group(
 
 luci.bucket(
     name = "ci",
+    constraints = luci.bucket_constraints(
+        pools = ["luci.flex.ci"],
+    ),
+)
+luci.bucket(
+    name = "ci.shadow",
+    shadows = "ci",
+    constraints = luci.bucket_constraints(
+        pools = ["luci.flex.ci"],
+        service_accounts = [
+          "libyuv-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+        ],
+    ),
+    bindings = [
+        # For led permissions.
+        luci.binding(
+            roles = "role/buildbucket.creator",
+            groups = [
+                "chromium-led-users",
+                "mdb/chrome-build-access-sphinx",
+                "mdb/chrome-troopers",
+                "mdb/foundry-x-team",
+            ],
+        ),
+    ],
+    dynamic = True,
 )
 luci.bucket(
     name = "try",
@@ -202,6 +199,35 @@ luci.bucket(
             "service-account-cq",
         ]),
     ],
+    constraints = luci.bucket_constraints(
+        pools = ["luci.flex.try"],
+        service_accounts = [
+            "libyuv-try-builder@chops-service-accounts.iam.gserviceaccount.com",
+        ],
+    ),
+)
+luci.bucket(
+    name = "try.shadow",
+    shadows = "try",
+    constraints = luci.bucket_constraints(
+        pools = ["luci.flex.try"],
+        service_accounts = [
+            "libyuv-try-builder@chops-service-accounts.iam.gserviceaccount.com",
+        ],
+    ),
+    bindings = [
+        # For led permissions.
+        luci.binding(
+            roles = "role/buildbucket.creator",
+            groups = [
+                "chromium-led-users",
+                "mdb/chrome-build-access-sphinx",
+                "mdb/chrome-troopers",
+                "mdb/foundry-x-team",
+            ],
+        ),
+    ],
+    dynamic = True,
 )
 luci.bucket(
     name = "cron",
@@ -211,24 +237,11 @@ def get_os_dimensions(os):
     if os == "android":
         return {"device_type": "walleye"}
     if os == "ios" or os == "mac":
-        return {"os": "Mac-12", "cpu": "x86-64"}
+        return {"os": "Mac-15", "cpu": "arm64"}
     elif os == "win":
         return {"os": "Windows-10", "cores": "8", "cpu": "x86-64"}
     elif os == "linux":
-        return {"os": "Ubuntu-18.04", "cores": "8", "cpu": "x86-64"}
-    return {}
-
-def get_os_properties(os, try_builder = False):
-    if os == "android":
-        return {"$build/goma": GOMA_BACKEND_RBE_PROD}
-    elif os in ("ios", "mac"):
-        return {"$build/goma": GOMA_BACKEND_RBE_PROD}
-    elif os == "win" and try_builder:
-        return {"$build/goma": GOMA_BACKEND_RBE_NO_ATS_PROD}
-    elif os == "win":
-        return {"$build/goma": GOMA_BACKEND_RBE_ATS_PROD}
-    elif os == "linux":
-        return {"$build/goma": GOMA_BACKEND_RBE_ATS_PROD}
+        return {"os": "Ubuntu-24.04", "cores": "8", "cpu": "x86-64"}
     return {}
 
 def libyuv_ci_builder(name, dimensions, properties, triggered_by):
@@ -245,7 +258,6 @@ def libyuv_ci_builder(name, dimensions, properties, triggered_by):
         executable = luci.recipe(
             name = "libyuv/libyuv",
             cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
-            use_python3 = True,
         ),
     )
 
@@ -262,14 +274,24 @@ def libyuv_try_builder(name, dimensions, properties, recipe_name = "libyuv/libyu
         executable = luci.recipe(
             name = recipe_name,
             cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
-            use_python3 = True,
         ),
     )
 
+def get_build_properties(bucket):
+    rbe_project = RBE_PROJECT.get(bucket)
+    return {
+        "$build/siso": {
+            "project": rbe_project,
+            "configs": ["builder"],
+            "enable_cloud_profiler": True,
+            "enable_cloud_trace": True,
+            "enable_monitoring": True,
+        },
+    }
+
 def ci_builder(name, os, category, short_name = None):
     dimensions = get_os_dimensions(os)
-    properties = get_os_properties(os)
-    properties["$build/reclient"] = RECLIENT_CI
+    properties = get_build_properties("ci")
 
     dimensions["pool"] = "luci.flex.ci"
     properties["builder_group"] = "client.libyuv"
@@ -280,8 +302,7 @@ def ci_builder(name, os, category, short_name = None):
 
 def try_builder(name, os, experiment_percentage = None):
     dimensions = get_os_dimensions(os)
-    properties = get_os_properties(os, try_builder = True)
-    properties["$build/reclient"] = RECLIENT_CQ
+    properties = get_build_properties("try")
 
     dimensions["pool"] = "luci.flex.try"
     properties["builder_group"] = "tryserver.libyuv"
@@ -313,7 +334,6 @@ luci.builder(
     executable = luci.recipe(
         name = "libyuv/roll_deps",
         cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
-        use_python3 = True,
     ),
 )
 
@@ -360,7 +380,9 @@ try_builder("ios_arm64_rel", "ios")
 try_builder("linux", "linux")
 try_builder("linux_asan", "linux")
 try_builder("linux_gcc", "linux", experiment_percentage = 100)
-try_builder("linux_msan", "linux")
+
+# TODO(libyuv:388428508): Make linux_msan not experimental.
+try_builder("linux_msan", "linux", experiment_percentage = 100)
 try_builder("linux_rel", "linux")
 try_builder("linux_tsan2", "linux")
 try_builder("linux_ubsan", "linux")

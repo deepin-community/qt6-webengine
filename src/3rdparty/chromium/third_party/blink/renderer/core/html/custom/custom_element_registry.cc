@@ -27,8 +27,11 @@
 #include "third_party/blink/renderer/core/html/custom/custom_element_upgrade_sorter.h"
 #include "third_party/blink/renderer/core/html_element_type_helpers.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -40,8 +43,9 @@ void CollectUpgradeCandidateInNode(Node& root,
     if (root_element->GetCustomElementState() == CustomElementState::kUndefined)
       candidates.push_back(root_element);
     if (auto* shadow_root = root_element->GetShadowRoot()) {
-      if (shadow_root->GetType() != ShadowRootType::kUserAgent)
+      if (shadow_root->GetMode() != ShadowRootMode::kUserAgent) {
         CollectUpgradeCandidateInNode(*shadow_root, candidates);
+      }
     }
   }
   for (auto& element : Traversal<HTMLElement>::ChildrenOf(root))
@@ -56,7 +60,7 @@ bool ThrowIfInvalidName(const AtomicString& name,
     return false;
   exception_state.ThrowDOMException(
       DOMExceptionCode::kSyntaxError,
-      "\"" + name + "\" is not a valid custom element name");
+      StrCat({"\"", name, "\" is not a valid custom element name"}));
   return true;
 }
 
@@ -67,7 +71,7 @@ bool ThrowIfValidName(const AtomicString& name,
     return false;
   exception_state.ThrowDOMException(
       DOMExceptionCode::kNotSupportedError,
-      "\"" + name + "\" is a valid custom element name");
+      StrCat({"\"", name, "\" is a valid custom element name"}));
   return true;
 }
 
@@ -78,14 +82,24 @@ CustomElementRegistry* CustomElementRegistry::Create(
     ScriptState* script_state) {
   DCHECK(RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled());
   return MakeGarbageCollected<CustomElementRegistry>(
-      LocalDOMWindow::From(script_state));
+      LocalDOMWindow::From(script_state), script_state->World().GetWorldId());
 }
 
-CustomElementRegistry::CustomElementRegistry(const LocalDOMWindow* owner)
+CustomElementRegistry::CustomElementRegistry(const LocalDOMWindow* owner,
+                                             int32_t world_id)
     : element_definition_is_running_(false),
+      world_id_(world_id),
       owner_(owner),
       upgrade_candidates_(MakeGarbageCollected<UpgradeCandidateMap>()),
       associated_documents_(MakeGarbageCollected<AssociatedDocumentSet>()) {}
+
+Vector<AtomicString> CustomElementRegistry::DefinedNames() const {
+  Vector<AtomicString> names;
+  for (const auto& name : name_map_.Keys()) {
+    names.push_back(name);
+  }
+  return names;
+}
 
 void CustomElementRegistry::Trace(Visitor* visitor) const {
   visitor->Trace(constructor_map_);
@@ -95,6 +109,7 @@ void CustomElementRegistry::Trace(Visitor* visitor) const {
   visitor->Trace(when_defined_promise_map_);
   visitor->Trace(associated_documents_);
   ScriptWrappable::Trace(visitor);
+  ElementRareDataField::Trace(visitor);
 }
 
 CustomElementDefinition* CustomElementRegistry::define(
@@ -127,7 +142,8 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
   if (NameIsDefined(name)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "the name \"" + name + "\" has already been used with this registry");
+        StrCat({"the name \"", name,
+                "\" has already been used with this registry"}));
     return nullptr;
   }
 
@@ -154,7 +170,7 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
         HTMLElementType::kHTMLUnknownElement) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kNotSupportedError,
-          "\"" + extends + "\" is an HTMLUnknownElement");
+          StrCat({"\"", extends, "\" is an HTMLUnknownElement"}));
       return nullptr;
     }
     // 7.3. Set localName to extends
@@ -224,11 +240,11 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
   // 16: when-defined promise processing
   const auto& entry = when_defined_promise_map_.find(name);
   if (entry != when_defined_promise_map_.end()) {
-    ScriptPromiseResolver* resolver = entry->value;
+    auto* resolver = entry->value.Get();
     when_defined_promise_map_.erase(entry);
     // Resolve() may run synchronous JavaScript that invalidates iterators of
     // |when_defined_promise_map_|, so it must be called after erasing |entry|.
-    resolver->Resolve(definition->GetConstructorForScript());
+    resolver->Resolve(definition->GetV8CustomElementConstructor());
   }
 
   return definition;
@@ -269,7 +285,7 @@ CustomElementDefinition* CustomElementRegistry::DefinitionFor(
   if (!definition)
     definition = DefinitionForName(desc.GetName());
   // 4&5. ...and local name equal to localName, return that definition
-  if (definition && definition->Descriptor().LocalName() == desc.LocalName()) {
+  if (definition and definition->Descriptor().LocalName() == desc.LocalName()) {
     return definition;
   }
   // 6. Return null
@@ -328,22 +344,22 @@ void CustomElementRegistry::AddCandidate(Element& candidate) {
 }
 
 // https://html.spec.whatwg.org/C/#dom-customelementsregistry-whendefined
-ScriptPromise CustomElementRegistry::whenDefined(
+ScriptPromise<V8CustomElementConstructor> CustomElementRegistry::whenDefined(
     ScriptState* script_state,
     const AtomicString& name,
     ExceptionState& exception_state) {
   if (ThrowIfInvalidName(name, false, exception_state))
-    return ScriptPromise();
-  CustomElementDefinition* definition = DefinitionForName(name);
-  if (definition) {
-    return ScriptPromise::Cast(script_state,
-                               definition->GetConstructorForScript());
+    return EmptyPromise();
+  if (CustomElementDefinition* definition = DefinitionForName(name)) {
+    return ToResolvedPromise<V8CustomElementConstructor>(
+        script_state, definition->GetV8CustomElementConstructor());
   }
   const auto it = when_defined_promise_map_.find(name);
   if (it != when_defined_promise_map_.end())
     return it->value->Promise();
-  auto* new_resolver = MakeGarbageCollected<ScriptPromiseResolver>(
-      script_state, exception_state.GetContext());
+  auto* new_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<V8CustomElementConstructor>>(
+          script_state, exception_state.GetContext());
   when_defined_promise_map_.insert(name, new_resolver);
   return new_resolver->Promise();
 }
@@ -359,7 +375,7 @@ void CustomElementRegistry::CollectCandidates(
     if (!element || !desc.Matches(*element))
       continue;
     if (RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled()) {
-      if (CustomElement::Registry(*element) != this) {
+      if ((*element).customElementRegistry() != this) {
         // The element has been moved away from the original tree scope and no
         // longer uses this registry.
         continue;

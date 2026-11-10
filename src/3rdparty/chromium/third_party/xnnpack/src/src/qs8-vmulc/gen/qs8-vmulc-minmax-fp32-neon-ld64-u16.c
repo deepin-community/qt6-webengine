@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vmulc/neon.c.in
 //   Generator: tools/xngen
@@ -7,11 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_qs8_vmulc_minmax_fp32_ukernel__neon_ld64_u16(
@@ -19,7 +23,7 @@ void xnn_qs8_vmulc_minmax_fp32_ukernel__neon_ld64_u16(
     const int8_t* input_a,
     const int8_t* input_b,
     int8_t* output,
-    const union xnn_qs8_mul_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_mul_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
@@ -27,15 +31,15 @@ void xnn_qs8_vmulc_minmax_fp32_ukernel__neon_ld64_u16(
   assert(input_b != NULL);
   assert(output != NULL);
 
-  const int8x8_t va_zero_point = vld1_dup_s8(params->fp32_neon.a_zero_point);
-  const float32x4_t vscale = vld1q_dup_f32(&params->fp32_neon.scale);
-  const float32x4_t vmagic_bias = vld1q_dup_f32(&params->fp32_neon.magic_bias);
-  const int32x4_t vmagic_bias_less_output_zero_point = vld1q_dup_s32(&params->fp32_neon.magic_bias_less_output_zero_point);
-  const int8x16_t voutput_min = vld1q_dup_s8(&params->fp32_neon.output_min);
-  const int8x16_t voutput_max = vld1q_dup_s8(&params->fp32_neon.output_max);
+  const int8x8_t va_zero_point = vdup_n_s8(params->scalar.a_zero_point);
+  const float32x4_t vscale = vdupq_n_f32(params->scalar.scale);
+  const float32x4_t vmagic_bias = vdupq_n_f32(12582912.0f);
+  const int32x4_t vmagic_bias_less_output_zero_point = vdupq_n_s32(INT32_C(0x4B400000) - (int32_t) params->scalar.output_zero_point);
+  const int8x16_t voutput_min = vdupq_n_s8(params->scalar.output_min);
+  const int8x16_t voutput_max = vdupq_n_s8(params->scalar.output_max);
 
-  const int8x8_t vb = vld1_dup_s8(input_b);
-  const int8x8_t vb_zero_point = vld1_dup_s8(params->fp32_neon.b_zero_point);
+  const int8x8_t vb = vdup_n_s8(*input_b);
+  const int8x8_t vb_zero_point = vdup_n_s8(params->scalar.b_zero_point);
   const int16x8_t vxb = vsubl_s8(vb, vb_zero_point);
   for (; batch >= 16 * sizeof(int8_t); batch -= 16 * sizeof(int8_t)) {
     const int8x8_t va01234567 = vld1_s8(input_a); input_a += 8;

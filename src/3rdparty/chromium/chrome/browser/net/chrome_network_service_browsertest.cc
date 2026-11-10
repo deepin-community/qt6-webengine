@@ -86,9 +86,8 @@ class ChromeNetworkServiceBrowserTest
       public ::testing::WithParamInterface</*kNetworkServiceInProcess*/ bool> {
  public:
   ChromeNetworkServiceBrowserTest() {
-    bool in_process = GetParam();
     // Verify that cookie encryption works both in-process and out of process.
-    if (in_process) {
+    if (GetParam()) {
       content::ForceInProcessNetworkService();
     } else {
       content::ForceOutOfProcessNetworkService();
@@ -107,18 +106,12 @@ class ChromeNetworkServiceBrowserTest
     network::mojom::NetworkContextParamsPtr context_params =
         network::mojom::NetworkContextParams::New();
     context_params->enable_encrypted_cookies = enable_encrypted_cookies;
-#if BUILDFLAG(IS_WIN)
-    // On Windows, the ProfileNetworkContextService adds a cookie encryption
-    // manager when the feature is enabled. This test uses its own network
-    // context, so replicate that behavior here to ensure that this test
-    // represents production code as much as possible.
-    if (base::FeatureList::IsEnabled(
-            features::kUseOsCryptAsyncForCookieEncryption)) {
-      g_browser_process->system_network_context_manager()
-          ->AddCookieEncryptionManagerToNetworkContextParams(
-              context_params.get());
-    }
-#endif  // BUILDFLAG(IS_WIN)
+    // Mirrors behavior in
+    // ProfileNetworkContextService::ConfigureNetworkContextParamsInternal into
+    // this test.
+    g_browser_process->system_network_context_manager()
+        ->AddCookieEncryptionManagerToNetworkContextParams(
+            context_params.get());
     context_params->file_paths = network::mojom::NetworkContextFilePaths::New();
 
     // Network files for the test context need to differ from the ones created
@@ -141,7 +134,8 @@ class ChromeNetworkServiceBrowserTest
   }
 };
 
-IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, PRE_EncryptedCookies) {
+IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest,
+                       PRE_PRE_EncryptedCookies) {
   // These test is only valid if crypto is enabled on the platform.
   auto crypto_delegate = cookie_config::GetCookieCryptoDelegate();
   if (!crypto_delegate) {
@@ -167,55 +161,50 @@ IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, PRE_EncryptedCookies) {
   FlushCookies(cookie_manager.get());
 }
 
-IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, EncryptedCookies) {
-  // Now attempt to read the cookie with encryption disabled.
+IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, PRE_EncryptedCookies) {
+  // Now attempt to read the cookie with encryption still enabled.
   mojo::Remote<network::mojom::NetworkContext> context(
-      CreateNetworkContext(/*enable_encrypted_cookies=*/false));
+      CreateNetworkContext(/*enable_encrypted_cookies=*/true));
   mojo::Remote<network::mojom::CookieManager> cookie_manager;
   context->GetCookieManager(cookie_manager.BindNewPipeAndPassReceiver());
 
   net::CookieList cookies = GetCookies(cookie_manager.get());
   ASSERT_EQ(1u, cookies.size());
   EXPECT_EQ(kCookieName, cookies[0].Name());
-  EXPECT_EQ("", cookies[0].Value());
+  EXPECT_EQ(kCookieValue, cookies[0].Value());
 }
 
-INSTANTIATE_TEST_SUITE_P(InProcess,
-                         ChromeNetworkServiceBrowserTest,
-                         ::testing::Values(true));
+IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, EncryptedCookies) {
+  // Now attempt to read the cookie again, but this time with encryption
+  // disabled.
+  mojo::Remote<network::mojom::NetworkContext> context(
+      CreateNetworkContext(/*enable_encrypted_cookies=*/false));
+  mojo::Remote<network::mojom::CookieManager> cookie_manager;
+  context->GetCookieManager(cookie_manager.BindNewPipeAndPassReceiver());
 
-INSTANTIATE_TEST_SUITE_P(OutOfProcess,
+  net::CookieList cookies = GetCookies(cookie_manager.get());
+  ASSERT_TRUE(cookies.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(,
                          ChromeNetworkServiceBrowserTest,
-                         ::testing::Values(false));
+                         testing::Bool(),
+                         [](const auto& info) {
+                           return info.param ? "InProcess" : "OutOfProcess";
+                         });
 
 #if BUILDFLAG(IS_WIN)
-class ChromeNetworkServiceBrowserCookieLockTest
-    : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<bool> {
+class ChromeNetworkServiceBrowserCookieLockTest : public InProcessBrowserTest {
  public:
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(
-        features::kLockProfileCookieDatabase, ShouldBeLocked());
-
-    InProcessBrowserTest::SetUp();
-  }
-
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
   }
-
- protected:
-  const bool& ShouldBeLocked() { return GetParam(); }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// This test verifies that if the kLockProfileCookieDatabase feature is enabled,
-// then the cookie store cannot be opened once sqlite has an exclusive lock on
-// the file.
-IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserCookieLockTest,
+// This test verifies that the cookie store cannot be opened once sqlite has an
+// exclusive lock on the file.
+IN_PROC_BROWSER_TEST_F(ChromeNetworkServiceBrowserCookieLockTest,
                        CookiesAreLocked) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/title1.html")));
@@ -231,16 +220,9 @@ IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserCookieLockTest,
     base::File cookie_file(
         cookie_filename,
         base::File::Flags::FLAG_OPEN_ALWAYS | base::File::Flags::FLAG_READ);
-    EXPECT_EQ(ShouldBeLocked(), !cookie_file.IsValid());
+    EXPECT_FALSE(cookie_file.IsValid());
   }
 }
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ChromeNetworkServiceBrowserCookieLockTest,
-                         ::testing::Bool(),
-                         [](const auto& info) {
-                           return info.param ? "Locked" : "NotLocked";
-                         });
 
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -313,7 +295,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNetworkServiceMigrationBrowserTest,
   EXPECT_FALSE(
       base::FeatureList::IsEnabled(features::kTriggerNetworkDataMigration));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), embedded_test_server()->GetURL("/setcookie.html")));
+      browser(), embedded_test_server()->GetURL("/set_cookie_header.html")));
   ASSERT_NO_FATAL_FAILURE(VerifyCookiePresent());
   EXPECT_TRUE(base::PathExists(GetOldCookieLocation()));
   EXPECT_FALSE(base::PathExists(GetNewCookieLocation()));

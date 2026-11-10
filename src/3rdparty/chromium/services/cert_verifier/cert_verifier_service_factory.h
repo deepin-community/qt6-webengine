@@ -21,10 +21,13 @@
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/public/cpp/network_service_buildflags.h"
 #include "services/network/public/mojom/cert_verifier_service.mojom.h"
+#include "services/network/public/mojom/cert_verifier_service_updater.mojom.h"
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+#include <optional>
+
+#include "mojo/public/cpp/base/proto_wrapper.h"
 #include "net/cert/internal/trust_store_chrome.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #endif
 
 namespace cert_verifier {
@@ -65,16 +68,27 @@ class CertVerifierServiceFactoryImpl
   void UpdateCtLogList(std::vector<network::mojom::CTLogInfoPtr> log_list,
                        base::Time update_time,
                        UpdateCtLogListCallback callback) override;
+  void DisableCtEnforcement(DisableCtEnforcementCallback callback) override;
 #endif
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
-  void UpdateChromeRootStore(mojom::ChromeRootStorePtr new_root_store,
+  void UpdateChromeRootStore(mojo_base::ProtoWrapper new_root_store,
                              UpdateChromeRootStoreCallback callback) override;
+  // Will not return anchors that are not trusted for the current running
+  // version of Chrome.
   void GetChromeRootStoreInfo(GetChromeRootStoreInfoCallback callback) override;
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  void GetPlatformRootStoreInfo(
+      GetPlatformRootStoreInfoCallback callback) override;
+#endif
 #endif
 #if BUILDFLAG(CHROME_ROOT_STORE_OPTIONAL)
   void SetUseChromeRootStore(bool use_crs,
                              SetUseChromeRootStoreCallback callback) override;
 #endif
+  void UpdateNetworkTime(base::Time system_time,
+                         base::TimeTicks system_ticks,
+                         base::Time current_time) override;
 
   // Remove a CertVerifyService from needing updates to the Chrome Root Store.
   void RemoveService(internal::CertVerifierServiceImpl* service_impl);
@@ -83,7 +97,11 @@ class CertVerifierServiceFactoryImpl
     return proc_params_;
   }
 
+  base::WeakPtr<CertVerifierServiceFactoryImpl> GetWeakPtr();
+
  private:
+  void InitializeRootStoreDataIfNecessary();
+
   // Update all the `verifier_services_` with the current data.
   void UpdateVerifierServices();
 

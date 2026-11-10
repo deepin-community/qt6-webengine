@@ -7,7 +7,7 @@ option optimize_for = LITE_RUNTIME;
 
 // This file defines messages used for starting, stopping, and managing VMs.
 package vm_tools.concierge;
-option go_package = "chromiumos/system_api/vm_concierge_proto";
+option go_package = "go.chromium.org/chromiumos/system_api/vm_concierge_proto";
 
 import "arc/arc.proto";
 
@@ -29,20 +29,8 @@ import "arc/arc.proto";
 // TODO(crbug/1121046): This spec may be insufficient for DLC, consider
 // re-designing it.
 message VirtualMachineSpec {
-  // Path to the kernel that should be used for the VM.
-  string kernel = 1;
-
-  // Path to the disk image that should be used as the root file system for
-  // the VM.
-  string rootfs = 2;
-
-  // ID of a DLC package that contains the kernel and rootfs. If this field is
-  // set, the kernel() and rootfs() fields will be ignored when calculating the
-  // path to the VM's image files.
+  // ID of a DLC package that contains the kernel and rootfs.
   string dlc_id = 3;
-
-  // Optional path to the initrd that should be used for the VM.
-  string initrd = 4;
 
   // ID of a DLC package that contains the vm_tools.img for this vm. If empty
   // the vm_tools.img from the above dlc_id is used if available.
@@ -145,6 +133,10 @@ message VmInfo {
   // service providers (camera, CRAS, etc).
   string permission_token = 5;
 
+  // VmType is assumed to be no larger than 99 (e.g. in
+  // concierge::service.cc::GetDiskImageVmType), if VmType ever exceeds 99
+  // please fix assertion elsewhere.
+  // LINT.IfChange
   enum VmType {
     // Default value indicating an unknown or custom VM.
     UNKNOWN = 0;
@@ -155,19 +147,32 @@ message VmInfo {
     PLUGIN_VM = 3;
     BOREALIS = 4;
     BRUSCHETTA = 5;
+    BAGUETTE = 6;
   };
+  // LINT.ThenChange(/system_api/dbus/vm_applications/apps.proto)
 
   // What type of VM this is.
   VmType vm_type = 6;
 
   // Whether the VM is using storage ballooning.
   bool storage_ballooning = 7;
+
+  // Status of the VM.
+  VmStatus status = 8;
 }
 
 // Optional fields for network configuration.
 message NetworkOptions {
   // Toggles the IFF_VNET_HDR option for the TAP device.
   bool enable_vnet_hdr = 1;
+}
+
+message VirtualSwapConfig {
+  // Size of the virtual swap device in MiB.
+  uint32 size_mib = 1;
+  // The interval between swapping out virtual swap area to the host in
+  // milliseconds.
+  uint32 swap_interval_ms = 2;
 }
 
 // Information that must be included with every StartVm dbus message.
@@ -190,19 +195,6 @@ message StartVmRequest {
 
   // Enable Virtio GPU in the started Vm. It uses integrated GPU on the host.
   bool enable_gpu = 8;
-
-  // Provide a software-based virtual Trusted Platform Module to the VM. The TPM
-  // is backed by libtpm2's TPM simulator and does not interact with any
-  // physical TPM on the host device. TPM state does not persist across VM
-  // launches. In order for the VM to see the virtual TPM, the guest kernel must
-  // contain a virtio TPM driver.
-  bool software_tpm = 9 [deprecated = true];
-
-  // This flag is only respected in developer mode and offers two things -
-  // - It can treat a trusted VM as untrusted and run it on insecure host
-  // kernels.
-  // - It can run an untrusted VM on insecure host kernels.
-  bool run_as_untrusted = 10;
 
   // Enable audio capture in the started Vm.
   bool enable_audio_capture = 11;
@@ -234,9 +226,6 @@ message StartVmRequest {
 
   // Kernel cmdline parameters that will be passed to crosvm.
   repeated string kernel_params = 17;
-
-  // DEPRECATED: Vulkan is enabled when it's supported, and GPU is enabled.
-  bool enable_vulkan = 18 [deprecated = true];
 
   // Enable Big GL rendering for the started Vm (default is GLES).
   bool enable_big_gl = 19;
@@ -305,25 +294,9 @@ message StartPluginVmRequest {
   // Parameters to pass to the plugin process.
   repeated string params = 4;
 
-  // The IPv4 address to assign to the VM in network-byte order.  Must be in the
-  // 100.115.92.128/28 subnet and must not be already assigned to another VM.
-  // If unspecified, a /29 subnet will be dynamically allocated
-  // from 100.115.93.0/24.
-  // Note: this field will be deprecated.
-  fixed32 guest_ipv4_address = 5;
-
-  // The EUI-48 MAC address to assign to the host side of the ethernet interface
-  // to the VM. Must be exactly 6 bytes and must not be in use by another VM.
-  // Must have the locally administered bit (0x02) set and the multicast bit
-  // (0x01) unset.
-  // If empty, a random MAC address will be generated and assigned.
-  // Note: this field will be deprecated.
-  bytes host_mac_address = 6;
-
   // Indicates that a specific /29 subnet should be allocated from
   // 100.115.93.0/24 for use by this VM; and if it is not available, then the
   // request should fail.
-  // This field is only used if |guest_ipv4_address| is empty.
   // Valid values are 1 - 32, inclusive.
   uint32 subnet_index = 7;
 
@@ -396,15 +369,6 @@ message StartArcVmRequest {
   // Whether to lock guest memory (for the purpose of disabling host swap).
   bool lock_guest_memory = 18;
 
-  // Whether the keyboard shortcut helper integration feature is enabled.
-  bool enable_keyboard_shortcut_helper_integration = 21;
-
-  // Whether broadcast anr prenotify is enabled.
-  bool enable_broadcast_anr_prenotify = 25;
-
-  // Size of logd config in kBytes, -1 if disabled
-  int32 logd_config_size = 26 [deprecated = true];
-
   // Whether virtio blk data is enabled
   bool enable_virtio_blk_data = 27;
 
@@ -434,11 +398,6 @@ message StartArcVmRequest {
   // src/third_party/kernel/v5.10-arcvm/mm/vmscan.c
   int32 mglru_reclaim_swappiness = 36;
 
-  // Whether updating O4C (Optimized for Chromebook applications) list via A2C2
-  // (ARC Application Compatibility Configuration Delivery) is enabled (See
-  // go/a2c2 for project details.)
-  bool update_o4c_list_via_a2c2 = 37 [deprecated = true];
-
   enum UsapProfileType {
     // Default USAP profile suitable for all devices.
     USAP_PROFILE_DEFAULT = 0;
@@ -459,7 +418,7 @@ message StartArcVmRequest {
     BINARY_TRANSLATION_TYPE_NDK_TRANSLATION = 2;
   }
 
-  // Type of binary translation used in natvie bridge experiment
+  // Type of binary translation used in native bridge experiment
   BinaryTranslationType native_bridge_experiment = 39;
 
   enum UreadaheadMode {
@@ -470,10 +429,6 @@ message StartArcVmRequest {
 
   // Ureadahead mode used
   UreadaheadMode ureadahead_mode = 40;
-
-  // Whether rw is enabled
-  // Deprecated, rootfs_writable should be used instead
-  bool enable_rw = 41 [deprecated = true];
 
   // Controls whether WebView Zygote is lazily initialized in ARC.
   bool enable_web_view_zygote_lazy_init = 42;
@@ -493,6 +448,18 @@ message StartArcVmRequest {
   // Whether to enable the multiple-workers feature for the root disk
   // (/dev/block/vda).
   bool rootfs_multiple_workers = 47;
+
+  // Whether to use the GKI kernel.
+  bool use_gki = 48;
+
+  // Enable IO scheduler for the /data block device (/dev/block/vde).
+  bool enable_data_block_io_scheduler = 49;
+
+  // Configuration of the virtual swap device to be set up by crosvm.
+  VirtualSwapConfig virtual_swap_config = 50;
+
+  // Whether to enable virtio-pvclock in the guest.
+  bool enable_pvclock = 51;
 }
 
 enum VmStatus {
@@ -516,6 +483,9 @@ enum VmStatus {
 }
 
 // Information sent back by vm_concierge in response to a StartVm dbus message.
+// StartVmResponse is returned as early as the crosvm process is started, which
+// may not be ready for control. Wait for VmStartedSignal instead before making
+// DBus requests to control the VM.
 message StartVmResponse {
   // If true, the VM was started successfully.  |vm_info| will have non-default
   // values only if this is true.
@@ -540,7 +510,7 @@ message StartVmResponse {
     SUCCESS = 1;
 
     // The disk mount succeeded, but some data loss is
-    // likely. Currently this occurrs when the initial mount fails,
+    // likely. Currently this occurs when the initial mount fails,
     // but succeeds on a retry with -o usebackuproots.
     PARTIAL_DATA_LOSS = 2;
 
@@ -560,7 +530,32 @@ message StartVmResponse {
   bool free_bytes_has_value = 7;
 }
 
-// Message used in the signal for when a VM has started.
+// Message used to communicate install status for VM.
+message VmInstallStateSignal {
+  enum State {
+    UNKNOWN = 0;
+    IN_PROGRESS = 1;
+    FAILED = 2;
+    SUCCEEDED = 3;
+  }
+  State state = 1;
+  enum Step {
+    unknown = 0;
+    launcher_start = 1;
+    core_start = 2;
+    install_fetch_image = 3;
+    install_configure = 4;
+    install_done = 5;
+    install_success = 6;
+    install_failure = 7;
+  }
+  Step in_progress_step = 2;
+  int64 in_progress_percent = 3;
+  string failed_reason = 4;
+}
+
+// Message used in the signal for when a VM has started, and can be controlled
+// via DBus methods.
 message VmStartedSignal {
   // The name of the VM which has started.
   string name = 1;
@@ -574,6 +569,21 @@ message VmStartedSignal {
   // Status of the VM. If VM_STATUS_RUNNING, it is not necessary to wait for a
   // TremplinStartedSignal before starting a container in the VM.
   VmStatus status = 4;
+}
+
+// Message used in the signal for when a VM is about to start.
+message VmStartingUpSignal {
+  // The name of the VM which is starting.
+  string name = 1;
+
+  // The owner of the VM.
+  string owner_id = 2;
+
+  // Type of the VM which is starting.
+  VmInfo.VmType vm_type = 3;
+
+  // The virtual socket context id assigned to the VM that is starting.
+  int64 cid = 4;
 }
 
 enum GuestUserlandReady {
@@ -605,12 +615,13 @@ message StopVmRequest {
   string owner_id = 2;
 }
 
-// Response sent back by vm_concierge when it receives a StopVm dbus message.
-message StopVmResponse {
-  // If true, the requested VM was stopped.
+// Response sent back by vm_concierge when DBus RPC is simple.
+message SuccessFailureResponse {
+  // If true, what was requested with the DBus request was successful.
   bool success = 1;
 
-  // The failure_reason if the requested VM could not be stopped.
+  // The reason of failure in human readable English text form.
+  // TODO(b/380358552): Revisit this to be an enum or remove altogether.
   string failure_reason = 2;
 }
 
@@ -670,14 +681,6 @@ message SuspendVmRequest {
   string owner_id = 2;
 }
 
-message SuspendVmResponse {
-  // If true, the requested VM was suspended.
-  bool success = 1;
-
-  // The failure_reason if the requested VM could not be suspended.
-  string failure_reason = 2;
-}
-
 // Information that must be included with every ResumeVm dbus message.
 message ResumeVmRequest {
   // The name of the VM to be stopped.
@@ -685,14 +688,6 @@ message ResumeVmRequest {
 
   // The owner of the vm.
   string owner_id = 2;
-}
-
-message ResumeVmResponse {
-  // If true, the requested VM was suspended.
-  bool success = 1;
-
-  // The failure_reason if the requested VM could not be suspended.
-  string failure_reason = 2;
 }
 
 // Response to a SyncTimes RPC.
@@ -774,15 +769,6 @@ message ArcVmCompleteBootResponse {
 message SetBalloonTimerRequest {
   // The interval of the balloon timer in milliseconds.
   uint64 timer_interval_millis = 1;
-}
-
-// Response sent back by vm_concierge for a SetBalloonTimerRequest dbus message.
-message SetBalloonTimerResponse {
-  // If true, the request succeeded.
-  bool success = 1;
-
-  // The failure_reason if the request could not be processed.
-  string failure_reason = 2;
 }
 
 // The type of storage location for a disk image.
@@ -896,6 +882,11 @@ message CreateDiskImageRequest {
   // |disk_size| is unspecified or 0. DISK_ALLOCATION_TYPE_PREALLOCATE must be
   // combined with a non-zero |disk_size|.
   DiskImageAllocationType allocation_type = 12;
+
+  // Switch indicating that a zstd-compressed image has been passed as an FD,
+  // which will be decompressed and written as the disk image contents.
+  // Currently this is only used for baguette vm's.
+  bool copy_baguette_image = 13;
 }
 
 // Response to a CreateDiskImageRequest.
@@ -959,8 +950,9 @@ message ResizeDiskImageResponse {
 }
 
 // Request to concierge to export a disk image.
-// Must be accompanied by an FD, the contents of the image will be written to
-// the passed FD.
+// Must be accompanied by at least 1 FD, the contents of the image will be
+// written to the first passed FD.  Takes an optional second FD which takes the
+// sha256 digest.
 message ExportDiskImageRequest {
   // The cryptohome id for the user's encrypted storage.
   string cryptohome_id = 1;
@@ -1045,17 +1037,6 @@ message CancelDiskImageRequest {
   string command_uuid = 1;
 }
 
-// Response to CancelDiskImageRequest.
-message CancelDiskImageResponse {
-  // If true, the request was successfully canceled. The request will
-  // fail if it is unknown, or if it has already completed (successfully
-  // or unsuccessfully).
-  bool success = 1;
-
-  // The failure reason if the command could not be completed.
-  string failure_reason = 2;
-}
-
 // Request to list all VM disk images in the given storage area.
 message ListVmDisksRequest {
   // The cryptohome id for the user's encrypted storage.
@@ -1100,6 +1081,13 @@ message VmDiskInfo {
 
   // The available space on the disk, or 0 if unknown.
   uint64 available_space = 8;
+
+  // VM type of the disk image (mainly used to distinguish baguette and
+  // crostini).
+  VmInfo.VmType vm_type = 9;
+
+  // True if the disk image file has vm_type xattr and passed via vm_type.
+  bool has_vm_type = 10;
 }
 
 // Response to ListVmDisks {
@@ -1154,6 +1142,31 @@ message AttachUsbDeviceResponse {
   string reason = 3;
 }
 
+// Request to vm_concierge to attach a security key to a VM.
+message AttachKeyRequest {
+  // Name of the VM to attach the key to.
+  string vm_name = 1;
+
+  // The owner of the VM.
+  string owner_id = 2;
+
+  // String path to the hidraw device on the host.
+  string hidraw = 3;
+}
+
+// Response sent back by vm_concierge after it receives an
+// AttachKeyRequest call.
+message AttachKeyResponse {
+  // Was the key successfully attached?
+  bool success = 1;
+
+  // The USB port number that was allocated to the key on the guest.
+  uint32 guest_port = 2;
+
+  // The reason for the failure, if there was one.
+  string reason = 3;
+}
+
 // Request sent to remove a USB device from a VM.
 message DetachUsbDeviceRequest {
   // The name of the VM.
@@ -1165,16 +1178,6 @@ message DetachUsbDeviceRequest {
   // The USB port the device is attached to on the guest. This value
   // should fit in a uint8_t.
   uint32 guest_port = 3;
-}
-
-// Response sent back by vm_concierge after it receives a
-// DetachUsbDeviceRequest call.
-message DetachUsbDeviceResponse {
-  // Was the USB device successfully detached?
-  bool success = 1;
-
-  // The reason for the failure, if there was one.
-  string reason = 2;
 }
 
 // Request sent to get a list of all USB devices attached to a guest VM.
@@ -1249,16 +1252,6 @@ message DetachNetDeviceRequest {
   uint32 guest_bus = 3;
 }
 
-// Response sent back by vm_concierge after it receives a
-// DetachNetDeviceRequest call.
-message DetachNetDeviceResponse {
-  // Was the device successfully detached?
-  bool success = 1;
-
-  // The reason for failure, if success is false.
-  string failure_reason = 2;
-}
-
 // Response sent back by vm_concierge after it receives a GetDnsSettings call.
 // Also being broadcast via DnsSettingsChanged signal.
 message DnsSettings {
@@ -1321,15 +1314,6 @@ message AdjustVmRequest {
   repeated string params = 4;
 }
 
-// Response to an AdjustVmRequest.
-message AdjustVmResponse {
-  // If true, the adjustment was done.
-  bool success = 1;
-
-  // If the attempt to adjust VM failed, the reason for the failure.
-  string failure_reason = 2;
-};
-
 // Request to reclaim memory of a given VM.
 message ReclaimVmMemoryRequest {
   // An identifier for this VM.
@@ -1360,6 +1344,7 @@ message ListVmsRequest {
 }
 
 // Message used for listing VMs.
+// TODO(b/325620275): remove in favor of extending VmInfo directly.
 message ExtendedVmInfo {
   // The name of the VM which has started.
   string name = 1;
@@ -1407,16 +1392,7 @@ message AddGroupPermissionMesaRequest {
   string owner_id = 2;
 }
 
-message GetVmLaunchAllowedRequest {
-  // Request untrusted VM regardless of other arguments.
-  bool run_as_untrusted = 1;
-
-  // The VM disk image is considered trusted.
-  bool is_trusted_image = 2;
-
-  // The VM kernel is started with custom kernel parameters.
-  bool has_custom_kernel_params = 3;
-}
+message GetVmLaunchAllowedRequest {}
 
 message GetVmLaunchAllowedResponse {
   // Whether the launch would be allowed.
@@ -1475,15 +1451,6 @@ message SwapVmRequest {
   SwapOperation operation = 3;
 }
 
-// Response to an SwapVmRequest.
-message SwapVmResponse {
-  // If true, the swap state changing operation of the VM was success.
-  bool success = 1;
-
-  // If the attempt to change swap state failed, the reason for failure.
-  string failure_reason = 2;
-}
-
 // Message used in the signal for notify a VM experiencing vmm swap IN/OUT.
 message VmSwappingSignal {
   // The name of the VM.
@@ -1509,16 +1476,6 @@ message InstallPflashRequest {
   string owner_id = 2;
 }
 
-// The response of the |InstallPflashRequest|.
-message InstallPflashResponse {
-  // Whether the request succeeded or not.
-  bool success = 1;
-
-  // The reason for failure for not being able to install the Pflash. Only
-  // valid when |success| is false.
-  string failure_reason = 2;
-}
-
 // Request sent to vm_concierge to inflate balloon in a vm until perceptible
 // processes are tried to kill.
 message AggressiveBalloonRequest {
@@ -1530,15 +1487,6 @@ message AggressiveBalloonRequest {
 
   // Whether enable inflating aggressive balloon or not.
   bool enable = 3;
-}
-
-// Response to an AggressiveBalloonRequest.
-message AggressiveBalloonResponse {
-  // Whether inflating balloon succeeds or not.
-  bool success = 1;
-
-  // The reason for failure.
-  string failure_reason = 2;
 }
 
 // Request to get an open FD to the VM Memory Management kills server.
@@ -1556,4 +1504,79 @@ message GetVmMemoryManagementKillsConnectionResponse {
 
   // The reason for failure.
   string failure_reason = 2;
+}
+
+// Request sent to set up a new user within a VM.
+message SetUpVmUserRequest {
+  // Name of the target VM.
+  string vm_name = 1;
+
+  // The owner of the VM.
+  string owner_id = 2;
+
+  // The username for the new user.
+  string username = 3;
+
+  // Optional UID for the new user.
+  optional uint32 uid = 4;
+
+  // Optional groups for the new user.
+  repeated string group_names = 5;
+}
+
+// Response sent for a SetUpVmUser call.
+message SetUpVmUserResponse {
+  // Whether the user was successfully set up.
+  bool success = 1;
+
+  // The failure_reason if the user was not set up successfully.
+  string failure_reason = 2;
+
+  // If the uid specified in SetUpVmUserRequest already exists,
+  // this is the corresponding username. Otherwise, this is the
+  // username specified in SetUpVmUserRequest.
+  string username = 3;
+}
+
+// Fake battery set action
+enum FakePowerAction {
+  // VM starts reporting fake power status
+  SET = 0;
+  // VM stops reporting fake power status
+  CANCEL = 1;
+}
+
+// Request send to SET/CANCEL fake battery config
+message ModifyFakePowerConfigRequest {
+  // The name of the VM which has started.
+  string name = 1;
+
+  // The owner of the vm.
+  string owner_id = 2;
+
+  // Whether to set or cancel the fake power configuration
+  FakePowerAction action = 3;
+
+  // The maximum battery capacity bat device can report to guest. This field
+  // should only be set when the action is SET.
+  uint32 capacity_limit = 4;
+}
+
+// Request to mute/unmute vm audio
+message MuteVmAudioRequest {
+  // The name of the VM to be muted/unmuted.
+  string name = 1;
+
+  // The owner of the vm.
+  string owner_id = 2;
+
+  // Set to true to mute, and false to unmute.
+  bool muted = 3;
+}
+
+// Response containing the URL of the Baguette image to download. This is a
+// constant baked into the concierge binary.
+message GetBaguetteImageUrlResponse {
+  string url = 1;
+  string sha256 = 2;
 }

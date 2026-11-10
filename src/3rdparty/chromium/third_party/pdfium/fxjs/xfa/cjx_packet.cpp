@@ -7,15 +7,14 @@
 #include "fxjs/xfa/cjx_packet.h"
 
 #include <utility>
-#include <vector>
 
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/xml/cfx_xmldocument.h"
 #include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "core/fxcrt/xml/cfx_xmltext.h"
 #include "fxjs/cfx_v8.h"
 #include "fxjs/fxv8.h"
 #include "fxjs/js_resources.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/v8-primitive.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
 #include "xfa/fxfa/cxfa_ffnotify.h"
@@ -38,13 +37,15 @@ bool CJX_Packet::DynamicTypeIs(TypeTag eType) const {
 
 CJS_Result CJX_Packet::getAttribute(CFXJSE_Engine* runtime,
                                     pdfium::span<v8::Local<v8::Value>> params) {
-  if (params.size() != 1)
+  if (params.size() != 1) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   WideString attributeValue;
   CFX_XMLElement* element = ToXMLElement(GetXFANode()->GetXMLMappingNode());
-  if (element)
+  if (element) {
     attributeValue = element->GetAttribute(runtime->ToWideString(params[0]));
+  }
 
   return CJS_Result::Success(
       runtime->NewString(attributeValue.ToUTF8().AsStringView()));
@@ -52,8 +53,9 @@ CJS_Result CJX_Packet::getAttribute(CFXJSE_Engine* runtime,
 
 CJS_Result CJX_Packet::setAttribute(CFXJSE_Engine* runtime,
                                     pdfium::span<v8::Local<v8::Value>> params) {
-  if (params.size() != 2)
+  if (params.size() != 2) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   CFX_XMLElement* element = ToXMLElement(GetXFANode()->GetXMLMappingNode());
   if (element) {
@@ -66,12 +68,14 @@ CJS_Result CJX_Packet::setAttribute(CFXJSE_Engine* runtime,
 CJS_Result CJX_Packet::removeAttribute(
     CFXJSE_Engine* runtime,
     pdfium::span<v8::Local<v8::Value>> params) {
-  if (params.size() != 1)
+  if (params.size() != 1) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   CFX_XMLElement* pElement = ToXMLElement(GetXFANode()->GetXMLMappingNode());
-  if (pElement)
+  if (pElement) {
     pElement->RemoveAttribute(runtime->ToWideString(params[0]));
+  }
 
   return CJS_Result::Success(runtime->NewNull());
 }
@@ -96,8 +100,9 @@ void CJX_Packet::content(v8::Isolate* pIsolate,
   }
 
   WideString wsTextData;
-  if (element)
+  if (element) {
     wsTextData = element->GetTextData();
+  }
 
   *pValue = fxv8::NewStringHelper(pIsolate, wsTextData.ToUTF8().AsStringView());
 }

@@ -8,11 +8,11 @@
 #include <cstddef>
 #include <memory>
 
+#include "quiche/http2/core/spdy_framer.h"
 #include "quiche/quic/core/http/quic_header_list.h"
 #include "quiche/quic/core/quic_packets.h"
 #include "quiche/quic/core/quic_stream.h"
 #include "quiche/quic/platform/api/quic_export.h"
-#include "quiche/spdy/core/spdy_framer.h"
 
 namespace quic {
 
@@ -41,7 +41,8 @@ class QUICHE_EXPORT QuicHeadersStream : public QuicStream {
   bool OnStreamFrameAcked(QuicStreamOffset offset, QuicByteCount data_length,
                           bool fin_acked, QuicTime::Delta ack_delay_time,
                           QuicTime receive_timestamp,
-                          QuicByteCount* newly_acked_length) override;
+                          QuicByteCount* newly_acked_length,
+                          bool is_retransmission) override;
 
   void OnStreamFrameRetransmitted(QuicStreamOffset offset,
                                   QuicByteCount data_length,

@@ -17,11 +17,27 @@ source_set("export") {
   ]
   deps = [
     "//base",
-    "//components/password_manager/core/browser/affiliation",
-    "//components/password_manager/core/browser/ui",
+    "//components/affiliations/core/browser:affiliations",
     "//components/password_manager/core/browser:metrics_util",
+    "//components/password_manager/core/browser/ui",
     "//components/sync/base:features",
   ]
+
+  if (is_android) {
+    sources += [
+      "login_db_deprecation_password_exporter.cc",
+      "login_db_deprecation_password_exporter.h",
+      "login_db_deprecation_password_exporter_interface.h",
+      "login_db_deprecation_runner.cc",
+      "login_db_deprecation_runner.h",
+    ]
+    deps += [
+      "//components/password_manager/core/browser/features:password_features",
+      "//components/password_manager/core/browser/password_store:password_store_interface",
+      "//components/password_manager/core/common",
+      "//components/prefs",
+    ]
+  }
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
@@ -34,10 +50,26 @@ source_set("unit_tests") {
   ]
   deps = [
     ":export",
+    "//components/affiliations/core/browser:test_support",
     "//components/password_manager/core/browser",
     "//components/password_manager/core/browser:test_support",
     "//components/password_manager/core/browser/import:csv",
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  if (is_android) {
+    sources += [
+      "login_db_deprecation_password_exporter_unittest.cc",
+      "login_db_deprecation_runner_unittest.cc",
+    ]
+    deps += [
+      "//components/password_manager/core/browser/features:password_features",
+      "//components/prefs:test_support",
+    ]
+  }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

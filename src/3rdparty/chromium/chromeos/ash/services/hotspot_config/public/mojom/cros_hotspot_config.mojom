@@ -102,6 +102,12 @@ enum HotspotControlResult {
   kAborted,
   // Invalid hotspot enable request.
   kInvalid,
+  // There's already an ongoing request.
+  kBusy,
+  // Failed due to concurrency conflict.
+  kConcurrencyNotSupported,
+  // Operation failed when starting hotspot.
+  kOperationFailure,
   kUnknownFailure,
 };
 
@@ -127,6 +133,18 @@ enum DisableReason {
   kRestart,
   // Disabled because the upstream network doesn't have Internet connectivity.
   kUpstreamNoInternet,
+  // Disabled because the downstream link disconnected.
+  kDownstreamLinkDisconnect,
+  // Disabled because the downstream network disconnected.
+  kDownstreamNetworkDisconnect,
+  // Failed to start tethering within given time.
+  kStartTimeout,
+  // Upstream network not available.
+  kUpstreamNotAvailable,
+  // Disabled due to concurrency resource conflict.
+  kResourceBusy,
+  // Received an unknown error from shill.
+  kUnknownError,
 };
 
 // Information about Hotspot feature including current state, active client

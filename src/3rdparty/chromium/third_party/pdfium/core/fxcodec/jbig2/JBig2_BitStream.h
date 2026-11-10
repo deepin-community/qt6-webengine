@@ -7,8 +7,9 @@
 #ifndef CORE_FXCODEC_JBIG2_JBIG2_BITSTREAM_H_
 #define CORE_FXCODEC_JBIG2_JBIG2_BITSTREAM_H_
 
+#include "core/fxcrt/raw_span.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
 class CJBig2_BitStream {
  public:
@@ -32,24 +33,23 @@ class CJBig2_BitStream {
   uint8_t getNextByte_arith() const;
   uint32_t getOffset() const;
   void setOffset(uint32_t dwOffset);
+  void addOffset(uint32_t dwDelta);
   uint32_t getBitPos() const;
   void setBitPos(uint32_t dwBitPos);
-  const uint8_t* getBuf() const;
-  uint32_t getLength() const;
+  pdfium::span<const uint8_t> getBufSpan() const { return span_; }
   const uint8_t* getPointer() const;
-  void offset(uint32_t dwOffset);
   uint32_t getByteLeft() const;
-  uint64_t getKey() const { return m_Key; }
+  uint64_t getKey() const { return key_; }
   bool IsInBounds() const;
 
  private:
   void AdvanceBit();
   uint32_t LengthInBits() const;
 
-  const pdfium::span<const uint8_t> m_Span;
-  uint32_t m_dwByteIdx = 0;
-  uint32_t m_dwBitIdx = 0;
-  const uint64_t m_Key;
+  const pdfium::raw_span<const uint8_t> span_;
+  uint32_t byte_idx_ = 0;  // Must always be <= `span_.size()`.
+  uint32_t bit_idx_ = 0;   // Must Always be in [0..7].
+  const uint64_t key_;
 };
 
 #endif  // CORE_FXCODEC_JBIG2_JBIG2_BITSTREAM_H_

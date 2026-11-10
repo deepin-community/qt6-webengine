@@ -6,9 +6,12 @@
 
 #include "xfa/fwl/cfwl_eventvalidate.h"
 
+namespace pdfium {
+
 CFWL_EventValidate::CFWL_EventValidate(CFWL_Widget* pSrcTarget,
                                        const WideString& wsInsert)
-    : CFWL_Event(CFWL_Event::Type::Validate, pSrcTarget),
-      m_wsInsert(wsInsert) {}
+    : CFWL_Event(CFWL_Event::Type::Validate, pSrcTarget), insert_(wsInsert) {}
 
 CFWL_EventValidate::~CFWL_EventValidate() = default;
+
+}  // namespace pdfium

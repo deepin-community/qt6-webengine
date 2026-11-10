@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -27,7 +28,6 @@
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/quads/video_hole_draw_quad.h"
-#include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/traced_value.h"
 
 namespace viz {
@@ -87,7 +87,7 @@ void CompositorRenderPass::SetAll(
     const gfx::Transform& transform_to_root_target,
     const cc::FilterOperations& filters,
     const cc::FilterOperations& backdrop_filters,
-    const absl::optional<gfx::RRectF>& backdrop_filter_bounds,
+    const std::optional<SkPath>& backdrop_filter_bounds,
     SubtreeCaptureId capture_id,
     gfx::Size subtree_capture_size,
     ViewTransitionElementResourceId resource_id,
@@ -125,9 +125,11 @@ void CompositorRenderPass::AsValueInto(
   value->SetString("subtree_capture_id", subtree_capture_id.ToString());
   cc::MathUtil::AddToTracedValue("subtree_size", subtree_size, value);
 
+  // id.value() is a 64-bit uint even on 32-bit architectures, so
+  // using reinterpret_cast for the intentional conversion to a TracedValue::Id.
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
       TRACE_DISABLED_BY_DEFAULT("viz.quads"), value, "CompositorRenderPass",
-      reinterpret_cast<void*>(static_cast<uint64_t>(id)));
+      TracedValue::Id(reinterpret_cast<void*>(id.value())));
 }
 
 CompositorRenderPassDrawQuad*
@@ -166,9 +168,6 @@ DrawQuad* CompositorRenderPass::CopyFromAndAppendDrawQuad(
     case DrawQuad::Material::kVideoHole:
       quad_list.AllocateAndCopyFrom(VideoHoleDrawQuad::MaterialCast(quad));
       break;
-    case DrawQuad::Material::kYuvVideoContent:
-      quad_list.AllocateAndCopyFrom(YUVVideoDrawQuad::MaterialCast(quad));
-      break;
     case DrawQuad::Material::kSharedElement:
       quad_list.AllocateAndCopyFrom(SharedElementDrawQuad::MaterialCast(quad));
       break;
@@ -176,10 +175,7 @@ DrawQuad* CompositorRenderPass::CopyFromAndAppendDrawQuad(
     case DrawQuad::Material::kAggregatedRenderPass:
     case DrawQuad::Material::kCompositorRenderPass:
     case DrawQuad::Material::kInvalid:
-      // TODO(danakj): Why is this a check instead of dcheck, and validate from
-      // IPC?
-      CHECK(false);  // Invalid DrawQuad material.
-      break;
+      NOTREACHED();
   }
   quad_list.back()->shared_quad_state = shared_quad_state_list.back();
   return quad_list.back();

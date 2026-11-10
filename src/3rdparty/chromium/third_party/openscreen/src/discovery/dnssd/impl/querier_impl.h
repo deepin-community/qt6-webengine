@@ -11,7 +11,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "absl/hash/hash.h"
 #include "discovery/dnssd/impl/constants.h"
 #include "discovery/dnssd/impl/conversion_layer.h"
 #include "discovery/dnssd/impl/dns_data_graph.h"
@@ -30,12 +29,12 @@ class ReportingClient;
 
 class QuerierImpl : public DnsSdQuerier, public MdnsRecordChangedCallback {
  public:
-  // |querier|, |task_runner|, and |network_config| must outlive the QuerierImpl
+  // `querier`, `task_runner`, and `network_config` must outlive the QuerierImpl
   // instance constructed.
-  QuerierImpl(MdnsService* querier,
+  QuerierImpl(MdnsService& querier,
               TaskRunner& task_runner,
-              ReportingClient* reporting_client,
-              const NetworkInterfaceConfig* network_config);
+              ReportingClient& reporting_client,
+              const NetworkInterfaceConfig& network_config);
   ~QuerierImpl() override;
 
   bool IsQueryRunning(const std::string& service) const;
@@ -53,7 +52,7 @@ class QuerierImpl : public DnsSdQuerier, public MdnsRecordChangedCallback {
  private:
   friend class QuerierImplTesting;
 
-  // Applies the provided record change to the underlying |graph_| instance.
+  // Applies the provided record change to the underlying `graph_` instance.
   ErrorOr<std::vector<PendingQueryChange>> ApplyRecordChanges(
       const MdnsRecord& record,
       RecordChangedEvent event);
@@ -70,10 +69,10 @@ class QuerierImpl : public DnsSdQuerier, public MdnsRecordChangedCallback {
   // callbacks to call when new InstanceEndpoints are available.
   std::map<ServiceKey, std::vector<Callback*>> callback_map_;
 
-  MdnsService* const mdns_querier_;
+  MdnsService& mdns_querier_;
   TaskRunner& task_runner_;
 
-  ReportingClient* reporting_client_;
+  ReportingClient& reporting_client_;
 };
 
 }  // namespace openscreen::discovery

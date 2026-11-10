@@ -24,7 +24,7 @@
 #include "libavutil/opt.h"
 
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 enum PixelizeModes {
@@ -310,11 +310,11 @@ static const AVOption pixelize_options[] = {
     { "w",      "set block width",  OFFSET(block_w[0]), AV_OPT_TYPE_INT, {.i64=16}, 1, 1024, FLAGS },
     { "height", "set block height", OFFSET(block_h[0]), AV_OPT_TYPE_INT, {.i64=16}, 1, 1024, FLAGS },
     { "h",      "set block height", OFFSET(block_h[0]), AV_OPT_TYPE_INT, {.i64=16}, 1, 1024, FLAGS },
-    { "mode",  "set the pixelize mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, PIXELIZE_MODES-1, FLAGS, "mode" },
-    { "m",     "set the pixelize mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, PIXELIZE_MODES-1, FLAGS, "mode" },
-    {  "avg",    "average",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_AVG}, 0,  0, FLAGS, "mode" },
-    {  "min",    "minimum",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_MIN}, 0,  0, FLAGS, "mode" },
-    {  "max",    "maximum",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_MAX}, 0,  0, FLAGS, "mode" },
+    { "mode",  "set the pixelize mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, PIXELIZE_MODES-1, FLAGS, .unit = "mode" },
+    { "m",     "set the pixelize mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, PIXELIZE_MODES-1, FLAGS, .unit = "mode" },
+    {  "avg",    "average",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_AVG}, 0,  0, FLAGS, .unit = "mode" },
+    {  "min",    "minimum",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_MIN}, 0,  0, FLAGS, .unit = "mode" },
+    {  "max",    "maximum",  0,  AV_OPT_TYPE_CONST, {.i64=PIXELIZE_MAX}, 0,  0, FLAGS, .unit = "mode" },
     { "planes", "set what planes to filter", OFFSET(planes), AV_OPT_TYPE_FLAGS, {.i64=15}, 0, 15, FLAGS },
     { "p",      "set what planes to filter", OFFSET(planes), AV_OPT_TYPE_FLAGS, {.i64=15}, 0, 15, FLAGS },
     { NULL },
@@ -338,14 +338,14 @@ static const AVFilterPad pixelize_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_pixelize = {
-    .name          = "pixelize",
-    .description   = NULL_IF_CONFIG_SMALL("Pixelize video."),
+const FFFilter ff_vf_pixelize = {
+    .p.name        = "pixelize",
+    .p.description = NULL_IF_CONFIG_SMALL("Pixelize video."),
+    .p.priv_class  = &pixelize_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(PixelizeContext),
-    .priv_class    = &pixelize_class,
     FILTER_INPUTS(pixelize_inputs),
     FILTER_OUTPUTS(pixelize_outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,
 };

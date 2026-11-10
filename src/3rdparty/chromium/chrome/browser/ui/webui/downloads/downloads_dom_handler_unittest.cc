@@ -9,6 +9,7 @@
 
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
@@ -41,6 +42,7 @@ using ::testing::ReturnRef;
 using ::testing::ReturnRefOfCopy;
 
 const char kTestDangerousDownloadUrl[] = "http://evildownload.com";
+const char kTestDangerousDownloadReferrerUrl[] = "http://referrer.test";
 
 class TestDownloadsDOMHandler : public DownloadsDOMHandler {
  public:
@@ -84,10 +86,11 @@ class DownloadsDOMHandlerTest : public testing::Test {
 
  protected:
   testing::StrictMock<MockPage> page_;
+  content::BrowserTaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
 
  private:
   // NOTE: The initialization order of these members matters.
-  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
   content::RenderViewHostTestEnabler rvh_test_enabler_;
   std::unique_ptr<content::WebContents> web_contents_;
@@ -144,14 +147,14 @@ TEST_F(DownloadsDOMHandlerTest, ClearAll) {
   EXPECT_CALL(completed, UpdateObservers());
   downloads.push_back(&completed);
 
-  ASSERT_TRUE(DownloadItemModel(&completed).ShouldShowInShelf());
+  ASSERT_TRUE(DownloadItemModel(&completed).ShouldShowInUi());
 
   TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
                                   web_ui());
   handler.RemoveDownloads(downloads);
 
   // Ensure |completed| has been "soft removed" (i.e. can be revived).
-  EXPECT_FALSE(DownloadItemModel(&completed).ShouldShowInShelf());
+  EXPECT_FALSE(DownloadItemModel(&completed).ShouldShowInUi());
 
   // Make sure |completed| actually get removed when removals are "finalized".
   EXPECT_CALL(*manager(), GetDownload(1)).WillOnce(testing::Return(&completed));
@@ -195,6 +198,8 @@ class DownloadsDOMHandlerWithFakeSafeBrowsingTest
     EXPECT_CALL(dangerous_download_, IsDone()).WillRepeatedly(Return(false));
     EXPECT_CALL(dangerous_download_, GetURL())
         .WillRepeatedly(ReturnRef(download_url_));
+    EXPECT_CALL(dangerous_download_, GetReferrerUrl())
+        .WillRepeatedly(ReturnRef(referrer_url_));
     ON_CALL(dangerous_download_, GetTargetFilePath())
         .WillByDefault(
             ReturnRefOfCopy(base::FilePath(FILE_PATH_LITERAL("foo.pdf"))));
@@ -225,6 +230,7 @@ class DownloadsDOMHandlerWithFakeSafeBrowsingTest
   raw_ptr<TestingBrowserProcess> browser_process_;
   scoped_refptr<safe_browsing::SafeBrowsingService> sb_service_;
   GURL download_url_ = GURL(kTestDangerousDownloadUrl);
+  GURL referrer_url_ = GURL(kTestDangerousDownloadReferrerUrl);
   testing::NiceMock<download::MockDownloadItem> dangerous_download_;
 };
 
@@ -272,61 +278,7 @@ TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest, DiscardDangerous_IsDone) {
                   .empty());
 }
 
-TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest, DiscardDangerous_EmptyURL) {
-  SetUpDangerousDownload();
-  GURL empty_url = GURL();
-  EXPECT_CALL(dangerous_download_, GetURL())
-      .WillRepeatedly(testing::ReturnRef(empty_url));
-
-  TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
-                                  web_ui());
-
-  EXPECT_CALL(dangerous_download_, Remove());
-  handler.DiscardDangerous("1");
-
-  // Verify that dangerous download report is not sent because the URL is empty.
-  EXPECT_TRUE(test_safe_browsing_factory_->test_safe_browsing_service()
-                  ->serialized_download_report()
-                  .empty());
-}
-
 TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
-       DiscardDangerous_Incognito) {
-  SetUpDangerousDownload();
-  TestingProfile::Builder otr_profile_builder;
-  otr_profile_builder.DisallowBrowserWindows();
-  Profile* incognito_profile = otr_profile_builder.BuildIncognito(profile());
-  content::DownloadItemUtils::AttachInfoForTesting(&dangerous_download_,
-                                                   incognito_profile, nullptr);
-  ON_CALL(*manager(), GetBrowserContext())
-      .WillByDefault(testing::Return(incognito_profile));
-
-  TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
-                                  web_ui());
-
-  EXPECT_CALL(dangerous_download_, Remove());
-  handler.DiscardDangerous("1");
-
-  // Verify that dangerous download report is not sent because it's in
-  // Incognito.
-  EXPECT_TRUE(test_safe_browsing_factory_->test_safe_browsing_service()
-                  ->serialized_download_report()
-                  .empty());
-}
-
-class DownloadsDOMHandlerTestImprovedDownloadPageWarnings
-    : public DownloadsDOMHandlerWithFakeSafeBrowsingTest {
- public:
-  DownloadsDOMHandlerTestImprovedDownloadPageWarnings() {
-    feature_list_.InitAndEnableFeature(
-        safe_browsing::kImprovedDownloadPageWarnings);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
        SaveSuspiciousRequiringGesture) {
   SetUpDangerousDownload();
 
@@ -354,7 +306,7 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
                 ->serialized_download_report());
 }
 
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
+TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
        SaveSuspiciousRequiringGesture_InsecureDownload) {
   SetUpInsecureDownload();
 
@@ -372,7 +324,7 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
                   .empty());
 }
 
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
+TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
        SaveSuspiciousRequiringGesture_NoRecentInteraction) {
   SetUpDangerousDownload();
 
@@ -383,8 +335,8 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
   handler.SaveSuspiciousRequiringGesture("1");
 }
 
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
-       SaveDangerousFromPromptRequiringGesture) {
+TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
+       SaveDangerousFromDialogRequiringGesture) {
   SetUpDangerousDownload();
 
   TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
@@ -393,7 +345,7 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
   SimulateMouseGestureOnWebUI();
 
   EXPECT_CALL(dangerous_download_, ValidateDangerousDownload());
-  handler.SaveDangerousFromPromptRequiringGesture("1");
+  handler.SaveDangerousFromDialogRequiringGesture("1");
 
   // Verify that dangerous download report is sent.
   safe_browsing::ClientSafeBrowsingReportRequest expected_report;
@@ -411,26 +363,26 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
                 ->serialized_download_report());
 }
 
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
-       SaveDangerousFromPromptRequiringGesture_NoRecentInteraction) {
+TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
+       SaveDangerousFromDialogRequiringGesture_NoRecentInteraction) {
   SetUpDangerousDownload();
 
   TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
                                   web_ui());
 
   EXPECT_CALL(dangerous_download_, ValidateDangerousDownload()).Times(0);
-  handler.SaveDangerousFromPromptRequiringGesture("1");
+  handler.SaveDangerousFromDialogRequiringGesture("1");
 }
 
-TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
-       RecordCancelBypassWarningPrompt) {
+TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTest,
+       RecordCancelBypassWarningDialog) {
   SetUpDangerousDownload();
 
   TestDownloadsDOMHandler handler(page_.BindAndGetRemote(), manager(),
                                   web_ui());
 
   EXPECT_CALL(dangerous_download_, ValidateDangerousDownload()).Times(0);
-  handler.RecordCancelBypassWarningPrompt("1");
+  handler.RecordCancelBypassWarningDialog("1");
 
   // Verify no cancel report is sent, since it's not a terminal action.
   EXPECT_TRUE(test_safe_browsing_factory_->test_safe_browsing_service()
@@ -441,10 +393,8 @@ TEST_F(DownloadsDOMHandlerTestImprovedDownloadPageWarnings,
 class DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService
     : public DownloadsDOMHandlerWithFakeSafeBrowsingTest {
  public:
-  DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService() {
-    feature_list_.InitAndEnableFeature(
-        safe_browsing::kImprovedDownloadPageWarnings);
-  }
+  DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService() =
+      default;
 
   void ExpectTrustSafetySentimentServiceCall(
       DownloadItemWarningData::WarningSurface surface,
@@ -459,7 +409,6 @@ class DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService
   }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   raw_ptr<MockTrustSafetySentimentService> mock_sentiment_service_;
 };
 
@@ -496,7 +445,7 @@ TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService,
 }
 
 TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService,
-       SaveDangerousFromPrompt_CallsTrustSafetySentimentService) {
+       SaveDangerousFromDialog_CallsTrustSafetySentimentService) {
   profile()->GetPrefs()->SetBoolean(prefs::kSafeBrowsingSurveysEnabled, true);
   SetUpDangerousDownload();
   ExpectTrustSafetySentimentServiceCall(
@@ -509,5 +458,5 @@ TEST_F(DownloadsDOMHandlerWithFakeSafeBrowsingTestTrustSafetySentimentService,
   SimulateMouseGestureOnWebUI();
 
   EXPECT_CALL(dangerous_download_, ValidateDangerousDownload());
-  handler.SaveDangerousFromPromptRequiringGesture("1");
+  handler.SaveDangerousFromDialogRequiringGesture("1");
 }

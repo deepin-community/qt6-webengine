@@ -30,7 +30,7 @@
 
 #include <optional>
 
-#include "src/tint/lang/core/address_space.h"
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/struct.h"
 #include "src/tint/lang/core/type/type.h"
 #include "src/tint/lang/wgsl/ast/struct.h"
@@ -103,7 +103,7 @@ class StructMember final : public Castable<StructMember, core::type::StructMembe
                  uint32_t offset,
                  uint32_t align,
                  uint32_t size,
-                 const core::type::StructMemberAttributes& attributes);
+                 const core::IOAttributes& attributes);
 
     /// Destructor
     ~StructMember() override;

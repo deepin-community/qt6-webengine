@@ -5,17 +5,20 @@
 #ifndef UI_BASE_WIN_SHELL_H_
 #define UI_BASE_WIN_SHELL_H_
 
-#include <windows.h>
-
 #include <string>
 
 #include "base/component_export.h"
+#include "base/feature_list.h"
+#include "base/win/windows_types.h"
 
 namespace base {
 class FilePath;
 }
 
 namespace ui::win {
+
+COMPONENT_EXPORT(UI_BASE)
+BASE_DECLARE_FEATURE(kManuallyParsePathForShellExecute);
 
 // Open the folder at |full_path| via the Windows shell. It is an error if
 // |full_path| does not refer to a folder.

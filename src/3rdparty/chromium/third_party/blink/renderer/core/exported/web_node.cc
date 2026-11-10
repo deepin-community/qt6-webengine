@@ -30,6 +30,8 @@
 
 #include "third_party/blink/public/web/web_node.h"
 
+#include <ostream>
+
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_document.h"
@@ -38,10 +40,12 @@
 #include "third_party/blink/public/web/web_element_collection.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
+#include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/node_list.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
@@ -55,6 +59,8 @@
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_regexp.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
@@ -90,8 +96,21 @@ bool WebNode::LessThan(const WebNode& n) const {
   return private_.Get() < n.private_.Get();
 }
 
+bool WebNode::Contains(const WebNode* n) const {
+  return private_->contains(n->private_.Get());
+}
+
 WebNode WebNode::ParentNode() const {
   return WebNode(const_cast<ContainerNode*>(private_->parentNode()));
+}
+
+WebNode WebNode::ParentOrShadowHostNode() const {
+  return WebNode(
+      const_cast<ContainerNode*>(private_->ParentOrShadowHostNode()));
+}
+
+bool WebNode::IsInUserAgentShadowRoot() const {
+  return private_->IsInUserAgentShadowRoot();
 }
 
 WebString WebNode::NodeValue() const {
@@ -144,14 +163,18 @@ bool WebNode::IsFocusable() const {
     return false;
   if (!private_->GetDocument().HaveRenderBlockingResourcesLoaded())
     return false;
-  private_->GetDocument().UpdateStyleAndLayoutTreeForElement(
-      element, DocumentUpdateReason::kFocus);
+  // Element::IsFocusable will internally update style and layout, so there's no
+  // need to do so before calling it here.
   return element->IsFocusable();
 }
 
 bool WebNode::IsContentEditable() const {
   private_->GetDocument().UpdateStyleAndLayoutTree();
   return blink::IsEditable(*private_);
+}
+
+WebElement WebNode::RootEditableElement() const {
+  return blink::RootEditableElement(*private_);
 }
 
 bool WebNode::IsInsideFocusableElementOrARIAWidget() const {
@@ -162,7 +185,7 @@ bool WebNode::IsInsideFocusableElementOrARIAWidget() const {
 v8::Local<v8::Value> WebNode::ToV8Value(v8::Isolate* isolate) {
   if (!private_.Get())
     return v8::Local<v8::Value>();
-  return ToV8Traits<Node>::ToV8(ScriptState::From(isolate->GetCurrentContext()),
+  return ToV8Traits<Node>::ToV8(ScriptState::ForCurrentRealm(isolate),
                                 private_.Get());
 }
 
@@ -204,29 +227,44 @@ WebElement WebNode::QuerySelector(const WebString& selector) const {
       ->QuerySelector(selector, IGNORE_EXCEPTION_FOR_TESTING);
 }
 
-WebVector<WebElement> WebNode::QuerySelectorAll(
+std::vector<WebElement> WebNode::QuerySelectorAll(
     const WebString& selector) const {
   if (!private_->IsContainerNode())
-    return WebVector<WebElement>();
+    return std::vector<WebElement>();
   StaticElementList* elements =
       blink::To<ContainerNode>(private_.Get())
           ->QuerySelectorAll(selector, IGNORE_EXCEPTION_FOR_TESTING);
   if (elements) {
-    WebVector<WebElement> vector((size_t)elements->length());
-    for (unsigned i = 0; i < elements->length(); ++i)
-      vector[i] = elements->item(i);
+    std::vector<WebElement> vector;
+    vector.reserve(elements->length());
+    for (unsigned i = 0; i < elements->length(); ++i) {
+      vector.push_back(elements->item(i));
+    }
     return vector;
   }
-  return WebVector<WebElement>();
+  return std::vector<WebElement>();
 }
 
-WebString WebNode::FindTextInElementWith(const WebString& substring) const {
+std::vector<WebNode> WebNode::FindAllTextNodesMatchingRegex(
+    const WebString& regex) const {
   ContainerNode* container_node =
       blink::DynamicTo<ContainerNode>(private_.Get());
   if (!container_node) {
-    return WebString();
+    return std::vector<WebNode>();
   }
-  return WebString(container_node->FindTextInElementWith(substring));
+
+  StaticNodeList* nodes = container_node->FindAllTextNodesMatchingRegex(regex);
+  if (!nodes) {
+    return std::vector<WebNode>();
+  }
+
+  std::vector<WebNode> nodes_vector;
+  nodes_vector.reserve(nodes->length());
+  for (unsigned i = 0; i < nodes->length(); i++) {
+    nodes_vector.push_back(nodes->item(i));
+  }
+
+  return nodes_vector;
 }
 
 bool WebNode::Focused() const {
@@ -261,6 +299,59 @@ int WebNode::GetDomNodeId() const {
 // static
 WebNode WebNode::FromDomNodeId(int dom_node_id) {
   return WebNode(Node::FromDomNodeId(dom_node_id));
+}
+
+base::ScopedClosureRunner WebNode::AddEventListener(
+    EventType event_type,
+    base::RepeatingCallback<void(WebDOMEvent)> handler) {
+  class EventListener : public NativeEventListener {
+   public:
+    EventListener(Node* node,
+                  base::RepeatingCallback<void(WebDOMEvent)> handler)
+        : node_(node), handler_(std::move(handler)) {}
+
+    void Invoke(ExecutionContext*, Event* event) override {
+      handler_.Run(WebDOMEvent(event));
+    }
+
+    void AddListener() {
+      node_->addEventListener(event_type_name(), this,
+                              /*use_capture=*/false);
+    }
+
+    void RemoveListener() {
+      node_->removeEventListener(event_type_name(), this,
+                                 /*use_capture=*/false);
+    }
+
+    void Trace(Visitor* visitor) const override {
+      NativeEventListener::Trace(visitor);
+      visitor->Trace(node_);
+    }
+
+   private:
+    const AtomicString& event_type_name() {
+      switch (event_type_) {
+        case EventType::kSelectionchange:
+          return event_type_names::kSelectionchange;
+      }
+      NOTREACHED();
+    }
+
+    Member<Node> node_;
+    EventType event_type_;
+    base::RepeatingCallback<void(WebDOMEvent)> handler_;
+  };
+
+  WebPrivatePtrForGC<EventListener> listener =
+      MakeGarbageCollected<EventListener>(Unwrap<Node>(), std::move(handler));
+  listener->AddListener();
+  return base::ScopedClosureRunner(WTF::BindOnce(
+      &EventListener::RemoveListener, WrapWeakPersistent(listener.Get())));
+}
+
+std::ostream& operator<<(std::ostream& ostream, const WebNode& node) {
+  return ostream << node.ConstUnwrap<Node>();
 }
 
 }  // namespace blink

@@ -5,7 +5,8 @@
 #include "components/payments/content/payment_request_web_contents_manager.h"
 
 #include "base/memory/raw_ptr.h"
-#include "components/autofill/core/browser/test_personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
+#include "components/payments/content/payment_request.h"
 #include "components/payments/content/test_content_payment_request_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
@@ -21,7 +22,7 @@ class PaymentRequestWebContentsManagerTest : public testing::Test {
   PaymentRequestWebContentsManagerTest()
       : web_contents_(web_contents_factory_.CreateWebContents(&context_)) {
     manager_ = PaymentRequestWebContentsManager::GetOrCreateForWebContents(
-        *web_contents_);
+        web_contents_);
   }
 
   ~PaymentRequestWebContentsManagerTest() override { manager_ = nullptr; }
@@ -50,14 +51,11 @@ class PaymentRequestWebContentsManagerTest : public testing::Test {
   raw_ptr<PaymentRequestWebContentsManager> manager_;
 
  private:
-  // Necessary supporting members to create the testing environment.
   content::BrowserTaskEnvironment task_environment_;
   content::TestBrowserContext context_;
+  autofill::TestPersonalDataManager test_personal_data_manager_;
   content::TestWebContentsFactory web_contents_factory_;
   raw_ptr<content::WebContents> web_contents_;
-
-  // Used in the creation of PaymentRequests.
-  autofill::TestPersonalDataManager test_personal_data_manager_;
 };
 
 TEST_F(PaymentRequestWebContentsManagerTest, SPCTransactionMode) {

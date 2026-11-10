@@ -1,21 +1,23 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
-/* eslint-disable rulesdir/inject_checkbox_styles */
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import '../../../ui/legacy/legacy.js';
+import '../../../ui/components/icon_button/icon_button.js';
+import './ControlButton.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
 import * as Input from '../../../ui/components/input/input.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as Lit from '../../../ui/lit/lit.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 import * as Models from '../models/models.js';
 import * as Actions from '../recorder-actions/recorder-actions.js';
 
 import createRecordingViewStyles from './createRecordingView.css.js';
+
+const {html, Directives: {ifDefined}} = Lit;
 
 const UIStrings = {
   /**
@@ -80,7 +82,7 @@ const UIStrings = {
   selectorTypeXPath: 'XPath',
   /**
    * @description The label for the input that allows specifying selector types
-   * that should be used during the recordering.
+   * that should be used during the recording.
    */
   selectorTypes: 'Selector types to record',
   /**
@@ -89,7 +91,11 @@ const UIStrings = {
    */
   includeNecessarySelectors:
       'You must choose CSS, Pierce, or XPath as one of your options. Only these selectors are guaranteed to be recorded since ARIA and text selectors may not be unique.',
-};
+  /**
+   * @description Title of a link to the developer documentation.
+   */
+  learnMore: 'Learn more',
+} as const;
 const str_ = i18n.i18n.registerUIStrings(
     'panels/recorder/components/CreateRecordingView.ts',
     UIStrings,
@@ -136,18 +142,17 @@ export interface CreateRecordingViewData {
 }
 
 export class CreateRecordingView extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-create-recording-view`;
   readonly #shadow = this.attachShadow({mode: 'open'});
-  #defaultRecordingName: string = '';
+  #defaultRecordingName = '';
   #error?: Error;
   #recorderSettings?: Models.RecorderSettings.RecorderSettings;
 
+  constructor() {
+    super();
+    this.setAttribute('jslog', `${VisualLogging.section('create-recording-view')}`);
+  }
+
   connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [
-      createRecordingViewStyles,
-      Input.textInputStyles,
-      Input.checkboxStyles,
-    ];
     this.#render();
     this.#shadow.querySelector('input')?.focus();
   }
@@ -172,9 +177,7 @@ export class CreateRecordingView extends HTMLElement {
   }
 
   startRecording(): void {
-    const nameInput = this.#shadow.querySelector(
-                          '#user-flow-name',
-                          ) as HTMLInputElement;
+    const nameInput = this.#shadow.querySelector<HTMLInputElement>('#user-flow-name');
     if (!nameInput) {
       throw new Error('input#user-flow-name not found');
     }
@@ -253,22 +256,26 @@ export class CreateRecordingView extends HTMLElement {
       ],
     ]);
     // clang-format off
-    LitHtml.render(
-      LitHtml.html`
+    Lit.render(
+      html`
+        <style>${createRecordingViewStyles}</style>
+        <style>${Input.textInputStyles}</style>
+        <style>${Input.checkboxStyles}</style>
         <div class="wrapper">
           <div class="header-wrapper">
             <h1>${i18nString(UIStrings.createRecording)}</h1>
-            <${Buttons.Button.Button.litTagName}
+            <devtools-button
               title=${i18nString(UIStrings.cancelRecording)}
+              jslog=${VisualLogging.close().track({click: true})}
               .data=${
                 {
-                  variant: Buttons.Button.Variant.ROUND,
+                  variant: Buttons.Button.Variant.ICON,
                   size: Buttons.Button.Size.SMALL,
                   iconName: 'cross',
                 } as Buttons.Button.ButtonData
               }
               @click=${this.#dispatchRecordingCancelled}
-            ></${Buttons.Button.Button.litTagName}>
+            ></devtools-button>
           </div>
           <label class="row-label" for="user-flow-name">${i18nString(
             UIStrings.recordingName,
@@ -277,42 +284,49 @@ export class CreateRecordingView extends HTMLElement {
             value=${this.#defaultRecordingName}
             @focus=${this.#onInputFocus}
             @keydown=${this.#onKeyDown}
+            jslog=${VisualLogging.textField('user-flow-name').track({change: true})}
             class="devtools-text-input"
             id="user-flow-name"
           />
           <label class="row-label" for="selector-attribute">
             <span>${i18nString(UIStrings.selectorAttribute)}</span>
-            <x-link class="link" href="https://g.co/devtools/recorder#selector">
-              <${IconButton.Icon.Icon.litTagName} name="help">
-              </${IconButton.Icon.Icon.litTagName}>
+            <x-link
+              class="link" href="https://g.co/devtools/recorder#selector"
+              title=${i18nString(UIStrings.learnMore)}
+              jslog=${VisualLogging.link('recorder-selector-help').track({click: true})}>
+              <devtools-icon name="help">
+              </devtools-icon>
             </x-link>
           </label>
           <input
-            value=${this.#recorderSettings?.selectorAttribute}
+            value=${ifDefined(this.#recorderSettings?.selectorAttribute)}
             placeholder="data-testid"
             @keydown=${this.#onKeyDown}
+            jslog=${VisualLogging.textField('selector-attribute').track({change: true})}
             class="devtools-text-input"
             id="selector-attribute"
           />
           <label class="row-label">
             <span>${i18nString(UIStrings.selectorTypes)}</span>
-            <x-link class="link" href="https://g.co/devtools/recorder#selector">
-              <${IconButton.Icon.Icon.litTagName} name="help">
-              </${IconButton.Icon.Icon.litTagName}>
+            <x-link
+              class="link" href="https://g.co/devtools/recorder#selector"
+              title=${i18nString(UIStrings.learnMore)}
+              jslog=${VisualLogging.link('recorder-selector-help').track({click: true})}>
+              <devtools-icon name="help">
+              </devtools-icon>
             </x-link>
           </label>
           <div class="checkbox-container">
             ${Object.values(Models.Schema.SelectorType).map(selectorType => {
               const checked =
                 this.#recorderSettings?.getSelectorByType(selectorType);
-              return LitHtml.html`
+              return html`
                   <label class="checkbox-label selector-type">
                     <input
                       @keydown=${this.#onKeyDown}
                       .value=${selectorType}
-                      checked=${LitHtml.Directives.ifDefined(
-                        checked ? checked : undefined,
-                      )}
+                      jslog=${VisualLogging.toggle().track({click: true}).context(`selector-${selectorType}`)}
+                      ?checked=${checked}
                       type="checkbox"
                     />
                     ${selectorTypeToLabel.get(selectorType) || selectorType}
@@ -323,7 +337,7 @@ export class CreateRecordingView extends HTMLElement {
 
           ${
             this.#error &&
-            LitHtml.html`
+            html`
           <div class="error" role="alert">
             ${this.#error.message}
           </div>
@@ -336,9 +350,10 @@ export class CreateRecordingView extends HTMLElement {
               @click=${this.startRecording}
               .label=${i18nString(UIStrings.startRecording)}
               .shape=${'circle'}
+              jslog=${VisualLogging.action(Actions.RecorderActions.START_RECORDING).track({click: true})}
               title=${Models.Tooltip.getTooltipForActions(
                 i18nString(UIStrings.startRecording),
-                Actions.RecorderActions.StartRecording,
+                Actions.RecorderActions.START_RECORDING,
               )}
             ></devtools-control-button>
           </div>
@@ -351,7 +366,7 @@ export class CreateRecordingView extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent(
+customElements.define(
     'devtools-create-recording-view',
     CreateRecordingView,
 );

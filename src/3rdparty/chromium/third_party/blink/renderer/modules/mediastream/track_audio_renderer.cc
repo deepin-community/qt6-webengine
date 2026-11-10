@@ -23,20 +23,17 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_media.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<media::AudioParameters> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = media::AudioParameters;
-  static Type Copy(Type pointer) { return pointer; }
-};
-
-}  // namespace WTF
-
 namespace blink {
+
+// template <>
+// struct CrossThreadCopier<media::AudioParameters> {
+//   STATIC_ONLY(CrossThreadCopier);
+//   using Type = media::AudioParameters;
+//   static Type Copy(Type pointer) { return pointer; }
+// };
 
 namespace {
 
@@ -94,9 +91,9 @@ int TrackAudioRenderer::Render(base::TimeDelta delay,
                                base::TimeTicks delay_timestamp,
                                const media::AudioGlitchInfo& glitch_info,
                                media::AudioBus* audio_bus) {
-  TRACE_EVENT2("audio", "TrackAudioRenderer::Render", "delay (ms)",
-               delay.InMillisecondsF(), "delay_timestamp (ms)",
-               (delay_timestamp - base::TimeTicks()).InMillisecondsF());
+  TRACE_EVENT("audio", "TrackAudioRenderer::Render", "playout_delay (ms)",
+              delay.InMillisecondsF(), "delay_timestamp (ms)",
+              (delay_timestamp - base::TimeTicks()).InMillisecondsF());
   base::AutoLock auto_lock(thread_lock_);
 
   if (!audio_shifter_) {
@@ -130,8 +127,10 @@ void TrackAudioRenderer::OnRenderError() {
 // WebMediaStreamAudioSink implementation
 void TrackAudioRenderer::OnData(const media::AudioBus& audio_bus,
                                 base::TimeTicks reference_time) {
-  TRACE_EVENT1("audio", "TrackAudioRenderer::OnData", "reference time (ms)",
-               (reference_time - base::TimeTicks()).InMillisecondsF());
+  TRACE_EVENT("audio", "TrackAudioRenderer::OnData", "capture_time (ms)",
+              (reference_time - base::TimeTicks()).InMillisecondsF(),
+              "capture_delay (ms)",
+              (base::TimeTicks::Now() - reference_time).InMillisecondsF());
 
   base::AutoLock auto_lock(thread_lock_);
 
@@ -328,7 +327,7 @@ void TrackAudioRenderer::SwitchOutputDevice(
     return;
   }
 
-  output_device_id_ = String(device_id.data(), device_id.size());
+  output_device_id_ = String(device_id);
   bool was_sink_started = sink_started_;
 
   if (sink_)

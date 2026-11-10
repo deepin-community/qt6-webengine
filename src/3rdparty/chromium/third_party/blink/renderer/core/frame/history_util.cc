@@ -83,10 +83,10 @@ bool CanChangeToUrlForHistoryApi(const KURL& url,
   // https://url.spec.whatwg.org/#concept-url-scheme.
   CHECK(url.Protocol().Is8Bit());
   std::string protocol = url.Protocol().Ascii();
-  is_standard = url::IsStandard(
-      protocol.data(), url::Component(0, static_cast<int>(protocol.size())));
+  is_standard = url::IsStandard(protocol);
   // Also allow registered QWE schemes
-  is_standard = is_standard || (url::CustomScheme::FindScheme(protocol) != nullptr);
+  is_standard =
+      is_standard || (url::CustomScheme::FindScheme(protocol) != nullptr);
   if (is_standard) {
     return true;
   }

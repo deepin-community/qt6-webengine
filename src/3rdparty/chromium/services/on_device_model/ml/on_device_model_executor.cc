@@ -4,6 +4,8 @@
 
 #include "services/on_device_model/ml/on_device_model_executor.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +18,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
@@ -23,7 +26,11 @@
 #include "base/timer/elapsed_timer.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "services/on_device_model/ml/chrome_ml.h"
-#include "services/on_device_model/ml/language_detector.h"
+#include "services/on_device_model/ml/gpu_blocklist.h"
+#include "services/on_device_model/ml/performance_class.h"
+#include "services/on_device_model/ml/session_accessor.h"
+#include "services/on_device_model/public/cpp/cpu.h"
+#include "services/on_device_model/public/cpp/features.h"
 #include "services/on_device_model/public/mojom/on_device_model.mojom.h"
 #include "services/on_device_model/public/mojom/on_device_model_service.mojom.h"
 
@@ -31,18 +38,33 @@
 #include "base/apple/foundation_util.h"
 #endif
 
-using on_device_model::mojom::LoadModelResult;
+#if defined(ENABLE_ON_DEVICE_CONSTRAINTS)
+#include "third_party/rust/chromium_crates_io/vendor/llguidance-v1/llguidance.h"
+#endif
 
 namespace ml {
 namespace {
 
-const base::FeatureParam<double> kTemperature{
-    &optimization_guide::features::kOptimizationGuideOnDeviceModel,
-    "on_device_model_temperature", 0.2};
+namespace odmm = ::on_device_model::mojom;
+using odmm::LoadModelResult;
 
-const base::FeatureParam<int> kTopK{
+constexpr uint32_t kReserveTokensForSafety = 2;
+
+const base::FeatureParam<bool> kPreferTextureWeights{
     &optimization_guide::features::kOptimizationGuideOnDeviceModel,
-    "on_device_model_topk", 3};
+    "on_device_model_prefer_texture_weights", true};
+
+const base::FeatureParam<bool> kEnableHostMappedPointer{
+    &optimization_guide::features::kOptimizationGuideOnDeviceModel,
+    "on_device_model_enable_host_mapped_pointer", true};
+
+const base::FeatureParam<bool> kUseLowPower{
+    &optimization_guide::features::kOptimizationGuideOnDeviceModel,
+    "on_device_model_use_low_power", false};
+
+const base::FeatureParam<bool> kAllowFp16{
+    &optimization_guide::features::kOptimizationGuideOnDeviceModel,
+    "on_device_model_allow_fp16", true};
 
 // Helper to bind object methods as weak task-posting callback functions.
 template <typename R, typename C, typename... Args>
@@ -57,6 +79,23 @@ std::function<R(Args...)> CreateWeakCallbackFn(R (C::*method)(Args...),
   };
 }
 
+// Helper to convert a OnceCallback to std::function.
+template <typename R, typename... Args>
+std::function<R(Args...)> ConvertCallbackToFn(
+    base::OnceCallback<R(Args...)> callback) {
+  auto shared_callback =
+      std::make_shared<base::OnceCallback<R(Args...)>>(std::move(callback));
+  return [shared_callback = shared_callback,
+          task_runner =
+              base::SequencedTaskRunner::GetCurrentDefault()](Args&&... args) {
+    if (!shared_callback->is_null()) {
+      task_runner->PostTask(FROM_HERE,
+                            base::BindOnce(std::move(*shared_callback),
+                                           std::forward<Args>(args)...));
+    }
+  };
+}
+
 int CalculateTokensPerSecond(int num_tokens, base::TimeDelta duration) {
   if (duration.InMicroseconds() <= 0) {
     return 0;
@@ -65,14 +104,36 @@ int CalculateTokensPerSecond(int num_tokens, base::TimeDelta duration) {
          base::Time::kMicrosecondsPerSecond;
 }
 
+// If `pieces` ends with ml::Token::kModel and then a text piece, returns the
+// final text piece.
+std::optional<std::string> GetModelResponsePrefix(
+    const std::vector<InputPiece>& pieces) {
+  if (pieces.size() < 2) {
+    return std::nullopt;
+  }
+  if (const ml::Token* token =
+          std::get_if<ml::Token>(&pieces[pieces.size() - 2]);
+      !token || *token != ml::Token::kModel) {
+    return std::nullopt;
+  }
+  if (const std::string* text = std::get_if<std::string>(&pieces.back())) {
+    return *text;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 // Handles sending and canceling responses.
-class Responder : public base::SupportsWeakPtr<Responder> {
+class Responder final {
  public:
   explicit Responder(
       mojo::PendingRemote<on_device_model::mojom::StreamingResponder> responder,
-      scoped_refptr<LanguageDetector> language_detector)
+      base::OnceClosure on_complete,
+      SessionAccessor::Ptr session)
       : responder_(std::move(responder)),
-        language_detector_(std::move(language_detector)) {
+        on_complete_(std::move(on_complete)),
+        session_(std::move(session)) {
     responder_.set_disconnect_handler(
         base::BindOnce(&Responder::Cancel, base::Unretained(this)));
   }
@@ -81,11 +142,10 @@ class Responder : public base::SupportsWeakPtr<Responder> {
   ChromeMLCancelFn* GetCancelFn() { return &cancel_; }
 
   ChromeMLExecutionOutputFn CreateOutputFn() {
-    return [weak_ptr = AsWeakPtr(),
+    return [weak_ptr = weak_ptr_factory_.GetWeakPtr(),
             task_runner = base::SequencedTaskRunner::GetCurrentDefault()](
                const ChromeMLExecutionOutput* output) {
       std::optional<std::string> text;
-      std::optional<std::vector<float>> class_scores;
       switch (output->status) {
         case ChromeMLExecutionStatus::kInProgress:
           CHECK(output->text);
@@ -96,22 +156,20 @@ class Responder : public base::SupportsWeakPtr<Responder> {
           break;
       }
 
-      if (output->ts_scores) {
-        class_scores.emplace(output->ts_scores,
-                             output->ts_scores + output->num_ts_scores);
-      }
-
       task_runner->PostTask(
-          FROM_HERE, base::BindOnce(&Responder::OnOutput, weak_ptr,
-                                    std::move(text), std::move(class_scores)));
+          FROM_HERE,
+          base::BindOnce(&Responder::OnOutput, weak_ptr, std::move(text)));
     };
   }
 
+  base::WeakPtr<Responder> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
-  void OnOutput(std::optional<std::string> text,
-                std::optional<std::vector<float>> class_scores) {
+  void OnOutput(std::optional<std::string> text) {
     if (text) {
-      num_tokens_++;
+      num_output_tokens_++;
       output_so_far_ += *text;
       if (first_token_time_ == base::TimeTicks()) {
         first_token_time_ = base::TimeTicks::Now();
@@ -119,63 +177,106 @@ class Responder : public base::SupportsWeakPtr<Responder> {
 
       auto chunk = on_device_model::mojom::ResponseChunk::New();
       chunk->text = *text;
-      chunk->safety_info = CreateSafetyInfo(output_so_far_, class_scores);
       responder_->OnResponse(std::move(chunk));
-    } else {
+    } else if (session_) {
+      // Empty text means the output is finished. Delete the session immediately
+      // to free up any resources.
+      session_ = nullptr;
       base::UmaHistogramCounts10000("OnDeviceModel.TokenCount.Output",
-                                    num_tokens_);
-      if (num_tokens_ > 1) {
+                                    num_output_tokens_);
+      if (num_output_tokens_ > 1) {
         // Time starts at the first token to avoid counting input processing
-        // time, so calculate using num_tokens_ - 1.
+        // time, so calculate using num_output_tokens_ - 1.
         base::UmaHistogramCounts1000(
             "OnDeviceModel.TokensPerSecond.Output",
             CalculateTokensPerSecond(
-                num_tokens_ - 1, base::TimeTicks::Now() - first_token_time_));
+                num_output_tokens_ - 1,
+                base::TimeTicks::Now() - first_token_time_));
       }
 
       auto summary = on_device_model::mojom::ResponseSummary::New();
-      summary->safety_info = CreateSafetyInfo(output_so_far_, class_scores);
+      summary->output_token_count = num_output_tokens_;
       responder_->OnComplete(std::move(summary));
+      if (!on_complete_.is_null()) {
+        std::move(on_complete_).Run();
+      }
     }
-  }
-
-  on_device_model::mojom::SafetyInfoPtr CreateSafetyInfo(
-      std::string_view text,
-      std::optional<std::vector<float>>& class_scores) {
-    if (!class_scores) {
-      return nullptr;
-    }
-
-    auto safety_info = on_device_model::mojom::SafetyInfo::New();
-    safety_info->class_scores = std::move(*class_scores);
-    if (language_detector_) {
-      safety_info->language = language_detector_->DetectLanguage(text);
-    }
-    return safety_info;
   }
 
   void Cancel() {
+    session_ = nullptr;
     if (cancel_) {
       cancel_();
     }
+    if (!on_complete_.is_null()) {
+      std::move(on_complete_).Run();
+    }
   }
 
+  base::ElapsedTimer timer_;
   base::TimeTicks first_token_time_;
-  int num_tokens_ = 0;
+  int num_output_tokens_ = 0;
   std::string output_so_far_;
   mojo::Remote<on_device_model::mojom::StreamingResponder> responder_;
-  const scoped_refptr<LanguageDetector> language_detector_;
   ChromeMLCancelFn cancel_;
+  base::OnceClosure on_complete_;
+  SessionAccessor::Ptr session_;
+  base::WeakPtrFactory<Responder> weak_ptr_factory_{this};
+};
+
+// Handles sending and cancelling ASR streams.
+class AsrStreamResponder final {
+ public:
+  explicit AsrStreamResponder(
+      mojo::PendingRemote<odmm::AsrStreamResponder> responder,
+      SessionAccessor::Ptr session)
+      : responder_(std::move(responder)), session_(std::move(session)) {
+    responder_.set_disconnect_handler(
+        base::BindOnce(&AsrStreamResponder::Cancel, base::Unretained(this)));
+  }
+  ~AsrStreamResponder() { Cancel(); }
+  SessionAccessor* session() { return session_.get(); }
+  ChromeMLASRStreamOutputFn CreateOutputFn() {
+    return [weak_ptr = weak_ptr_factory_.GetWeakPtr(),
+            task_runner = base::SequencedTaskRunner::GetCurrentDefault()](
+               const ChromeMLASRStreamOutput& output) {
+      std::vector<odmm::SpeechRecognitionResultPtr> result;
+      result.reserve(output.size());
+      for (const auto& t : output) {
+        result.push_back(
+            odmm::SpeechRecognitionResult::New(t.transcript, t.is_final));
+      }
+      task_runner->PostTask(
+          FROM_HERE, base::BindOnce(&AsrStreamResponder::OnOutput, weak_ptr,
+                                    std::move(result)));
+    };
+  }
+
+  base::WeakPtr<AsrStreamResponder> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
+  void Cancel() { session_ = nullptr; }
+  void OnOutput(std::vector<odmm::SpeechRecognitionResultPtr> output) {
+    responder_->OnResponse(std::move(output));
+  }
+  mojo::Remote<odmm::AsrStreamResponder> responder_;
+  SessionAccessor::Ptr session_;
+  base::WeakPtrFactory<AsrStreamResponder> weak_ptr_factory_{this};
 };
 
 // Handles calling the ContextClient on completion and canceling the context
 // request.
-class ContextHolder : public base::SupportsWeakPtr<ContextHolder> {
+class ContextHolder final {
  public:
   explicit ContextHolder(
       mojo::PendingRemote<on_device_model::mojom::ContextClient> client,
-      base::OnceCallback<void(ContextHolder*)> on_disconnect)
-      : client_(std::move(client)), on_disconnect_(std::move(on_disconnect)) {
+      base::OnceCallback<void(ContextHolder*)> on_disconnect,
+      base::OnceClosure on_complete)
+      : client_(std::move(client)),
+        on_disconnect_(std::move(on_disconnect)),
+        on_complete_(std::move(on_complete)) {
     if (client_) {
       client_.set_disconnect_handler(
           base::BindOnce(&ContextHolder::OnDisconnect, base::Unretained(this)));
@@ -185,12 +286,19 @@ class ContextHolder : public base::SupportsWeakPtr<ContextHolder> {
     if (cancel_) {
       cancel_();
     }
+    if (!on_complete_.is_null()) {
+      std::move(on_complete_).Run();
+    }
   }
 
   ChromeMLCancelFn* GetCancelFn() { return &cancel_; }
 
   ChromeMLContextSavedFn CreateContextSavedFn() {
     return CreateWeakCallbackFn(&ContextHolder::OnComplete, this);
+  }
+
+  base::WeakPtr<ContextHolder> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
   }
 
  private:
@@ -204,6 +312,9 @@ class ContextHolder : public base::SupportsWeakPtr<ContextHolder> {
     }
     if (client_) {
       client_->OnComplete(tokens_processed);
+    }
+    if (!on_complete_.is_null()) {
+      std::move(on_complete_).Run();
     }
     OnDisconnect();
   }
@@ -219,103 +330,206 @@ class ContextHolder : public base::SupportsWeakPtr<ContextHolder> {
   mojo::Remote<on_device_model::mojom::ContextClient> client_;
   base::OnceCallback<void(ContextHolder*)> on_disconnect_;
   ChromeMLCancelFn cancel_;
+  base::OnceClosure on_complete_;
+  base::WeakPtrFactory<ContextHolder> weak_ptr_factory_{this};
 };
 
-class SessionImpl : public on_device_model::OnDeviceModel::Session {
- public:
-  SessionImpl(const ChromeML& chrome_ml,
-              ChromeMLModel model,
-              scoped_refptr<LanguageDetector> language_detector)
-      : chrome_ml_(chrome_ml),
-        model_(model),
-        language_detector_(std::move(language_detector)) {}
-  ~SessionImpl() override = default;
+BackendImpl::BackendImpl(const ml::ChromeML* chrome_ml)
+    : chrome_ml_(chrome_ml), ts_holder_(ml::TsHolder::Create(*chrome_ml_)) {}
 
-  SessionImpl(const SessionImpl&) = delete;
-  SessionImpl& operator=(const SessionImpl&) = delete;
+BackendImpl::~BackendImpl() = default;
 
-  DISABLE_CFI_DLSYM
-  void AddContext(on_device_model::mojom::InputOptionsPtr input,
-                  mojo::PendingRemote<on_device_model::mojom::ContextClient>
-                      client) override {
-    auto context_holder = std::make_unique<ContextHolder>(
-        std::move(client),
-        base::BindOnce(&SessionImpl::RemoveContext, base::Unretained(this)));
-    ChromeMLContextSavedFn context_saved_fn =
-        context_holder->CreateContextSavedFn();
-    ChromeMLExecuteOptions options{
-        .prompt = input->text.c_str(),
-        .context_mode = GetContextMode(*input) | ContextMode::kSave,
-        .max_tokens = input->max_tokens.value_or(0),
-        .token_offset = input->token_offset.value_or(0),
-        .context_saved_fn = &context_saved_fn};
-    chrome_ml_->api().ExecuteModel(model_, &options,
-                                   context_holder->GetCancelFn());
-    context_holders_.insert(std::move(context_holder));
-    // Once we have added context, it should not be cleared.
-    clear_context_ = false;
+base::expected<void, on_device_model::ServiceDisconnectReason>
+BackendImpl::CanCreate() {
+  if (!chrome_ml_) {
+    return base::unexpected(
+        on_device_model::ServiceDisconnectReason::kFailedToLoadLibrary);
+  }
+  if (!on_device_model::IsCpuCapable() &&
+      ml::IsGpuBlocked(chrome_ml_->api(), /*log_histogram=*/false)) {
+    return base::unexpected(
+        on_device_model::ServiceDisconnectReason::kGpuBlocked);
+  }
+  return base::ok();
+}
+
+DISABLE_CFI_DLSYM
+on_device_model::Capabilities BackendImpl::GetCapabilities(
+    on_device_model::ModelFile model_file) {
+  on_device_model::Capabilities result;
+  if (!chrome_ml_->api().GetCapabilities) {
+    return result;
   }
 
-  DISABLE_CFI_DLSYM
-  void Execute(on_device_model::mojom::InputOptionsPtr input,
-               mojo::PendingRemote<on_device_model::mojom::StreamingResponder>
-                   response) override {
-    responder_ =
-        std::make_unique<Responder>(std::move(response), language_detector_);
-    ChromeMLExecutionOutputFn output_fn = responder_->CreateOutputFn();
-    int32_t ts_interval = -1;
-    if (input->safety_interval.has_value()) {
-      ts_interval =
-          base::saturated_cast<int32_t>(input->safety_interval.value());
+  PlatformFile platform_file;
+  if (model_file.IsFile()) {
+    platform_file = model_file.file().TakePlatformFile();
+  } else {
+    base::File file(model_file.path(),
+                    base::File::FLAG_OPEN | base::File::FLAG_READ);
+    platform_file = file.TakePlatformFile();
+  }
+  ChromeMLCapabilities capabilities;
+  chrome_ml_->api().GetCapabilities(platform_file, capabilities);
+
+  if (capabilities.image_input) {
+    result.Put(on_device_model::CapabilityFlags::kImageInput);
+  }
+  if (capabilities.audio_input) {
+    result.Put(on_device_model::CapabilityFlags::kAudioInput);
+  }
+  return result;
+}
+
+base::expected<std::unique_ptr<on_device_model::BackendModel>,
+               on_device_model::mojom::LoadModelResult>
+BackendImpl::CreateWithResult(on_device_model::mojom::LoadModelParamsPtr params,
+                              base::OnceClosure on_complete) {
+  return OnDeviceModelExecutor::CreateWithResult(*chrome_ml_, std::move(params),
+                                                 std::move(on_complete));
+}
+
+void BackendImpl::LoadTextSafetyModel(
+    on_device_model::mojom::TextSafetyModelParamsPtr params,
+    mojo::PendingReceiver<on_device_model::mojom::TextSafetyModel> model) {
+  ts_holder_.AsyncCall(&ml::TsHolder::Reset)
+      .WithArgs(std::move(params), std::move(model));
+}
+
+on_device_model::mojom::DevicePerformanceInfoPtr
+BackendImpl::GetDevicePerformanceInfo() {
+  return ml::GetDevicePerformanceInfo(*chrome_ml_);
+}
+
+SessionImpl::SessionImpl(const ChromeML& chrome_ml,
+                         OnDeviceModelExecutor& executor,
+                         SessionAccessor::Ptr session,
+                         uint32_t max_tokens,
+                         std::optional<uint32_t> adaptation_id)
+    : chrome_ml_(chrome_ml),
+      executor_(executor),
+      session_(std::move(session)),
+      max_tokens_(max_tokens),
+      adaptation_id_(adaptation_id) {}
+SessionImpl::~SessionImpl() = default;
+
+DISABLE_CFI_DLSYM
+void SessionImpl::Append(
+    on_device_model::mojom::AppendOptionsPtr options,
+    mojo::PendingRemote<on_device_model::mojom::ContextClient> client,
+    base::OnceClosure on_complete) {
+  model_response_prefix_ = GetModelResponsePrefix(options->input->pieces);
+  auto context_holder = std::make_unique<ContextHolder>(
+      std::move(client),
+      base::BindOnce(&SessionImpl::RemoveContext, base::Unretained(this)),
+      std::move(on_complete));
+  if (options->max_tokens == 0 || options->max_tokens > max_tokens_) {
+    options->max_tokens = max_tokens_;
+  }
+  ChromeMLContextSavedFn context_saved_fn =
+      context_holder->CreateContextSavedFn();
+  *context_holder->GetCancelFn() =
+      session_->Append(std::move(options), context_saved_fn);
+  context_holders_.insert(std::move(context_holder));
+}
+
+DISABLE_CFI_DLSYM
+void SessionImpl::Generate(
+    on_device_model::mojom::GenerateOptionsPtr options,
+    mojo::PendingRemote<on_device_model::mojom::StreamingResponder> response,
+    base::OnceClosure on_complete) {
+  auto cloned = session_->Clone();
+  auto cloned_raw = cloned.get();  // For Generate after std::move
+  responder_ = std::make_unique<Responder>(
+      std::move(response), std::move(on_complete), std::move(cloned));
+  ChromeMLExecutionOutputFn output_fn = responder_->CreateOutputFn();
+  ChromeMLConstraint constraint = 0;
+  if (options->constraint) {
+    constraint = executor_->CreateConstraint(*options->constraint,
+                                             model_response_prefix_);
+    if (!constraint) {
+      // TODO(crbug.com/391919456): Propagate error.
+      responder_.reset();
+      return;
     }
-    ChromeMLExecuteOptions options{
-        .prompt = input->text.c_str(),
-        .context_mode = GetContextMode(*input),
-        .max_tokens = input->max_tokens.value_or(0),
-        .token_offset = input->token_offset.value_or(0),
-        .max_output_tokens = input->max_output_tokens.value_or(0),
-        .score_ts_interval = ts_interval,
-        .execution_output_fn = &output_fn,
-    };
-    chrome_ml_->api().ExecuteModel(model_, &options, responder_->GetCancelFn());
   }
+  *responder_->GetCancelFn() =
+      cloned_raw->Generate(std::move(options), constraint, output_fn);
+}
 
- private:
-  void RemoveContext(ContextHolder* context) {
-    std::erase_if(context_holders_, base::MatchesUniquePtr(context));
+DISABLE_CFI_DLSYM
+void SessionImpl::SizeInTokens(on_device_model::mojom::InputPtr input,
+                               base::OnceCallback<void(uint32_t)> callback) {
+  session_->SizeInTokens(std::move(input),
+                         ConvertCallbackToFn(std::move(callback)));
+}
+
+DISABLE_CFI_DLSYM
+void SessionImpl::Score(const std::string& text,
+                        base::OnceCallback<void(float)> callback) {
+  session_->Score(text, ConvertCallbackToFn(std::move(callback)));
+}
+
+DISABLE_CFI_DLSYM
+void SessionImpl::GetProbabilitiesBlocking(
+    const std::string& input,
+    base::OnceCallback<void(const std::vector<float>&)> callback) {
+  session_->GetProbabilitiesBlocking(input,
+                                     ConvertCallbackToFn(std::move(callback)));
+}
+
+DISABLE_CFI_DLSYM
+void SessionImpl::AsrStream(
+    odmm::AsrStreamOptionsPtr options,
+    mojo::PendingRemote<odmm::AsrStreamResponder> responder) {
+  DCHECK_EQ(asr_responder_, nullptr);
+  auto cloned = session_->Clone();
+  auto cloned_raw = cloned.get();  // For CreateAsrStream after std::move
+  asr_responder_ = std::make_unique<AsrStreamResponder>(std::move(responder),
+                                                        std::move(cloned));
+  ChromeMLASRStreamOutputFn output_fn = asr_responder_->CreateOutputFn();
+  cloned_raw->CreateAsrStream(std::move(options), output_fn);
+}
+
+DISABLE_CFI_DLSYM
+void SessionImpl::AsrAddAudioChunk(odmm::AudioDataPtr data) {
+  if (!asr_responder_) {
+    return;
   }
+  asr_responder_->session()->AsrAddAudioChunk(std::move(data));
+}
 
-  int GetContextMode(const on_device_model::mojom::InputOptions& input) {
-    int context_mode = ContextMode::kNone;
-    if (input.ignore_context) {
-      context_mode |= ContextMode::kIgnoreContext;
-    }
-    if (clear_context_) {
-      context_mode |= ContextMode::kReset;
-    }
-    return context_mode;
-  }
+std::unique_ptr<on_device_model::BackendSession> SessionImpl::Clone() {
+  return std::make_unique<SessionImpl>(chrome_ml_.get(), *executor_,
+                                       session_->Clone(), max_tokens_,
+                                       adaptation_id_);
+}
 
-  bool clear_context_ = true;
-  const raw_ref<const ChromeML> chrome_ml_;
-  ChromeMLModel model_;
-  const scoped_refptr<LanguageDetector> language_detector_;
-  std::unique_ptr<Responder> responder_;
-  std::set<std::unique_ptr<ContextHolder>> context_holders_;
-};
+void SessionImpl::RemoveContext(ContextHolder* context) {
+  std::erase_if(context_holders_, base::MatchesUniquePtr(context));
+}
 
-}  // namespace
+DISABLE_CFI_DLSYM
+void DestroyModel(const ChromeML* chrome_ml, ChromeMLModel model) {
+  chrome_ml->api().DestroyModel(model);
+}
 
 OnDeviceModelExecutor::OnDeviceModelExecutor(
     base::PassKey<OnDeviceModelExecutor>,
     const ChromeML& chrome_ml)
     : chrome_ml_(chrome_ml),
-      task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {}
+      model_task_runner_(
+          base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})) {}
 
-DISABLE_CFI_DLSYM
 OnDeviceModelExecutor::~OnDeviceModelExecutor() {
+#if defined(ENABLE_ON_DEVICE_CONSTRAINTS)
+  if (tokenizer_ != nullptr) {
+    llg_free_tokenizer(tokenizer_);
+  }
+#endif
   if (model_ != 0) {
-    chrome_ml_->api().DestroyModel(model_);
+    model_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&DestroyModel, &chrome_ml_.get(), model_));
   }
 }
 
@@ -323,10 +537,12 @@ OnDeviceModelExecutor::~OnDeviceModelExecutor() {
 base::expected<std::unique_ptr<OnDeviceModelExecutor>, LoadModelResult>
 OnDeviceModelExecutor::CreateWithResult(
     const ChromeML& chrome_ml,
-    on_device_model::mojom::LoadModelParamsPtr params) {
+    on_device_model::mojom::LoadModelParamsPtr params,
+    base::OnceClosure on_complete) {
   auto executor = std::make_unique<OnDeviceModelExecutor>(
       base::PassKey<OnDeviceModelExecutor>(), chrome_ml);
-  auto load_model_result = executor->Init(std::move(params));
+  auto load_model_result =
+      executor->Init(std::move(params), std::move(on_complete));
   if (load_model_result == LoadModelResult::kSuccess) {
     return base::ok<std::unique_ptr<OnDeviceModelExecutor>>(
         std::move(executor));
@@ -334,106 +550,181 @@ OnDeviceModelExecutor::CreateWithResult(
   return base::unexpected(load_model_result);
 }
 
-std::unique_ptr<on_device_model::OnDeviceModel::Session>
-OnDeviceModelExecutor::CreateSession() {
-  return std::make_unique<SessionImpl>(*chrome_ml_, model_, language_detector_);
+std::unique_ptr<on_device_model::BackendSession>
+OnDeviceModelExecutor::CreateSession(
+    const ScopedAdaptation* adaptation,
+    on_device_model::mojom::SessionParamsPtr params) {
+  std::optional<uint32_t> adaptation_id;
+  on_device_model::mojom::LoadAdaptationParamsPtr adaptation_params;
+  if (adaptation) {
+    adaptation_id = adaptation->adaptation_id();
+    auto it = adaptation_params_.find(*adaptation_id);
+    CHECK(it != adaptation_params_.end());
+    adaptation_params = it->second->Clone();
+  }
+  auto session = SessionAccessor::Create(
+      *chrome_ml_, model_task_runner_, model_, std::move(params),
+      std::move(adaptation_params), adaptation_id);
+  return std::make_unique<SessionImpl>(*chrome_ml_, *this, std::move(session),
+                                       max_tokens_ - kReserveTokensForSafety,
+                                       adaptation_id);
+}
+
+std::unique_ptr<OnDeviceModelExecutor::ScopedAdaptation>
+OnDeviceModelExecutor::LoadAdaptation(
+    on_device_model::mojom::LoadAdaptationParamsPtr params) {
+  adaptation_params_.insert({next_adaptation_id_, std::move(params)});
+  return std::make_unique<ScopedAdaptation>(weak_ptr_factory_.GetWeakPtr(),
+                                            next_adaptation_id_++);
+}
+
+void OnDeviceModelExecutor::UnloadAdaptation(uint32_t adaptation_id) {
+  adaptation_params_.erase(adaptation_id);
+}
+
+DISABLE_CFI_DLSYM
+ChromeMLConstraint OnDeviceModelExecutor::CreateConstraint(
+    const on_device_model::mojom::ResponseConstraint& response_constraint,
+    const std::optional<std::string>& prefix) {
+#if defined(ENABLE_ON_DEVICE_CONSTRAINTS)
+  if (!tokenizer_) {
+    CHECK(chrome_ml_->api().GetTokenizerParams(
+        model_, [&](const ChromeMLTokenizerParams& params) {
+          LlgTokenizerInit tokenizer_init{
+              .vocab_size = params.vocab_size,
+              .tok_eos = params.eos_token_id,
+              .token_lens = params.token_lens,
+              .token_bytes = params.token_bytes,
+              .tokenizer_json = params.tokenizer_json_file_content,
+              .tokenize_fn = params.tokenize_fn,
+              .tokenize_user_data = params.tokenize_user_data,
+          };
+
+          std::string error;
+          error.resize(256);
+          tokenizer_ =
+              llg_new_tokenizer(&tokenizer_init, error.data(), error.size());
+          if (!tokenizer_) {
+            LOG(ERROR) << "Error creating tokenizer: " << error;
+          }
+        }));
+  }
+
+  if (!tokenizer_) {
+    return 0;
+  }
+
+  LlgConstraintInit init;
+  llg_constraint_init_set_defaults(&init, tokenizer_);
+  LlgConstraint* constraint = nullptr;
+  switch (response_constraint.which()) {
+    case on_device_model::mojom::ResponseConstraint::Tag::kJsonSchema:
+      constraint = llg_new_constraint_json(
+          &init, response_constraint.get_json_schema().c_str());
+      break;
+    case on_device_model::mojom::ResponseConstraint::Tag::kRegex:
+      constraint = llg_new_constraint_regex(
+          &init, response_constraint.get_regex().c_str());
+      break;
+    case on_device_model::mojom::ResponseConstraint::Tag::kUnknownType:
+      LOG(ERROR) << "Unknown constraint type.";
+      return 0;
+  }
+  const char* error = llg_get_error(constraint);
+  if (error) {
+    LOG(ERROR) << "Error creating constraint: " << error;
+    llg_free_constraint(constraint);
+    return 0;
+  }
+  // Now apply any model prefix to the constraint so the generated model
+  // response continues with the correct constraint state.
+  if (prefix) {
+    std::vector<uint32_t> tokens;
+    // First get the total number of tokens needed.
+    size_t token_size = llg_tokenize_bytes(
+        tokenizer_, reinterpret_cast<const uint8_t*>(prefix->data()),
+        prefix->size(), tokens.data(), 0);
+    tokens.resize(token_size);
+    // Then tokenize into `tokens`.
+    llg_tokenize_bytes(tokenizer_,
+                       reinterpret_cast<const uint8_t*>(prefix->data()),
+                       prefix->size(), tokens.data(), tokens.size());
+    // Apply each token to the constraint.
+    for (uint32_t token : tokens) {
+      LlgMaskResult mask_res;
+      if (llg_compute_mask(constraint, &mask_res) < 0) {
+        LOG(ERROR) << "Error computing mask for prompt prefix.";
+        llg_free_constraint(constraint);
+        return 0;
+      }
+      LlgCommitResult res;
+      if (llg_commit_token(constraint, token, &res) < 0) {
+        LOG(ERROR) << "Error matching prompt prefix.";
+        llg_free_constraint(constraint);
+        return 0;
+      }
+    }
+  }
+  return reinterpret_cast<ChromeMLConstraint>(constraint);
+#else
+  return 0;
+#endif
 }
 
 DISABLE_CFI_DLSYM
 LoadModelResult OnDeviceModelExecutor::Init(
-    on_device_model::mojom::LoadModelParamsPtr params) {
-  if (chrome_ml_->IsGpuBlocked()) {
+    on_device_model::mojom::LoadModelParamsPtr params,
+    base::OnceClosure on_complete) {
+  if (params->backend_type == ml::ModelBackendType::kGpuBackend &&
+      ml::IsGpuBlocked(chrome_ml_->api(), /*log_histogram=*/false)) {
     return LoadModelResult::kGpuBlocked;
   }
   on_device_model::ModelAssets assets = std::move(params->assets);
-  sentencepiece_model_proto_ = std::make_unique<base::MemoryMappedFile>();
-  if (!assets.sp_model.IsValid() ||
-      !sentencepiece_model_proto_->Initialize(std::move(assets.sp_model))) {
-    LOG(ERROR) << "Unable to load sentencepiece model";
-    return LoadModelResult::kFailedToLoadLibrary;
-  }
 
-  model_proto_ = std::make_unique<base::MemoryMappedFile>();
-  if (!assets.model.IsValid() ||
-      !model_proto_->Initialize(std::move(assets.model))) {
-    LOG(ERROR) << "Unable to load model";
-    return LoadModelResult::kFailedToLoadLibrary;
-  }
+  max_tokens_ = std::max(params->max_tokens, kReserveTokensForSafety);
 
-  weights_ = std::make_unique<base::MemoryMappedFile>();
-  if (!assets.weights.IsValid() ||
-      !weights_->Initialize(std::move(assets.weights),
-                            base::MemoryMappedFile::READ_WRITE_COPY)) {
-    LOG(ERROR) << "Unable to load weights";
-    return LoadModelResult::kFailedToLoadLibrary;
+  ChromeMLModelData data;
+  std::string weights_path_str;
+  std::string sp_model_path_str = assets.sp_model_path.AsUTF8Unsafe();
+  // Prefer to load the model from a file descriptor if possible.
+  if (assets.weights.IsFile()) {
+    data.weights_file = assets.weights.file().TakePlatformFile();
+  } else {
+    weights_path_str = assets.weights.path().AsUTF8Unsafe();
+    data.model_path = weights_path_str.data();
+    data.sentencepiece_model_path = sp_model_path_str.data();
   }
-
-  if (assets.ts_data.IsValid()) {
-    if (!ts_data_.Initialize(std::move(assets.ts_data)) ||
-        !assets.ts_sp_model.IsValid() ||
-        !ts_sp_model_.Initialize(std::move(assets.ts_sp_model))) {
-      LOG(ERROR) << "Invalid TS model data supplied";
-      return LoadModelResult::kFailedToLoadLibrary;
-    }
+  // TODO(crbug.com/400998489): Cache files are experimental for now.
+  data.cache_file = params->backend_type == ml::ModelBackendType::kCpuBackend &&
+                            assets.cache.IsValid()
+                        ? assets.cache.TakePlatformFile()
+                        : base::kInvalidPlatformFile;
+  if (assets.encoder_cache.IsValid()) {
+    data.encoder_cache_file = assets.encoder_cache.TakePlatformFile();
   }
-
-  if (assets.language_detection_model.IsValid()) {
-    language_detector_ =
-        LanguageDetector::Create(std::move(assets.language_detection_model));
-    if (!language_detector_) {
-      LOG(ERROR) << "Failed to initialize language detection";
-      return LoadModelResult::kFailedToLoadLibrary;
-    }
+  if (assets.adapter_cache.IsValid()) {
+    data.adapter_cache_file = assets.adapter_cache.TakePlatformFile();
   }
-
-  auto model_proto_dispose =
-      CreateWeakCallbackFn(&OnDeviceModelExecutor::DisposeModelProto, this);
-  auto weights_dispose =
-      CreateWeakCallbackFn(&OnDeviceModelExecutor::DisposeWeights, this);
-  const ChromeMLModelData data = {
-      .model_proto_data = model_proto_->data(),
-      .model_proto_size = model_proto_->length(),
-      .model_proto_dispose = &model_proto_dispose,
-      .weights_data = weights_->mutable_bytes().data(),
-      .weights_size = weights_->length(),
-      .weights_dispose = &weights_dispose,
-  };
-  auto sentencepiece_model_proto_dispose =
-      CreateWeakCallbackFn(&OnDeviceModelExecutor::DisposeSentencepiece, this);
   ChromeMLModelDescriptor descriptor = {
-      .sentencepiece_model_proto_data = sentencepiece_model_proto_->data(),
-      .sentencepiece_model_proto_size = sentencepiece_model_proto_->length(),
-      .sentencepiece_model_proto_dispose = &sentencepiece_model_proto_dispose,
+      .backend_type = params->backend_type,
       .model_data = &data,
-      .max_tokens = params->max_tokens,
-      .temperature = static_cast<float>(kTemperature.Get()),
-      .top_k = kTopK.Get(),
-      .ts_dimension = params->ts_dimension.value_or(0),
+      .max_tokens = max_tokens_,
+      .temperature = 0.0f,
+      .top_k = optimization_guide::features::GetOnDeviceModelMaxTopK(),
+      .adaptation_ranks = params->adaptation_ranks.data(),
+      .adaptation_ranks_size = params->adaptation_ranks.size(),
+      .prefer_texture_weights = kPreferTextureWeights.Get(),
+      .enable_host_mapped_pointer = kEnableHostMappedPointer.Get(),
+      .use_low_power = kUseLowPower.Get(),
+      .allow_fp16 = kAllowFp16.Get(),
+      .performance_hint = params->performance_hint,
   };
-  if (ts_data_.IsValid()) {
-    CHECK(ts_sp_model_.IsValid());
-    descriptor.ts_data = ts_data_.data();
-    descriptor.ts_size = ts_data_.length();
-    descriptor.ts_spm_data = ts_sp_model_.data();
-    descriptor.ts_spm_size = ts_sp_model_.length();
-  };
-  model_ = chrome_ml_->api().CreateModel(&descriptor,
-                                         reinterpret_cast<uintptr_t>(this),
-                                         OnDeviceModelExecutor::Schedule);
+  model_ = chrome_ml_->api().SessionCreateModel(
+      &descriptor, reinterpret_cast<uintptr_t>(this),
+      OnDeviceModelExecutor::Schedule);
+  model_task_runner_->PostTask(FROM_HERE, std::move(on_complete));
   return (model_ != 0) ? LoadModelResult::kSuccess
                        : LoadModelResult::kFailedToLoadLibrary;
-}
-
-void OnDeviceModelExecutor::DisposeSentencepiece() {
-  sentencepiece_model_proto_ = nullptr;
-}
-
-void OnDeviceModelExecutor::DisposeModelProto() {
-  model_proto_ = nullptr;
-}
-
-void OnDeviceModelExecutor::DisposeWeights() {
-  weights_ = nullptr;
 }
 
 // static

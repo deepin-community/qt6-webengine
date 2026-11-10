@@ -6,10 +6,11 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
@@ -19,7 +20,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "ipc/ipc_channel.h"
+#include "ipc/constants.mojom.h"
 #include "ui/webui/examples/browser/devtools/devtools_server.h"
 #include "url/gurl.h"
 
@@ -36,7 +37,8 @@ static GURL GetFrontendURL() {
 // This constant should be in sync with
 // the constant
 // kMaxMessageChunkSize in chrome/browser/devtools/devtools_ui_bindings.cc.
-constexpr size_t kMaxMessageChunkSize = IPC::Channel::kMaximumMessageSize / 4;
+constexpr size_t kMaxMessageChunkSize =
+    IPC::mojom::kChannelMaximumMessageSize / 4;
 
 }  // namespace
 
@@ -56,8 +58,8 @@ class DevToolsFrontend::AgentHostClient
   // content::DevToolsAgentHostClient
   void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
                                base::span<const uint8_t> message) override {
-    base::StringPiece str_message(reinterpret_cast<const char*>(message.data()),
-                                  message.size());
+    std::string_view str_message(reinterpret_cast<const char*>(message.data()),
+                                 message.size());
     if (str_message.length() < kMaxMessageChunkSize) {
       CallClientFunction("DevToolsAPI", "dispatchMessage",
                          base::Value(std::string(str_message)));
@@ -65,7 +67,7 @@ class DevToolsFrontend::AgentHostClient
       size_t total_size = str_message.length();
       for (size_t pos = 0; pos < str_message.length();
            pos += kMaxMessageChunkSize) {
-        base::StringPiece str_message_chunk =
+        std::string_view str_message_chunk =
             str_message.substr(pos, kMaxMessageChunkSize);
 
         CallClientFunction(
@@ -118,7 +120,7 @@ class DevToolsFrontend::AgentHostClient
   void ReadyToCommitNavigation(
       content::NavigationHandle* navigation_handle) override {
     content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
-    // TODO(https://crbug.com/1218946): With MPArch there may be multiple main
+    // TODO(crbug.com/40185886): With MPArch there may be multiple main
     // frames. This caller was converted automatically to the primary main frame
     // to preserve its semantics. Follow up to confirm correctness.
     if (navigation_handle->IsInPrimaryMainFrame()) {
@@ -158,15 +160,27 @@ class DevToolsFrontend::AgentHostClient
       if (!agent_host_ || !protocol_message)
         return;
       agent_host_->DispatchProtocolMessage(
-          this, base::as_bytes(base::make_span(*protocol_message)));
+          this, base::as_byte_span(*protocol_message));
     } else if (*method == "loadCompleted") {
       CallClientFunction("DevToolsAPI", "setUseSoftMenu", base::Value(true));
     } else if (*method == "loadNetworkResource" && params.size() == 3) {
       // TODO(robliao): Add support for this if necessary.
       NOTREACHED();
-      return;
     } else if (*method == "getPreferences") {
       SendMessageAck(request_id, base::Value(std::move(preferences_)));
+      return;
+    } else if (*method == "getHostConfig") {
+      base::Value::Dict response_dict;
+
+      // Chrome's DevToolsUIBindings sets feature flag values to this
+      // devToolsVeLogging dictionary, but they're not accessible from //ui.
+      // Just set the default values instead.
+      base::Value::Dict ve_logging_dict;
+      ve_logging_dict.Set("enabled", true);
+      ve_logging_dict.Set("testing", false);
+      response_dict.Set("devToolsVeLogging", std::move(ve_logging_dict));
+
+      SendMessageAck(request_id, base::Value(std::move(response_dict)));
       return;
     } else if (*method == "setPreference") {
       if (params.size() < 2)
@@ -213,8 +227,8 @@ class DevToolsFrontend::AgentHostClient
                        base::Value(request_id), std::move(arg));
   }
 
-  content::WebContents* const devtools_contents_;
-  content::WebContents* const inspected_contents_;
+  const raw_ptr<content::WebContents> devtools_contents_;
+  const raw_ptr<content::WebContents> inspected_contents_;
 
   scoped_refptr<content::DevToolsAgentHost> agent_host_;
   std::unique_ptr<content::DevToolsFrontendHost> frontend_host_;

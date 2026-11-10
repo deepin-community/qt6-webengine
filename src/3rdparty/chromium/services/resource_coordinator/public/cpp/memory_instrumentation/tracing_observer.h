@@ -24,9 +24,6 @@ namespace memory_instrumentation {
 // Also provides a method for adding a dump to the trace.
 class COMPONENT_EXPORT(RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION)
     TracingObserver :
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-    public base::trace_event::TraceLog::EnabledStateObserver,
-#endif
     public tracing::PerfettoTracedProcess::DataSourceBase {
  public:
   TracingObserver();
@@ -38,17 +35,10 @@ class COMPONENT_EXPORT(RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION)
 
   // PerfettoTracedProcess::DataSourceBase implementation
   void StartTracingImpl(
-      tracing::PerfettoProducer* producer,
       const perfetto::DataSourceConfig& data_source_config) override;
   void StopTracingImpl(
       base::OnceClosure stop_complete_callback = base::OnceClosure()) override;
   void Flush(base::RepeatingClosure flush_complete_callback) override;
-
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  // TraceLog::EnabledStateObserver implementation.
-  void OnTraceLogEnabled() override;
-  void OnTraceLogDisabled() override;
-#endif
 
   virtual bool AddChromeDumpToTraceIfEnabled(
       const base::trace_event::MemoryDumpRequestArgs&,
@@ -71,14 +61,9 @@ class COMPONENT_EXPORT(RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION)
   static std::string ApplyPathFiltering(const std::string& file,
                                         bool is_argument_filtering_enabled);
 
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   using DataSourceProxy =
       tracing::PerfettoTracedProcess::DataSourceProxy<TracingObserver>;
   friend class perfetto::DataSource<TracingObserver>;
-#else   // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  base::Lock writer_lock_;
-  std::unique_ptr<perfetto::TraceWriter> trace_writer_ GUARDED_BY(writer_lock_);
-#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
  private:
   // Returns true if the dump mode is allowed for current tracing session.

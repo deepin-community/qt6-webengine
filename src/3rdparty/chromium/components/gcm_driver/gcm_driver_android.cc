@@ -12,8 +12,10 @@
 #include "base/android/jni_string.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/gcm_driver/android/jni_headers/GCMDriver_jni.h"
 
 using base::android::AppendJavaStringArrayToStringVector;
@@ -40,7 +42,6 @@ GCMDriverAndroid::~GCMDriverAndroid() {
 
 void GCMDriverAndroid::OnRegisterFinished(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_app_id,
     const JavaParamRef<jstring>& j_registration_id,
     jboolean success) {
@@ -56,7 +57,6 @@ void GCMDriverAndroid::OnRegisterFinished(
 
 void GCMDriverAndroid::OnUnregisterFinished(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_app_id,
     jboolean success) {
   std::string app_id = ConvertJavaStringToUTF8(env, j_app_id);
@@ -70,7 +70,6 @@ void GCMDriverAndroid::OnUnregisterFinished(
 
 void GCMDriverAndroid::OnMessageReceived(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_app_id,
     const JavaParamRef<jstring>& j_sender_id,
     const JavaParamRef<jstring>& j_message_id,
@@ -85,9 +84,9 @@ void GCMDriverAndroid::OnMessageReceived(
   message.sender_id = ConvertJavaStringToUTF8(env, j_sender_id);
 
   if (!j_message_id.is_null())
-    ConvertJavaStringToUTF8(env, j_message_id, &message.message_id);
+    message.message_id = ConvertJavaStringToUTF8(env, j_message_id);
   if (!j_collapse_key.is_null())
-    ConvertJavaStringToUTF8(env, j_collapse_key, &message.collapse_key);
+    message.collapse_key = ConvertJavaStringToUTF8(env, j_collapse_key);
 
   // Expand j_data_keys_and_values from array to map.
   std::vector<std::string> data_keys_and_values;

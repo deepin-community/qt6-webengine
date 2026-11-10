@@ -27,13 +27,13 @@ class ReportingClient;
 
 class MdnsQuerier : public MdnsReceiver::ResponseClient {
  public:
-  MdnsQuerier(MdnsSender* sender,
-              MdnsReceiver* receiver,
+  MdnsQuerier(MdnsSender& sender,
+              MdnsReceiver& receiver,
               TaskRunner& task_runner,
               ClockNowFunctionPtr now_function,
-              MdnsRandom* random_delay,
-              ReportingClient* reporting_client,
-              Config config);
+              MdnsRandom& random_delay,
+              ReportingClient& reporting_client,
+              const Config& config);
   MdnsQuerier(const MdnsQuerier& other) = delete;
   MdnsQuerier(MdnsQuerier&& other) noexcept = delete;
   MdnsQuerier& operator=(const MdnsQuerier& other) = delete;
@@ -41,9 +41,9 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
   ~MdnsQuerier() override;
 
   // Starts an mDNS query with the given name, DNS type, and DNS class.  Updated
-  // records are passed to |callback|.  The caller must ensure |callback|
+  // records are passed to `callback`.  The caller must ensure `callback`
   // remains alive while it is registered with a query.
-  // NOTE: This call is only valid for |dns_type| values:
+  // NOTE: This call is only valid for `dns_type` values:
   // - DnsType::kA
   // - DnsType::kPTR
   // - DnsType::kTXT
@@ -56,7 +56,7 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
                   MdnsRecordChangedCallback* callback);
 
   // Stops an mDNS query with the given name, DNS type, and DNS class.
-  // |callback| must be the same callback pointer that was previously passed to
+  // `callback` must be the same callback pointer that was previously passed to
   // StartQuery.
   void StopQuery(const DomainName& name,
                  DnsType dns_type,
@@ -84,17 +84,17 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
         std::function<bool(const MdnsRecordTracker&)>;
     using TrackerChangeCallback = std::function<void(const MdnsRecordTracker&)>;
 
-    RecordTrackerLruCache(MdnsQuerier* querier,
-                          MdnsSender* sender,
-                          MdnsRandom* random_delay,
+    RecordTrackerLruCache(MdnsQuerier& querier,
+                          MdnsSender& sender,
+                          MdnsRandom& random_delay,
                           TaskRunner& task_runner,
                           ClockNowFunctionPtr now_function,
-                          ReportingClient* reporting_client,
+                          ReportingClient& reporting_client,
                           const Config& config);
 
-    // Returns all trackers with the associated |name| such that its type
-    // represents a type corresponding to |dns_type| and class corresponding to
-    // |dns_class|.
+    // Returns all trackers with the associated `name` such that its type
+    // represents a type corresponding to `dns_type` and class corresponding to
+    // `dns_class`.
     std::vector<RecordTrackerConstRef> Find(const DomainName& name);
     std::vector<RecordTrackerConstRef> Find(const DomainName& name,
                                             DnsType dns_type,
@@ -109,7 +109,7 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
     // provided applicability check. Returns the number of trackers erased.
     int Erase(const DomainName& name, TrackerApplicableCheck check);
 
-    // Updates all record trackers in the domain |record.name()| which match the
+    // Updates all record trackers in the domain `record.name()` which match the
     // provided applicability check using the provided record. Returns the
     // number of records successfully updated.
     int Update(const MdnsRecord& record, TrackerApplicableCheck check);
@@ -130,13 +130,13 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
     void MoveToBeginning(RecordMap::iterator iterator);
     void MoveToEnd(RecordMap::iterator iterator);
 
-    MdnsQuerier* const querier_;
-    MdnsSender* const sender_;
-    MdnsRandom* const random_delay_;
+    MdnsQuerier& querier_;
+    MdnsSender& sender_;
+    MdnsRandom& random_delay_;
     TaskRunner& task_runner_;
     ClockNowFunctionPtr now_function_;
-    ReportingClient* reporting_client_;
-    const Config& config_;
+    ReportingClient& reporting_client_;
+    Config config_;
 
     // List of RecordTracker instances used by this instance where the least
     // recently updated element (or next to be deleted element) appears at the
@@ -162,7 +162,7 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
   void OnMessageReceived(const MdnsMessage& message) override;
 
   // Expires the record tracker provided. This callback is passed to owned
-  // MdnsRecordTracker instances in |records_|.
+  // MdnsRecordTracker instances in `records_`.
   void OnRecordExpired(const MdnsRecordTracker* tracker,
                        const MdnsRecord& record);
 
@@ -175,10 +175,10 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
   // RFC6891.
   void ProcessRecord(const MdnsRecord& records);
 
-  // Processes a shared record update as a record of type |type|.
+  // Processes a shared record update as a record of type `type`.
   void ProcessSharedRecord(const MdnsRecord& record, DnsType type);
 
-  // Processes a unique record update as a record of type |type|.
+  // Processes a unique record update as a record of type `type`.
   void ProcessUniqueRecord(const MdnsRecord& record, DnsType type);
 
   // Called when exactly one tracker is associated with a provided key.
@@ -205,12 +205,12 @@ class MdnsQuerier : public MdnsReceiver::ResponseClient {
   // Applies the supplied pending changes.
   void ApplyPendingChanges(std::vector<PendingQueryChange> pending_changes);
 
-  MdnsSender* const sender_;
-  MdnsReceiver* const receiver_;
+  MdnsSender& sender_;
+  MdnsReceiver& receiver_;
   TaskRunner& task_runner_;
   const ClockNowFunctionPtr now_function_;
-  MdnsRandom* const random_delay_;
-  ReportingClient* reporting_client_;
+  MdnsRandom& random_delay_;
+  ReportingClient& reporting_client_;
   Config config_;
 
   // A collection of active question trackers, each is uniquely identified by

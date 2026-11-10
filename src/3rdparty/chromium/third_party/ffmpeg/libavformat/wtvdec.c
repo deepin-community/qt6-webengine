@@ -31,8 +31,10 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
+#include "libavutil/mem.h"
 #include "libavutil/time_internal.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 #include "wtv.h"
@@ -184,7 +186,7 @@ static AVIOContext * wtvfile_open_sector(unsigned first_sector, uint64_t length,
         int nb_sectors1 = read_ints(s->pb, sectors1, WTV_SECTOR_SIZE / 4);
         int i;
 
-        wf->sectors = av_malloc_array(nb_sectors1, 1 << WTV_SECTOR_BITS);
+        wf->sectors = av_calloc(nb_sectors1, 1 << WTV_SECTOR_BITS);
         if (!wf->sectors) {
             av_free(wf);
             return NULL;
@@ -773,6 +775,7 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
 {
     WtvContext *wtv = s->priv_data;
     AVIOContext *pb = wtv->pb;
+    int ret;
     while (!avio_feof(pb)) {
         ff_asf_guid g;
         int len, sid, consumed;
@@ -832,7 +835,7 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
             int stream_index = ff_find_stream_index(s, sid);
             if (stream_index >= 0) {
                 AVStream *st = s->streams[stream_index];
-                uint8_t buf[258];
+                uint8_t buf[258] = {0};
                 const uint8_t *pbuf = buf;
                 int buf_size;
 
@@ -845,7 +848,9 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
                 }
 
                 buf_size = FFMIN(len - consumed, sizeof(buf));
-                avio_read(pb, buf, buf_size);
+                ret = ffio_read_size(pb, buf, buf_size);
+                if (ret < 0)
+                    return ret;
                 consumed += buf_size;
                 ff_parse_mpeg2_descriptor(s, st, 0, &pbuf, buf + buf_size, NULL, 0, 0, NULL);
             }
@@ -1117,14 +1122,14 @@ static int read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_wtv_demuxer = {
-    .name           = "wtv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Windows Television (WTV)"),
+const FFInputFormat ff_wtv_demuxer = {
+    .p.name         = "wtv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Windows Television (WTV)"),
+    .p.flags        = AVFMT_SHOW_IDS,
     .priv_data_size = sizeof(WtvContext),
     .read_probe     = read_probe,
     .read_header    = read_header,
     .read_packet    = read_packet,
     .read_seek      = read_seek,
     .read_close     = read_close,
-    .flags          = AVFMT_SHOW_IDS,
 };

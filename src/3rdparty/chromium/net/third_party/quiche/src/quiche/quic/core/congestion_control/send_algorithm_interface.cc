@@ -7,10 +7,13 @@
 #include "absl/base/attributes.h"
 #include "quiche/quic/core/congestion_control/bbr2_sender.h"
 #include "quiche/quic/core/congestion_control/bbr_sender.h"
+#include "quiche/quic/core/congestion_control/prague_sender.h"
 #include "quiche/quic/core/congestion_control/tcp_cubic_sender_bytes.h"
-#include "quiche/quic/core/quic_packets.h"
-#include "quiche/quic/platform/api/quic_bug_tracker.h"
-#include "quiche/quic/platform/api/quic_flag_utils.h"
+#include "quiche/quic/core/crypto/quic_random.h"
+#include "quiche/quic/core/quic_clock.h"
+#include "quiche/quic/core/quic_connection_stats.h"
+#include "quiche/quic/core/quic_types.h"
+#include "quiche/quic/core/quic_unacked_packet_map.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 
 namespace quic {
@@ -51,6 +54,9 @@ SendAlgorithmInterface* SendAlgorithmInterface::Create(
       return new TcpCubicSenderBytes(clock, rtt_stats, true /* use Reno */,
                                      initial_congestion_window,
                                      max_congestion_window, stats);
+    case kPragueCubic:
+      return new PragueSender(clock, rtt_stats, initial_congestion_window,
+                              max_congestion_window, stats);
   }
   return nullptr;
 }

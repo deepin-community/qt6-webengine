@@ -10,9 +10,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/mapped_memory.h"
@@ -56,8 +58,8 @@ class QuerySyncManagerTest : public testing::Test {
 };
 
 TEST_F(QuerySyncManagerTest, Basic) {
-  QuerySyncManager::QueryInfo infos[4];
-  memset(&infos, 0xBD, sizeof(infos));
+  std::array<QuerySyncManager::QueryInfo, 4> infos;
+  UNSAFE_TODO(memset(&infos, 0xBD, infos.size() * sizeof(infos[0])));
 
   for (size_t ii = 0; ii < std::size(infos); ++ii) {
     EXPECT_TRUE(sync_manager_->Alloc(&infos[ii]));
@@ -73,8 +75,8 @@ TEST_F(QuerySyncManagerTest, Basic) {
 }
 
 TEST_F(QuerySyncManagerTest, DontFree) {
-  QuerySyncManager::QueryInfo infos[4];
-  memset(&infos, 0xBD, sizeof(infos));
+  std::array<QuerySyncManager::QueryInfo, 4> infos;
+  UNSAFE_TODO(memset(&infos, 0xBD, infos.size() * sizeof(infos[0])));
 
   for (size_t ii = 0; ii < std::size(infos); ++ii) {
     EXPECT_TRUE(sync_manager_->Alloc(&infos[ii]));

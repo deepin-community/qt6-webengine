@@ -5,10 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_TESTING_MOCK_FETCH_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_TESTING_MOCK_FETCH_CONTEXT_H_
 
+#include <memory>
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/types/optional_ref.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -19,8 +22,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
-
-#include <memory>
 
 namespace blink {
 
@@ -45,10 +46,8 @@ class MockFetchContext : public FetchContext {
     tagged_urls_ = std::move(tagged_urls);
   }
 
-  bool AllowImage(bool images_enabled, const KURL&) const override {
-    return true;
-  }
-  absl::optional<ResourceRequestBlockedReason> CanRequest(
+  bool AllowImage() const override { return true; }
+  std::optional<ResourceRequestBlockedReason> CanRequest(
       ResourceType,
       const ResourceRequest&,
       const KURL&,
@@ -56,9 +55,9 @@ class MockFetchContext : public FetchContext {
       ReportingDisposition,
       base::optional_ref<const ResourceRequest::RedirectInfo> redirect_info)
       const override {
-    return absl::nullopt;
+    return std::nullopt;
   }
-  absl::optional<ResourceRequestBlockedReason>
+  std::optional<ResourceRequestBlockedReason>
   CanRequestBasedOnSubresourceFilterOnly(
       ResourceType type,
       const ResourceRequest& resource_request,
@@ -71,17 +70,29 @@ class MockFetchContext : public FetchContext {
       return ResourceRequestBlockedReason::kSubresourceFilter;
     }
 
-    return absl::nullopt;
+    return std::nullopt;
   }
-  absl::optional<ResourceRequestBlockedReason> CheckCSPForRequest(
+  std::optional<ResourceRequestBlockedReason> CheckCSPForRequest(
       mojom::blink::RequestContextType,
       network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
       const KURL& url,
       const ResourceLoaderOptions& options,
       ReportingDisposition reporting_disposition,
       const KURL& url_before_redirects,
       ResourceRequest::RedirectStatus redirect_status) const override {
-    return absl::nullopt;
+    return std::nullopt;
+  }
+  std::optional<ResourceRequestBlockedReason> CheckAndEnforceCSPForRequest(
+      mojom::blink::RequestContextType,
+      network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
+      const KURL& url,
+      const ResourceLoaderOptions& options,
+      ReportingDisposition reporting_disposition,
+      const KURL& url_before_redirects,
+      ResourceRequest::RedirectStatus redirect_status) const override {
+    return std::nullopt;
   }
   void AddResourceTiming(
       mojom::blink::ResourceTimingInfoPtr resource_timing_info,
@@ -104,7 +115,8 @@ class MockFetchContext : public FetchContext {
       const ResourceRequestHead& resource_request,
       base::optional_ref<const KURL> alias_url,
       ResourceType type,
-      const FetchInitiatorInfo& initiator_info) override {
+      const FetchInitiatorInfo& initiator_info,
+      subresource_filter::ScopedRule* out_rule) override {
     const KURL url =
         alias_url.has_value() ? alias_url.value() : resource_request.Url();
     return tagged_urls_.Contains(url.GetString());
@@ -115,13 +127,32 @@ class MockFetchContext : public FetchContext {
     resource_load_info_notifier_ = resource_load_info_notifier;
   }
 
+  void SetPotentiallyUnusedPreload(const Vector<KURL>& urls) {
+    potentially_unused_preloads_ = urls;
+  }
+
+  const Vector<KURL>& GetPotentiallyUnusedPreloads() const override {
+    return potentially_unused_preloads_;
+  }
+
+  void SetPermissionsPolicy(
+      std::unique_ptr<network::PermissionsPolicy> policy) {
+    permissions_policy_ = std::move(policy);
+  }
+
+  const network::PermissionsPolicy* GetPermissionsPolicy() const override {
+    return permissions_policy_.get();
+  }
+
  private:
-  raw_ptr<mojom::ResourceLoadInfoNotifier, ExperimentalRenderer>
-      resource_load_info_notifier_ = nullptr;
+  raw_ptr<mojom::ResourceLoadInfoNotifier> resource_load_info_notifier_ =
+      nullptr;
   std::unique_ptr<WeakWrapperResourceLoadInfoNotifier>
       weak_wrapper_resource_load_info_notifier_;
   Vector<String> blocked_urls_;
   Vector<String> tagged_urls_;
+  Vector<KURL> potentially_unused_preloads_;
+  std::unique_ptr<network::PermissionsPolicy> permissions_policy_;
 };
 
 }  // namespace blink

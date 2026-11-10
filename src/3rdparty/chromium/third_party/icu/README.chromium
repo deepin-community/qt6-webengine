@@ -1,18 +1,18 @@
 Name: icu
 URL: https://github.com/unicode-org/icu
-Version: 73-1
-CPEPrefix: cpe:/a:icu-project:international_components_for_unicode:73.1
+Version: 74-2
+CPEPrefix: cpe:/a:icu-project:international_components_for_unicode:74.2
 License: MIT
 License File: LICENSE
 Security Critical: yes
 Shipped: yes
 
 Description:
-This directory contains the source code of ICU 73.1 for C/C++.
+This directory contains the source code of ICU 74.2 for C/C++.
 
 A. How to update ICU
 
-1. Run "scripts/update.sh <version>" (e.g. 73-1).
+1. Run "scripts/update.sh <version>" (e.g. 74-2).
    This will download ICU from the upstream git repository.
    It does preserve Chrome-specific build files and
    converter files. (see section C)
@@ -63,9 +63,9 @@ Pre-built data files are generated and checked in with the following steps
      viii) cast/patch_locale.sh
        Modify the file for cast, android, ios and flutter.
 
-     ix) Repeat step iii) - vi) for cast, andriod and ios to produce
+     ix) Repeat step iii) - vi) for cast, android and ios to produce
        cast/icudtl.dat
-       andriod/icudtl.dat
+       android/icudtl.dat
        ios/icudtl.dat
 
      x) flutter/patch_brkitr.sh
@@ -207,7 +207,11 @@ D. Local Modifications
      windowsZones.txt
      zoneinfo64.txt
 
-  As of Mar 5, 2024, the latest version is 2024a
+  - Delete the line containing `Factory{"Etc/Unknown"}` from
+    timezoneTypes.txt before regenerating data
+    bug: https://crbug.com/381620359
+
+  As of Mar 18, 2025, the latest version is 2025a
   and the above files are available at the ICU github repos.
 
 4. Build-related changes
@@ -215,10 +219,6 @@ D. Local Modifications
   - patches/configure.patch:
     * Remove a section of configure that will cause breakage while
       running runConfigureICU.
-
-  - patches/wpo.patch (only needed when icudata dll is used).
-    upstream bugs : https://unicode-org.atlassian.net/browse/ICU-8043
-                    https://unicode-org.atlassian.net/browse/ICU-5701
 
   - patches/data_symb.patch :
       Put ICU_DATA_ENTRY_POINT(icudtXX_dat) in common when we use
@@ -257,22 +257,50 @@ D. Local Modifications
     patches/fuchsia.patch
   - context bug: https://bugs.chromium.org/p/chromium/issues/detail?id=1184527
 
-10. Patch fix of double free during OOM
-    patches/ultag_parse-double-free.patch
-  - https://unicode-org.atlassian.net/browse/ICU-22475
-  - https://github.com/unicode-org/icu/pull/2567
-
-11. Patch fix to support TimeZone GMT-16:00 ... GMT-23:59.
-    patches/gmt24.patch
-  - https://unicode-org.atlassian.net/browse/ICU-22526
-  - https://github.com/unicode-org/icu/pull/2646
-
-12. Patch fix of Etc/Unknown being returned for
+10. Patch fix of Etc/Unknown being returned for
     Intl.DateTimeFormat().resolvedOptions().timeZone on macOS 14.
     patches/revert_realpath.patch
   - https://bugs.chromium.org/p/chromium/issues/detail?id=1473422
   - https://unicode-org.atlassian.net/browse/ICU-22541
 
-13. Patch fix of uloc_tag.cpp
-    patches/uloc_tag_buffer_overflow.patch
-  - https://github.com/unicode-org/icu/pull/2600/files
+11. Patch source/common/locid.cpp to resolve crashes in DecimalFormatting.
+    patches/locid.patch
+  - https://issues.chromium.org/issues/333453962
+
+12. Patch source/common/messagepattern.ccp/.h to resolve stack overflow.
+    patches/limit_message_pattern.patch
+  - https://issues.chromium.org/343280855
+  - https://unicode-org.atlassian.net/browse/ICU-22798
+
+13. Patch source/common/ubidiwrt.cpp to resolve a bidi buffer overflow.
+    patches/bidi_buffer_overflow.patch
+  - https://issues.chromium.org/u/1/issues/345352978
+  - https://unicode-org.atlassian.net/browse/ICU-22768
+
+14. Patch source/tools/pkgdata/pkgdata.cpp to remove a format-overflow warning.
+    patches/remove_format_overflow_warning.patch
+  - https://unicode-org.atlassian.net/browse/ICU-21589
+  - https://issues.chromium.org/u/1/issues/345352978
+
+15. Patch source/i18n/japancal.cpp to fix an extended year int32 overflow.
+    patches/ja_extended_year_overflow.patch
+  - https://issues.chromium.org/u/1/issues/345352978
+  - https://unicode-org.atlassian.net/browse/ICU-22730
+
+16. Patch an icu:calendar integer overflow by propagating error.
+    patch/propagate_error_avoid_overflow.patch
+  - https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=68895
+  - https://issues.chromium.org/u/1/issues/345352978
+  - https://unicode-org.atlassian.net/browse/ICU-22730
+
+17. Patch UnicodeString to fix heap-buffer-overflow .
+    patches/unicode_string.patch
+  - https://unicode-org.atlassian.net/browse/ICU-23060
+  - https://g-issues.chromium.org/issues/393989622
+  - https://patch-diff.githubusercontent.com/raw/unicode-org/icu/pull/3416.diff
+  - https://patch-diff.githubusercontent.com/raw/unicode-org/icu/pull/3420.diff
+
+18. Patch unnecessary uses of the virtual keyword.
+    patches/unnecessary_virtual_specifier.patch
+  - https://issues.chromium.org/issues/403236787
+  - https://patch-diff.githubusercontent.com/raw/unicode-org/icu/pull/3489.diff

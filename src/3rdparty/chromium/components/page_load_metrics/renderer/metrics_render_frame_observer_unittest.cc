@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "components/page_load_metrics/common/page_load_metrics.mojom-forward.h"
@@ -66,6 +65,11 @@ class TestMetricsRenderFrameObserver : public MetricsRenderFrameObserver,
                   PageTimingMetadataRecorder::MonotonicTiming());
   }
 
+  mojom::CustomUserTimingMarkPtr GetCustomUserTimingMark() const override {
+    return mojom::CustomUserTimingMark::New("fake_user_timing_mark",
+                                            base::Milliseconds(100));
+  }
+
   void ExpectSoftNavigationMetrics(
       const mojom::SoftNavigationMetrics& soft_navigation_metrics) {
     fake_soft_navigation_metrics_ = soft_navigation_metrics.Clone();
@@ -98,11 +102,7 @@ class TestMetricsRenderFrameObserver : public MetricsRenderFrameObserver,
   FakePageTimingSender::PageTimingValidator validator_;
   mutable mojom::PageLoadTimingPtr fake_timing_;
   mojom::SoftNavigationMetricsPtr fake_soft_navigation_metrics_ =
-      mojom::SoftNavigationMetrics::New(
-          blink::kSoftNavigationCountDefaultValue,
-          base::Milliseconds(0),
-          base::EmptyString(),
-          mojom::LargestContentfulPaintTiming::New());
+      CreateSoftNavigationMetrics();
 };
 
 typedef testing::Test MetricsRenderFrameObserverTest;
@@ -124,7 +124,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleMetric) {
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
 
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -149,7 +149,7 @@ TEST_F(MetricsRenderFrameObserverTest,
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
 
@@ -170,7 +170,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleCpuMetric) {
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
 
@@ -191,14 +191,12 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
   mojom::PageLoadTiming timing;
   page_load_metrics::InitPageLoadTimingForTest(&timing);
   mojom::SoftNavigationMetricsPtr soft_navigation_metrics =
-      mojom::SoftNavigationMetrics::New(
-          blink::kSoftNavigationCountDefaultValue, base::Milliseconds(0),
-          base::EmptyString(), mojom::LargestContentfulPaintTiming::New());
+      CreateSoftNavigationMetrics();
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics(*soft_navigation_metrics);
 
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -219,13 +217,12 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
   observer.ExpectPageLoadTiming(timing);
   // Expect a soft navigation metrics being sent because of soft navigation
   // detection.
-  soft_navigation_metrics->count = 1;
-
+  // TODO(crbug.com/426595418): Rework these tests to verify the
+  // navigationId values.
+  soft_navigation_metrics->count = 111111;
   soft_navigation_metrics->start_time =
       base::TimeDelta() + base::Milliseconds(221.1);
-
-  soft_navigation_metrics->navigation_id =
-      "94befe01-5108-43f2-9ec9-936dd0f36e02";
+  soft_navigation_metrics->navigation_id = 42;
 
   observer.ExpectSoftNavigationMetrics(*soft_navigation_metrics);
 
@@ -255,7 +252,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
   observer.ExpectPageLoadTiming(timing);
 
   soft_navigation_metrics->largest_contentful_paint =
-      mojom::LargestContentfulPaintTiming::New();
+      CreateLargestContentfulPaintTiming();
 
   soft_navigation_metrics->largest_contentful_paint->largest_image_paint_size =
       1;
@@ -283,7 +280,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -311,7 +308,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
 
   observer.ExpectPageLoadTiming(timing_2);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -323,62 +320,6 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
 
   observer.DidChangePerformanceTiming();
   observer.GetMockTimer()->Fire();
-}
-
-using MetricsRenderFrameObserverUmaHistogramTest =
-    MetricsRenderFrameObserverTest;
-
-TEST_F(MetricsRenderFrameObserverUmaHistogramTest, UmaHistogram) {
-  base::HistogramTester histogram_tester;
-
-  // Test the case where both timings are 0.
-  base::TimeDelta start_time_relative_to_reference = base::TimeDelta();
-  double nav_start_relative_to_reference = 0;
-  internal::RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-      start_time_relative_to_reference, nav_start_relative_to_reference);
-
-  histogram_tester.ExpectBucketCount(
-      internal::kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-      internal::SoftNavigationFromStartInvalidTimingReasons::
-          kSoftNavStartTimeIsZeroAndEqNavStart,
-      1);
-
-  // Test the case where the start time is 0 and navigation start is non 0.
-  start_time_relative_to_reference = base::TimeDelta();
-  nav_start_relative_to_reference = 1.0;
-  internal::RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-      start_time_relative_to_reference, nav_start_relative_to_reference);
-
-  histogram_tester.ExpectBucketCount(
-      internal::kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-      internal::SoftNavigationFromStartInvalidTimingReasons::
-          kSoftNavStartTimeIsZeroAndLtNavStart,
-      1);
-
-  // Test the case where both timings are non 0 and they are equal.
-  start_time_relative_to_reference = base::TimeDelta() + base::Seconds(1);
-  nav_start_relative_to_reference = 1.0;
-  internal::RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-      start_time_relative_to_reference, nav_start_relative_to_reference);
-
-  histogram_tester.ExpectBucketCount(
-      internal::kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-      internal::SoftNavigationFromStartInvalidTimingReasons::
-          kSoftNavStartTimeIsNonZeroAndEqNavStart,
-      1);
-
-  // Test the case where both timings are non 0 and the start time is less than
-  // the navigation start.
-  start_time_relative_to_reference = base::TimeDelta() + base::Seconds(1);
-  nav_start_relative_to_reference = 2.0;
-  internal::RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-      start_time_relative_to_reference, nav_start_relative_to_reference);
-
-  histogram_tester.ExpectBucketCount(
-      internal::kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-      internal::SoftNavigationFromStartInvalidTimingReasons::
-          kSoftNavStartTimeIsNonZeroAndLtNavStart,
-      1);
 }
 
 }  // namespace page_load_metrics

@@ -72,7 +72,6 @@ EventRewriteStatus EventRewriter::RewriteEvent(
     const Event& event,
     std::unique_ptr<Event>* rewritten_event) {
   NOTREACHED();
-  return EVENT_REWRITE_DISCARD;
 }
 
 bool EventRewriter::SupportsNonRootLocation() const {
@@ -86,7 +85,6 @@ EventRewriteStatus EventRewriter::NextDispatchEvent(
     const Event& last_event,
     std::unique_ptr<Event>* new_event) {
   NOTREACHED();
-  return EVENT_REWRITE_DISCARD;
 }
 
 // TODO(kpschoedel): Remove old API.

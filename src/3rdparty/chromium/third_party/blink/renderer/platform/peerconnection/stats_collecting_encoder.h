@@ -90,8 +90,7 @@ class PLATFORM_EXPORT StatsCollectingEncoder
   base::Lock lock_;
 
   const std::unique_ptr<webrtc::VideoEncoder> encoder_;
-  raw_ptr<webrtc::EncodedImageCallback, ExperimentalRenderer> encoded_callback_{
-      nullptr};
+  raw_ptr<webrtc::EncodedImageCallback> encoded_callback_{nullptr};
   // We only care about the highest layer...
   // - In simulcast, the stream index refers to the simulcast index.
   // - In SVC, the stream index refers to the spatial index.
@@ -102,7 +101,7 @@ class PLATFORM_EXPORT StatsCollectingEncoder
   bool first_frame_encoded_{false};
   base::TimeTicks last_check_for_simultaneous_encoders_;
 
-  WTF::Deque<EncodeStartInfo> encode_start_info_ GUARDED_BY(lock_);
+  Deque<EncodeStartInfo> encode_start_info_ GUARDED_BY(lock_);
 
   SEQUENCE_CHECKER(encoding_sequence_checker_);
 };

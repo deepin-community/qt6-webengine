@@ -139,7 +139,7 @@ egl::Error IOSurfaceSurfaceCGL::unMakeCurrent(const gl::Context *context)
     return egl::NoError();
 }
 
-egl::Error IOSurfaceSurfaceCGL::swap(const gl::Context *context)
+egl::Error IOSurfaceSurfaceCGL::swap(const gl::Context *context, SurfaceSwapFeedback *feedback)
 {
     return egl::NoError();
 }
@@ -177,12 +177,14 @@ egl::Error IOSurfaceSurfaceCGL::bindTexImage(const gl::Context *context,
 
     if (error != kCGLNoError)
     {
-        return egl::EglContextLost() << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+        std::ostringstream err;
+        err << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+        return egl::Error(EGL_CONTEXT_LOST, err.str());
     }
 
     if (IsError(initializeAlphaChannel(context, textureID)))
     {
-        return egl::EglContextLost() << "Failed to initialize IOSurface alpha channel.";
+        return egl::Error(EGL_CONTEXT_LOST, "Failed to initialize IOSurface alpha channel.");
     }
 
     return egl::NoError();
@@ -195,19 +197,14 @@ egl::Error IOSurfaceSurfaceCGL::releaseTexImage(const gl::Context *context, EGLi
     return egl::NoError();
 }
 
-void IOSurfaceSurfaceCGL::setSwapInterval(EGLint interval)
+void IOSurfaceSurfaceCGL::setSwapInterval(const egl::Display *display, EGLint interval)
 {
     UNREACHABLE();
 }
 
-EGLint IOSurfaceSurfaceCGL::getWidth() const
+gl::Extents IOSurfaceSurfaceCGL::getSize() const
 {
-    return mWidth;
-}
-
-EGLint IOSurfaceSurfaceCGL::getHeight() const
-{
-    return mHeight;
+    return gl::Extents(mWidth, mHeight, 1);
 }
 
 EGLint IOSurfaceSurfaceCGL::isPostSubBufferSupported() const
@@ -308,15 +305,16 @@ egl::Error IOSurfaceSurfaceCGL::attachToFramebuffer(const gl::Context *context,
             format.nativeFormat, format.nativeType, mIOSurface, mPlane);
         if (error != kCGLNoError)
         {
-            return egl::EglContextLost()
-                   << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+            std::ostringstream err;
+            err << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+            return egl::Error(EGL_CONTEXT_LOST, err.str());
         }
         ASSERT(error == kCGLNoError);
 
         // TODO: pass context
         if (IsError(initializeAlphaChannel(context, textureID)))
         {
-            return egl::EglContextLost() << "Failed to initialize IOSurface alpha channel.";
+            return egl::Error(EGL_CONTEXT_LOST, "Failed to initialize IOSurface alpha channel.");
         }
 
         GLuint framebufferID = 0;

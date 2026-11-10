@@ -9,13 +9,17 @@
  */
 #include "test/pc/e2e/analyzer/video/default_video_quality_analyzer_internal_shared_objects.h"
 
+#include <optional>
+#include <string>
+#include <utility>
+
 #include "api/video/video_frame.h"
 #include "rtc_base/strings/string_builder.h"
 
 namespace webrtc {
 
 std::string InternalStatsKey::ToString() const {
-  rtc::StringBuilder out;
+  StringBuilder out;
   out << "stream=" << stream << "_sender=" << sender
       << "_receiver=" << receiver;
   return out.str();
@@ -37,8 +41,8 @@ bool operator==(const InternalStatsKey& a, const InternalStatsKey& b) {
 }
 
 FrameComparison::FrameComparison(InternalStatsKey stats_key,
-                                 absl::optional<VideoFrame> captured,
-                                 absl::optional<VideoFrame> rendered,
+                                 std::optional<VideoFrame> captured,
+                                 std::optional<VideoFrame> rendered,
                                  FrameComparisonType type,
                                  FrameStats frame_stats,
                                  OverloadReason overload_reason)

@@ -33,7 +33,7 @@
 #include "dawn/native/Commands.h"
 #include "dawn/native/d3d/UtilsD3D.h"
 #include "dawn/native/d3d12/BufferD3D12.h"
-#include "dawn/native/d3d12/TextureCopySplitter.h"
+#include "dawn/native/d3d12/ResourceAllocatorManagerD3D12.h"
 #include "dawn/native/d3d12/TextureD3D12.h"
 #include "dawn/native/d3d12/d3d12_platform.h"
 #include "dawn/native/dawn_platform.h"
@@ -42,18 +42,13 @@ namespace dawn::native::d3d12 {
 
 D3D12_COMPARISON_FUNC ToD3D12ComparisonFunc(wgpu::CompareFunction func);
 
+D3D12_SHADER_VISIBILITY ShaderVisibilityType(wgpu::ShaderStage visibility);
+
 D3D12_TEXTURE_COPY_LOCATION ComputeTextureCopyLocationForTexture(const Texture* texture,
                                                                  uint32_t level,
                                                                  uint32_t layer,
                                                                  Aspect aspect);
 
-D3D12_TEXTURE_COPY_LOCATION ComputeBufferLocationForCopyTextureRegion(
-    const Texture* texture,
-    ID3D12Resource* bufferResource,
-    const Extent3D& bufferSize,
-    const uint64_t offset,
-    const uint32_t rowPitch,
-    Aspect aspect);
 D3D12_BOX ComputeD3D12BoxFromOffsetAndSize(const Origin3D& offset, const Extent3D& copySize);
 
 enum class BufferTextureCopyDirection {
@@ -77,6 +72,14 @@ void RecordBufferTextureCopy(BufferTextureCopyDirection direction,
                              const Extent3D& copySize);
 
 void SetDebugName(Device* device, ID3D12Object* object, const char* prefix, std::string label = "");
+
+constexpr DXGI_FORMAT GetNullRTVDXGIFormatForD3D12RenderPass() {
+    return DXGI_FORMAT_R8G8B8A8_UNORM;
+}
+
+D3D12_HEAP_TYPE GetD3D12HeapType(ResourceHeapKind resourceHeapKind);
+
+D3D12_HEAP_PROPERTIES GetD3D12HeapProperties(ResourceHeapKind resourceHeapKind);
 
 }  // namespace dawn::native::d3d12
 

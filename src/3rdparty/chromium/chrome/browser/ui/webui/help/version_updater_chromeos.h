@@ -14,13 +14,15 @@
 namespace content {
 class BrowserContext;
 class WebContents;
-}
+}  // namespace content
 
 class VersionUpdaterCros : public VersionUpdater,
                            public ash::UpdateEngineClient::Observer {
  public:
+  explicit VersionUpdaterCros(content::WebContents* web_contents);
   VersionUpdaterCros(const VersionUpdaterCros&) = delete;
   VersionUpdaterCros& operator=(const VersionUpdaterCros&) = delete;
+  ~VersionUpdaterCros() override;
 
   // VersionUpdater implementation.
   void CheckForUpdate(StatusCallback callback, PromoteCallback) override;
@@ -35,17 +37,10 @@ class VersionUpdaterCros : public VersionUpdater,
   void SetUpdateOverCellularOneTimePermission(StatusCallback callback,
                                               const std::string& update_version,
                                               int64_t update_size) override;
-  void ApplyDeferredUpdate() override;
+  void ApplyDeferredUpdateAdvanced() override;
 
   // Gets the last update status, without triggering a new check or download.
   void GetUpdateStatus(StatusCallback callback);
-
- protected:
-  friend class VersionUpdater;
-
-  // Clients must use VersionUpdater::Create().
-  explicit VersionUpdaterCros(content::WebContents* web_contents);
-  ~VersionUpdaterCros() override;
 
  private:
   // UpdateEngineClient::Observer implementation.

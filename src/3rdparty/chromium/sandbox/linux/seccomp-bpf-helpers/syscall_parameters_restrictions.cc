@@ -15,16 +15,20 @@
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "base/allocator/partition_alloc_features.h"
+#include "base/android/background_thread_pool_field_trial.h"
+#include "base/feature_list.h"
+#include "base/features.h"
 #include "base/notreached.h"
 #include "base/synchronization/synchronization_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/bpf_dsl/seccomp_macros.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
@@ -35,8 +39,11 @@
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 #include "sandbox/linux/system_headers/linux_time.h"
 
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && \
-    !defined(__arm__) && !defined(__aarch64__) &&             \
+#if !defined(MAP_DROPPABLE)
+#define MAP_DROPPABLE	0x08    // Zero memory under memory pressure.
+#endif
+
+#if BUILDFLAG(IS_LINUX) && !defined(__arm__) && !defined(__aarch64__) && \
     !defined(PTRACE_GET_THREAD_AREA)
 // Also include asm/ptrace-abi.h since ptrace.h in older libc (for instance
 // the one in Ubuntu 16.04 LTS) is missing PTRACE_GET_THREAD_AREA.
@@ -107,7 +114,7 @@ inline bool IsArchitectureMips() {
 // to allow those futex(2) calls to fail with EINVAL, instead of crashing the
 // process. See crbug.com/598471.
 inline bool IsBuggyGlibcSemPost() {
-#if defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS)
   return true;
 #else
   return false;
@@ -228,7 +235,7 @@ ResultExpr RestrictIoctl() {
       CrashSIGSYSIoctl());
 }
 
-ResultExpr RestrictMmapFlags() {
+ResultExpr RestrictMmapFlags(uint64_t extra_allowed_mask) {
 #if BUILDFLAG(IS_ANDROID) && defined(__x86_64__)
   const uint64_t kArchSpecificAllowedMask = MAP_32BIT;
 #else
@@ -238,8 +245,15 @@ ResultExpr RestrictMmapFlags() {
   // TODO(davidung), remove MAP_DENYWRITE with updated Tegra libraries.
   const uint64_t kAllowedMask = MAP_SHARED | MAP_PRIVATE | MAP_ANONYMOUS |
                                 MAP_STACK | MAP_NORESERVE | MAP_FIXED |
-                                MAP_DENYWRITE | MAP_LOCKED |
-                                kArchSpecificAllowedMask;
+                                MAP_DENYWRITE | MAP_LOCKED | MAP_DROPPABLE |
+                                kArchSpecificAllowedMask | extra_allowed_mask;
+  const Arg<int> flags(3);
+  return If((flags & ~kAllowedMask) == 0, Allow()).Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT ResultExpr RestrictMremapFlagsForODML() {
+  // No flags are allowed.
+  const uint64_t kAllowedMask = 0;
   const Arg<int> flags(3);
   return If((flags & ~kAllowedMask) == 0, Allow()).Else(CrashSIGSYS());
 }
@@ -336,23 +350,31 @@ ResultExpr RestrictKillTarget(pid_t target_pid, int sysno) {
       return CrashSIGSYSKill();
     default:
       NOTREACHED();
-      return CrashSIGSYS();
   }
 }
 
 ResultExpr RestrictFutex() {
   const uint64_t kAllowedFutexFlags = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
+  ResultExpr error = IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex();
   const Arg<int> op(1);
   return Switch(op & ~kAllowedFutexFlags)
       .Cases({FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
-#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
-              // Enable priority-inheritance operations.
-              FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
-              FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI,
-#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
               FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET},
              Allow())
-      .Default(IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex());
+#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE) && BUILDFLAG(IS_ANDROID)
+      // Priority-inheritance futex operations are enabled only on Android
+      // kernels 6.1+. Bionic uses the PI variants of the futex operations
+      // (FUTEX_LOCK_PI2, FUTEX_UNLOCK_PI) to implement priority inheriting
+      // mutexes.
+      .Cases({FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
+              FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI2},
+             base::android::BackgroundThreadPoolFieldTrial::
+                     ShouldUsePriorityInheritanceLocks()
+                 ? Allow()
+                 : error)
+#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)  &&
+        // BUILDFLAG(IS_ANDROID)
+      .Default(error);
 }
 
 ResultExpr RestrictGetSetpriority(pid_t target_pid) {
@@ -385,7 +407,6 @@ ResultExpr RestrictSchedTarget(pid_t target_pid, int sysno) {
     }
     default:
       NOTREACHED();
-      return CrashSIGSYS();
   }
 }
 
@@ -496,6 +517,52 @@ ResultExpr RestrictGoogle3Threading(int sysno) {
 ResultExpr RestrictPipe2() {
   const Arg<int> flags(1);
   return If((flags & ~(O_CLOEXEC|O_DIRECT|O_NONBLOCK)) == 0, Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictSockSendFlags(int sysno) {
+  size_t argIndex;
+  switch (sysno) {
+#if defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_send:
+      argIndex = 3;
+      break;
+#endif
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || \
+    defined(__mips__) || defined(__aarch64__)
+    case __NR_sendto:  // Could specify destination.
+      argIndex = 3;
+      break;
+    case __NR_sendmsg:  // Could specify destination.
+      argIndex = 2;
+      break;
+#endif
+    case __NR_sendmmsg:  // Could specify destination.
+      argIndex = 3;
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  // In particular, does not include MSG_OOB due to its history of security
+  // vulnerabilities, see crbug.com/428177287.
+  const Arg<int> flags(argIndex);
+  return If((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) == 0, Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMemfdCreate() {
+  const Arg<int> flags(1);
+  return If((flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING)) == 0, Allow())
+      // ChromeOS uses ~0 as the flags to check if memfd_create exists (will
+      // return -EINVAL).
+      // https://source.chromium.org/chromium/chromium/src/+/main:mojo/core/channel_linux.cc;drc=c4987dbe36be309f8db36cba174310cb8a23e989;l=918
+      // Instead of doing something fancy to avoid this, just allow the syscall.
+      // ~0 will always be invalid; even if every flag bit gets a usage in the
+      // future, `flags` still encodes the huge page size which must be a power
+      // of 2, which it will not be if every bit is set.
+      .ElseIf(flags == ~0, Allow())
       .Else(CrashSIGSYS());
 }
 

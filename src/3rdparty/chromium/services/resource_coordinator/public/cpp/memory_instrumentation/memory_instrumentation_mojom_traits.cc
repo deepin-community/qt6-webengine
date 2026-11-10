@@ -4,6 +4,7 @@
 
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation_mojom_traits.h"
 
+#include "base/notreached.h"
 #include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
 
 namespace mojo {
@@ -21,9 +22,7 @@ EnumTraits<memory_instrumentation::mojom::DumpType,
     case base::trace_event::MemoryDumpType::kSummaryOnly:
       return memory_instrumentation::mojom::DumpType::SUMMARY_ONLY;
     default:
-      CHECK(false) << "Invalid type: " << static_cast<uint8_t>(type);
-      // This should not be reached. Just return a random value.
-      return memory_instrumentation::mojom::DumpType::PERIODIC_INTERVAL;
+      NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(type);
   }
 }
 
@@ -44,7 +43,6 @@ bool EnumTraits<memory_instrumentation::mojom::DumpType,
       break;
     default:
       NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(input);
-      return false;
   }
   return true;
 }
@@ -62,9 +60,7 @@ EnumTraits<memory_instrumentation::mojom::LevelOfDetail,
     case base::trace_event::MemoryDumpLevelOfDetail::kDetailed:
       return memory_instrumentation::mojom::LevelOfDetail::DETAILED;
     default:
-      CHECK(false) << "Invalid type: " << static_cast<uint8_t>(level_of_detail);
-      // This should not be reached. Just return a random value.
-      return memory_instrumentation::mojom::LevelOfDetail::BACKGROUND;
+      NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(level_of_detail);
   }
 }
 
@@ -85,7 +81,6 @@ bool EnumTraits<memory_instrumentation::mojom::LevelOfDetail,
       break;
     default:
       NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(input);
-      return false;
   }
   return true;
 }
@@ -101,9 +96,7 @@ EnumTraits<memory_instrumentation::mojom::Determinism,
     case base::trace_event::MemoryDumpDeterminism::kForceGc:
       return memory_instrumentation::mojom::Determinism::FORCE_GC;
     default:
-      CHECK(false) << "Invalid type: " << static_cast<uint8_t>(determinism);
-      // This should not be reached. Just return a random value.
-      return memory_instrumentation::mojom::Determinism::NONE;
+      NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(determinism);
   }
 }
 
@@ -121,7 +114,6 @@ bool EnumTraits<memory_instrumentation::mojom::Determinism,
       break;
     default:
       NOTREACHED() << "Invalid type: " << static_cast<uint8_t>(input);
-      return false;
   }
   return true;
 }
@@ -209,7 +201,7 @@ bool StructTraits<memory_instrumentation::mojom::RawAllocatorDumpDataView,
       absolute_name, level_of_detail,
       base::trace_event::MemoryAllocatorDumpGuid(input.id()));
   if (input.weak())
-    mad->set_flags(base::trace_event::MemoryAllocatorDump::WEAK);
+    mad->set_flags(base::trace_event::MemoryAllocatorDump::kWeak);
   if (!input.ReadEntries(mad->mutable_entries_for_serialization()))
     return false;
   *out = std::move(mad);

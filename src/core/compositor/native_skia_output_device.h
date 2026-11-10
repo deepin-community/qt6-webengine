@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef NATIVE_SKIA_OUTPUT_DEVICE_H
 #define NATIVE_SKIA_OUTPUT_DEVICE_H
@@ -10,7 +11,6 @@
 #include "components/viz/service/display_embedder/skia_output_device.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
-#include "gpu/config/gpu_preferences.h"
 
 #include <QMutex>
 
@@ -60,12 +60,8 @@ public:
 
     // Overridden from SkiaOutputDevice.
     void SetFrameSinkId(const viz::FrameSinkId &frame_sink_id) override;
-    bool Reshape(const SkImageInfo &image_info,
-                 const gfx::ColorSpace &color_space,
-                 int sample_count,
-                 float device_scale_factor,
-                 gfx::OverlayTransform transform) override;
-    void Present(const absl::optional<gfx::Rect>& update_rect,
+    bool Reshape(const ReshapeParams &params) override;
+    void Present(const std::optional<gfx::Rect>& update_rect,
                  BufferPresentedCallback feedback,
                  viz::OutputSurfaceFrame frame) override;
     void EnsureBackbuffer() override;
@@ -77,6 +73,7 @@ public:
     void swapFrame() override;
     void waitForTexture() override;
     void releaseTexture() override;
+    bool hasResources() override;
     void releaseResources() override;
     bool textureIsFlipped() override;
     QSize size() override;
@@ -118,10 +115,10 @@ protected:
         void consumeFence();
 
         sk_sp<SkImage> skImage();
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
         scoped_refptr<gfx::NativePixmap> nativePixmap();
 #elif defined(Q_OS_WIN)
-        absl::optional<gl::DCLayerOverlayImage> overlayImage() const;
+        std::optional<gl::DCLayerOverlayImage> overlayImage() const;
 #elif defined(Q_OS_MACOS)
         gfx::ScopedIOSurface ioSurface() const;
 #endif
@@ -139,6 +136,10 @@ protected:
         uint64_t m_estimatedSize = 0; // FIXME: estimate size
         std::unique_ptr<gfx::GpuFence> m_acquireFence;
         std::unique_ptr<gl::GLFence> m_fence;
+#if BUILDFLAG(ENABLE_VULKAN)
+        VkFence m_vkFence = VK_NULL_HANDLE;
+        VkDevice m_vkDevice = VK_NULL_HANDLE;
+#endif
         gpu::Mailbox m_mailbox;
         std::unique_ptr<gpu::SkiaImageRepresentation> m_skiaRepresentation;
         std::unique_ptr<gpu::SkiaImageRepresentation::ScopedWriteAccess> m_scopedSkiaWriteAccess;

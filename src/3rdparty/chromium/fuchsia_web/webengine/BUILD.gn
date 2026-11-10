@@ -62,7 +62,7 @@ _disallowed_extensions_deps = [
   # //extensions:extensions is addressed below.
   "//extensions:extensions_resources",
   "//extensions/browser/*",
-  "//extensions/common:common",
+  "//extensions/common",
   "//extensions/common:core_api_provider",
   "//extensions/common:export",
   "//extensions/common:mojom",
@@ -84,35 +84,21 @@ _disallowed_pdf_deps = [
   "//pdf/*",
 ]
 
-# Ppapi code should not be included as enable_ppapi is false.
-# Exclude everything except "//ppapi/buildflags/*", which is allowed.
-_disallowed_ppapi_deps = [
-  "//ppapi:*",
-  "//ppapi/c/*",
-  "//ppapi/cpp/*",
-  "//ppapi/host/*",
-  "//ppapi/lib/*",
-  "//ppapi/native_client/*",
-  "//ppapi/proxy/*",
-  "//ppapi/shared_impl/*",
-  "//ppapi/thunk/*",
-]
-
 # Although `enable_printing` is true on Fuchsia, no code should be linked.
 # "//printing:metafile" is used by //third_party/blink/renderer/core and
 # uses "//printing/common/*".
 # "//printing/mojom/*" is allowed because Blink public APIs use its types.
 _disallowed_printing_deps = [
-  "//printing:printing",
+  "//printing",
   "//printing:printing_base",
   "//printing/backend/*",
 ]
 
-# TODO(crbug.com/1311822): Replace the uses of this in each target with a group
+# TODO(crbug.com/40220356): Replace the uses of this in each target with a group
 # that depends on those targets once this is correctly supported.
 _disallowed_deps =
     _disallowed_cast_deps + _disallowed_extensions_deps + _disallowed_pdf_deps +
-    _disallowed_ppapi_deps + _disallowed_printing_deps +
+    _disallowed_printing_deps +
     [
       # Ensure WebEngine is not communicating with the Finch service until it
       # is explicitly supported. See crbug.com/1155712.
@@ -139,6 +125,7 @@ repack("web_engine_pak") {
     "$root_gen_dir/net/net_resources.pak",
     "$root_gen_dir/third_party/blink/public/resources/blink_resources.pak",
     "$root_gen_dir/third_party/blink/public/resources/blink_scaled_resources_100_percent.pak",
+    "$root_gen_dir/ui/resources/ui_lottie_resources.pak",
     "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
   ]
 
@@ -155,7 +142,7 @@ repack("web_engine_pak") {
     "//ui/resources",
   ]
 
-  # TODO(crbug.com/1092804): Move this into ${target_gen_dir} and have a
+  # TODO(crbug.com/40698522): Move this into ${target_gen_dir} and have a
   # GN SDK fuchsia_resource() rule map it into place in the web_engine package.
   output = "$root_gen_dir/web_engine_common_resources.pak"
 }
@@ -166,17 +153,21 @@ foreach(locale, locales_with_pseudolocales) {
     # 1. Locale settings (e.g. default encoding, accept-languages per locale).
     # 2. Blink strings for UI elements, e.g. drop-down lists.
     # 3. //ui strings used to configure e.g. preferred font family.
+    # 4. //ui/strings/ax_strings are used for accessibility-related strings, of
+    # which fuchsia only uses a subset.
 
     sources = [
       "$root_gen_dir/components/strings/components_locale_settings_${locale}.pak",
       "$root_gen_dir/third_party/blink/public/strings/blink_strings_${locale}.pak",
       "$root_gen_dir/ui/strings/app_locale_settings_${locale}.pak",
+      "$root_gen_dir/ui/strings/ax_strings_${locale}.pak",
     ]
 
     deps = [
       "//components/strings:components_locale_settings",
       "//third_party/blink/public/strings",
       "//ui/strings:app_locale_settings",
+      "//ui/strings:ax_strings",
     ]
 
     output = "$root_gen_dir/locales/${locale}.pak"
@@ -195,7 +186,7 @@ component("web_engine_core") {
     "//components/cdm/renderer",
     "//components/client_hints/browser:in_memory",
     "//components/embedder_support",
-    "//components/embedder_support:browser_util",
+    "//components/embedder_support:user_agent",
     "//components/embedder_support/origin_trials",
     "//components/favicon/content",
     "//components/favicon/core",
@@ -210,6 +201,7 @@ component("web_engine_core") {
     "//components/permissions",
     "//components/policy/content:safe_sites_navigation_throttle",
     "//components/profile_metrics",
+    "//components/reduce_accept_language/browser:in_memory",
     "//components/site_isolation",
     "//components/strings:components_locale_settings",
     "//components/url_rewrite/browser",
@@ -250,8 +242,8 @@ component("web_engine_core") {
     "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.views:fuchsia.ui.views_cpp_hlcpp_conversion",
     "//third_party/fuchsia-sdk/sdk/pkg/component_incoming_cpp",
     "//third_party/fuchsia-sdk/sdk/pkg/fit-promise",
+    "//third_party/fuchsia-sdk/sdk/pkg/inspect_component_cpp",
     "//third_party/fuchsia-sdk/sdk/pkg/sys_cpp",
-    "//third_party/fuchsia-sdk/sdk/pkg/sys_inspect_cpp",
     "//third_party/widevine/cdm:buildflags",
     "//ui/accessibility",
     "//ui/aura",
@@ -380,6 +372,10 @@ component("web_engine_core") {
       "//components/cast_streaming/renderer",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("context_provider") {
@@ -396,19 +392,19 @@ source_set("context_provider") {
     "//base",
     "//components/fuchsia_component_support",
     "//fuchsia_web/common",
-    "//fuchsia_web/webinstance_host:webinstance_host",
+    "//fuchsia_web/webinstance_host",
+    "//third_party/fuchsia-sdk/sdk/pkg/inspect_component_cpp",
     "//third_party/fuchsia-sdk/sdk/pkg/sys_cpp",
-    "//third_party/fuchsia-sdk/sdk/pkg/sys_inspect_cpp",
   ]
 }
 
-# TODO(crbug.com/1081525): Rename to features_and_switches or collapse into
+# TODO(crbug.com/40691380): Rename to features_and_switches or collapse into
 # common. Consider moving these and other files in engine/ to common/ or
 # elsewhere.
 source_set("switches") {
   visibility += [
     "//fuchsia_web/shell:cast_streaming_shell_exe",
-    "//fuchsia_web/webinstance_host:webinstance_host",
+    "//fuchsia_web/webinstance_host",
   ]
   deps = [ "//base" ]
   public_deps = [ "//build:chromecast_buildflags" ]
@@ -433,12 +429,12 @@ executable("web_engine_exe") {
 }
 
 source_set("webui_resources") {
-  data = [ "$root_gen_dir/ui/resources/webui_resources.pak" ]
-  deps = [ "//ui/resources" ]
+  data = [ "$root_gen_dir/ui/webui/resources/webui_resources.pak" ]
+  deps = [ "//ui/webui/resources:resources_grit" ]
 }
 
 _web_engine_excluded_files = [
-  # TODO(crbug.com/1022542): SwiftShader is used only in tests. It should
+  # TODO(crbug.com/42050042): SwiftShader is used only in tests. It should
   # not be included in the WebEngine package.
   # Whenever this list is updated the exclusions in the cast_runner package
   # should be updated as well (see fuchsia_web/runners/BUILD.gn).
@@ -470,7 +466,7 @@ fuchsia_component("web_instance_with_svc_directory_component") {
 }
 
 # Component definition for the legacy fuchsia.web.ContextProvider service.
-# TODO(crbug.com/1443560): Remove once all callers have migrated to launching
+# TODO(crbug.com/40267388): Remove once all callers have migrated to launching
 # instances directly as Components.
 fuchsia_component("context_provider_component") {
   manifest = "context_provider.cml"
@@ -492,7 +488,7 @@ fuchsia_package("web_engine") {
 
 fuchsia_package_installer("web_engine_installer") {
   # Force this template to apply visibility. See the bug below.
-  # TODO(crbug.com/1328459): Remove once the bug is fixed.
+  # TODO(crbug.com/40841959): Remove once the bug is fixed.
   visibility += []
   package = ":web_engine"
 }
@@ -519,7 +515,7 @@ fuchsia_package_installer("web_engine_with_webui_installer") {
   package = ":web_engine_with_webui"
 }
 
-# TODO(crbug.com/1081525): Move to ../common/test.
+# TODO(crbug.com/40691380): Move to ../common/test.
 source_set("browsertest_core") {
   visibility += [
     "//fuchsia_web/runners:*",
@@ -584,7 +580,7 @@ test("web_engine_browsertests") {
     "browser/virtual_keyboard_browsertest.cc",
   ]
 
-  # TODO(crbug.com/1157909): Move to the list above when the bug is fixed.
+  # TODO(crbug.com/40736687): Move to the list above when the bug is fixed.
   if (!is_component_build) {
     sources += [ "browser/explicit_sites_filter_browsertest.cc" ]
   }
@@ -595,7 +591,7 @@ test("web_engine_browsertests") {
     ":web_engine_core",
     "//components/fuchsia_component_support:annotations_manager",
     "//components/policy/content:safe_sites_navigation_throttle",
-    "//components/safe_search_api:safe_search_api",
+    "//components/safe_search_api",
     "//components/safe_search_api:test_support",
     "//components/version_info",
     "//content/public/browser",
@@ -638,6 +634,7 @@ test("web_engine_unittests") {
     "browser/navigation_policy_throttle_unittest.cc",
     "browser/url_request_rewrite_type_converters_unittest.cc",
     "browser/web_engine_config_unittest.cc",
+    "browser/web_engine_content_browser_client_unittest.cc",
     "context_provider_impl_unittest.cc",
     "renderer/web_engine_audio_output_device_test.cc",
     "renderer/web_engine_audio_renderer_test.cc",
@@ -727,6 +724,10 @@ test("web_engine_integration_tests") {
     "//third_party/fuchsia-sdk/sdk/pkg/sys/component/realm_builder_absolute.shard.cml",
     "//third_party/fuchsia-sdk/sdk/pkg/vulkan/client.shard.cml",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("cast_streaming_receiver") {

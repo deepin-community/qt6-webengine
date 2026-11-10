@@ -52,7 +52,7 @@ ContextInfo ContextFactory::AsContextInfo(const OwnedContextInfo& owned) {
 }
 
 ContextInfo ContextFactory::getContextInfo(skgpu::ContextType type) {
-    if (!skgpu::IsDawnBackend(type) && fOptions.fNeverYieldToWebGPU) {
+    if (!skgpu::IsDawnBackend(type) && fOptions.hasDawnOptions()) {
         return {};
     }
 

@@ -4,6 +4,7 @@
 
 #include "device/vr/openxr/openxr_input_helper.h"
 
+#include "base/trace_event/trace_event.h"
 #include "device/gamepad/public/cpp/gamepad.h"
 #include "device/vr/openxr/openxr_extension_helper.h"
 #include "device/vr/openxr/openxr_util.h"
@@ -39,6 +40,15 @@ OpenXRInputHelper::OpenXRInputHelper(XrSession session,
       hand_input_enabled_(hand_input_enabled) {}
 
 OpenXRInputHelper::~OpenXRInputHelper() = default;
+
+bool OpenXRInputHelper::IsHandTrackingEnabled() const {
+  // As long as we have at least one controller that can supply hand tracking
+  // data, then hand tracking is enabled.
+  return std::ranges::any_of(controller_states_,
+                             [](const OpenXrControllerState& state) {
+                               return state.controller.IsHandTrackingEnabled();
+                             });
+}
 
 XrResult OpenXRInputHelper::Initialize(
     XrInstance instance,
@@ -86,6 +96,7 @@ XrResult OpenXRInputHelper::Initialize(
 
 std::vector<mojom::XRInputSourceStatePtr> OpenXRInputHelper::GetInputState(
     XrTime predicted_display_time) {
+  TRACE_EVENT0("xr", "GetInputState");
   std::vector<mojom::XRInputSourceStatePtr> input_states;
   if (XR_FAILED(SyncActions(predicted_display_time))) {
     for (OpenXrControllerState& state : controller_states_) {
@@ -97,8 +108,10 @@ std::vector<mojom::XRInputSourceStatePtr> OpenXRInputHelper::GetInputState(
 
   for (uint32_t i = 0; i < controller_states_.size(); i++) {
     device::OpenXrController* controller = &controller_states_[i].controller;
+    TRACE_EVENT1("xr", "ParseController", "Handedness",
+                 controller->GetHandness());
 
-    absl::optional<GamepadButton> menu_button =
+    std::optional<GamepadButton> menu_button =
         controller->GetButton(OpenXrButtonType::kMenu);
 
     // Pressing a menu buttons is treated as a signal to exit the WebXR session.
@@ -106,9 +119,9 @@ std::vector<mojom::XRInputSourceStatePtr> OpenXRInputHelper::GetInputState(
       OnExitGesture();
     }
 
-    absl::optional<GamepadButton> primary_button =
+    std::optional<GamepadButton> primary_button =
         controller->GetButton(OpenXrButtonType::kTrigger);
-    absl::optional<GamepadButton> squeeze_button =
+    std::optional<GamepadButton> squeeze_button =
         controller->GetButton(OpenXrButtonType::kSqueeze);
 
     // Having a trigger button is the minimum for an webxr input.

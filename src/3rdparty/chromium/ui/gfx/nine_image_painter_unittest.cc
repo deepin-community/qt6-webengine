@@ -5,6 +5,7 @@
 #include "ui/gfx/nine_image_painter.h"
 
 #include "base/base64.h"
+#include "base/strings/strcat.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -19,14 +20,12 @@
 namespace gfx {
 
 static std::string GetPNGDataUrl(const SkBitmap& bitmap) {
-  std::vector<unsigned char> png_data;
-  gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &png_data);
-  std::string data_url;
-  data_url.insert(data_url.end(), png_data.begin(), png_data.end());
-  base::Base64Encode(data_url, &data_url);
-  data_url.insert(0, "data:image/png;base64,");
-
-  return data_url;
+  std::optional<std::vector<uint8_t>> png_data =
+      gfx::PNGCodec::EncodeBGRASkBitmap(bitmap,
+                                        /*discard_transparency=*/false);
+  return base::StrCat(
+      {"data:image/png;base64,",
+       base::Base64Encode(png_data.value_or(std::vector<uint8_t>()))});
 }
 
 void ExpectRedWithGreenRect(const SkBitmap& bitmap,

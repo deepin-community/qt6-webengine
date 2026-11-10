@@ -43,6 +43,7 @@
 #endif
 
 #if !defined(HB_NO_COLOR) && !defined(HB_NO_DRAW)
+#ifndef HB_NO_SVG
 static void
 svg_dump (hb_face_t *face, unsigned face_index)
 {
@@ -72,6 +73,7 @@ svg_dump (hb_face_t *face, unsigned face_index)
     hb_blob_destroy (blob);
   }
 }
+#endif
 
 /* _png API is so easy to use unlike the below code, don't get confused */
 static void
@@ -217,7 +219,7 @@ layered_glyph_dump (hb_font_t *font, hb_draw_funcs_t *funcs, unsigned face_index
       {
 	hb_font_extents_t font_extents;
 	hb_font_get_extents_for_direction (font, HB_DIRECTION_LTR, &font_extents);
-	hb_glyph_extents_t extents = {0};
+	hb_glyph_extents_t extents = {0, 0, 0, 0};
 	if (!hb_font_get_glyph_extents (font, gid, &extents))
 	{
 	  printf ("Skip gid: %u\n", gid);
@@ -267,7 +269,7 @@ dump_glyphs (hb_font_t *font, hb_draw_funcs_t *funcs, unsigned face_index)
   {
     hb_font_extents_t font_extents;
     hb_font_get_extents_for_direction (font, HB_DIRECTION_LTR, &font_extents);
-    hb_glyph_extents_t extents = {0};
+    hb_glyph_extents_t extents = {0, 0, 0, 0};
     if (!hb_font_get_glyph_extents (font, gid, &extents))
     {
       printf ("Skip gid: %u\n", gid);
@@ -327,9 +329,11 @@ dump_glyphs (hb_blob_t *blob, const char *font_name)
       printf ("Dumping png (CBDT/sbix)...\n");
     png_dump (face, face_index);
 
+#ifndef HB_NO_SVG
     if (hb_ot_color_has_svg (face))
       printf ("Dumping svg (SVG )...\n");
     svg_dump (face, face_index);
+#endif
 
     if (hb_ot_color_has_layers (face) && hb_ot_color_has_palettes (face))
       printf ("Dumping layered color glyphs (COLR/CPAL)...\n");
@@ -513,7 +517,8 @@ main (int argc, char **argv)
 {
   if (argc != 2)
   {
-    fprintf (stderr, "usage: %s font-file.ttf\n", argv[0]);
+    fprintf (stderr, "usage: %s font-file.ttf\n\n"
+		     "This tools is unsupported and crashes on bad data.\nDon't use it.\n", argv[0]);
     exit (1);
   }
 

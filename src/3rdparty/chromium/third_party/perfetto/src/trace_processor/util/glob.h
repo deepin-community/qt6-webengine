@@ -17,17 +17,14 @@
 #ifndef SRC_TRACE_PROCESSOR_UTIL_GLOB_H_
 #define SRC_TRACE_PROCESSOR_UTIL_GLOB_H_
 
-#include <optional>
-#include <string_view>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "perfetto/ext/base/small_vector.h"
-#include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_view.h"
 
-namespace perfetto {
-namespace trace_processor {
-namespace util {
+namespace perfetto::trace_processor::util {
 
 // Lightweight implementation of matching on UNIX glob patterns, maintaining
 // compatibility of syntax and semantics used by SQLite.
@@ -42,7 +39,7 @@ namespace util {
 //
 // This is a class instead of a free function to allow preprocessing the
 // pattern (e.g. to compute Kleene star offsets). This can create big savings
-// because trace processsor needs to match the same pattern on many strings
+// because trace processor needs to match the same pattern on many strings
 // when filtering tables.
 //
 // Implementation:
@@ -75,16 +72,17 @@ class GlobMatcher {
 
   // Creates a glob matcher from a pattern.
   static GlobMatcher FromPattern(base::StringView pattern_str) {
-    return GlobMatcher(std::move(pattern_str));
+    return GlobMatcher(pattern_str);
   }
 
   // Checks the provided string against the pattern and returns whether it
   // matches.
-  bool Matches(base::StringView input);
+  bool Matches(base::StringView input) const;
 
   // Returns whether the comparison should really be an equality comparison.
-  bool IsEquality() {
-    return !leading_star_ && !trailing_star_ && segments_.size() <= 1;
+  bool IsEquality() const {
+    return !leading_star_ && !trailing_star_ &&
+           !contains_char_class_or_question_ && segments_.size() <= 1;
   }
 
  private:
@@ -110,7 +108,7 @@ class GlobMatcher {
 
   // Returns whether |input| starts with the pattern in |segment| following
   // glob matching rules.
-  bool StartsWith(base::StringView input, const Segment& segment) {
+  bool StartsWith(base::StringView input, const Segment& segment) const {
     if (!contains_char_class_or_question_) {
       return input.StartsWith(segment.pattern);
     }
@@ -119,7 +117,7 @@ class GlobMatcher {
 
   // Returns whether |input| ends with the pattern in |segment| following
   // glob matching rules.
-  bool EndsWith(base::StringView input, const Segment& segment) {
+  bool EndsWith(base::StringView input, const Segment& segment) const {
     if (!contains_char_class_or_question_) {
       return input.EndsWith(segment.pattern);
     }
@@ -131,7 +129,9 @@ class GlobMatcher {
   // Returns the index where |input| matches the pattern in |segment|
   // following glob matching rules or base::StringView::npos, if no such index
   // exists.
-  size_t Find(base::StringView input, const Segment& segment, size_t start) {
+  size_t Find(base::StringView input,
+              const Segment& segment,
+              size_t start) const {
     if (!contains_char_class_or_question_) {
       return input.find(segment.pattern, start);
     }
@@ -151,7 +151,7 @@ class GlobMatcher {
   // Matches |in| against the given character class.
   static bool MatchesCharacterClass(char input, base::StringView char_class);
 
-  bool StartsWithSlow(base::StringView input, const Segment& segment);
+  static bool StartsWithSlow(base::StringView input, const Segment& segment);
 
   // IMPORTANT: this should *not* be modified after the constructor as we store
   // pointers to the data inside here.
@@ -168,8 +168,6 @@ class GlobMatcher {
   bool contains_char_class_or_question_ = false;
 };
 
-}  // namespace util
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor::util
 
 #endif  // SRC_TRACE_PROCESSOR_UTIL_GLOB_H_

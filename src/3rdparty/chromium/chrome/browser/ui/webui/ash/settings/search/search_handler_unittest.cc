@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/webui/ash/settings/search/search_handler.h"
 
+#include <array>
+
 #include "ash/webui/settings/public/constants/routes.mojom.h"
-#include "base/no_destructor.h"
+#include "base/containers/span.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -53,8 +55,8 @@ class FakeObserver : public mojom::SearchResultsObserver {
 
 // Note: Copied from printing_section.cc but does not need to stay in sync with
 // it.
-const std::vector<SearchConcept>& GetPrintingSearchConcepts() {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetPrintingSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_PRINTING_ADD_PRINTER,
        mojom::kPrintingDetailsSubpagePath,
        mojom::SearchResultIcon::kPrinter,
@@ -76,11 +78,13 @@ const std::vector<SearchConcept>& GetPrintingSearchConcepts() {
        {IDS_OS_SETTINGS_TAG_PRINTING_ALT1, IDS_OS_SETTINGS_TAG_PRINTING_ALT2,
         SearchConcept::kAltTagEnd}},
   });
-  return *tags;
+  return tags;
 }
 
 // Creates a result with some default values.
 mojom::SearchResultPtr CreateDummyResult() {
+  const mojom::Section kSection = mojom::Section::kSystemPreferences;
+
   return mojom::SearchResult::New(
       /*text=*/std::u16string(),
       /*canonical_text=*/std::u16string(), /*url=*/"",
@@ -89,7 +93,7 @@ mojom::SearchResultPtr CreateDummyResult() {
       mojom::SearchResultDefaultRank::kMedium,
       /*was_generated_from_text_match=*/false,
       mojom::SearchResultType::kSection,
-      mojom::SearchResultIdentifier::NewSection(mojom::Section::kPrinting));
+      mojom::SearchResultIdentifier::NewSection(kSection));
 }
 
 }  // namespace
@@ -109,27 +113,28 @@ class SearchHandlerTest : public testing::Test {
   void SetUp() override {
     handler_.BindInterface(handler_remote_.BindNewPipeAndPassReceiver());
 
+    const mojom::Section kSection = mojom::Section::kSystemPreferences;
+
     fake_hierarchy_.AddSubpageMetadata(
-        IDS_SETTINGS_PRINTING_CUPS_PRINTERS, mojom::Section::kPrinting,
+        IDS_OS_SETTINGS_PRINTING_CUPS_PRINT_TITLE, kSection,
         mojom::Subpage::kPrintingDetails, mojom::SearchResultIcon::kPrinter,
         mojom::SearchResultDefaultRank::kMedium,
         mojom::kPrintingDetailsSubpagePath);
-    fake_hierarchy_.AddSettingMetadata(mojom::Section::kPrinting,
-                                       mojom::Setting::kAddPrinter);
-    fake_hierarchy_.AddSettingMetadata(mojom::Section::kPrinting,
+    fake_hierarchy_.AddSettingMetadata(kSection, mojom::Setting::kAddPrinter);
+    fake_hierarchy_.AddSettingMetadata(kSection,
                                        mojom::Setting::kSavedPrinters);
 
     handler_remote_->Observe(observer_.GenerateRemote());
     handler_remote_.FlushForTesting();
   }
 
-  void AddSearchTags(const std::vector<SearchConcept>& search_tags) {
+  void AddSearchTags(base::span<const SearchConcept> search_tags) {
     SearchTagRegistry::ScopedTagUpdater updater =
         search_tag_registry_.StartUpdate();
     updater.AddSearchTags(search_tags);
   }
 
-  void RemoveSearchTags(const std::vector<SearchConcept>& search_tags) {
+  void RemoveSearchTags(base::span<const SearchConcept> search_tags) {
     SearchTagRegistry::ScopedTagUpdater updater =
         search_tag_registry_.StartUpdate();
     updater.RemoveSearchTags(search_tags);
@@ -212,7 +217,9 @@ TEST_F(SearchHandlerTest, UrlModification) {
 
   // The URL should have bee modified according to the FakeOsSettingSection
   // scheme.
-  EXPECT_EQ(std::string("kPrinting::") + mojom::kPrintingDetailsSubpagePath,
+  const std::string kPrefix = std::string("kSystemPreferences::");
+
+  EXPECT_EQ(kPrefix + mojom::kPrintingDetailsSubpagePath,
             search_results[0]->url_path_with_parameters);
 }
 

@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "browser_main_parts_qt.h"
 
@@ -7,6 +8,7 @@
 
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_for_ui.h"
+#include "base/notimplemented.h"
 #include "base/process/process.h"
 #include "base/task/current_thread.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
@@ -24,10 +26,9 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/result_codes.h"
-#include "extensions/buildflags/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "select_file_dialog_factory_qt.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
@@ -35,15 +36,22 @@
 #include "ui/display/screen.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "components/storage_monitor/storage_monitor.h"
+#include "extensions/browser/api/messaging/message_service.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/extensions_browser_client_qt.h"
 #include "extensions/extension_system_factory_qt.h"
 #include "common/extensions/extensions_client_qt.h"
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+#include "chrome/browser/media/webrtc/webrtc_event_log_manager.h"
+#endif
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/browser/plugin_service.h"
+#include "extensions/plugin_info_host_qt.h"
 #include "extensions/plugin_service_filter_qt.h"
 #endif // BUILDFLAG(ENABLE_PLUGINS)
 
@@ -54,14 +62,9 @@
 #include <QtGui/qtgui-config.h>
 #include <QStandardPaths>
 
-#if QT_CONFIG(opengl)
-#include "ui/gl/gl_context.h"
-#include <QOpenGLContext>
-#endif
-
 #if BUILDFLAG(IS_MAC)
 #include "base/message_loop/message_pump_apple.h"
-#include "services/device/public/cpp/geolocation/geolocation_manager.h"
+#include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
 #include "services/device/public/cpp/geolocation/system_geolocation_source.h"
 #include "ui/base/idle/idle.h"
 #endif
@@ -157,8 +160,7 @@ private:
         if (more_work_info.is_immediate())
             return m_scheduler.scheduleImmediateWork();
 
-        if (m_delegate->DoIdleWork())
-            return m_scheduler.scheduleIdleWork();
+        m_delegate->DoIdleWork();
 
         ScheduleDelayedWork(more_work_info.delayed_run_time);
     }
@@ -177,12 +179,14 @@ public:
     // SystemGeolocationSource implementation:
     void StartWatchingPosition(bool) override {}
     void StopWatchingPosition() override {}
-    void RegisterPermissionUpdateCallback(PermissionUpdateCallback callback)
+    void RegisterPermissionUpdateCallback(PermissionUpdateCallback callback) override
     {
-        callback.Run(device::LocationSystemPermissionStatus::kDenied);
+        callback.Run(device::LocationSystemPermissionStatus::kAllowed);
     }
-    void RegisterPositionUpdateCallback(PositionUpdateCallback callback) {}
     void RequestPermission() override {}
+    void AddPositionUpdateObserver(PositionObserver* observer) override {}
+    void RemovePositionUpdateObserver(PositionObserver* observer) override {}
+
 };
 #endif // BUILDFLAG(IS_MAC)
 
@@ -200,6 +204,10 @@ std::unique_ptr<base::MessagePump> messagePumpFactory()
 #endif
 }
 
+BrowserMainPartsQt::BrowserMainPartsQt() = default;
+
+BrowserMainPartsQt::~BrowserMainPartsQt() = default;
+
 int BrowserMainPartsQt::PreEarlyInitialization()
 {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -211,7 +219,7 @@ int BrowserMainPartsQt::PreEarlyInitialization()
 void BrowserMainPartsQt::PreCreateMainMessageLoop()
 {
 #if BUILDFLAG(IS_MAC)
-    m_geolocationManager = std::make_unique<device::GeolocationManager>(std::make_unique<FakeGeolocationSource>());
+    m_geolocationSystemPermissionManager = std::make_unique<device::GeolocationSystemPermissionManager>(std::make_unique<FakeGeolocationSource>());
 #endif
 }
 
@@ -234,14 +242,24 @@ int BrowserMainPartsQt::PreMainMessageLoopRun()
     ui::SelectFileDialog::SetFactory(std::make_unique<SelectFileDialogFactoryQt>());
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+    extensions::MessageService::GetFactoryInstance(); // required for communicating with hangouts
     extensions::ExtensionsClient::Set(new extensions::ExtensionsClientQt());
     extensions::ExtensionsBrowserClient::Set(new extensions::ExtensionsBrowserClientQt());
     extensions::ExtensionSystemFactoryQt::GetInstance();
+    extensions::ExtensionsBrowserClient::Get()->Init();
+    storage_monitor::StorageMonitor::Create();
 
 #if BUILDFLAG(ENABLE_PLUGINS)
     content::PluginService *plugin_service = content::PluginService::GetInstance();
     plugin_service->SetFilter(extensions::PluginServiceFilterQt::GetInstance());
+    extensions::PluginInfoHostQt::EnsureFactoryBuilt();
 #endif // BUILDFLAG(ENABLE_PLUGINS)
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+    m_webrtcEventLogManager =
+            webrtc_event_logging::WebRtcEventLogManager::CreateSingletonInstance();
+#endif
+
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
     if (base::FeatureList::IsEnabled(features::kWebUsb)) {
@@ -265,6 +283,15 @@ void BrowserMainPartsQt::PostMainMessageLoopRun()
     WebEngineContext::current()->destroyProfileAdapter();
 }
 
+#if defined(Q_OS_WIN)
+class DesktopScreenWinQt : public display::win::ScreenWin
+{
+public:
+    DesktopScreenWinQt() {}
+    ~DesktopScreenWinQt() {}
+};
+#endif
+
 int BrowserMainPartsQt::PreCreateThreads()
 {
 #if BUILDFLAG(IS_MAC)
@@ -272,8 +299,9 @@ int BrowserMainPartsQt::PreCreateThreads()
 #endif
 
     // Like ChromeBrowserMainExtraPartsViews::PreCreateThreads does.
+    // FIXME: This is now done differently in Chrome, find out where and if we need to change.
 #if defined(Q_OS_WIN)
-    display::Screen::SetScreenInstance(new display::win::ScreenWin);
+    display::Screen::SetScreenInstance(new DesktopScreenWinQt());
 #elif defined(Q_OS_DARWIN)
     display::Screen::SetScreenInstance(display::CreateNativeScreen());
 #else
@@ -296,9 +324,9 @@ void BrowserMainPartsQt::PostCreateThreads()
 }
 
 #if BUILDFLAG(IS_MAC)
-device::GeolocationManager *BrowserMainPartsQt::GetGeolocationManager()
+device::GeolocationSystemPermissionManager *BrowserMainPartsQt::GetGeolocationSystemPermissionManager()
 {
-    return m_geolocationManager.get();
+    return m_geolocationSystemPermissionManager.get();
 }
 #endif
 

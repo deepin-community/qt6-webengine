@@ -28,6 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_PARSER_HTML_CONSTRUCTION_SITE_H_
 
 #include "base/check_op.h"
+#include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/parser_content_policy.h"
 #include "third_party/blink/renderer/core/html/parser/html_element_stack.h"
@@ -98,7 +99,6 @@ class Element;
 class HTMLFormElement;
 class HTMLParserReentryPermit;
 class PartRoot;
-enum class DeclarativeShadowRootType;
 
 class HTMLConstructionSite final {
   DISALLOW_NEW();
@@ -109,11 +109,13 @@ class HTMLConstructionSite final {
   HTMLConstructionSite(HTMLParserReentryPermit*,
                        Document&,
                        ParserContentPolicy,
-                       DocumentFragment*,
+                       ContainerNode*,
                        Element*);
   HTMLConstructionSite(const HTMLConstructionSite&) = delete;
   HTMLConstructionSite& operator=(const HTMLConstructionSite&) = delete;
   ~HTMLConstructionSite();
+
+  void SetPatchScope(ContainerNode* scope);
   void Trace(Visitor*) const;
 
   void Detach();
@@ -150,7 +152,7 @@ class HTMLConstructionSite final {
   void InsertCommentOnHTMLHtmlElement(AtomicHTMLToken*);
   void InsertDOMPart(AtomicHTMLToken*);
   void InsertHTMLElement(AtomicHTMLToken*);
-  void InsertHTMLTemplateElement(AtomicHTMLToken*, DeclarativeShadowRootType);
+  void InsertHTMLTemplateElement(AtomicHTMLToken*, String);
   void InsertSelfClosingHTMLElementDestroyingToken(AtomicHTMLToken*);
   void InsertFormattingElement(AtomicHTMLToken*);
   void InsertHTMLHeadElement(AtomicHTMLToken*);
@@ -294,6 +296,11 @@ class HTMLConstructionSite final {
 
   TaskQueue task_queue_;
 
+  // When using node.patchAll(), that node would be used to select
+  // the patch target rather than the tree scope where the patch template is
+  // found.
+  Member<ContainerNode> patch_scope_;
+
   class PendingText final {
     DISALLOW_NEW();
 
@@ -362,7 +369,6 @@ class HTMLConstructionSite final {
     void Trace(Visitor*) const;
 
    private:
-    Member<Comment> pending_node_part_comment_node_;
     Vector<String> pending_node_part_metadata_;
     HeapVector<Member<PartRoot>> part_root_stack_;
   };
@@ -384,9 +390,6 @@ class HTMLConstructionSite final {
 
   // Whether duplicate attribute was reported.
   bool reported_duplicate_attribute_ = false;
-
-  // Whether strings should be canonicalized (deduplicated).
-  bool canonicalize_whitespace_strings_ = true;
 };
 
 }  // namespace blink

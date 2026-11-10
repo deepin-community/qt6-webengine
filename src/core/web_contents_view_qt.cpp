@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "web_contents_view_qt.h"
 
@@ -87,7 +88,7 @@ void WebContentsViewQt::CreateView(gfx::NativeView context)
 
 gfx::NativeView WebContentsViewQt::GetNativeView() const
 {
-    return nullptr;
+    return {};
 }
 
 gfx::Rect WebContentsViewQt::GetContainerBounds() const
@@ -226,17 +227,19 @@ static Qt::DropActions toQtDropActions(blink::DragOperationsMask ops)
     return result;
 }
 
-void WebContentsViewQt::StartDragging(const content::DropData &drop_data,
-                                      const url::Origin& source_origin,
+void WebContentsViewQt::StartDragging(content::RenderFrameHost &source_rfh,
+                                      const content::DropData &drop_data,
                                       blink::DragOperationsMask allowed_ops,
                                       const gfx::ImageSkia &image,
                                       const gfx::Vector2d &image_offset,
                                       const gfx::Rect &drag_obj_rect,
-                                      const blink::mojom::DragEventSourceInfo &event_info,
-                                      content::RenderWidgetHostImpl *source_rwh)
+                                      const blink::mojom::DragEventSourceInfo &event_info)
 {
 #if QT_CONFIG(draganddrop)
     Q_UNUSED(event_info);
+
+    content::RenderWidgetHostImpl *const source_rwh =
+            static_cast<content::RenderWidgetHostImpl *>(source_rfh.GetRenderWidgetHost());
 
     QObject *dragSource = m_client->dragSource();
     if (!dragSource) {

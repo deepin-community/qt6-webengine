@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <cstddef>
 #include <sstream>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_base/files/file_path.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -44,70 +49,70 @@ struct BinaryIntTestData {
 
 TEST(PartitionAllocBaseFilePathTest, Append) {
   const struct BinaryTestData cases[] = {
-    {{FPL(""), FPL("cc")}, FPL("cc")},
-    {{FPL("."), FPL("ff")}, FPL("ff")},
-    {{FPL("."), FPL("")}, FPL(".")},
-    {{FPL("/"), FPL("cc")}, FPL("/cc")},
-    {{FPL("/aa"), FPL("")}, FPL("/aa")},
-    {{FPL("/aa/"), FPL("")}, FPL("/aa")},
-    {{FPL("//aa"), FPL("")}, FPL("//aa")},
-    {{FPL("//aa/"), FPL("")}, FPL("//aa")},
-    {{FPL("//"), FPL("aa")}, FPL("//aa")},
+      {{FPL(""), FPL("cc")}, FPL("cc")},
+      {{FPL("."), FPL("ff")}, FPL("ff")},
+      {{FPL("."), FPL("")}, FPL(".")},
+      {{FPL("/"), FPL("cc")}, FPL("/cc")},
+      {{FPL("/aa"), FPL("")}, FPL("/aa")},
+      {{FPL("/aa/"), FPL("")}, FPL("/aa")},
+      {{FPL("//aa"), FPL("")}, FPL("//aa")},
+      {{FPL("//aa/"), FPL("")}, FPL("//aa")},
+      {{FPL("//"), FPL("aa")}, FPL("//aa")},
 #if defined(PA_FILE_PATH_USES_DRIVE_LETTERS)
-    {{FPL("c:"), FPL("a")}, FPL("c:a")},
-    {{FPL("c:"), FPL("")}, FPL("c:")},
-    {{FPL("c:/"), FPL("a")}, FPL("c:/a")},
-    {{FPL("c://"), FPL("a")}, FPL("c://a")},
-    {{FPL("c:///"), FPL("a")}, FPL("c:/a")},
+      {{FPL("c:"), FPL("a")}, FPL("c:a")},
+      {{FPL("c:"), FPL("")}, FPL("c:")},
+      {{FPL("c:/"), FPL("a")}, FPL("c:/a")},
+      {{FPL("c://"), FPL("a")}, FPL("c://a")},
+      {{FPL("c:///"), FPL("a")}, FPL("c:/a")},
 #endif  // PA_FILE_PATH_USES_DRIVE_LETTERS
 #if defined(PA_FILE_PATH_USES_WIN_SEPARATORS)
-    // Append introduces the default separator character, so these test cases
-    // need to be defined with different expected results on platforms that use
-    // different default separator characters.
-    {{FPL("\\"), FPL("cc")}, FPL("\\cc")},
-    {{FPL("\\aa"), FPL("")}, FPL("\\aa")},
-    {{FPL("\\aa\\"), FPL("")}, FPL("\\aa")},
-    {{FPL("\\\\aa"), FPL("")}, FPL("\\\\aa")},
-    {{FPL("\\\\aa\\"), FPL("")}, FPL("\\\\aa")},
-    {{FPL("\\\\"), FPL("aa")}, FPL("\\\\aa")},
-    {{FPL("/aa/bb"), FPL("cc")}, FPL("/aa/bb\\cc")},
-    {{FPL("/aa/bb/"), FPL("cc")}, FPL("/aa/bb\\cc")},
-    {{FPL("aa/bb/"), FPL("cc")}, FPL("aa/bb\\cc")},
-    {{FPL("aa/bb"), FPL("cc")}, FPL("aa/bb\\cc")},
-    {{FPL("a/b"), FPL("c")}, FPL("a/b\\c")},
-    {{FPL("a/b/"), FPL("c")}, FPL("a/b\\c")},
-    {{FPL("//aa"), FPL("bb")}, FPL("//aa\\bb")},
-    {{FPL("//aa/"), FPL("bb")}, FPL("//aa\\bb")},
-    {{FPL("\\aa\\bb"), FPL("cc")}, FPL("\\aa\\bb\\cc")},
-    {{FPL("\\aa\\bb\\"), FPL("cc")}, FPL("\\aa\\bb\\cc")},
-    {{FPL("aa\\bb\\"), FPL("cc")}, FPL("aa\\bb\\cc")},
-    {{FPL("aa\\bb"), FPL("cc")}, FPL("aa\\bb\\cc")},
-    {{FPL("a\\b"), FPL("c")}, FPL("a\\b\\c")},
-    {{FPL("a\\b\\"), FPL("c")}, FPL("a\\b\\c")},
-    {{FPL("\\\\aa"), FPL("bb")}, FPL("\\\\aa\\bb")},
-    {{FPL("\\\\aa\\"), FPL("bb")}, FPL("\\\\aa\\bb")},
+      // Append introduces the default separator character, so these test cases
+      // need to be defined with different expected results on platforms that
+      // use different default separator characters.
+      {{FPL("\\"), FPL("cc")}, FPL("\\cc")},
+      {{FPL("\\aa"), FPL("")}, FPL("\\aa")},
+      {{FPL("\\aa\\"), FPL("")}, FPL("\\aa")},
+      {{FPL("\\\\aa"), FPL("")}, FPL("\\\\aa")},
+      {{FPL("\\\\aa\\"), FPL("")}, FPL("\\\\aa")},
+      {{FPL("\\\\"), FPL("aa")}, FPL("\\\\aa")},
+      {{FPL("/aa/bb"), FPL("cc")}, FPL("/aa/bb\\cc")},
+      {{FPL("/aa/bb/"), FPL("cc")}, FPL("/aa/bb\\cc")},
+      {{FPL("aa/bb/"), FPL("cc")}, FPL("aa/bb\\cc")},
+      {{FPL("aa/bb"), FPL("cc")}, FPL("aa/bb\\cc")},
+      {{FPL("a/b"), FPL("c")}, FPL("a/b\\c")},
+      {{FPL("a/b/"), FPL("c")}, FPL("a/b\\c")},
+      {{FPL("//aa"), FPL("bb")}, FPL("//aa\\bb")},
+      {{FPL("//aa/"), FPL("bb")}, FPL("//aa\\bb")},
+      {{FPL("\\aa\\bb"), FPL("cc")}, FPL("\\aa\\bb\\cc")},
+      {{FPL("\\aa\\bb\\"), FPL("cc")}, FPL("\\aa\\bb\\cc")},
+      {{FPL("aa\\bb\\"), FPL("cc")}, FPL("aa\\bb\\cc")},
+      {{FPL("aa\\bb"), FPL("cc")}, FPL("aa\\bb\\cc")},
+      {{FPL("a\\b"), FPL("c")}, FPL("a\\b\\c")},
+      {{FPL("a\\b\\"), FPL("c")}, FPL("a\\b\\c")},
+      {{FPL("\\\\aa"), FPL("bb")}, FPL("\\\\aa\\bb")},
+      {{FPL("\\\\aa\\"), FPL("bb")}, FPL("\\\\aa\\bb")},
 #if defined(PA_FILE_PATH_USES_DRIVE_LETTERS)
-    {{FPL("c:\\"), FPL("a")}, FPL("c:\\a")},
-    {{FPL("c:\\\\"), FPL("a")}, FPL("c:\\\\a")},
-    {{FPL("c:\\\\\\"), FPL("a")}, FPL("c:\\a")},
-    {{FPL("c:\\"), FPL("")}, FPL("c:\\")},
-    {{FPL("c:\\a"), FPL("b")}, FPL("c:\\a\\b")},
-    {{FPL("c:\\a\\"), FPL("b")}, FPL("c:\\a\\b")},
+      {{FPL("c:\\"), FPL("a")}, FPL("c:\\a")},
+      {{FPL("c:\\\\"), FPL("a")}, FPL("c:\\\\a")},
+      {{FPL("c:\\\\\\"), FPL("a")}, FPL("c:\\a")},
+      {{FPL("c:\\"), FPL("")}, FPL("c:\\")},
+      {{FPL("c:\\a"), FPL("b")}, FPL("c:\\a\\b")},
+      {{FPL("c:\\a\\"), FPL("b")}, FPL("c:\\a\\b")},
 #endif  // PA_FILE_PATH_USES_DRIVE_LETTERS
 #else   // PA_FILE_PATH_USES_WIN_SEPARATORS
-    {{FPL("/aa/bb"), FPL("cc")}, FPL("/aa/bb/cc")},
-    {{FPL("/aa/bb/"), FPL("cc")}, FPL("/aa/bb/cc")},
-    {{FPL("aa/bb/"), FPL("cc")}, FPL("aa/bb/cc")},
-    {{FPL("aa/bb"), FPL("cc")}, FPL("aa/bb/cc")},
-    {{FPL("a/b"), FPL("c")}, FPL("a/b/c")},
-    {{FPL("a/b/"), FPL("c")}, FPL("a/b/c")},
-    {{FPL("//aa"), FPL("bb")}, FPL("//aa/bb")},
-    {{FPL("//aa/"), FPL("bb")}, FPL("//aa/bb")},
+      {{FPL("/aa/bb"), FPL("cc")}, FPL("/aa/bb/cc")},
+      {{FPL("/aa/bb/"), FPL("cc")}, FPL("/aa/bb/cc")},
+      {{FPL("aa/bb/"), FPL("cc")}, FPL("aa/bb/cc")},
+      {{FPL("aa/bb"), FPL("cc")}, FPL("aa/bb/cc")},
+      {{FPL("a/b"), FPL("c")}, FPL("a/b/c")},
+      {{FPL("a/b/"), FPL("c")}, FPL("a/b/c")},
+      {{FPL("//aa"), FPL("bb")}, FPL("//aa/bb")},
+      {{FPL("//aa/"), FPL("bb")}, FPL("//aa/bb")},
 #if defined(PA_FILE_PATH_USES_DRIVE_LETTERS)
-    {{FPL("c:/"), FPL("a")}, FPL("c:/a")},
-    {{FPL("c:/"), FPL("")}, FPL("c:/")},
-    {{FPL("c:/a"), FPL("b")}, FPL("c:/a/b")},
-    {{FPL("c:/a/"), FPL("b")}, FPL("c:/a/b")},
+      {{FPL("c:/"), FPL("a")}, FPL("c:/a")},
+      {{FPL("c:/"), FPL("")}, FPL("c:/")},
+      {{FPL("c:/a"), FPL("b")}, FPL("c:/a/b")},
+      {{FPL("c:/a/"), FPL("b")}, FPL("c:/a/b")},
 #endif  // PA_FILE_PATH_USES_DRIVE_LETTERS
 #endif  // PA_FILE_PATH_USES_WIN_SEPARATORS
   };

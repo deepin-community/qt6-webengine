@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/strings/utf_string_conversions.h"
-#include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
+#include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/url_formatter/elide_url.h"
@@ -24,13 +24,17 @@ using BlocklistedStatus = OriginCredentialStore::BlocklistedStatus;
 UiCredential::UiCredential(std::u16string username,
                            std::u16string password,
                            url::Origin origin,
+                           std::string display_name,
                            password_manager_util::GetLoginMatchType match_type,
-                           base::Time last_used)
+                           base::Time last_used,
+                           IsBackupCredential is_backup_credential)
     : username_(std::move(username)),
       password_(std::move(password)),
       origin_(std::move(origin)),
+      display_name_(std::move(display_name)),
       match_type_(match_type),
-      last_used_(last_used) {}
+      last_used_(last_used),
+      is_backup_credential_(is_backup_credential) {}
 
 UiCredential::UiCredential(const PasswordForm& form,
                            const url::Origin& affiliated_origin)
@@ -42,7 +46,8 @@ UiCredential::UiCredential(const PasswordForm& form,
       sender_name_(form.sender_name),
       sender_profile_image_url_(form.sender_profile_image_url),
       sharing_notification_displayed_(form.sharing_notification_displayed) {
-  FacetURI facet_uri = FacetURI::FromPotentiallyInvalidSpec(form.signon_realm);
+  auto facet_uri =
+      affiliations::FacetURI::FromPotentiallyInvalidSpec(form.signon_realm);
   if (facet_uri.IsValidAndroidFacetURI()) {
     origin_ = affiliated_origin;
     display_name_ = form.app_display_name.empty()
@@ -57,6 +62,13 @@ UiCredential::UiCredential(const PasswordForm& form,
   }
 }
 
+UiCredential::UiCredential(const PasswordForm& form,
+                           const url::Origin& affiliated_origin,
+                           IsBackupCredential is_backup_credential)
+    : UiCredential(form, affiliated_origin) {
+  is_backup_credential_ = is_backup_credential;
+}
+
 UiCredential::UiCredential(UiCredential&&) = default;
 UiCredential::UiCredential(const UiCredential&) = default;
 UiCredential& UiCredential::operator=(UiCredential&&) = default;
@@ -65,12 +77,12 @@ UiCredential::~UiCredential() = default;
 
 bool operator==(const UiCredential& lhs, const UiCredential& rhs) {
   auto tie = [](const UiCredential& cred) {
-    return std::make_tuple(std::cref(cred.username()),
-                           std::cref(cred.password()), std::cref(cred.origin()),
-                           cred.match_type(), cred.last_used(),
-                           cred.is_shared(), std::cref(cred.sender_name()),
-                           std::cref(cred.sender_profile_image_url()),
-                           cred.sharing_notification_displayed());
+    return std::make_tuple(
+        std::cref(cred.username()), std::cref(cred.password()),
+        std::cref(cred.origin()), cred.match_type(), cred.last_used(),
+        cred.is_shared(), std::cref(cred.sender_name()),
+        std::cref(cred.sender_profile_image_url()),
+        cred.sharing_notification_displayed(), cred.is_backup_credential());
   };
 
   return tie(lhs) == tie(rhs);
@@ -88,6 +100,9 @@ std::ostream& operator<<(std::ostream& os, const UiCredential& credential) {
     case password_manager_util::GetLoginMatchType::kPSL:
       match_type = "PSL match";
       break;
+    case password_manager_util::GetLoginMatchType::kGrouped:
+      match_type = "grouped match";
+      break;
   }
   return os << "(user: \"" << credential.username() << "\", " << "pwd: \""
             << credential.password() << "\", " << "origin: \""
@@ -98,7 +113,8 @@ std::ostream& operator<<(std::ostream& os, const UiCredential& credential) {
             << "sender_profile_image_url: "
             << credential.sender_profile_image_url().possibly_invalid_spec()
             << ", " << "sharing_notification_displayed: "
-            << credential.sharing_notification_displayed();
+            << credential.sharing_notification_displayed() << ", "
+            << "is_backup_credential: " << credential.is_backup_credential();
 }
 
 OriginCredentialStore::OriginCredentialStore(url::Origin origin)

@@ -6,7 +6,7 @@ import * as Common from '../../../../core/common/common.js';
 import * as Root from '../../../../core/root/root.js';
 import * as UI from '../../legacy.js';
 
-import {Events, type ContrastInfo} from './ContrastInfo.js';
+import {type ContrastInfo, Events} from './ContrastInfo.js';
 
 export class ContrastOverlay {
   private contrastInfo: ContrastInfo;
@@ -25,7 +25,7 @@ export class ContrastOverlay {
 
     this.contrastRatioSVG = UI.UIUtils.createSVGChild(colorElement, 'svg', 'spectrum-contrast-container fill');
     this.contrastRatioLines = new Map();
-    if (Root.Runtime.experiments.isEnabled('APCA')) {
+    if (Root.Runtime.experiments.isEnabled('apca')) {
       this.contrastRatioLines.set(
           'APCA', UI.UIUtils.createSVGChild(this.contrastRatioSVG, 'path', 'spectrum-contrast-line'));
     } else {
@@ -43,14 +43,14 @@ export class ContrastOverlay {
     this.contrastRatioLinesThrottler = new Common.Throttler.Throttler(0);
     this.drawContrastRatioLinesBound = this.drawContrastRatioLines.bind(this);
 
-    this.contrastInfo.addEventListener(Events.ContrastInfoUpdated, this.update.bind(this));
+    this.contrastInfo.addEventListener(Events.CONTRAST_INFO_UPDATED, this.update.bind(this));
   }
 
   private update(): void {
     if (!this.visible || this.contrastInfo.isNull()) {
       return;
     }
-    if (Root.Runtime.experiments.isEnabled('APCA') && this.contrastInfo.contrastRatioAPCA() === null) {
+    if (Root.Runtime.experiments.isEnabled('apca') && this.contrastInfo.contrastRatioAPCA() === null) {
       return;
     }
     if (!this.contrastInfo.contrastRatio()) {
@@ -73,7 +73,7 @@ export class ContrastOverlay {
 
   private async drawContrastRatioLines(): Promise<void> {
     for (const [level, element] of this.contrastRatioLines) {
-      const path = this.contrastRatioLineBuilder.drawContrastRatioLine(this.width, this.height, level as string);
+      const path = this.contrastRatioLineBuilder.drawContrastRatioLine(this.width, this.height, level);
       if (path) {
         element.setAttribute('d', path);
       } else {
@@ -90,7 +90,7 @@ export class ContrastRatioLineBuilder {
   }
 
   drawContrastRatioLine(width: number, height: number, level: string): string|null {
-    const isAPCA = Root.Runtime.experiments.isEnabled('APCA');
+    const isAPCA = Root.Runtime.experiments.isEnabled('apca');
     const requiredContrast =
         isAPCA ? this.contrastInfo.contrastRatioAPCAThreshold() : this.contrastInfo.contrastRatioThreshold(level);
     if (!width || !height || requiredContrast === null) {
@@ -134,13 +134,13 @@ export class ContrastRatioLineBuilder {
     blendedRGBA = Common.ColorUtils.blendColors(candidateRGBA, bgRGBA);
 
     let candidateLuminance: ((candidateHSVA: Common.ColorUtils.Color4D) => number)|
-        ((candidateHSVA: Common.ColorUtils.Color4D) => number) = (candidateHSVA: Common.ColorUtils.Color4D): number => {
+        ((candidateHSVA: Common.ColorUtils.Color4D) => number) = (candidateHSVA: Common.ColorUtils.Color4D) => {
           return Common.ColorUtils.luminance(
               Common.ColorUtils.blendColors(Common.Color.Legacy.fromHSVA(candidateHSVA).rgba(), bgRGBA));
         };
 
-    if (Root.Runtime.experiments.isEnabled('APCA')) {
-      candidateLuminance = (candidateHSVA: Common.ColorUtils.Color4D): number => {
+    if (Root.Runtime.experiments.isEnabled('apca')) {
+      candidateLuminance = (candidateHSVA: Common.ColorUtils.Color4D) => {
         return Common.ColorUtils.luminanceAPCA(
             Common.ColorUtils.blendColors(Common.Color.Legacy.fromHSVA(candidateHSVA).rgba(), bgRGBA));
       };
@@ -158,7 +158,7 @@ export class ContrastRatioLineBuilder {
       // gradient of the curve.
       candidateHSVA[V] = lastV + currentSlope * dS;
 
-      const v = Common.Color.approachColorValue(candidateHSVA, bgRGBA, V, desiredLuminance, candidateLuminance);
+      const v = Common.Color.approachColorValue(candidateHSVA, V, desiredLuminance, candidateLuminance);
       if (v === null) {
         break;
       }
@@ -177,7 +177,7 @@ export class ContrastRatioLineBuilder {
     if (s < 1 + dS) {
       s -= dS;
       candidateHSVA[V] = 1;
-      s = Common.Color.approachColorValue(candidateHSVA, bgRGBA, S, desiredLuminance, candidateLuminance);
+      s = Common.Color.approachColorValue(candidateHSVA, S, desiredLuminance, candidateLuminance);
       if (s !== null) {
         pathBuilder = pathBuilder.concat(['L', (s * width).toFixed(2), '-0.1']);
       }

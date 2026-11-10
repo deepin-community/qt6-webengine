@@ -24,7 +24,7 @@
 #include "content/public/test/content_mock_cert_verifier.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom-blink.h"
+#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
 
 namespace content {
 
@@ -36,6 +36,10 @@ using ReasonsMatcher = testing::Matcher<
     const blink::mojom::BackForwardCacheNotRestoredReasonsPtr&>;
 using SameOriginMatcher = testing::Matcher<
     const blink::mojom::SameOriginBfcacheNotRestoredDetailsPtr&>;
+using BlockingDetailsReasonsMatcher =
+    testing::Matcher<const blink::mojom::BFCacheBlockingDetailedReasonPtr&>;
+using SourceLocationMatcher =
+    testing::Matcher<const blink::mojom::ScriptSourceLocationPtr&>;
 using BlockingDetailsMatcher =
     testing::Matcher<const blink::mojom::BlockingDetailsPtr&>;
 
@@ -83,11 +87,16 @@ class BackForwardCacheBrowserTest
 
   void SetupFeaturesAndParameters();
 
+  // Enabled and disable only takes effect once per feature and each param can
+  // only be set once. This allows subclasses to set values and then call
+  // `SetUpCommandLine` and not have them overridden.
   void EnableFeatureAndSetParams(const base::Feature& feature,
                                  std::string param_name,
                                  std::string param_value);
-
   void DisableFeature(const base::Feature& feature);
+  // Convenience method for setting up cache-sizes.
+  void EnableCacheSize(std::optional<int> cache_size,
+                       std::optional<int> foreground_cache_size);
 
   void SetUpOnMainThread() override;
 
@@ -101,7 +110,7 @@ class BackForwardCacheBrowserTest
 
   std::string DepictFrameTree(FrameTreeNode* node);
 
-  bool HistogramContainsIntValue(base::HistogramBase::Sample sample,
+  bool HistogramContainsIntValue(base::HistogramBase::Sample32 sample,
                                  std::vector<base::Bucket> histogram_values);
 
   void EvictByJavaScript(RenderFrameHostImpl* rfh);
@@ -143,17 +152,29 @@ class BackForwardCacheBrowserTest
       const std::optional<testing::Matcher<std::string>>& id,
       const std::optional<testing::Matcher<std::string>>& name,
       const std::optional<testing::Matcher<std::string>>& src,
-      const std::vector<testing::Matcher<std::string>>& reasons,
+      const std::vector<BlockingDetailsReasonsMatcher>& reasons,
       const std::optional<SameOriginMatcher>& same_origin_details);
+
   SameOriginMatcher MatchesSameOriginDetails(
-      const testing::Matcher<std::string>& url,
+      const testing::Matcher<GURL>& url,
       const std::vector<ReasonsMatcher>& children);
 
+  // Used in tests that ensure source location is sent to the renderer side from
+  // the browser one
+  BlockingDetailsReasonsMatcher MatchesDetailedReason(
+      const testing::Matcher<std::string>& name,
+      const std::optional<SourceLocationMatcher>& source);
+
+  // Used in tests that ensure source location is sent to the browser side from
+  // the renderer one.
   BlockingDetailsMatcher MatchesBlockingDetails(
-      const std::optional<testing::Matcher<std::string>>& url,
-      const std::optional<testing::Matcher<std::string>>& function_name,
-      const testing::Matcher<uint64_t>& line,
-      const testing::Matcher<uint64_t>& column);
+      const std::optional<SourceLocationMatcher>& source);
+
+  SourceLocationMatcher MatchesSourceLocation(
+      const testing::Matcher<GURL>& url,
+      const testing::Matcher<std::string>& function_name,
+      const testing::Matcher<uint64_t>& line_number,
+      const testing::Matcher<uint64_t>& column_number);
 
   // Access the tree result of NotRestoredReason for the last main frame
   // navigation.
@@ -202,8 +223,6 @@ class BackForwardCacheBrowserTest
   // renderer for a bfcached page.
   bool fail_for_unexpected_messages_while_cached_ = true;
 };
-
-[[nodiscard]] bool WaitForDOMContentLoaded(RenderFrameHostImpl* rfh);
 
 class HighCacheSizeBackForwardCacheBrowserTest
     : public BackForwardCacheBrowserTest {

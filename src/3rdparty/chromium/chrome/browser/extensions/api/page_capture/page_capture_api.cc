@@ -60,8 +60,7 @@ void ClearFileReferenceOnIOThread(
 
 static PageCaptureSaveAsMHTMLFunction::TestDelegate* test_delegate_ = nullptr;
 
-PageCaptureSaveAsMHTMLFunction::PageCaptureSaveAsMHTMLFunction() {
-}
+PageCaptureSaveAsMHTMLFunction::PageCaptureSaveAsMHTMLFunction() = default;
 
 PageCaptureSaveAsMHTMLFunction::~PageCaptureSaveAsMHTMLFunction() {
   if (mhtml_file_.get()) {
@@ -240,7 +239,7 @@ void PageCaptureSaveAsMHTMLFunction::ReturnSuccess(int file_size) {
   // blob to remain alive, we have to stick around until a reference has
   // been obtained by the renderer. The response ack is the signal that the
   // renderer has it's reference, so we can release ours.
-  // TODO(crbug.com/1050887): Potential memory leak here.
+  // TODO(crbug.com/40673405): Potential memory leak here.
   AddRef();  // Balanced in either OnMessageReceived()
   AddResponseTarget();
 
@@ -248,12 +247,10 @@ void PageCaptureSaveAsMHTMLFunction::ReturnSuccess(int file_size) {
 }
 
 WebContents* PageCaptureSaveAsMHTMLFunction::GetWebContents() {
-  Browser* browser = nullptr;
   content::WebContents* web_contents = nullptr;
-
   if (!ExtensionTabUtil::GetTabById(params_->details.tab_id, browser_context(),
-                                    include_incognito_information(), &browser,
-                                    nullptr, &web_contents, nullptr)) {
+                                    include_incognito_information(),
+                                    &web_contents)) {
     return nullptr;
   }
   return web_contents;

@@ -22,6 +22,7 @@
 #include <QtTest/QtTest>
 
 #include <QtWebEngineCore/qwebengineframe.h>
+#include <QtWebEngineCore/private/qtwebenginecore-config_p.h>
 
 class tst_QWebEngineFrame : public QObject
 {
@@ -39,10 +40,14 @@ private Q_SLOTS:
     void size();
     void isMainFrame();
     void runJavaScript();
+    void runJavaScriptMoveOnly();
+    void runJavaScriptSourceCompat();
+#if QT_CONFIG(webengine_printing_and_pdf)
     void printRequestedByFrame();
     void printToPdfFile();
     void printToPdfFileFailures();
     void printToPdfFunction();
+#endif
 
 private:
 };
@@ -62,7 +67,7 @@ void tst_QWebEngineFrame::findFrameByName()
     QWebEnginePage page;
     QSignalSpy loadSpy{ &page, SIGNAL(loadFinished(bool)) };
     page.load(QUrl("qrc:/resources/iframes.html"));
-    QTRY_COMPARE(loadSpy.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 1, 10000);
     auto maybeFrame = page.findFrameByName("test-subframe0");
     QVERIFY(maybeFrame.has_value());
     QCOMPARE(maybeFrame->name(), "test-subframe0");
@@ -79,7 +84,7 @@ void tst_QWebEngineFrame::isValid()
     QVERIFY(firstPageSubframe && firstPageSubframe->isValid());
 
     page.load(QUrl("qrc:/resources/frameset.html"));
-    QTRY_COMPARE(loadSpy.size(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 2, 10000);
     QVERIFY(!firstPageSubframe->isValid());
 }
 
@@ -96,7 +101,7 @@ void tst_QWebEngineFrame::name()
     QCOMPARE(children.at(2).name(), "test-subframe2");
 
     page.load(QUrl("qrc:/resources/iframes.html"));
-    QTRY_COMPARE(loadSpy.size(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 2, 10000);
     QVERIFY(!children.at(0).isValid());
     QCOMPARE(children.at(0).name(), QString());
 }
@@ -106,7 +111,7 @@ void tst_QWebEngineFrame::htmlName()
     QWebEnginePage page;
     QSignalSpy loadSpy{ &page, SIGNAL(loadFinished(bool)) };
     page.load(QUrl("qrc:/resources/iframes.html"));
-    QTRY_COMPARE(loadSpy.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 1, 10000);
     auto children = page.mainFrame().children();
     QCOMPARE(children.at(0).name(), "test-subframe0");
     QCOMPARE(children.at(0).htmlName(), "iframe0-300x200");
@@ -114,7 +119,7 @@ void tst_QWebEngineFrame::htmlName()
     QCOMPARE(children.at(1).htmlName(), "iframe1-350x250");
 
     page.load(QUrl("qrc:/resources/frameset.html"));
-    QTRY_COMPARE(loadSpy.size(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 2, 10000);
     QVERIFY(!children.at(0).isValid());
     QCOMPARE(children.at(0).htmlName(), QString());
 }
@@ -138,7 +143,7 @@ void tst_QWebEngineFrame::childrenOfInvalidFrame()
     QWebEnginePage page;
     QSignalSpy loadSpy{ &page, SIGNAL(loadFinished(bool)) };
     page.load(QUrl("qrc:/resources/nesting-iframe.html"));
-    QTRY_COMPARE(loadSpy.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.size(), 1, 10000);
     auto nestedFrame = page.mainFrame().children().at(0);
     QCOMPARE(nestedFrame.children().size(), 2);
 
@@ -207,6 +212,43 @@ void tst_QWebEngineFrame::runJavaScript()
     QCOMPARE(result, QString("test-subframe0"));
 }
 
+class DeleteObserver {
+public:
+    static bool s_wasDeleted;
+    DeleteObserver() { s_wasDeleted = false;};
+    ~DeleteObserver() { s_wasDeleted = true; }
+};
+
+bool DeleteObserver::s_wasDeleted;
+
+void tst_QWebEngineFrame::runJavaScriptMoveOnly()
+{
+    QWebEnginePage page;
+    QSignalSpy loadSpy{ &page, SIGNAL(loadFinished(bool)) };
+    page.load(QUrl("qrc:/resources/iframes.html"));
+    QTRY_COMPARE(loadSpy.size(), 1);
+    auto children = page.mainFrame().children();
+    CallbackSpy<QVariant> spy;
+    auto holdThis = std::make_unique<DeleteObserver>();
+    QVERIFY(!DeleteObserver::s_wasDeleted);
+    children[0].runJavaScript("window.name", [spyref = spy.ref(), holdingThis = std::move(holdThis)](const QVariant &res) mutable { spyref(res); });
+    auto result = spy.waitForResult();
+    QVERIFY(DeleteObserver::s_wasDeleted);
+    QCOMPARE(result, QString("test-subframe0"));
+}
+
+void tst_QWebEngineFrame::runJavaScriptSourceCompat()
+{
+    QWebEnginePage page;
+    QSignalSpy loadSpy{ &page, SIGNAL(loadFinished(bool)) };
+    page.load(QUrl("qrc:/resources/iframes.html"));
+    QTRY_COMPARE(loadSpy.size(), 1);
+    auto children = page.mainFrame().children();
+    children[0].runJavaScript("window.name", nullptr);
+    children[0].runJavaScript("window.name", 0, {});
+}
+
+#if QT_CONFIG(webengine_printing_and_pdf)
 void tst_QWebEngineFrame::printRequestedByFrame()
 {
     QWebEnginePage page;
@@ -240,7 +282,7 @@ void tst_QWebEngineFrame::printToPdfFile()
     QVERIFY(maybeInnerFrame);
     auto innerFrame = *maybeInnerFrame;
 
-    QSignalSpy savePdfSpy{ &page, SIGNAL(pdfPrintingFinished(QString, bool)) };
+    QSignalSpy savePdfSpy{ &page, SIGNAL(pdfPrintingFinished(QString,bool)) };
 
     QString outerPath = tempDir.path() + "/outer.pdf";
     outerFrame.printToPdf(outerPath);
@@ -280,7 +322,7 @@ void tst_QWebEngineFrame::printToPdfFileFailures()
     QVERIFY(maybeInnerFrame);
     auto innerFrame = *maybeInnerFrame;
 
-    QSignalSpy savePdfSpy{ &page, SIGNAL(pdfPrintingFinished(QString, bool)) };
+    QSignalSpy savePdfSpy{ &page, SIGNAL(pdfPrintingFinished(QString,bool)) };
 
 #if !defined(Q_OS_WIN)
     auto badPath = tempDir.path() + "/print_//2_failed.pdf";
@@ -340,6 +382,7 @@ void tst_QWebEngineFrame::printToPdfFunction()
     QVERIFY(invalidSpy.wasCalled());
     QCOMPARE(invalidPdfData.size(), 0);
 }
+#endif
 
 QTEST_MAIN(tst_QWebEngineFrame)
 

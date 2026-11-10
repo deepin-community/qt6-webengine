@@ -5,17 +5,17 @@
 #include "qpdflink.h"
 #include "qpdfsearchmodel.h"
 #include "qpdfsearchmodel_p.h"
+#include "qtpdfglobal_p.h"
 
 #include "third_party/pdfium/public/fpdf_text.h"
 #include "third_party/pdfium/public/fpdfview.h"
 
 #include <QtCore/qelapsedtimer.h>
-#include <QtCore/qloggingcategory.h>
 #include <QtCore/QMetaEnum>
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcS, "qt.pdf.search")
+Q_PDF_LOGGING_CATEGORY(qLcS, "qt.pdf.search")
 
 static const int UpdateTimerInterval = 100;
 static const int ContextChars = 64;
@@ -34,7 +34,8 @@ static const int ContextChars = 64;
     and to iterate through them using the "search forward" / "search backward"
     buttons and shortcuts that would be found in a typical document-viewing UI:
 
-    \image search-results.png
+    \image search-results.png {PDF viewer with search results panel showing
+           entries for "sand" and highlighted result on page}
 */
 
 /*!
@@ -56,7 +57,7 @@ static const int ContextChars = 64;
 QPdfSearchModel::QPdfSearchModel(QObject *parent)
     : QAbstractListModel(*(new QPdfSearchModelPrivate()), parent)
 {
-    QMetaEnum rolesMetaEnum = metaObject()->enumerator(metaObject()->indexOfEnumerator("Role"));
+    const QMetaEnum rolesMetaEnum = QMetaEnum::fromType<Role>();
     for (int r = Qt::UserRole; r < int(Role::NRoles); ++r) {
         QByteArray roleName = QByteArray(rolesMetaEnum.valueToKey(r));
         if (roleName.isEmpty())
@@ -135,6 +136,34 @@ QVariant QPdfSearchModel::data(const QModelIndex &index, int role) const
 int QPdfSearchModel::count() const
 {
     return rowCount(QModelIndex());
+}
+
+/*!
+    \since 6.12
+    \enum QPdfSearchModel::Status
+
+    This enum describes the current status of the search model.
+
+    \value Null The initial status before the first search has begun.
+    \value Searching The status while the search is being conducted.
+    \value Finished The status when all possible search results have been found on all pages.
+
+    \sa QPdfSearchModel::status()
+*/
+
+/*!
+    \since 6.12
+    \property QPdfSearchModel::status
+    \brief the search status
+
+    This property tells whether a search is in progress.
+
+    \sa count()
+*/
+QPdfSearchModel::Status QPdfSearchModel::status() const
+{
+    Q_D(const QPdfSearchModel);
+    return d->status;
 }
 
 void QPdfSearchModel::updatePage(int page)
@@ -226,6 +255,9 @@ void QPdfSearchModel::timerEvent(QTimerEvent *event)
             qCDebug(qLcS) << "done updating search results on" << d->searchResults.size() << "pages";
         killTimer(d->updateTimerId);
         d->updateTimerId = -1;
+        d->setStatus(QPdfSearchModel::Status::Finished);
+    } else if (!d->searchString.isEmpty()) {
+        d->setStatus(QPdfSearchModel::Status::Searching);
     }
     d->doSearch(d->nextPageToUpdate++);
 }
@@ -300,25 +332,25 @@ bool QPdfSearchModelPrivate::doSearch(int page)
         }
         QString contextBefore, contextAfter;
         if (startIndex >= 0 || endIndex >= 0) {
-            startIndex = qMax(0, startIndex - ContextChars);
-            endIndex += ContextChars;
-            int count = endIndex - startIndex + 1;
+            int contextStart = qMax(0, startIndex - ContextChars);
+            int contextEnd = endIndex + ContextChars;
+            int count = contextEnd - contextStart + 1;
             if (count > 0) {
                 QList<ushort> buf(count + 1);
-                int len = FPDFText_GetText(textPage, startIndex, count, buf.data());
+                int len = FPDFText_GetText(textPage, contextStart, count, buf.data());
                 Q_ASSERT(len - 1 <= count); // len is number of characters written, including the terminator
                 QString context = QString::fromUtf16(
                         reinterpret_cast<const char16_t *>(buf.constData()), len - 1);
-                context = context.replace(QLatin1Char('\n'), QStringLiteral("\u23CE"));
-                context = context.remove(QLatin1Char('\r'));
-                // try to find the search string near the middle of the context if possible
-                int si = context.indexOf(searchString, ContextChars - 5, Qt::CaseInsensitive);
-                if (si < 0)
-                    si = context.indexOf(searchString, Qt::CaseInsensitive);
-                if (si < 0)
-                    qWarning() << "search string" << searchString << "not found in context" << context;
-                contextBefore = context.mid(0, si);
-                contextAfter = context.mid(si + searchString.size());
+
+                const auto replaceNewlines = [&](QString &s) {
+                    s.replace(QLatin1Char('\n'), QStringLiteral("\u23CE"));
+                    s.remove(QLatin1Char('\r'));
+                };
+
+                contextBefore = context.mid(0, startIndex - contextStart);
+                contextAfter = context.mid(startIndex - contextStart + searchString.size());
+                replaceNewlines(contextBefore);
+                replaceNewlines(contextAfter);
             }
         }
         if (!rects.isEmpty())
@@ -366,6 +398,16 @@ int QPdfSearchModelPrivate::rowsBeforePage(int page)
     for (int i = 0; i < page; ++i)
         ret += searchResults[i].size();
     return ret;
+}
+
+void QPdfSearchModelPrivate::setStatus(QPdfSearchModel::Status s)
+{
+    Q_Q(QPdfSearchModel);
+    if (status == s)
+        return;
+
+    status = s;
+    emit q->statusChanged(status);
 }
 
 QT_END_NAMESPACE

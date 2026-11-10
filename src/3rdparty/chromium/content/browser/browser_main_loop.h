@@ -16,7 +16,6 @@
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/browser_process_io_thread.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_main_runner.h"
@@ -54,10 +53,6 @@ class AudioSystem;
 class SystemMessageWindowWin;
 #elif (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && defined(USE_UDEV)
 class DeviceMonitorLinux;
-#endif
-class UserInputMonitor;
-#if BUILDFLAG(IS_MAC)
-class DeviceMonitorMac;
 #endif
 }  // namespace media
 
@@ -173,9 +168,6 @@ class CONTENT_EXPORT BrowserMainLoop {
   MediaStreamManager* media_stream_manager() const {
     return media_stream_manager_.get();
   }
-  media::UserInputMonitor* user_input_monitor() const {
-    return user_input_monitor_.get();
-  }
   MediaKeysListenerManagerImpl* media_keys_listener_manager() const {
     return media_keys_listener_manager_.get();
   }
@@ -220,12 +212,6 @@ class CONTENT_EXPORT BrowserMainLoop {
   void GetCompositingModeReporter(
       mojo::PendingReceiver<viz::mojom::CompositingModeReporter> receiver);
 
-#if BUILDFLAG(IS_MAC)
-  media::DeviceMonitorMac* device_monitor_mac() const {
-    return device_monitor_mac_.get();
-  }
-#endif
-
   SmsProvider* GetSmsProvider();
   void SetSmsProviderForTesting(std::unique_ptr<SmsProvider>);
 
@@ -260,8 +246,6 @@ class CONTENT_EXPORT BrowserMainLoop {
   using ProceedWithMainMessageLoopRun =
       base::StrongAlias<class ProceedWithMainMessageLoopRunTag, bool>;
   ProceedWithMainMessageLoopRun InterceptMainMessageLoopRun();
-
-  void MainMessageLoopRun();
 
   void InitializeMojo();
 
@@ -357,9 +341,6 @@ class CONTENT_EXPORT BrowserMainLoop {
   // ***************************************************************************
   std::unique_ptr<MediaKeysListenerManagerImpl> media_keys_listener_manager_;
 
-  // |user_input_monitor_| has to outlive |audio_manager_|, so declared first.
-  std::unique_ptr<media::UserInputMonitor> user_input_monitor_;
-
   // Support for out-of-process Data Decoder.
   std::unique_ptr<data_decoder::ServiceProvider> data_decoder_service_provider_;
 
@@ -380,8 +361,6 @@ class CONTENT_EXPORT BrowserMainLoop {
   std::unique_ptr<media::SystemMessageWindowWin> system_message_window_;
 #elif (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && defined(USE_UDEV)
   std::unique_ptr<media::DeviceMonitorLinux> device_monitor_linux_;
-#elif BUILDFLAG(IS_MAC)
-  std::unique_ptr<media::DeviceMonitorMac> device_monitor_mac_;
 #endif
 
   std::unique_ptr<MediaStreamManager> media_stream_manager_;

@@ -11,6 +11,11 @@
 #ifndef MODULES_AUDIO_CODING_NETEQ_MOCK_MOCK_PACKET_BUFFER_H_
 #define MODULES_AUDIO_CODING_NETEQ_MOCK_MOCK_PACKET_BUFFER_H_
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+
+#include "modules/audio_coding/neteq/packet.h"
 #include "modules/audio_coding/neteq/packet_buffer.h"
 #include "test/gmock.h"
 
@@ -36,7 +41,7 @@ class MockPacketBuffer : public PacketBuffer {
               (uint32_t timestamp, uint32_t* next_timestamp),
               (const, override));
   MOCK_METHOD(const Packet*, PeekNextPacket, (), (const, override));
-  MOCK_METHOD(absl::optional<Packet>, GetNextPacket, (), (override));
+  MOCK_METHOD(std::optional<Packet>, GetNextPacket, (), (override));
   MOCK_METHOD(int, DiscardNextPacket, (), (override));
   MOCK_METHOD(void,
               DiscardOldPackets,

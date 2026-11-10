@@ -4,8 +4,11 @@
 
 #include "quiche/quic/core/quic_ping_manager.h"
 
+#include "quiche/quic/core/quic_connection_alarms.h"
 #include "quiche/quic/core/quic_one_block_arena.h"
 #include "quiche/quic/platform/api/quic_test.h"
+#include "quiche/quic/test_tools/mock_quic_connection_alarms.h"
+#include "quiche/quic/test_tools/quic_connection_peer.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
 
 namespace quic {
@@ -13,10 +16,6 @@ namespace test {
 
 class QuicPingManagerPeer {
  public:
-  static QuicAlarm* GetAlarm(QuicPingManager* manager) {
-    return manager->alarm_.get();
-  }
-
   static void SetPerspective(QuicPingManager* manager,
                              Perspective perspective) {
     manager->perspective_ = perspective;
@@ -27,6 +26,7 @@ namespace {
 
 const bool kShouldKeepAlive = true;
 const bool kHasInflightPackets = true;
+const QuicTime::Delta kPtoDelay = QuicTime::Delta::FromMilliseconds(50);
 
 class MockDelegate : public QuicPingManager::Delegate {
  public:
@@ -37,20 +37,24 @@ class MockDelegate : public QuicPingManager::Delegate {
 class QuicPingManagerTest : public QuicTest {
  public:
   QuicPingManagerTest()
-      : manager_(Perspective::IS_CLIENT, &delegate_, &arena_, &alarm_factory_,
-                 /*context=*/nullptr),
-        alarm_(static_cast<MockAlarmFactory::TestAlarm*>(
-            QuicPingManagerPeer::GetAlarm(&manager_))) {
+      : alarms_(&connection_alarms_delegate_, arena_, alarm_factory_),
+        alarm_(&alarms_, QuicAlarmSlot::kPing),
+        manager_(Perspective::IS_CLIENT, &delegate_, alarm_) {
     clock_.AdvanceTime(QuicTime::Delta::FromSeconds(1));
+    ON_CALL(connection_alarms_delegate_, OnPingAlarm()).WillByDefault([&] {
+      manager_.OnAlarm();
+    });
   }
 
  protected:
   testing::StrictMock<MockDelegate> delegate_;
+  MockConnectionAlarmsDelegate connection_alarms_delegate_;
   MockClock clock_;
   QuicConnectionArena arena_;
   MockAlarmFactory alarm_factory_;
+  QuicAlarmMultiplexer alarms_;
+  QuicTestAlarmProxy alarm_;
   QuicPingManager manager_;
-  MockAlarmFactory::TestAlarm* alarm_;
 };
 
 TEST_F(QuicPingManagerTest, KeepAliveTimeout) {
@@ -59,7 +63,7 @@ TEST_F(QuicPingManagerTest, KeepAliveTimeout) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Set alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
             alarm_->deadline() - clock_.ApproximateNow());
@@ -67,7 +71,7 @@ TEST_F(QuicPingManagerTest, KeepAliveTimeout) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Reset alarm with no in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // Verify the deadline is set slightly less than 15 seconds in the future,
   // because of the 1s alarm granularity.
@@ -81,13 +85,13 @@ TEST_F(QuicPingManagerTest, KeepAliveTimeout) {
   EXPECT_FALSE(alarm_->IsSet());
   // Reset alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
 
   // Verify alarm is not armed if !kShouldKeepAlive.
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   manager_.SetAlarm(clock_.ApproximateNow(), !kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_FALSE(alarm_->IsSet());
 }
 
@@ -100,7 +104,7 @@ TEST_F(QuicPingManagerTest, CustomizedKeepAliveTimeout) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Set alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(10),
             alarm_->deadline() - clock_.ApproximateNow());
@@ -108,7 +112,7 @@ TEST_F(QuicPingManagerTest, CustomizedKeepAliveTimeout) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Set alarm with no in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // The deadline is set slightly less than 10 seconds in the future, because
   // of the 1s alarm granularity.
@@ -122,13 +126,13 @@ TEST_F(QuicPingManagerTest, CustomizedKeepAliveTimeout) {
   EXPECT_FALSE(alarm_->IsSet());
   // Reset alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
 
   // Verify alarm is not armed if !kShouldKeepAlive.
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   manager_.SetAlarm(clock_.ApproximateNow(), !kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   EXPECT_FALSE(alarm_->IsSet());
 }
 
@@ -142,7 +146,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeout) {
 
   // Set alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   // Verify alarm is in keep-alive mode.
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -151,7 +155,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeout) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Set alarm with no in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // Verify alarm is in retransmittable-on-wire mode.
   EXPECT_EQ(kRtransmittableOnWireTimeout,
@@ -163,7 +167,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeout) {
   EXPECT_FALSE(alarm_->IsSet());
   // Reset alarm with in flight packets.
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   // Verify the alarm is in keep-alive mode.
   ASSERT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -182,7 +186,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   EXPECT_FALSE(alarm_->IsSet());
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   // Verify alarm is in keep-alive mode.
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -194,7 +198,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
     // Reset alarm with no in flight packets.
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     // Verify alarm is in retransmittable-on-wire mode.
     EXPECT_EQ(initial_retransmittable_on_wire_timeout,
@@ -205,7 +209,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
     EXPECT_FALSE(alarm_->IsSet());
     // Reset alarm with in flight packets.
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      kHasInflightPackets);
+                      kHasInflightPackets, kPtoDelay);
   }
 
   QuicTime::Delta retransmittable_on_wire_timeout =
@@ -218,7 +222,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
     retransmittable_on_wire_timeout = retransmittable_on_wire_timeout * 2;
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     EXPECT_EQ(retransmittable_on_wire_timeout,
               alarm_->deadline() - clock_.ApproximateNow());
@@ -229,7 +233,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
     EXPECT_FALSE(alarm_->IsSet());
     // Reset alarm with in flight packets.
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      kHasInflightPackets);
+                      kHasInflightPackets, kPtoDelay);
   }
 
   // Verify alarm is in keep-alive mode.
@@ -240,7 +244,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireTimeoutExponentiallyBackOff) {
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   // Reset alarm with no in flight packets
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // Verify alarm is in keep-alive mode because retransmittable-on-wire deadline
   // is later.
@@ -267,7 +271,7 @@ TEST_F(QuicPingManagerTest,
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   EXPECT_FALSE(alarm_->IsSet());
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
   // Verify alarm is in keep-alive mode.
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -275,7 +279,7 @@ TEST_F(QuicPingManagerTest,
 
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // Verify alarm is in retransmittable-on-wire mode.
   EXPECT_EQ(initial_retransmittable_on_wire_timeout,
@@ -287,14 +291,14 @@ TEST_F(QuicPingManagerTest,
 
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(initial_retransmittable_on_wire_timeout,
             alarm_->deadline() - clock_.ApproximateNow());
 
   manager_.reset_consecutive_retransmittable_on_wire_count();
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_EQ(initial_retransmittable_on_wire_timeout,
             alarm_->deadline() - clock_.ApproximateNow());
   EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
@@ -303,7 +307,7 @@ TEST_F(QuicPingManagerTest,
 
   for (int i = 0; i < kMaxAggressiveRetransmittableOnWireCount; i++) {
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     EXPECT_EQ(initial_retransmittable_on_wire_timeout,
               alarm_->deadline() - clock_.ApproximateNow());
@@ -312,13 +316,13 @@ TEST_F(QuicPingManagerTest,
     alarm_->Fire();
     // Reset alarm with in flight packets.
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      kHasInflightPackets);
+                      kHasInflightPackets, kPtoDelay);
     // Advance 5ms to receive next packet.
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   }
 
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(initial_retransmittable_on_wire_timeout * 2,
             alarm_->deadline() - clock_.ApproximateNow());
@@ -330,7 +334,7 @@ TEST_F(QuicPingManagerTest,
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
   manager_.reset_consecutive_retransmittable_on_wire_count();
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(initial_retransmittable_on_wire_timeout,
             alarm_->deadline() - clock_.ApproximateNow());
@@ -351,7 +355,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireLimit) {
   clock_.AdvanceTime(kShortDelay);
   EXPECT_FALSE(alarm_->IsSet());
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    kHasInflightPackets);
+                    kHasInflightPackets, kPtoDelay);
 
   EXPECT_TRUE(alarm_->IsSet());
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -360,7 +364,7 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireLimit) {
   for (int i = 0; i <= kMaxRetransmittableOnWirePingCount; i++) {
     clock_.AdvanceTime(kShortDelay);
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     EXPECT_EQ(initial_retransmittable_on_wire_timeout,
               alarm_->deadline() - clock_.ApproximateNow());
@@ -368,11 +372,11 @@ TEST_F(QuicPingManagerTest, RetransmittableOnWireLimit) {
     EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
     alarm_->Fire();
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      kHasInflightPackets);
+                      kHasInflightPackets, kPtoDelay);
   }
 
   manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                    !kHasInflightPackets);
+                    !kHasInflightPackets, kPtoDelay);
   EXPECT_TRUE(alarm_->IsSet());
   // Verify alarm is in keep-alive mode.
   EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
@@ -395,7 +399,7 @@ TEST_F(QuicPingManagerTest, MaxRetransmittableOnWireDelayShift) {
 
   for (int i = 0; i <= kMaxAggressiveRetransmittableOnWireCount; i++) {
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     EXPECT_EQ(initial_retransmittable_on_wire_timeout,
               alarm_->deadline() - clock_.ApproximateNow());
@@ -403,11 +407,11 @@ TEST_F(QuicPingManagerTest, MaxRetransmittableOnWireDelayShift) {
     EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
     alarm_->Fire();
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      kHasInflightPackets);
+                      kHasInflightPackets, kPtoDelay);
   }
   for (int i = 1; i <= 20; ++i) {
     manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
-                      !kHasInflightPackets);
+                      !kHasInflightPackets, kPtoDelay);
     EXPECT_TRUE(alarm_->IsSet());
     if (i <= 10) {
       EXPECT_EQ(initial_retransmittable_on_wire_timeout * (1 << i),
@@ -420,6 +424,113 @@ TEST_F(QuicPingManagerTest, MaxRetransmittableOnWireDelayShift) {
     clock_.AdvanceTime(alarm_->deadline() - clock_.ApproximateNow());
     EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
     alarm_->Fire();
+  }
+}
+
+TEST_F(QuicPingManagerTest, PtoBasedRetransmittableOnWireTimeout) {
+  // Set the initial retransmittable on wire timeout.
+  manager_.set_initial_retransmittable_on_wire_timeout(
+      QuicTime::Delta::FromMilliseconds(200));
+  // Verify the alarm is set based on different value based on PTO delay.
+  for (int num_times_pto : {1, 2, 3}) {
+    EXPECT_TRUE(!alarm_->IsSet());
+    manager_.set_num_ptos_for_retransmittable_on_wire_timeout(num_times_pto);
+    manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                      !kHasInflightPackets, kPtoDelay);
+    EXPECT_EQ(kPtoDelay * num_times_pto,
+              alarm_->deadline() - clock_.ApproximateNow());
+    EXPECT_TRUE(alarm_->IsSet());
+    clock_.AdvanceTime(kPtoDelay * num_times_pto);
+    EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
+    alarm_->Fire();
+  }
+}
+
+TEST_F(QuicPingManagerTest,
+       PtoBasedRetransmittableOnWireTimeoutExponentiallyBackOff) {
+  const int kMaxAggressiveRetransmittableOnWireCount = 5;
+  SetQuicFlag(quic_max_aggressive_retransmittable_on_wire_ping_count,
+              kMaxAggressiveRetransmittableOnWireCount);
+
+  for (int num_times_pto : {1, 2, 3}) {
+    manager_.set_num_ptos_for_retransmittable_on_wire_timeout(num_times_pto);
+
+    QuicTime::Delta pto_delay = static_cast<int>(num_times_pto) * kPtoDelay;
+
+    clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
+    EXPECT_FALSE(alarm_->IsSet());
+    manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                      kHasInflightPackets, kPtoDelay);
+    // Verify alarm is in keep-alive mode.
+    EXPECT_TRUE(alarm_->IsSet());
+    EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
+              alarm_->deadline() - clock_.ApproximateNow());
+
+    // Verify no exponential backoff on the first few retransmittable on wire
+    // timeouts.
+    for (int i = 0; i <= kMaxAggressiveRetransmittableOnWireCount; ++i) {
+      clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
+      // Reset alarm with no in flight packets.
+      manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                        !kHasInflightPackets, kPtoDelay);
+      EXPECT_TRUE(alarm_->IsSet());
+      // Verify alarm is in retransmittable-on-wire mode.
+      EXPECT_EQ(pto_delay, alarm_->deadline() - clock_.ApproximateNow());
+      clock_.AdvanceTime(pto_delay);
+      EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
+      alarm_->Fire();
+      EXPECT_FALSE(alarm_->IsSet());
+      // Reset alarm with in flight packets.
+      manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                        kHasInflightPackets, kPtoDelay);
+    }
+
+    QuicTime::Delta retransmittable_on_wire_timeout = pto_delay;
+
+    // Verify subsequent retransmittable-on-wire timeout is exponentially
+    // backed off.
+    while (retransmittable_on_wire_timeout * 2 <
+           QuicTime::Delta::FromSeconds(kPingTimeoutSecs)) {
+      retransmittable_on_wire_timeout = retransmittable_on_wire_timeout * 2;
+      clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
+      manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                        !kHasInflightPackets, kPtoDelay);
+      EXPECT_TRUE(alarm_->IsSet());
+      EXPECT_EQ(retransmittable_on_wire_timeout,
+                alarm_->deadline() - clock_.ApproximateNow());
+
+      clock_.AdvanceTime(retransmittable_on_wire_timeout);
+      EXPECT_CALL(delegate_, OnRetransmittableOnWireTimeout());
+      alarm_->Fire();
+      EXPECT_FALSE(alarm_->IsSet());
+      // Reset alarm with in flight packets.
+      manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                        kHasInflightPackets, kPtoDelay);
+    }
+
+    // Verify alarm is in keep-alive mode.
+    EXPECT_TRUE(alarm_->IsSet());
+    EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs),
+              alarm_->deadline() - clock_.ApproximateNow());
+
+    clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(5));
+    // Reset alarm with no in flight packets
+    manager_.SetAlarm(clock_.ApproximateNow(), kShouldKeepAlive,
+                      !kHasInflightPackets, kPtoDelay);
+    EXPECT_TRUE(alarm_->IsSet());
+    // Verify alarm is in keep-alive mode because retransmittable-on-wire
+    // deadline is later.
+    EXPECT_EQ(QuicTime::Delta::FromSeconds(kPingTimeoutSecs) -
+                  QuicTime::Delta::FromMilliseconds(5),
+              alarm_->deadline() - clock_.ApproximateNow());
+    clock_.AdvanceTime(QuicTime::Delta::FromSeconds(kPingTimeoutSecs) -
+                       QuicTime::Delta::FromMilliseconds(5));
+    EXPECT_CALL(delegate_, OnKeepAliveTimeout());
+    alarm_->Fire();
+    EXPECT_FALSE(alarm_->IsSet());
+
+    // Reset the consecutive retransmittable on wire count for next iteration.
+    manager_.reset_consecutive_retransmittable_on_wire_count();
   }
 }
 

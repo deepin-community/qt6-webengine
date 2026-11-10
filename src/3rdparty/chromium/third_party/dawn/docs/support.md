@@ -6,7 +6,7 @@ Vulkan is supported with minimal features, limits and extensions being required 
 Vulkan is the preferred target API on platforms that don't have other "modern" GPU APIs.
 Vulkan is supported as best effort on other platforms (e.g. Windows and macOS).
 
-**Required version**: Vulkan 1.0 is supported with some required extensions (`VK_KHR_maintenance1`), or Vulkan 1.1 and above without extensions.
+**Required version**: Vulkan 1.1.
 
 **Required features**: `depthBiasClamp`, `fragmentStoresAndAtomics`, `fullDrawIndexUint32`, `imageCubeArray`, `independentBlend`, `sampleRateShading`, and either `textureCompressionBC` or both of `textureCompressionETC` and `textureCompressionASTC_LDR`.
 
@@ -34,12 +34,12 @@ Supported shader models are 5.1 and above. It is the preferred target API when a
 
 ## Apple's Metal
 
-Metal is supported and is the preferred target API when available.
+Metal 2.3 is supported and is the preferred target API when available.
 
 **Apple OS support:**
 
- - macOS: supported.
- - iOS: supported, best effort.
+ - macOS: supported on version 12.0+.
+ - iOS: supported on version 14.0+, best effort.
  - tvOS/ipadOS/...: Not supported, contributions welcome.
 
 ## Khronos's OpenGL family
@@ -47,8 +47,6 @@ Metal is supported and is the preferred target API when available.
 Support for OpenGL is in progress with the aim to make OpenGL ES 3.1 (with extensions and limits) supported through EGL.
 Other flavors of OpenGL (desktop OpenGL) or binding APIs (GLX, WGL, EAGL, CGL) are supported as best effort with contributions welcome.
 
-
 ## Microsoft's D3D11
 
-Dawn doesn't have a D3D11 backend at the moment, but D3D11 support can be achieved with the OpenGL ES backend through ANGLE's OpenGL ES to D3D11 translation.
-There might be a D3D11 backend in the future.
+A work-in-progress D3D11 backend is available but not considered ready for production uses yet.

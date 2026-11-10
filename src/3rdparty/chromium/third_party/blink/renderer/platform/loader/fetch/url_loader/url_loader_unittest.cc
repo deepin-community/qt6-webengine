@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.h"
+
 #include <stdint.h>
 #include <string.h>
 
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/command_line.h"
@@ -14,11 +18,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/system/data_pipe.h"
+#include "net/base/features.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
@@ -46,13 +52,11 @@
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_url_request_extra_data.h"
 #include "third_party/blink/public/platform/web_url_response.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/platform/loader/fetch/loader_freeze_mode.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_sender.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_response.h"
-#include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_client.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -81,7 +85,7 @@ class MockResourceRequestSender : public ResourceRequestSender {
       uint32_t loader_options,
       SyncLoadResponse* response,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      WebVector<std::unique_ptr<URLLoaderThrottle>> throttles,
+      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
       base::TimeDelta timeout,
       const Vector<String>& cors_exempt_header_list,
       base::WaitableEvent* terminate_sync_load_event,
@@ -100,7 +104,7 @@ class MockResourceRequestSender : public ResourceRequestSender {
       const Vector<String>& cors_exempt_header_list,
       scoped_refptr<ResourceRequestClient> resource_request_client,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      WebVector<std::unique_ptr<URLLoaderThrottle>> throttles,
+      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
       std::unique_ptr<ResourceLoadInfoNotifierWrapper>
           resource_load_info_notifier_wrapper,
       CodeCacheHost* code_cache_host,
@@ -234,8 +238,8 @@ class TestURLLoaderClient : public URLLoaderClient {
 
   void DidReceiveResponse(
       const WebURLResponse& response,
-      mojo::ScopedDataPipeConsumerHandle body,
-      absl::optional<mojo_base::BigBuffer> cached_metadata) override {
+      std::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
+      std::optional<mojo_base::BigBuffer> cached_metadata) override {
     EXPECT_TRUE(loader_);
     EXPECT_FALSE(did_receive_response_);
 
@@ -246,13 +250,13 @@ class TestURLLoaderClient : public URLLoaderClient {
       return;
     }
     DCHECK(!response_body_);
-    if (body) {
-      response_body_ = std::move(body);
+    // SegmentedBuffer is used only for BackgroundUrlLoader.
+    CHECK(std::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body));
+    mojo::ScopedDataPipeConsumerHandle body_handle =
+        std::move(std::get<mojo::ScopedDataPipeConsumerHandle>(body));
+    if (body_handle) {
+      response_body_ = std::move(body_handle);
     }
-  }
-
-  void DidReceiveData(const char* data, size_t dataLength) override {
-    NOTREACHED();
   }
 
   void DidFinishLoading(base::TimeTicks finishTime,
@@ -296,7 +300,7 @@ class TestURLLoaderClient : public URLLoaderClient {
   bool did_receive_response() const { return did_receive_response_; }
   bool did_receive_response_body() const { return !!response_body_; }
   bool did_finish() const { return did_finish_; }
-  const absl::optional<WebURLError>& error() const { return error_; }
+  const std::optional<WebURLError>& error() const { return error_; }
   const WebURLResponse& response() const { return response_; }
 
  private:
@@ -313,7 +317,7 @@ class TestURLLoaderClient : public URLLoaderClient {
   bool did_receive_response_;
   mojo::ScopedDataPipeConsumerHandle response_body_;
   bool did_finish_;
-  absl::optional<WebURLError> error_;
+  std::optional<WebURLError> error_;
   WebURLResponse response_;
 };
 
@@ -373,7 +377,7 @@ class URLLoaderTest : public testing::Test {
 
     resource_request_client()->OnReceivedResponse(
         network::mojom::URLResponseHead::New(), std::move(handle_to_pass),
-        /*cached_metadata=*/absl::nullopt);
+        /*cached_metadata=*/std::nullopt);
     EXPECT_TRUE(client()->did_receive_response());
   }
 
@@ -417,7 +421,7 @@ class URLLoaderTest : public testing::Test {
   base::test::SingleThreadTaskEnvironment task_environment_;
   mojo::ScopedDataPipeProducerHandle body_handle_;
   std::unique_ptr<TestURLLoaderClient> client_;
-  raw_ptr<MockResourceRequestSender, ExperimentalRenderer> sender_ = nullptr;
+  raw_ptr<MockResourceRequestSender> sender_ = nullptr;
 };
 
 TEST_F(URLLoaderTest, Success) {
@@ -513,11 +517,11 @@ TEST_F(URLLoaderTest, ResponseAddressSpace) {
   KURL url("http://foo.example");
 
   network::mojom::URLResponseHead head;
-  head.response_address_space = network::mojom::IPAddressSpace::kPrivate;
+  head.response_address_space = network::mojom::IPAddressSpace::kLocal;
 
   WebURLResponse response = WebURLResponse::Create(url, head, true, -1);
 
-  EXPECT_EQ(network::mojom::IPAddressSpace::kPrivate, response.AddressSpace());
+  EXPECT_EQ(network::mojom::IPAddressSpace::kLocal, response.AddressSpace());
 }
 
 TEST_F(URLLoaderTest, ClientAddressSpace) {
@@ -540,9 +544,9 @@ TEST_F(URLLoaderTest, SSLInfo) {
       {"subjectAltName_sanity_check.pem", "root_ca_cert.pem"}, &certs));
   ASSERT_EQ(2U, certs.size());
 
-  base::StringPiece cert0_der =
+  std::string_view cert0_der =
       net::x509_util::CryptoBufferAsStringPiece(certs[0]->cert_buffer());
-  base::StringPiece cert1_der =
+  std::string_view cert1_der =
       net::x509_util::CryptoBufferAsStringPiece(certs[1]->cert_buffer());
 
   net::SSLInfo ssl_info;
@@ -555,7 +559,7 @@ TEST_F(URLLoaderTest, SSLInfo) {
   head.ssl_info = ssl_info;
   WebURLResponse web_url_response = WebURLResponse::Create(url, head, true, -1);
 
-  const absl::optional<net::SSLInfo>& got_ssl_info =
+  const std::optional<net::SSLInfo>& got_ssl_info =
       web_url_response.ToResourceResponse().GetSSLInfo();
   ASSERT_TRUE(got_ssl_info.has_value());
   EXPECT_EQ(ssl_info.connection_status, got_ssl_info->connection_status);
@@ -580,7 +584,7 @@ TEST_F(URLLoaderTest, SyncLengths) {
   sync_load_response.error_code = net::OK;
   sync_load_response.url = GURL(url);
   sync_load_response.data =
-      SharedBuffer::Create(kBodyData, sizeof(kBodyData) - 1);
+      SharedBuffer::Create(base::span_from_cstring(kBodyData));
   ASSERT_EQ(17u, sync_load_response.data->size());
   sync_load_response.head->encoded_body_length =
       network::mojom::EncodedBodyLength::New(kEncodedBodyLength);
@@ -588,7 +592,7 @@ TEST_F(URLLoaderTest, SyncLengths) {
   sender()->set_sync_load_response(std::move(sync_load_response));
 
   WebURLResponse response;
-  absl::optional<WebURLError> error;
+  std::optional<WebURLError> error;
   scoped_refptr<SharedBuffer> data;
   int64_t encoded_data_length = 0;
   uint64_t encoded_body_length = 0;
@@ -621,6 +625,89 @@ TEST_F(URLLoaderTest, AuthChallengeInfo) {
   EXPECT_TRUE(response.AuthChallengeInfo()->is_proxy);
   EXPECT_EQ("foobar", response.AuthChallengeInfo()->challenge);
 }
+
+struct IPProtectionTestParams {
+  std::string test_name;
+  bool enable_ipp_feature_param;
+  bool cached;
+  bool expected_result;
+};
+
+class URLLoaderTest_IPProtection
+    : public URLLoaderTest,
+      public testing::WithParamInterface<IPProtectionTestParams> {
+ public:
+  URLLoaderTest_IPProtection() {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        net::features::kEnableIpProtectionProxy,
+        {{"IpPrivacyEnableIppInDevTools",
+          GetParam().enable_ipp_feature_param ? "true" : "false"}});
+  }
+
+  ~URLLoaderTest_IPProtection() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Verifies that WebURLResponse::Create() creates a response with
+// IsIpProtectionUsed to the response.
+TEST_P(URLLoaderTest_IPProtection, IsIPProtectionUsedSetCorrectly) {
+  network::mojom::URLResponseHead head;
+
+  head.proxy_chain =
+      net::ProxyChain().ForIpProtection(std::vector<net::ProxyServer>());
+
+  if (GetParam().cached) {
+    head.load_timing.request_start_time = base::Time::Now();
+  }
+
+  blink::WebURLResponse response =
+      WebURLResponse::Create(KURL(), head, true, -1);
+
+  EXPECT_EQ(response.IsIpProtectionUsed(), GetParam().expected_result);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    URLLoaderTest_IPProtectionTestStates,
+    URLLoaderTest_IPProtection,
+    testing::Values(
+        // IsIpProtectionUsed should be set to true if
+        // the feature is enabled and the response was not
+        // cached.
+        IPProtectionTestParams{
+            .test_name = "FeatureEnabledNotCached",
+            .enable_ipp_feature_param = true,
+            .cached = false,
+            .expected_result = true,
+        },
+        // Cached responses should not set
+        // IsIpProtectionUsed to true even if the feature
+        // is enabled.
+        IPProtectionTestParams{
+            .test_name = "FeatureEnabledCached",
+            .enable_ipp_feature_param = true,
+            .cached = true,
+            .expected_result = false,
+        },
+        // IsIpProtectionUsed should not be set if the
+        // feature is disabled, regardless of whether the
+        // response is cached or not.
+        IPProtectionTestParams{
+            .test_name = "FeatureDisabledCached",
+            .enable_ipp_feature_param = false,
+            .cached = true,
+            .expected_result = false,
+        },
+        IPProtectionTestParams{
+            .test_name = "FeatureDisabledNotCached",
+            .enable_ipp_feature_param = false,
+            .cached = false,
+            .expected_result = false,
+        }),
+    [](const testing::TestParamInfo<IPProtectionTestParams>& info) {
+      return info.param.test_name;
+    });
 
 }  // namespace
 }  // namespace blink

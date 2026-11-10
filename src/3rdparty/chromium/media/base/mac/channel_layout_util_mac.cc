@@ -2,11 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/base/mac/channel_layout_util_mac.h"
 
 #include <memory>
 
 #include "base/check_op.h"
+#include "base/containers/span.h"
+#include "base/logging.h"
+#include "base/numerics/safe_math.h"
 #include "media/base/channel_layout.h"
 
 namespace media {
@@ -97,8 +105,21 @@ std::unique_ptr<ScopedAudioChannelLayout> ChannelLayoutToAudioChannelLayout(
   //
   // Code modeled after example from Apple documentation here:
   // https://developer.apple.com/library/content/qa/qa1627/_index.html
-  int output_layout_size =
-      offsetof(AudioChannelLayout, mChannelDescriptions[input_channels]);
+  // Modified to use `size_t` and `base::CheckedNumeric` to prevent integer
+  // truncation and overflow.
+  // `AudioChannelLayout` already includes one `AudioChannelDescription` in its
+  // definition, so we allocate space for `input_channels - 1` additional
+  // descriptions.
+  base::CheckedNumeric<size_t> checked_layout_size =
+      sizeof(AudioChannelLayout) +
+      base::CheckedNumeric<size_t>(input_channels - 1) *
+          sizeof(AudioChannelDescription);
+  size_t output_layout_size = 0;
+  if (!checked_layout_size.AssignIfValid(&output_layout_size)) {
+    DLOG(ERROR) << "Invalid AudioChannelLayout size.";
+    return nullptr;
+  }
+
   auto new_layout =
       std::make_unique<ScopedAudioChannelLayout>(output_layout_size);
 
@@ -122,7 +143,9 @@ std::unique_ptr<ScopedAudioChannelLayout> ChannelLayoutToAudioChannelLayout(
   } else {
     for (int ch = 0; ch <= CHANNELS_MAX; ++ch) {
       const int order = ChannelOrder(input_layout, static_cast<Channels>(ch));
-      if (order == -1) {
+      // We only allocate up to `input_channels`, skip if past what was
+      // allocated for.
+      if (order == -1 || order >= input_channels) {
         continue;
       }
       descriptions[order].mChannelLabel =
@@ -179,7 +202,20 @@ bool AudioChannelLayoutToChannelLayout(const AudioChannelLayout& input_layout,
   }
   CHECK_GT(static_cast<int>(channel_count), 0);
 
-  for (int i = 0; i < ChannelLayout::CHANNEL_LAYOUT_MAX; i++) {
+  std::vector<Channels> channels_to_match;
+  for (UInt32 i = 0; i < channel_count; i++) {
+    Channels channel;
+    auto channelLabel =
+        tag == kAudioChannelLayoutTag_UseChannelDescriptions
+            ? input_layout.mChannelDescriptions[i].mChannelLabel
+            : new_layout.layout()->mChannelDescriptions[i].mChannelLabel;
+    if (!AudioChannelLabelToChannel(channelLabel, &channel)) {
+      return false;
+    }
+    channels_to_match.push_back(channel);
+  }
+
+  for (int i = 0; i <= ChannelLayout::CHANNEL_LAYOUT_MAX; i++) {
     ChannelLayout layout = static_cast<ChannelLayout>(i);
     if (static_cast<UInt32>(ChannelLayoutToChannelCount(layout)) !=
         channel_count) {
@@ -187,16 +223,7 @@ bool AudioChannelLayoutToChannelLayout(const AudioChannelLayout& input_layout,
     }
 
     bool matched = true;
-    for (UInt32 j = 0; j < channel_count; j++) {
-      Channels channel;
-      auto channelLabel =
-          tag == kAudioChannelLayoutTag_UseChannelDescriptions
-              ? input_layout.mChannelDescriptions[j].mChannelLabel
-              : new_layout.layout()->mChannelDescriptions[j].mChannelLabel;
-      if (!AudioChannelLabelToChannel(channelLabel, &channel)) {
-        matched = false;
-        break;
-      }
+    for (const auto& channel : channels_to_match) {
       auto channel_order = ChannelOrder(layout, channel);
       if (channel_order == -1) {
         matched = false;

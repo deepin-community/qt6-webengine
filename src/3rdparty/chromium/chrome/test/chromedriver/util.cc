@@ -8,8 +8,10 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/base64.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -117,8 +119,8 @@ Status UnzipArchive(const base::FilePath& unzip_dir,
 // Stream for writing binary data.
 class DataOutputStream {
  public:
-  DataOutputStream() {}
-  ~DataOutputStream() {}
+  DataOutputStream() = default;
+  ~DataOutputStream() = default;
 
   void WriteUInt16(uint16_t data) { WriteBytes(&data, sizeof(data)); }
 
@@ -133,7 +135,7 @@ class DataOutputStream {
       return;
     size_t next = buffer_.length();
     buffer_.resize(next + size);
-    memcpy(&buffer_[next], bytes, size);
+    UNSAFE_TODO(memcpy(&buffer_[next], bytes, size));
   }
 
   const std::string& buffer() const { return buffer_; }
@@ -147,7 +149,7 @@ class DataInputStream {
  public:
   DataInputStream(const char* data, int size)
       : data_(data), size_(size), iter_(0) {}
-  ~DataInputStream() {}
+  ~DataInputStream() = default;
 
   bool ReadUInt16(uint16_t* data) { return ReadBytes(data, sizeof(*data)); }
 
@@ -168,7 +170,7 @@ class DataInputStream {
   bool ReadBytes(void* bytes, int size) {
     if (iter_ + size > size_)
       return false;
-    memcpy(bytes, &data_[iter_], size);
+    UNSAFE_TODO(memcpy(bytes, &data_[iter_], size));
     iter_ += size;
     return true;
   }
@@ -448,7 +450,7 @@ namespace {
 
 template <typename T>
 bool GetOptionalValue(const base::Value::Dict& dict,
-                      base::StringPiece path,
+                      std::string_view path,
                       T* out_value,
                       bool* has_value,
                       std::optional<T> (base::Value::*getter)() const) {
@@ -471,7 +473,7 @@ bool GetOptionalValue(const base::Value::Dict& dict,
 }  // namespace
 
 bool GetOptionalBool(const base::Value::Dict& dict,
-                     base::StringPiece path,
+                     std::string_view path,
                      bool* out_value,
                      bool* has_value) {
   return GetOptionalValue(dict, path, out_value, has_value,
@@ -479,7 +481,7 @@ bool GetOptionalBool(const base::Value::Dict& dict,
 }
 
 bool GetOptionalInt(const base::Value::Dict& dict,
-                    base::StringPiece path,
+                    std::string_view path,
                     int* out_value,
                     bool* has_value) {
   if (GetOptionalValue(dict, path, out_value, has_value,
@@ -504,7 +506,7 @@ bool GetOptionalInt(const base::Value::Dict& dict,
 }
 
 bool GetOptionalDouble(const base::Value::Dict& dict,
-                       base::StringPiece path,
+                       std::string_view path,
                        double* out_value,
                        bool* has_value) {
   return GetOptionalValue(dict, path, out_value, has_value,
@@ -512,7 +514,7 @@ bool GetOptionalDouble(const base::Value::Dict& dict,
 }
 
 bool GetOptionalString(const base::Value::Dict& dict,
-                       base::StringPiece path,
+                       std::string_view path,
                        std::string* out_value,
                        bool* has_value) {
   if (has_value != nullptr)
@@ -532,7 +534,7 @@ bool GetOptionalString(const base::Value::Dict& dict,
 }
 
 bool GetOptionalDictionary(const base::Value::Dict& dict,
-                           base::StringPiece path,
+                           std::string_view path,
                            const base::Value::Dict** out_value,
                            bool* has_value) {
   if (has_value != nullptr)
@@ -550,7 +552,7 @@ bool GetOptionalDictionary(const base::Value::Dict& dict,
 }
 
 bool GetOptionalList(const base::Value::Dict& dict,
-                     base::StringPiece path,
+                     std::string_view path,
                      const base::Value::List** out_value,
                      bool* has_value) {
   if (has_value != nullptr)
@@ -571,7 +573,7 @@ bool GetOptionalList(const base::Value::Dict& dict,
 }
 
 bool GetOptionalSafeInt(const base::Value::Dict& dict,
-                        base::StringPiece path,
+                        std::string_view path,
                         int64_t* out_value,
                         bool* has_value) {
   // Check if we have a normal int, which is always a safe int.
@@ -608,7 +610,7 @@ bool GetOptionalSafeInt(const base::Value::Dict& dict,
 }
 
 bool SetSafeInt(base::Value::Dict& dict,
-                const base::StringPiece path,
+                std::string_view path,
                 int64_t in_value_64) {
   int int_value = static_cast<int>(in_value_64);
   if (in_value_64 == int_value)

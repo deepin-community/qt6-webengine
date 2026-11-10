@@ -96,6 +96,12 @@ tools/xngen src/x32-transposec/avx2.c.in -D SIZE=8  IN_PTRS=REUSE OUT_PTRS=SWITC
 tools/xngen src/x32-transposec/avx2.c.in -D SIZE=16 IN_PTRS=REUSE OUT_PTRS=MOV    -o src/x16-transposec/gen/x16-transposec-16x16-reuse-mov-avx2.c &
 tools/xngen src/x32-transposec/avx2.c.in -D SIZE=16 IN_PTRS=REUSE OUT_PTRS=SWITCH -o src/x16-transposec/gen/x16-transposec-16x16-reuse-switch-avx2.c &
 
+#################################### RISCV VECTOR ###############################
+tools/xngen src/x32-transposec/rvv.c.in -D SIZE=32 VLEN=1024 -o src/x32-transposec/gen/x32-transposec-32x8-rvv.c &
+tools/xngen src/x32-transposec/rvv.c.in -D SIZE=32 VLEN=512 -o src/x32-transposec/gen/x32-transposec-16x8-rvv.c &
+tools/xngen src/x32-transposec/rvv.c.in -D SIZE=32 VLEN=256 -o src/x32-transposec/gen/x32-transposec-8x8-rvv.c &
+tools/xngen src/x32-transposec/rvv.c.in -D SIZE=32 VLEN=128 -o src/x32-transposec/gen/x32-transposec-4x4-rvv.c &
+
 #################################### ARM NEON ###############################
 tools/xngen src/x32-transposec/neon-zip.c.in -D SIZE=8 VECTOR_SIZE=64  IN_PTRS=MULTI OUT_PTRS=DEC    -o src/x8-transposec/gen/x8-transposec-8x8-multi-dec-zip-neon.c &
 tools/xngen src/x32-transposec/neon-zip.c.in -D SIZE=8 VECTOR_SIZE=64  IN_PTRS=MULTI OUT_PTRS=MOV    -o src/x8-transposec/gen/x8-transposec-8x8-multi-mov-zip-neon.c &
@@ -164,5 +170,8 @@ tools/xngen src/x32-transposec/wasmsimd.c.in -D SIZE=32 IN_PTRS=REUSE OUT_PTRS=M
 tools/xngen src/x32-transposec/wasmsimd.c.in -D SIZE=32 IN_PTRS=MULTI OUT_PTRS=SWITCH -o src/x32-transposec/gen/x32-transposec-4x4-multi-switch-wasmsimd.c &
 tools/xngen src/x32-transposec/wasmsimd.c.in -D SIZE=32 IN_PTRS=MULTI OUT_PTRS=MULTI  -o src/x32-transposec/gen/x32-transposec-4x4-multi-multi-wasmsimd.c &
 tools/xngen src/x32-transposec/wasmsimd.c.in -D SIZE=32 IN_PTRS=MULTI OUT_PTRS=MOV    -o src/x32-transposec/gen/x32-transposec-4x4-multi-mov-wasmsimd.c &
+
+#################################### HEXAGON HVX ###############################
+tools/xngen src/x32-transposec/hvx.c.in -D SIZE=32 IN_PTRS=MULTI OUT_PTRS=MULTI TILE_HEIGHT=32 -o src/x32-transposec/gen/x32-transposec-32x32-multi-multi-hvx.c &
 
 wait

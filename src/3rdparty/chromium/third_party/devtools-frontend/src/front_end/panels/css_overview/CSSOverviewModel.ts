@@ -5,12 +5,11 @@
 import * as Common from '../../core/common/common.js';
 import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
-import * as ColorPicker from '../../ui/legacy/components/color_picker/color_picker.js';
 import type * as ProtocolProxyApi from '../../generated/protocol-proxy-api.js';
-import * as Protocol from '../../generated/protocol.js';
+import type * as Protocol from '../../generated/protocol.js';
+import * as ColorPicker from '../../ui/legacy/components/color_picker/color_picker.js';
 
-import {type ContrastIssue} from './CSSOverviewCompletedView.js';
-
+import type {ContrastIssue} from './CSSOverviewCompletedView.js';
 import {CSSOverviewUnusedDeclarations, type UnusedDeclaration} from './CSSOverviewUnusedDeclarations.js';
 
 interface NodeStyleStats {
@@ -45,7 +44,6 @@ export class CSSOverviewModel extends SDK.SDKModel.SDKModel<void> {
   readonly #runtimeAgent: ProtocolProxyApi.RuntimeApi;
   readonly #cssAgent: ProtocolProxyApi.CSSApi;
   readonly #domSnapshotAgent: ProtocolProxyApi.DOMSnapshotApi;
-  readonly #overlayAgent: ProtocolProxyApi.OverlayApi;
 
   constructor(target: SDK.Target.Target) {
     super(target);
@@ -53,29 +51,16 @@ export class CSSOverviewModel extends SDK.SDKModel.SDKModel<void> {
     this.#runtimeAgent = target.runtimeAgent();
     this.#cssAgent = target.cssAgent();
     this.#domSnapshotAgent = target.domsnapshotAgent();
-    this.#overlayAgent = target.overlayAgent();
-  }
-
-  highlightNode(node: Protocol.DOM.BackendNodeId): void {
-    const highlightConfig = {
-      contentColor: Common.Color.PageHighlight.Content.toProtocolRGBA(),
-      showInfo: true,
-      contrastAlgorithm: Root.Runtime.experiments.isEnabled('APCA') ? Protocol.Overlay.ContrastAlgorithm.Apca :
-                                                                      Protocol.Overlay.ContrastAlgorithm.Aa,
-    };
-
-    void this.#overlayAgent.invoke_hideHighlight();
-    void this.#overlayAgent.invoke_highlightNode({backendNodeId: node, highlightConfig});
   }
 
   async getNodeStyleStats(): Promise<NodeStyleStats> {
-    const backgroundColors: Map<string, Set<Protocol.DOM.BackendNodeId>> = new Map();
-    const textColors: Map<string, Set<Protocol.DOM.BackendNodeId>> = new Map();
-    const textColorContrastIssues: Map<string, ContrastIssue[]> = new Map();
-    const fillColors: Map<string, Set<Protocol.DOM.BackendNodeId>> = new Map();
-    const borderColors: Map<string, Set<Protocol.DOM.BackendNodeId>> = new Map();
-    const fontInfo: Map<string, Map<string, Map<string, Protocol.DOM.BackendNodeId[]>>> = new Map();
-    const unusedDeclarations: Map<string, UnusedDeclaration[]> = new Map();
+    const backgroundColors = new Map<string, Set<Protocol.DOM.BackendNodeId>>();
+    const textColors = new Map<string, Set<Protocol.DOM.BackendNodeId>>();
+    const textColorContrastIssues = new Map<string, ContrastIssue[]>();
+    const fillColors = new Map<string, Set<Protocol.DOM.BackendNodeId>>();
+    const borderColors = new Map<string, Set<Protocol.DOM.BackendNodeId>>();
+    const fontInfo = new Map<string, Map<string, Map<string, Protocol.DOM.BackendNodeId[]>>>();
+    const unusedDeclarations = new Map<string, UnusedDeclaration[]>();
     const snapshotConfig = {
       computedStyles: [
         'background-color',
@@ -272,7 +257,7 @@ export class CSSOverviewModel extends SDK.SDKModel.SDKModel<void> {
             null;
         if (textColor && blendedBackgroundColor) {
           const contrastInfo = new ColorPicker.ContrastInfo.ContrastInfo({
-            backgroundColors: [blendedBackgroundColor.asString(Common.Color.Format.HEXA) as string],
+            backgroundColors: [blendedBackgroundColor.asString(Common.Color.Format.HEXA)],
             computedFontSize: fontSizeIdx !== -1 ? strings[fontSizeIdx] : '',
             computedFontWeight: fontWeightIdx !== -1 ? strings[fontWeightIdx] : '',
           });
@@ -282,7 +267,7 @@ export class CSSOverviewModel extends SDK.SDKModel.SDKModel<void> {
           const formattedTextColor = formatColor(blendedTextColor);
           const formattedBackgroundColor = formatColor(blendedBackgroundColor.asLegacyColor());
           const key = `${formattedTextColor}_${formattedBackgroundColor}`;
-          if (Root.Runtime.experiments.isEnabled('APCA')) {
+          if (Root.Runtime.experiments.isEnabled('apca')) {
             const contrastRatio = contrastInfo.contrastRatioAPCA();
             const threshold = contrastInfo.contrastRatioAPCAThreshold();
             const passes = contrastRatio && threshold ? Math.abs(contrastRatio) >= threshold : false;

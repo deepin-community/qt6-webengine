@@ -44,9 +44,9 @@ class ComputePipeline final : public ComputePipelineBase, public PipelineGL {
         Device* device,
         const UnpackedPtr<ComputePipelineDescriptor>& descriptor);
 
-    void ApplyNow();
+    MaybeError ApplyNow(const OpenGLFunctions& gl);
 
-    MaybeError Initialize() override;
+    MaybeError InitializeImpl() override;
 
   private:
     using ComputePipelineBase::ComputePipelineBase;

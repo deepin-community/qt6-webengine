@@ -27,7 +27,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     virtual void performTest() = 0;
@@ -135,7 +135,7 @@ protected:
         SkMatrix m;
         m.setRotate(1);
         for (int i = 0; i < 100000; ++i) {
-            fV = m.mapXY(5, 6);
+            fV = m.mapPoint({5, 6});
         }
     }
 private:
@@ -193,7 +193,7 @@ public:
         fName.printf("mapRect_%s_%s", name, typeName);
     }
 
-    bool isSuitableFor(Backend backend) override { return backend == kNonRendering_Backend; }
+    bool isSuitableFor(Backend backend) override { return backend == Backend::kNonRendering; }
 
     virtual void performTest() = 0;
 

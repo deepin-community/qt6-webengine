@@ -1,17 +1,29 @@
 // Copyright 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import '../../../ui/components/icon_button/icon_button.js';
+
+import * as i18n from '../../../core/i18n/i18n.js';
+import {html, render} from '../../../ui/lit/lit.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import elementsTreeExpandButtonStyles from './elementsTreeExpandButton.css.js';
+
+const UIStrings = {
+  /**
+   *@description Aria label for a button expanding collapsed subtree
+   */
+  expand: 'Expand',
+} as const;
+const str_ = i18n.i18n.registerUIStrings('panels/elements/components/ElementsTreeExpandButton.ts', UIStrings);
+const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
 export interface ElementsTreeExpandButtonData {
   clickHandler: (event?: Event) => void;
 }
 export class ElementsTreeExpandButton extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-elements-tree-expand-button`;
   readonly #shadow = this.attachShadow({mode: 'open'});
 
   #clickHandler: ((event?: Event) => void) = () => {};
@@ -25,26 +37,26 @@ export class ElementsTreeExpandButton extends HTMLElement {
     this.#render();
   }
 
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [elementsTreeExpandButtonStyles];
-  }
-
   #render(): void {
     // clang-format off
     // This button's innerText will be tested by e2e test and blink layout tests.
     // It can't have any other characters like '\n' or space, otherwise it will break tests.
-    LitHtml.render(LitHtml.html`<span
+    render(html`
+      <style>${elementsTreeExpandButtonStyles}</style>
+      <button
         class="expand-button"
-        @click=${this.#clickHandler}><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`,
+        tabindex="-1"
+        aria-label=${i18nString(UIStrings.expand)}
+        jslog=${VisualLogging.action('expand').track({click: true})}
+        @click=${this.#clickHandler}><devtools-icon name="dots-horizontal"></devtools-icon></button>`,
       this.#shadow, {host: this});
     // clang-format on
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-elements-tree-expand-button', ElementsTreeExpandButton);
+customElements.define('devtools-elements-tree-expand-button', ElementsTreeExpandButton);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-elements-tree-expand-button': ElementsTreeExpandButton;
   }

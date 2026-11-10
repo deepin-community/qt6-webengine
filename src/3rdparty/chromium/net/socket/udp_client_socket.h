@@ -52,6 +52,7 @@ class NET_EXPORT_PRIVATE UDPClientSocket : public DatagramClientSocket {
                                CompletionOnceCallback callback) override;
   int ConnectUsingDefaultNetworkAsync(const IPEndPoint& address,
                                       CompletionOnceCallback callback) override;
+  DscpAndEcn GetLastTos() const override;
 
   handles::NetworkHandle GetBoundNetwork() const override;
   void ApplySocketTag(const SocketTag& tag) override;
@@ -72,13 +73,16 @@ class NET_EXPORT_PRIVATE UDPClientSocket : public DatagramClientSocket {
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
   int SetDoNotFragment() override;
-  int SetRecvEcn() override;
+  int SetRecvTos() override;
+  int SetTos(DiffServCodePoint dscp, EcnCodePoint ecn) override;
   void SetMsgConfirm(bool confirm) override;
   const NetLogWithSource& NetLog() const override;
   void EnableRecvOptimization() override;
 
   int SetMulticastInterface(uint32_t interface_index) override;
   void SetIOSNetworkServiceType(int ios_network_service_type) override;
+  void RegisterQuicConnectionClosePayload(base::span<uint8_t> payload) override;
+  void UnregisterQuicConnectionClosePayload() override;
 
   // Takes ownership of an opened but unconnected and unbound `socket`. This
   // method must be called after UseNonBlockingIO, otherwise the adopted socket

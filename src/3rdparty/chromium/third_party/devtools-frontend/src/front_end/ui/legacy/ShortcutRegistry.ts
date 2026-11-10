@@ -5,12 +5,13 @@
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as Platform from '../../core/platform/platform.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {type Action, getRegisteredActionExtensions, KeybindSet} from './ActionRegistration.js';
-import {type ActionRegistry} from './ActionRegistry.js';
+import type {ActionRegistry} from './ActionRegistry.js';
 import {Context} from './Context.js';
 import {Dialog} from './Dialog.js';
-import {KeyboardShortcut, Modifiers, Type} from './KeyboardShortcut.js';
+import {type Key, KeyboardShortcut, type Modifier, Modifiers, Type} from './KeyboardShortcut.js';
 import {isEditing} from './UIUtils.js';
 
 let shortcutRegistryInstance: ShortcutRegistry|undefined;
@@ -36,12 +37,12 @@ export class ShortcutRegistry {
     this.consumePrefix = null;
     this.devToolsDefaultShortcutActions = new Set();
     this.disabledDefaultShortcutsForAction = new Platform.MapUtilities.Multimap();
-    this.keybindSetSetting = Common.Settings.Settings.instance().moduleSetting('activeKeybindSet');
+    this.keybindSetSetting = Common.Settings.Settings.instance().moduleSetting('active-keybind-set');
     this.keybindSetSetting.addChangeListener(event => {
       Host.userMetrics.keybindSetSettingChanged(event.data);
       this.registerBindings();
     });
-    this.userShortcutsSetting = Common.Settings.Settings.instance().moduleSetting('userShortcuts');
+    this.userShortcutsSetting = Common.Settings.Settings.instance().moduleSetting('user-shortcuts');
     this.userShortcutsSetting.addChangeListener(this.registerBindings, this);
 
     this.registerBindings();
@@ -65,9 +66,7 @@ export class ShortcutRegistry {
   static removeInstance(): void {
     shortcutRegistryInstance = undefined;
   }
-  private applicableActions(key: number, handlers: {
-    [x: string]: () => Promise<boolean>,
-  }|undefined = {}): Action[] {
+  private applicableActions(key: number, handlers: Record<string, () => Promise<boolean>>|undefined = {}): Action[] {
     let actions: string[] = [];
     const keyMap = this.activePrefixKey || this.keyMap;
     const keyNode = keyMap.getNode(key);
@@ -92,10 +91,10 @@ export class ShortcutRegistry {
     return [...this.actionToShortcut.get(action)];
   }
 
-  actionsForDescriptors(descriptors: {
+  actionsForDescriptors(descriptors: Array<{
     key: number,
     name: string,
-  }[]): string[] {
+  }>): string[] {
     let keyMapNode: (ShortcutTreeNode|null)|ShortcutTreeNode = this.keyMap;
     for (const {key} of descriptors) {
       if (!keyMapNode) {
@@ -118,11 +117,10 @@ export class ShortcutRegistry {
     return keys;
   }
 
-  keysForActions(actionIds: string[]): number[] {
-    const keys = actionIds.flatMap(
-        action => [...this.actionToShortcut.get(action)].flatMap(
-            shortcut => shortcut.descriptors.map(descriptor => descriptor.key)));
-    return [...(new Set(keys))];
+  keysForAction(actionId: string): number[] {
+    const keys = [...this.actionToShortcut.get(actionId)].flatMap(
+        shortcut => shortcut.descriptors.map(descriptor => descriptor.key));
+    return keys;
   }
 
   shortcutTitleForAction(actionId: string): string|undefined {
@@ -132,9 +130,23 @@ export class ShortcutRegistry {
     return undefined;
   }
 
-  handleShortcut(event: KeyboardEvent, handlers?: {
-    [x: string]: () => Promise<boolean>,
-  }): void {
+  keyAndModifiersForAction(actionId: string): {key: Key, modifier: Modifier}|undefined {
+    for (const keys of this.keysForAction(actionId)) {
+      const {keyCode, modifiers} = KeyboardShortcut.keyCodeAndModifiersFromKey(keys);
+      const key = KeyboardShortcut.keyCodeToKey(keyCode);
+      if (key) {
+        return {key, modifier: KeyboardShortcut.modifierValueToModifier(modifiers) || Modifiers.None};
+      }
+    }
+    return undefined;
+  }
+
+  // DevTools and Chrome modifier values do not match, see latter here: crsrc.org/c/ui/events/event_constants.h;l=24
+  devToolsToChromeModifier(devToolsModifier: Modifier): number {
+    return devToolsModifier.value * 2;
+  }
+
+  handleShortcut(event: KeyboardEvent, handlers?: Record<string, () => Promise<boolean>>): void {
     void this.handleKey(KeyboardShortcut.makeKeyFromEvent(event), event.key, event, handlers);
   }
 
@@ -142,7 +154,7 @@ export class ShortcutRegistry {
     return this.devToolsDefaultShortcutActions.has(actionId);
   }
 
-  getShortcutListener(handlers: {[x: string]: () => Promise<boolean>}): (event: KeyboardEvent) => void {
+  getShortcutListener(handlers: Record<string, () => Promise<boolean>>): (event: KeyboardEvent) => void {
     const shortcuts = Object.keys(handlers).flatMap(action => [...this.actionToShortcut.get(action)]);
     // We only want keys for these specific actions to get handled this
     // way; all others should be allowed to bubble up.
@@ -151,7 +163,7 @@ export class ShortcutRegistry {
       allowlistKeyMap.addKeyMapping(shortcut.descriptors.map(descriptor => descriptor.key), shortcut.action);
     });
 
-    return (event: KeyboardEvent): void => {
+    return (event: KeyboardEvent) => {
       const key = KeyboardShortcut.makeKeyFromEvent(event);
       const keyMap = this.activePrefixKey ? allowlistKeyMap.getNode(this.activePrefixKey.key()) : allowlistKeyMap;
       if (!keyMap) {
@@ -163,22 +175,23 @@ export class ShortcutRegistry {
     };
   }
 
-  addShortcutListener(element: Element, handlers: {
-    [x: string]: () => Promise<boolean>,
-  }): (arg0: Event) => void {
+  addShortcutListener(element: Element, handlers: Record<string, () => Promise<boolean>>): (arg0: Event) => void {
     const listener = this.getShortcutListener(handlers) as (event: Event) => void;
     element.addEventListener('keydown', listener);
     return listener;
   }
 
-  async handleKey(key: number, domKey: string, event?: KeyboardEvent, handlers?: {
-    [x: string]: () => Promise<boolean>,
-  }): Promise<void> {
+  async handleKey(
+      key: number,
+      domKey: string,
+      event?: KeyboardEvent,
+      handlers?: Record<string, () => Promise<boolean>>,
+      ): Promise<void> {
     const keyModifiers = key >> 8;
     const hasHandlersOrPrefixKey = Boolean(handlers) || Boolean(this.activePrefixKey);
     const keyMapNode = this.keyMap.getNode(key);
-    const maybeHasActions =
-        (this.applicableActions(key, handlers)).length > 0 || (keyMapNode && keyMapNode.hasChords());
+    const actions = this.applicableActions(key, handlers);
+    const maybeHasActions = actions.length > 0 || (keyMapNode?.hasChords());
     if ((!hasHandlersOrPrefixKey && isPossiblyInputKey()) || !maybeHasActions ||
         KeyboardShortcut.isModifier(KeyboardShortcut.keyCodeAndModifiersFromKey(key).keyCode)) {
       return;
@@ -186,13 +199,19 @@ export class ShortcutRegistry {
     if (event) {
       event.consume(true);
     }
-    if (!hasHandlersOrPrefixKey && Dialog.hasInstance()) {
+
+    // We allow the use of Ctrl/Meta+Plus/Minus/0 even when a modal dialog is open,
+    // so that users are able to zoom in and out even while for example the Settings
+    // dialog is shown.
+    const DIALOG_ALLOWED_ACTION_IDS = ['main.zoom-in', 'main.zoom-out', 'main.zoom-reset'];
+    if (!hasHandlersOrPrefixKey && Dialog.hasInstance() &&
+        (actions.length !== 1 || !DIALOG_ALLOWED_ACTION_IDS.includes(actions[0].id()))) {
       return;
     }
 
     if (this.activePrefixTimeout) {
       clearTimeout(this.activePrefixTimeout);
-      const handled = await maybeExecuteActionForKey.call(this);
+      const handled = await maybeExecuteActionForKey.call(this, event);
       this.activePrefixKey = null;
       this.activePrefixTimeout = null;
       if (handled) {
@@ -202,16 +221,16 @@ export class ShortcutRegistry {
         await this.consumePrefix();
       }
     }
-    if (keyMapNode && keyMapNode.hasChords()) {
+    if (keyMapNode?.hasChords()) {
       this.activePrefixKey = keyMapNode;
-      this.consumePrefix = async(): Promise<void> => {
+      this.consumePrefix = async () => {
         this.activePrefixKey = null;
         this.activePrefixTimeout = null;
-        await maybeExecuteActionForKey.call(this);
+        await maybeExecuteActionForKey.call(this, event);
       };
       this.activePrefixTimeout = window.setTimeout(this.consumePrefix, KeyTimeout);
     } else {
-      await maybeExecuteActionForKey.call(this);
+      await maybeExecuteActionForKey.call(this, event);
     }
 
     function isPossiblyInputKey(): boolean {
@@ -226,29 +245,32 @@ export class ShortcutRegistry {
       const modifiers = Modifiers;
       // Undo/Redo will also cause input, so textual undo should take precedence over DevTools undo when editing.
       if (Host.Platform.isMac()) {
-        if (KeyboardShortcut.makeKey('z', modifiers.Meta) === key) {
+        if (KeyboardShortcut.makeKey('z', modifiers.Meta.value) === key) {
           return true;
         }
-        if (KeyboardShortcut.makeKey('z', modifiers.Meta | modifiers.Shift) === key) {
+        if (KeyboardShortcut.makeKey('z', modifiers.Meta.value | modifiers.Shift.value) === key) {
           return true;
         }
       } else {
-        if (KeyboardShortcut.makeKey('z', modifiers.Ctrl) === key) {
+        if (KeyboardShortcut.makeKey('z', modifiers.Ctrl.value) === key) {
           return true;
         }
-        if (KeyboardShortcut.makeKey('y', modifiers.Ctrl) === key) {
+        if (KeyboardShortcut.makeKey('y', modifiers.Ctrl.value) === key) {
           return true;
         }
-        if (!Host.Platform.isWin() && KeyboardShortcut.makeKey('z', modifiers.Ctrl | modifiers.Shift) === key) {
+        if (!Host.Platform.isWin() &&
+            KeyboardShortcut.makeKey('z', modifiers.Ctrl.value | modifiers.Shift.value) === key) {
           return true;
         }
       }
 
-      if ((keyModifiers & (modifiers.Ctrl | modifiers.Alt)) === (modifiers.Ctrl | modifiers.Alt)) {
+      if ((keyModifiers & (modifiers.Ctrl.value | modifiers.Alt.value)) ===
+          (modifiers.Ctrl.value | modifiers.Alt.value)) {
         return Host.Platform.isWin();
       }
 
-      return !hasModifier(modifiers.Ctrl) && !hasModifier(modifiers.Alt) && !hasModifier(modifiers.Meta);
+      return !hasModifier(modifiers.Ctrl.value) && !hasModifier(modifiers.Alt.value) &&
+          !hasModifier(modifiers.Meta.value);
     }
 
     function hasModifier(mod: number): boolean {
@@ -257,14 +279,17 @@ export class ShortcutRegistry {
 
     /** ;
      */
-    async function maybeExecuteActionForKey(this: ShortcutRegistry): Promise<boolean> {
+    async function maybeExecuteActionForKey(this: ShortcutRegistry, event?: KeyboardEvent): Promise<boolean> {
       const actions = this.applicableActions(key, handlers);
       if (!actions.length) {
         return false;
       }
       for (const action of actions) {
         let handled;
-        if (handlers && handlers[action.id()]) {
+        if (event) {
+          void VisualLogging.logKeyDown(null, event, action.id());
+        }
+        if (handlers?.[action.id()]) {
           handled = await handlers[action.id()]();
         }
         if (!handlers) {
@@ -299,8 +324,8 @@ export class ShortcutRegistry {
   }
 
   removeShortcut(shortcut: KeyboardShortcut): void {
-    if (shortcut.type === Type.DefaultShortcut || shortcut.type === Type.KeybindSetShortcut) {
-      this.addShortcutToSetting(shortcut.changeType(Type.DisabledDefault));
+    if (shortcut.type === Type.DEFAULT_SHORTCUT || shortcut.type === Type.KEYBIND_SET_SHORTCUT) {
+      this.addShortcutToSetting(shortcut.changeType(Type.DISABLED_DEFAULT));
     } else {
       this.removeShortcutFromSetting(shortcut);
     }
@@ -336,14 +361,14 @@ export class ShortcutRegistry {
     const keybindSet = this.keybindSetSetting.get();
     this.disabledDefaultShortcutsForAction.clear();
     this.devToolsDefaultShortcutActions.clear();
-    const forwardedKeys: {
+    const forwardedKeys: Array<{
       keyCode: number,
       modifiers: number,
-    }[] = [];
+    }> = [];
     const userShortcuts = this.userShortcutsSetting.get();
     for (const userShortcut of userShortcuts) {
       const shortcut = KeyboardShortcut.createShortcutFromSettingObject(userShortcut);
-      if (shortcut.type === Type.DisabledDefault) {
+      if (shortcut.type === Type.DISABLED_DEFAULT) {
         this.disabledDefaultShortcutsForAction.set(shortcut.action, shortcut);
       } else {
         if (ForwardedActions.has(shortcut.action)) {
@@ -375,13 +400,13 @@ export class ShortcutRegistry {
           }
           if (!keybindSets) {
             this.devToolsDefaultShortcutActions.add(actionId);
-            this.registerShortcut(new KeyboardShortcut(shortcutDescriptors, actionId, Type.DefaultShortcut));
+            this.registerShortcut(new KeyboardShortcut(shortcutDescriptors, actionId, Type.DEFAULT_SHORTCUT));
           } else {
             if (keybindSets.includes(KeybindSet.DEVTOOLS_DEFAULT)) {
               this.devToolsDefaultShortcutActions.add(actionId);
             }
             this.registerShortcut(
-                new KeyboardShortcut(shortcutDescriptors, actionId, Type.KeybindSetShortcut, new Set(keybindSets)));
+                new KeyboardShortcut(shortcutDescriptors, actionId, Type.KEYBIND_SET_SHORTCUT, new Set(keybindSets)));
           }
         }
       }
@@ -410,10 +435,10 @@ export class ShortcutRegistry {
   }
 
   private isDisabledDefault(
-      shortcutDescriptors: {
+      shortcutDescriptors: Array<{
         key: number,
         name: string,
-      }[],
+      }>,
       action: string): boolean {
     const disabledDefaults = this.disabledDefaultShortcutsForAction.get(action);
     for (const disabledDefault of disabledDefaults) {
@@ -431,7 +456,7 @@ export class ShortcutTreeNode {
   private chordsInternal: Map<number, ShortcutTreeNode>;
   private readonly depth: number;
 
-  constructor(key: number, depth: number = 0) {
+  constructor(key: number, depth = 0) {
     this.keyInternal = key;
     this.actionsInternal = [];
     this.chordsInternal = new Map();

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "base/feature_list.h"
+#include "base/memory/stack_allocated.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/core_probes_inl.h"
 
@@ -27,6 +28,7 @@ class CORE_EXPORT LCPScriptObserver
   LCPScriptObserver(const LCPScriptObserver&) = delete;
   LCPScriptObserver& operator=(const LCPScriptObserver&) = delete;
   virtual ~LCPScriptObserver();
+  void Shutdown();
 
   virtual void Trace(Visitor*) const;
 
@@ -40,10 +42,12 @@ class CORE_EXPORT LCPScriptObserver
   void Did(const probe::CallFunction&);
 
  private:
-  GC_PLUGIN_IGNORE("probe references should be valid within will/did callbacks")
+  STACK_ALLOCATED_IGNORE(
+      "probe references should be valid within will/did callbacks")
   Vector<const probe::ExecuteScript*> stack_script_probes_;
 
-  GC_PLUGIN_IGNORE("probe references should be valid within will/did callbacks")
+  STACK_ALLOCATED_IGNORE(
+      "probe references should be valid within will/did callbacks")
   Vector<const probe::CallFunction*> stack_function_probes_;
 
   Member<LocalFrame> local_root_;

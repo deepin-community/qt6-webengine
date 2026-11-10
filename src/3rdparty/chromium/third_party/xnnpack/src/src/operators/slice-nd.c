@@ -4,18 +4,24 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include <xnnpack.h>
-#include <xnnpack/allocator.h>
-#include <xnnpack/log.h>
-#include <xnnpack/microparams-init.h>
-#include <xnnpack/normalization.h>
-#include <xnnpack/operator.h>
-#include <xnnpack/config.h>
+#include "include/xnnpack.h"
+#include "src/xnnpack/allocator.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/compute.h"
+#include "src/xnnpack/config-types.h"
+#include "src/xnnpack/config.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/normalization.h"
+#include "src/xnnpack/operator-type.h"
+#include "src/xnnpack/operator-utils.h"
+#include "src/xnnpack/operator.h"
+#include "src/xnnpack/params.h"
+#include <pthreadpool.h>
 
 static void init_slice_nd(
     uint32_t flags,
@@ -63,6 +69,14 @@ static enum xnn_status create_slice_nd(
       sizeof(struct xnn_operator), xnn_operator_type_to_string(operator_type));
     goto error;
   }
+  slice_op->compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (slice_op->compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    goto error;
+  }
+  slice_op->num_compute_invocations = 1;
 
   init_slice_nd(flags, operator_type, copy_config, slice_op);
 
@@ -106,56 +120,64 @@ static enum xnn_status reshape_slice_nd(
     pthreadpool_t threadpool)
 {
   if (slice_op->type != expected_operator_type) {
-    xnn_log_error("failed to reshape operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(slice_op->type));
+    xnn_log_error(
+        "failed to reshape operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(slice_op));
     return xnn_status_invalid_parameter;
   }
   slice_op->state = xnn_run_state_invalid;
 
   if ((xnn_params.init_flags & XNN_INIT_FLAG_XNNPACK) == 0) {
     xnn_log_error("failed to reshape %s operator: XNNPACK is not initialized",
-      xnn_operator_type_to_string(slice_op->type));
+                  xnn_operator_type_to_string_v2(slice_op));
     return xnn_status_uninitialized;
   }
 
   if (num_dims == 0) {
     xnn_log_error(
-      "failed to create %s operator with %zu num_dims: num_dims must be non-zero",
-      xnn_operator_type_to_string(slice_op->type), num_dims);
+        "failed to reshape %s operator with %zu num_dims: num_dims must be "
+        "non-zero",
+        xnn_operator_type_to_string_v2(slice_op), num_dims);
     return xnn_status_unsupported_parameter;
   }
 
   if (num_dims > XNN_MAX_TENSOR_DIMS) {
     xnn_log_error(
-      "failed to create %s operator with %zu num_dims: num_dims must be <= %d",
-      xnn_operator_type_to_string(slice_op->type), num_dims, XNN_MAX_TENSOR_DIMS);
+        "failed to reshape %s operator with %zu num_dims: num_dims must be <= "
+        "%d",
+        xnn_operator_type_to_string_v2(slice_op), num_dims,
+        XNN_MAX_TENSOR_DIMS);
     return xnn_status_unsupported_parameter;
   }
 
   for (size_t i = 0; i < num_dims; i++) {
-    if (input_shape[i] == 0) {
-      xnn_log_error(
-        "failed to reshape %s operator: input shape dimension #%zu is zero",
-        xnn_operator_type_to_string(slice_op->type), i);
-      return xnn_status_invalid_parameter;
+    if (sizes[i] == 0) {
+      slice_op->state = xnn_run_state_skip;
+      return xnn_status_success;
     }
     if (offsets[i] >= input_shape[i]) {
       xnn_log_error(
-          "failed to create %s operator with %zu offsets[%zu]: 0 <= offset < %zu",
-          xnn_operator_type_to_string(slice_op->type), offsets[i], i, input_shape[i]);
+          "failed to reshape %s operator with %zu offsets[%zu]: 0 <= offset < "
+          "%zu",
+          xnn_operator_type_to_string_v2(slice_op), offsets[i], i,
+          input_shape[i]);
       return xnn_status_unsupported_parameter;
     }
-    if (sizes[i] == 0 || sizes[i] > input_shape[i]) {
+    if (sizes[i] > input_shape[i]) {
       xnn_log_error(
-          "failed to create %s operator with %zu sizes[%zu]: 0 < size <= %zu",
-          xnn_operator_type_to_string(slice_op->type), sizes[i], i, input_shape[i]);
+          "failed to reshape %s operator with %zu sizes[%zu]: 0 <= size <= %zu",
+          xnn_operator_type_to_string_v2(slice_op), sizes[i], i,
+          input_shape[i]);
       return xnn_status_unsupported_parameter;
     }
     if (offsets[i] + sizes[i] > input_shape[i]) {
       xnn_log_error(
-          "failed to create %s operator with %zu offsets[%zu] and %zu sizes[%zu]: offset + size <= %zu",
-          xnn_operator_type_to_string(slice_op->type), offsets[i], i, sizes[i], i, input_shape[i]);
+          "failed to reshape %s operator with %zu offsets[%zu] and %zu "
+          "sizes[%zu]: offset + size <= %zu",
+          xnn_operator_type_to_string_v2(slice_op), offsets[i], i, sizes[i], i,
+          input_shape[i]);
       return xnn_status_unsupported_parameter;
     }
   }
@@ -294,9 +316,11 @@ static enum xnn_status setup_slice_nd(
     void* output)
 {
   if (slice_op->type != expected_operator_type) {
-    xnn_log_error("failed to setup operator: operator type mismatch (expected %s, got %s)",
-      xnn_operator_type_to_string(expected_operator_type),
-      xnn_operator_type_to_string(slice_op->type));
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(slice_op));
     return xnn_status_invalid_parameter;
   }
 
@@ -305,8 +329,8 @@ static enum xnn_status setup_slice_nd(
       return xnn_status_success;
     case xnn_run_state_invalid:
       xnn_log_error(
-        "failed to setup %s operator: operator has not been reshaped yet",
-        xnn_operator_type_to_string(slice_op->type));
+          "failed to setup %s operator: operator has not been reshaped yet",
+          xnn_operator_type_to_string_v2(slice_op));
       return xnn_status_invalid_state;
     case xnn_run_state_needs_setup:
       // Operator has been reshaped, but not setup, continue with setup.
@@ -378,12 +402,21 @@ static enum xnn_status xnn_run_slice_nd(
 {
   struct xnn_operator slice_op;
   memset(&slice_op, 0, sizeof(slice_op));
+  slice_op.compute = xnn_allocate_zero_memory(sizeof(struct compute_parameters));
+  if (slice_op.compute == NULL) {
+    xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
+                  sizeof(struct compute_parameters),
+                  xnn_operator_type_to_string(operator_type));
+    return xnn_status_out_of_memory;
+  }
+  slice_op.num_compute_invocations = 1;
 
   const struct xnn_unary_elementwise_config* copy_config = xnn_init_xx_copy_config();
   if (copy_config == NULL) {
     xnn_log_error(
-        "failed to create %s operator: unsupported hardware configuration",
+        "failed to run %s operator: unsupported hardware configuration",
         xnn_operator_type_to_string(operator_type));
+    xnn_destroy_operator(&slice_op);
     return xnn_status_unsupported_hardware;
   }
 
@@ -396,6 +429,7 @@ static enum xnn_status xnn_run_slice_nd(
     threadpool);
 
   if (status != xnn_status_success){
+    xnn_destroy_operator(&slice_op);
     return status;
   }
 
@@ -404,10 +438,13 @@ static enum xnn_status xnn_run_slice_nd(
     input, output);
 
   if (status != xnn_status_success){
+    xnn_destroy_operator(&slice_op);
     return status;
   }
 
-  return xnn_run_operator(&slice_op, threadpool);
+  status = xnn_run_operator(&slice_op, threadpool);
+  xnn_destroy_operator(&slice_op);
+  return status;
 }
 
 enum xnn_status xnn_run_slice_nd_x32(
@@ -422,7 +459,7 @@ enum xnn_status xnn_run_slice_nd_x32(
 {
   if ((xnn_params.init_flags & XNN_INIT_FLAG_XNNPACK) == 0) {
     xnn_log_error(
-      "failed to create %s operator: XNNPACK is not initialized",
+      "failed to run %s operator: XNNPACK is not initialized",
       xnn_operator_type_to_string(xnn_operator_type_slice_nd_x32));
     return xnn_status_uninitialized;
   }

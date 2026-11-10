@@ -11,8 +11,10 @@
 #include <string>
 #include <utility>
 
+#include "base/atomicops.h"
 #include "base/bits.h"
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/queue.h"
 #include "base/functional/bind.h"
@@ -137,8 +139,7 @@ class I420ConverterImpl : public I420Converter {
 
 // Implements texture consumption/readback and encapsulates
 // the data needed for it.
-class GLHelper::CopyTextureToImpl
-    : public base::SupportsWeakPtr<GLHelper::CopyTextureToImpl> {
+class GLHelper::CopyTextureToImpl final {
  public:
   CopyTextureToImpl(GLES2Interface* gl,
                     ContextSupport* context_support,
@@ -204,9 +205,9 @@ class GLHelper::CopyTextureToImpl
           bytes_per_pixel(bytes_per_pixel_),
           bytes_per_row(bytes_per_row_),
           row_stride_bytes(row_stride_bytes_),
-          pixels(pixels_),
           flip_y(flip_y_),
-          callback(std::move(callback_)) {}
+          callback(std::move(callback_)),
+          pixels(pixels_) {}
 
     bool done = false;
     bool result = false;
@@ -214,9 +215,9 @@ class GLHelper::CopyTextureToImpl
     size_t bytes_per_pixel;
     size_t bytes_per_row;
     size_t row_stride_bytes;
-    raw_ptr<unsigned char> pixels;
     bool flip_y;
     base::OnceCallback<void(bool)> callback;
+    raw_ptr<unsigned char> pixels;
     GLuint buffer = 0;
     GLuint query = 0;
   };
@@ -243,7 +244,7 @@ class GLHelper::CopyTextureToImpl
     void Add(Request* r) { requests_.push(r); }
 
    private:
-    base::queue<Request*> requests_;
+    base::queue<raw_ptr<Request, CtnExperimental>> requests_;
   };
 
   // A readback pipeline that also converts the data to YUV before
@@ -318,7 +319,7 @@ class GLHelper::CopyTextureToImpl
   // this object is destroyed. Must be declared before other Scoped* fields.
   ScopedFlush flush_;
 
-  base::queue<Request*> request_queue_;
+  base::queue<raw_ptr<Request, CtnExperimental>> request_queue_;
 
   // Lazily set by IsBGRAReadbackSupported().
   enum {
@@ -334,6 +335,8 @@ class GLHelper::CopyTextureToImpl
     BGRA_PREFERRED,
     BGRA_NOT_PREFERRED
   } bgra_preference_ = BGRA_PREFERENCE_UNKNOWN;
+
+  base::WeakPtrFactory<CopyTextureToImpl> weak_ptr_factory_{this};
 };
 
 std::unique_ptr<GLHelper::ScalerInterface> GLHelper::CreateScaler(
@@ -380,8 +383,8 @@ void GLHelper::CopyTextureToImpl::ReadbackAsync(
   gl_->EndQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM);
   gl_->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
   context_support_->SignalQuery(
-      request->query,
-      base::BindOnce(&CopyTextureToImpl::ReadbackDone, AsWeakPtr(), request));
+      request->query, base::BindOnce(&CopyTextureToImpl::ReadbackDone,
+                                     weak_ptr_factory_.GetWeakPtr(), request));
 }
 
 void GLHelper::CopyTextureToImpl::ReadbackTextureAsync(
@@ -448,13 +451,17 @@ void GLHelper::CopyTextureToImpl::ReadbackDone(Request* finished_request) {
             std::min(request->row_stride_bytes, request->bytes_per_row);
         unsigned char* dst = request->pixels;
         if (request->flip_y && request->size.height() > 1) {
-          dst += dst_stride * (request->size.height() - 1);
+          UNSAFE_TODO(dst += dst_stride * (request->size.height() - 1));
           dst_stride = -dst_stride;
         }
+        // We need to use `RelaxedAtomicWriteMemcpy` because we might be writing
+        // into memory observed by JS at the same time.
         for (int y = 0; y < request->size.height(); y++) {
-          memcpy(dst, src, bytes_to_copy);
-          dst += dst_stride;
-          src += src_stride;
+          base::subtle::RelaxedAtomicWriteMemcpy(
+              UNSAFE_TODO(base::span(dst, bytes_to_copy)),
+              UNSAFE_TODO(base::span(src, bytes_to_copy)));
+          UNSAFE_TODO(dst += dst_stride);
+          UNSAFE_TODO(src += src_stride);
         }
         gl_->UnmapBufferCHROMIUM(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM);
       }
@@ -573,7 +580,7 @@ void GLHelper::CopyTextureToImpl::ReadbackPlane(
   const bool kFlipY = false;
   size_t bytes_per_row = paste_rect.width() >> size_shift;
   ReadbackAsync(gfx::Point(), texture_size, bytes_per_row, row_stride_bytes,
-                data + offset,
+                UNSAFE_TODO(data + offset),
                 (swizzle == kSwizzleBGRA) ? GL_BGRA_EXT : GL_RGBA,
                 GL_UNSIGNED_BYTE, 4, kFlipY, std::move(callback));
 }

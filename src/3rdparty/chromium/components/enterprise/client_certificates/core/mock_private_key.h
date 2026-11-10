@@ -5,7 +5,10 @@
 #ifndef COMPONENTS_ENTERPRISE_CLIENT_CERTIFICATES_CORE_MOCK_PRIVATE_KEY_H_
 #define COMPONENTS_ENTERPRISE_CLIENT_CERTIFICATES_CORE_MOCK_PRIVATE_KEY_H_
 
+#include "base/values.h"
 #include "components/enterprise/client_certificates/core/private_key.h"
+#include "components/enterprise/client_certificates/proto/client_certificates_database.pb.h"
+#include "net/ssl/ssl_private_key.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace client_certificates {
@@ -13,7 +16,8 @@ namespace client_certificates {
 class MockPrivateKey : public PrivateKey {
  public:
   explicit MockPrivateKey(
-      PrivateKeySource source = PrivateKeySource::kUnexportableKey);
+      PrivateKeySource source = PrivateKeySource::kUnexportableKey,
+      scoped_refptr<net::SSLPrivateKey> ssl_private_key = nullptr);
 
   MOCK_METHOD(std::optional<std::vector<uint8_t>>,
               SignSlowly,
@@ -27,6 +31,11 @@ class MockPrivateKey : public PrivateKey {
               GetAlgorithm,
               (),
               (const, override));
+  MOCK_METHOD(client_certificates_pb::PrivateKey,
+              ToProto,
+              (),
+              (const, override));
+  MOCK_METHOD(base::Value::Dict, ToDict, (), (const, override));
 
  protected:
   ~MockPrivateKey() override;

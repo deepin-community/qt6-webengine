@@ -13,15 +13,16 @@
   color: var(--sys-color-on-surface);
   display: flex;
   flex-direction: column;
+  overflow-x: auto;
 }
 
 .object-properties-section li {
   user-select: text;
-}
 
-.object-properties-section li::before {
-  top: -1px;
-  margin-right: 2px;
+  &::before {
+    flex-shrink: 0;
+    margin-right: 2px;
+  }
 }
 
 .object-properties-section li.editing-sub-part {
@@ -60,19 +61,7 @@
   overflow: hidden;
 }
 
-.object-properties-section [data-webidl="true"] > .name-and-value > .adorner {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-right: 2px;
-}
-
-.object-properties-section [data-webidl="true"] > .name-and-value > .name {
-  font-weight: bold;
-}
-
 .name-and-value {
-  overflow: hidden;
   line-height: 16px;
   display: flex;
   white-space: nowrap;

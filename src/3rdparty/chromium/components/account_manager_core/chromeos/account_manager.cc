@@ -4,10 +4,14 @@
 
 #include "components/account_manager_core/chromeos/account_manager.h"
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "base/check.h"
+#include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -20,11 +24,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "build/chromeos_buildflags.h"
 #include "components/account_manager_core/account.h"
 #include "components/account_manager_core/chromeos/tokens.pb.h"
 #include "components/account_manager_core/pref_names.h"
@@ -38,7 +40,6 @@
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_access_token_consumer.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/protobuf/src/google/protobuf/message_lite.h"
 
 namespace account_manager {
@@ -81,48 +82,36 @@ void RecordInitializationTime(
 }
 
 // Returns `nullopt` if `account_type` is `ACCOUNT_TYPE_UNSPECIFIED`.
-absl::optional<::account_manager::AccountType> FromProtoAccountType(
+std::optional<::account_manager::AccountType> FromProtoAccountType(
     const internal::AccountType& account_type) {
   switch (account_type) {
     case internal::AccountType::ACCOUNT_TYPE_UNSPECIFIED:
-      return absl::nullopt;
+      return std::nullopt;
     case internal::AccountType::ACCOUNT_TYPE_GAIA:
       static_assert(
           static_cast<int>(internal::AccountType::ACCOUNT_TYPE_GAIA) ==
               static_cast<int>(::account_manager::AccountType::kGaia),
           "Underlying enum values must match");
       return ::account_manager::AccountType::kGaia;
-    case internal::AccountType::ACCOUNT_TYPE_ACTIVE_DIRECTORY:
-      static_assert(static_cast<int>(
-                        internal::AccountType::ACCOUNT_TYPE_ACTIVE_DIRECTORY) ==
-                        static_cast<int>(
-                            ::account_manager::AccountType::kActiveDirectory),
-                    "Underlying enum values must match");
-      return ::account_manager::AccountType::kActiveDirectory;
   }
 }
 
 internal::AccountType ToProtoAccountType(
     const ::account_manager::AccountType& account_type) {
-  switch (account_type) {
-    case ::account_manager::AccountType::kGaia:
-      return internal::AccountType::ACCOUNT_TYPE_GAIA;
-    case ::account_manager::AccountType::kActiveDirectory:
-      return internal::AccountType::ACCOUNT_TYPE_ACTIVE_DIRECTORY;
-  }
+  // Currently, we only support `kGaia` account type. Should a new type be added
+  // in the future, consider removing the `CHECK_EQ()` below and handling the
+  // new type accordingly.
+  CHECK_EQ(account_type, account_manager::AccountType::kGaia);
+
+  return internal::AccountType::ACCOUNT_TYPE_GAIA;
 }
 
 // Returns a Base16 encoded SHA1 digest of `data`.
 std::string Sha1Digest(const std::string& data) {
-  const base::SHA1Digest hash =
-      base::SHA1HashSpan(base::as_bytes(base::make_span(data)));
-  return base::HexEncode(hash);
+  return base::HexEncode(base::SHA1Hash(base::as_byte_span(data)));
 }
 
 }  // namespace
-
-// static
-const char AccountManager::kActiveDirectoryDummyToken[] = "dummy_ad_token";
 
 // static
 const char* const AccountManager::kInvalidToken =
@@ -243,7 +232,7 @@ class AccountManager::AccessTokenFetcher : public OAuth2AccessTokenFetcher {
       return;
     }
 
-    absl::optional<std::string> maybe_token =
+    std::optional<std::string> maybe_token =
         account_manager_->GetRefreshToken(account_key_);
     if (!maybe_token.has_value()) {
       FireOnGetTokenFailure(GoogleServiceAuthError(
@@ -358,8 +347,9 @@ void AccountManager::Initialize(
   if (!IsEphemeralMode()) {
     DCHECK(task_runner_);
     tokens_file_path = home_dir_.Append(kTokensFileName);
-    writer_ = std::make_unique<base::ImportantFileWriter>(tokens_file_path,
-                                                          task_runner_);
+    constexpr const char* kHistogramSuffix = "AccountManager";
+    writer_ = std::make_unique<base::ImportantFileWriter>(
+        tokens_file_path, task_runner_, kHistogramSuffix);
   }
   initialization_callbacks_.emplace_back(std::move(initialization_callback));
 
@@ -413,7 +403,7 @@ AccountManager::AccountMap AccountManager::LoadAccountsFromDisk(
 
   bool is_any_account_corrupt = false;
   for (const auto& account : accounts_proto.accounts()) {
-    const absl::optional<::account_manager::AccountType> account_type =
+    const std::optional<::account_manager::AccountType> account_type =
         FromProtoAccountType(account.account_type());
     if (!account_type.has_value()) {
       LOG(WARNING) << "Ignoring invalid account_type load from disk";
@@ -566,10 +556,10 @@ void AccountManager::UpdateToken(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_NE(init_state_, InitializationState::kNotStarted);
 
-  if (account_key.account_type() ==
-      ::account_manager::AccountType::kActiveDirectory) {
-    DCHECK_EQ(token, kActiveDirectoryDummyToken);
-  }
+  // Currently, we only support `kGaia` account type. Should a new type be added
+  // in the future, consider removing the `CHECK_EQ()` below and handling the
+  // new type accordingly.
+  CHECK_EQ(account_key.account_type(), account_manager::AccountType::kGaia);
 
   if (init_state_ != InitializationState::kInitialized) {
     base::OnceClosure closure =
@@ -581,7 +571,7 @@ void AccountManager::UpdateToken(
 
   DCHECK_EQ(init_state_, InitializationState::kInitialized);
   auto it = accounts_.find(account_key);
-  DCHECK(it != accounts_.end())
+  CHECK(it != accounts_.end())
       << "UpdateToken cannot be used for adding accounts";
   UpsertAccountInternal(account_key, AccountInfo{it->second.raw_email, token});
 }
@@ -600,9 +590,6 @@ void AccountManager::UpsertAccountInternal(
   auto it = accounts_.find(account_key);
   if (it == accounts_.end()) {
     // This is a new account. Insert it.
-    // Note: AccountManager may be used on Lacros in tests. Don't check pref
-    // service in this case.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     // New account insertions can only happen through a user action, which
     // implies that |Profile| must have been fully initialized at this point.
     // |ProfileImpl|'s constructor guarantees that
@@ -615,7 +602,6 @@ void AccountManager::UpsertAccountInternal(
       // adding a Secondary Account are already blocked.
       CHECK(accounts_.empty());
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
     accounts_.emplace(account_key, account);
     PersistAccountsAsync();
     NotifyTokenObservers(
@@ -725,8 +711,7 @@ bool AccountManager::IsTokenAvailable(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto it = accounts_.find(account_key);
-  return it != accounts_.end() && !it->second.token.empty() &&
-         it->second.token != kActiveDirectoryDummyToken;
+  return it != accounts_.end() && !it->second.token.empty();
 }
 
 void AccountManager::HasDummyGaiaToken(
@@ -824,8 +809,8 @@ void AccountManager::DeletePendingTokenRevocationRequest(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto it =
-      base::ranges::find(pending_token_revocation_requests_, request,
-                         &std::unique_ptr<GaiaTokenRevocationRequest>::get);
+      std::ranges::find(pending_token_revocation_requests_, request,
+                        &std::unique_ptr<GaiaTokenRevocationRequest>::get);
 
   if (it != pending_token_revocation_requests_.end()) {
     pending_token_revocation_requests_.erase(it);
@@ -836,7 +821,7 @@ bool AccountManager::IsEphemeralMode() const {
   return home_dir_.empty();
 }
 
-absl::optional<std::string> AccountManager::GetRefreshToken(
+std::optional<std::string> AccountManager::GetRefreshToken(
     const ::account_manager::AccountKey& account_key) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(init_state_, InitializationState::kInitialized);
@@ -844,10 +829,10 @@ absl::optional<std::string> AccountManager::GetRefreshToken(
 
   auto it = accounts_.find(account_key);
   if (it == accounts_.end() || it->second.token.empty()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  return absl::make_optional<std::string>(it->second.token);
+  return std::make_optional<std::string>(it->second.token);
 }
 
 scoped_refptr<network::SharedURLLoaderFactory>

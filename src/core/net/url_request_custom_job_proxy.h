@@ -1,16 +1,18 @@
 // Copyright (C) 2017 Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef URL_REQUEST_CUSTOM_JOB_PROXY_H_
 #define URL_REQUEST_CUSTOM_JOB_PROXY_H_
 
 #include "base/task/sequenced_task_runner.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
 #include <QtCore/QPointer>
 #include <QMap>
 #include <QByteArray>
+#include <optional>
 
 QT_FORWARD_DECLARE_CLASS(QIODevice)
 
@@ -24,7 +26,7 @@ class URLRequestCustomJob;
 class URLRequestCustomJobDelegate;
 class ProfileAdapter;
 
-// Used to comunicate between URLRequestCustomJob living on the IO thread
+// Used to communicate between URLRequestCustomJob living on the IO thread
 // and URLRequestCustomJobDelegate living on the UI thread.
 class URLRequestCustomJobProxy : public base::RefCountedThreadSafe<URLRequestCustomJobProxy>
 {
@@ -63,7 +65,7 @@ public:
     void fail(int error);
     void succeed();
     void release();
-    void initialize(GURL url, std::string method, absl::optional<url::Origin> initiatorOrigin,
+    void initialize(GURL url, std::string method, std::optional<url::Origin> initiatorOrigin,
                     std::map<std::string, std::string> headers,
                     scoped_refptr<network::ResourceRequestBody> requestBody);
     void readyRead();

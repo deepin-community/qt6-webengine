@@ -18,9 +18,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavcodec/hevcdec.h"
+#include "libavcodec/hevc/hevcdec.h"
 #include "libavcodec/bit_depth_template.c"
 #include "libavcodec/mips/hevcdsp_mips.h"
+#include "libavutil/intfloat.h"
 #include "libavutil/mips/mmiutils.h"
 
 #define PUT_HEVC_QPEL_H(w, x_step, src_step, dst_step)                   \
@@ -34,7 +35,7 @@ void ff_hevc_put_hevc_qpel_h##w##_8_mmi(int16_t *dst, const uint8_t *_src, \
     ptrdiff_t srcstride = _srcstride / sizeof(pixel);                    \
     double ftmp[15];                                                     \
     uint64_t rtmp[1];                                                    \
-    const int8_t *filter = ff_hevc_qpel_filters[mx - 1];                 \
+    const int8_t *filter = ff_hevc_qpel_filters[mx];                     \
     DECLARE_VAR_ALL64;                                                   \
                                                                          \
     x = x_step;                                                          \
@@ -134,7 +135,7 @@ void ff_hevc_put_hevc_qpel_hv##w##_8_mmi(int16_t *dst, const uint8_t *_src,\
     DECLARE_VAR_ALL64;                                                   \
                                                                          \
     src   -= (QPEL_EXTRA_BEFORE * srcstride + 3);                        \
-    filter = ff_hevc_qpel_filters[mx - 1];                               \
+    filter = ff_hevc_qpel_filters[mx];                                   \
     x = x_step;                                                          \
     y = height + QPEL_EXTRA;                                             \
     __asm__ volatile(                                                    \
@@ -206,7 +207,7 @@ void ff_hevc_put_hevc_qpel_hv##w##_8_mmi(int16_t *dst, const uint8_t *_src,\
     );                                                                   \
                                                                          \
     tmp    = tmp_array + QPEL_EXTRA_BEFORE * 4 -12;                      \
-    filter = ff_hevc_qpel_filters[my - 1];                               \
+    filter = ff_hevc_qpel_filters[my];                                   \
     x = x_step;                                                          \
     y = height;                                                          \
     __asm__ volatile(                                                    \
@@ -314,7 +315,7 @@ void ff_hevc_put_hevc_qpel_bi_h##w##_8_mmi(uint8_t *_dst,               \
     ptrdiff_t     srcstride = _srcstride / sizeof(pixel);               \
     pixel *dst          = (pixel *)_dst;                                \
     ptrdiff_t dststride = _dststride / sizeof(pixel);                   \
-    const int8_t *filter    = ff_hevc_qpel_filters[mx - 1];             \
+    const int8_t *filter    = ff_hevc_qpel_filters[mx];                 \
     double ftmp[20];                                                    \
     uint64_t rtmp[1];                                                   \
     union av_intfloat64 shift;                                          \
@@ -458,7 +459,7 @@ void ff_hevc_put_hevc_qpel_bi_hv##w##_8_mmi(uint8_t *_dst,              \
     offset.i = 64;                                                      \
                                                                         \
     src   -= (QPEL_EXTRA_BEFORE * srcstride + 3);                       \
-    filter = ff_hevc_qpel_filters[mx - 1];                              \
+    filter = ff_hevc_qpel_filters[mx];                                  \
     x = width >> 2;                                                     \
     y = height + QPEL_EXTRA;                                            \
     __asm__ volatile(                                                   \
@@ -530,7 +531,7 @@ void ff_hevc_put_hevc_qpel_bi_hv##w##_8_mmi(uint8_t *_dst,              \
     );                                                                  \
                                                                         \
     tmp    = tmp_array;                                                 \
-    filter = ff_hevc_qpel_filters[my - 1];                              \
+    filter = ff_hevc_qpel_filters[my];                                  \
     x = width >> 2;                                                     \
     y = height;                                                         \
     __asm__ volatile(                                                   \
@@ -665,7 +666,7 @@ void ff_hevc_put_hevc_epel_bi_hv##w##_8_mmi(uint8_t *_dst,              \
     ptrdiff_t srcstride = _srcstride / sizeof(pixel);                   \
     pixel *dst          = (pixel *)_dst;                                \
     ptrdiff_t dststride = _dststride / sizeof(pixel);                   \
-    const int8_t *filter = ff_hevc_epel_filters[mx - 1];                \
+    const int8_t *filter = ff_hevc_epel_filters[mx];                    \
     int16_t tmp_array[(MAX_PB_SIZE + EPEL_EXTRA) * MAX_PB_SIZE];        \
     int16_t *tmp = tmp_array;                                           \
     double  ftmp[12];                                                   \
@@ -735,7 +736,7 @@ void ff_hevc_put_hevc_epel_bi_hv##w##_8_mmi(uint8_t *_dst,              \
     );                                                                  \
                                                                         \
     tmp      = tmp_array;                                               \
-    filter = ff_hevc_epel_filters[my - 1];                              \
+    filter = ff_hevc_epel_filters[my];                                  \
     x = width >> 2;                                                     \
     y = height;                                                         \
     __asm__ volatile(                                                   \
@@ -969,7 +970,7 @@ void ff_hevc_put_hevc_qpel_uni_hv##w##_8_mmi(uint8_t *_dst,             \
     offset.i = 32;                                                      \
                                                                         \
     src   -= (QPEL_EXTRA_BEFORE * srcstride + 3);                       \
-    filter = ff_hevc_qpel_filters[mx - 1];                              \
+    filter = ff_hevc_qpel_filters[mx];                                  \
     x = width >> 2;                                                     \
     y = height + QPEL_EXTRA;                                            \
     __asm__ volatile(                                                   \
@@ -1041,7 +1042,7 @@ void ff_hevc_put_hevc_qpel_uni_hv##w##_8_mmi(uint8_t *_dst,             \
     );                                                                  \
                                                                         \
     tmp    = tmp_array;                                                 \
-    filter = ff_hevc_qpel_filters[my - 1];                              \
+    filter = ff_hevc_qpel_filters[my];                                  \
     x = width >> 2;                                                     \
     y = height;                                                         \
     __asm__ volatile(                                                   \

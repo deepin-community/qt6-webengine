@@ -38,7 +38,7 @@ export class Tabs extends LitElement {
     }
 
     md-tabs {
-      --md-divider-color: transparent;
+      --md-divider-thickness: 0;
     }
 
     slot {
@@ -52,7 +52,7 @@ export class Tabs extends LitElement {
    * The index of the active tab.
    * @export
    */
-  activeTabIndex: number;
+  declare activeTabIndex: number;
 
   /** @nocollapse */
   static override properties = {

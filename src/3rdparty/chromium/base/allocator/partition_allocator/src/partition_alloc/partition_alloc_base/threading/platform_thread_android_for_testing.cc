@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <pthread.h>
 
 #include <cstddef>
@@ -13,7 +18,7 @@ namespace partition_alloc::internal::base {
 void InitThreading() {}
 
 void TerminateOnThread() {
-  // partition alloc tests don't use AttachCurrentThread(), because
+  // PartitionAlloc tests don't use AttachCurrentThread(), because
   // the tests don't set / get any thread priority. So no need to do
   // "base::android::DetachFromVM();" here.
 }

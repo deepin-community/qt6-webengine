@@ -6,6 +6,7 @@
 #include "build/build_config.h"
 #include "content/browser/permissions/permission_controller_impl.h"
 #include "content/browser/screen_details/screen_details_test_utils.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -28,12 +29,12 @@ IN_PROC_BROWSER_TEST_F(ScreenDetailsTest, GetScreensNoPermission) {
               EvalJsResult::IsError());
 }
 
-// TODO(crbug.com/1119974): Test ScreenDetails API values with permission.
+// TODO(crbug.com/40145721): Test ScreenDetails API values with permission.
 IN_PROC_BROWSER_TEST_F(ScreenDetailsTest, DISABLED_GetScreensBasic) {
   ASSERT_TRUE(NavigateToURL(shell(), GetTestUrl(nullptr, "empty.html")));
   ASSERT_EQ(true, EvalJs(shell(), "'getScreenDetails' in self"));
   auto result = EvalJs(shell(), content::test::kGetScreenDetailsScript);
-  EXPECT_EQ(content::test::GetExpectedScreenDetails(), result.value);
+  EXPECT_EQ(content::test::GetExpectedScreenDetails(), result);
 }
 
 // Test that screen.isExtended matches the availability of multiple displays.
@@ -86,8 +87,8 @@ class FakeScreenDetailsTest : public ScreenDetailsTest {
   raw_ptr<Shell> test_shell_ = nullptr;
 };
 
-// TODO(crbug.com/1042990): Windows crashes static casting to ScreenWin.
-// TODO(crbug.com/1042990): Android requires a GetDisplayNearestView overload.
+// TODO(crbug.com/40115071): Windows crashes static casting to ScreenWin.
+// TODO(crbug.com/40115071): Android requires a GetDisplayNearestView overload.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_GetScreensFaked DISABLED_GetScreensFaked
 #else
@@ -115,11 +116,11 @@ IN_PROC_BROWSER_TEST_F(FakeScreenDetailsTest, MAYBE_GetScreensFaked) {
 
   EvalJsResult result =
       EvalJs(test_shell(), content::test::kGetScreenDetailsScript);
-  EXPECT_EQ(content::test::GetExpectedScreenDetails(), result.value);
+  EXPECT_EQ(content::test::GetExpectedScreenDetails(), result);
 }
 
-// TODO(crbug.com/1042990): Windows crashes static casting to ScreenWin.
-// TODO(crbug.com/1042990): Android requires a GetDisplayNearestView overload.
+// TODO(crbug.com/40115071): Windows crashes static casting to ScreenWin.
+// TODO(crbug.com/40115071): Android requires a GetDisplayNearestView overload.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_IsExtendedFaked DISABLED_IsExtendedFaked
 #else
@@ -137,15 +138,15 @@ IN_PROC_BROWSER_TEST_F(FakeScreenDetailsTest, MAYBE_IsExtendedFaked) {
   EXPECT_FALSE(EvalJs(test_shell(), "screen.isExtended").ExtractBool());
 }
 
-// TODO(crbug.com/1042990): Windows crashes static casting to ScreenWin.
-// TODO(crbug.com/1042990): Android requires a GetDisplayNearestView overload.
+// TODO(crbug.com/40115071): Windows crashes static casting to ScreenWin.
+// TODO(crbug.com/40115071): Android requires a GetDisplayNearestView overload.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_ScreenOnchangeNoPermission DISABLED_ScreenOnchangeNoPermission
 #else
 #define MAYBE_ScreenOnchangeNoPermission ScreenOnchangeNoPermission
 #endif
 // Sites with no permission only get an event if screen.isExtended changes.
-// TODO(crbug.com/1119974): Need content_browsertests permission controls.
+// TODO(crbug.com/40145721): Need content_browsertests permission controls.
 IN_PROC_BROWSER_TEST_F(FakeScreenDetailsTest,
                        MAYBE_ScreenOnchangeNoPermission) {
   ASSERT_TRUE(NavigateToURL(test_shell(), GetTestUrl(nullptr, "empty.html")));
@@ -188,8 +189,8 @@ IN_PROC_BROWSER_TEST_F(FakeScreenDetailsTest,
   EXPECT_EQ("2", EvalJs(test_shell(), "document.title"));
 }
 
-// TODO(crbug.com/1042990): Windows crashes static casting to ScreenWin.
-// TODO(crbug.com/1042990): Android requires a GetDisplayNearestView overload.
+// TODO(crbug.com/40115071): Windows crashes static casting to ScreenWin.
+// TODO(crbug.com/40115071): Android requires a GetDisplayNearestView overload.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_ScreenOnChangeForIsExtended DISABLED_ScreenOnChangeForIsExtended
 #else
@@ -237,8 +238,8 @@ IN_PROC_BROWSER_TEST_F(FakeScreenDetailsTest,
   EXPECT_EQ("2", EvalJs(test_shell(), "document.title"));
 }
 
-// TODO(crbug.com/1042990): Windows crashes static casting to ScreenWin.
-// TODO(crbug.com/1042990): Android requires a GetDisplayNearestView overload.
+// TODO(crbug.com/40115071): Windows crashes static casting to ScreenWin.
+// TODO(crbug.com/40115071): Android requires a GetDisplayNearestView overload.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_ScreenOnChangeForAttributes DISABLED_ScreenOnChangeForAttributes
 #else

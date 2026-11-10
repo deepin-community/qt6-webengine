@@ -164,8 +164,8 @@ Where possible, it's great to use a memory-safe language. The following
 memory-safe languages are approved for use in Chromium:
 * Java (on Android only)
 * Swift (on iOS only)
-* [Rust](../docs/rust.md) (for [third-party use](
-  ../docs/adding_to_third_party.md#Rust))
+* [Rust](../rust.md) (for [third-party use](
+  ../adding_to_third_party.md#Rust))
 * JavaScript or WebAssembly (although we don't currently use them in
   high-privilege processes like the browser/gpu process)
 
@@ -176,8 +176,8 @@ For an example of image processing, we have the pure-Java class
 [BaseGifImage](https://cs.chromium.org/chromium/src/third_party/gif_player/src/jp/tomorrowkey/android/gifplayer/BaseGifImage.java?rcl=27febd503d1bab047d73df26db83184fff8d6620&l=27).
 On Android, where we can use Java and also face a particularly high cost for
 creating new processes (necessary for sandboxing), using Java to decode tricky
-formats can be a great approach. We do a similar thing with the pure-Java
-[JsonSanitizer](https://cs.chromium.org/chromium/src/services/data_decoder/public/cpp/android/java/src/org/chromium/services/data_decoder/JsonSanitizer.java),
+formats can be a great approach. Before switching to a Rust-based parser, we
+used a Java [JsonSanitizer](https://cs.chromium.org/chromium/src/services/data_decoder/public/cpp/android/java/src/org/chromium/services/data_decoder/JsonSanitizer.java),
 to 'vet' incoming JSON in a memory-safe way before passing the input to the C++
 JSON implementation.
 
@@ -303,13 +303,28 @@ Ultimately this process results in parsing significantly simpler grammars. (PNG
 > language and still have such high performance, that'd be ideal. But that's
 > unlikely to happen soon.)
 
+### Exception: Protobuf
+
 While less preferable to Mojo, we also similarly trust Protobuf for
 deserializing messages at high privilege from potentially untrustworthy senders.
 For example, Protobufs are sometimes embedded in Mojo IPC messages. It is
 always preferable to use a Mojo message where possible, though sometimes
-external constraints require the use of Protobuf. Note that this only applies to
-Protobuf as a container format; the data contained within a Protobuf must be
-handled according to this rule as well.
+external constraints require the use of Protobuf.
+
+Protobuf's threat model does not include parsing a protobuf from shared
+memory. Always copy the proto buffer bytes from untrustworthy shared
+memory regions before deserializing to a Message.
+
+If you must pass protobuf bytes over mojo use
+[mojo_base::ProtoWrapper](https://chromium.googlesource.com/chromium/src/+/main/mojo/public/cpp/base/proto_wrapper.h)
+as this provides limited type safety for the top-level protobuf message and
+ensures copies are taken before deserializing.
+
+Note that this exception only applies to Protobuf as a container format;
+complex data contained within a Protobuf must be handled according to this
+rule as well.
+
+### Exception: RE2
 
 As another special case, we trust the
 [RE2](https://cs.chromium.org/chromium/src/third_party/re2/README.chromium)
@@ -319,7 +334,7 @@ part of the threat model against which it's been tested for years. It is **not**
 the case, however, that text matched by an RE2 regular expression is necessarily
 "sanitized" or "safe". That requires additional security judgment.
 
-## Safe Types
+## Safe Types and Abstractions
 
 As discussed above in [Normalization](#normalization), there are some types that
 are considered "safe," even though they are deserialized from an untrustworthy
@@ -343,6 +358,9 @@ represent potentially complex data, such as:
 The deserialization of these is safe, though it is important to remember that
 the value itself is still untrustworthy (e.g. a malicious path trying to escape
 its parent using `../`).
+
+The JSON parser in `//base/json` is implemented in Rust and considered safe for
+use at high privilege with untrusted data.
 
 ## Existing Code That Violates The Rule
 

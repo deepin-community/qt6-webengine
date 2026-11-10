@@ -25,7 +25,9 @@ class ContextMtl;
 class VertexArrayMtl : public VertexArrayImpl
 {
   public:
-    VertexArrayMtl(const gl::VertexArrayState &state, ContextMtl *context);
+    VertexArrayMtl(const gl::VertexArrayState &state,
+                   const gl::VertexArrayBuffers &vertexArrayBuffers,
+                   ContextMtl *context);
     ~VertexArrayMtl() override;
 
     void destroy(const gl::Context *context) override;
@@ -63,10 +65,12 @@ class VertexArrayMtl : public VertexArrayImpl
     std::vector<DrawCommandRange> getDrawIndices(const gl::Context *glContext,
                                                  gl::DrawElementsType originalIndexType,
                                                  gl::DrawElementsType indexType,
-                                                 gl::PrimitiveMode primitiveMode,
+                                                 gl::PrimitiveMode originalMode,
+                                                 gl::PrimitiveMode mode,
                                                  mtl::BufferRef idxBuffer,
                                                  uint32_t indexCount,
-                                                 size_t offset);
+                                                 const void *originalOffsetOrClientPtr,
+                                                 size_t offsetInBytes);
 
   private:
     void reset(ContextMtl *context);

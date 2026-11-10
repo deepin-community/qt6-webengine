@@ -48,12 +48,12 @@ typedef struct PermsContext {
 #define TFLAGS AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption options[] = {
-    { "mode", "select permissions mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64 = MODE_NONE}, MODE_NONE, NB_MODES-1, TFLAGS, "mode" },
-        { "none",   "do nothing",                       0, AV_OPT_TYPE_CONST, {.i64 = MODE_NONE},            0, 0, TFLAGS, "mode" },
-        { "ro",     "set all output frames read-only",  0, AV_OPT_TYPE_CONST, {.i64 = MODE_RO},              0, 0, TFLAGS, "mode" },
-        { "rw",     "set all output frames writable",   0, AV_OPT_TYPE_CONST, {.i64 = MODE_RW},              0, 0, TFLAGS, "mode" },
-        { "toggle", "switch permissions",               0, AV_OPT_TYPE_CONST, {.i64 = MODE_TOGGLE},          0, 0, TFLAGS, "mode" },
-        { "random", "set permissions randomly",         0, AV_OPT_TYPE_CONST, {.i64 = MODE_RANDOM},          0, 0, TFLAGS, "mode" },
+    { "mode", "select permissions mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64 = MODE_NONE}, MODE_NONE, NB_MODES-1, TFLAGS, .unit = "mode" },
+        { "none",   "do nothing",                       0, AV_OPT_TYPE_CONST, {.i64 = MODE_NONE},            0, 0, TFLAGS, .unit = "mode" },
+        { "ro",     "set all output frames read-only",  0, AV_OPT_TYPE_CONST, {.i64 = MODE_RO},              0, 0, TFLAGS, .unit = "mode" },
+        { "rw",     "set all output frames writable",   0, AV_OPT_TYPE_CONST, {.i64 = MODE_RW},              0, 0, TFLAGS, .unit = "mode" },
+        { "toggle", "switch permissions",               0, AV_OPT_TYPE_CONST, {.i64 = MODE_TOGGLE},          0, 0, TFLAGS, .unit = "mode" },
+        { "random", "set permissions randomly",         0, AV_OPT_TYPE_CONST, {.i64 = MODE_RANDOM},          0, 0, TFLAGS, .unit = "mode" },
     { "seed", "set the seed for the random mode", OFFSET(random_seed), AV_OPT_TYPE_INT64, {.i64 = -1}, -1, UINT32_MAX, FLAGS },
     { NULL }
 };
@@ -125,16 +125,16 @@ static const AVFilterPad aperms_inputs[] = {
     },
 };
 
-const AVFilter ff_af_aperms = {
-    .name        = "aperms",
-    .description = NULL_IF_CONFIG_SMALL("Set permissions for the output audio frame."),
-    .priv_class  = &perms_class,
+const FFFilter ff_af_aperms = {
+    .p.name      = "aperms",
+    .p.description= NULL_IF_CONFIG_SMALL("Set permissions for the output audio frame."),
+    .p.priv_class= &perms_class,
+    .p.flags     = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
+                   AVFILTER_FLAG_METADATA_ONLY,
     .init        = init,
     .priv_size   = sizeof(PermsContext),
     FILTER_INPUTS(aperms_inputs),
     FILTER_OUTPUTS(ff_audio_default_filterpad),
-    .flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
-                   AVFILTER_FLAG_METADATA_ONLY,
     .process_command = ff_filter_process_command,
 };
 #endif /* CONFIG_APERMS_FILTER */
@@ -149,16 +149,16 @@ static const AVFilterPad perms_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_perms = {
-    .name        = "perms",
-    .description = NULL_IF_CONFIG_SMALL("Set permissions for the output video frame."),
+const FFFilter ff_vf_perms = {
+    .p.name        = "perms",
+    .p.description = NULL_IF_CONFIG_SMALL("Set permissions for the output video frame."),
+    .p.priv_class  = &perms_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
+                     AVFILTER_FLAG_METADATA_ONLY,
     .init        = init,
     .priv_size   = sizeof(PermsContext),
     FILTER_INPUTS(perms_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
-    .priv_class  = &perms_class,
-    .flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |
-                   AVFILTER_FLAG_METADATA_ONLY,
     .process_command = ff_filter_process_command,
 };
 #endif /* CONFIG_PERMS_FILTER */

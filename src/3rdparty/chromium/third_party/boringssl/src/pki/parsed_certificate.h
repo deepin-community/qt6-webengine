@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_PARSED_CERTIFICATE_H_
 #define BSSL_PKI_PARSED_CERTIFICATE_H_
@@ -11,13 +21,14 @@
 #include <vector>
 
 #include <openssl/base.h>
+#include <openssl/span.h>
 
 #include "certificate_policies.h"
 #include "input.h"
 #include "parse_certificate.h"
 #include "signature_algorithm.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 struct GeneralNames;
 class NameConstraints;
@@ -76,15 +87,15 @@ class OPENSSL_EXPORT ParsedCertificate {
   ParsedCertificate &operator=(const ParsedCertificate &) = delete;
 
   // Returns the DER-encoded certificate data for this cert.
-  const der::Input &der_cert() const { return cert_; }
+  der::Input der_cert() const { return cert_; }
 
   // Returns the CRYPTO_BUFFER backing this object.
   CRYPTO_BUFFER *cert_buffer() const { return cert_data_.get(); }
 
   // Accessors for raw fields of the Certificate.
-  const der::Input &tbs_certificate_tlv() const { return tbs_certificate_tlv_; }
+  der::Input tbs_certificate_tlv() const { return tbs_certificate_tlv_; }
 
-  const der::Input &signature_algorithm_tlv() const {
+  der::Input signature_algorithm_tlv() const {
     return signature_algorithm_tlv_;
   }
 
@@ -107,7 +118,7 @@ class OPENSSL_EXPORT ParsedCertificate {
   // Sequence tag). This is guaranteed to be valid DER, though the contents of
   // unhandled string types are treated as raw bytes.
   der::Input normalized_subject() const {
-    return der::Input(normalized_subject_);
+    return StringAsBytes(normalized_subject_);
   }
   // Returns the DER-encoded raw issuer value (including the outer sequence
   // tag). This is guaranteed to be valid DER, though the contents of unhandled
@@ -117,7 +128,7 @@ class OPENSSL_EXPORT ParsedCertificate {
   // Sequence tag). This is guaranteed to be valid DER, though the contents of
   // unhandled string types are treated as raw bytes.
   der::Input normalized_issuer() const {
-    return der::Input(normalized_issuer_);
+    return StringAsBytes(normalized_issuer_);
   }
 
   // Returns true if the certificate has a BasicConstraints extension.
@@ -245,7 +256,7 @@ class OPENSSL_EXPORT ParsedCertificate {
 
   // Gets the value for extension matching |extension_oid|. Returns false if the
   // extension is not present.
-  bool GetExtension(const der::Input &extension_oid,
+  bool GetExtension(der::Input extension_oid,
                     ParsedExtension *parsed_extension) const;
 
  private:
@@ -323,6 +334,6 @@ class OPENSSL_EXPORT ParsedCertificate {
   ExtensionsMap extensions_;
 };
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_PARSED_CERTIFICATE_H_

@@ -6,7 +6,9 @@
 #define UI_ACTIONS_ACTIONS_H_
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -17,8 +19,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/actions/action_id.h"
+#include "ui/actions/action_utils.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/class_property.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -133,6 +135,220 @@ class COMPONENT_EXPORT(ACTIONS) ActionInvocationContext
   static ContextBuilder Builder();
 };
 
+template <typename BuilderT, typename ActionItemClass>
+class BaseActionItemBuilderT {
+ public:
+  using ChildList = std::vector<std::unique_ptr<BuilderT>>;
+  using ActionChangedCallback = ui::metadata::PropertyChangedCallback;
+  using InvokeActionCallback =
+      base::RepeatingCallback<void(ActionItem*, ActionInvocationContext)>;
+  BaseActionItemBuilderT() {
+    action_item_ = std::make_unique<ActionItemClass>();
+  }
+  explicit BaseActionItemBuilderT(InvokeActionCallback callback) {
+    action_item_ = std::make_unique<ActionItemClass>(std::move(callback));
+  }
+  BaseActionItemBuilderT(BaseActionItemBuilderT&&) = default;
+  BaseActionItemBuilderT& operator=(BaseActionItemBuilderT&&) = default;
+  ~BaseActionItemBuilderT() = default;
+
+  // Build an action.
+  static BuilderT Builder(InvokeActionCallback callback) {
+    return BuilderT(std::move(callback));
+  }
+  static BuilderT Builder() { return BuilderT(); }
+
+  BuilderT& AddChild(BuilderT&& child_item) & {
+    children_.emplace_back(child_item.Release());
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& AddChild(BuilderT&& child_item) && {
+    return std::move(this->AddChild(std::move(child_item)));
+  }
+
+  template <typename Child, typename... Types>
+  BuilderT& AddChildren(Child&& child, Types&&... args) & {
+    return AddChildrenImpl(&child, &args...);
+  }
+
+  template <typename Child, typename... Types>
+  BuilderT&& AddChildren(Child&& child, Types&&... args) && {
+    return std::move(this->AddChildrenImpl(&child, &args...));
+  }
+
+  template <typename ActionPtr>
+  BuilderT& CopyAddressTo(ActionPtr* action_address) & {
+    *action_address = action_item_.get();
+    return static_cast<BuilderT&>(*this);
+  }
+
+  template <typename ActionPtr>
+  BuilderT&& CopyAddressTo(ActionPtr* action_address) && {
+    return std::move(this->CopyAddressTo(action_address));
+  }
+
+  template <typename Action>
+  BuilderT& CopyWeakPtrTo(base::WeakPtr<Action>* weak_ptr) & {
+    *weak_ptr = action_item_->GetAsWeakPtr();
+    return static_cast<BuilderT&>(*this);
+  }
+
+  template <typename Action>
+  BuilderT&& CopyWeakPtrTo(base::WeakPtr<Action>* weak_ptr) && {
+    return std::move(this->CopyWeakPtrTo(weak_ptr));
+  }
+
+  template <typename T>
+  BuilderT& SetProperty(const ui::ClassProperty<T>* property,
+                        ui::metadata::ArgType<T> value) & {
+    action_item_->SetProperty(property, value);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  template <typename T>
+  BuilderT&& SetProperty(const ui::ClassProperty<T>* property,
+                         ui::metadata::ArgType<T> value) && {
+    return std::move(this->SetProperty(property, value));
+  }
+
+  BuilderT& SetAccessibleName(const std::u16string accessible_name) & {
+    action_item_->SetAccessibleName(accessible_name);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetAccessibleName(const std::u16string accessible_name) && {
+    return std::move(this->SetAccessibleName(accessible_name));
+  }
+
+  BuilderT& SetActionId(std::optional<ActionId> action_id) & {
+    action_item_->SetActionId(action_id);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetActionId(std::optional<ActionId> action_id) && {
+    return std::move(this->SetActionId(action_id));
+  }
+
+  BuilderT& SetAccelerator(ui::Accelerator accelerator) & {
+    action_item_->SetAccelerator(accelerator);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetAccelerator(ui::Accelerator accelerator) && {
+    return std::move(this->SetAccelerator(accelerator));
+  }
+
+  BuilderT& SetChecked(bool checked) & {
+    action_item_->SetChecked(checked);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetChecked(bool checked) && {
+    return std::move(this->SetChecked(checked));
+  }
+
+  BuilderT& SetEnabled(bool enabled) & {
+    action_item_->SetEnabled(enabled);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetEnabled(bool enabled) && {
+    return std::move(this->SetEnabled(enabled));
+  }
+
+  BuilderT& SetGroupId(std::optional<int> group_id) & {
+    action_item_->SetGroupId(group_id);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetGroupId(std::optional<int> group_id) && {
+    return std::move(this->SetGroupId(group_id));
+  }
+
+  BuilderT& SetImage(const ui::ImageModel& image) & {
+    action_item_->SetImage(image);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetImage(const ui::ImageModel& image) && {
+    return std::move(this->SetImage(image));
+  }
+
+  BuilderT& SetText(std::u16string_view text) & {
+    action_item_->SetText(text);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetText(std::u16string_view text) && {
+    return std::move(this->SetText(text));
+  }
+
+  BuilderT& SetTooltipText(std::u16string_view tooltip) & {
+    action_item_->SetTooltipText(tooltip);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetTooltipText(std::u16string_view tooltip) && {
+    return std::move(this->SetTooltipText(tooltip));
+  }
+
+  BuilderT& SetVisible(bool visible) & {
+    action_item_->SetVisible(visible);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetVisible(bool visible) && {
+    return std::move(this->SetVisible(visible));
+  }
+
+  BuilderT& SetInvokeActionCallback(InvokeActionCallback callback) & {
+    action_item_->SetInvokeActionCallback(std::move(callback));
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetInvokeActionCallback(InvokeActionCallback callback) && {
+    return std::move(this->SetInvokeActionCallback(std::move(callback)));
+  }
+
+  BuilderT& SetIsShowingBubble(bool showing_bubble) & {
+    action_item_->SetIsShowingBubble(showing_bubble);
+    return static_cast<BuilderT&>(*this);
+  }
+
+  BuilderT&& SetIsShowingBubble(bool showing_bubble) && {
+    return std::move(this->SetIsShowingBubble(showing_bubble));
+  }
+
+  [[nodiscard]] std::unique_ptr<ActionItemClass> Build() && {
+    CreateChildren();
+    return std::move(action_item_);
+  }
+
+ protected:
+  template <typename... Args>
+  BuilderT& AddChildrenImpl(Args*... args) & {
+    std::vector<BuilderT*> children = {args...};
+    for (auto* child : children) {
+      children_.emplace_back(child->Release());
+    }
+    return static_cast<BuilderT&>(*this);
+  }
+  void CreateChildren() {
+    for (auto& child : children_) {
+      action_item_->AddChild(std::move(*child).Build());
+    }
+  }
+  [[nodiscard]] std::unique_ptr<BuilderT> Release() {
+    return std::make_unique<BuilderT>(std::move(static_cast<BuilderT&>(*this)));
+  }
+
+  // Owned and meaningful during the Builder building process. Its
+  // ownership will be transferred out upon Build() call.
+  std::unique_ptr<ActionItemClass> action_item_;
+  ChildList children_;
+};
+
 class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   METADATA_HEADER(ActionItem, BaseAction)
 
@@ -141,96 +357,12 @@ class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   using InvokeActionCallback =
       base::RepeatingCallback<void(ActionItem*, ActionInvocationContext)>;
 
-  class COMPONENT_EXPORT(ACTIONS) ActionItemBuilder {
-   public:
-    using ChildList = std::vector<std::unique_ptr<ActionItemBuilder>>;
-    ActionItemBuilder();
-    explicit ActionItemBuilder(InvokeActionCallback callback);
-    ActionItemBuilder(ActionItemBuilder&&);
-    ActionItemBuilder& operator=(ActionItemBuilder&&);
-    ~ActionItemBuilder();
-
-    ActionItemBuilder& AddChild(ActionItemBuilder&& child_item) &;
-    ActionItemBuilder&& AddChild(ActionItemBuilder&& child_item) &&;
-    template <typename Child, typename... Types>
-    ActionItemBuilder& AddChildren(Child&& child, Types&&... args) & {
-      return AddChildrenImpl(&child, &args...);
-    }
-    template <typename Child, typename... Types>
-    ActionItemBuilder&& AddChildren(Child&& child, Types&&... args) && {
-      return std::move(this->AddChildrenImpl(&child, &args...));
-    }
-    template <typename ActionPtr>
-    ActionItemBuilder& CopyAddressTo(ActionPtr* action_address) & {
-      *action_address = action_item_.get();
-      return *this;
-    }
-    template <typename ActionPtr>
-    ActionItemBuilder&& CopyAddressTo(ActionPtr* action_address) && {
-      return std::move(this->CopyAddressTo(action_address));
-    }
-    template <typename Action>
-    ActionItemBuilder& CopyWeakPtrTo(base::WeakPtr<Action>* weak_ptr) & {
-      *weak_ptr = action_item_->GetAsWeakPtr();
-      return *this;
-    }
-    template <typename Action>
-    ActionItemBuilder&& CopyWeakPtrTo(base::WeakPtr<Action>* weak_ptr) && {
-      return std::move(this->CopyWeakPtrTo(weak_ptr));
-    }
-
-    template <typename T>
-    ActionItemBuilder& SetProperty(const ui::ClassProperty<T>* property,
-                                   ui::metadata::ArgType<T> value) & {
-      action_item_->SetProperty(property, value);
-      return *this;
-    }
-    template <typename T>
-    ActionItemBuilder&& SetProperty(const ui::ClassProperty<T>* property,
-                                    ui::metadata::ArgType<T> value) && {
-      return std::move(this->SetProperty(property, value));
-    }
-    ActionItemBuilder& SetAccessibleName(
-        const std::u16string accessible_name) &;
-    ActionItemBuilder&& SetAccessibleName(
-        const std::u16string accessible_name) &&;
-    ActionItemBuilder& SetActionId(absl::optional<ActionId> action_id) &;
-    ActionItemBuilder&& SetActionId(absl::optional<ActionId> action_id) &&;
-    ActionItemBuilder& SetAccelerator(ui::Accelerator accelerator) &;
-    ActionItemBuilder&& SetAccelerator(ui::Accelerator accelerator) &&;
-    ActionItemBuilder& SetChecked(bool checked) &;
-    ActionItemBuilder&& SetChecked(bool checked) &&;
-    ActionItemBuilder& SetEnabled(bool enabled) &;
-    ActionItemBuilder&& SetEnabled(bool enabled) &&;
-    ActionItemBuilder& SetGroupId(absl::optional<int> group_id) &;
-    ActionItemBuilder&& SetGroupId(absl::optional<int> group_id) &&;
-    ActionItemBuilder& SetImage(const ui::ImageModel& image) &;
-    ActionItemBuilder&& SetImage(const ui::ImageModel& image) &&;
-    ActionItemBuilder& SetText(const std::u16string& text) &;
-    ActionItemBuilder&& SetText(const std::u16string& text) &&;
-    ActionItemBuilder& SetTooltipText(const std::u16string& tooltip) &;
-    ActionItemBuilder&& SetTooltipText(const std::u16string& tooltip) &&;
-    ActionItemBuilder& SetVisible(bool visible) &;
-    ActionItemBuilder&& SetVisible(bool visible) &&;
-    ActionItemBuilder& SetInvokeActionCallback(InvokeActionCallback callback) &;
-    ActionItemBuilder&& SetInvokeActionCallback(
-        InvokeActionCallback callback) &&;
-    [[nodiscard]] std::unique_ptr<ActionItem> Build() &&;
-
-   private:
-    template <typename... Args>
-    ActionItemBuilder& AddChildrenImpl(Args*... args) & {
-      std::vector<ActionItemBuilder*> children = {args...};
-      for (auto* child : children) {
-        children_.emplace_back(child->Release());
-      }
-      return *this;
-    }
-    void CreateChildren();
-    [[nodiscard]] std::unique_ptr<ActionItemBuilder> Release();
-
-    std::unique_ptr<ActionItem> action_item_;
-    ChildList children_;
+  class COMPONENT_EXPORT(ACTIONS) ActionItemBuilder
+      : public BaseActionItemBuilderT<ActionItemBuilder, ActionItem> {
+    // TODO: possibly construct a Core class of
+    // ctors to avoid writing this in every derived
+    // class.
+    using BaseActionItemBuilderT::BaseActionItemBuilderT;
   };
 
   ActionItem();
@@ -240,31 +372,35 @@ class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   ~ActionItem() override;
 
   // Build an action.
-  static ActionItemBuilder Builder(InvokeActionCallback callback);
-  static ActionItemBuilder Builder();
+  static ActionItemBuilder Builder() { return ActionItemBuilder(); }
+  static ActionItemBuilder Builder(InvokeActionCallback callback) {
+    return ActionItemBuilder(std::move(callback));
+  }
 
   // Configure action states and attributes.
-  std::u16string GetAccessibleName() const;
-  void SetAccessibleName(const std::u16string accessible_name);
-  absl::optional<ActionId> GetActionId() const;
-  void SetActionId(absl::optional<ActionId> action_id);
+  std::u16string_view GetAccessibleName() const;
+  void SetAccessibleName(std::u16string_view accessible_name);
+  std::optional<ActionId> GetActionId() const;
+  void SetActionId(std::optional<ActionId> action_id);
   ui::Accelerator GetAccelerator() const;
   void SetAccelerator(ui::Accelerator accelerator);
   bool GetChecked() const;
   void SetChecked(bool checked);
   bool GetEnabled() const;
   void SetEnabled(bool enabled);
-  absl::optional<int> GetGroupId() const;
-  void SetGroupId(absl::optional<int> group_id);
+  std::optional<int> GetGroupId() const;
+  void SetGroupId(std::optional<int> group_id);
   const ui::ImageModel& GetImage() const;
   void SetImage(const ui::ImageModel& image);
-  const std::u16string GetText() const;
-  void SetText(const std::u16string& text);
-  const std::u16string GetTooltipText() const;
-  void SetTooltipText(const std::u16string& tooltip);
+  std::u16string_view GetText() const;
+  void SetText(std::u16string_view text);
+  std::u16string_view GetTooltipText() const;
+  void SetTooltipText(std::u16string_view tooltip);
   bool GetVisible() const;
   void SetVisible(bool visible);
   void SetInvokeActionCallback(InvokeActionCallback callback);
+  bool GetIsShowingBubble() const;
+  void SetIsShowingBubble(bool showing_bubble);
 
   [[nodiscard]] base::CallbackListSubscription AddActionChangedCallback(
       ActionChangedCallback callback);
@@ -276,13 +412,16 @@ class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   // ActionChanged callbacks for each state change.
   [[nodiscard]] ScopedActionUpdate BeginUpdate();
 
+  // ui::PropertyHandler:
+  void AfterPropertyChange(const void* key, int64_t old_value) override;
+
   // Invoke an action.
   void InvokeAction(
       ActionInvocationContext context = ActionInvocationContext());
 
   // Get action metrics.
   int GetInvokeCount() const;
-  absl::optional<base::TimeTicks> GetLastInvokeTime() const;
+  std::optional<base::TimeTicks> GetLastInvokeTime() const;
 
   base::WeakPtr<ActionItem> GetAsWeakPtr();
 
@@ -302,11 +441,11 @@ class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   int updating_ = 0;
   bool updated_ = false;
   std::u16string accessible_name_;
-  absl::optional<ActionId> action_id_;
+  std::optional<ActionId> action_id_;
   ui::Accelerator accelerator_;
   bool checked_ = false;
   bool enabled_ = true;
-  absl::optional<int> group_id_;
+  std::optional<int> group_id_;
   bool visible_ = true;
   std::u16string text_;
   std::u16string tooltip_;
@@ -314,8 +453,59 @@ class COMPONENT_EXPORT(ACTIONS) ActionItem : public BaseAction {
   Synonyms synonyms_;
   InvokeActionCallback callback_;
   int invoke_count_ = 0;
-  absl::optional<base::TimeTicks> last_invoke_time_;
+  std::optional<base::TimeTicks> last_invoke_time_;
+  // Represents whether this action is currently showing associated ephemeral
+  // UI. Pinned action buttons which execute on mouse release won't execute if
+  // `is_showing_bubble_` was true on mouse press. Used to avoid immediately
+  // re-triggering actions when mouse press was intended to dismiss their
+  // ephemeral UI.
+  // TODO(b/361251892): Rename this to appropriately reflect bubbles that do not
+  // close on deactivate.
+  bool is_showing_bubble_ = false;
   base::WeakPtrFactory<ActionItem> weak_ptr_factory_{this};
+};
+
+// TODO(crbug.com/375261318): Make it so that this ActionItem descendant can
+// also be subclassed along with the builder.
+// A subclass of ActionItem that has an additional image that reflects the
+// current state of the action.
+class COMPONENT_EXPORT(ACTIONS) StatefulImageActionItem : public ActionItem {
+  METADATA_HEADER(StatefulImageActionItem, ActionItem)
+
+ public:
+  using ActionItem::ActionItem;
+  ~StatefulImageActionItem() override;
+
+  class StatefulImageActionItemBuilder
+      : public BaseActionItemBuilderT<StatefulImageActionItemBuilder,
+                                      StatefulImageActionItem> {
+   public:
+    using BaseActionItemBuilderT::BaseActionItemBuilderT;
+
+    StatefulImageActionItemBuilder& SetStatefulImage(
+        const ui::ImageModel& image) & {
+      action_item_->SetStatefulImage(image);
+      return *this;
+    }
+
+    StatefulImageActionItemBuilder&& SetStatefulImage(
+        const ui::ImageModel& image) && {
+      return std::move(this->SetStatefulImage(image));
+    }
+  };
+
+  static StatefulImageActionItemBuilder Builder() {
+    return StatefulImageActionItemBuilder();
+  }
+  static StatefulImageActionItemBuilder Builder(InvokeActionCallback callback) {
+    return StatefulImageActionItemBuilder(std::move(callback));
+  }
+
+  const ui::ImageModel& GetStatefulImage() const;
+  void SetStatefulImage(const ui::ImageModel& image);
+
+ private:
+  ui::ImageModel stateful_image_;
 };
 
 class COMPONENT_EXPORT(ACTIONS) ActionManager
@@ -391,14 +581,14 @@ class COMPONENT_EXPORT(ACTIONS) ActionIdMap {
 
   // Searches existing maps for the given ActionId and returns the corresponding
   // string if found, otherwise returns an empty string.
-  static absl::optional<std::string> ActionIdToString(const ActionId action_id);
+  static std::optional<std::string> ActionIdToString(const ActionId action_id);
   // Searches existing maps for the given string and returns the corresponding
   // ActionId if found, otherwise returns kActionsEnd.
-  static absl::optional<ActionId> StringToActionId(
+  static std::optional<ActionId> StringToActionId(
       const std::string action_id_string);
-  static std::vector<absl::optional<std::string>> ActionIdsToStrings(
+  static std::vector<std::optional<std::string>> ActionIdsToStrings(
       std::vector<ActionId> action_ids);
-  static std::vector<absl::optional<ActionId>> StringsToActionIds(
+  static std::vector<std::optional<ActionId>> StringsToActionIds(
       std::vector<std::string> action_id_strings);
 
   static void AddActionIdToStringMappings(ActionIdToStringMap map);
@@ -416,14 +606,15 @@ class COMPONENT_EXPORT(ACTIONS) ActionIdMap {
   template <typename T, typename U>
   static void MergeMaps(base::flat_map<T, U>& map1, base::flat_map<T, U>& map2);
 
-  static absl::optional<ActionIdToStringMap>& GetGlobalActionIdToStringMap();
-  static absl::optional<StringToActionIdMap>& GetGlobalStringToActionIdMap();
+  static std::optional<ActionIdToStringMap>& GetGlobalActionIdToStringMap();
+  static std::optional<StringToActionIdMap>& GetGlobalStringToActionIdMap();
   static ActionIdToStringMap& GetActionIdToStringMap();
   static StringToActionIdMap& GetStringToActionIdMap();
 };
 
 COMPONENT_EXPORT(ACTIONS)
-extern const ui::ClassProperty<bool>* const kActionItemPinnableKey;
+extern const ui::ClassProperty<
+    std::underlying_type_t<ActionPinnableState>>* const kActionItemPinnableKey;
 
 }  // namespace actions
 

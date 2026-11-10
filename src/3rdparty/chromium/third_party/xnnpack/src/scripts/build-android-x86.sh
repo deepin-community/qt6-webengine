@@ -50,7 +50,7 @@ CMAKE_ARGS+=("-DHAVE_STD_REGEX=0")
 # Android-specific options
 CMAKE_ARGS+=("-DANDROID_NDK=$ANDROID_NDK")
 CMAKE_ARGS+=("-DANDROID_ABI=x86")
-CMAKE_ARGS+=("-DANDROID_PLATFORM=android-14")
+CMAKE_ARGS+=("-DANDROID_PLATFORM=android-24")
 CMAKE_ARGS+=("-DANDROID_PIE=ON")
 CMAKE_ARGS+=("-DANDROID_STL=c++_static")
 CMAKE_ARGS+=("-DANDROID_CPP_FEATURES=exceptions")
@@ -64,7 +64,7 @@ cd build/android/x86 && cmake ../../.. \
 # Cross-platform parallel build
 if [ "$(uname)" == "Darwin" ]
 then
-  cmake --build . -- "-j$(sysctl -n hw.ncpu)"
+  cmake --build . -- "-j$((2*$(sysctl -n hw.ncpu)))"
 else
-  cmake --build . -- "-j$(nproc)"
+  cmake --build . -- "-j$((2*$(nproc)))"
 fi

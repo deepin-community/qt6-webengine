@@ -4,11 +4,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <xmmintrin.h>
 
-#include <xnnpack/conv.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/conv.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_f32_conv_hwc2chw_ukernel_3x3s2p1c3x4__sse_1x1(
@@ -24,7 +28,7 @@ void xnn_f32_conv_hwc2chw_ukernel_3x3s2p1c3x4__sse_1x1(
     size_t output_channels,
     size_t output_height_stride,
     size_t output_channel_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(input_width != 0);
   assert(output_y_end > output_y_start);
@@ -46,8 +50,10 @@ void xnn_f32_conv_hwc2chw_ukernel_3x3s2p1c3x4__sse_1x1(
     i0 = zero;
   }
 
-  const __m128 vmin = _mm_load_ps(params->sse.min);
-  const __m128 vmax = _mm_load_ps(params->sse.max);
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   for (size_t output_y = output_y_start; output_y < output_y_end; output_y += 1) {
     const size_t input_y2 = output_y * 2 + 2 - input_padding_top;

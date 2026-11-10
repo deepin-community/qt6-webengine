@@ -98,7 +98,7 @@ void BackgroundSyncContextImpl::OneShotSyncServiceHadConnectionError(
   DCHECK(service);
 
   auto iter = one_shot_sync_services_.find(service);
-  DCHECK(iter != one_shot_sync_services_.end());
+  CHECK(iter != one_shot_sync_services_.end());
   one_shot_sync_services_.erase(iter);
 }
 
@@ -108,7 +108,7 @@ void BackgroundSyncContextImpl::PeriodicSyncServiceHadConnectionError(
   DCHECK(service);
 
   auto iter = periodic_sync_services_.find(service);
-  DCHECK(iter != periodic_sync_services_.end());
+  CHECK(iter != periodic_sync_services_.end());
   periodic_sync_services_.erase(iter);
 }
 

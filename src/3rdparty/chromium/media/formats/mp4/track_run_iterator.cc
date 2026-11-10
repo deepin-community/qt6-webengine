@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp4/track_run_iterator.h"
 
 #include <algorithm>
@@ -287,14 +292,14 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
   for (size_t i = 0; i < moof.tracks.size(); i++) {
     const TrackFragment& traf = moof.tracks[i];
 
-    const Track* trak = NULL;
+    const Track* trak = nullptr;
     for (size_t t = 0; t < moov_->tracks.size(); t++) {
       if (moov_->tracks[t].header.track_id == traf.header.track_id)
         trak = &moov_->tracks[t];
     }
     RCHECK(trak);
 
-    const TrackExtends* trex = NULL;
+    const TrackExtends* trex = nullptr;
     for (size_t t = 0; t < moov_->extends.tracks.size(); t++) {
       if (moov_->extends.tracks[t].track_id == traf.header.track_id)
         trex = &moov_->extends.tracks[t];
@@ -381,9 +386,12 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
         tri.encryption_scheme = sinf->IsCbcsEncryptionScheme()
                                     ? EncryptionScheme::kCbcs
                                     : EncryptionScheme::kCenc;
-        tri.encryption_pattern =
-            EncryptionPattern(track_encryption->default_crypt_byte_block,
-                              track_encryption->default_skip_byte_block);
+        auto pattern = EncryptionPattern::Create(
+            track_encryption->default_crypt_byte_block,
+            track_encryption->default_skip_byte_block);
+        RCHECK_MEDIA_LOGGED(pattern.has_value(), media_log_,
+                            "Invalid encryption pattern.");
+        tri.encryption_pattern = *pattern;
       }
 
       // Initialize aux_info variables only if no sample encryption entries.
@@ -426,7 +434,7 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
 
       // Avoid allocating insane sample counts for invalid media.
       size_t max_sample_count =
-          GetDemuxerMemoryLimit(Demuxer::DemuxerTypes::kChunkDemuxer) /
+          GetDemuxerMemoryLimit(DemuxerType::kChunkDemuxer) /
           sizeof(decltype(tri.samples)::value_type);
 
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
@@ -778,9 +786,13 @@ std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
         (index == 0)
             ? track_encryption().default_skip_byte_block
             : GetSampleEncryptionInfoEntry(*run_itr_, index)->skip_byte_block;
+    auto pattern = EncryptionPattern::Create(encrypt_blocks, skip_blocks);
+    if (!pattern) {
+      MEDIA_LOG(ERROR, media_log_) << "Invalid encryption pattern.";
+      return nullptr;
+    }
     return DecryptConfig::CreateCbcsConfig(
-        key_id, iv, sample_encryption_entry.subsamples,
-        EncryptionPattern(encrypt_blocks, skip_blocks));
+        key_id, iv, sample_encryption_entry.subsamples, *pattern);
   }
 
   return DecryptConfig::CreateCencConfig(key_id, iv,

@@ -18,7 +18,7 @@
 
 namespace openscreen::cast {
 
-using ::cast::channel::CastMessage;
+using proto::CastMessage;
 
 using ::testing::_;
 
@@ -81,9 +81,9 @@ class CastAppDiscoveryServiceImplTest : public ::testing::Test {
   MockSocketErrorHandler mock_error_handler_;
   VirtualConnectionRouter router_;
   FakeClock clock_{Clock::now()};
-  FakeTaskRunner task_runner_{&clock_};
-  CastPlatformClient platform_client_{&router_, &FakeClock::now, task_runner_};
-  CastAppDiscoveryServiceImpl app_discovery_service_{&platform_client_,
+  FakeTaskRunner task_runner_{clock_};
+  CastPlatformClient platform_client_{router_, &FakeClock::now, task_runner_};
+  CastAppDiscoveryServiceImpl app_discovery_service_{platform_client_,
                                                      &FakeClock::now};
 
   CastMediaSource source_a_1_{"cast:AAA?clientId=1", {"AAA"}};
@@ -112,7 +112,7 @@ TEST_F(CastAppDiscoveryServiceImplTest, StartObservingAvailability) {
   EXPECT_EQ(receivers1[0].unique_id, "receiverId1");
   EXPECT_EQ(receivers2[0].unique_id, "receiverId1");
 
-  // No more updates for |source_a_1_| (i.e. |receivers1|).
+  // No more updates for `source_a_1_` (i.e. `receivers1`).
   subscription1.Reset();
   platform_client_.RemoveReceiver(receiver_);
   app_discovery_service_.RemoveReceiver(receiver_);
@@ -149,14 +149,14 @@ TEST_F(CastAppDiscoveryServiceImplTest, AvailQueryUpdatedOnReceiverUpdate) {
   std::string sender_id;
   auto subscription1 = StartSourceA1Query(&receivers1, &request_id, &sender_id);
 
-  // Result set now includes |receiver_|.
+  // Result set now includes `receiver_`.
   CastMessage availability_response =
       CreateAppAvailableResponseChecked(request_id, sender_id, "AAA");
   EXPECT_TRUE(peer_socket().Send(availability_response).ok());
   ASSERT_EQ(receivers1.size(), 1u);
   EXPECT_EQ(receivers1[0].unique_id, "receiverId1");
 
-  // Updating |receiver_| causes |source_a_1_| query to be updated, but it's too
+  // Updating `receiver_` causes `source_a_1_` query to be updated, but it's too
   // soon for a new message to be sent.
   EXPECT_CALL(peer_client(), OnMessage(_, _)).Times(0);
   receiver_.friendly_name = "New Name";
@@ -228,7 +228,7 @@ TEST_F(CastAppDiscoveryServiceImplTest,
   EXPECT_CALL(peer_client(), OnMessage(_, _)).Times(0);
   AddOrUpdateReceiver(receiver_, socket_id_);
 
-  // Registering apps immediately sends requests to |receiver_|.
+  // Registering apps immediately sends requests to `receiver_`.
   int request_idA = -1;
   std::string sender_id = "";
   EXPECT_CALL(peer_client(), OnMessage(_, _))

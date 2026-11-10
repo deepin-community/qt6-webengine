@@ -5,6 +5,7 @@
 #include "components/pwg_encoder/bitmap_image.h"
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 
 namespace pwg_encoder {
 
@@ -17,7 +18,7 @@ BitmapImage::BitmapImage(const gfx::Size& size, Colorspace colorspace)
       colorspace_(colorspace),
       data_(new uint8_t[size.GetArea() * channels()]) {}
 
-BitmapImage::~BitmapImage() {}
+BitmapImage::~BitmapImage() = default;
 
 uint8_t BitmapImage::channels() const {
   return kCurrentlySupportedNumberOfChannels;
@@ -26,7 +27,8 @@ uint8_t BitmapImage::channels() const {
 const uint8_t* BitmapImage::GetPixel(const gfx::Point& point) const {
   DCHECK_LT(point.x(), size_.width());
   DCHECK_LT(point.y(), size_.height());
-  return data_.get() + (point.y() * size_.width() + point.x()) * channels();
+  return UNSAFE_TODO(data_.get() +
+                     (point.y() * size_.width() + point.x()) * channels());
 }
 
 }  // namespace pwg_encoder

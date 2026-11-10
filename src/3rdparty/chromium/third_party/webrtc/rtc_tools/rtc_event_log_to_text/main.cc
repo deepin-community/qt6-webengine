@@ -8,8 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include <stdio.h>
-
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -45,10 +44,10 @@ int main(int argc, char* argv[]) {
   std::vector<char*> args = absl::ParseCommandLine(argc, argv);
 
   // Print RTC_LOG warnings and errors even in release builds.
-  if (rtc::LogMessage::GetLogToDebug() > rtc::LS_WARNING) {
-    rtc::LogMessage::LogToDebug(rtc::LS_WARNING);
+  if (webrtc::LogMessage::GetLogToDebug() > webrtc::LS_WARNING) {
+    webrtc::LogMessage::LogToDebug(webrtc::LS_WARNING);
   }
-  rtc::LogMessage::SetLogToStderr(true);
+  webrtc::LogMessage::SetLogToStderr(true);
 
   webrtc::ParsedRtcEventLog::UnconfiguredHeaderExtensions header_extensions =
       webrtc::ParsedRtcEventLog::UnconfiguredHeaderExtensions::kDontParse;
@@ -68,7 +67,8 @@ int main(int argc, char* argv[]) {
     output = stdout;
   } else {
     // Print usage information.
-    std::cerr << absl::ProgramUsageMessage();
+    absl::string_view usage = absl::ProgramUsageMessage();
+    fwrite(usage.data(), usage.size(), 1, stderr);
     return 1;
   }
 

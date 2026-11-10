@@ -32,6 +32,7 @@
 
 #include <memory>
 
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -42,19 +43,17 @@
 #include "media/base/media_log.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
-#include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_dedicated_worker_host_factory_client.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/graphics/parkable_image_manager.h"
 #include "third_party/blink/renderer/platform/heap/blink_gc_memory_dump_provider.h"
-#include "third_party/blink/renderer/platform/heap/gc_task_runner.h"
 #include "third_party/blink/renderer/platform/heap/process_heap.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/canvas_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/instrumentation/memory_pressure_listener.h"
@@ -62,17 +61,11 @@
 #include "third_party/blink/renderer/platform/instrumentation/tracing/memory_cache_dump_provider.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_factory.h"
-#include "third_party/blink/renderer/platform/scheduler/common/simple_main_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/dummy_schedulers.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
-#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_helper.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
-#include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/webrtc/api/rtp_parameters.h"
-#include "third_party/webrtc/p2p/base/port_allocator.h"
 
 namespace blink {
 
@@ -132,8 +125,6 @@ class IdleDelayedTaskHelper : public base::SingleThreadTaskRunner {
 
 static Platform* g_platform = nullptr;
 
-static GCTaskRunner* g_gc_task_runner = nullptr;
-
 static bool did_initialize_blink_ = false;
 
 Platform::Platform() = default;
@@ -146,8 +137,8 @@ WebThemeEngine* Platform::ThemeEngine() {
 
 void Platform::InitializeBlink() {
   DCHECK(!did_initialize_blink_);
-  WTF::Partitions::Initialize();
-  WTF::Initialize();
+  Partitions::Initialize();
+  InitializeWtf();
   Length::Initialize();
   ProcessHeap::Init();
   ThreadState::AttachMainThread();
@@ -160,8 +151,7 @@ void Platform::InitializeMainThread(
   DCHECK(!g_platform);
   DCHECK(platform);
   g_platform = platform;
-  InitializeMainThreadCommon(platform,
-                             main_thread_scheduler->CreateMainThread());
+  InitializeMainThreadCommon(main_thread_scheduler->CreateMainThread());
 }
 
 void Platform::CreateMainThreadAndInitialize(Platform* platform) {
@@ -169,11 +159,10 @@ void Platform::CreateMainThreadAndInitialize(Platform* platform) {
   DCHECK(platform);
   g_platform = platform;
   InitializeBlink();
-  InitializeMainThreadCommon(platform, scheduler::CreateSimpleMainThread());
+  InitializeMainThreadCommon(scheduler::CreateSimpleMainThread());
 }
 
 void Platform::InitializeMainThreadCommon(
-    Platform* platform,
     std::unique_ptr<MainThread> main_thread) {
   DCHECK(did_initialize_blink_);
   MainThread::SetMainThread(std::move(main_thread));
@@ -192,8 +181,6 @@ void Platform::InitializeMainThreadCommon(
   font_family_names::Init();
   InitializePlatformLanguage();
 
-  DCHECK(!g_gc_task_runner);
-  g_gc_task_runner = new GCTaskRunner(Thread::MainThread());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       PartitionAllocMemoryDumpProvider::Instance(), "PartitionAlloc",
       base::SingleThreadTaskRunner::GetCurrentDefault());
@@ -222,7 +209,7 @@ void Platform::InitializeMainThreadCommon(
   // This relies on being called prior to
   // PartitionAllocSupport::ReconfigureAfterTaskRunnerInit, which would start
   // memory reclaimer with a regular task runner. The first one prevails.
-  WTF::Partitions::StartMemoryReclaimer(
+  Partitions::StartMemoryReclaimer(
       base::MakeRefCounted<IdleDelayedTaskHelper>());
 }
 
@@ -237,13 +224,13 @@ void Platform::CreateMainThreadForTesting() {
 }
 
 void Platform::SetMainThreadTaskRunnerForTesting() {
-  DCHECK(WTF::IsMainThread());
+  DCHECK(IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
   scheduler::SetMainThreadTaskRunnerForTesting();
 }
 
 void Platform::UnsetMainThreadTaskRunnerForTesting() {
-  DCHECK(WTF::IsMainThread());
+  DCHECK(IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
   scheduler::UnsetMainThreadTaskRunnerForTesting();
 }
@@ -311,7 +298,7 @@ Platform::SharedMainThreadContextProvider() {
   return nullptr;
 }
 
-scoped_refptr<cc::RasterContextProviderWrapper>
+scoped_refptr<viz::RasterContextProvider>
 Platform::SharedCompositorWorkerContextProvider(
     cc::RasterDarkModeFilter* dark_mode_filter) {
   return nullptr;
@@ -319,6 +306,10 @@ Platform::SharedCompositorWorkerContextProvider(
 
 scoped_refptr<gpu::GpuChannelHost> Platform::EstablishGpuChannelSync() {
   return nullptr;
+}
+
+bool Platform::IsGpuRemoteDisconnected() {
+  return false;
 }
 
 void Platform::EstablishGpuChannel(EstablishGpuChannelCallback callback) {

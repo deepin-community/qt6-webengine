@@ -11,25 +11,26 @@
 #ifndef UTIL_H_MODULE
 #define UTIL_H_MODULE
 
-#if defined (__cplusplus)
-extern "C" {
-#endif
-
-
 /*-****************************************
 *  Dependencies
 ******************************************/
 #include "platform.h"     /* PLATFORM_POSIX_VERSION, ZSTD_NANOSLEEP_SUPPORT, ZSTD_SETPRIORITY_SUPPORT */
 #include <stddef.h>       /* size_t, ptrdiff_t */
+#include <stdio.h>        /* FILE */
 #include <sys/types.h>    /* stat, utime */
 #include <sys/stat.h>     /* stat, chmod */
 #include "../lib/common/mem.h"          /* U64 */
-
+#if !(defined(_MSC_VER) || defined(__MINGW32__) || defined (__MSVCRT__))
+#include <libgen.h>
+#endif
 
 /*-************************************************************
-* Avoid fseek()'s 2GiB barrier with MSVC, macOS, *BSD, MinGW
+*  Fix fseek()'s 2GiB barrier with MSVC, macOS, *BSD, MinGW
 ***************************************************************/
-#if defined(_MSC_VER) && (_MSC_VER >= 1400)
+#if defined(LIBC_NO_FSEEKO)
+/* Some older libc implementations don't include these functions (e.g. Bionic < 24) */
+#  define UTIL_fseek fseek
+#elif defined(_MSC_VER) && (_MSC_VER >= 1400)
 #  define UTIL_fseek _fseeki64
 #elif !defined(__64BIT__) && (PLATFORM_POSIX_VERSION >= 200112L) /* No point defining Large file for 64 bit */
 #  define UTIL_fseek fseeko
@@ -38,7 +39,6 @@ extern "C" {
 #else
 #  define UTIL_fseek fseek
 #endif
-
 
 /*-*************************************************
 *  Sleep & priority functions: Windows - Posix - others
@@ -88,6 +88,10 @@ extern "C" {
 #endif
 
 
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
 /*-****************************************
 *  Console log
 ******************************************/
@@ -118,7 +122,6 @@ int UTIL_requireUserConfirmation(const char* prompt, const char* abortMsg, const
 #define STRDUP(s) _strdup(s)
 #else
 #define PATH_SEP '/'
-#include <libgen.h>
 #define STRDUP(s) strdup(s)
 #endif
 
@@ -181,6 +184,7 @@ int UTIL_fchmod(const int fd, char const* filename, const stat_t* statbuf, mode_
  * compute the needed information.
  */
 
+int UTIL_isFdRegularFile(int fd);
 int UTIL_isRegularFile(const char* infilename);
 int UTIL_isDirectory(const char* infilename);
 int UTIL_isSameFile(const char* file1, const char* file2);
@@ -188,6 +192,7 @@ int UTIL_isSameFileStat(const char* file1, const char* file2, const stat_t* file
 int UTIL_isCompressedFile(const char* infilename, const char *extensionList[]);
 int UTIL_isLink(const char* infilename);
 int UTIL_isFIFO(const char* infilename);
+int UTIL_isFileDescriptorPipe(const char* filename);
 
 /**
  * Returns with the given file descriptor is a console.
@@ -247,13 +252,13 @@ typedef struct
     size_t tableCapacity;
 } FileNamesTable;
 
-/*! UTIL_createFileNamesTable_fromFileName() :
+/*! UTIL_createFileNamesTable_fromFileList() :
  *  read filenames from @inputFileName, and store them into returned object.
  * @return : a FileNamesTable*, or NULL in case of error (ex: @inputFileName doesn't exist).
  *  Note: inputFileSize must be less than 50MB
  */
 FileNamesTable*
-UTIL_createFileNamesTable_fromFileName(const char* inputFileName);
+UTIL_createFileNamesTable_fromFileList(const char* inputFileName);
 
 /*! UTIL_assembleFileNamesTable() :
  *  This function takes ownership of its arguments, @filenames and @buf,

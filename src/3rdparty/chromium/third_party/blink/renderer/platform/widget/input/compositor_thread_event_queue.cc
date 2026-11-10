@@ -56,8 +56,7 @@ CompositorThreadEventQueue::~CompositorThreadEventQueue() {
 }
 
 void CompositorThreadEventQueue::Queue(
-    std::unique_ptr<EventWithCallback> new_event,
-    base::TimeTicks timestamp_now) {
+    std::unique_ptr<EventWithCallback> new_event) {
   if (queue_.empty() ||
       !IsContinuousGestureEvent(new_event->event().GetType()) ||
       !(queue_.back()->CanCoalesceWith(*new_event) ||
@@ -76,7 +75,7 @@ void CompositorThreadEventQueue::Queue(
   }
 
   if (queue_.back()->CanCoalesceWith(*new_event)) {
-    queue_.back()->CoalesceWith(new_event.get(), timestamp_now);
+    queue_.back()->CoalesceWith(new_event.get());
     return;
   }
 
@@ -102,13 +101,10 @@ void CompositorThreadEventQueue::Queue(
   queue_.pop_back();
 
   DCHECK(IsContinuousGestureEvent(last_event->event().GetType()));
-  DCHECK_LE(last_event->latency_info().trace_id(),
-            new_event->latency_info().trace_id());
 
   SetScrollOrPinchTraceId(last_event.get(), &oldest_scroll_trace_id,
                           &oldest_pinch_trace_id);
   oldest_latency = last_event->latency_info();
-  base::TimeTicks oldest_creation_timestamp = last_event->creation_timestamp();
   EventWithCallback::OriginalEventList combined_original_events;
   combined_original_events.splice(combined_original_events.end(),
                                   last_event->original_events());
@@ -123,16 +119,9 @@ void CompositorThreadEventQueue::Queue(
                              ToWebGestureEvent(queue_.back()->event()))) {
     second_last_event = std::move(queue_.back());
     queue_.pop_back();
-    // second_last_event's trace_id might not be less than last_event if we had
-    // both a scroll and a pinch previously in the queue and reordered them when
-    // coalescing with a new event to keep the invariant that a scroll happens
-    // before the pinch.
-    DCHECK_LE(second_last_event->latency_info().trace_id(),
-              new_event->latency_info().trace_id());
     SetScrollOrPinchTraceId(second_last_event.get(), &oldest_scroll_trace_id,
                             &oldest_pinch_trace_id);
     oldest_latency = second_last_event->latency_info();
-    oldest_creation_timestamp = second_last_event->creation_timestamp();
     combined_original_events.splice(combined_original_events.begin(),
                                     second_last_event->original_events());
   }
@@ -179,14 +168,12 @@ void CompositorThreadEventQueue::Queue(
   auto scroll_event = std::make_unique<EventWithCallback>(
       std::make_unique<WebCoalescedInputEvent>(
           std::move(coalesced_events.first), scroll_latency),
-      oldest_creation_timestamp, timestamp_now,
       std::move(scroll_original_events));
   scroll_event->set_coalesced_scroll_and_pinch();
 
   auto pinch_event = std::make_unique<EventWithCallback>(
       std::make_unique<WebCoalescedInputEvent>(
           std::move(coalesced_events.second), pinch_latency),
-      oldest_creation_timestamp, timestamp_now,
       std::move(pinch_original_events));
   pinch_event->set_coalesced_scroll_and_pinch();
 

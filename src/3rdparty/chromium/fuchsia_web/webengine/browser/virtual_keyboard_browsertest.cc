@@ -6,11 +6,14 @@
 #include <fidl/fuchsia.ui.input3/cpp/fidl.h>
 #include <lib/fit/function.h>
 
+#include <string_view>
+
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/koid.h"
 #include "base/fuchsia/scoped_service_binding.h"
 #include "base/fuchsia/test_component_context_for_process.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
@@ -114,7 +117,7 @@ class VirtualKeyboardTest : public WebEngineBrowserTest {
     command_line->AppendSwitch("allow-pre-commit-input");
   }
 
-  gfx::Point GetCoordinatesOfInputField(base::StringPiece id) {
+  gfx::Point GetCoordinatesOfInputField(std::string_view id) {
     // Distance to click from the top/left extents of an input field.
     constexpr int kInputFieldClickInset = 8;
 
@@ -148,7 +151,7 @@ class VirtualKeyboardTest : public WebEngineBrowserTest {
   std::optional<MockVirtualKeyboardControllerCreator> controller_creator_;
   std::unique_ptr<MockVirtualKeyboardController> controller_;
 
-  content::WebContents* web_contents_ = nullptr;
+  raw_ptr<content::WebContents> web_contents_ = nullptr;
 };
 
 // Verifies that RequestShow() is not called redundantly if the virtual
@@ -218,7 +221,7 @@ IN_PROC_BROWSER_TEST_F(VirtualKeyboardTest, ShowAndHideWithVisibility) {
 IN_PROC_BROWSER_TEST_F(VirtualKeyboardTest, InputModeMappings) {
   // Note that the service will elide type updates if there is no change,
   // so the array is ordered to produce an update on each entry.
-  const std::vector<std::pair<base::StringPiece, virtualkeyboard::TextType>>
+  const std::vector<std::pair<std::string_view, virtualkeyboard::TextType>>
       kInputTypeMappings = {
           {kInputFieldModeTel, virtualkeyboard::TextType::kPhone},
           {kInputFieldModeSearch, virtualkeyboard::TextType::kAlphanumeric},

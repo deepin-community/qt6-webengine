@@ -12,10 +12,21 @@
 
 #include <libdrm/drm_fourcc.h>
 #include <pipewire/pipewire.h>
-#include <spa/param/video/format-utils.h>
+#include <spa/param/format.h>
+#include <spa/param/param.h>
+#include <spa/pod/builder.h>
+#include <spa/pod/iter.h>
+#include <spa/pod/pod.h>
+#include <spa/pod/vararg.h>
+#include <spa/utils/type.h>
 
-#include <string>
+#include <cstdint>
+#include <optional>
+#include <tuple>
+#include <vector>
 
+#include "absl/strings/string_view.h"
+#include "rtc_base/string_encode.h"
 #include "rtc_base/string_to_number.h"
 
 #if !PW_CHECK_VERSION(0, 3, 29)
@@ -28,15 +39,15 @@
 namespace webrtc {
 
 PipeWireVersion PipeWireVersion::Parse(const absl::string_view& version) {
-  std::vector<absl::string_view> parsed_version = rtc::split(version, '.');
+  std::vector<absl::string_view> parsed_version = split(version, '.');
 
   if (parsed_version.size() != 3) {
     return {};
   }
 
-  absl::optional<int> major = rtc::StringToNumber<int>(parsed_version.at(0));
-  absl::optional<int> minor = rtc::StringToNumber<int>(parsed_version.at(1));
-  absl::optional<int> micro = rtc::StringToNumber<int>(parsed_version.at(2));
+  std::optional<int> major = StringToNumber<int>(parsed_version.at(0));
+  std::optional<int> minor = StringToNumber<int>(parsed_version.at(1));
+  std::optional<int> micro = StringToNumber<int>(parsed_version.at(2));
 
   // Return invalid version if we failed to parse it
   if (!major || !minor || !micro) {

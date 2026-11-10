@@ -17,12 +17,12 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/thread.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/media/media_stream_provider.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
@@ -75,6 +75,12 @@ class CONTENT_EXPORT AudioInputDeviceManager : public MediaStreamProvider {
   // Only accessed on Browser::IO thread.
   base::ObserverList<MediaStreamProviderListener>::Unchecked listeners_;
   blink::MediaStreamDevices devices_;
+
+  // Sessions for which Open() has been called and the asynchronous device
+  // query is still in flight. A session is removed from this set either when
+  // OpenedOnIOThread() runs or when Close() is called for it before that
+  // happens, in which case OpenedOnIOThread() will discard the result.
+  base::flat_set<base::UnguessableToken> pending_open_sessions_;
 
   const raw_ptr<media::AudioSystem> audio_system_;
 };

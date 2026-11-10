@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ref.h"
 #include "base/test/task_environment.h"
 #include "cc/paint/paint_image.h"
@@ -78,7 +79,7 @@ class ImageDecodeAcceleratorProxyTest : public ::testing::Test {
 TEST_F(ImageDecodeAcceleratorProxyTest, ScheduleImageDecodeSendsMessage) {
   const uint8_t image[4] = {1, 2, 3, 4};
   base::span<const uint8_t> encoded_data =
-      base::span<const uint8_t>(image, std::size(image));
+      UNSAFE_TODO(base::span<const uint8_t>(image, std::size(image)));
 
   const gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
 

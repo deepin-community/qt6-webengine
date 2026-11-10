@@ -45,12 +45,11 @@ class ProgramPipelineState;
 class ProgramBindings;
 class ProgramAliasedBindings;
 class Shader;
-struct ShaderVariableBuffer;
+struct AtomicCounterBuffer;
 struct VariableLocation;
 struct Version;
 
-using AtomicCounterBuffer = ShaderVariableBuffer;
-using ShaderUniform       = std::pair<ShaderType, const sh::ShaderVariable *>;
+using ShaderUniform = std::pair<ShaderType, const sh::ShaderVariable *>;
 
 // The link operation is responsible for finishing the link of uniform and interface blocks.
 // This way it can filter out unreferenced resources and still have access to the info.
@@ -274,6 +273,19 @@ class AtomicCounterBufferLinker final : angle::NonCopyable
     std::vector<AtomicCounterBuffer> *mAtomicCounterBuffersOut = nullptr;
 };
 
+class PixelLocalStorageLinker final : angle::NonCopyable
+{
+  public:
+    PixelLocalStorageLinker();
+    ~PixelLocalStorageLinker();
+
+    void init(std::vector<ShPixelLocalStorageFormat> *pixelLocalStorageFormatsOut);
+    void link(const std::vector<ShPixelLocalStorageFormat> &pixelLocalStorageFormats) const;
+
+  private:
+    std::vector<ShPixelLocalStorageFormat> *mPixelLocalStorageFormatsOut = nullptr;
+};
+
 struct ProgramLinkedResources
 {
     ProgramLinkedResources();
@@ -285,12 +297,14 @@ struct ProgramLinkedResources
               std::vector<std::string> *uniformMappedNamesOut,
               std::vector<InterfaceBlock> *shaderStorageBlocksOut,
               std::vector<BufferVariable> *bufferVariablesOut,
-              std::vector<AtomicCounterBuffer> *atomicCounterBuffersOut);
+              std::vector<AtomicCounterBuffer> *atomicCounterBuffersOut,
+              std::vector<ShPixelLocalStorageFormat> *pixelLocalStorageFormatsOut);
 
     ProgramVaryingPacking varyingPacking;
     UniformBlockLinker uniformBlockLinker;
     ShaderStorageBlockLinker shaderStorageBlockLinker;
     AtomicCounterBufferLinker atomicCounterBufferLinker;
+    PixelLocalStorageLinker pixelLocalStorageLinker;
     std::vector<UnusedUniform> unusedUniforms;
     std::vector<std::string> unusedInterfaceBlocks;
 };
@@ -343,6 +357,13 @@ using InterfaceBlockMap    = std::map<std::string, ShaderInterfaceBlock>;
 bool LinkValidateProgramGlobalNames(InfoLog &infoLog,
                                     const ProgramExecutable &executable,
                                     const LinkingVariables &linkingVariables);
+bool LinkValidateInOutNumberMatching(const std::vector<sh::ShaderVariable> &outputVaryings,
+                                     const std::vector<sh::ShaderVariable> &inputVaryings,
+                                     ShaderType frontShaderType,
+                                     ShaderType backShaderType,
+                                     int frontShaderVersion,
+                                     int backShaderVersion,
+                                     InfoLog &infoLog);
 bool LinkValidateShaderInterfaceMatching(const std::vector<sh::ShaderVariable> &outputVaryings,
                                          const std::vector<sh::ShaderVariable> &inputVaryings,
                                          ShaderType frontShaderType,

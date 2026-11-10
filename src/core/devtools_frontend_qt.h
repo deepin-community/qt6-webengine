@@ -1,5 +1,6 @@
 // Copyright (C) 2017 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef DEVTOOLS_FRONTEND_QT_H
 #define DEVTOOLS_FRONTEND_QT_H
@@ -59,19 +60,21 @@ private:
     void OpenInNewTab(const std::string &url) override;
     void InspectedContentsClosing() override;
     void OnLoadCompleted() override;
+    content::WebContents* GetInspectedWebContents() override;
 
-    void InspectElementCompleted() override{};
+    void InspectElementCompleted() override {}
     void CloseWindow() override;
-    void Inspect(scoped_refptr<content::DevToolsAgentHost>) override{};
-    void SetInspectedPageBounds(const gfx::Rect &) override{};
-    void SetIsDocked(bool) override{};
-    void SetWhitelistedShortcuts(const std::string &) override{};
-    void OpenNodeFrontend() override{};
-    void ReadyForTest() override{};
-    void ConnectionReady() override{};
-    void SetOpenNewWindowForPopups(bool) override{};
-    void RenderProcessGone(bool) override{};
-    void ShowCertificateViewer(const std::string &) override{};
+    void Inspect(scoped_refptr<content::DevToolsAgentHost>) override {}
+    void SetInspectedPageBounds(const gfx::Rect &) override {}
+    void SetIsDocked(bool) override {}
+    void SetWhitelistedShortcuts(const std::string &) override {}
+    void OpenNodeFrontend() override {}
+    void ReadyForTest() override {}
+    void ConnectionReady() override {}
+    void SetOpenNewWindowForPopups(bool) override {}
+    void RenderProcessGone(bool) override {}
+    void ShowCertificateViewer(const std::string &) override {}
+    void OpenSearchResultsInNewTab(const std::string &) override {}
 
     // We shouldn't be keeping it alive
     QWeakPointer<WebContentsAdapter> m_frontendAdapter;

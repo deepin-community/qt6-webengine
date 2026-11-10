@@ -36,20 +36,16 @@ declare namespace Adb {
     adbPortStatus: number[];
     adbConnected: boolean;
   }
-  interface PortForwardingConfig {
-    [field: string]: string;
-  }
+  type PortForwardingConfig = Record<string, string>;
   interface PortForwardingRule {
     port: string;
     address: string;
   }
   interface DevicePortForwardingStatus {
-    ports: {[port: string]: number};
+    ports: Record<string, number>;
     browserId: string;
   }
-  interface PortForwardingStatus {
-    [field: string]: DevicePortForwardingStatus;
-  }
+  type PortForwardingStatus = Record<string, DevicePortForwardingStatus>;
   interface Config {
     discoverUsbDevices: boolean;
     portForwardingEnabled: boolean;
@@ -60,13 +56,9 @@ declare namespace Adb {
   type NetworkDiscoveryConfig = string[];
 }
 
-interface HTMLElement {
-  createChild(tagName: string, className?: string, content?: string): HTMLElement;
-}
-
 interface Element {
   boxInWindow(targetWindow?: Window): AnchorBox;
-  createChild(tagName: string, className?: string, content?: string): Element;
+  createChild<K extends keyof HTMLElementTagNameMap>(tagName: K, className?: string): HTMLElementTagNameMap[K];
   hasFocus(): boolean;
   positionAt(x: (number|undefined), y: (number|undefined), relativeTo?: Element): void;
   removeChildren(): void;
@@ -74,7 +66,7 @@ interface Element {
 }
 
 interface DocumentFragment {
-  createChild(tagName: string, className?: string, content?: string): Element;
+  createChild<K extends keyof HTMLElementTagNameMap>(tagName: K, className?: string): HTMLElementTagNameMap[K];
 }
 
 interface Event {
@@ -94,14 +86,13 @@ interface Node {
   isSelfOrDescendant(node: Node|null): boolean;
   parentElementOrShadowHost(): Element|null;
   parentNodeOrShadowHost(): Node|null;
-  setTextContentTruncatedIfNeeded(text: any, placeholder?: string): boolean;
+  setTextContentTruncatedIfNeeded(text: unknown, placeholder?: string): boolean;
   traverseNextNode(stayWithin?: Node): Node|null;
   traversePreviousNode(stayWithin?: Node): Node|null;
-  deepTextContent(): string
+  deepTextContent(normalizeWhitespace?: boolean): string;
+  deepInnerText(): string;
   window(): Window;
   childTextNodes(): Node[];
-  __widget?: any;
-  __widgetCounter?: number|null;
 }
 
 declare function onInvokeElement(element: Element, callback: (event: Event) => void): void;

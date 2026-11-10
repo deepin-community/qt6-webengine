@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,7 +18,6 @@
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -35,9 +37,6 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/gl/gl_switches.h"
-
-// TODO(crbug.com/1215089): Enable this test suite on Lacros.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace {
 
@@ -99,7 +98,7 @@ const char* ToString(Frame frame) {
     case Frame::kEmbeddedFrame:
       return "embedded";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(Track track) {
@@ -111,7 +110,7 @@ const char* ToString(Track track) {
     case Track::kSecond:
       return "second";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(SubCaptureTargetType type) {
@@ -121,7 +120,7 @@ const char* ToString(SubCaptureTargetType type) {
     case SubCaptureTargetType::kRestrictionTarget:
       return "restriction-target";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Conveniently pack together all relevant information about a tab and
@@ -300,11 +299,12 @@ class SubCaptureBrowserTestBase : public WebRtcTestBase {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
-    // TODO(https://crbug.com/1424557): Remove this after fixing feature
+    // MSan and GL do not get along so avoid using the GPU with MSan.
+    // TODO(crbug.com/40260482): Remove this after fixing feature
     // detection in 0c tab capture path as it'll no longer be needed.
-    if constexpr (!BUILDFLAG(IS_CHROMEOS)) {
-      command_line->AppendSwitch(switches::kUseGpuInTests);
-    }
+#if !BUILDFLAG(IS_CHROMEOS) && !defined(MEMORY_SANITIZER)
+    command_line->AppendSwitch(switches::kUseGpuInTests);
+#endif
     command_line_ = command_line;
   }
 
@@ -381,7 +381,7 @@ class SubCaptureBrowserTestBase : public WebRtcTestBase {
   raw_ptr<base::CommandLine> command_line_ = nullptr;
 
   // Holds the tabs manipulated by this test.
-  TabInfo tabs_[kTabCount];
+  std::array<TabInfo, kTabCount> tabs_;
 
   // Each page is served from a distinct origin, thereby proving that
   // cropping/restricting works irrespective of whether iframes are
@@ -599,7 +599,13 @@ IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest,
       tab.ApplySubCaptureTarget(target, type_, Frame::kTopLevelDocument));
 }
 
-IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MaxIdsInTopLevelDocument) {
+// TODO(crbug.com/431852186): Re-enable after flakes are resolved.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_MaxIdsInTopLevelDocument DISABLED_MaxIdsInTopLevelDocument
+#else
+#define MAYBE_MaxIdsInTopLevelDocument MaxIdsInTopLevelDocument
+#endif
+IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MAYBE_MaxIdsInTopLevelDocument) {
   SetUpTest(Frame::kNone, /*self_capture=*/false);
   TabInfo& tab = tabs_[kMainTab];
 
@@ -620,7 +626,13 @@ IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MaxIdsInTopLevelDocument) {
             base::StringPrintf("top-level-produce-%s-error", ToString(type_)));
 }
 
-IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MaxIdsInEmbeddedFrame) {
+// TODO(crbug.com/431852186): Re-enable after flakes are resolved.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_MaxIdsInEmbeddedFrame DISABLED_MaxIdsInEmbeddedFrame
+#else
+#define MAYBE_MaxIdsInEmbeddedFrame MaxIdsInEmbeddedFrame
+#endif
+IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MAYBE_MaxIdsInEmbeddedFrame) {
   SetUpTest(Frame::kNone, /*self_capture=*/false);
   TabInfo& tab = tabs_[kMainTab];
 
@@ -641,7 +653,15 @@ IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MaxIdsInEmbeddedFrame) {
       base::StringPrintf("embedded-produce-%s-error", ToString(type_)));
 }
 
-IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest, MaxIdsSharedBetweenFramesInTab) {
+// TODO(crbug.com/431852186): Re-enable after flakes are resolved.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_MaxIdsSharedBetweenFramesInTab \
+  DISABLED_MaxIdsSharedBetweenFramesInTab
+#else
+#define MAYBE_MaxIdsSharedBetweenFramesInTab MaxIdsSharedBetweenFramesInTab
+#endif
+IN_PROC_BROWSER_TEST_P(SubCaptureBrowserTest,
+                       MAYBE_MaxIdsSharedBetweenFramesInTab) {
   SetUpTest(Frame::kNone, /*self_capture=*/false);
   TabInfo& tab = tabs_[kMainTab];
 
@@ -834,9 +854,9 @@ IN_PROC_BROWSER_TEST_P(SubCaptureClonesBrowserTest,
 
 // Original track becomes unblocked for sub-capture after clone is GCed 1/3.
 //
-// TODO(crbug.com/1353349)  Re-enable for macOS and ChromeOS after flakes are
+// TODO(crbug.com/40858400)  Re-enable for macOS and ChromeOS after flakes are
 // resolved.
-// TODO(crbug.com/1459313): Also flakes on linux-bfcache-rel, so turning the
+// TODO(crbug.com/40919381): Also flakes on linux-bfcache-rel, so turning the
 // test off entirely.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
@@ -854,7 +874,7 @@ IN_PROC_BROWSER_TEST_P(
 
 // Original track becomes unblocked for sub-capture after clone is GCed 2/3.
 //
-// TODO(crbug.com/1353349) Re-enable after flakes are resolved.
+// TODO(crbug.com/40858400) Re-enable after flakes are resolved.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
     DISABLED_CanReapplySubCaptureOnOriginalTrackAfterCloneIsGarbageCollected) {
@@ -873,7 +893,7 @@ IN_PROC_BROWSER_TEST_P(
 
 // Original track becomes unblocked for sub-capture clone is GCed 3/3.
 //
-// TODO(crbug.com/1356788): Re-enable this test.
+// TODO(crbug.com/40860614): Re-enable this test.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
     DISABLED_CanUndoSubCaptureOnOriginalTrackAfterCloneIsGarbageCollected) {
@@ -894,7 +914,7 @@ IN_PROC_BROWSER_TEST_P(
 //
 // The following test is disabled because of a loosely-related issue,
 // where an original track is kept alive if a clone exists, but not vice versa.
-// TODO(crbug.com/1333594): Uncomment after fixing the aforementioned issue.
+// TODO(crbug.com/40845775): Uncomment after fixing the aforementioned issue.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
     DISABLED_CanApplySubCaptureOnCloneAfterOriginalTrackIsGarbageCollected) {
@@ -913,7 +933,7 @@ IN_PROC_BROWSER_TEST_P(
 //
 // The following test is disabled because of a loosely-related issue,
 // where an original track is kept alive if a clone exists, but not vice versa.
-// TODO(crbug.com/1333594): Uncomment after fixing the aforementioned issue.
+// TODO(crbug.com/40845775): Uncomment after fixing the aforementioned issue.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
     DISABLED_CanReapplySubCaptureOnCloneAfterOriginalTrackIsGarbageCollected) {
@@ -934,7 +954,7 @@ IN_PROC_BROWSER_TEST_P(
 //
 // The following test is disabled because of a loosely-related issue,
 // where an original track is kept alive if a clone exists, but not vice versa.
-// TODO(crbug.com/1333594): Uncomment after fixing the aforementioned issue.
+// TODO(crbug.com/40845775): Uncomment after fixing the aforementioned issue.
 IN_PROC_BROWSER_TEST_P(
     SubCaptureClonesBrowserTest,
     DISABLED_CanUndoSubCaptureOnCloneAfterOriginalTrackIsGarbageCollected) {
@@ -1159,5 +1179,3 @@ IN_PROC_BROWSER_TEST_P(SubCaptureSelfCaptureOnlyBrowserTest, ApplySubCapture) {
   EXPECT_EQ(expect_permitted, tabs_[kMainTab].ApplySubCaptureTarget(
                                   target, type_, capturing_entity_));
 }
-
-#endif  //  !BUILDFLAG(IS_CHROMEOS_LACROS)

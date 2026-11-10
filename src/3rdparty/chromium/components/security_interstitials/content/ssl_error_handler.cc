@@ -13,10 +13,10 @@
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/clock.h"
@@ -60,14 +60,6 @@ BASE_FEATURE(kMITMSoftwareInterstitial,
              "MITMSoftwareInterstitial",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kCaptivePortalInterstitial,
-             "CaptivePortalInterstitial",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kCaptivePortalCertificateList,
-             "CaptivePortalCertificateList",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 namespace {
 
 BASE_FEATURE(kSSLCommonNameMismatchHandling,
@@ -96,7 +88,7 @@ class CommonNameMismatchRedirectObserver
   CommonNameMismatchRedirectObserver& operator=(
       const CommonNameMismatchRedirectObserver&) = delete;
 
-  ~CommonNameMismatchRedirectObserver() override {}
+  ~CommonNameMismatchRedirectObserver() override = default;
 
   static void AddToConsoleAfterNavigation(
       content::WebContents* web_contents,
@@ -156,10 +148,6 @@ void RecordUMA(SSLErrorHandler::UMAEvent event) {
                             SSLErrorHandler::SSL_ERROR_HANDLER_EVENT_COUNT);
 }
 
-bool IsCaptivePortalInterstitialEnabled() {
-  return base::FeatureList::IsEnabled(kCaptivePortalInterstitial);
-}
-
 bool IsMITMSoftwareInterstitialEnabled() {
   return base::FeatureList::IsEnabled(kMITMSoftwareInterstitial);
 }
@@ -189,7 +177,7 @@ class ConfigSingleton {
 
   // Returns a DynamicInterstitialInfo that matches with |ssl_info|. If is no
   // match, return null.
-  absl::optional<DynamicInterstitialInfo> MatchDynamicInterstitial(
+  std::optional<DynamicInterstitialInfo> MatchDynamicInterstitial(
       const net::SSLInfo& ssl_info,
       bool is_overridable);
 
@@ -333,7 +321,7 @@ const std::string ConfigSingleton::MatchKnownMITMSoftware(
   return ssl_error_assistant_->MatchKnownMITMSoftware(cert);
 }
 
-absl::optional<DynamicInterstitialInfo>
+std::optional<DynamicInterstitialInfo>
 ConfigSingleton::MatchDynamicInterstitial(const net::SSLInfo& ssl_info,
                                           bool is_overridable) {
   return ssl_error_assistant_->MatchDynamicInterstitial(ssl_info,
@@ -534,8 +522,10 @@ void SSLErrorHandlerDelegateImpl::OnBlockingPageReady(
 
 }  // namespace
 
-static base::LazyInstance<ConfigSingleton>::Leaky g_config =
-    LAZY_INSTANCE_INITIALIZER;
+ConfigSingleton& GetConfig() {
+  static base::NoDestructor<ConfigSingleton> config;
+  return *config;
+}
 
 void SSLErrorHandler::HandleSSLError(
     content::WebContents* web_contents,
@@ -562,7 +552,7 @@ void SSLErrorHandler::HandleSSLError(
               web_contents, ssl_info, web_contents->GetBrowserContext(),
               cert_error, options_mask, request_url, captive_portal_service,
               std::move(blocking_page_factory),
-              g_config.Pointer()->on_blocking_page_shown_callback(),
+              GetConfig().on_blocking_page_shown_callback(),
               std::move(blocking_page_ready_callback))),
       web_contents, cert_error, ssl_info, network_time_tracker,
       captive_portal_service, request_url);
@@ -572,30 +562,30 @@ void SSLErrorHandler::HandleSSLError(
 
 // static
 void SSLErrorHandler::ResetConfigForTesting() {
-  g_config.Pointer()->ResetForTesting();
+  GetConfig().ResetForTesting();
 }
 
 // static
 void SSLErrorHandler::SetInterstitialDelayForTesting(
     const base::TimeDelta& delay) {
-  g_config.Pointer()->SetInterstitialDelayForTesting(delay);
+  GetConfig().SetInterstitialDelayForTesting(delay);
 }
 
 // static
 void SSLErrorHandler::SetInterstitialTimerStartedCallbackForTesting(
     TimerStartedCallback* callback) {
-  g_config.Pointer()->SetTimerStartedCallbackForTesting(callback);
+  GetConfig().SetTimerStartedCallbackForTesting(callback);
 }
 
 // static
 void SSLErrorHandler::SetClockForTesting(base::Clock* testing_clock) {
-  g_config.Pointer()->SetClockForTesting(testing_clock);
+  GetConfig().SetClockForTesting(testing_clock);
 }
 
 // static
 void SSLErrorHandler::SetReportNetworkConnectivityCallbackForTesting(
     base::OnceClosure closure) {
-  g_config.Pointer()->SetReportNetworkConnectivityCallbackForTesting(
+  GetConfig().SetReportNetworkConnectivityCallbackForTesting(
       std::move(closure));
 }
 
@@ -606,14 +596,13 @@ std::string SSLErrorHandler::GetHistogramNameForTesting() {
 
 // static
 int SSLErrorHandler::GetErrorAssistantProtoVersionIdForTesting() {
-  return g_config.Pointer()->GetErrorAssistantProtoVersionIdForTesting();
+  return GetConfig().GetErrorAssistantProtoVersionIdForTesting();
 }
 
 // static
 void SSLErrorHandler::SetOSReportsCaptivePortalForTesting(
     bool os_reports_captive_portal) {
-  g_config.Pointer()->SetOSReportsCaptivePortalForTesting(
-      os_reports_captive_portal);
+  GetConfig().SetOSReportsCaptivePortalForTesting(os_reports_captive_portal);
 }
 
 bool SSLErrorHandler::IsTimerRunningForTesting() const {
@@ -623,13 +612,13 @@ bool SSLErrorHandler::IsTimerRunningForTesting() const {
 // static
 void SSLErrorHandler::SetErrorAssistantProto(
     std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig> config_proto) {
-  g_config.Pointer()->SetErrorAssistantProto(std::move(config_proto));
+  GetConfig().SetErrorAssistantProto(std::move(config_proto));
 }
 
 // static
 void SSLErrorHandler::SetClientCallbackOnInterstitialsShown(
     OnBlockingPageShownCallback callback) {
-  g_config.Pointer()->SetClientCallbackOnInterstitialsShown(callback);
+  GetConfig().SetClientCallbackOnInterstitialsShown(callback);
 }
 
 SSLErrorHandler::SSLErrorHandler(
@@ -669,9 +658,9 @@ void SSLErrorHandler::StartHandlingError() {
     return;
   }
 
-  absl::optional<DynamicInterstitialInfo> dynamic_interstitial =
-      g_config.Pointer()->MatchDynamicInterstitial(
-          ssl_info_, delegate_->IsErrorOverridable());
+  std::optional<DynamicInterstitialInfo> dynamic_interstitial =
+      GetConfig().MatchDynamicInterstitial(ssl_info_,
+                                           delegate_->IsErrorOverridable());
   if (dynamic_interstitial) {
     ShowDynamicInterstitial(dynamic_interstitial.value());
     return;
@@ -693,11 +682,10 @@ void SSLErrorHandler::StartHandlingError() {
   // opens a new tab if it detects a portal ignoring the types of SSL errors. To
   // be consistent with captive portal detector, use the result of OS detection
   // without checking only_error_is_name_mismatch.
-  if (IsCaptivePortalInterstitialEnabled() &&
-      (g_config.Pointer()->DoesOSReportCaptivePortalForTesting() ||
+  if ((GetConfig().DoesOSReportCaptivePortalForTesting() ||  // IN-TEST
        delegate_->DoesOSReportCaptivePortal())) {
     delegate_->ReportNetworkConnectivity(
-        g_config.Pointer()->report_network_connectivity_callback());
+        GetConfig().report_network_connectivity_callback());
     RecordUMA(OS_REPORTS_CAPTIVE_PORTAL);
 
     if (!is_captive_portal_login_tab) {
@@ -715,15 +703,7 @@ void SSLErrorHandler::StartHandlingError() {
   // helpful place to direct the user to go.
   if (only_error_is_name_mismatch) {
     delegate_->ReportNetworkConnectivity(
-        g_config.Pointer()->report_network_connectivity_callback());
-
-    if (base::FeatureList::IsEnabled(kCaptivePortalCertificateList) &&
-        g_config.Pointer()->IsKnownCaptivePortalCertificate(ssl_info_) &&
-        !is_captive_portal_login_tab) {
-      RecordUMA(CAPTIVE_PORTAL_CERT_FOUND);
-      ShowCaptivePortalInterstitial(GURL());
-      return;
-    }
+        GetConfig().report_network_connectivity_callback());
   }
 
   // The MITM software interstitial is displayed if and only if:
@@ -734,7 +714,7 @@ void SSLErrorHandler::StartHandlingError() {
   if (IsMITMSoftwareInterstitialEnabled() && !delegate_->IsErrorOverridable() &&
       IsOnlyCertError(net::CERT_STATUS_AUTHORITY_INVALID)) {
     const std::string found_mitm_software =
-        g_config.Pointer()->MatchKnownMITMSoftware(ssl_info_.cert);
+        GetConfig().MatchKnownMITMSoftware(ssl_info_.cert);
     if (!found_mitm_software.empty()) {
       ShowMITMSoftwareInterstitial(found_mitm_software);
       return;
@@ -763,11 +743,12 @@ void SSLErrorHandler::StartHandlingError() {
           suggested_url,
           base::BindOnce(&SSLErrorHandler::CommonNameMismatchHandlerCallback,
                          weak_ptr_factory_.GetWeakPtr()));
-      timer_.Start(FROM_HERE, g_config.Pointer()->interstitial_delay(), this,
+      timer_.Start(FROM_HERE, GetConfig().interstitial_delay(), this,
                    &SSLErrorHandler::ShowSSLInterstitial);
 
-      if (g_config.Pointer()->timer_started_callback())
-        g_config.Pointer()->timer_started_callback()->Run(web_contents());
+      if (GetConfig().timer_started_callback()) {
+        GetConfig().timer_started_callback()->Run(web_contents());
+      }
 
       // Do not check for a captive portal in this case, because a captive
       // portal most likely cannot serve a valid certificate which passes the
@@ -784,12 +765,13 @@ void SSLErrorHandler::StartHandlingError() {
     captive_portal_tab_helper->OnSSLCertError(ssl_info_);
   }
 
-  if (IsCaptivePortalInterstitialEnabled() && !is_captive_portal_login_tab) {
+  if (!is_captive_portal_login_tab) {
     delegate_->CheckForCaptivePortal();
-    timer_.Start(FROM_HERE, g_config.Pointer()->interstitial_delay(), this,
+    timer_.Start(FROM_HERE, GetConfig().interstitial_delay(), this,
                  &SSLErrorHandler::ShowSSLInterstitial);
-    if (g_config.Pointer()->timer_started_callback())
-      g_config.Pointer()->timer_started_callback()->Run(web_contents());
+    if (GetConfig().timer_started_callback()) {
+      GetConfig().timer_started_callback()->Run(web_contents());
+    }
     return;
   }
 #endif
@@ -820,15 +802,11 @@ void SSLErrorHandler::ShowMITMSoftwareInterstitial(
 }
 
 void SSLErrorHandler::ShowSSLInterstitial() {
-  GURL support_url = (cert_error_ == net::ERR_CERT_SYMANTEC_LEGACY)
-                         ? GURL(kSymantecSupportUrl)
-                         : GURL();
-
   // Show SSL blocking page. The interstitial owns the blocking page.
   RecordUMA(delegate_->IsErrorOverridable()
                 ? SHOW_SSL_INTERSTITIAL_OVERRIDABLE
                 : SHOW_SSL_INTERSTITIAL_NONOVERRIDABLE);
-  delegate_->ShowSSLInterstitial(support_url);
+  delegate_->ShowSSLInterstitial(/*support_url=*/GURL());
   // Once an interstitial is displayed, no need to keep the handler around.
   // This is the equivalent of "delete this".
   web_contents()->RemoveUserData(UserDataKey());
@@ -849,7 +827,6 @@ void SSLErrorHandler::ShowDynamicInterstitial(
   switch (dynamic_interstitial.interstitial_type) {
     case chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_NONE:
       NOTREACHED();
-      return;
     case chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL:
       delegate_->ShowSSLInterstitial(dynamic_interstitial.support_url);
       return;
@@ -930,7 +907,7 @@ void SSLErrorHandler::DeleteSSLErrorHandler() {
 
 void SSLErrorHandler::HandleCertDateInvalidError() {
   const base::TimeTicks now = base::TimeTicks::Now();
-  timer_.Start(FROM_HERE, g_config.Pointer()->interstitial_delay(),
+  timer_.Start(FROM_HERE, GetConfig().interstitial_delay(),
                base::BindOnce(&SSLErrorHandler::HandleCertDateInvalidErrorImpl,
                               base::Unretained(this), now));
   // Try kicking off a time fetch to get an up-to-date estimate of the
@@ -947,14 +924,15 @@ void SSLErrorHandler::HandleCertDateInvalidError() {
     return;
   }
 
-  if (g_config.Pointer()->timer_started_callback())
-    g_config.Pointer()->timer_started_callback()->Run(web_contents());
+  if (GetConfig().timer_started_callback()) {
+    GetConfig().timer_started_callback()->Run(web_contents());
+  }
 }
 
 void SSLErrorHandler::HandleCertDateInvalidErrorImpl(
     base::TimeTicks started_handling_error) {
   timer_.Stop();
-  base::Clock* testing_clock = g_config.Pointer()->clock();
+  base::Clock* testing_clock = GetConfig().clock();
   const base::Time now =
       testing_clock ? testing_clock->Now() : base::Time::NowFromSystemTime();
 

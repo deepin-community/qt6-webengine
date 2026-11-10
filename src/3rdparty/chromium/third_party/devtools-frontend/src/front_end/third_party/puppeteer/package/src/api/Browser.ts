@@ -3,8 +3,8 @@
  * Copyright 2017 Google Inc.
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import type {ChildProcess} from 'child_process';
+/// <reference types="node"  preserve="true"/>
+import type {ChildProcess} from 'node:child_process';
 
 import type {Protocol} from 'devtools-protocol';
 
@@ -13,14 +13,18 @@ import {
   from,
   merge,
   raceWith,
-  filterAsync,
-  fromEvent,
-  type Observable,
 } from '../../third_party/rxjs/rxjs.js';
 import type {ProtocolType} from '../common/ConnectOptions.js';
+import type {Cookie, CookieData} from '../common/Cookie.js';
+import type {DownloadBehavior} from '../common/DownloadBehavior.js';
 import {EventEmitter, type EventType} from '../common/EventEmitter.js';
-import {debugError} from '../common/util.js';
-import {timeout} from '../common/util.js';
+import {
+  debugError,
+  fromEmitterEvent,
+  filterAsync,
+  timeout,
+  fromAbortSignal,
+} from '../common/util.js';
 import {asyncDisposeSymbol, disposeSymbol} from '../util/disposable.js';
 
 import type {BrowserContext} from './BrowserContext.js';
@@ -39,6 +43,13 @@ export interface BrowserContextOptions {
    * Bypass the proxy for the given list of hosts.
    */
   proxyBypassList?: string[];
+  /**
+   * Behavior definition for when downloading a file.
+   *
+   * @remarks
+   * If not set, the default behavior will be used.
+   */
+  downloadBehavior?: DownloadBehavior;
 }
 
 /**
@@ -63,25 +74,24 @@ export const WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map<
   Permission,
   Protocol.Browser.PermissionType
 >([
+  ['accelerometer', 'sensors'],
+  ['ambient-light-sensor', 'sensors'],
+  ['background-sync', 'backgroundSync'],
+  ['camera', 'videoCapture'],
+  ['clipboard-read', 'clipboardReadWrite'],
+  ['clipboard-sanitized-write', 'clipboardSanitizedWrite'],
+  ['clipboard-write', 'clipboardReadWrite'],
   ['geolocation', 'geolocation'],
+  ['gyroscope', 'sensors'],
+  ['idle-detection', 'idleDetection'],
+  ['keyboard-lock', 'keyboardLock'],
+  ['magnetometer', 'sensors'],
+  ['microphone', 'audioCapture'],
   ['midi', 'midi'],
   ['notifications', 'notifications'],
-  // TODO: push isn't a valid type?
-  // ['push', 'push'],
-  ['camera', 'videoCapture'],
-  ['microphone', 'audioCapture'],
-  ['background-sync', 'backgroundSync'],
-  ['ambient-light-sensor', 'sensors'],
-  ['accelerometer', 'sensors'],
-  ['gyroscope', 'sensors'],
-  ['magnetometer', 'sensors'],
-  ['accessibility-events', 'accessibilityEvents'],
-  ['clipboard-read', 'clipboardReadWrite'],
-  ['clipboard-write', 'clipboardReadWrite'],
-  ['clipboard-sanitized-write', 'clipboardSanitizedWrite'],
   ['payment-handler', 'paymentHandler'],
   ['persistent-storage', 'durableStorage'],
-  ['idle-detection', 'idleDetection'],
+  ['pointer-lock', 'pointerLock'],
   // chrome-specific permissions we have.
   ['midi-sysex', 'midiSysex'],
 ]);
@@ -90,24 +100,25 @@ export const WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map<
  * @public
  */
 export type Permission =
+  | 'accelerometer'
+  | 'ambient-light-sensor'
+  | 'background-sync'
+  | 'camera'
+  | 'clipboard-read'
+  | 'clipboard-sanitized-write'
+  | 'clipboard-write'
   | 'geolocation'
+  | 'gyroscope'
+  | 'idle-detection'
+  | 'keyboard-lock'
+  | 'magnetometer'
+  | 'microphone'
+  | 'midi-sysex'
   | 'midi'
   | 'notifications'
-  | 'camera'
-  | 'microphone'
-  | 'background-sync'
-  | 'ambient-light-sensor'
-  | 'accelerometer'
-  | 'gyroscope'
-  | 'magnetometer'
-  | 'accessibility-events'
-  | 'clipboard-read'
-  | 'clipboard-write'
-  | 'clipboard-sanitized-write'
   | 'payment-handler'
   | 'persistent-storage'
-  | 'idle-detection'
-  | 'midi-sysex';
+  | 'pointer-lock';
 
 /**
  * @public
@@ -119,6 +130,11 @@ export interface WaitForTargetOptions {
    * @defaultValue `30_000`
    */
   timeout?: number;
+
+  /**
+   * A signal object that allows you to cancel a waitFor call.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -139,7 +155,7 @@ export const enum BrowserEvent {
    * Emitted when the URL of a target changes. Contains a {@link Target}
    * instance.
    *
-   * @remarks Note that this includes target changes in incognito browser
+   * @remarks Note that this includes target changes in all browser
    * contexts.
    */
   TargetChanged = 'targetchanged',
@@ -150,7 +166,7 @@ export const enum BrowserEvent {
    *
    * Contains a {@link Target} instance.
    *
-   * @remarks Note that this includes target creations in incognito browser
+   * @remarks Note that this includes target creations in all browser
    * contexts.
    */
   TargetCreated = 'targetcreated',
@@ -158,7 +174,7 @@ export const enum BrowserEvent {
    * Emitted when a target is destroyed, for example when a page is closed.
    * Contains a {@link Target} instance.
    *
-   * @remarks Note that this includes target destructions in incognito browser
+   * @remarks Note that this includes target destructions in all browser
    * contexts.
    */
   TargetDestroyed = 'targetdestroyed',
@@ -167,13 +183,6 @@ export const enum BrowserEvent {
    */
   TargetDiscovered = 'targetdiscovered',
 }
-
-export {
-  /**
-   * @deprecated Use {@link BrowserEvent}.
-   */
-  BrowserEvent as BrowserEmittedEvents,
-};
 
 /**
  * @public
@@ -190,12 +199,20 @@ export interface BrowserEvents extends Record<EventType, unknown> {
 }
 
 /**
+ * @public
+ * @experimental
+ */
+export interface DebugInfo {
+  pendingProtocolErrors: Error[];
+}
+
+/**
  * {@link Browser} represents a browser instance that is either:
  *
  * - connected to via {@link Puppeteer.connect} or
  * - launched by {@link PuppeteerNode.launch}.
  *
- * {@link Browser} {@link EventEmitter | emits} various events which are
+ * {@link Browser} {@link EventEmitter.emit | emits} various events which are
  * documented in the {@link BrowserEvent} enum.
  *
  * @example Using a {@link Browser} to create a {@link Page}:
@@ -246,7 +263,7 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
   abstract process(): ChildProcess | null;
 
   /**
-   * Creates a new incognito {@link BrowserContext | browser context}.
+   * Creates a new {@link BrowserContext | browser context}.
    *
    * This won't share cookies/cache with other {@link BrowserContext | browser contexts}.
    *
@@ -256,16 +273,16 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
    * import puppeteer from 'puppeteer';
    *
    * const browser = await puppeteer.launch();
-   * // Create a new incognito browser context.
-   * const context = await browser.createIncognitoBrowserContext();
+   * // Create a new browser context.
+   * const context = await browser.createBrowserContext();
    * // Create a new page in a pristine context.
    * const page = await context.newPage();
    * // Do stuff
    * await page.goto('https://example.com');
    * ```
    */
-  abstract createIncognitoBrowserContext(
-    options?: BrowserContextOptions
+  abstract createBrowserContext(
+    options?: BrowserContextOptions,
   ): Promise<BrowserContext>;
 
   /**
@@ -292,9 +309,8 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
    * You can find the debugger URL (`webSocketDebuggerUrl`) from
    * `http://HOST:PORT/json/version`.
    *
-   * See {@link
-   * https://chromedevtools.github.io/devtools-protocol/#how-do-i-access-the-browser-target
-   * | browser endpoint} for more information.
+   * See {@link https://chromedevtools.github.io/devtools-protocol/#how-do-i-access-the-browser-target | browser endpoint}
+   * for more information.
    *
    * @remarks The format is always `ws://HOST:PORT/devtools/browser/<id>`.
    */
@@ -332,28 +348,31 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
    * ```ts
    * await page.evaluate(() => window.open('https://www.example.com/'));
    * const newWindowTarget = await browser.waitForTarget(
-   *   target => target.url() === 'https://www.example.com/'
+   *   target => target.url() === 'https://www.example.com/',
    * );
    * ```
    */
   async waitForTarget(
     predicate: (x: Target) => boolean | Promise<boolean>,
-    options: WaitForTargetOptions = {}
+    options: WaitForTargetOptions = {},
   ): Promise<Target> {
-    const {timeout: ms = 30000} = options;
+    const {timeout: ms = 30000, signal} = options;
     return await firstValueFrom(
       merge(
-        fromEvent(this, BrowserEvent.TargetCreated) as Observable<Target>,
-        fromEvent(this, BrowserEvent.TargetChanged) as Observable<Target>,
-        from(this.targets())
-      ).pipe(filterAsync(predicate), raceWith(timeout(ms)))
+        fromEmitterEvent(this, BrowserEvent.TargetCreated),
+        fromEmitterEvent(this, BrowserEvent.TargetChanged),
+        from(this.targets()),
+      ).pipe(
+        filterAsync(predicate),
+        raceWith(fromAbortSignal(signal), timeout(ms)),
+      ),
     );
   }
 
   /**
    * Gets a list of all open {@link Page | pages} inside this {@link Browser}.
    *
-   * If there ar multiple {@link BrowserContext | browser contexts}, this
+   * If there are multiple {@link BrowserContext | browser contexts}, this
    * returns all {@link Page | pages} in all
    * {@link BrowserContext | browser contexts}.
    *
@@ -364,7 +383,7 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
     const contextPages = await Promise.all(
       this.browserContexts().map(context => {
         return context.pages();
-      })
+      }),
     );
     // Flatten array.
     return contextPages.reduce((acc, x) => {
@@ -407,9 +426,59 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
   abstract disconnect(): Promise<void>;
 
   /**
+   * Returns all cookies in the default {@link BrowserContext}.
+   *
+   * @remarks
+   *
+   * Shortcut for
+   * {@link BrowserContext.cookies | browser.defaultBrowserContext().cookies()}.
+   */
+  async cookies(): Promise<Cookie[]> {
+    return await this.defaultBrowserContext().cookies();
+  }
+
+  /**
+   * Sets cookies in the default {@link BrowserContext}.
+   *
+   * @remarks
+   *
+   * Shortcut for
+   * {@link BrowserContext.setCookie | browser.defaultBrowserContext().setCookie()}.
+   */
+  async setCookie(...cookies: CookieData[]): Promise<void> {
+    return await this.defaultBrowserContext().setCookie(...cookies);
+  }
+
+  /**
+   * Removes cookies from the default {@link BrowserContext}.
+   *
+   * @remarks
+   *
+   * Shortcut for
+   * {@link BrowserContext.deleteCookie | browser.defaultBrowserContext().deleteCookie()}.
+   */
+  async deleteCookie(...cookies: Cookie[]): Promise<void> {
+    return await this.defaultBrowserContext().deleteCookie(...cookies);
+  }
+
+  /**
+   * Installs an extension and returns the ID. In Chrome, this is only
+   * available if the browser was created using `pipe: true` and the
+   * `--enable-unsafe-extension-debugging` flag is set.
+   */
+  abstract installExtension(path: string): Promise<string>;
+
+  /**
+   * Uninstalls an extension. In Chrome, this is only available if the browser
+   * was created using `pipe: true` and the
+   * `--enable-unsafe-extension-debugging` flag is set.
+   */
+  abstract uninstallExtension(id: string): Promise<void>;
+
+  /**
    * Whether Puppeteer is connected to this {@link Browser | browser}.
    *
-   * @deprecated Use {@link Browser.connected}.
+   * @deprecated Use {@link Browser | Browser.connected}.
    */
   isConnected(): boolean {
     return this.connected;
@@ -421,17 +490,40 @@ export abstract class Browser extends EventEmitter<BrowserEvents> {
   abstract get connected(): boolean;
 
   /** @internal */
-  [disposeSymbol](): void {
-    return void this.close().catch(debugError);
+  override [disposeSymbol](): void {
+    if (this.process()) {
+      return void this.close().catch(debugError);
+    }
+    return void this.disconnect().catch(debugError);
   }
 
   /** @internal */
   [asyncDisposeSymbol](): Promise<void> {
-    return this.close();
+    if (this.process()) {
+      return this.close();
+    }
+    return this.disconnect();
   }
 
   /**
    * @internal
    */
   abstract get protocol(): ProtocolType;
+
+  /**
+   * Get debug information from Puppeteer.
+   *
+   * @remarks
+   *
+   * Currently, includes pending protocol calls. In the future, we might add more info.
+   *
+   * @public
+   * @experimental
+   */
+  abstract get debugInfo(): DebugInfo;
+
+  /**
+   * @internal
+   */
+  abstract isNetworkEnabled(): boolean;
 }

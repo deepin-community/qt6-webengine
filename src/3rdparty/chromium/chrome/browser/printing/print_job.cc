@@ -20,6 +20,7 @@
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/printing/print_job_worker.h"
 #include "chrome/browser/printing/printer_query.h"
+#include "components/enterprise/buildflags/buildflags.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -29,7 +30,7 @@
 #if BUILDFLAG(IS_WIN)
 #include <optional>
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/pdf/pdf_pref_names.h"
@@ -57,7 +58,7 @@ void HoldRefCallback(scoped_refptr<PrintJob> job, base::OnceClosure callback) {
   std::move(callback).Run();
 }
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
 // Those must be kept in sync with the values defined in policy_templates.json.
 enum class PrintPostScriptMode {
   // Do normal PostScript generation. Text is always rendered with Type 3 fonts.
@@ -150,7 +151,7 @@ void PrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
   rfh_id_ = query->rfh_id();
   std::unique_ptr<PrintSettings> settings = query->ExtractSettings();
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
   pdf_page_mapping_ = PageNumber::GetPages(settings->ranges(), page_count);
   PrefService* prefs = GetPrefsForWebContents(GetWebContents(rfh_id_));
   if (prefs && prefs->IsManagedPreference(prefs::kPdfUseSkiaRendererEnabled)) {
@@ -164,7 +165,7 @@ void PrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
   UpdatePrintedDocument(new_doc);
 }
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
 // static
 std::vector<uint32_t> PrintJob::GetFullPageMapping(
     const std::vector<uint32_t>& pages,
@@ -221,7 +222,6 @@ void PrintJob::StartPrinting() {
 
   if (!worker_->IsRunning() || is_job_pending_) {
     NOTREACHED();
-    return;
   }
 
 #if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
@@ -292,7 +292,7 @@ void PrintJob::Cancel() {
   is_canceling_ = false;
 }
 
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 void PrintJob::CleanupAfterContentAnalysisDenial() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   worker_->CleanupAfterContentAnalysisDenial();
@@ -343,7 +343,7 @@ const std::string& PrintJob::source_id() const {
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
 class PrintJob::PdfConversionState {
  public:
   PdfConversionState(const gfx::Size& page_size,
@@ -511,7 +511,7 @@ void PrintJob::StartPdfToPostScriptConversion(
       bytes, render_settings,
       base::BindOnce(&PrintJob::OnPdfConversionStarted, this));
 }
-#endif  // BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#endif  // BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
 
 void PrintJob::UpdatePrintedDocument(
     scoped_refptr<PrintedDocument> new_document) {
@@ -548,7 +548,7 @@ void PrintJob::SyncPrintedDocumentToWorker() {
 
 #if BUILDFLAG(IS_WIN)
 void PrintJob::OnPageDone(PrintedPage* page) {
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (pdf_conversion_state_) {
     pdf_conversion_state_->OnPageProcessed(
@@ -576,7 +576,7 @@ void PrintJob::OnDocDone(int job_id, PrintedDocument* document) {
 
   if (printing_start_time_.has_value()) {
     base::UmaHistogramMediumTimes(
-        "Printing.PrintDuration.Success",
+        "Printing.PrintDuration.LocalPrinter.Success",
         base::TimeTicks::Now() - printing_start_time_.value());
     printing_start_time_.reset();
   }

@@ -46,12 +46,14 @@ cc_library(
         ":watchos": INTERNAL_HDRS + GCD_IMPL_SRCS,
         ":tvos": INTERNAL_HDRS + GCD_IMPL_SRCS,
         ":windows_x86_64": INTERNAL_HDRS + WINDOWS_IMPL_SRCS,
+        ":windows_arm64": INTERNAL_HDRS + WINDOWS_IMPL_SRCS,
         "//conditions:default": INTERNAL_HDRS + PTHREADS_IMPL_SRCS,
     }) + select({
         ":linux_x86_64": ARCH_SPECIFIC_SRCS,
         ":android_x86": ARCH_SPECIFIC_SRCS,
         ":android_x86_64": ARCH_SPECIFIC_SRCS,
         ":windows_x86_64": ARCH_SPECIFIC_SRCS,
+        ":windows_arm64": ARCH_SPECIFIC_SRCS,
         ":macos_x86": ARCH_SPECIFIC_SRCS,
         ":macos_x86_64": ARCH_SPECIFIC_SRCS,
         ":macos_arm64": ARCH_SPECIFIC_SRCS,
@@ -62,8 +64,11 @@ cc_library(
         ":tvos_x86_64": ARCH_SPECIFIC_SRCS,
         "//conditions:default": [],
     }),
+    hdrs = [
+        "include/pthreadpool.h",
+    ],
     copts = [
-        "-std=gnu11",
+        "-std=c11",
     ] + select({
         ":optimized_build": ["-O2"],
         "//conditions:default": [],
@@ -107,6 +112,7 @@ cc_library(
         ":android_x86": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         ":android_x86_64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         ":windows_x86_64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
+        ":windows_arm64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         ":macos_x86": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         ":macos_x86_64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         ":macos_arm64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
@@ -117,9 +123,6 @@ cc_library(
         ":tvos_x86_64": ["-DPTHREADPOOL_USE_FASTPATH=1"],
         "//conditions:default": ["-DPTHREADPOOL_USE_FASTPATH=0"],
     }),
-    hdrs = [
-        "include/pthreadpool.h",
-    ],
     defines = [
         "PTHREADPOOL_NO_DEPRECATED_API",
     ],
@@ -134,6 +137,7 @@ cc_library(
         "//conditions:default": [],
     }),
     strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
     deps = [
         "@FXdiv",
     ] + select({
@@ -146,7 +150,6 @@ cc_library(
         ":android_arm64": ["@cpuinfo"],
         "//conditions:default": [],
     }),
-    visibility = ["//visibility:public"],
 )
 
 ################################## Unit tests ##################################
@@ -346,7 +349,6 @@ config_setting(
 config_setting(
     name = "ios",
     values = {
-        "crosstool_top": "@bazel_tools//tools/cpp:toolchain",
         "apple_platform_type": "ios",
     },
 )
@@ -370,7 +372,6 @@ config_setting(
 config_setting(
     name = "watchos",
     values = {
-        "crosstool_top": "@bazel_tools//tools/cpp:toolchain",
         "apple_platform_type": "watchos",
     },
 )
@@ -394,7 +395,6 @@ config_setting(
 config_setting(
     name = "tvos",
     values = {
-        "crosstool_top": "@bazel_tools//tools/cpp:toolchain",
         "apple_platform_type": "tvos",
     },
 )
@@ -415,10 +415,17 @@ config_setting(
 )
 
 config_setting(
+    name = "windows_arm64",
+    values = {
+        "cpu": "arm64_windows",
+    },
+)
+
+config_setting(
     name = "emscripten",
     values = {
         "crosstool_top": "//toolchain:emscripten",
-    }
+    },
 )
 
 config_setting(
@@ -426,5 +433,5 @@ config_setting(
     values = {
         "crosstool_top": "//toolchain:emscripten",
         "copt": "-pthread",
-    }
+    },
 )

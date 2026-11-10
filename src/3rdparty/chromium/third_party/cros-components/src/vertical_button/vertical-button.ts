@@ -59,6 +59,8 @@ export class VerticalButton extends LitElement {
       --md-filled-button-label-text-size: var(--cros-button-2-font-size);
       --md-filled-button-label-text-line-height: var(--cros-button-2-line-height);
       --md-filled-button-label-text-weight: var(--cros-button-2-font-weight);
+      --md-filled-button-disabled-container-opacity: 100%;
+      --md-filled-button-disabled-label-text-opacity: 100%;
       --md-focus-ring-duration: 0s;
       --md-sys-color-on-primary: var(--cros-sys-on_primary_container);
       --md-sys-color-primary: var(--cros-sys-secondary_container);
@@ -98,11 +100,11 @@ export class VerticalButton extends LitElement {
     `;
 
   /** @export */
-  selected: boolean;
+  declare selected: boolean;
   /** @export */
-  disabled: boolean;
+  declare disabled: boolean;
   /** @export */
-  label: string;
+  declare label: string;
   /** @export */
   /*
    * Variation in height is driven by number of rows to display for the label.
@@ -113,7 +115,7 @@ export class VerticalButton extends LitElement {
    * vertical-button as a number of rows equal to some other button in a group,
    * rather than due to content in this particular button.
    */
-  labelRows: number;
+  declare labelRows: number;
 
   /** @nocollapse */
   static override properties = {

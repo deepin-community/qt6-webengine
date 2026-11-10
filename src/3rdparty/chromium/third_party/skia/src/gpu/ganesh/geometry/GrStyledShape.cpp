@@ -4,12 +4,24 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
 #include "src/gpu/ganesh/geometry/GrStyledShape.h"
 
+#include "include/core/SkArc.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPathEffect.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkStrokeRec.h"
 #include "include/private/SkIDChangeListener.h"
+#include "include/private/base/SkAlign.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkMalloc.h"
+#include "include/private/base/SkTo.h"
 
+#include <algorithm>
+#include <cstring>
+#include <limits>
 #include <utility>
+
 
 GrStyledShape& GrStyledShape::operator=(const GrStyledShape& that) {
     fShape      = that.fShape;
@@ -130,12 +142,12 @@ static void write_path_key_from_data(const SkPath& path, uint32_t* origKey) {
     SkASSERT(key - origKey == path_key_from_data_size(path));
 }
 
-int GrStyledShape::unstyledKeySize() const {
+uint16_t GrStyledShape::unstyledKeySize() const {
     if (fInheritedKey.count()) {
-        return fInheritedKey.count();
+        return SkTo<uint16_t>(fInheritedKey.count());
     }
 
-    int count = 1; // Every key has the state flags from the GrShape
+    uint16_t count = 1; // Every key has the state flags from the GrShape
     switch(fShape.type()) {
         case GrShape::Type::kPoint:
             static_assert(0 == sizeof(SkPoint) % sizeof(uint32_t));
@@ -150,8 +162,8 @@ int GrStyledShape::unstyledKeySize() const {
             count += SkRRect::kSizeInMemory / sizeof(uint32_t);
             break;
         case GrShape::Type::kArc:
-            static_assert(0 == sizeof(GrArc) % sizeof(uint32_t));
-            count += sizeof(GrArc) / sizeof(uint32_t);
+            static_assert(0 == sizeof(SkArc) % sizeof(uint32_t));
+            count += sizeof(SkArc) / sizeof(uint32_t);
             break;
         case GrShape::Type::kLine:
             static_assert(0 == sizeof(GrLineSegment) % sizeof(uint32_t));
@@ -159,11 +171,13 @@ int GrStyledShape::unstyledKeySize() const {
             break;
         case GrShape::Type::kPath: {
             if (0 == fGenID) {
-                return -1; // volatile, so won't be keyed
+                return 0; // volatile, so won't be keyed
             }
+            // When >= 0, `dataKeySize` is a reasonably small number bounded by
+            // kMaxKeyFromDataVerbCnt since point count is derived from verb count.
             int dataKeySize = path_key_from_data_size(fShape.path());
             if (dataKeySize >= 0) {
-                count += dataKeySize;
+                count += SkTo<uint16_t>(dataKeySize);
             } else {
                 count++; // Just adds the gen ID.
             }
@@ -222,9 +236,9 @@ void GrStyledShape::writeUnstyledKey(uint32_t* key) const {
             case GrShape::Type::kArc:
                 // Write dense floats first
                 memcpy(key, &fShape.arc(), sizeof(SkRect) + 2 * sizeof(float));
-                key += (sizeof(GrArc) / sizeof(uint32_t) - 1);
+                key += (sizeof(SkArc) / sizeof(uint32_t) - 1);
                 // Then write the final bool as an int, to make sure upper bits are set
-                *key++ = fShape.arc().fUseCenter ? 1 : 0;
+                *key++ = fShape.arc().isWedge() ? 1 : 0;
                 break;
             case GrShape::Type::kLine:
                 memcpy(key, &fShape.line(), sizeof(GrLineSegment));
@@ -240,6 +254,7 @@ void GrStyledShape::writeUnstyledKey(uint32_t* key) const {
 
 void GrStyledShape::setInheritedKey(const GrStyledShape &parent, GrStyle::Apply apply,
                                     SkScalar scale) {
+    static constexpr int kInheritedKeyLimit = 1024;
     SkASSERT(!fInheritedKey.count());
     // If the output shape turns out to be simple, then we will just use its geometric key
     if (fShape.isPath()) {
@@ -253,7 +268,7 @@ void GrStyledShape::setInheritedKey(const GrStyledShape &parent, GrStyle::Apply 
         bool useParentGeoKey = !parentCnt;
         if (useParentGeoKey) {
             parentCnt = parent.unstyledKeySize();
-            if (parentCnt < 0) {
+            if (!parentCnt) {
                 // The parent's geometry has no key so we will have no key.
                 fGenID = 0;
                 return;
@@ -272,7 +287,12 @@ void GrStyledShape::setInheritedKey(const GrStyledShape &parent, GrStyle::Apply 
             // we try to get a key for the shape.
             fGenID = 0;
             return;
+        } else if (parentCnt + styleCnt > kInheritedKeyLimit) {
+            // Prevent chained path effects and styles from growing the key too large
+            fGenID = 0;
+            return;
         }
+
         fInheritedKey.reset(parentCnt + styleCnt);
         if (useParentGeoKey) {
             // This will be the geo key.
@@ -303,11 +323,12 @@ void GrStyledShape::addGenIDChangeListener(sk_sp<SkIDChangeListener> listener) c
     }
 }
 
-GrStyledShape GrStyledShape::MakeArc(const SkRect& oval, SkScalar startAngleDegrees,
-                                     SkScalar sweepAngleDegrees, bool useCenter,
-                                     const GrStyle& style, DoSimplify doSimplify) {
+GrStyledShape GrStyledShape::MakeArc(const SkArc& arc,
+                                     const GrStyle& style,
+                                     DoSimplify doSimplify) {
     GrStyledShape result;
-    result.fShape.setArc({oval.makeSorted(), startAngleDegrees, sweepAngleDegrees, useCenter});
+    result.fShape.setArc(
+            SkArc::Make(arc.fOval.makeSorted(), arc.fStartAngle, arc.fSweepAngle, arc.fType));
     result.fStyle = style;
     if (doSimplify == DoSimplify::kYes) {
         result.simplify();
@@ -422,79 +443,13 @@ GrStyledShape::GrStyledShape(const GrStyledShape& parent, GrStyle::Apply apply, 
     this->setInheritedKey(*parentForKey, apply, scale);
 }
 
-bool GrStyledShape::asRRect(SkRRect* rrect, SkPathDirection* dir, unsigned* start,
-                            bool* inverted) const {
+bool GrStyledShape::asRRect(SkRRect* rrect, bool* inverted) const {
     if (!fShape.isRRect() && !fShape.isRect()) {
         return false;
     }
 
-    // Validity check here, if we don't have a path effect on the style, we should have passed
-    // appropriate flags to GrShape::simplify() to have reset these parameters.
-    SkASSERT(fStyle.hasPathEffect() || (fShape.dir() == GrShape::kDefaultDir &&
-                                        fShape.startIndex() == GrShape::kDefaultStart));
-
-    // If the shape is a regular rect, map to round rect winding parameters, including accounting
-    // for the automatic sorting of edges that SkRRect::MakeRect() performs.
-    if (fShape.isRect()) {
-        if (rrect) {
-            *rrect = SkRRect::MakeRect(fShape.rect());
-        }
-        // Don't bother mapping these if we don't have a path effect, however.
-        if (!fStyle.hasPathEffect()) {
-            if (dir) {
-                *dir = GrShape::kDefaultDir;
-            }
-            if (start) {
-                *start = GrShape::kDefaultStart;
-            }
-        } else {
-            // In SkPath a rect starts at index 0 by default. This is the top left corner. However,
-            // we store rects as rrects. RRects don't preserve the invertedness, but rather sort the
-            // rect edges. Thus, we may need to modify the rrect's start index and direction.
-            SkPathDirection rectDir = fShape.dir();
-            unsigned rectStart = fShape.startIndex();
-
-            if (fShape.rect().fLeft > fShape.rect().fRight) {
-                // Toggle direction, and modify index by mapping through the array
-                static const unsigned kMapping[] = {1, 0, 3, 2};
-                rectDir = rectDir == SkPathDirection::kCCW ? SkPathDirection::kCW
-                                                           : SkPathDirection::kCCW;
-                rectStart = kMapping[rectStart];
-            }
-            if (fShape.rect().fTop > fShape.rect().fBottom) {
-                // Toggle direction and map index by 3 - start
-                // NOTE: if we earlier flipped for X as well, this results in no net direction
-                // change and effectively flipping the start index to the diagonal corners of the
-                // rect (matching what we'd expect for a rect with both X and Y flipped).
-                rectDir = rectDir == SkPathDirection::kCCW ? SkPathDirection::kCW
-                                                           : SkPathDirection::kCCW;
-                rectStart = 3 - rectStart;
-            }
-
-            if (dir) {
-                *dir = rectDir;
-            }
-            if (start) {
-                // Convert to round rect indexing
-                *start = 2 * rectStart;
-            }
-        }
-    } else {
-        // Straight forward export
-        if (rrect) {
-            *rrect = fShape.rrect();
-        }
-        if (dir) {
-            *dir = fShape.dir();
-        }
-        if (start) {
-            *start = fShape.startIndex();
-            // Canonicalize the index if the rrect is an oval, which GrShape doesn't treat special
-            // but we do for dashing placement
-            if (fShape.rrect().isOval()) {
-                *start &= 0b110;
-            }
-        }
+    if (rrect) {
+        *rrect = fShape.isRect() ? SkRRect::MakeRect(fShape.rect()) : fShape.rrect();
     }
 
     if (inverted) {
@@ -566,7 +521,7 @@ bool GrStyledShape::asNestedRects(SkRect rects[2]) const {
 class AutoRestoreInverseness {
 public:
     AutoRestoreInverseness(GrShape* shape, const GrStyle& style)
-            // Dashing ignores inverseness skbug.com/5421.
+            // Dashing ignores inverseness skbug.com/40036591.
             : fShape(shape), fInverted(!style.isDashed() && fShape->inverted()) {}
 
     ~AutoRestoreInverseness() {
@@ -613,7 +568,7 @@ void GrStyledShape::simplify() {
              fShape.path().isConvex())) {
             // Stroke styles don't differentiate between winding and even/odd. There is no
             // distinction between even/odd and non-zero winding count for convex paths.
-            // Moreover, dashing ignores inverseness (skbug.com/5421)
+            // Moreover, dashing ignores inverseness (skbug.com/40036591)
             fShape.path().setFillType(GrShape::kDefaultFillType);
         }
     } else {
@@ -785,5 +740,4 @@ void GrStyledShape::simplifyStroke() {
     // If we made it here, the stroke was fully applied to the new shape so we can become a fill.
     fStyle = GrStyle::SimpleFill();
     fSimplified = true;
-    return;
 }

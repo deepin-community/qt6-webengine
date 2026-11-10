@@ -31,7 +31,7 @@
 #endif
 
 #if defined(SK_GANESH) || defined(SK_GRAPHITE)
-#include "include/gpu/GrContextOptions.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
 
 class SlugGM : public skiagm::GM {
 public:
@@ -55,7 +55,7 @@ protected:
         int glyphCount = font.countText(fText, txtLen, SkTextEncoding::kUTF8);
 
         fGlyphs.append(glyphCount);
-        font.textToGlyphs(fText, txtLen, SkTextEncoding::kUTF8, fGlyphs.begin(), glyphCount);
+        font.textToGlyphs(fText, txtLen, SkTextEncoding::kUTF8, fGlyphs);
     }
 
     SkString getName() const override { return SkString("slug"); }
@@ -76,7 +76,7 @@ protected:
         canvas->translate(30, 30);
         canvas->drawTextBlob(blob, 10, 10, p);
         canvas->translate(370, 0);
-        slug->draw(canvas);
+        slug->draw(canvas, p);
         for (float scale = 1.5; scale < 4; scale += 0.5) {
             canvas->translate(-370, 20 * scale);
             canvas->save();
@@ -89,7 +89,7 @@ protected:
             canvas->scale(scale, scale);
             canvas->rotate(5);
 
-            slug->draw(canvas);
+            slug->draw(canvas, p);
             canvas->restore();
         }
     }
@@ -109,7 +109,7 @@ private:
         return builder.make();
     }
 
-    SkTDArray<uint16_t> fGlyphs;
+    SkTDArray<SkGlyphID> fGlyphs;
     sk_sp<SkTypeface>   fTypeface;
     const char*         fText;
     using INHERITED = skiagm::GM;

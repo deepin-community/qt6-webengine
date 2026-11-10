@@ -16,22 +16,6 @@
 
 namespace app_mode {
 
-const char kAppShimBootstrapNameFragment[] = "apps";
-
-const char kRunningChromeVersionSymlinkName[] = "RunningChromeVersion";
-const char kFeatureStateFileName[] = "ChromeFeatureState";
-
-const char kLaunchedByChromeProcessId[] = "launched-by-chrome-process-id";
-const char kLaunchedByChromeBundlePath[] = "launched-by-chrome-bundle-path";
-const char kLaunchedByChromeFrameworkBundlePath[] =
-    "launched-by-chrome-framework-bundle-path";
-const char kLaunchedByChromeFrameworkDylibPath[] =
-    "launched-by-chrome-framework-dylib-path";
-const char kLaunchedForTest[] = "launched-for-test";
-const char kLaunchedAfterRebuild[] = "launched-after-rebuild";
-const char kIsNormalLaunch[] = "is-normal-launch";
-const char kLaunchChromeForTest[] = "launch-chrome-for-test";
-
 NSString* const kCFBundleDocumentTypesKey = @"CFBundleDocumentTypes";
 NSString* const kCFBundleTypeExtensionsKey = @"CFBundleTypeExtensions";
 NSString* const kCFBundleTypeIconFileKey = @"CFBundleTypeIconFile";
@@ -57,6 +41,7 @@ NSString* const kCrAppModeProfileDirKey = @"CrAppModeProfileDir";
 NSString* const kCrAppModeProfileNameKey = @"CrAppModeProfileName";
 NSString* const kCrAppModeMajorVersionKey = @"CrAppModeMajorVersionKey";
 NSString* const kCrAppModeMinorVersionKey = @"CrAppModeMinorVersionKey";
+NSString* const kCrAppModeIsAdHocSignedKey = @"CrAppModeIsAdhocSigned";
 
 NSString* const kLastRunAppBundlePathPrefsKey = @"LastRunAppBundlePath";
 
@@ -116,22 +101,6 @@ ChromeConnectionConfig ChromeConnectionConfig::DecodeFromPath(
 
   return {.framework_version = parts[0],
           .is_mojo_ipcz_enabled = parts[1] == "1"};
-}
-
-BASE_FEATURE(kUseAdHocSigningForWebAppShims,
-             "UseAdHocSigningForWebAppShims",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-bool UseAdHocSigningForWebAppShims() {
-  if (@available(macOS 11.7, *)) {
-    // macOS 11.7 and above can code sign at runtime without requiring that the
-    // developer tools be installed.
-    return base::FeatureList::IsEnabled(kUseAdHocSigningForWebAppShims);
-  }
-
-  // Code signing on older macOS versions invokes `codesign_allocate` from the
-  // developer tools, so we can't do it at runtime.
-  return false;
 }
 
 }  // namespace app_mode

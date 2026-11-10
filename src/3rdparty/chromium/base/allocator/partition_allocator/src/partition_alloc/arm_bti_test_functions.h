@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include "build/build_config.h"
+#ifndef PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_
+#define PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_
 
-#if defined(ARCH_CPU_ARM64)
+#include "partition_alloc/build_config.h"
+
+#if PA_BUILDFLAG(PA_ARCH_CPU_ARM64)
 extern "C" {
 /**
  * A valid BTI function. Jumping to this funtion should not cause any problem in
@@ -26,6 +31,6 @@ int64_t arm_bti_test_function_invalid_offset(int64_t);
  **/
 void arm_bti_test_function_end(void);
 }
-#endif  // defined(ARCH_CPU_ARM64)
+#endif  // PA_BUILDFLAG(PA_ARCH_CPU_ARM64)
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_
+#endif  // PARTITION_ALLOC_ARM_BTI_TEST_FUNCTIONS_H_

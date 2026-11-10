@@ -4,11 +4,14 @@
 
 #include "quiche/quic/core/quic_connection_stats.h"
 
+#include <ostream>
+
 namespace quic {
 
 std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   os << "{ bytes_sent: " << s.bytes_sent;
   os << " packets_sent: " << s.packets_sent;
+  os << " packets_sent_by_dispatcher: " << s.packets_sent_by_dispatcher;
   os << " stream_bytes_sent: " << s.stream_bytes_sent;
   os << " packets_discarded: " << s.packets_discarded;
   os << " bytes_received: " << s.bytes_received;
@@ -30,7 +33,6 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   os << " crypto_retransmit_count: " << s.crypto_retransmit_count;
   os << " loss_timeout_count: " << s.loss_timeout_count;
   os << " tlp_count: " << s.tlp_count;
-  os << " rto_count: " << s.rto_count;
   os << " pto_count: " << s.pto_count;
   os << " min_rtt_us: " << s.min_rtt_us;
   os << " srtt_us: " << s.srtt_us;

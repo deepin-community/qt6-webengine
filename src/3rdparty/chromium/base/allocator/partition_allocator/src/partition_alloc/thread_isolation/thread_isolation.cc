@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/thread_isolation/thread_isolation.h"
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
 #include "partition_alloc/address_pool_manager.h"
 #include "partition_alloc/page_allocator.h"
@@ -12,14 +17,15 @@
 #include "partition_alloc/partition_alloc_constants.h"
 #include "partition_alloc/reservation_offset_table.h"
 
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
 #include "partition_alloc/thread_isolation/pkey.h"
 #endif
 
 namespace partition_alloc::internal {
 
-#if BUILDFLAG(PA_DCHECK_IS_ON)
-ThreadIsolationSettings ThreadIsolationSettings::settings;
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
+    PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK)
+PA_CONSTINIT ThreadIsolationSettings ThreadIsolationSettings::settings;
 #endif
 
 void WriteProtectThreadIsolatedMemory(ThreadIsolationOption thread_isolation,
@@ -37,7 +43,7 @@ void WriteProtectThreadIsolatedMemory(ThreadIsolationOption thread_isolation,
                 : PageAccessibilityConfiguration::Permissions::kReadWrite));
     return;
   }
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
   partition_alloc::internal::TagMemoryWithPkey(
       thread_isolation.enabled ? thread_isolation.pkey : kDefaultPkey, address,
       size);
@@ -59,7 +65,7 @@ int MprotectWithThreadIsolation(void* addr,
                                 size_t len,
                                 int prot,
                                 ThreadIsolationOption thread_isolation) {
-#if BUILDFLAG(ENABLE_PKEYS)
+#if PA_BUILDFLAG(ENABLE_PKEYS)
   return PkeyMprotect(addr, len, prot, thread_isolation.pkey);
 #endif
 }
@@ -74,13 +80,13 @@ void WriteProtectThreadIsolatedGlobals(ThreadIsolationOption thread_isolation) {
       thread_isolation, *pool,
       offsetof(AddressPoolManager::Pool, alloc_bitset_));
 
-  uint16_t* pkey_reservation_offset_table =
-      GetReservationOffsetTable(kThreadIsolatedPoolHandle);
+  auto pkey_reservation_offset_table =
+      ReservationOffsetTable::Get(kThreadIsolatedPoolHandle);
   WriteProtectThreadIsolatedMemory(
-      thread_isolation, pkey_reservation_offset_table,
-      ReservationOffsetTable::kReservationOffsetTableLength);
+      thread_isolation, pkey_reservation_offset_table.GetData(),
+      ReservationOffsetTable::kThreadIsolatedOffsetTableLength);
 
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
   WriteProtectThreadIsolatedVariable(thread_isolation,
                                      ThreadIsolationSettings::settings);
 #endif
@@ -92,4 +98,4 @@ void UnprotectThreadIsolatedGlobals() {
 
 }  // namespace partition_alloc::internal
 
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)

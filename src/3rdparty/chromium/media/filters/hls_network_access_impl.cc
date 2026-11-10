@@ -1,0 +1,251 @@
+// Copyright 2024 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "media/filters/hls_network_access_impl.h"
+
+#include "base/task/bind_post_task.h"
+
+namespace media {
+
+namespace {
+
+void MergeEncryptionSecurityMetadata(
+    scoped_refptr<hls::MediaSegment::EncryptionData> enc_data,
+    HlsDataSourceProvider::ReadCb cb,
+    HlsDataSourceProvider::ReadResult result) {
+  if (!result.has_value()) {
+    std::move(cb).Run(std::move(result).error().AddHere());
+    return;
+  }
+
+  auto stream = std::move(result).value();
+  const auto& encryption_metadata = enc_data->GetSecurityMetadata();
+  if (encryption_metadata.has_value()) {
+    stream->MergeSecurityMetadata(*encryption_metadata);
+  }
+  std::move(cb).Run(std::move(stream));
+}
+
+}  // namespace
+
+HlsNetworkAccessImpl::~HlsNetworkAccessImpl() = default;
+
+HlsNetworkAccessImpl::HlsNetworkAccessImpl(
+    base::SequenceBound<HlsDataSourceProvider> dsp)
+    : data_source_provider_(std::move(dsp)) {
+  // This is always created on the main sequence, but used on the media sequence
+  DETACH_FROM_SEQUENCE(media_sequence_checker_);
+}
+
+void HlsNetworkAccessImpl::ReadSegmentQueueInternal(
+    HlsDataSourceProvider::SegmentQueue media_segment_url_queue,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  // Callers of `ReadSegmentQueueInternal` should enforce this.
+  CHECK(data_source_provider_);
+
+  data_source_provider_
+      .AsyncCall(&HlsDataSourceProvider::ReadFromCombinedUrlQueue)
+      .WithArgs(std::move(media_segment_url_queue),
+                base::BindPostTaskToCurrentDefault(std::move(cb)));
+}
+
+void HlsNetworkAccessImpl::ReadAllInternal(const GURL& uri,
+                                           HlsDataSourceProvider::ReadCb cb,
+                                           DataSource::CacheMode cache_mode) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  // Callers of `ReadAllInternal` should enforce this.
+  CHECK(data_source_provider_);
+  HlsDataSourceProvider::SegmentQueue queue;
+  queue.emplace(uri, std::nullopt, cache_mode);
+  ReadSegmentQueueInternal(
+      std::move(queue),
+      base::BindOnce(&HlsNetworkAccessImpl::ReadUntilExhausted,
+                     weak_factory_.GetWeakPtr(), std::move(cb)));
+}
+
+void HlsNetworkAccessImpl::OnKeyFetch(
+    scoped_refptr<hls::MediaSegment::EncryptionData> enc_data,
+    base::OnceCallback<void(HlsDataSourceProvider::ReadCb)> next_op,
+    HlsDataSourceProvider::ReadCb cb,
+    HlsDataSourceProvider::ReadResult result) {
+  if (!result.has_value()) {
+    std::move(cb).Run(std::move(result).error().AddHere());
+    return;
+  }
+  auto stream = std::move(result).value();
+  enc_data->ImportKey(stream->AsString());
+  enc_data->ImportKeySecurity(stream->SecurityInfo());
+  if (enc_data->NeedsKeyFetch()) {
+    std::move(cb).Run({HlsDataSourceProvider::ReadStatus::Codes::kError,
+                       "Error importing key in encrypted segment fetch"});
+    return;
+  }
+  std::move(next_op).Run(std::move(cb));
+}
+
+void HlsNetworkAccessImpl::ReadManifest(const GURL& uri,
+                                        HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!data_source_provider_) {
+    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
+    return;
+  }
+  ReadAllInternal(uri, std::move(cb), DataSource::CacheMode::kBypassCache);
+}
+
+void HlsNetworkAccessImpl::ReadKey(
+    const hls::MediaSegment::EncryptionData& data,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!data_source_provider_) {
+    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
+    return;
+  }
+  ReadAllInternal(data.GetUri(), std::move(cb));
+}
+
+void HlsNetworkAccessImpl::MediaSegmentSecurityChecks(
+    HlsDataSourceProvider::ReadCb cb,
+    url::Origin manifest_origin,
+    HlsDataSourceProvider::ReadResult result) {
+  if (!result.has_value()) {
+    std::move(cb).Run(std::move(result).error().AddHere());
+    return;
+  }
+
+  auto stream = std::move(result).value();
+
+  // Security considerations:
+  //   - The stream may have data from up to three separate origins, including:
+  //      - a decryption key (EXT-X-KEY)
+  //      - a header (EXT-X-MAP)
+  //      - content (EXTINF)
+  //   - The header and the content might also include byte ranges as part of
+  //     the request. the ranges are not required to have any sort of alignment.
+  //   - Most media can be played in a cross-origin-tainted state in which the
+  //     media is hosted on a different origin than the frame and where the
+  //     media is not served with an appropriate access-control-allow-origin
+  //     header. This is not the case with HLS.
+
+  if (!stream->SecurityInfo().would_taint_origin) {
+    // This request is considered safe entirely - all the requests happened
+    // on either the same origin as the top frame, or the responses included
+    // access-control-allow-origin headers that marked the top frame safe. This
+    // request should be allowed.
+    std::move(cb).Run(std::move(stream));
+    return;
+  }
+
+  // If every single origin in the security metadata is the same as the
+  // manifest's origin, it's also safe to allow, even though the frame will
+  // see it as tainted data. Note that media content with an access header
+  // allowing the manifest origin _will not_ be acceptable here - the origins
+  // must be identical. The prior check for `would_taint_origin` will already
+  // allow content served from multiple origins IFF those network responses
+  // provide access-control-allow-origin headers for the top frame's origin.
+  if (stream->SecurityInfo().IsSafeLoadFromManifestOrigin(manifest_origin)) {
+    std::move(cb).Run(std::move(stream));
+    return;
+  }
+
+  // Anything else is disallowed.
+  std::move(cb).Run({HlsDataSourceProvider::ReadStatus::Codes::kError,
+                     "insecure media request"});
+}
+
+void HlsNetworkAccessImpl::ReadMediaSegment(const hls::MediaSegment& segment,
+                                            bool read_chunked,
+                                            bool include_init,
+                                            HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!data_source_provider_) {
+    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
+    return;
+  }
+
+  // Bind security checks
+  cb = base::BindOnce(&HlsNetworkAccessImpl::MediaSegmentSecurityChecks,
+                      weak_factory_.GetWeakPtr(), std::move(cb),
+                      segment.GetManifestOrigin());
+
+  if (!read_chunked) {
+    cb = base::BindOnce(&HlsNetworkAccessImpl::ReadUntilExhausted,
+                        weak_factory_.GetWeakPtr(), std::move(cb));
+  }
+
+  HlsDataSourceProvider::SegmentQueue queue;
+  if (include_init) {
+    if (auto init = segment.GetInitializationSegment()) {
+      queue.emplace(init->GetUri(), init->GetByteRange(),
+                    DataSource::CacheMode::kHitCache);
+    }
+  }
+  queue.emplace(segment.GetUri(), segment.GetByteRange(),
+                DataSource::CacheMode::kHitCache);
+
+  if (auto enc_data = segment.GetEncryptionData()) {
+    // After fetching the media, we need to merge the security metadata into
+    // it's stream so that the populated media content has the full set of
+    // origins from which it is composed.
+    cb = base::BindOnce(&MergeEncryptionSecurityMetadata, enc_data,
+                        std::move(cb));
+
+    if (enc_data->NeedsKeyFetch()) {
+      ReadKey(
+          *enc_data,
+          base::BindOnce(
+              &HlsNetworkAccessImpl::OnKeyFetch, weak_factory_.GetWeakPtr(),
+              enc_data,
+              base::BindOnce(&HlsNetworkAccessImpl::ReadSegmentQueueInternal,
+                             weak_factory_.GetWeakPtr(), std::move(queue)),
+              std::move(cb)));
+      return;
+    }
+  }
+
+  ReadSegmentQueueInternal(std::move(queue), std::move(cb));
+}
+
+void HlsNetworkAccessImpl::ReadStream(
+    std::unique_ptr<HlsDataSourceStream> stream,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(stream);
+  if (!data_source_provider_) {
+    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
+    return;
+  }
+  data_source_provider_
+      .AsyncCall(&HlsDataSourceProvider::ReadFromExistingStream)
+      .WithArgs(std::move(stream),
+                base::BindPostTaskToCurrentDefault(std::move(cb)));
+}
+
+void HlsNetworkAccessImpl::AbortPendingReads(base::OnceClosure cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  data_source_provider_.AsyncCall(&HlsDataSourceProvider::AbortPendingReads)
+      .WithArgs(std::move(cb));
+}
+
+void HlsNetworkAccessImpl::ReadUntilExhausted(
+    HlsDataSourceProvider::ReadCb cb,
+    HlsDataSourceProvider::ReadResult result) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!result.has_value()) {
+    std::move(cb).Run(std::move(result).error());
+    return;
+  }
+  auto stream = std::move(result).value();
+  if (!stream->CanReadMore()) {
+    std::move(cb).Run(std::move(stream));
+    return;
+  }
+
+  ReadStream(std::move(stream),
+             base::BindOnce(&HlsNetworkAccessImpl::ReadUntilExhausted,
+                            weak_factory_.GetWeakPtr(), std::move(cb)));
+}
+
+}  // namespace media

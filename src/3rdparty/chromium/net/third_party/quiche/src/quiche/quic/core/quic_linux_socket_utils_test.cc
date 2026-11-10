@@ -7,11 +7,13 @@
 #include <netinet/in.h>
 #include <stdint.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/platform/api/quic_test.h"
 #include "quiche/quic/test_tools/quic_mock_syscall_wrapper.h"
 #include "quiche/common/quiche_circular_deque.h"
@@ -19,6 +21,7 @@
 using testing::_;
 using testing::InSequence;
 using testing::Invoke;
+using testing::SetErrnoAndReturn;
 
 namespace quic {
 namespace test {
@@ -134,9 +137,11 @@ void CheckIpAndGsoSizeInCbuf(msghdr* hdr, const void* cbuf,
 TEST_F(QuicLinuxSocketUtilsTest, QuicMsgHdr) {
   QuicSocketAddress peer_addr(QuicIpAddress::Loopback4(), 1234);
   char packet_buf[1024];
+  iovec iov{packet_buf, sizeof(packet_buf)};
 
   {
-    QuicMsgHdr quic_hdr(packet_buf, sizeof(packet_buf), peer_addr, nullptr, 0);
+    QuicMsgHdr quic_hdr(&iov, 1, nullptr, 0);
+    quic_hdr.SetPeerAddress(peer_addr);
     CheckMsghdrWithoutCbuf(quic_hdr.hdr(), packet_buf, sizeof(packet_buf),
                            peer_addr);
   }
@@ -145,8 +150,8 @@ TEST_F(QuicLinuxSocketUtilsTest, QuicMsgHdr) {
     QuicIpAddress self_addr =
         is_ipv4 ? QuicIpAddress::Loopback4() : QuicIpAddress::Loopback6();
     alignas(cmsghdr) char cbuf[kCmsgSpaceForIp + kCmsgSpaceForTTL];
-    QuicMsgHdr quic_hdr(packet_buf, sizeof(packet_buf), peer_addr, cbuf,
-                        sizeof(cbuf));
+    QuicMsgHdr quic_hdr(&iov, 1, cbuf, sizeof(cbuf));
+    quic_hdr.SetPeerAddress(peer_addr);
     msghdr* hdr = const_cast<msghdr*>(quic_hdr.hdr());
 
     EXPECT_EQ(nullptr, hdr->msg_control);
@@ -319,6 +324,16 @@ TEST_F(QuicLinuxSocketUtilsTest, WriteMultiplePackets_WriteSuccess) {
                                  buffered_writes.cend(), &num_packets_sent));
     EXPECT_EQ(expected_num_packets_sent, num_packets_sent);
   }
+}
+
+TEST_F(QuicLinuxSocketUtilsTest, WriteReturnsEnobufs) {
+  QuicMsgHdr hdr(nullptr, 0, nullptr, 0);
+  EXPECT_CALL(mock_syscalls_, Sendmsg)
+      .WillRepeatedly(SetErrnoAndReturn(ENOBUFS, -1));
+  EXPECT_EQ(WriteResult(WRITE_STATUS_BLOCKED, ENOBUFS),
+            QuicLinuxSocketUtils::WritePacket(/*fd=*/1, hdr, true));
+  EXPECT_EQ(WriteResult(WRITE_STATUS_ERROR, ENOBUFS),
+            QuicLinuxSocketUtils::WritePacket(/*fd=*/1, hdr, false));
 }
 
 }  // namespace

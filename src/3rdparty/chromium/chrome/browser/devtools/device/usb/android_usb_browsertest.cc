@@ -9,12 +9,14 @@
 #include <unordered_map>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/queue.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -245,10 +247,11 @@ class FakeAndroidUsbDevice : public FakeUsbDevice {
       // A new message, parse header first.
       DCHECK_GE(buffer.size(), 6u);
       const auto* header = reinterpret_cast<const uint32_t*>(buffer.data());
-      current_message_ = std::make_unique<AdbMessage>(header[0], header[1],
-                                                      header[2], std::string());
-      remaining_body_length_ = header[3];
-      uint32_t magic = header[5];
+      current_message_ =
+          std::make_unique<AdbMessage>(header[0], UNSAFE_TODO(header[1]),
+                                       UNSAFE_TODO(header[2]), std::string());
+      remaining_body_length_ = UNSAFE_TODO(header[3]);
+      uint32_t magic = UNSAFE_TODO(header[5]);
       if ((current_message_->command ^ 0xffffffff) != magic) {
         DCHECK(false) << "Header checksum error";
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -278,7 +281,7 @@ class FakeAndroidUsbDevice : public FakeUsbDevice {
   template <class D>
   void append(D data) {
     std::copy(reinterpret_cast<uint8_t*>(&data),
-              (reinterpret_cast<uint8_t*>(&data)) + sizeof(D),
+              UNSAFE_TODO((reinterpret_cast<uint8_t*>(&data)) + sizeof(D)),
               std::back_inserter(output_buffer_));
   }
 
@@ -288,7 +291,7 @@ class FakeAndroidUsbDevice : public FakeUsbDevice {
     int count = data.length();
     uint32_t sum = 0;
     while (count-- > 0)
-      sum += *x++;
+      sum += *UNSAFE_TODO(x++);
     return sum;
   }
 
@@ -362,8 +365,8 @@ class FakeAndroidUsbDevice : public FakeUsbDevice {
     append(static_cast<uint32_t>(body.size() + (add_zero ? 1 : 0)));
     append(Checksum(body));
     append(command ^ 0xffffffff);
-    const auto* body_head = reinterpret_cast<const uint8_t*>(body.data());
-    std::copy(body_head, body_head + body.size(),
+    base::span<const uint8_t> body_head = base::as_byte_span(body);
+    std::copy(body_head.data(), body_head.subspan(body.size()).data(),
               std::back_inserter(output_buffer_));
     if (add_zero) {
       output_buffer_.push_back(0);
@@ -492,7 +495,7 @@ class DevToolsAndroidBridgeWarmUp
 
  private:
   base::OnceClosure closure_;
-  DevToolsAndroidBridge* adb_bridge_;
+  raw_ptr<DevToolsAndroidBridge> adb_bridge_;
 };
 
 class AndroidUsbDiscoveryTest : public InProcessBrowserTest {
@@ -536,7 +539,7 @@ class AndroidUsbDiscoveryTest : public InProcessBrowserTest {
 
   scoped_refptr<content::MessageLoopRunner> runner_;
   std::unique_ptr<FakeUsbDeviceManager> usb_manager_;
-  DevToolsAndroidBridge* adb_bridge_;
+  raw_ptr<DevToolsAndroidBridge, DanglingUntriaged> adb_bridge_;
   int scheduler_invoked_ = 0;
 };
 
@@ -609,7 +612,7 @@ class MockListListener : public DevToolsAndroidBridge::DeviceListListener {
     }
   }
 
-  DevToolsAndroidBridge* adb_bridge_;
+  raw_ptr<DevToolsAndroidBridge> adb_bridge_;
   base::OnceClosure callback_;
 };
 
@@ -628,7 +631,7 @@ class MockCountListener : public DevToolsAndroidBridge::DeviceCountListener {
 
   void Shutdown() { std::move(callback_).Run(); }
 
-  DevToolsAndroidBridge* adb_bridge_;
+  raw_ptr<DevToolsAndroidBridge> adb_bridge_;
   base::OnceClosure callback_;
   int invoked_ = 0;
 };

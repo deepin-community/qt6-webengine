@@ -21,13 +21,12 @@
 #include "cast/standalone_sender/connection_settings.h"
 #include "cast/standalone_sender/looping_file_sender.h"
 #include "cast/standalone_sender/remoting_sender.h"
-#include "cast/streaming/environment.h"
-#include "cast/streaming/sender_session.h"
+#include "cast/streaming/public/environment.h"
+#include "cast/streaming/public/sender_session.h"
 #include "platform/base/error.h"
 #include "platform/base/interface_info.h"
 #include "platform/impl/task_runner.h"
 #include "util/scoped_wake_lock.h"
-#include "util/serial_delete_ptr.h"
 
 namespace Json {
 class Value;
@@ -74,7 +73,7 @@ class LoopingFileCastAgent final
  public:
   using ShutdownCallback = std::function<void()>;
 
-  // |shutdown_callback| is invoked after normal shutdown, whether initiated
+  // `shutdown_callback` is invoked after normal shutdown, whether initiated
   // sender- or receiver-side; or, for any fatal error.
   LoopingFileCastAgent(TaskRunner& task_runner,
                        std::unique_ptr<TrustStore> cast_trust_store,
@@ -93,11 +92,11 @@ class LoopingFileCastAgent final
                    std::unique_ptr<CastSocket> socket) override;
   void OnError(SenderSocketFactory* factory,
                const IPEndpoint& endpoint,
-               Error error) override;
+               const Error& error) override;
 
   // VirtualConnectionRouter::SocketErrorHandler overrides.
   void OnClose(CastSocket* cast_socket) override;
-  void OnError(CastSocket* socket, Error error) override;
+  void OnError(CastSocket* socket, const Error& error) override;
 
   // ConnectionNamespaceHandler::VirtualConnectionPolicy overrides.
   bool IsConnectionAllowed(
@@ -106,7 +105,7 @@ class LoopingFileCastAgent final
   // CastMessageHandler overrides.
   void OnMessage(VirtualConnectionRouter* router,
                  CastSocket* socket,
-                 ::cast::channel::CastMessage message) override;
+                 proto::CastMessage message) override;
 
   // RemotingSender::Client overrides.
   void OnReady() override;
@@ -121,12 +120,12 @@ class LoopingFileCastAgent final
   // requested. Otherwise, the workflow is aborted and Shutdown() is called.
   void HandleReceiverStatus(const Json::Value& status);
 
-  // Called by the |connection_handler_| after message routing to the Cast
-  // Receiver's Mirroring App has been established (if |success| is true).
+  // Called by the `connection_handler_` after message routing to the Cast
+  // Receiver's Mirroring App has been established (if `success` is true).
   void OnRemoteMessagingOpened(bool success);
 
-  // Called by the |connection_handler_| after message routing to the Cast
-  // Receiver platform has been established (if |success| is true).
+  // Called by the `connection_handler_` after message routing to the Cast
+  // Receiver platform has been established (if `success` is true).
   void OnReceiverMessagingOpened(bool success);
 
   // Once we have a connection to the receiver we need to create and start
@@ -139,7 +138,7 @@ class LoopingFileCastAgent final
                     SenderSession::ConfiguredSenders senders,
                     capture_recommendations::Recommendations
                         capture_recommendations) override;
-  void OnError(const SenderSession* session, Error error) override;
+  void OnError(const SenderSession* session, const Error& error) override;
 
   // SenderStatsClient overrides.
   void OnStatisticsUpdated(const SenderStats& updated_stats) override;
@@ -168,7 +167,7 @@ class LoopingFileCastAgent final
 
   // Initialized by Connect().
   std::optional<ConnectionSettings> connection_settings_;
-  SerialDeletePtr<ScopedWakeLock> wake_lock_;
+  ScopedWakeLockPtr wake_lock_;
 
   // If non-empty, this is the sessionId associated with the Cast Receiver
   // application that this LoopingFileCastAgent launched.
@@ -191,7 +190,7 @@ class LoopingFileCastAgent final
   std::unique_ptr<RemotingSender> remoting_sender_;
 
   // Set when remoting is successfully negotiated. However, remoting streams
-  // won't start until |is_ready_for_remoting_| is true.
+  // won't start until `is_ready_for_remoting_` is true.
   std::unique_ptr<SenderSession::ConfiguredSenders> current_negotiation_;
 
   // Set to true once we have gotten news that the mirroring application has

@@ -45,7 +45,6 @@ namespace rx
 class ContextImpl;
 struct D3DUniform;
 struct D3DVarying;
-class DeviceD3D;
 class EGLImageD3D;
 class FramebufferImpl;
 class ImageD3D;
@@ -161,7 +160,7 @@ class BufferFactoryD3D : angle::NonCopyable
                                                  const gl::VertexBinding &binding,
                                                  size_t count,
                                                  GLsizei instances,
-                                                 GLuint baseInstance,
+                                                 uint64_t baseInstance,
                                                  unsigned int *bytesRequiredOut) const = 0;
 };
 

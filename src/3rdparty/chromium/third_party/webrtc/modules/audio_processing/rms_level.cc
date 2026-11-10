@@ -12,15 +12,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <numeric>
+#include <optional>
 
+#include "api/array_view.h"
 #include "rtc_base/checks.h"
 
 namespace webrtc {
 namespace {
-static constexpr float kMaxSquaredLevel = 32768 * 32768;
+constexpr float kMaxSquaredLevel = 32768 * 32768;
 // kMinLevel is the level corresponding to kMinLevelDb, that is 10^(-127/10).
-static constexpr float kMinLevel = 1.995262314968883e-13f;
+constexpr float kMinLevel = 1.995262314968883e-13f;
 
 // Calculates the normalized RMS value from a mean square value. The input
 // should be the sum of squared samples divided by the number of samples. The
@@ -54,10 +58,10 @@ void RmsLevel::Reset() {
   sum_square_ = 0.f;
   sample_count_ = 0;
   max_sum_square_ = 0.f;
-  block_size_ = absl::nullopt;
+  block_size_ = std::nullopt;
 }
 
-void RmsLevel::Analyze(rtc::ArrayView<const int16_t> data) {
+void RmsLevel::Analyze(ArrayView<const int16_t> data) {
   if (data.empty()) {
     return;
   }
@@ -74,7 +78,7 @@ void RmsLevel::Analyze(rtc::ArrayView<const int16_t> data) {
   max_sum_square_ = std::max(max_sum_square_, sum_square);
 }
 
-void RmsLevel::Analyze(rtc::ArrayView<const float> data) {
+void RmsLevel::Analyze(ArrayView<const float> data) {
   if (data.empty()) {
     return;
   }
@@ -119,7 +123,7 @@ int RmsLevel::Average() {
 
 RmsLevel::Levels RmsLevel::AverageAndPeak() {
   // Note that block_size_ should by design always be non-empty when
-  // sample_count_ != 0. Also, the * operator of absl::optional enforces this
+  // sample_count_ != 0. Also, the * operator of std::optional enforces this
   // with a DCHECK.
   Levels levels = (sample_count_ == 0)
                       ? Levels{RmsLevel::kMinLevelDb, RmsLevel::kMinLevelDb}

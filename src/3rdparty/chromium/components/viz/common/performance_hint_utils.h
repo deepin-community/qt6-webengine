@@ -5,8 +5,6 @@
 #ifndef COMPONENTS_VIZ_COMMON_PERFORMANCE_HINT_UTILS_H_
 #define COMPONENTS_VIZ_COMMON_PERFORMANCE_HINT_UTILS_H_
 
-#include <vector>
-
 #include "base/containers/flat_set.h"
 #include "base/process/process_handle.h"
 #include "base/threading/platform_thread.h"
@@ -14,15 +12,23 @@
 
 namespace viz {
 
-// Check that thread IDs in `thread_ids_from_sandboxed_process` are not in any
-// of process in `privileged_process_ids`. Android OS will check that thread IDs
-// used for performance hint belongs to a chromium process. So this check
-// ensures that thread IDs reported by sandboxed processes are indeed in
-// sandboxed processes.
-VIZ_COMMON_EXPORT bool CheckThreadIdsDoNotBelongToProcessIds(
-    const std::vector<base::ProcessId>& privileged_process_ids,
-    const base::flat_set<base::PlatformThreadId>&
-        thread_ids_from_sandboxed_process);
+// Browser and Renderers use this struct to pass information about threads
+// involved in frame production to Viz. Viz then uses the Android
+// PerformanceHint API to optimize these threads' scheduling.
+struct VIZ_COMMON_EXPORT Thread {
+  enum class Type {
+    kMain,
+    kIO,
+    kCompositor,
+    kVideo,
+    kOther,
+  };
+
+  base::PlatformThreadId id;
+  Type type;
+
+  friend constexpr bool operator==(const Thread&, const Thread&) = default;
+};
 
 // Check that thread IDs in `thread_ids_from_sandboxed_process` are not in
 // current process. This function should be called from the Browser and the GPU

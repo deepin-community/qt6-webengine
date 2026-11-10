@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/4x8-aarch32-neon-ld64.S.in
 //   Generator: tools/xngen
@@ -7,9 +8,10 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 .syntax unified
+
 
 // void xnn_f32_gemm_minmax_ukernel_4x8__asm_aarch32_neon_ld64(
 //     size_t mr,                            r0

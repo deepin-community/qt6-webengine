@@ -52,7 +52,12 @@
 // works too early in the process. E.g. getenv() will not work yet.
 
 #include <fcntl.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#else                      // __APPLE__
 #include <linux/limits.h>  // ARG_MAX
+#endif                     // __APPLE__
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -60,17 +65,29 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace centipede {
+#include "absl/base/nullability.h"
+
+namespace fuzztest::internal {
+
+namespace {
+
+constexpr bool kForkServerDebug = false;
+[[maybe_unused]] constexpr bool kForkServerDumpEnvAtStart = false;
+
+}  // namespace
 
 // Writes a C string to stderr when debugging, no-op otherwise.
-void Log(const char *str) {
-  // Uncomment these lines to debug.
-  // (void)write(STDERR_FILENO, str, strlen(str));
-  // fsync(STDERR_FILENO);
+void Log(const char *absl_nonnull str) {
+  if constexpr (kForkServerDebug) {
+    (void)write(STDERR_FILENO, str, strlen(str));
+    fsync(STDERR_FILENO);
+  }
 }
 
-// Maybe writes the `reason` to stderr; then calls _exit.
-void Exit(const char *reason) {
+// Maybe writes the `reason` to stderr; then calls _exit. We use this instead of
+// CHECK/RunnerCheck since the fork server runs at the very early stage of the
+// process, where the logging functions used there may not work.
+void Exit(const char *absl_nonnull reason) {
   Log(reason);
   _exit(0);  // The exit code does not matter, it won't be checked anyway.
 }
@@ -80,18 +97,68 @@ void Exit(const char *reason) {
 static char env[ARG_MAX];
 static ssize_t env_size;
 
-// Reads /proc/self/environ into env.
 void GetAllEnv() {
+#ifdef __APPLE__
+  // Reference:
+  // https://chromium.googlesource.com/crashpad/crashpad/+/360e441c53ab4191a6fd2472cc57c3343a2f6944/util/posix/process_util_mac.cc
+  char args[ARG_MAX];
+  size_t args_size = sizeof(args);
+  int mib[] = {CTL_KERN, KERN_PROCARGS2, getpid()};
+  int rv =
+      sysctl(mib, sizeof(mib) / sizeof(mib[0]), args, &args_size, nullptr, 0);
+  if (rv != 0) {
+    Exit("GetEnv: sysctl({CTK_KERN, KERN_PROCARGS2, ...}) failed");
+  }
+  if (args_size < sizeof(int)) {
+    Exit("GetEnv: args_size too small");
+  }
+  int argc = 0;
+  memcpy(&argc, &args[0], sizeof(argc));
+  size_t start_pos = sizeof(argc);
+  // Find the end of the executable path.
+  while (start_pos < args_size && args[start_pos] != 0) ++start_pos;
+  if (start_pos == args_size) {
+    Exit("GetEnv: envp not found");
+  }
+  // Find the beginning of the string area.
+  while (start_pos < args_size && args[start_pos] == 0) ++start_pos;
+  if (start_pos == args_size) {
+    Exit("GetEnv: envp not found");
+  }
+  // Ignore the first argc strings, after which is the envp.
+  for (int i = 0; i < argc; ++i) {
+    while (start_pos < args_size && args[start_pos] != 0) ++start_pos;
+    if (start_pos == args_size) {
+      Exit("GetEnv: envp not found");
+    }
+    ++start_pos;
+  }
+  const size_t end_pos = args_size;
+  memcpy(env, &args[start_pos], end_pos - start_pos);
+  env_size = end_pos - start_pos;
+  if constexpr (kForkServerDumpEnvAtStart) {
+    size_t pos = start_pos;
+    while (pos < args_size) {
+      const size_t len = strnlen(&args[pos], args_size - pos);
+      (void)write(STDERR_FILENO, &args[pos], len);
+      (void)write(STDERR_FILENO, "\n", 1);
+      pos += len + 1;
+    }
+    fsync(STDERR_FILENO);
+  }
+#else                        // __APPLE__
+  // Reads /proc/self/environ into env.
   int fd = open("/proc/self/environ", O_RDONLY);
   if (fd < 0) Exit("GetEnv: can't open /proc/self/environ\n");
   env_size = read(fd, env, sizeof(env));
   if (env_size < 0) Exit("GetEnv: can't read to env\n");
   if (close(fd) != 0) Exit("GetEnv: can't close /proc/self/environ\n");
+#endif                       // __APPLE__
   env[sizeof(env) - 1] = 0;  // Just in case.
 }
 
 // Gets a zero-terminated string matching the environment `key` (ends with '=').
-const char *GetOneEnv(const char *key) {
+const char *absl_nullable GetOneEnv(const char *absl_nonnull key) {
   size_t key_len = strlen(key);
   if (env_size < key_len) return nullptr;
   bool in_the_beginning_of_key = true;
@@ -139,6 +206,46 @@ __attribute__((constructor(150))) void ForkServerCallMeVeryEarly() {
   if (pipe1 < 0) Exit("###open pipe1 failed\n");
   Log("###Centipede fork server ready\n");
 
+  struct sigaction old_sigterm_act{};
+  struct sigaction sigterm_act{};
+  sigterm_act.sa_handler = [](int) {};
+  if (sigaction(SIGTERM, &sigterm_act, &old_sigterm_act) != 0) {
+    Exit("###sigaction failed on SIGTERM for the fork server");
+  }
+
+  struct sigaction old_sigchld_act{};
+  struct sigaction sigchld_act{};
+  sigchld_act.sa_handler = [](int) {};
+  if (sigaction(SIGCHLD, &sigchld_act, &old_sigchld_act) != 0) {
+    Exit("###sigaction failed on SIGCHLD for the fork server");
+  }
+
+  sigset_t old_sigset;
+  sigset_t server_sigset;
+  if (sigprocmask(SIG_SETMASK, nullptr, &server_sigset) != 0) {
+    Exit("###sigprocmask() failed to get the existing sigset\n");
+  }
+  if (sigaddset(&server_sigset, SIGTERM) != 0) {
+    Exit("###sigaddset() failed to add SIGTERM\n");
+  }
+  if (sigaddset(&server_sigset, SIGCHLD) != 0) {
+    Exit("###sigaddset() failed to add SIGCHLD\n");
+  }
+  if (sigprocmask(SIG_SETMASK, &server_sigset, &old_sigset) != 0) {
+    Exit("###sigprocmask() failed to set the fork server sigset\n");
+  }
+
+  sigset_t wait_sigset;
+  if (sigemptyset(&wait_sigset) != 0) {
+    Exit("###sigemptyset() failed\n");
+  }
+  if (sigaddset(&wait_sigset, SIGTERM) != 0) {
+    Exit("###sigaddset() failed to add SIGTERM to the wait sigset\n");
+  }
+  if (sigaddset(&wait_sigset, SIGCHLD) != 0) {
+    Exit("###sigaddset() failed to add SIGCHLD to the wait sigset\n");
+  }
+
   // Loop.
   while (true) {
     Log("###Centipede fork server blocking on pipe0\n");
@@ -150,6 +257,15 @@ __attribute__((constructor(150))) void ForkServerCallMeVeryEarly() {
     if (pid < 0) {
       Exit("###fork failed\n");
     } else if (pid == 0) {
+      if (sigaction(SIGTERM, &old_sigterm_act, nullptr) != 0) {
+        Exit("###sigaction failed on SIGTERM for the child");
+      }
+      if (sigaction(SIGCHLD, &old_sigchld_act, nullptr) != 0) {
+        Exit("###sigaction failed on SIGCHLD for the child");
+      }
+      if (sigprocmask(SIG_SETMASK, &old_sigset, nullptr) != 0) {
+        Exit("###sigprocmask() failed to restore the previous sigset\n");
+      }
       // Child process. Reset stdout/stderr and let it run normally.
       for (int fd = 1; fd <= 2; fd++) {
         lseek(fd, 0, SEEK_SET);
@@ -161,7 +277,28 @@ __attribute__((constructor(150))) void ForkServerCallMeVeryEarly() {
     } else {
       // Parent process.
       int status = -1;
-      if (waitpid(pid, &status, 0) < 0) Exit("###waitpid failed\n");
+      while (true) {
+        int sig = -1;
+        if (sigwait(&wait_sigset, &sig) != 0) {
+          Exit("###sigwait() failed\n");
+        }
+        if (sig == SIGCHLD) {
+          Log("###Got SIGCHLD\n");
+          const pid_t ret = waitpid(pid, &status, WNOHANG);
+          if (ret < 0) {
+            Exit("###waitpid failed\n");
+          }
+          if (ret == pid && (WIFEXITED(status) || WIFSIGNALED(status))) {
+            Log("###Got exit status\n");
+            break;
+          }
+        } else if (sig == SIGTERM) {
+          Log("###Got SIGTERM\n");
+          kill(pid, SIGTERM);
+        } else {
+          Exit("###Unknown signal from sigwait\n");
+        }
+      }
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_SUCCESS)
           Log("###Centipede fork returned EXIT_SUCCESS\n");
@@ -173,15 +310,42 @@ __attribute__((constructor(150))) void ForkServerCallMeVeryEarly() {
         Log("###Centipede fork crashed\n");
       }
       Log("###Centipede fork writing status to pipe1\n");
-      if (write(pipe1, &status, sizeof(status)) == -1)
+      if (write(pipe1, &status, sizeof(status)) == -1) {
         Exit("###write to pipe1 failed\n");
+      }
+      // Deplete any remaining signals before the next execution. Controller
+      // won't send more signals after write succeeded.
+      {
+        sigset_t pending;
+        while (true) {
+          if (sigpending(&pending) != 0) {
+            Exit("###sigpending() failed\n");
+          }
+          if (sigismember(&pending, SIGTERM) ||
+              sigismember(&pending, SIGCHLD)) {
+            int unused_sig;
+            if (sigwait(&wait_sigset, &unused_sig) != 0) {
+              Exit("###sigwait() failed\n");
+            }
+          } else {
+            break;
+          }
+        }
+      }
     }
   }
   // The only way out of the loop is via Exit() or return.
   __builtin_unreachable();
 }
 
+// If supported, use .preinit_array to call `ForkServerCallMeVeryEarly` even
+// earlier than the `constructor` attribute of the declaration. This helps to
+// avoid potential conflicts with higher-priority constructors.
+#ifdef __APPLE__
+// .preinit_array is not supported in MacOS.
+#else   // __APPLE__
 __attribute__((section(".preinit_array"))) auto call_very_early =
     ForkServerCallMeVeryEarly;
+#endif  // __APPLE__
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

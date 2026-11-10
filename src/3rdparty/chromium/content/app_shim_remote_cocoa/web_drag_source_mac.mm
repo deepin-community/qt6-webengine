@@ -27,8 +27,8 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/drop_data.h"
+#include "net/base/apple/url_conversions.h"
 #include "net/base/filename_util.h"
-#include "net/base/mac/url_conversions.h"
 #include "net/base/mime_util.h"
 #include "ui/base/clipboard/clipboard_constants.h"
 #include "ui/base/clipboard/custom_data_helper.h"
@@ -45,6 +45,10 @@
   // The drop data.
   content::DropData _dropData;
 
+  // The (child process ID, token) of the document that started the drag.
+  content::ChildProcessId _renderProcessId;
+  blink::DocumentToken _documentToken;
+
   // The source origin the drop data came from.
   url::Origin _sourceOrigin;
 
@@ -57,20 +61,23 @@
   // The URL to download from for a drag-out download.
   GURL _downloadURL;
 
-  // The file type associated with the file drag, if any. TODO(macOS 11): Change
-  // to a UTType object.
-  NSString* __strong _fileUTType;
+  // The file type associated with the file drag, if any.
+  UTType* __strong _fileType;
 }
 
 - (instancetype)initWithHost:(remote_cocoa::mojom::WebContentsNSViewHost*)host
-                    dropData:(const content::DropData&)dropData
+             renderProcessId:(content::ChildProcessId)renderProcessId
+               documentToken:(const blink::DocumentToken&)documentToken
                 sourceOrigin:(const url::Origin&)sourceOrigin
+                    dropData:(const content::DropData&)dropData
                 isPrivileged:(BOOL)privileged {
   if ((self = [super init])) {
     _host = host;
     _dropData = dropData;
     _sourceOrigin = sourceOrigin;
     _privileged = privileged;
+    _renderProcessId = renderProcessId;
+    _documentToken = documentToken;
   }
 
   return self;
@@ -100,17 +107,15 @@
   // URL (and title).
   if (_dropData.url.is_valid()) {
     [writableTypes addObject:NSPasteboardTypeURL];
-    [writableTypes addObject:ui::kUTTypeURLName];
+    [writableTypes addObject:ui::kUTTypeUrlName];
   }
 
   // File.
   if (!_dropData.file_contents.empty() ||
-      !_dropData.download_metadata.empty()) {
+      _dropData.download_metadata.has_value()) {
     std::string mimeType;
 
-    // TODO(https://crbug.com/898608): The |downloadFileName_| and
-    // |downloadURL_| values should be computed by the caller.
-    if (_dropData.download_metadata.empty()) {
+    if (!_dropData.download_metadata.has_value()) {
       std::optional<base::FilePath> suggestedFilename =
           _dropData.GetSafeFilenameForImageFileContents();
       if (suggestedFilename) {
@@ -118,41 +123,27 @@
         net::GetMimeTypeFromFile(_downloadFileName, &mimeType);
       }
     } else {
-      std::u16string mimeType16;
-      base::FilePath filename;
-      if (content::ParseDownloadMetadata(_dropData.download_metadata,
-                                         &mimeType16, &filename,
-                                         &_downloadURL)) {
-        // Generate the file name based on both mime type and proposed file
-        // name.
-        std::string defaultName = content::GetContentClient()->browser()
-                                      ? content::GetContentClient()
-                                            ->browser()
-                                            ->GetDefaultDownloadName()
-                                      : std::string();
-        mimeType = base::UTF16ToUTF8(mimeType16);
-        _downloadFileName =
-            net::GenerateFileName(_downloadURL, std::string(), std::string(),
-                                  filename.value(), mimeType, defaultName);
-      }
+      mimeType = _dropData.download_metadata->mime_type;
+      _downloadURL = _dropData.download_metadata->url;
+
+      // Generate the file name based on both mime type and proposed file
+      // name.
+      std::string defaultName =
+          content::GetContentClient()->browser()
+              ? content::GetContentClient()->browser()->GetDefaultDownloadName()
+              : std::string();
+      _downloadFileName = net::GenerateFileName(
+          _downloadURL, std::string(), std::string(),
+          _dropData.download_metadata->suggested_file_name, mimeType,
+          defaultName);
     }
 
     if (!mimeType.empty()) {
-      if (@available(macOS 11, *)) {
-        UTType* type =
-            [UTType typeWithMIMEType:base::SysUTF8ToNSString(mimeType)];
-        _fileUTType = type.identifier;
-      } else {
-        base::apple::ScopedCFTypeRef<CFStringRef> mimeTypeCF(
-            base::SysUTF8ToCFStringRef(mimeType));
-        _fileUTType = base::apple::CFToNSOwnershipCast(
-            UTTypeCreatePreferredIdentifierForTag(kUTTagClassMIMEType,
-                                                  mimeTypeCF.get(), nullptr));
-      }
+      _fileType = [UTType typeWithMIMEType:base::SysUTF8ToNSString(mimeType)];
 
       // Promise both the file's contents...
       if (!_dropData.file_contents.empty()) {
-        [writableTypes addObject:_fileUTType];
+        [writableTypes addObject:_fileType.identifier];
       }
 
       // ... and materialization of the file if requested.
@@ -182,19 +173,11 @@
   //
   // (The only time that Blink fills in the DropData::file_contents is with
   // an image drop, but the MIME time is tested anyway for paranoia's sake.)
-  bool hasImageData;
-  if (@available(macOS 11, *)) {
-    hasImageData =
-        !_dropData.file_contents.empty() && _fileUTType &&
-        [[UTType typeWithIdentifier:_fileUTType] conformsToType:UTTypeImage];
-  } else {
-    hasImageData =
-        !_dropData.file_contents.empty() && _fileUTType &&
-        UTTypeConformsTo(base::apple::NSToCFPtrCast(_fileUTType), kUTTypeImage);
-  }
+  bool hasImageData = !_dropData.file_contents.empty() && _fileType &&
+                      [_fileType conformsToType:UTTypeImage];
   if (hasHTMLData) {
     if (hasImageData) {
-      [writableTypes addObject:ui::kUTTypeChromiumImageAndHTML];
+      [writableTypes addObject:ui::kUTTypeChromiumImageAndHtml];
     } else {
       [writableTypes addObject:NSPasteboardTypeHTML];
     }
@@ -206,7 +189,7 @@
   }
 
   if (!_dropData.custom_data.empty()) {
-    [writableTypes addObject:ui::kUTTypeChromiumWebCustomData];
+    [writableTypes addObject:ui::kUTTypeChromiumDataTransferCustomData];
   }
 
   return writableTypes;
@@ -215,7 +198,7 @@
 - (id)pasteboardPropertyListForType:(NSPasteboardType)type {
   // HTML.
   if ([type isEqualToString:NSPasteboardTypeHTML] ||
-      [type isEqualToString:ui::kUTTypeChromiumImageAndHTML]) {
+      [type isEqualToString:ui::kUTTypeChromiumImageAndHtml]) {
     DCHECK(_dropData.html && !_dropData.html->empty());
 
     // NSPasteboardTypeHTML requires the character set to be declared.
@@ -243,12 +226,12 @@
   }
 
   // URL title.
-  if ([type isEqualToString:ui::kUTTypeURLName]) {
+  if ([type isEqualToString:ui::kUTTypeUrlName]) {
     return base::SysUTF16ToNSString(_dropData.url_title);
   }
 
   // File contents.
-  if ([type isEqualToString:_fileUTType]) {
+  if ([type isEqualToString:_fileType.identifier]) {
     return [NSData dataWithBytes:_dropData.file_contents.data()
                           length:_dropData.file_contents.length()];
   }
@@ -256,7 +239,7 @@
   // File instantiation promise.
   if ([type isEqualToString:base::apple::CFToNSPtrCast(
                                 kPasteboardTypeFilePromiseContent)]) {
-    return _fileUTType;
+    return _fileType.identifier;
   }
   if ([type isEqualToString:base::apple::CFToNSPtrCast(
                                 kPasteboardTypeFileURLPromise)]) {
@@ -280,8 +263,8 @@
     base::FilePath filePath =
         base::apple::NSURLToFilePath([NSURL URLWithString:dropDestination]);
     filePath = filePath.Append(_downloadFileName);
-    _host->DragPromisedFileTo(filePath, _dropData, _downloadURL, _sourceOrigin,
-                              &filePath);
+    _host->DragPromisedFileTo(_renderProcessId, _documentToken, filePath,
+                              _dropData, &filePath);
 
     // The process of writing the file may have altered the value of
     // `filePath` if, say, an existing file at the drop site already had that
@@ -296,7 +279,7 @@
   }
 
   // Custom MIME data.
-  if ([type isEqualToString:ui::kUTTypeChromiumWebCustomData]) {
+  if ([type isEqualToString:ui::kUTTypeChromiumDataTransferCustomData]) {
     base::Pickle pickle;
     ui::WriteCustomDataToPickle(_dropData.custom_data, &pickle);
     return [NSData dataWithBytes:pickle.data() length:pickle.size()];
@@ -318,7 +301,6 @@
 
   // Oops! Unknown drag pasteboard type.
   NOTREACHED();
-  return [NSData data];
 }
 
 @end  // @implementation WebDragSource

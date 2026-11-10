@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/memory/memory.h"
 #include "quiche/quic/core/crypto/null_encrypter.h"
@@ -43,8 +44,6 @@
 
 using testing::_;
 using testing::StrictMock;
-
-using testing::AtLeast;
 
 namespace quic {
 namespace test {
@@ -101,18 +100,6 @@ class TestServerSession : public QuicServerSessionBase {
   QuicSpdyStream* CreateOutgoingBidirectionalStream() override {
     QUICHE_DCHECK(false);
     return nullptr;
-  }
-
-  QuicSpdyStream* CreateOutgoingUnidirectionalStream() override {
-    if (!ShouldCreateOutgoingUnidirectionalStream()) {
-      return nullptr;
-    }
-
-    QuicSpdyStream* stream = new QuicSimpleServerStream(
-        GetNextOutgoingUnidirectionalStreamId(), this, WRITE_UNIDIRECTIONAL,
-        quic_simple_server_backend_);
-    ActivateStream(absl::WrapUnique(stream));
-    return stream;
   }
 
   std::unique_ptr<QuicCryptoServerStreamBase> CreateQuicCryptoServerStream(
@@ -248,6 +235,10 @@ MATCHER_P(EqualsProto, network_params, "") {
 INSTANTIATE_TEST_SUITE_P(Tests, QuicServerSessionBaseTest,
                          ::testing::ValuesIn(AllSupportedVersions()),
                          ::testing::PrintToStringParamName());
+
+TEST_P(QuicServerSessionBaseTest, GetSSLConfig) {
+  EXPECT_EQ(session_->QuicSpdySession::GetSSLConfig(), QuicSSLConfig());
+}
 
 TEST_P(QuicServerSessionBaseTest, CloseStreamDueToReset) {
   // Send some data open a stream, then reset it.
@@ -564,8 +555,7 @@ TEST_P(QuicServerSessionBaseTest, BandwidthEstimates) {
   if (!VersionUsesHttp3(transport_version())) {
     session_->RegisterStreamPriority(
         QuicUtils::GetHeadersStreamId(transport_version()),
-        /*is_static=*/true,
-        QuicStreamPriority::Default(session_->priority_type()));
+        /*is_static=*/true, QuicStreamPriority());
   }
 
   // Set some initial bandwidth values.

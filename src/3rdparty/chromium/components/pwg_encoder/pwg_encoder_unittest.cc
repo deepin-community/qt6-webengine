@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/hash/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/pwg_encoder/bitmap_image.h"
@@ -27,13 +28,13 @@ std::unique_ptr<BitmapImage> MakeSampleBitmap() {
   uint32_t* bitmap_data =
       reinterpret_cast<uint32_t*>(bitmap_image->pixel_data());
   for (int i = 0; i < kRasterWidth * kRasterHeight; i++)
-    bitmap_data[i] = 0xFFFFFF;
+    UNSAFE_TODO(bitmap_data[i]) = 0xFFFFFF;
 
   for (int i = 0; i < kRasterWidth; i++) {
     for (int j = 200; j < 300; j++) {
       int row_start = j * kRasterWidth;
       uint32_t red = (i * 255) / kRasterWidth;
-      bitmap_data[row_start + i] = red;
+      UNSAFE_TODO(bitmap_data[row_start + i]) = red;
     }
   }
 
@@ -42,9 +43,9 @@ std::unique_ptr<BitmapImage> MakeSampleBitmap() {
     for (int j = 400; j < 500; j++) {
       int row_start = j * kRasterWidth;
       if ((i / 40) % 2 == 0) {
-        bitmap_data[row_start + i] = 255 << 8;
+        UNSAFE_TODO(bitmap_data[row_start + i]) = 255 << 8;
       } else {
-        bitmap_data[row_start + i] = 255 << 16;
+        UNSAFE_TODO(bitmap_data[row_start + i]) = 255 << 16;
       }
     }
   }
@@ -65,8 +66,7 @@ TEST(PwgRasterTest, Encode) {
   EXPECT_EQ(2970U, output.size());
 
   std::string sha1 = base::SHA1HashString(output);
-  EXPECT_EQ("4AD7442998C8FEAE94BC9C8B177A7C94766CC9FB",
-            base::HexEncode(sha1.data(), sha1.size()));
+  EXPECT_EQ("4AD7442998C8FEAE94BC9C8B177A7C94766CC9FB", base::HexEncode(sha1));
 
   // Encode again in monochrome.
   header_info.color_space = PwgHeaderInfo::SGRAY;
@@ -76,8 +76,7 @@ TEST(PwgRasterTest, Encode) {
   EXPECT_EQ(2388U, output.size());
 
   sha1 = base::SHA1HashString(output);
-  EXPECT_EQ("4E718B0A69AC26A366A2E23AE1ECA6055079A1FF",
-            base::HexEncode(sha1.data(), sha1.size()));
+  EXPECT_EQ("4E718B0A69AC26A366A2E23AE1ECA6055079A1FF", base::HexEncode(sha1));
 }
 
 }  // namespace pwg_encoder

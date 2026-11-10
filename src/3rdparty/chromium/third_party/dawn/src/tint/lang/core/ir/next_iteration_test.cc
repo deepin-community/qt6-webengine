@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/next_iteration.h"
-#include "gtest/gtest-spi.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
 namespace tint::core::ir {
@@ -34,15 +33,16 @@ namespace {
 
 using namespace tint::core::number_suffixes;  // NOLINT
 using IR_NextIterationTest = IRTestHelper;
+using IR_NextIterationDeathTest = IR_NextIterationTest;
 
-TEST_F(IR_NextIterationTest, Fail_NullLoop) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(IR_NextIterationDeathTest, Fail_NullLoop) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Module mod;
             Builder b{mod};
             b.NextIteration(nullptr);
         },
-        "");
+        "internal compiler error");
 }
 
 TEST_F(IR_NextIterationTest, Result) {
@@ -82,6 +82,18 @@ TEST_F(IR_NextIterationTest, CloneNoArgs) {
     auto* new_inst = clone_ctx.Clone(inst);
 
     EXPECT_EQ(new_loop, new_inst->Loop());
+}
+
+TEST_F(IR_NextIterationTest, Destroy) {
+    auto* loop = b.Loop();
+    auto* inst = b.NextIteration(loop);
+
+    ASSERT_EQ(1u, loop->Body()->InboundSiblingBranches().Length());
+    EXPECT_EQ(inst, loop->Body()->InboundSiblingBranches()[0]);
+
+    inst->Destroy();
+
+    EXPECT_EQ(0u, loop->Body()->InboundSiblingBranches().Length());
 }
 
 }  // namespace

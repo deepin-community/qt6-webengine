@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "components/openscreen_platform/network_util.h"
 #include "net/base/net_errors.h"
 
@@ -76,7 +78,7 @@ bool NetUdpSocket::HandleRecvFromResult(int result) {
   DCHECK_GT(result, 0);
 
   openscreen::UdpPacket packet(read_buffer_->data(),
-                               read_buffer_->data() + result);
+                               UNSAFE_TODO(read_buffer_->data() + result));
   packet.set_source(openscreen_platform::ToOpenScreenEndPoint(from_address_));
   client_->OnRead(this, std::move(packet));
   return true;
@@ -163,8 +165,7 @@ void NetUdpSocket::JoinMulticastGroup(
   }
 }
 
-void NetUdpSocket::SendMessage(const void* data,
-                               size_t length,
+void NetUdpSocket::SendMessage(openscreen::ByteView data,
                                const openscreen::IPEndpoint& dest) {
   DVLOG(3) << __func__;
 
@@ -174,11 +175,11 @@ void NetUdpSocket::SendMessage(const void* data,
     return;
   }
 
-  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(length);
-  memcpy(buffer->data(), data, length);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(data.size());
+  UNSAFE_TODO(memcpy(buffer->data(), data.data(), data.size()));
 
   const int result = udp_socket_.SendTo(
-      buffer.get(), length, openscreen_platform::ToNetEndPoint(dest),
+      buffer.get(), data.size(), openscreen_platform::ToNetEndPoint(dest),
       base::BindOnce(&NetUdpSocket::OnSendToCompleted, base::Unretained(this)));
   send_pending_ = true;
 

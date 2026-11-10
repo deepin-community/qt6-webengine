@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/json/json_writer.h"
 #include "content/browser/devtools/devtools_renderer_channel.h"
 #include "content/browser/devtools/devtools_session.h"
 #include "content/browser/devtools/protocol/fetch_handler.h"
@@ -64,12 +65,24 @@ std::string SharedWorkerDevToolsAgentHost::GetTitle() {
   return instance_.name();
 }
 
+std::string SharedWorkerDevToolsAgentHost::GetDescription() {
+  if (!instance_.extended_lifetime()) {
+    return std::string();
+  }
+
+  base::Value::Dict description;
+  description.Set("extendedLifetime", true);
+  std::string json;
+  base::JSONWriter::Write(description, &json);
+  return json;
+}
+
 GURL SharedWorkerDevToolsAgentHost::GetURL() {
   return instance_.url();
 }
 
 blink::StorageKey SharedWorkerDevToolsAgentHost::GetStorageKey() const {
-  return instance_.storage_key();
+  return instance_.worker_storage_key();
 }
 
 bool SharedWorkerDevToolsAgentHost::Activate() {
@@ -85,18 +98,16 @@ bool SharedWorkerDevToolsAgentHost::Close() {
   return true;
 }
 
-bool SharedWorkerDevToolsAgentHost::AttachSession(DevToolsSession* session,
-                                                  bool acquire_wake_lock) {
+bool SharedWorkerDevToolsAgentHost::AttachSession(DevToolsSession* session) {
   session->CreateAndAddHandler<protocol::IOHandler>(GetIOContext());
   session->CreateAndAddHandler<protocol::InspectorHandler>();
   session->CreateAndAddHandler<protocol::NetworkHandler>(
       GetId(), devtools_worker_token_, GetIOContext(),
-      base::BindRepeating([] {}), session->GetClient()->MayReadLocalFiles(),
-      session->GetClient()->IsTrusted());
-  // TODO(crbug.com/1143100): support pushing updated loader factories down to
+      base::BindRepeating([] {}), session->GetClient());
+  // TODO(crbug.com/40154954): support pushing updated loader factories down to
   // renderer.
   session->CreateAndAddHandler<protocol::FetchHandler>(
-      GetIOContext(),
+      GetIOContext(), session->GetRootSession()->GetClient(),
       base::BindRepeating([](base::OnceClosure cb) { std::move(cb).Run(); }));
   session->CreateAndAddHandler<protocol::SchemaHandler>();
   session->CreateAndAddHandler<protocol::TargetHandler>(
@@ -112,7 +123,8 @@ void SharedWorkerDevToolsAgentHost::DetachSession(DevToolsSession* session) {
 bool SharedWorkerDevToolsAgentHost::Matches(SharedWorkerHost* worker_host) {
   return instance_.Matches(worker_host->instance().url(),
                            worker_host->instance().name(),
-                           worker_host->instance().storage_key());
+                           worker_host->instance().creator_storage_key(),
+                           worker_host->instance().same_site_cookies());
 }
 
 void SharedWorkerDevToolsAgentHost::WorkerReadyForInspection(
@@ -122,9 +134,9 @@ void SharedWorkerDevToolsAgentHost::WorkerReadyForInspection(
   DCHECK_EQ(WORKER_NOT_READY, state_);
   DCHECK(worker_host_);
   state_ = WORKER_READY;
-  GetRendererChannel()->SetRenderer(std::move(agent_remote),
-                                    std::move(agent_host_receiver),
-                                    worker_host_->GetProcessHost()->GetID());
+  GetRendererChannel()->SetRenderer(
+      std::move(agent_remote), std::move(agent_host_receiver),
+      worker_host_->GetProcessHost()->GetDeprecatedID());
   for (auto* inspector : protocol::InspectorHandler::ForAgentHost(this))
     inspector->TargetReloadedAfterCrash();
 }
@@ -151,7 +163,10 @@ void SharedWorkerDevToolsAgentHost::WorkerDestroyed() {
 DevToolsAgentHostImpl::NetworkLoaderFactoryParamsAndInfo
 SharedWorkerDevToolsAgentHost::CreateNetworkFactoryParamsForDevTools() {
   DCHECK(worker_host_);
-  return {GetStorageKey().origin(), net::SiteForCookies::FromUrl(GetURL()),
+  return {GetStorageKey().origin(),
+          instance_.DoesRequireCrossSiteRequestForCookies()
+              ? net::SiteForCookies()
+              : net::SiteForCookies::FromUrl(GetURL()),
           worker_host_->CreateNetworkFactoryParamsForSubresources()};
 }
 

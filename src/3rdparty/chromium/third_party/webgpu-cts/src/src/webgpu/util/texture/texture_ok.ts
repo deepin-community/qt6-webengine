@@ -1,8 +1,13 @@
 import { assert, ErrorWithExtra, unreachable } from '../../../common/util/util.js';
-import { kTextureFormatInfo, EncodableTextureFormat } from '../../format_info.js';
-import { GPUTest } from '../../gpu_test.js';
+import {
+  EncodableTextureFormat,
+  getTextureFormatType,
+  isColorTextureFormat,
+  isDepthTextureFormat,
+} from '../../format_info.js';
+import { GPUTestBase } from '../../gpu_test.js';
 import { numbersApproximatelyEqual } from '../conversion.js';
-import { generatePrettyTable } from '../pretty_diff_tables.js';
+import { generatePrettyTable, numericToStringBuilder } from '../pretty_diff_tables.js';
 import { reifyExtent3D, reifyOrigin3D } from '../unions.js';
 
 import { fullSubrectCoordinates } from './base.js';
@@ -166,8 +171,8 @@ function comparePerComponent(
 
 /** Create a new mappable GPUBuffer, and copy a subrectangle of GPUTexture data into it. */
 function createTextureCopyForMapRead(
-  t: GPUTest,
-  source: GPUImageCopyTexture,
+  t: GPUTestBase,
+  source: GPUTexelCopyTextureInfo,
   copySize: GPUExtent3D,
   { format }: { format: EncodableTextureFormat }
 ): { buffer: GPUBuffer; bytesPerRow: number; rowsPerImage: number } {
@@ -175,13 +180,12 @@ function createTextureCopyForMapRead(
     aspect: source.aspect,
   });
 
-  const buffer = t.device.createBuffer({
+  const buffer = t.createBufferTracked({
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     size: byteLength,
   });
-  t.trackForCleanup(buffer);
 
-  const cmd = t.device.createCommandEncoder();
+  const cmd = t.device.createCommandEncoder({ label: 'createTextureCopyForMapRead' });
   cmd.copyTextureToBuffer(source, { buffer, bytesPerRow, rowsPerImage }, copySize);
   t.device.queue.submit([cmd.finish()]);
 
@@ -221,13 +225,14 @@ export function findFailedPixels(
     return undefined;
   }
 
-  const info = kTextureFormatInfo[format];
   const repr = kTexelRepresentationInfo[format];
-
-  const integerSampleType = info.sampleType === 'uint' || info.sampleType === 'sint';
-  const numberToString = integerSampleType
-    ? (n: number) => n.toFixed()
-    : (n: number) => n.toPrecision(6);
+  // MAINTENANCE_TODO: Print depth-stencil formats as float+int instead of float+float.
+  const printAsInteger = isColorTextureFormat(format)
+    ? // For color, pick the type based on the format type
+      ['uint', 'sint'].includes(getTextureFormatType(format))
+    : // Print depth as "float", depth-stencil as "float,float", stencil as "int".
+      !isDepthTextureFormat(format);
+  const numericToString = numericToStringBuilder(printAsInteger);
 
   const componentOrderStr = repr.componentOrder.join(',') + ':';
 
@@ -245,14 +250,14 @@ export function findFailedPixels(
     yield* [' act. colors', '==', componentOrderStr];
     for (const coords of failedPixels) {
       const pixel = actTexelView.color(coords);
-      yield `${repr.componentOrder.map(ch => numberToString(pixel[ch]!)).join(',')}`;
+      yield `${repr.componentOrder.map(ch => numericToString(pixel[ch]!)).join(',')}`;
     }
   })();
   const printExpectedColors = (function* () {
     yield* [' exp. colors', '==', componentOrderStr];
     for (const coords of failedPixels) {
       const pixel = expTexelView.color(coords);
-      yield `${repr.componentOrder.map(ch => numberToString(pixel[ch]!)).join(',')}`;
+      yield `${repr.componentOrder.map(ch => numericToString(pixel[ch]!)).join(',')}`;
     }
   })();
   const printActualULPs = (function* () {
@@ -272,7 +277,7 @@ export function findFailedPixels(
 
   const opts = {
     fillToWidth: 120,
-    numberToString,
+    numericToString,
   };
   return `\
  between ${lowerCorner} and ${upperCorner} inclusive:
@@ -296,8 +301,8 @@ ${generatePrettyTable(opts, [
  * subnormal numbers (where ULP is defined for float, normalized, and integer formats).
  */
 export async function textureContentIsOKByT2B(
-  t: GPUTest,
-  source: GPUImageCopyTexture,
+  t: GPUTestBase,
+  source: GPUTexelCopyTextureInfo,
   copySize_: GPUExtent3D,
   { expTexelView }: { expTexelView: TexelView },
   texelCompareOptions: TexelCompareOptions,

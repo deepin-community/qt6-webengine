@@ -5,8 +5,8 @@
 import("//build/config/apple/symbols.gni")
 import("//build/config/c++/c++.gni")
 import("//build/config/mac/mac_sdk.gni")
+import("//build/config/rust.gni")
 import("//build/config/sysroot.gni")
-import("//build/toolchain/goma.gni")
 import("//build/toolchain/rbe.gni")
 import("//build/toolchain/siso.gni")
 
@@ -38,12 +38,22 @@ config("compiler") {
 
   ldflags = common_mac_flags
 
+  # ld64 defaults to fixup chains on macOS 12+ when targeting arm64 and on
+  # macOS 13+ when targeting x86_64.
+  # ld64.lld currently defaults to it on macOS 13+.
+  # Force it on; for Chromium it should work on macOS 12 even on x86_64.
+  ldflags += [ "-Wl,-fixup_chains" ]
+
   if (save_unstripped_output) {
     ldflags += [ "-Wcrl,unstripped," + rebase_path(root_out_dir) ]
   }
 
   if (export_libcxxabi_from_executables) {
     ldflags += [ "-Wl,-undefined,dynamic_lookup" ]
+  }
+
+  if (enable_rust) {
+    ldflags += [ "-Wl,-no_compact_unwind" ]
   }
 }
 
@@ -61,6 +71,20 @@ config("runtime_library") {
   asmflags = common_flags
   cflags = common_flags
   ldflags = common_flags
+
+  # Record the SDK as 26.0, even though that may not be the SDK in use. This
+  # convinces macOS 26 (and its betas) to enable new features gated on that SDK
+  # being used at build time, before actually migrating to that SDK (which is
+  # currently in beta, and which we wouldn’t normally use until released). On
+  # macOS < 26, this white lie is a no-op, as older versions won’t change
+  # behaviors if this field is set to anything newer than they’re aware of. On
+  # macOS 26, this enables Liquid Glass, and disables the undesirable
+  # SystemVersionCompat OS version reporting, where macOS 26 calls itself macOS
+  # 16.
+  #
+  # TODO(https://crbug.com/423933062): Remove this once the macOS 26 SDK is in
+  # use.
+  # ldflags += [ "-Wl,-platform_version,macos,$mac_deployment_target,26.0" ]
 }
 
 # On Mac, this is used for everything except static libraries.
@@ -88,7 +112,7 @@ config("mac_dynamic_flags") {
   }
 }
 
-# When building with Goma, all inputs must be relative to the build directory.
+# When building with RBE, all inputs must be relative to the build directory.
 # If using the system Xcode, which typically resides outside the build root, a
 # symlink to the SDK is created in the build directory, and the path to that
 # link is stored in $mac_sdk_path. If an action references a file in the SDK as
@@ -100,8 +124,7 @@ config("mac_dynamic_flags") {
 #
 # The symbolic link for $mac_sdk_path is set up by
 # //build/config/apple/sdk_info.py in //build/config/mac/mac_sdk.gni.
-if (use_system_xcode && (use_goma || use_remoteexec || use_siso) &&
-    target_os == "mac" && current_toolchain == default_toolchain) {
+if (mac_use_xcode_symlinks && current_toolchain == default_toolchain) {
   action("sdk_inputs") {
     script = "//build/noop.py"
     outputs = [

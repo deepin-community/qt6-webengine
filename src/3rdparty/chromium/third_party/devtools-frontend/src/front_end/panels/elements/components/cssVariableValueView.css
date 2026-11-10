@@ -8,15 +8,12 @@
   max-width: 232px;
   font-size: 12px;
   line-height: 1.4;
+  word-break: break-all;
 }
 
 .monospace {
   font-family: var(--monospace-font-family);
   font-size: var(--monospace-font-size);
-}
-
-:host {
-  padding: 11px 7px;
 }
 
 .divider {

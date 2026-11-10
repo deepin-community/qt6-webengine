@@ -5,12 +5,13 @@
 #include "chrome/browser/ui/webui/family_link_user_internals/family_link_user_internals_message_handler.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_piece.h"
 #include "base/values.h"
+#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -22,25 +23,27 @@
 #include "components/signin/public/identity_manager/tribool.h"
 #include "components/supervised_user/core/browser/child_account_service.h"
 #include "components/supervised_user/core/browser/supervised_user_error_page.h"
+#include "components/supervised_user/core/browser/supervised_user_preferences.h"
 #include "components/supervised_user/core/browser/supervised_user_settings_service.h"
+#include "components/supervised_user/core/browser/supervised_user_utils.h"
 #include "components/supervised_user/core/common/features.h"
-#include "components/supervised_user/core/common/supervised_user_utils.h"
 #include "components/url_formatter/url_fixer.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-
-using content::BrowserThread;
+#include "google_apis/gaia/gaia_id.h"
 
 namespace {
+
+using content::BrowserThread;
 
 // Creates a 'section' for display on about:family-link-user-internals,
 // consisting of a title and a list of fields. Returns a pointer to the new
 // section's contents, for use with |AddSectionEntry| below. Note that
 // |parent_list|, not the caller, owns the newly added section.
 base::Value::List* AddSection(base::Value::List* parent_list,
-                              base::StringPiece title) {
+                              std::string_view title) {
   base::Value::Dict section;
   base::Value::List section_contents;
   section.Set("title", title);
@@ -53,7 +56,7 @@ base::Value::List* AddSection(base::Value::List* parent_list,
 
 // Adds a bool entry to a section (created with |AddSection| above).
 void AddSectionEntry(base::Value::List* section_list,
-                     base::StringPiece name,
+                     std::string_view name,
                      bool value) {
   base::Value::Dict entry;
   entry.Set("stat_name", name);
@@ -64,8 +67,8 @@ void AddSectionEntry(base::Value::List* section_list,
 
 // Adds a string entry to a section (created with |AddSection| above).
 void AddSectionEntry(base::Value::List* section_list,
-                     base::StringPiece name,
-                     base::StringPiece value) {
+                     std::string_view name,
+                     std::string_view value) {
   base::Value::Dict entry;
   entry.Set("stat_name", name);
   entry.Set("stat_value", value);
@@ -86,15 +89,54 @@ std::string FilteringBehaviorToString(
   return "Unknown";
 }
 
-std::string FilteringBehaviorToString(
-    supervised_user::FilteringBehavior behavior,
-    bool uncertain) {
-  std::string result = FilteringBehaviorToString(behavior);
-  if (uncertain)
-    result += " (Uncertain)";
-  return result;
+std::string WebFilterTypeToString(
+    supervised_user::WebFilterType web_filter_type) {
+  switch (web_filter_type) {
+    case supervised_user::WebFilterType::kAllowAllSites:
+      return "Allow all sites";
+    case supervised_user::WebFilterType::kTryToBlockMatureSites:
+      return "Try to block mature sites";
+    case supervised_user::WebFilterType::kCertainSites:
+      return "Only certain sites";
+    case supervised_user::WebFilterType::kDisabled:
+      return "Disabled";
+    case supervised_user::WebFilterType::kMixed:
+      NOTREACHED()
+          << "That value is not intended to be set, but is rather "
+             "used to indicate multiple settings used in profiles in metrics.";
+  }
+  return "Unknown";
 }
 
+std::string FilteringResultToString(
+    supervised_user::SupervisedUserURLFilter::Result result) {
+  std::string return_value = FilteringBehaviorToString(result.behavior);
+  if (!result.IsClassificationSuccessful()) {
+    return_value += " (Uncertain)";
+  }
+  return return_value;
+}
+
+std::string FilteringReasonToString(
+    supervised_user::SupervisedUserURLFilter::Result result) {
+  switch (result.reason) {
+    case supervised_user::FilteringBehaviorReason::DEFAULT:
+      return "Default";
+    case supervised_user::FilteringBehaviorReason::ASYNC_CHECKER:
+      CHECK(result.async_check_details.has_value())
+          << "reason == ASYNC_CHECKER must imply async_check_details";
+      if (result.async_check_details->reason ==
+          safe_search_api::ClassificationDetails::Reason::kCachedResponse) {
+        return "AsyncChecker (Cached)";
+      }
+      return "AsyncChecker";
+    case supervised_user::FilteringBehaviorReason::MANUAL:
+      return "Manual";
+    case supervised_user::FilteringBehaviorReason::FILTER_DISABLED:
+      return "Filtering is disabled";
+  }
+  NOTREACHED();
+}
 }  // namespace
 
 FamilyLinkUserInternalsMessageHandler::FamilyLinkUserInternalsMessageHandler() =
@@ -125,11 +167,41 @@ void FamilyLinkUserInternalsMessageHandler::RegisterMessages() {
 }
 
 void FamilyLinkUserInternalsMessageHandler::OnJavascriptDisallowed() {
-  scoped_observation_.Reset();
+  url_filter_observation_.Reset();
+  identity_manager_observation_.Reset();
   weak_factory_.InvalidateWeakPtrs();
 }
 
 void FamilyLinkUserInternalsMessageHandler::OnURLFilterChanged() {
+  SendBasicInfo();
+}
+
+void FamilyLinkUserInternalsMessageHandler::OnPrimaryAccountChanged(
+    const signin::PrimaryAccountChangeEvent& event_details) {
+  OnAccountChanged();
+}
+void FamilyLinkUserInternalsMessageHandler::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
+  OnAccountChanged();
+}
+void FamilyLinkUserInternalsMessageHandler::OnRefreshTokenUpdatedForAccount(
+    const CoreAccountInfo& account_info) {
+  OnAccountChanged();
+}
+void FamilyLinkUserInternalsMessageHandler::
+    OnErrorStateOfRefreshTokenUpdatedForAccount(
+        const CoreAccountInfo& account_info,
+        const GoogleServiceAuthError& error,
+        signin_metrics::SourceForRefreshTokenOperation token_operation_source) {
+  OnAccountChanged();
+}
+void FamilyLinkUserInternalsMessageHandler::OnAccountsInCookieUpdated(
+    const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
+    const GoogleServiceAuthError& error) {
+  OnAccountChanged();
+}
+
+void FamilyLinkUserInternalsMessageHandler::OnAccountChanged() {
   SendBasicInfo();
 }
 
@@ -142,12 +214,19 @@ FamilyLinkUserInternalsMessageHandler::GetSupervisedUserService() {
 
 void FamilyLinkUserInternalsMessageHandler::HandleRegisterForEvents(
     const base::Value::List& args) {
-  DCHECK(args.empty());
-  AllowJavascript();
-  if (scoped_observation_.IsObserving())
-    return;
+  CHECK(args.empty()) << "Expected call is (void)";
 
-  scoped_observation_.Observe(GetSupervisedUserService()->GetURLFilter());
+  AllowJavascript();
+  if (!url_filter_observation_.IsObserving()) {
+    url_filter_observation_.Observe(GetSupervisedUserService()->GetURLFilter());
+  }
+
+  Profile* profile = Profile::FromWebUI(web_ui());
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  if (!identity_manager_observation_.IsObserving() && identity_manager) {
+    identity_manager_observation_.Observe(identity_manager);
+  }
 }
 
 void FamilyLinkUserInternalsMessageHandler::HandleGetBasicInfo(
@@ -157,15 +236,16 @@ void FamilyLinkUserInternalsMessageHandler::HandleGetBasicInfo(
 
 void FamilyLinkUserInternalsMessageHandler::HandleTryURL(
     const base::Value::List& args) {
-  DCHECK_EQ(2u, args.size());
-  if (!args[0].is_string() || !args[1].is_string())
-    return;
+  CHECK(args.size() == 2u && args[0].is_string() && args[1].is_string())
+      << "Expected call is (callback_id: string, url_str: string)";
+
   const std::string& callback_id = args[0].GetString();
   const std::string& url_str = args[1].GetString();
 
   GURL url = url_formatter::FixupURL(url_str, std::string());
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return;
+  }
 
   supervised_user::SupervisedUserURLFilter* filter =
       GetSupervisedUserService()->GetURLFilter();
@@ -179,7 +259,7 @@ void FamilyLinkUserInternalsMessageHandler::HandleTryURL(
             web_contents->GetOutermostWebContents());
   }
 
-  filter->GetFilteringBehaviorForURLWithAsyncChecks(
+  filter->GetFilteringBehaviorWithAsyncChecks(
       url,
       base::BindOnce(&FamilyLinkUserInternalsMessageHandler::OnTryURLResult,
                      weak_factory_.GetWeakPtr(), callback_id),
@@ -188,26 +268,30 @@ void FamilyLinkUserInternalsMessageHandler::HandleTryURL(
 
 void FamilyLinkUserInternalsMessageHandler::SendBasicInfo() {
   base::Value::List section_list;
-
-  base::Value::List* section_general = AddSection(&section_list, "General");
-  AddSectionEntry(section_general, "Child detection enabled",
-                  supervised_user::IsChildAccountSupervisionEnabled());
-
   Profile* profile = Profile::FromWebUI(web_ui());
 
   base::Value::List* section_profile = AddSection(&section_list, "Profile");
   AddSectionEntry(section_profile, "Account", profile->GetProfileUserName());
-  AddSectionEntry(section_profile, "Child", profile->IsChild());
 
   supervised_user::SupervisedUserURLFilter* filter =
       GetSupervisedUserService()->GetURLFilter();
 
   base::Value::List* section_filter = AddSection(&section_list, "Filter");
-  AddSectionEntry(section_filter, "Online checks active",
-                  filter->HasAsyncURLChecker());
+  AddSectionEntry(section_filter, "SafeSites enabled",
+                  supervised_user::IsSafeSitesEnabled(*profile->GetPrefs()));
+  AddSectionEntry(section_filter, "Web filter type",
+                  WebFilterTypeToString(filter->GetWebFilterType()));
+
+  base::Value::List* section_search =
+      AddSection(&section_list, "Google search");
   AddSectionEntry(
-      section_filter, "Default behavior",
-      FilteringBehaviorToString(filter->GetDefaultFilteringBehavior()));
+      section_search, "Safe search enforced",
+      supervised_user::IsGoogleSafeSearchEnforced(*profile->GetPrefs()));
+
+  base::Value::List* section_browser =
+      AddSection(&section_list, "Browser and web");
+  AddSectionEntry(section_browser, "Incognito mode allowed",
+                  IncognitoModePrefs::IsIncognitoAllowed(profile));
 
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
@@ -220,14 +304,20 @@ void FamilyLinkUserInternalsMessageHandler::SendBasicInfo() {
           &section_list, "User Information for " + account.full_name);
       AddSectionEntry(section_user, "Account id",
                       account.account_id.ToString());
-      AddSectionEntry(section_user, "Gaia", account.gaia);
+      AddSectionEntry(section_user, "Gaia", account.gaia.ToString());
       AddSectionEntry(section_user, "Email", account.email);
       AddSectionEntry(section_user, "Given name", account.given_name);
       AddSectionEntry(section_user, "Hosted domain", account.hosted_domain);
       AddSectionEntry(section_user, "Locale", account.locale);
-      AddSectionEntry(section_user, "Is child",
-                      TriboolToString(account.is_child_account));
+      AddSectionEntry(
+          section_user, "Is subject to parental controls",
+          TriboolToString(
+              account.capabilities.is_subject_to_parental_controls()));
       AddSectionEntry(section_user, "Is valid", account.IsValid());
+      AddSectionEntry(
+          section_user, "Is subject to family link parental controls",
+          TriboolToString(
+              account.capabilities.is_subject_to_parental_controls()));
     }
   }
 
@@ -251,28 +341,20 @@ void FamilyLinkUserInternalsMessageHandler::SendFamilyLinkUserSettings(
 
 void FamilyLinkUserInternalsMessageHandler::OnTryURLResult(
     const std::string& callback_id,
-    supervised_user::FilteringBehavior behavior,
-    supervised_user::FilteringBehaviorReason reason,
-    bool uncertain) {
+    supervised_user::SupervisedUserURLFilter::Result filtering_result) {
   base::Value::Dict result;
-  result.Set("allowResult", FilteringBehaviorToString(behavior, uncertain));
-  result.Set("manual",
-             reason == supervised_user::FilteringBehaviorReason::MANUAL &&
-                 behavior == supervised_user::FilteringBehavior::kAllow);
+  result.Set("allowResult", FilteringResultToString(filtering_result));
+  result.Set("manual", filtering_result.IsFromManualList() &&
+                           filtering_result.IsAllowed());
   ResolveJavascriptCallback(base::Value(callback_id), result);
 }
 
-void FamilyLinkUserInternalsMessageHandler::OnSiteListUpdated() {}
-
 void FamilyLinkUserInternalsMessageHandler::OnURLChecked(
-    const GURL& url,
-    supervised_user::FilteringBehavior behavior,
-    supervised_user::FilteringBehaviorReason reason,
-    bool uncertain) {
+    supervised_user::SupervisedUserURLFilter::Result filtering_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::Value::Dict result;
-  result.Set("url", url.possibly_invalid_spec());
-  result.Set("result", FilteringBehaviorToString(behavior, uncertain));
-  result.Set("reason", FilteringBehaviorReasonToString(reason));
+  result.Set("url", filtering_result.url.possibly_invalid_spec());
+  result.Set("result", FilteringResultToString(filtering_result));
+  result.Set("reason", FilteringReasonToString(filtering_result));
   FireWebUIListener("filtering-result-received", result);
 }

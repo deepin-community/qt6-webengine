@@ -14,8 +14,7 @@
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "third_party/flatbuffers/src/include/flatbuffers/flatbuffers.h"
 
-namespace extensions {
-namespace declarative_net_request {
+namespace extensions::declarative_net_request {
 
 // Holds the result of indexing a JSON ruleset.
 class ParseInfo {
@@ -75,11 +74,11 @@ class ParseInfo {
  private:
   bool has_error_ = false;
 
-  // Only valid iff |has_error_| is true.
+  // Only valid iff `has_error_` is true.
   std::string error_;
   ParseResult error_reason_ = ParseResult::NONE;
 
-  // Only valid iff |has_error_| is false.
+  // Only valid iff `has_error_` is false.
   size_t rules_count_ = 0;
   size_t regex_rules_count_ = 0;
   flatbuffers::DetachedBuffer buffer_;
@@ -89,7 +88,6 @@ class ParseInfo {
   std::vector<RuleWarning> rule_ignored_warnings_;
 };
 
-}  // namespace declarative_net_request
-}  // namespace extensions
+}  // namespace extensions::declarative_net_request
 
 #endif  // EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_PARSE_INFO_H_

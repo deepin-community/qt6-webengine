@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -15,19 +17,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
-#include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/custom_handlers/pref_names.h"
 #include "components/custom_handlers/protocol_handler.h"
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #endif
 #include "content/public/browser/child_process_security_policy.h"
 #include "net/url_request/url_request.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/url_util_qt.h"
 #include "url/url_util.h"
 
@@ -40,7 +38,7 @@ namespace {
 
 const ProtocolHandler& LookupHandler(
     const ProtocolHandlerRegistry::ProtocolHandlerMap& handler_map,
-    base::StringPiece scheme) {
+    std::string_view scheme) {
   auto p = handler_map.find(scheme);
 
   if (p != handler_map.end())
@@ -169,9 +167,9 @@ ProtocolHandlerRegistry::GetReplacedHandlers(
 void ProtocolHandlerRegistry::ClearDefault(const std::string& scheme) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // TODO(jfernandez): If we want to use StringPiece as map's key for erasing,
-  // we would need to adapt the ProtocolHandlerMap, or just use the iterator
-  // got from find(scheme).
+  // TODO(jfernandez): If we want to use std::string_view as map's key for
+  // erasing, we would need to adapt the ProtocolHandlerMap, or just use the
+  // iterator got from find(scheme).
   default_handlers_.erase(scheme);
   Save();
   NotifyChanged();
@@ -201,7 +199,7 @@ void ProtocolHandlerRegistry::InitProtocolSettings() {
     return;
   }
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   if (prefs_->HasPrefPath(prefs::kCustomHandlersEnabled)) {
     if (prefs_->GetBoolean(prefs::kCustomHandlersEnabled)) {
       Enable();
@@ -229,7 +227,7 @@ void ProtocolHandlerRegistry::InitProtocolSettings() {
 #endif
 }
 
-int ProtocolHandlerRegistry::GetHandlerIndex(base::StringPiece scheme) const {
+int ProtocolHandlerRegistry::GetHandlerIndex(std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const ProtocolHandler& candidate = GetHandlerFor(scheme);
   if (candidate.IsEmpty())
@@ -248,7 +246,7 @@ int ProtocolHandlerRegistry::GetHandlerIndex(base::StringPiece scheme) const {
 }
 
 ProtocolHandlerRegistry::ProtocolHandlerList
-ProtocolHandlerRegistry::GetHandlersFor(base::StringPiece scheme) const {
+ProtocolHandlerRegistry::GetHandlersFor(std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto p = protocol_handlers_.find(scheme);
   if (p == protocol_handlers_.end()) {
@@ -307,12 +305,13 @@ void ProtocolHandlerRegistry::GetRegisteredProtocols(
 }
 
 bool ProtocolHandlerRegistry::CanSchemeBeOverridden(
-    base::StringPiece scheme) const {
+    std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const ProtocolHandlerList* handlers = GetHandlerList(scheme);
   // If we already have a handler for this scheme, we can add more.
-  if (handlers != NULL && !handlers->empty())
+  if (handlers != nullptr && !handlers->empty()) {
     return true;
+  }
   // Don't override a scheme if it already has an external handler.
   return !delegate_->IsExternalHandlerRegistered(
       static_cast<std::string>(scheme));
@@ -334,7 +333,7 @@ bool ProtocolHandlerRegistry::IsRegisteredByUser(
 }
 
 bool ProtocolHandlerRegistry::HasPolicyRegisteredHandler(
-    base::StringPiece scheme) {
+    std::string_view scheme) {
   return (policy_protocol_handlers_.find(scheme) !=
           policy_protocol_handlers_.end());
 }
@@ -392,8 +391,7 @@ void ProtocolHandlerRegistry::RemoveIgnoredHandler(
     NotifyChanged();
 }
 
-bool ProtocolHandlerRegistry::IsHandledProtocol(
-    base::StringPiece scheme) const {
+bool ProtocolHandlerRegistry::IsHandledProtocol(std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return enabled_ && !GetHandlerFor(scheme).IsEmpty();
 }
@@ -433,7 +431,7 @@ void ProtocolHandlerRegistry::RemoveHandler(const ProtocolHandler& handler) {
     NotifyChanged();
 }
 
-void ProtocolHandlerRegistry::RemoveDefaultHandler(base::StringPiece scheme) {
+void ProtocolHandlerRegistry::RemoveDefaultHandler(std::string_view scheme) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   ProtocolHandler current_default = GetHandlerFor(scheme);
   if (!current_default.IsEmpty())
@@ -441,7 +439,7 @@ void ProtocolHandlerRegistry::RemoveDefaultHandler(base::StringPiece scheme) {
 }
 
 const ProtocolHandler& ProtocolHandlerRegistry::GetHandlerFor(
-    base::StringPiece scheme) const {
+    std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return LookupHandler(default_handlers_, scheme);
 }
@@ -488,7 +486,7 @@ void ProtocolHandlerRegistry::Shutdown() {
 // static
 void ProtocolHandlerRegistry::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   registry->RegisterListPref(prefs::kRegisteredProtocolHandlers);
   registry->RegisterListPref(prefs::kIgnoredProtocolHandlers);
   registry->RegisterListPref(prefs::kPolicyRegisteredProtocolHandlers);
@@ -514,12 +512,12 @@ void ProtocolHandlerRegistry::PromoteHandler(const ProtocolHandler& handler) {
   DCHECK(IsRegistered(handler));
   auto p = protocol_handlers_.find(handler.protocol());
   ProtocolHandlerList& list = p->second;
-  list.erase(base::ranges::find(list, handler));
+  list.erase(std::ranges::find(list, handler));
   list.insert(list.begin(), handler);
 }
 
 void ProtocolHandlerRegistry::Save() {
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (is_loading_) {
     return;
@@ -538,11 +536,11 @@ void ProtocolHandlerRegistry::Save() {
 }
 
 const ProtocolHandlerRegistry::ProtocolHandlerList*
-ProtocolHandlerRegistry::GetHandlerList(base::StringPiece scheme) const {
+ProtocolHandlerRegistry::GetHandlerList(std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto p = protocol_handlers_.find(scheme);
   if (p == protocol_handlers_.end()) {
-    return NULL;
+    return nullptr;
   }
   return &p->second;
 }
@@ -551,7 +549,7 @@ void ProtocolHandlerRegistry::SetDefault(const ProtocolHandler& handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   const std::string& protocol = handler.protocol();
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   ProtocolHandlerMap::const_iterator p = default_handlers_.find(protocol);
   // If we're not loading, and we are setting a default for a new protocol,
   // register with the OS.
@@ -635,7 +633,7 @@ bool ProtocolHandlerRegistry::RegisterProtocolHandler(
 
 std::vector<const base::Value::Dict*>
 ProtocolHandlerRegistry::GetHandlersFromPref(const char* pref_name) const {
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::vector<const base::Value::Dict*> result;
   if (!prefs_ || !prefs_->HasPrefPath(pref_name)) {
@@ -716,10 +714,10 @@ void ProtocolHandlerRegistry::EraseHandler(const ProtocolHandler& handler,
 
 void ProtocolHandlerRegistry::EraseHandler(const ProtocolHandler& handler,
                                            ProtocolHandlerList* list) {
-  list->erase(base::ranges::find(*list, handler));
+  list->erase(std::ranges::find(*list, handler));
 }
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 void ProtocolHandlerRegistry::OnSetAsDefaultProtocolClientFinished(
     const std::string& protocol,
     bool is_default) {
@@ -740,14 +738,14 @@ base::WeakPtr<ProtocolHandlerRegistry> ProtocolHandlerRegistry::GetWeakPtr() {
 void ProtocolHandlerRegistry::AddPredefinedHandler(
     const ProtocolHandler& handler) {
   DCHECK(!is_loaded_);  // Must be called prior InitProtocolSettings.
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   RegisterProtocolHandler(handler, USER);
 #endif
   SetDefault(handler);
   predefined_protocol_handlers_.push_back(handler);
 }
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 DefaultClientCallback ProtocolHandlerRegistry::GetDefaultWebClientCallback(
     const std::string& protocol) {
   return base::BindOnce(

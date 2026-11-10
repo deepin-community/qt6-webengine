@@ -6,12 +6,10 @@
 
 #include "fxjs/xfa/cjx_container.h"
 
-#include <vector>
-
+#include "core/fxcrt/span.h"
 #include "fxjs/xfa/cfxjse_class.h"
 #include "fxjs/xfa/cfxjse_engine.h"
 #include "fxjs/xfa/cfxjse_value.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/cppgc/allocation.h"
 #include "v8/include/v8-object.h"
 #include "xfa/fxfa/parser/cxfa_arraynodelist.h"
@@ -39,9 +37,9 @@ CJS_Result CJX_Container::getDelta(CFXJSE_Engine* runtime,
 
 CJS_Result CJX_Container::getDeltas(CFXJSE_Engine* runtime,
                                     pdfium::span<v8::Local<v8::Value>> params) {
-  CXFA_Document* pDoc = GetDocument();
+  CXFA_Document* doc = GetDocument();
   auto* pList = cppgc::MakeGarbageCollected<CXFA_ArrayNodeList>(
-      pDoc->GetHeap()->GetAllocationHandle(), pDoc);
-  pDoc->GetNodeOwner()->PersistList(pList);
+      doc->GetHeap()->GetAllocationHandle(), doc);
+  doc->GetNodeOwner()->PersistList(pList);
   return CJS_Result::Success(runtime->NewNormalXFAObject(pList));
 }

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -36,7 +37,7 @@ namespace {
 
 base::Value::Dict NetLogSpdyStreamErrorParams(spdy::SpdyStreamId stream_id,
                                               int net_error,
-                                              base::StringPiece description) {
+                                              std::string_view description) {
   return base::Value::Dict()
       .Set("stream_id", static_cast<int>(stream_id))
       .Set("net_error", ErrorToShortString(net_error))
@@ -53,7 +54,7 @@ base::Value::Dict NetLogSpdyStreamWindowUpdateParams(
       .Set("window_size", window_size);
 }
 
-base::Value::Dict NetLogSpdyDataParams(spdy::SpdyStreamId stream_id,
+base::Value::Dict NetLogSpdyDataParamsSS(spdy::SpdyStreamId stream_id,
                                        int size,
                                        bool fin) {
   return base::Value::Dict()
@@ -77,7 +78,6 @@ class SpdyStream::HeadersBufferProducer : public SpdyBufferProducer {
   std::unique_ptr<SpdyBuffer> ProduceBuffer() override {
     if (!stream_.get()) {
       NOTREACHED();
-      return nullptr;
     }
     DCHECK_GT(stream_->stream_id(), 0u);
     return std::make_unique<SpdyBuffer>(stream_->ProduceHeadersFrame());
@@ -277,8 +277,15 @@ void SpdyStream::IncreaseRecvWindowSize(int32_t delta_window_size) {
   if (unacked_recv_window_bytes_ > max_recv_window_size_ / 2 ||
       elapsed >= session_->TimeToBufferSmallWindowUpdates()) {
     last_recv_window_update_ = base::TimeTicks::Now();
+    // SendStreamWindowUpdate() can result in session draining and stream
+    // destruction if the number of queued capped frames exceeds the limit.
+    // Check weak_this after the call to detect this.
+    base::WeakPtr<SpdyStream> weak_this = weak_ptr_factory_.GetWeakPtr();
     session_->SendStreamWindowUpdate(
         stream_id_, static_cast<uint32_t>(unacked_recv_window_bytes_));
+    if (!weak_this) {
+      return;
+    }
     unacked_recv_window_bytes_ = 0;
   }
 }
@@ -327,7 +334,7 @@ void SpdyStream::SetRequestTime(base::Time t) {
 }
 
 void SpdyStream::OnHeadersReceived(
-    const spdy::Http2HeaderBlock& response_headers,
+    const quiche::HttpHeaderBlock& response_headers,
     base::Time response_time,
     base::TimeTicks recv_first_byte_time) {
   switch (response_state_) {
@@ -335,7 +342,7 @@ void SpdyStream::OnHeadersReceived(
       // No header block has been received yet.
       DCHECK(response_headers_.empty());
 
-      spdy::Http2HeaderBlock::const_iterator it =
+      quiche::HttpHeaderBlock::const_iterator it =
           response_headers.find(spdy::kHttp2StatusHeader);
       if (it == response_headers.end()) {
         const std::string error("Response headers do not include :status.");
@@ -561,7 +568,7 @@ int SpdyStream::OnDataSent(size_t frame_size) {
   }
 }
 
-void SpdyStream::LogStreamError(int error, base::StringPiece description) {
+void SpdyStream::LogStreamError(int error, std::string_view description) {
   net_log_.AddEvent(NetLogEventType::HTTP2_STREAM_ERROR, [&] {
     return NetLogSpdyStreamErrorParams(stream_id_, error, description);
   });
@@ -616,12 +623,12 @@ base::WeakPtr<SpdyStream> SpdyStream::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-int SpdyStream::SendRequestHeaders(spdy::Http2HeaderBlock request_headers,
+int SpdyStream::SendRequestHeaders(quiche::HttpHeaderBlock request_headers,
                                    SpdySendStatus send_status) {
   net_log_.AddEvent(
       NetLogEventType::HTTP_TRANSACTION_HTTP2_SEND_REQUEST_HEADERS,
       [&](NetLogCaptureMode capture_mode) {
-        return Http2HeaderBlockNetLogParams(&request_headers, capture_mode);
+        return HttpHeaderBlockNetLogParams(&request_headers, capture_mode);
       });
   CHECK_EQ(pending_send_status_, MORE_DATA_TO_SEND);
   CHECK(!request_headers_valid_);
@@ -713,6 +720,15 @@ bool SpdyStream::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
   return result;
 }
 
+base::Value::Dict SpdyStream::GetInfoAsValue() const {
+  base::Value::Dict dict;
+  dict.Set("stream_id", static_cast<int>(stream_id_));
+  dict.Set("io_state", DescribeState(io_state_));
+  dict.Set("send_stalled_by_flow_control", send_stalled_by_flow_control_);
+  dict.Set("pending_send_status", pending_send_status_);
+  return dict;
+}
+
 void SpdyStream::QueueNextDataFrame() {
   // Until the request has been completely sent, we cannot be sure
   // that our stream_id is correct.
@@ -762,7 +778,7 @@ void SpdyStream::QueueNextDataFrame() {
   }
 
   session_->net_log().AddEvent(NetLogEventType::HTTP2_SESSION_SEND_DATA, [&] {
-    return NetLogSpdyDataParams(stream_id_, effective_len, end_stream);
+    return NetLogSpdyDataParamsSS(stream_id_, effective_len, end_stream);
   });
 
   session_->EnqueueStreamWrite(
@@ -771,7 +787,7 @@ void SpdyStream::QueueNextDataFrame() {
 }
 
 void SpdyStream::OnEarlyHintsReceived(
-    const spdy::Http2HeaderBlock& response_headers,
+    const quiche::HttpHeaderBlock& response_headers,
     base::TimeTicks recv_first_byte_time) {
   // Record the timing of the 103 Early Hints response for the experiment
   // (https://crbug.com/1093693).
@@ -800,7 +816,7 @@ void SpdyStream::OnEarlyHintsReceived(
 }
 
 void SpdyStream::SaveResponseHeaders(
-    const spdy::Http2HeaderBlock& response_headers,
+    const quiche::HttpHeaderBlock& response_headers,
     int status) {
   if (response_headers.contains("transfer-encoding")) {
     session_->ResetStream(stream_id_, ERR_HTTP2_PROTOCOL_ERROR,

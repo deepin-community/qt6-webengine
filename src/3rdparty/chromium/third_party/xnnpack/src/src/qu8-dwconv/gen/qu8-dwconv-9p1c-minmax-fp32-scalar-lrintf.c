@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-dwconv/unipass-scalar.c.in
 //   Generator: tools/xngen
@@ -9,11 +10,14 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
-
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
 
 void xnn_qu8_dwconv_minmax_fp32_ukernel_9p1c__scalar_lrintf(
     size_t channels,
@@ -24,17 +28,18 @@ void xnn_qu8_dwconv_minmax_fp32_ukernel_9p1c__scalar_lrintf(
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
+    size_t input_pixel_stride,
     const uint8_t* zero,
-    const union xnn_qu8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qu8_conv_minmax_params* restrict params)
 {
   assert(channels != 0);
   assert(output_width != 0);
 
-  const float vscale = params->fp32_scalar_lrintf.scale;
-  const float voutput_min_less_zero_point = params->fp32_scalar_lrintf.output_min_less_zero_point;
-  const float voutput_max_less_zero_point = params->fp32_scalar_lrintf.output_max_less_zero_point;
-  const int32_t voutput_zero_point = params->fp32_scalar_lrintf.output_zero_point;
-  const int32_t vkernel_zero_point = params->fp32_scalar_lrintf.kernel_zero_point;
+  const float vscale = params->fp32_scalar.scale;
+  const float voutput_min_less_zero_point = (int32_t) params->fp32_scalar.output_min - (int32_t) params->fp32_scalar.output_zero_point;
+  const float voutput_max_less_zero_point = (int32_t) params->fp32_scalar.output_max - (int32_t) params->fp32_scalar.output_zero_point;
+  const int32_t voutput_zero_point = params->fp32_scalar.output_zero_point;
+  const int32_t vkernel_zero_point = params->fp32_scalar.kernel_zero_point;
   do {
     const uint8_t* i0 = input[0];
     assert(i0 != NULL);
@@ -128,6 +133,7 @@ void xnn_qu8_dwconv_minmax_fp32_ukernel_9p1c__scalar_lrintf(
       *output++ = (uint8_t) vout;
     } while (--c != 0);
 
+    input_offset += input_pixel_stride;
     output = (uint8_t*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

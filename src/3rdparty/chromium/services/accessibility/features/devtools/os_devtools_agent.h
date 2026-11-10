@@ -5,6 +5,7 @@
 #ifndef SERVICES_ACCESSIBILITY_FEATURES_DEVTOOLS_OS_DEVTOOLS_AGENT_H_
 #define SERVICES_ACCESSIBILITY_FEATURES_DEVTOOLS_OS_DEVTOOLS_AGENT_H_
 
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
@@ -52,6 +53,7 @@ class OSDevToolsAgent : public blink::mojom::DevToolsAgent,
           session_receiver,
       mojo::PendingReceiver<blink::mojom::DevToolsSession> io_session_receiver,
       blink::mojom::DevToolsSessionStatePtr reattach_session_state,
+      const std::string& script_to_evaluate_on_load,
       bool client_expects_binary_responses,
       bool client_is_trusted,
       const std::string& session_id,
@@ -60,8 +62,6 @@ class OSDevToolsAgent : public blink::mojom::DevToolsAgent,
   void ReportChildTargets(bool report,
                           bool wait_for_debugger,
                           ReportChildTargetsCallback callback) override;
-  void GetUniqueFormControlId(int32_t nodeId,
-                              GetUniqueFormControlIdCallback callback) override;
   // V8InspectorClient implementation.
 
   // TODO(b/290815208): Implement after source files are able to be loaded.
@@ -88,11 +88,11 @@ class OSDevToolsAgent : public blink::mojom::DevToolsAgent,
   // These pointers are kept around for access to the session for non-mojo
   // related tasks. The session destroyed callback ensures these are erased when
   // a session is disconnected.
-  std::set<OSDevToolsSession*> sessions_;
+  std::set<raw_ptr<OSDevToolsSession, SetExperimental>> sessions_;
 
   SEQUENCE_CHECKER(v8_sequence_checker_);
   base::WeakPtrFactory<OSDevToolsAgent> weak_ptr_factory_{this};
 };
 
 }  // namespace ax
-#endif
+#endif  // SERVICES_ACCESSIBILITY_FEATURES_DEVTOOLS_OS_DEVTOOLS_AGENT_H_

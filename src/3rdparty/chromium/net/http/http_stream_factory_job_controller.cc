@@ -15,21 +15,32 @@
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
+#include "net/base/features.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/privacy_mode.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_string_util.h"
+#include "net/base/session_usage.h"
+#include "net/base/task/task_runner.h"
 #include "net/base/url_util.h"
+#include "net/http/alternative_service.h"
 #include "net/http/bidirectional_stream_impl.h"
+#include "net/http/http_stream_key.h"
+#include "net/http/http_stream_pool.h"
+#include "net/http/http_stream_pool_request_info.h"
 #include "net/http/transport_security_state.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
+#include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_resolution_request.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
+#include "net/quic/quic_session_key.h"
+#include "net/socket/next_proto.h"
 #include "net/spdy/spdy_session.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 #include "url/url_constants.h"
@@ -81,7 +92,7 @@ void HistogramProxyUsed(const ProxyInfo& proxy_info, bool success) {
   ProxyServer::Scheme proxy_scheme = ProxyServer::Scheme::SCHEME_INVALID;
   if (!proxy_info.is_empty() && !proxy_info.is_direct()) {
     if (proxy_info.proxy_chain().is_multi_proxy()) {
-      // TODO(https://crbug.com/1491092): Update this histogram to have a new
+      // TODO(crbug.com/40284947): Update this histogram to have a new
       // bucket for multi-chain proxies. Until then, don't influence the
       // existing metric counts which have historically been only for single-hop
       // proxies.
@@ -89,9 +100,7 @@ void HistogramProxyUsed(const ProxyInfo& proxy_info, bool success) {
     }
     proxy_scheme = proxy_info.proxy_chain().is_direct()
                        ? static_cast<ProxyServer::Scheme>(1)
-                       : proxy_info.proxy_chain()
-                             .GetProxyServer(/*chain_index=*/0)
-                             .scheme();
+                       : proxy_info.proxy_chain().First().scheme();
   }
   if (success) {
     UMA_HISTOGRAM_ENUMERATION("Net.HttpJob.ProxyTypeSuccess", proxy_scheme,
@@ -105,23 +114,7 @@ void HistogramProxyUsed(const ProxyInfo& proxy_info, bool success) {
 // Generate a AlternativeService for DNS alt job. Note: Chrome does not yet
 // support different port DNS alpn.
 AlternativeService GetAlternativeServiceForDnsJob(const GURL& url) {
-  return AlternativeService(kProtoQUIC, HostPortPair::FromURL(url));
-}
-
-}  // namespace
-
-// The maximum time to wait for the alternate job to complete before resuming
-// the main job.
-const int kMaxDelayTimeForMainJobSecs = 3;
-
-base::Value::Dict NetLogJobControllerParams(const HttpRequestInfo& request_info,
-                                            bool is_preconnect) {
-  base::Value::Dict dict;
-  dict.Set("url", request_info.url.possibly_invalid_spec());
-  dict.Set("is_preconnect", is_preconnect);
-  dict.Set("privacy_mode", PrivacyModeToDebugString(request_info.privacy_mode));
-
-  return dict;
+  return AlternativeService(NextProto::kProtoQUIC, HostPortPair::FromURL(url));
 }
 
 base::Value::Dict NetLogAltSvcParams(const AlternativeServiceInfo* alt_svc_info,
@@ -132,15 +125,29 @@ base::Value::Dict NetLogAltSvcParams(const AlternativeServiceInfo* alt_svc_info,
   return dict;
 }
 
+const scoped_refptr<base::SingleThreadTaskRunner>& TaskRunnerHSFJC(
+    net::RequestPriority priority) {
+  if (features::kNetTaskSchedulerHttpStreamFactoryJobController.Get()) {
+    return net::GetTaskRunner(priority);
+  }
+  return base::SingleThreadTaskRunner::GetCurrentDefault();
+}
+
+}  // namespace
+
+// The maximum time to wait for the alternate job to complete before resuming
+// the main job.
+const int kMaxDelayTimeForMainJobSecs = 3;
+
 HttpStreamFactory::JobController::JobController(
     HttpStreamFactory* factory,
     HttpStreamRequest::Delegate* delegate,
     HttpNetworkSession* session,
     JobFactory* job_factory,
-    const HttpRequestInfo& request_info,
+    const HttpRequestInfo& http_request_info,
     bool is_preconnect,
     bool is_websocket,
-    bool enable_ip_based_pooling,
+    bool enable_ip_based_pooling_for_h2,
     bool enable_alternative_services,
     bool delay_main_job_with_available_spdy_session,
     const std::vector<SSLConfig::CertAndStatus>& allowed_bad_certs)
@@ -150,32 +157,46 @@ HttpStreamFactory::JobController::JobController(
       delegate_(delegate),
       is_preconnect_(is_preconnect),
       is_websocket_(is_websocket),
-      enable_ip_based_pooling_(enable_ip_based_pooling),
+      enable_ip_based_pooling_for_h2_(enable_ip_based_pooling_for_h2),
       enable_alternative_services_(enable_alternative_services),
       delay_main_job_with_available_spdy_session_(
           delay_main_job_with_available_spdy_session),
-      request_info_(request_info),
+      management_config_(http_request_info.connection_management_config),
+      http_request_info_url_(http_request_info.url),
+      origin_url_(DuplicateUrlWithHostMappingRules(http_request_info.url)),
+      request_info_(http_request_info),
       allowed_bad_certs_(allowed_bad_certs),
       net_log_(NetLogWithSource::Make(
           session->net_log(),
           NetLogSourceType::HTTP_STREAM_JOB_CONTROLLER)) {
-  DCHECK(factory);
-  DCHECK(base::EqualsCaseInsensitiveASCII(request_info_.url.scheme_piece(),
+  DCHECK(factory_);
+  DCHECK(session_);
+  DCHECK(job_factory_);
+  DCHECK(base::EqualsCaseInsensitiveASCII(origin_url_.scheme_piece(),
                                           url::kHttpScheme) ||
-         base::EqualsCaseInsensitiveASCII(request_info_.url.scheme_piece(),
+         base::EqualsCaseInsensitiveASCII(origin_url_.scheme_piece(),
                                           url::kHttpsScheme) ||
-         base::EqualsCaseInsensitiveASCII(request_info_.url.scheme_piece(),
+         base::EqualsCaseInsensitiveASCII(origin_url_.scheme_piece(),
                                           url::kWsScheme) ||
-         base::EqualsCaseInsensitiveASCII(request_info_.url.scheme_piece(),
+         base::EqualsCaseInsensitiveASCII(origin_url_.scheme_piece(),
                                           url::kWssScheme));
-  // Preconnects do not require a NetworkIsolationKey so we don't require it to
-  // be set consistently with the NetworkAnonymizationKey here.
-  if (!is_preconnect) {
-    DCHECK(request_info.IsConsistent());
-  }
 
   net_log_.BeginEvent(NetLogEventType::HTTP_STREAM_JOB_CONTROLLER, [&] {
-    return NetLogJobControllerParams(request_info, is_preconnect);
+    base::Value::Dict dict;
+    dict.Set("url", http_request_info.url.possibly_invalid_spec());
+    if (origin_url_ != http_request_info.url) {
+      dict.Set("url_after_host_mapping", origin_url_.possibly_invalid_spec());
+    }
+    dict.Set("is_preconnect", is_preconnect_);
+    dict.Set("privacy_mode",
+             PrivacyModeToDebugString(request_info_.privacy_mode));
+    base::Value::List allowed_bad_certs_list;
+    for (const auto& cert_and_status : allowed_bad_certs_) {
+      allowed_bad_certs_list.Append(
+          cert_and_status.cert->subject().GetDisplayName());
+    }
+    dict.Set("allowed_bad_certs", std::move(allowed_bad_certs_list));
+    return dict;
   });
 }
 
@@ -198,15 +219,14 @@ std::unique_ptr<HttpStreamRequest> HttpStreamFactory::JobController::Start(
     const NetLogWithSource& source_net_log,
     HttpStreamRequest::StreamType stream_type,
     RequestPriority priority) {
-  DCHECK(factory_);
   DCHECK(!request_);
 
   stream_type_ = stream_type;
   priority_ = priority;
 
   auto request = std::make_unique<HttpStreamRequest>(
-      request_info_.url, this, delegate,
-      websocket_handshake_stream_create_helper, source_net_log, stream_type);
+      this, websocket_handshake_stream_create_helper, source_net_log,
+      stream_type);
   // Keep a raw pointer but release ownership of HttpStreamRequest instance.
   request_ = request.get();
 
@@ -218,6 +238,7 @@ std::unique_ptr<HttpStreamRequest> HttpStreamFactory::JobController::Start(
       source_net_log.source());
 
   RunLoop(OK);
+
   return request;
 }
 
@@ -257,7 +278,12 @@ LoadState HttpStreamFactory::JobController::GetLoadState() const {
 
 void HttpStreamFactory::JobController::OnRequestComplete() {
   DCHECK(request_);
+  CHECK(!switched_to_http_stream_pool_);
+
   request_ = nullptr;
+  // This is called when the delegate is destroying its HttpStreamRequest, so
+  // it's no longer safe to call into it after this point.
+  delegate_ = nullptr;
 
   if (!job_bound_) {
     alternative_job_.reset();
@@ -377,6 +403,24 @@ void HttpStreamFactory::JobController::OnWebSocketHandshakeStreamReady(
                                              std::move(stream));
 }
 
+void HttpStreamFactory::JobController::OnQuicHostResolution(
+    const url::SchemeHostPort& destination,
+    base::TimeTicks dns_resolution_start_time,
+    base::TimeTicks dns_resolution_end_time) {
+  if (!request_) {
+    return;
+  }
+  if (destination != url::SchemeHostPort(origin_url_)) {
+    // Ignores different destination alternative job's DNS resolution time.
+    return;
+  }
+  // QUIC jobs (ALTERNATIVE, DNS_ALPN_H3) are started before the non-QUIC (MAIN)
+  // job. So we set the DNS resolution overrides to use the DNS timing of the
+  // QUIC jobs.
+  request_->SetDnsResolutionTimeOverrides(dns_resolution_start_time,
+                                          dns_resolution_end_time);
+}
+
 void HttpStreamFactory::JobController::OnStreamFailed(Job* job, int status) {
   DCHECK_NE(OK, status);
   if (job->job_type() == MAIN) {
@@ -384,7 +428,7 @@ void HttpStreamFactory::JobController::OnStreamFailed(Job* job, int status) {
     main_job_net_error_ = status;
   } else if (job->job_type() == ALTERNATIVE) {
     DCHECK_EQ(alternative_job_.get(), job);
-    DCHECK_NE(kProtoUnknown, alternative_service_info_.protocol());
+    DCHECK_NE(NextProto::kProtoUnknown, alternative_service_info_.protocol());
     alternative_job_net_error_ = status;
   } else {
     DCHECK_EQ(job->job_type(), DNS_ALPN_H3);
@@ -577,7 +621,7 @@ void HttpStreamFactory::JobController::ResumeMainJobLater(
   resume_main_job_callback_.Reset(
       base::BindOnce(&HttpStreamFactory::JobController::ResumeMainJob,
                      ptr_factory_.GetWeakPtr()));
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+  TaskRunnerHSFJC(priority_)->PostDelayedTask(
       FROM_HERE, resume_main_job_callback_.callback(), delay);
 }
 
@@ -721,7 +765,7 @@ void HttpStreamFactory::JobController::RunLoop(int result) {
     DCHECK(!main_job_);
     DCHECK(!alternative_job_);
     DCHECK(!dns_alpn_h3_job_);
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+    TaskRunnerHSFJC(priority_)->PostTask(
         FROM_HERE,
         base::BindOnce(&HttpStreamFactory::JobController::NotifyRequestFailed,
                        ptr_factory_.GetWeakPtr(), rv));
@@ -747,7 +791,6 @@ int HttpStreamFactory::JobController::DoLoop(int rv) {
         break;
       default:
         NOTREACHED() << "bad state";
-        break;
     }
   } while (next_state_ != STATE_NONE && rv != ERR_IO_PENDING);
   return rv;
@@ -755,7 +798,6 @@ int HttpStreamFactory::JobController::DoLoop(int rv) {
 
 int HttpStreamFactory::JobController::DoResolveProxy() {
   DCHECK(!proxy_resolve_request_);
-  DCHECK(session_);
 
   next_state_ = STATE_RESOLVE_PROXY_COMPLETE;
 
@@ -764,14 +806,12 @@ int HttpStreamFactory::JobController::DoResolveProxy() {
     return OK;
   }
 
-  GURL origin_url = request_info_.url;
-  RewriteUrlWithHostMappingRules(origin_url);
-
   CompletionOnceCallback io_callback =
       base::BindOnce(&JobController::OnIOComplete, base::Unretained(this));
   return session_->proxy_resolution_service()->ResolveProxy(
-      origin_url, request_info_.method, request_info_.network_anonymization_key,
-      &proxy_info_, std::move(io_callback), &proxy_resolve_request_, net_log_);
+      origin_url_, request_info_.method,
+      request_info_.network_anonymization_key, &proxy_info_,
+      std::move(io_callback), &proxy_resolve_request_, net_log_);
 }
 
 int HttpStreamFactory::JobController::DoResolveProxyComplete(int rv) {
@@ -809,39 +849,43 @@ int HttpStreamFactory::JobController::DoResolveProxyComplete(int rv) {
 int HttpStreamFactory::JobController::DoCreateJobs() {
   DCHECK(!main_job_);
   DCHECK(!alternative_job_);
-  DCHECK(request_info_.url.is_valid());
-  DCHECK(request_info_.url.IsStandard());
+  DCHECK(origin_url_.is_valid());
+  DCHECK(origin_url_.IsStandard());
 
-  GURL origin_url = request_info_.url;
-  RewriteUrlWithHostMappingRules(origin_url);
-
-  url::SchemeHostPort destination(origin_url);
+  url::SchemeHostPort destination(origin_url_);
   DCHECK(destination.IsValid());
   ConvertWsToHttp(destination);
 
-  // Create an alternative job if alternative service is set up for this domain,
-  // but only if we'll be speaking directly to the server, since QUIC through
-  // proxies is not supported.
-  if (proxy_info_.is_direct()) {
-    alternative_service_info_ =
-        GetAlternativeServiceInfoFor(request_info_, delegate_, stream_type_);
+  // Create an alternative job if alternative service is set up for this domain.
+  // This is applicable even if the connection will be made via a proxy.
+  alternative_service_info_ = GetAlternativeServiceInfoFor(
+      http_request_info_url_, request_info_, delegate_, stream_type_);
+
+  if (session_->host_resolver()->IsHappyEyeballsV3Enabled() &&
+      proxy_info_.is_direct() && !is_websocket_) {
+    SwitchToHttpStreamPool();
+    return OK;
   }
+
   quic::ParsedQuicVersion quic_version = quic::ParsedQuicVersion::Unsupported();
-  if (alternative_service_info_.protocol() == kProtoQUIC) {
+  if (alternative_service_info_.protocol() == NextProto::kProtoQUIC) {
     quic_version =
         SelectQuicVersion(alternative_service_info_.advertised_versions());
     DCHECK_NE(quic_version, quic::ParsedQuicVersion::Unsupported());
   }
+
+  // Getting ALPN for H3 from DNS has a lot of preconditions. Among them:
+  // - proxied connections perform DNS on the proxy, so they can't get supported
+  //   ALPNs from DNS
   const bool dns_alpn_h3_job_enabled =
-      !HttpStreamFactory::Job::OriginToForceQuicOn(
-          *session_->context().quic_context->params(), destination) &&
+      !session_->ShouldForceQuic(destination, proxy_info_, is_websocket_) &&
       enable_alternative_services_ &&
       session_->params().use_dns_https_svcb_alpn &&
-      base::EqualsCaseInsensitiveASCII(origin_url.scheme(),
+      base::EqualsCaseInsensitiveASCII(origin_url_.scheme(),
                                        url::kHttpsScheme) &&
       session_->IsQuicEnabled() && proxy_info_.is_direct() &&
       !session_->http_server_properties()->IsAlternativeServiceBroken(
-          GetAlternativeServiceForDnsJob(origin_url),
+          GetAlternativeServiceForDnsJob(origin_url_),
           request_info_.network_anonymization_key);
 
   if (is_preconnect_) {
@@ -857,14 +901,16 @@ int HttpStreamFactory::JobController::DoCreateJobs() {
     std::unique_ptr<Job> preconnect_job = job_factory_->CreateJob(
         this, dns_alpn_h3_job_enabled ? PRECONNECT_DNS_ALPN_H3 : PRECONNECT,
         session_, request_info_, IDLE, proxy_info_, allowed_bad_certs_,
-        destination, origin_url, is_websocket_, enable_ip_based_pooling_,
-        net_log_.net_log());
+        destination, origin_url_, is_websocket_,
+        enable_ip_based_pooling_for_h2_, net_log_.net_log(),
+        NextProto::kProtoUnknown, quic::ParsedQuicVersion::Unsupported(),
+        management_config_);
     // When there is an valid alternative service info, and `preconnect_job`
     // has no existing QUIC session, create a job for the alternative service.
-    if (alternative_service_info_.protocol() != kProtoUnknown &&
+    if (alternative_service_info_.protocol() != NextProto::kProtoUnknown &&
         !preconnect_job->HasAvailableQuicSession()) {
       GURL alternative_url = CreateAltSvcUrl(
-          origin_url, alternative_service_info_.host_port_pair());
+          origin_url_, alternative_service_info_.GetHostPortPair());
       RewriteUrlWithHostMappingRules(alternative_url);
 
       url::SchemeHostPort alternative_destination =
@@ -873,17 +919,20 @@ int HttpStreamFactory::JobController::DoCreateJobs() {
 
       main_job_ = job_factory_->CreateJob(
           this, PRECONNECT, session_, request_info_, IDLE, proxy_info_,
-          allowed_bad_certs_, std::move(alternative_destination), origin_url,
-          is_websocket_, enable_ip_based_pooling_, session_->net_log(),
-          alternative_service_info_.protocol(), quic_version);
+          allowed_bad_certs_, std::move(alternative_destination), origin_url_,
+          is_websocket_, enable_ip_based_pooling_for_h2_, session_->net_log(),
+          alternative_service_info_.protocol(), quic_version,
+          management_config_);
     } else {
       main_job_ = std::move(preconnect_job);
 
       if (dns_alpn_h3_job_enabled) {
         preconnect_backup_job_ = job_factory_->CreateJob(
             this, PRECONNECT, session_, request_info_, IDLE, proxy_info_,
-            allowed_bad_certs_, std::move(destination), origin_url,
-            is_websocket_, enable_ip_based_pooling_, net_log_.net_log());
+            allowed_bad_certs_, std::move(destination), origin_url_,
+            is_websocket_, enable_ip_based_pooling_for_h2_, net_log_.net_log(),
+            NextProto::kProtoUnknown, quic::ParsedQuicVersion::Unsupported(),
+            management_config_);
       }
     }
     main_job_->Preconnect(num_streams_);
@@ -891,25 +940,27 @@ int HttpStreamFactory::JobController::DoCreateJobs() {
   }
   main_job_ = job_factory_->CreateJob(
       this, MAIN, session_, request_info_, priority_, proxy_info_,
-      allowed_bad_certs_, std::move(destination), origin_url, is_websocket_,
-      enable_ip_based_pooling_, net_log_.net_log());
+      allowed_bad_certs_, std::move(destination), origin_url_, is_websocket_,
+      enable_ip_based_pooling_for_h2_, net_log_.net_log(),
+      NextProto::kProtoUnknown, quic::ParsedQuicVersion::Unsupported(),
+      management_config_);
 
   // Alternative Service can only be set for HTTPS requests while Alternative
   // Proxy is set for HTTP requests.
   // The main job may use HTTP/3 if the origin is specified in
   // `--origin-to-force-quic-on` switch. In that case, do not create
   // `alternative_job_` and `dns_alpn_h3_job_`.
-  if ((alternative_service_info_.protocol() != kProtoUnknown) &&
+  if ((alternative_service_info_.protocol() != NextProto::kProtoUnknown) &&
       !main_job_->using_quic()) {
-    DCHECK(request_info_.url.SchemeIs(url::kHttpsScheme));
+    DCHECK(origin_url_.SchemeIs(url::kHttpsScheme));
     DCHECK(!is_websocket_);
     DVLOG(1) << "Selected alternative service (host: "
-             << alternative_service_info_.host_port_pair().host()
-             << " port: " << alternative_service_info_.host_port_pair().port()
+             << alternative_service_info_.GetHostPortPair().host()
+             << " port: " << alternative_service_info_.GetHostPortPair().port()
              << " version: " << quic_version << ")";
 
-    GURL alternative_url =
-        CreateAltSvcUrl(origin_url, alternative_service_info_.host_port_pair());
+    GURL alternative_url = CreateAltSvcUrl(
+        origin_url_, alternative_service_info_.GetHostPortPair());
     RewriteUrlWithHostMappingRules(alternative_url);
 
     url::SchemeHostPort alternative_destination =
@@ -918,19 +969,21 @@ int HttpStreamFactory::JobController::DoCreateJobs() {
 
     alternative_job_ = job_factory_->CreateJob(
         this, ALTERNATIVE, session_, request_info_, priority_, proxy_info_,
-        allowed_bad_certs_, std::move(alternative_destination), origin_url,
-        is_websocket_, enable_ip_based_pooling_, net_log_.net_log(),
-        alternative_service_info_.protocol(), quic_version);
+        allowed_bad_certs_, std::move(alternative_destination), origin_url_,
+        is_websocket_, enable_ip_based_pooling_for_h2_, net_log_.net_log(),
+        alternative_service_info_.protocol(), quic_version, management_config_);
   }
 
   if (dns_alpn_h3_job_enabled && !main_job_->using_quic()) {
     DCHECK(!is_websocket_);
     url::SchemeHostPort dns_alpn_h3_destination =
-        url::SchemeHostPort(origin_url);
+        url::SchemeHostPort(origin_url_);
     dns_alpn_h3_job_ = job_factory_->CreateJob(
         this, DNS_ALPN_H3, session_, request_info_, priority_, proxy_info_,
-        allowed_bad_certs_, std::move(dns_alpn_h3_destination), origin_url,
-        is_websocket_, enable_ip_based_pooling_, net_log_.net_log());
+        allowed_bad_certs_, std::move(dns_alpn_h3_destination), origin_url_,
+        is_websocket_, enable_ip_based_pooling_for_h2_, net_log_.net_log(),
+        NextProto::kProtoUnknown, quic::ParsedQuicVersion::Unsupported(),
+        management_config_);
   }
 
   ClearInappropriateJobs();
@@ -970,7 +1023,7 @@ void HttpStreamFactory::JobController::ClearInappropriateJobs() {
   if (alternative_job_ && dns_alpn_h3_job_ &&
       (alternative_job_->HasAvailableQuicSession() ||
        (alternative_service_info_.alternative_service() ==
-        GetAlternativeServiceForDnsJob(request_info_.url)))) {
+        GetAlternativeServiceForDnsJob(http_request_info_url_)))) {
     // Clear |dns_alpn_h3_job_|, when there is an active session available for
     // |alternative_job_| or |alternative_job_| was created for the same
     // destination.
@@ -1110,7 +1163,7 @@ void HttpStreamFactory::JobController::MaybeReportBrokenAlternativeService(
   if (alt_job_net_error == ERR_NETWORK_CHANGED ||
       alt_job_net_error == ERR_INTERNET_DISCONNECTED ||
       (alt_job_net_error == ERR_NAME_NOT_RESOLVED &&
-       request_info_.url.host() == alt_service.host)) {
+       http_request_info_url_.host() == alt_service.host)) {
     // No need to mark alternative service as broken.
     return;
   }
@@ -1125,6 +1178,11 @@ void HttpStreamFactory::JobController::MaybeReportBrokenAlternativeService(
 }
 
 void HttpStreamFactory::JobController::MaybeNotifyFactoryOfCompletion() {
+  if (switched_to_http_stream_pool_) {
+    factory_->OnJobControllerComplete(this);
+    return;
+  }
+
   if (main_job_ || alternative_job_ || dns_alpn_h3_job_) {
     return;
   }
@@ -1137,7 +1195,7 @@ void HttpStreamFactory::JobController::MaybeNotifyFactoryOfCompletion() {
       "Net.AlternateServiceFailed");
   // Report for the DNS alt job if apply.
   MaybeReportBrokenAlternativeService(
-      GetAlternativeServiceForDnsJob(request_info_.url),
+      GetAlternativeServiceForDnsJob(http_request_info_url_),
       dns_alpn_h3_job_net_error_, dns_alpn_h3_job_failed_on_default_network_,
       "Net.AlternateServiceForDnsAlpnH3Failed");
 
@@ -1161,13 +1219,21 @@ void HttpStreamFactory::JobController::NotifyRequestFailed(int rv) {
 }
 
 void HttpStreamFactory::JobController::RewriteUrlWithHostMappingRules(
-    GURL& url) {
+    GURL& url) const {
   session_->params().host_mapping_rules.RewriteUrl(url);
+}
+
+GURL HttpStreamFactory::JobController::DuplicateUrlWithHostMappingRules(
+    const GURL& url) const {
+  GURL copy = url;
+  RewriteUrlWithHostMappingRules(copy);
+  return copy;
 }
 
 AlternativeServiceInfo
 HttpStreamFactory::JobController::GetAlternativeServiceInfoFor(
-    const HttpRequestInfo& request_info,
+    const GURL& http_request_info_url,
+    const StreamRequestInfo& request_info,
     HttpStreamRequest::Delegate* delegate,
     HttpStreamRequest::StreamType stream_type) {
   if (!enable_alternative_services_) {
@@ -1175,19 +1241,20 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoFor(
   }
 
   AlternativeServiceInfo alternative_service_info =
-      GetAlternativeServiceInfoInternal(request_info, delegate, stream_type);
+      GetAlternativeServiceInfoInternal(http_request_info_url, request_info,
+                                        delegate, stream_type);
   AlternativeServiceType type;
-  if (alternative_service_info.protocol() == kProtoUnknown) {
+  if (alternative_service_info.protocol() == NextProto::kProtoUnknown) {
     type = NO_ALTERNATIVE_SERVICE;
-  } else if (alternative_service_info.protocol() == kProtoQUIC) {
-    if (request_info.url.host_piece() ==
+  } else if (alternative_service_info.protocol() == NextProto::kProtoQUIC) {
+    if (http_request_info_url.host_piece() ==
         alternative_service_info.alternative_service().host) {
       type = QUIC_SAME_DESTINATION;
     } else {
       type = QUIC_DIFFERENT_DESTINATION;
     }
   } else {
-    if (request_info.url.host_piece() ==
+    if (http_request_info_url.host_piece() ==
         alternative_service_info.alternative_service().host) {
       type = NOT_QUIC_SAME_DESTINATION;
     } else {
@@ -1201,10 +1268,11 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoFor(
 
 AlternativeServiceInfo
 HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
-    const HttpRequestInfo& request_info,
+    const GURL& http_request_info_url,
+    const StreamRequestInfo& request_info,
     HttpStreamRequest::Delegate* delegate,
     HttpStreamRequest::StreamType stream_type) {
-  GURL original_url = request_info.url;
+  GURL original_url = http_request_info_url;
 
   if (!original_url.SchemeIs(url::kHttpsScheme)) {
     return AlternativeServiceInfo();
@@ -1230,7 +1298,8 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
   for (const AlternativeServiceInfo& alternative_service_info :
        alternative_service_info_vector) {
     DCHECK(IsAlternateProtocolValid(alternative_service_info.protocol()));
-    if (!quic_advertised && alternative_service_info.protocol() == kProtoQUIC) {
+    if (!quic_advertised &&
+        alternative_service_info.protocol() == NextProto::kProtoQUIC) {
       quic_advertised = true;
     }
     const bool is_broken = http_server_properties.IsAlternativeServiceBroken(
@@ -1264,19 +1333,20 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
       continue;
     }
 
-    if (alternative_service_info.protocol() == kProtoHTTP2) {
+    if (alternative_service_info.protocol() == NextProto::kProtoHTTP2) {
       if (!session_->params().enable_http2_alternative_service) {
         continue;
       }
 
       // Cache this entry if we don't have a non-broken Alt-Svc yet.
-      if (first_alternative_service_info.protocol() == kProtoUnknown) {
+      if (first_alternative_service_info.protocol() ==
+          NextProto::kProtoUnknown) {
         first_alternative_service_info = alternative_service_info;
       }
       continue;
     }
 
-    DCHECK_EQ(kProtoQUIC, alternative_service_info.protocol());
+    DCHECK_EQ(NextProto::kProtoQUIC, alternative_service_info.protocol());
     quic_all_broken = false;
     if (!session_->IsQuicEnabled()) {
       continue;
@@ -1298,11 +1368,12 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
     RewriteUrlWithHostMappingRules(mapped_origin);
     QuicSessionKey session_key(
         HostPortPair::FromURL(mapped_origin), request_info.privacy_mode,
+        proxy_info_.proxy_chain(), SessionUsage::kDestination,
         request_info.socket_tag, request_info.network_anonymization_key,
         request_info.secure_dns_policy, /*require_dns_https_alpn=*/false);
 
     GURL destination = CreateAltSvcUrl(
-        original_url, alternative_service_info.host_port_pair());
+        original_url, alternative_service_info.GetHostPortPair());
     if (session_key.host() != destination.host_piece() &&
         !session_->context().quic_context->params()->allow_remote_alt_svc) {
       continue;
@@ -1319,7 +1390,7 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
     }
 
     // Cache this entry if we don't have a non-broken Alt-Svc yet.
-    if (first_alternative_service_info.protocol() == kProtoUnknown) {
+    if (first_alternative_service_info.protocol() == NextProto::kProtoUnknown) {
       first_alternative_service_info = alternative_service_info;
     }
   }
@@ -1334,22 +1405,8 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
 
 quic::ParsedQuicVersion HttpStreamFactory::JobController::SelectQuicVersion(
     const quic::ParsedQuicVersionVector& advertised_versions) {
-  const quic::ParsedQuicVersionVector& supported_versions =
-      session_->context().quic_context->params()->supported_versions;
-  if (advertised_versions.empty()) {
-    return supported_versions[0];
-  }
-
-  for (const quic::ParsedQuicVersion& advertised : advertised_versions) {
-    for (const quic::ParsedQuicVersion& supported : supported_versions) {
-      if (supported == advertised) {
-        DCHECK_NE(quic::ParsedQuicVersion::Unsupported(), supported);
-        return supported;
-      }
-    }
-  }
-
-  return quic::ParsedQuicVersion::Unsupported();
+  return session_->context().quic_context->SelectQuicVersion(
+      advertised_versions);
 }
 
 void HttpStreamFactory::JobController::ReportAlternateProtocolUsage(
@@ -1383,7 +1440,8 @@ HttpStreamFactory::JobController::CalculateAlternateProtocolUsage(
       return ALTERNATE_PROTOCOL_USAGE_DNS_ALPN_H3_JOB_WON_RACE;
     }
   }
-  // TODO(crbug.com/1345536): Implement better logic to support uncovered cases.
+  // TODO(crbug.com/40232167): Implement better logic to support uncovered
+  // cases.
   return ALTERNATE_PROTOCOL_USAGE_UNSPECIFIED_REASON;
 }
 
@@ -1392,7 +1450,6 @@ int HttpStreamFactory::JobController::ReconsiderProxyAfterError(Job* job,
   // ReconsiderProxyAfterError() should only be called when the last job fails.
   DCHECK_EQ(1, GetJobCount());
   DCHECK(!proxy_resolve_request_);
-  DCHECK(session_);
 
   if (!job->should_reconsider_proxy()) {
     return error;
@@ -1402,13 +1459,15 @@ int HttpStreamFactory::JobController::ReconsiderProxyAfterError(Job* job,
     return error;
   }
 
-  if (proxy_info_.is_secure_http_like()) {
-    // TODO(https://crbug.com/1491092): Should do this for every proxy in the
-    // chain as part of adding support for client certificates.
-    session_->ssl_client_context()->ClearClientCertificate(
-        proxy_info_.proxy_chain()
-            .GetProxyServer(/*chain_index=*/0)
-            .host_port_pair());
+  // Clear client certificates for all proxies in the chain.
+  // TODO(crbug.com/40284947): client certificates for multi-proxy
+  // chains are not yet supported, and this is only tested with single-proxy
+  // chains.
+  for (auto& proxy_server : proxy_info_.proxy_chain().proxy_servers()) {
+    if (proxy_server.is_secure_http_like()) {
+      session_->ssl_client_context()->ClearClientCertificate(
+          proxy_server.host_port_pair());
+    }
   }
 
   if (!proxy_info_.Fallback(error, net_log_)) {
@@ -1445,6 +1504,58 @@ bool HttpStreamFactory::JobController::IsQuicAllowedForHost(
 
   std::string lowered_host = base::ToLowerASCII(host);
   return base::Contains(host_allowlist, lowered_host);
+}
+
+void HttpStreamFactory::JobController::SwitchToHttpStreamPool() {
+  CHECK(request_info_.socket_tag == SocketTag());
+  CHECK_EQ(stream_type_, HttpStreamRequest::HTTP_STREAM);
+  CHECK(session_->host_resolver()->IsHappyEyeballsV3Enabled());
+
+  switched_to_http_stream_pool_ = true;
+
+  bool disable_cert_network_fetches =
+      !!(request_info_.load_flags & LOAD_DISABLE_CERT_NETWORK_FETCHES);
+  NextProtoSet allowed_alpns =
+      request_info_.is_http1_allowed
+          ? NextProtoSet::All()
+          : NextProtoSet{NextProto::kProtoHTTP2, NextProto::kProtoQUIC};
+  url::SchemeHostPort destination(origin_url_);
+  session_->ApplyTestingFixedPort(destination);
+  HttpStreamPoolRequestInfo pool_request_info(
+      std::move(destination), request_info_.privacy_mode,
+      request_info_.socket_tag, request_info_.network_anonymization_key,
+      request_info_.secure_dns_policy, disable_cert_network_fetches,
+      alternative_service_info_, allowed_alpns, request_info_.load_flags,
+      proxy_info_, net_log_);
+  if (is_preconnect_) {
+    int rv = session_->http_stream_pool()->Preconnect(
+        std::move(pool_request_info), num_streams_,
+        base::BindOnce(&JobController::OnPoolPreconnectsComplete,
+                       ptr_factory_.GetWeakPtr()));
+    if (rv != ERR_IO_PENDING) {
+      TaskRunnerHSFJC(priority_)->PostTask(
+          FROM_HERE, base::BindOnce(&JobController::OnPoolPreconnectsComplete,
+                                    ptr_factory_.GetWeakPtr(), rv));
+    }
+    return;
+  }
+
+  // Exchange `request_` and `delegate_` to prevent them from being dangling.
+  session_->http_stream_pool()->HandleStreamRequest(
+      std::exchange(request_, nullptr), std::exchange(delegate_, nullptr),
+      std::move(pool_request_info), priority_, allowed_bad_certs_,
+      enable_ip_based_pooling_for_h2_, enable_alternative_services_);
+
+  // Delete `this` later as this method is called while running DoLoop().
+  TaskRunnerHSFJC(priority_)->PostTask(
+      FROM_HERE, base::BindOnce(&JobController::MaybeNotifyFactoryOfCompletion,
+                                ptr_factory_.GetWeakPtr()));
+}
+
+void HttpStreamFactory::JobController::OnPoolPreconnectsComplete(int rv) {
+  CHECK(switched_to_http_stream_pool_);
+  factory_->OnPreconnectsCompleteInternal();
+  MaybeNotifyFactoryOfCompletion();
 }
 
 }  // namespace net

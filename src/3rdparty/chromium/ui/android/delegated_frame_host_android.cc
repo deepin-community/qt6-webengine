@@ -8,11 +8,14 @@
 
 #include "base/android/build_info.h"
 #include "base/check_op.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "cc/slim/layer.h"
 #include "cc/slim/layer_tree.h"
 #include "cc/slim/surface_layer.h"
@@ -21,7 +24,10 @@
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/common/surfaces/surface_id.h"
+#include "components/viz/common/viz_utils.h"
 #include "components/viz/host/host_frame_sink_manager.h"
+#include "ui/android/browser_controls_offset_tag_constraints.h"
+#include "ui/android/browser_controls_offset_tag_definitions.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
 #include "ui/android/window_android_compositor.h"
@@ -51,7 +57,7 @@ scoped_refptr<cc::slim::SurfaceLayer> CreateSurfaceLayer(
 }
 
 // From content::VisibleTimeRequestTrigger::ConsumeAndMergeRequests
-// TODO(crbug.com/1263687): Use separate start time for each event.
+// TODO(crbug.com/40203057): Use separate start time for each event.
 blink::mojom::RecordContentToVisibleTimeRequestPtr ConsumeAndMergeRequests(
     blink::mojom::RecordContentToVisibleTimeRequestPtr request1,
     blink::mojom::RecordContentToVisibleTimeRequestPtr request2) {
@@ -123,6 +129,53 @@ void DelegatedFrameHostAndroid::SetIsFrameSinkIdOwner(bool is_owner) {
   }
 }
 
+void DelegatedFrameHostAndroid::RegisterOffsetTags(
+    const BrowserControlsOffsetTagDefinitions& tag_definitions) {
+  const cc::BrowserControlsOffsetTags& tags = tag_definitions.tags;
+  const BrowserControlsOffsetTagConstraints& constraints =
+      tag_definitions.constraints;
+
+  const viz::OffsetTag& bottom_controls_offset_tag =
+      tags.bottom_controls_offset_tag;
+  if (!bottom_controls_offset_tag.IsEmpty()) {
+    content_layer_->RegisterOffsetTag(bottom_controls_offset_tag,
+                                      constraints.bottom_controls_constraints);
+  }
+
+  // TOOD(peilinwang) Enforce that either both tags exist or are both empty
+  // after the NoBrowserFramesWithAdditionalCaptures BCIV experiment ramps up.
+  const viz::OffsetTag& top_controls_offset_tag = tags.top_controls_offset_tag;
+  const viz::OffsetTag& content_offset_tag = tags.content_offset_tag;
+  if (!top_controls_offset_tag.IsEmpty()) {
+    CHECK(!content_offset_tag.IsEmpty());
+    content_layer_->RegisterOffsetTag(top_controls_offset_tag,
+                                      constraints.top_controls_constraints);
+  }
+  if (!content_offset_tag.IsEmpty()) {
+    content_layer_->RegisterOffsetTag(content_offset_tag,
+                                      constraints.content_constraints);
+  }
+}
+
+void DelegatedFrameHostAndroid::UnregisterOffsetTags(
+    const cc::BrowserControlsOffsetTags& tags) {
+  const viz::OffsetTag& top_controls_offset_tag = tags.top_controls_offset_tag;
+  if (!top_controls_offset_tag.IsEmpty()) {
+    content_layer_->UnregisterOffsetTag(top_controls_offset_tag);
+  }
+
+  const viz::OffsetTag& content_offset_tag = tags.content_offset_tag;
+  if (!content_offset_tag.IsEmpty()) {
+    content_layer_->UnregisterOffsetTag(content_offset_tag);
+  }
+
+  const viz::OffsetTag& bottom_controls_offset_tag =
+      tags.bottom_controls_offset_tag;
+  if (!bottom_controls_offset_tag.IsEmpty()) {
+    content_layer_->UnregisterOffsetTag(bottom_controls_offset_tag);
+  }
+}
+
 const viz::FrameSinkId& DelegatedFrameHostAndroid::GetFrameSinkId() const {
   return frame_sink_id_;
 }
@@ -131,48 +184,47 @@ void DelegatedFrameHostAndroid::CopyFromCompositingSurface(
     const gfx::Rect& src_subrect,
     const gfx::Size& output_size,
     base::OnceCallback<void(const SkBitmap&)> callback,
-    bool capture_exact_surface_id) {
+    bool capture_exact_surface_id,
+    base::TimeDelta ipc_delay) {
   DCHECK(CanCopyFromCompositingSurface());
 
   const viz::SurfaceId surface_id(frame_sink_id_, local_surface_id_);
-  std::unique_ptr<ui::WindowAndroidCompositor::ReadbackRef> readback_ref;
+
+  ui::WindowAndroidCompositor::ScopedKeepSurfaceAliveCallback
+      keep_surface_alive;
   if (view_->GetWindowAndroid() && view_->GetWindowAndroid()->GetCompositor()) {
-    readback_ref =
-        view_->GetWindowAndroid()->GetCompositor()->TakeReadbackRef(surface_id);
+    keep_surface_alive = view_->GetWindowAndroid()
+                             ->GetCompositor()
+                             ->TakeScopedKeepSurfaceAliveCallback(surface_id);
   }
+
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
           viz::CopyOutputRequest::ResultFormat::RGBA,
           viz::CopyOutputRequest::ResultDestination::kSystemMemory,
           base::BindOnce(
-              [](base::OnceCallback<void(const SkBitmap&)> callback,
-                 std::unique_ptr<ui::WindowAndroidCompositor::ReadbackRef>
-                     readback_ref,
+              [](base::OnceCallback<void(const SkBitmap&)> copy_result,
+                 ui::WindowAndroidCompositor::ScopedKeepSurfaceAliveCallback
+                     keep_alive,
                  std::unique_ptr<viz::CopyOutputResult> result) {
+                if (keep_alive) {
+                  std::move(keep_alive).Run();
+                }
                 auto scoped_bitmap = result->ScopedAccessSkBitmap();
-                std::move(callback).Run(scoped_bitmap.GetOutScopedBitmap());
+                std::move(copy_result).Run(scoped_bitmap.GetOutScopedBitmap());
               },
-              std::move(callback), std::move(readback_ref)));
+              std::move(callback), std::move(keep_surface_alive)));
+  request->set_send_result_delay(ipc_delay);
 
-  if (!src_subrect.IsEmpty())
-    request->set_area(src_subrect);
-  if (!output_size.IsEmpty()) {
-    // The CopyOutputRequest API does not allow fixing the output size. Instead
-    // we have the set area and scale in such a way that it would result in the
-    // desired output size.
-    if (!request->has_area())
-      request->set_area(gfx::Rect(surface_size_in_pixels_));
-    request->set_result_selection(gfx::Rect(output_size));
-    const gfx::Rect& area = request->area();
-    // Viz would normally return an empty result for an empty area.
-    // However, this guard here is still necessary to protect against setting
-    // an illegal scaling ratio.
-    if (area.IsEmpty())
-      return;
-    request->SetScaleRatio(
-        gfx::Vector2d(area.width(), area.height()),
-        gfx::Vector2d(output_size.width(), output_size.height()));
-  }
+  // `CopyOutputRequestCallback` holds a `ReadbackRefCallback` which must only
+  // be executed on the UI thread. Since the result callback can be dispatched
+  // on any thread by default, explicitly set the result task runner to the
+  // current thread.
+  request->set_result_task_runner(
+      base::SequencedTaskRunner::GetCurrentDefault());
+
+  viz::SetCopyOutputRequestResultSize(request.get(), src_subrect, output_size,
+                                      surface_size_in_pixels_);
 
   host_frame_sink_manager_->RequestCopyOfOutput(surface_id, std::move(request),
                                                 capture_exact_surface_id);
@@ -189,15 +241,13 @@ void DelegatedFrameHostAndroid::EvictDelegatedFrame(
   // If we have a surface from before a navigation, evict it, regardless of
   // visibility state.
   //
-  // TODO(https://crbug.com/1459229): Investigate why guarding the invalid
+  // TODO(crbug.com/40919347): Investigate why guarding the invalid
   // `pre_navigation_local_surface_id_` for Android only.
   if (!pre_navigation_local_surface_id_.is_valid() &&
       (!HasSavedFrame() || frame_evictor_->visible())) {
     return;
   }
 
-  UMA_HISTOGRAM_COUNTS_100("MemoryAndroid.EvictedTreeSize2",
-                           surface_ids.size());
   if (surface_ids.empty())
     return;
   host_frame_sink_manager_->EvictSurfaces(surface_ids);
@@ -210,9 +260,11 @@ void DelegatedFrameHostAndroid::EvictDelegatedFrame(
   client_->WasEvicted();
 }
 
-std::vector<viz::SurfaceId>
+viz::FrameEvictorClient::EvictIds
 DelegatedFrameHostAndroid::CollectSurfaceIdsForEviction() const {
-  return client_->CollectSurfaceIdsForEviction();
+  viz::FrameEvictorClient::EvictIds ids;
+  ids.embedded_ids = client_->CollectSurfaceIdsForEviction();
+  return ids;
 }
 
 viz::SurfaceId DelegatedFrameHostAndroid::GetCurrentSurfaceId() const {
@@ -240,8 +292,13 @@ DelegatedFrameHostAndroid::GetFirstSurfaceIdAfterNavigationForTesting() const {
                         first_local_surface_id_after_navigation_);
 }
 
+viz::SurfaceId
+DelegatedFrameHostAndroid::GetBFCacheFallbackSurfaceIdForTesting() const {
+  return viz::SurfaceId(frame_sink_id_, bfcache_fallback_);
+}
+
 void DelegatedFrameHostAndroid::ClearFallbackSurfaceForCommitPending() {
-  const absl::optional<viz::SurfaceId> fallback_surface_id =
+  const std::optional<viz::SurfaceId> fallback_surface_id =
       content_layer_->oldest_acceptable_fallback();
 
   // CommitPending without a target for TakeFallbackContentFrom. Since we cannot
@@ -293,6 +350,7 @@ void DelegatedFrameHostAndroid::AttachToCompositor(
     WindowAndroidCompositor* compositor) {
   if (registered_parent_compositor_)
     DetachFromCompositor();
+  compositor->AddFrameSubmissionObserver(client_);
   compositor->AddChildFrameSink(frame_sink_id_);
   registered_parent_compositor_ = compositor;
   if (content_to_visible_time_request_) {
@@ -302,11 +360,18 @@ void DelegatedFrameHostAndroid::AttachToCompositor(
                 /*has_saved_frames=*/true,
                 std::move(content_to_visible_time_request_)));
   }
+  // If we are visible and embedded, then update the surface keep alive for
+  // the newly attached compositor.
+  if (frame_evictor_->visible()) {
+    UpdateCaptureKeepAlive();
+  }
 }
 
 void DelegatedFrameHostAndroid::DetachFromCompositor() {
   if (!registered_parent_compositor_)
     return;
+  ReleaseCaptureKeepAlive();
+  registered_parent_compositor_->RemoveFrameSubmissionObserver(client_);
   registered_parent_compositor_->RemoveChildFrameSink(frame_sink_id_);
   registered_parent_compositor_ = nullptr;
   content_to_visible_time_request_ = nullptr;
@@ -323,6 +388,7 @@ bool DelegatedFrameHostAndroid::HasSavedFrame() const {
 void DelegatedFrameHostAndroid::WasHidden() {
   CancelSuccessfulPresentationTimeRequest();
   frame_evictor_->SetVisible(false);
+  ReleaseCaptureKeepAlive();
 }
 
 void DelegatedFrameHostAndroid::WasShown(
@@ -444,6 +510,10 @@ void DelegatedFrameHostAndroid::EmbedSurface(
     content_layer_->SetSurfaceId(new_primary_surface_id, deadline_policy);
     content_layer_->SetBounds(new_size_in_pixels);
   }
+
+  // If DFHA is shown, make sure that the surface is kept alive. This is
+  // required for e.g. tab sharing capture to work.
+  UpdateCaptureKeepAlive();
 }
 
 void DelegatedFrameHostAndroid::RequestSuccessfulPresentationTimeForNextFrame(
@@ -500,7 +570,7 @@ void DelegatedFrameHostAndroid::TakeFallbackContentFrom(
   bfcache_fallback_ =
       viz::ParentLocalSurfaceIdAllocator::InvalidLocalSurfaceId();
 
-  // TODO(https://crbug.com/1471665): Investigate why on Android we use the
+  // TODO(crbug.com/40278354): Investigate why on Android we use the
   // primary ID unconditionally, which is different on `DelegatedFrameHost`.
   content_layer_->SetOldestAcceptableFallback(
       other->content_layer_->surface_id().ToSmallestId());
@@ -524,6 +594,24 @@ void DelegatedFrameHostAndroid::DidNavigateMainFramePreCommit() {
   pre_navigation_local_surface_id_ = local_surface_id_;
   first_local_surface_id_after_navigation_ = viz::LocalSurfaceId();
   SetLocalSurfaceId(viz::LocalSurfaceId());
+
+  // The page is either activated or evicted from BFCache without notifying the
+  // DelegatedFrameHost. In either cases, `bfcache_fallback_` must be
+  // invalidated.
+  //
+  // TODO(https://crbug.com/356337182): Remove the DumpWithoutCrashing when the
+  // bug is fixed.
+  if (bfcache_fallback_.is_valid()) {
+    SCOPED_CRASH_KEY_STRING64("crbug-356337182", "bfc_fallback_crashed",
+                              bfcache_fallback_.ToString().c_str());
+    SCOPED_CRASH_KEY_STRING64(
+        "crbug-356337182", "pre_nav_lsid_crashed",
+        pre_navigation_local_surface_id_.ToString().c_str());
+    SCOPED_CRASH_KEY_STRING64("crbug-356337182", "current_lsid_crashed",
+                              local_surface_id_.ToString().c_str());
+    base::debug::DumpWithoutCrashing();
+    bfcache_fallback_ = viz::LocalSurfaceId();
+  }
 }
 
 void DelegatedFrameHostAndroid::DidEnterBackForwardCache() {
@@ -546,14 +634,8 @@ void DelegatedFrameHostAndroid::DidEnterBackForwardCache() {
   }
 }
 
-void DelegatedFrameHostAndroid::SetTopControlsVisibleHeight(float height) {
-  if (top_controls_visible_height_ == height)
-    return;
-  if (!content_layer_ || !content_layer_->layer_tree()) {
-    return;
-  }
-  top_controls_visible_height_ = height;
-  content_layer_->layer_tree()->UpdateTopControlsVisibleHeight(height);
+void DelegatedFrameHostAndroid::ActivatedOrEvictedFromBackForwardCache() {
+  bfcache_fallback_ = viz::LocalSurfaceId();
 }
 
 void DelegatedFrameHostAndroid::
@@ -575,6 +657,27 @@ void DelegatedFrameHostAndroid::
       ->PostRequestSuccessfulPresentationTimeForNextFrame(
           content_to_visible_time_recorder_.TabWasShown(
               /*has_saved_frames=*/true, std::move(request)));
+}
+
+void DelegatedFrameHostAndroid::UpdateCaptureKeepAlive() {
+  if (!registered_parent_compositor_) {
+    return;
+  }
+  if (capture_keep_alive_callback_) {
+    std::move(capture_keep_alive_callback_).Run();
+  }
+  auto surface_id = GetCurrentSurfaceId();
+  if (surface_id.is_valid()) {
+    capture_keep_alive_callback_ =
+        registered_parent_compositor_->TakeScopedKeepSurfaceAliveCallback(
+            surface_id);
+  }
+}
+
+void DelegatedFrameHostAndroid::ReleaseCaptureKeepAlive() {
+  if (capture_keep_alive_callback_) {
+    std::move(capture_keep_alive_callback_).Run();
+  }
 }
 
 }  // namespace ui

@@ -11,7 +11,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/browser_process.h"
 #endif
@@ -32,7 +31,7 @@
 namespace webrtc_event_logging {
 
 namespace {
-// TODO(crbug.com/817495): Eliminate the duplication with other uploaders.
+// TODO(crbug.com/41373913): Eliminate the duplication with other uploaders.
 const char kUploadContentType[] = "multipart/form-data";
 const char kBoundary[] = "----**--yradnuoBgoLtrapitluMklaTelgooG--**----";
 
@@ -354,7 +353,7 @@ void WebRtcEventLogUploaderImpl::ReportResult(bool upload_successful,
   //   fail again after (as an example) wasting 50MBs of upload bandwidth.
   // * If the file was not found, this will simply have no effect (other than
   //   to LOG() an error).
-  // TODO(crbug.com/775415): Provide refined retrial behavior.
+  // TODO(crbug.com/40545136): Provide refined retrial behavior.
   DeleteLogFile();
 
   if (delete_history_file) {

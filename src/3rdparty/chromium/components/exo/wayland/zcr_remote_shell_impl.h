@@ -94,7 +94,7 @@ class WaylandRemoteShell : public display::DisplayObserver,
 
   // Overridden from display::DisplayObserver:
   void OnDisplayAdded(const display::Display& new_display) override;
-  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplaysRemoved(const display::Displays& removed_displays) override;
   void OnDisplayTabletStateChanged(display::TabletState state) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics) override;
@@ -131,7 +131,8 @@ class WaylandRemoteShell : public display::DisplayObserver,
                                     int64_t display_id,
                                     const gfx::Rect& bounds_in_display,
                                     bool resize,
-                                    int bounds_change);
+                                    int bounds_change,
+                                    bool is_adjusted_bounds);
 
   void SendBoundsChanged(wl_resource* resource,
                          int64_t display_id,
@@ -211,10 +212,11 @@ class WaylandRemoteSurfaceDelegate
                       chromeos::WindowStateType new_state_type) override;
   void OnBoundsChanged(chromeos::WindowStateType current_state,
                        chromeos::WindowStateType requested_state,
-                       int64_t display_id,
-                       const gfx::Rect& bounds_in_display,
+                       int64_t requested_display_id,
+                       const gfx::Rect& requested_bounds_in_display,
                        bool is_resize,
-                       int bounds_change) override;
+                       int bounds_change,
+                       bool is_adjusted_bounds) override;
   void OnDragStarted(int component) override;
   void OnDragFinished(int x, int y, bool canceled) override;
   void OnZoomLevelChanged(ZoomChange zoom_change) override;

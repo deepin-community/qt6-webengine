@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/paint_op_buffer_iterator.h"
@@ -66,8 +67,7 @@ bool BitmapsEqual(const PaintRecord& record1,
 bool PaintFlagsMayChangeColorOrMovePixelsExceptShader(
     const cc::PaintFlags& flags) {
   return flags.getStyle() != cc::PaintFlags::kFill_Style || flags.getLooper() ||
-         flags.getMaskFilter() || flags.getColorFilter() ||
-         flags.getImageFilter() ||
+         flags.getColorFilter() || flags.getImageFilter() ||
          (flags.getBlendMode() != SkBlendMode::kSrc &&
           flags.getBlendMode() != SkBlendMode::kSrcOver);
 }
@@ -103,8 +103,8 @@ bool DrawingDisplayItem::EqualsForUnderInvalidationImpl(
 #if !defined(MEMORY_SANITIZER)
   if (record.buffer().next_op_offset() ==
           other_record.buffer().next_op_offset() &&
-      memcmp(&record.GetFirstOp(), &other_record.GetFirstOp(),
-             record.buffer().next_op_offset()) == 0) {
+      UNSAFE_TODO(memcmp(&record.GetFirstOp(), &other_record.GetFirstOp(),
+                         record.buffer().next_op_offset())) == 0) {
     return true;
   }
 #endif

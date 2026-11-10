@@ -9,38 +9,114 @@
 #include "base/metrics/field_trial_params.h"
 #include "content/common/content_export.h"
 
+namespace content {
+class BrowserContext;
+}  // namespace content
+
 namespace features {
 
-// If enabled, then prefetch requests from speculation rules should use the code
-// in content/browser/preloading/prefetch/ instead of
-// chrome/browser/preloadingprefetch/prefetch_proxy/.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUseContentRefactor);
-
-// If enabled, PrefetchContainer can be used for more than one navigation.
-// https://crbug.com/1449360
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchReusable);
+// Controls params for tests of prefetch.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchTesting);
 
 // The size limit of body size in bytes that can be reused in
-// `kPrefetchReusable`.
+// `PrefetchDataPipeTee`.
 CONTENT_EXPORT extern const base::FeatureParam<int>
     kPrefetchReusableBodySizeLimit;
+
+// This feature was used to launch the prefetch migration from embedder layer to
+// content/, and this work has finished and the old implemnetation was deleted.
+// Now this flag is just for injecting parameters through field trials as an
+// umberella feature.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUseContentRefactor);
 
 // If enabled, navigational prefetch is scoped to the referring document's
 // network isolation key instead of the old behavior of the referring document
 // itself. See crbug.com/1502326
 BASE_DECLARE_FEATURE(kPrefetchNIKScope);
 
-// If enabled, the early cookie copy in `PrefetchDocumentManager` is
-// skipped. See crbug.com/1503003 for details.
-BASE_DECLARE_FEATURE(kPrefetchDocumentManagerEarlyCookieCopySkipped);
+// If enabled, prefetches may include client hints request headers.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchClientHints);
 
-// If enabled, a will retrieve and store responses from/to the HTTP cache
-// whenever possible.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUsesHTTPCache);
+// This allows controlling the behavior of client hints with prefetches in case
+// an unexpected issue arises with the planned behavior, or one is suspected and
+// we want to debug more easily.
+// TODO(crbug.com/41497015): Remove this control once a behavior is shipped and
+// stabilized.
+enum class PrefetchClientHintsCrossSiteBehavior {
+  // Send no client hints cross-site.
+  kNone,
+  // Send only the "low-entropy" hints which are included by default.
+  kLowEntropy,
+  // Send all client hints that would normally be sent.
+  kAll,
+};
+CONTENT_EXPORT extern const base::FeatureParam<
+    PrefetchClientHintsCrossSiteBehavior>
+    kPrefetchClientHintsCrossSiteBehavior;
 
-// If explicitly disabled, prefetch proxy is not used.
-BASE_DECLARE_FEATURE(kPrefetchProxy);
+// If enabled, then prefetch serving will apply mitigations if it may have been
+// contaminated by cross-partition state.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchStateContaminationMitigation);
 
+// If true, contaminated prefetches will also force a browsing context group
+// swap.
+CONTENT_EXPORT extern const base::FeatureParam<bool>
+    kPrefetchStateContaminationSwapsBrowsingContextGroup;
+
+// Fix for prefetching a URL controlled by a ServiceWorker without fetch
+// handler. Currently this stops prefetching for such cases
+// (https://crbug.com/379076354).
+// Even when `kPrefetchServiceWorker` is enabled, this is still effective for
+// SW-ineligible prefetches.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchServiceWorkerNoFetchHandlerFix);
+
+// Enabling this will apply net::RequestPriority::MEDIUM for prefetch
+// requests triggered by embedders. See crbug.com/353628437 to track this issue.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchNetworkPriorityForEmbedders);
+
+// Enabling this will bupm net::RequestPriority once after the running prefetch
+// starts to be served.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kPrefetchBumpNetworkPriorityAfterBeingServed);
+
+// Allow prefetching ServiceWorker-controlled URLs.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchServiceWorker);
+bool IsPrefetchServiceWorkerEnabled(content::BrowserContext* browser_context);
+
+// If enabled, prefetch caches are cleared when browsing data removal. Please
+// see crbug.com/40262310 for more details.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchBrowsingDataRemoval);
+
+// Replace current prefetch queue with a new queue and scheduler, which allows
+// prioritization, concurrent prefetches, bursting.
+//
+// For more details, see
+// https://docs.google.com/document/d/1W0Nk3Nq6NaUXkBppOUC5zyNmhVqMjYShm1bydGYd9qc
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchScheduler);
+
+// Call `PrefetchScheduler::Progress()` synchronously as much as possible.
+CONTENT_EXPORT extern const base::FeatureParam<bool>
+    kPrefetchSchedulerProgressSyncBestEffort;
+
+// Controls params for tests of `PrefetchScheduler`.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchSchedulerTesting);
+CONTENT_EXPORT extern const base::FeatureParam<size_t>
+    kPrefetchSchedulerTestingActiveSetSizeLimitForBase;
+CONTENT_EXPORT extern const base::FeatureParam<size_t>
+    kPrefetchSchedulerTestingActiveSetSizeLimitForBurst;
+
+// Provide a partial fix for prefetch queueing problem (crbug.com/400233773),
+// without `PrefetchScheduler` feature.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kPrefetchQueueingPartialFixWithoutScheduler);
+
+// Controls field trials parameters for prefetch canary checker.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchCanaryCheckerParams);
+
+// Allows multiple base limit on `PrefetchScheduler`.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchMultipleActiveSetSizeLimitForBase);
+CONTENT_EXPORT extern const base::FeatureParam<size_t>
+    kPrefetchMultipleActiveSetSizeLimitForBaseValue;
 }  // namespace features
 
 #endif  // CONTENT_BROWSER_PRELOADING_PREFETCH_PREFETCH_FEATURES_H_

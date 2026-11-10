@@ -27,16 +27,16 @@ class UdpSocketReaderPosix : public SocketHandleWaiter::Subscriber {
 
   // Creates a new instance of this object.
   // NOTE: The provided NetworkWaiter must outlive this object.
-  explicit UdpSocketReaderPosix(SocketHandleWaiter* waiter);
+  explicit UdpSocketReaderPosix(SocketHandleWaiter& waiter);
   ~UdpSocketReaderPosix() override;
 
-  // Waits for |socket| to be readable and then calls the socket's
+  // Waits for `socket` to be readable and then calls the socket's
   // RecieveMessage(...) method to process the available packet.
   // NOTE: The first read on any newly watched socket may be delayed up to 50
   // ms.
   void OnCreate(UdpSocket* socket);
 
-  // Cancels any pending wait on reading |socket|. Following this call, any
+  // Cancels any pending wait on reading `socket`. Following this call, any
   // pending reads will proceed but their associated callbacks will not fire.
   // NOTE: This method will block until a delete is safe.
   // NOTE: If a socket callback is removed in the middle of a wait call, data
@@ -47,6 +47,9 @@ class UdpSocketReaderPosix : public SocketHandleWaiter::Subscriber {
 
   // SocketHandleWaiter::Subscriber overrides.
   void ProcessReadyHandle(SocketHandleRef handle, uint32_t flags) override;
+
+  // NOTE: we don't subscribe to write events from the socket handle waiter.
+  bool HasPendingWrite(SocketHandleRef handle) override;
 
   OSP_DISALLOW_COPY_AND_ASSIGN(UdpSocketReaderPosix);
 
@@ -65,7 +68,7 @@ class UdpSocketReaderPosix : public SocketHandleWaiter::Subscriber {
   std::mutex mutex_;
 
   // NetworkWaiter watching this NetworkReader.
-  SocketHandleWaiter* const waiter_;
+  SocketHandleWaiter& waiter_;
 
   friend class TestingUdpSocketReader;
 };

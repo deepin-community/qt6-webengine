@@ -10,7 +10,8 @@
     \title PDF Single Page Viewer Example
     \brief A Qt Quick PDF viewer that views one page at a time.
 
-    \image singlepageviewer.webp
+    \image singlepageviewer.webp {PDF viewer displaying PdfScrollablePageView
+           QML Type documentation}
 
     \e {PDF Single Page Viewer Example} demonstrates how to use the PdfScrollablePageView
     component to render PDF documents and search for text in them.
@@ -22,7 +23,7 @@
     Instantiate an \l ApplicationWindow, bind its title to the title of the
     PDF document, and create a toolbar:
 
-    \quotefromfile singlepage/viewer.qml
+    \quotefromfile singlepage/Viewer.qml
     \skipto ApplicationWindow
     \printuntil rightMargin
 

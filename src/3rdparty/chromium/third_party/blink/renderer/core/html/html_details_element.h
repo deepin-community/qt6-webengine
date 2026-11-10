@@ -44,12 +44,14 @@ class HTMLDetailsElement final : public HTMLElement {
 
   // Walks up the ancestor chain and expands all <details> elements found along
   // the way by setting the open attribute. If any were expanded, returns true.
-  // This method may run script because of the mutation events fired when
+  // This method may run script because of the synchronous events fired when
   // setting the open attribute.
   static bool ExpandDetailsAncestors(const Node&);
 
-  bool HandleInvokeInternal(HTMLElement& invoker,
-                            AtomicString& action) override;
+  bool IsValidBuiltinCommand(HTMLElement& invoker,
+                             CommandEventType command) override;
+  bool HandleCommandInternal(HTMLElement& invoker,
+                             CommandEventType command) override;
 
   // The name attribute for grouping of related details; empty string
   // means no grouping.
@@ -66,7 +68,6 @@ class HTMLDetailsElement final : public HTMLElement {
   HeapVector<Member<HTMLDetailsElement>> OtherElementsInNameGroup();
   void MaybeCloseForExclusivity();
 
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
   void ParseAttribute(const AttributeModificationParams&) override;
   void AttributeChanged(const AttributeModificationParams&) override;
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;

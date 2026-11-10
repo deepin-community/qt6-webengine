@@ -2,45 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 import QtQuick
-import QtWebEngine
 
 QtObject {
     id: root
-
-    property QtObject defaultProfile: WebEngineProfile {
-        offTheRecord: false
-        storageName: "Profile"
-        Component.onCompleted: {
-            let fullVersionList = defaultProfile.clientHints.fullVersionList;
-            fullVersionList["QuickNanoBrowser"] = "1.0";
-            defaultProfile.clientHints.fullVersionList = fullVersionList;
-        }
-
-    }
-
-    property QtObject otrProfile: WebEngineProfile {
-        offTheRecord: true
-    }
-
-    property Component browserWindowComponent: BrowserWindow {
-        applicationRoot: root
-    }
-    property Component browserDialogComponent: BrowserDialog {
-        onClosing: destroy()
-    }
-    function createWindow(profile) {
-        var newWindow = browserWindowComponent.createObject(root);
-        newWindow.currentWebView.profile = profile;
-        profile.downloadRequested.connect(newWindow.onDownloadRequested);
-        return newWindow;
-    }
-    function createDialog(profile) {
-        var newDialog = browserDialogComponent.createObject(root);
-        newDialog.currentWebView.profile = profile;
-        return newDialog;
-    }
-    function load(url) {
-        var browserWindow = createWindow(defaultProfile);
-        browserWindow.currentWebView.url = url;
-    }
+    required property string startupUrl
+    Component.onCompleted: BrowserManager.load(startupUrl)
 }

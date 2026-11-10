@@ -9,7 +9,7 @@ if (build_with_chromium) {
     testonly = true
     public_configs = [
       "//build/config/compiler:default_include_dirs",
-      "../../build:openscreen_include_dirs",
+      "../../build_overrides:openscreen_include_dirs",
     ]
     public_deps = [ "//third_party/googletest:gmock" ]
   }
@@ -18,7 +18,7 @@ if (build_with_chromium) {
     testonly = true
     public_configs = [
       "//build/config/compiler:default_include_dirs",
-      "../../build:openscreen_include_dirs",
+      "../../build_overrides:openscreen_include_dirs",
     ]
     public_deps = [ "//third_party/googletest:gtest" ]
   }
@@ -27,7 +27,7 @@ if (build_with_chromium) {
     testonly = true
     public_configs = [
       "//build/config/compiler:default_include_dirs",
-      "../../build:openscreen_include_dirs",
+      "../../build_overrides:openscreen_include_dirs",
     ]
     public_deps = [ "//third_party/googletest:gtest_main" ]
   }
@@ -42,6 +42,7 @@ if (build_with_chromium) {
       cflags_cc += [
         "-Wno-exit-time-destructors",
         "-Wno-inconsistent-missing-override",
+        "-Wno-sign-compare",
       ]
     }
 
@@ -56,6 +57,10 @@ if (build_with_chromium) {
     cflags_cc = []
     if (is_clang) {
       cflags_cc += [ "-Wno-exit-time-destructors" ]
+    }
+
+    if (is_win) {
+      cflags_cc += [ "-Wno-sign-compare" ]
     }
   }
 

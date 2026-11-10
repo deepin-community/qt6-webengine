@@ -12,7 +12,9 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_notification_options.h"
 #include "third_party/blink/renderer/modules/notifications/notification.h"
 #include "third_party/blink/renderer/modules/notifications/timestamp_trigger.h"
+#include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/testing/exception_state_matchers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -33,7 +35,7 @@ const char kNotificationImage[] = "https://example.com/image.jpg";
 const char kNotificationIcon[] = "/icon.png";
 const char kNotificationIconInvalid[] = "https://invalid:icon:url";
 const char kNotificationBadge[] = "badge.png";
-const unsigned kNotificationVibration[] = {42, 10, 20, 30, 40};
+const std::array<unsigned, 5> kNotificationVibration = {42, 10, 20, 30, 40};
 const uint64_t kNotificationTimestamp = 621046800ull;
 const bool kNotificationRenotify = true;
 const bool kNotificationSilent = false;
@@ -47,17 +49,16 @@ const char kNotificationActionTitle[] = "My Action";
 const char kNotificationActionIcon[] = "https://example.com/action_icon.png";
 const char kNotificationActionPlaceholder[] = "Placeholder...";
 
-const unsigned kNotificationVibrationUnnormalized[] = {10, 1000000, 50, 42};
-const int kNotificationVibrationNormalized[] = {10, 10000, 50};
+const std::array<unsigned, 4> kNotificationVibrationUnnormalized = {10, 1000000,
+                                                                    50, 42};
+const std::array<int, 3> kNotificationVibrationNormalized = {10, 10000, 50};
 
 TEST(NotificationDataTest, ReflectProperties) {
   test::TaskEnvironment task_environment;
   const KURL base_url(kNotificationBaseUrl);
   V8TestingScope scope(base_url);
 
-  Vector<unsigned> vibration_pattern;
-  for (size_t i = 0; i < std::size(kNotificationVibration); ++i)
-    vibration_pattern.push_back(kNotificationVibration[i]);
+  Vector<unsigned> vibration_pattern(kNotificationVibration);
 
   auto* vibration_sequence =
       MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
@@ -98,11 +99,11 @@ TEST(NotificationDataTest, ReflectProperties) {
 
   // TODO(peter): Test |options.data| and |notificationData.data|.
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_FALSE(exception_state.HadException());
+  ASSERT_THAT(exception_state, HadNoException());
 
   EXPECT_EQ(kNotificationTitle, notification_data->title);
 
@@ -146,9 +147,7 @@ TEST(NotificationDataTest, SilentNotificationWithVibration) {
   test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
-  Vector<unsigned> vibration_pattern;
-  for (size_t i = 0; i < std::size(kNotificationVibration); ++i)
-    vibration_pattern.push_back(kNotificationVibration[i]);
+  Vector<unsigned> vibration_pattern(kNotificationVibration);
 
   auto* vibration_sequence =
       MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
@@ -159,14 +158,14 @@ TEST(NotificationDataTest, SilentNotificationWithVibration) {
   options->setVibrate(vibration_sequence);
   options->setSilent(true);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_TRUE(exception_state.HadException());
-
-  EXPECT_EQ("Silent notifications must not specify vibration patterns.",
-            exception_state.Message());
+  ASSERT_THAT(exception_state,
+              HadException(
+                  ESErrorType::kTypeError,
+                  "Silent notifications must not specify vibration patterns."));
 }
 
 TEST(NotificationDataTest, ActionTypeButtonWithPlaceholder) {
@@ -183,14 +182,15 @@ TEST(NotificationDataTest, ActionTypeButtonWithPlaceholder) {
       NotificationOptions::Create(scope.GetIsolate());
   options->setActions(actions);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_TRUE(exception_state.HadException());
-
-  EXPECT_EQ("Notifications of type \"button\" cannot specify a placeholder.",
-            exception_state.Message());
+  ASSERT_THAT(
+      exception_state,
+      HadException(
+          ESErrorType::kTypeError,
+          "Notifications of type \"button\" cannot specify a placeholder."));
 }
 
 TEST(NotificationDataTest, RenotifyWithEmptyTag) {
@@ -202,15 +202,14 @@ TEST(NotificationDataTest, RenotifyWithEmptyTag) {
   options->setTag(kNotificationEmptyTag);
   options->setRenotify(true);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_TRUE(exception_state.HadException());
-
-  EXPECT_EQ(
-      "Notifications which set the renotify flag must specify a non-empty tag.",
-      exception_state.Message());
+  ASSERT_THAT(exception_state,
+              HadException(ESErrorType::kTypeError,
+                           "Notifications which set the renotify flag must "
+                           "specify a non-empty tag."));
 }
 
 TEST(NotificationDataTest, InvalidIconUrls) {
@@ -233,11 +232,11 @@ TEST(NotificationDataTest, InvalidIconUrls) {
   options->setBadge(kNotificationIconInvalid);
   options->setActions(actions);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_FALSE(exception_state.HadException());
+  ASSERT_THAT(exception_state, HadNoException());
 
   EXPECT_TRUE(notification_data->image.IsEmpty());
   EXPECT_TRUE(notification_data->icon.IsEmpty());
@@ -250,9 +249,7 @@ TEST(NotificationDataTest, VibrationNormalization) {
   test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
-  Vector<unsigned> unnormalized_pattern;
-  for (size_t i = 0; i < std::size(kNotificationVibrationUnnormalized); ++i)
-    unnormalized_pattern.push_back(kNotificationVibrationUnnormalized[i]);
+  Vector<unsigned> unnormalized_pattern(kNotificationVibrationUnnormalized);
 
   auto* vibration_sequence =
       MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
@@ -262,15 +259,13 @@ TEST(NotificationDataTest, VibrationNormalization) {
       NotificationOptions::Create(scope.GetIsolate());
   options->setVibrate(vibration_sequence);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  EXPECT_FALSE(exception_state.HadException());
+  EXPECT_THAT(exception_state, HadNoException());
 
-  Vector<int> normalized_pattern;
-  for (size_t i = 0; i < std::size(kNotificationVibrationNormalized); ++i)
-    normalized_pattern.push_back(kNotificationVibrationNormalized[i]);
+  Vector<int> normalized_pattern(kNotificationVibrationNormalized);
 
   ASSERT_EQ(normalized_pattern.size(),
             notification_data->vibration_pattern->size());
@@ -287,11 +282,11 @@ TEST(NotificationDataTest, DefaultTimestampValue) {
   NotificationOptions* options =
       NotificationOptions::Create(scope.GetIsolate());
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  EXPECT_FALSE(exception_state.HadException());
+  EXPECT_THAT(exception_state, HadNoException());
 
   // The timestamp should be set to the current time since the epoch if it
   // wasn't supplied by the developer. "32" has no significance, but an equal
@@ -314,11 +309,11 @@ TEST(NotificationDataTest, DirectionValues) {
         NotificationOptions::Create(scope.GetIsolate());
     options->setDir(direction);
 
-    ExceptionState& exception_state = scope.GetExceptionState();
+    auto& exception_state = scope.GetExceptionState();
     mojom::blink::NotificationDataPtr notification_data =
         CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                                options, exception_state);
-    ASSERT_FALSE(exception_state.HadException());
+    ASSERT_THAT(exception_state, HadNoException());
 
     EXPECT_EQ(mappings.at(direction), notification_data->direction);
   }
@@ -341,11 +336,11 @@ TEST(NotificationDataTest, MaximumActionCount) {
       NotificationOptions::Create(scope.GetIsolate());
   options->setActions(actions);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_FALSE(exception_state.HadException());
+  ASSERT_THAT(exception_state, HadNoException());
 
   // The stored actions will be capped to |maxActions| entries.
   ASSERT_EQ(Notification::maxActions(), notification_data->actions->size());
@@ -369,14 +364,15 @@ TEST(NotificationDataTest, RejectsTriggerTimestampOverAYear) {
       NotificationOptions::Create(scope.GetIsolate());
   options->setShowTrigger(show_trigger);
 
-  ExceptionState& exception_state = scope.GetExceptionState();
+  auto& exception_state = scope.GetExceptionState();
   mojom::blink::NotificationDataPtr notification_data =
       CreateNotificationData(scope.GetExecutionContext(), kNotificationTitle,
                              options, exception_state);
-  ASSERT_TRUE(exception_state.HadException());
-
-  EXPECT_EQ("Notification trigger timestamp too far ahead in the future.",
-            exception_state.Message());
+  ASSERT_THAT(
+      exception_state,
+      HadException(
+          ESErrorType::kTypeError,
+          "Notification trigger timestamp too far ahead in the future."));
 }
 
 }  // namespace

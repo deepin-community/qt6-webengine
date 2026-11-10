@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -16,6 +17,7 @@
 #include "find_text_helper.h"
 #include "media_capture_devices_dispatcher.h"
 #include "pdf_util_qt.h"
+#include "permission_manager_qt.h"
 #include "profile_adapter.h"
 #include "profile_qt.h"
 #include "qwebengineloadinginfo.h"
@@ -33,7 +35,7 @@
 #include "base/task/sequence_manager/thread_controller_with_message_pump_impl.h"
 #include "base/values.h"
 #include "chrome/browser/tab_contents/form_interaction_tab_helper.h"
-#include "components/autofill/core/browser/autofill_manager.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/favicon/core/favicon_service.h"
@@ -76,7 +78,7 @@
 
 #if QT_CONFIG(accessibility)
 #include "browser_accessibility_qt.h"
-#include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "ui/accessibility/platform/browser_accessibility_manager.h"
 #include <QtGui/qaccessible.h>
 #endif
 
@@ -92,6 +94,8 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/extension_web_contents_observer_qt.h"
 #endif
+
+using namespace Qt::StringLiterals;
 
 namespace QtWebEngineCore {
 
@@ -181,7 +185,7 @@ static void callbackOnEvaluateJS(WebContentsAdapter *adapter, quint64 requestId,
 
 #if QT_CONFIG(webengine_printing_and_pdf)
 static void callbackOnPrintingFinished(WebContentsAdapter *adapter, quint64 requestId,
-                                       QSharedPointer<QByteArray> result)
+                                       std::shared_ptr<QByteArray> result)
 {
     adapter->didPrintPage(requestId, result);
 }
@@ -317,8 +321,8 @@ static void deserializeNavigationHistory(QDataStream &input, int *currentIndex, 
         std::unique_ptr<content::NavigationEntry> entry = content::NavigationController::CreateNavigationEntry(
             toGurl(virtualUrl),
             content::Referrer(toGurl(referrerUrl), static_cast<network::mojom::ReferrerPolicy>(referrerPolicy)),
-            absl::nullopt, // optional initiator_origin
-            absl::nullopt, // optional initiator_base_url
+            std::nullopt, // optional initiator_origin
+            std::nullopt, // optional initiator_base_url
             // Use a transition type of reload so that we don't incorrectly
             // increase the typed count.
             ui::PAGE_TRANSITION_RELOAD,
@@ -504,7 +508,7 @@ void WebContentsAdapter::initialize(content::SiteInstance *site)
     Q_ASSERT(rvh);
     if (!m_webContents->GetPrimaryMainFrame()->IsRenderFrameLive())
         static_cast<content::WebContentsImpl*>(m_webContents.get())->CreateRenderViewForRenderManager(
-                rvh, absl::nullopt, nullptr);
+                rvh, std::nullopt, nullptr, std::nullopt);
 
     m_webContentsDelegate->RenderViewHostChanged(nullptr, rvh);
 
@@ -513,6 +517,12 @@ void WebContentsAdapter::initialize(content::SiteInstance *site)
         ui::NativeTheme::GetInstanceForWeb()->set_preferred_color_scheme(toWeb(colorScheme));
     });
     ui::NativeTheme::GetInstanceForWeb()->set_preferred_color_scheme(toWeb(QGuiApplication::styleHints()->colorScheme()));
+
+    {
+        // Initialize the UI native theme in a scope where we allow blocking. Fixes crashes on Windows
+        base::ScopedAllowBlocking allowBlock;
+        ui::NativeTheme::GetInstanceForNativeUi();
+    }
 
     m_adapterClient->initializationFinished();
 }
@@ -533,13 +543,13 @@ void WebContentsAdapter::initializeRenderPrefs()
     base::CommandLine* commandLine = base::CommandLine::ForCurrentProcess();
     if (commandLine->HasSwitch(switches::kForceWebRtcIPHandlingPolicy))
         rendererPrefs->webrtc_ip_handling_policy =
-                commandLine->GetSwitchValueASCII(switches::kForceWebRtcIPHandlingPolicy);
+                blink::ToWebRTCIPHandlingPolicy(commandLine->GetSwitchValueASCII(switches::kForceWebRtcIPHandlingPolicy));
     else
         rendererPrefs->webrtc_ip_handling_policy =
                 m_adapterClient->webEngineSettings()->testAttribute(
                         QWebEngineSettings::WebRTCPublicInterfacesOnly)
-                ? blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly
-                : blink::kWebRTCIPHandlingDefault;
+                ? blink::mojom::WebRtcIpHandlingPolicy::kDefaultPublicInterfaceOnly
+                : blink::mojom::WebRtcIpHandlingPolicy::kDefault;
 #endif
     rendererPrefs->can_accept_load_drops = m_adapterClient->webEngineSettings()->testAttribute(QWebEngineSettings::NavigateOnDropEnabled);
 
@@ -659,13 +669,13 @@ void WebContentsAdapter::load(const QWebEngineHttpRequest &request)
     Q_UNUSED(guard);
 
     // Add URL scheme if missing from view-source URL.
-    if (request.url().scheme() == content::kViewSourceScheme) {
+    if (request.url().scheme() == QLatin1StringView(content::kViewSourceScheme)) {
         QUrl pageUrl = QUrl(request.url().toString().remove(0,
                                                            strlen(content::kViewSourceScheme) + 1));
         if (pageUrl.scheme().isEmpty()) {
             QUrl extendedUrl = QUrl::fromUserInput(pageUrl.toString());
-            extendedUrl = QUrl(QString("%1:%2").arg(content::kViewSourceScheme,
-                                                    extendedUrl.toString()));
+            extendedUrl = QUrl(QLatin1StringView(content::kViewSourceScheme) + u':'
+                               + extendedUrl.toString());
             gurl = toGurl(extendedUrl);
         }
     }
@@ -691,9 +701,11 @@ void WebContentsAdapter::load(const QWebEngineHttpRequest &request)
                         net::ERR_DISALLOWED_URL_SCHEME));
             return;
         }
-        params.post_data = network::ResourceRequestBody::CreateFromBytes(
-                    (const char*)request.postData().constData(),
-                    request.postData().length());
+        {
+            std::vector<uint8_t> data(request.postData().length());
+            memcpy(data.data(), request.postData().constData(), data.size());
+            params.post_data = network::ResourceRequestBody::CreateFromBytes(std::move(data));
+        }
         break;
     }
 
@@ -733,7 +745,7 @@ void WebContentsAdapter::setContent(const QByteArray &data, const QString &mimeT
 
     WebEngineSettings::get(m_adapterClient->webEngineSettings())->doApply();
 
-    QByteArray encodedData = data.toPercentEncoding();
+    const QByteArray encodedData = data.toPercentEncoding();
     std::string urlString;
     if (!mimeType.isEmpty())
         urlString = std::string("data:") + mimeType.toStdString() + std::string(",");
@@ -750,7 +762,8 @@ void WebContentsAdapter::setContent(const QByteArray &data, const QString &mimeT
     content::NavigationController::LoadURLParams params((dataUrlToLoad));
     params.load_type = content::NavigationController::LOAD_TYPE_DATA;
     params.base_url_for_data_url = toGurl(baseUrl);
-    params.virtual_url_for_data_url = baseUrl.isEmpty() ? GURL(url::kAboutBlankURL) : toGurl(baseUrl);
+    params.virtual_url_for_special_cases =
+            baseUrl.isEmpty() ? GURL(url::kAboutBlankURL) : toGurl(baseUrl);
     params.can_load_local_resources = true;
     params.transition_type = ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_API);
     params.override_user_agent = content::NavigationController::UA_OVERRIDE_TRUE;
@@ -980,10 +993,10 @@ void WebContentsAdapter::serializeNavigationHistory(QDataStream &output)
 void WebContentsAdapter::setZoomFactor(qreal factor)
 {
     CHECK_INITIALIZED();
-    if (factor < blink::kMinimumPageZoomFactor || factor > blink::kMaximumPageZoomFactor)
+    if (factor < blink::kMinimumBrowserZoomFactor || factor > blink::kMaximumBrowserZoomFactor)
         return;
 
-    double zoomLevel = blink::PageZoomFactorToZoomLevel(static_cast<double>(factor));
+    double zoomLevel = blink::ZoomFactorToZoomLevel(static_cast<double>(factor));
     content::HostZoomMap *zoomMap = content::HostZoomMap::GetForWebContents(m_webContents.get());
 
     if (zoomMap) {
@@ -998,7 +1011,7 @@ void WebContentsAdapter::setZoomFactor(qreal factor)
 qreal WebContentsAdapter::currentZoomFactor() const
 {
     CHECK_INITIALIZED(1);
-    return blink::PageZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(m_webContents.get()));
+    return blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(m_webContents.get()));
 }
 
 ProfileQt* WebContentsAdapter::profile()
@@ -1030,12 +1043,12 @@ QAccessibleInterface *WebContentsAdapter::browserAccessible()
     content::RenderFrameHostImpl *rfh = static_cast<content::RenderFrameHostImpl *>(m_webContents->GetPrimaryMainFrame());
     if (!rfh)
         return nullptr;
-    content::BrowserAccessibilityManager *manager = rfh->GetOrCreateBrowserAccessibilityManager();
+    ui::BrowserAccessibilityManager *manager = rfh->GetOrCreateBrowserAccessibilityManager();
     if (!manager) // FIXME!
         return nullptr;
-    content::BrowserAccessibility *acc = manager->GetFromAXNode(manager->GetRoot());
+    ui::BrowserAccessibility *acc = manager->GetFromAXNode(manager->GetRoot());
 
-    return content::toQAccessibleInterface(acc);
+    return ui::toQAccessibleInterface(acc);
 }
 #endif // QT_CONFIG(accessibility)
 
@@ -1045,7 +1058,8 @@ content::RenderFrameHost *WebContentsAdapter::renderFrameHostFromFrameId(quint64
     if (frameId == kUseMainFrameId) {
         result = m_webContents->GetPrimaryMainFrame();
     } else {
-        auto *ftn = content::FrameTreeNode::GloballyFindByID(static_cast<int>(frameId));
+        auto *ftn = content::FrameTreeNode::GloballyFindByID(
+                static_cast<content::FrameTreeNodeId>(frameId));
         if (!ftn)
             return nullptr;
 
@@ -1056,11 +1070,14 @@ content::RenderFrameHost *WebContentsAdapter::renderFrameHostFromFrameId(quint64
 }
 
 void WebContentsAdapter::runJavaScript(const QString &javaScript, quint32 worldId, quint64 frameId,
-                                       const std::function<void(const QVariant &)> &callback)
+                                       QtPrivate::SlotObjUniquePtr callback)
 {
     auto exit = [&] {
-        if (callback)
-            callback(QVariant());
+        if (callback) {
+            QVariant var;
+            void *argv[] = { nullptr, &var };
+            callback->call(nullptr, argv);
+        }
     };
 
     if (!isInitialized())
@@ -1069,14 +1086,14 @@ void WebContentsAdapter::runJavaScript(const QString &javaScript, quint32 worldI
     if (!rfh)
         return exit();
     if (!static_cast<content::RenderFrameHostImpl*>(rfh)->GetAssociatedLocalFrame()) {
-        qWarning() << "Local frame is gone, not running script";
+        qWarning("Local frame is gone, not running script");
         return exit();
     }
 
     content::RenderFrameHost::JavaScriptResultCallback internalCallback = base::NullCallback();
     if (callback) {
         internalCallback = base::BindOnce(&callbackOnEvaluateJS, this, m_nextRequestId);
-        m_javaScriptCallbacks.insert(m_nextRequestId, callback);
+        m_javaScriptCallbacks.insert_or_assign(m_nextRequestId, std::move(callback));
         ++m_nextRequestId;
     }
     if (worldId == 0)
@@ -1089,16 +1106,21 @@ void WebContentsAdapter::runJavaScript(const QString &javaScript, quint32 worldI
 void WebContentsAdapter::didRunJavaScript(quint64 requestId, const base::Value &result)
 {
     Q_ASSERT(requestId);
-    auto callback = m_javaScriptCallbacks.take(requestId);
-    Q_ASSERT(callback);
-    callback(fromJSValue(&result));
+    auto callbackNode = m_javaScriptCallbacks.extract(requestId);
+    Q_ASSERT(callbackNode);
+    Q_ASSERT(callbackNode.mapped());
+    QVariant qresult = fromJSValue(&result);
+    void *args[] = { nullptr, &qresult };
+    callbackNode.mapped()->call(nullptr, args);
 }
 
 // Called when QWebEnginePage is deleted
 void WebContentsAdapter::clearJavaScriptCallbacks()
 {
-    for (auto varFun : std::as_const(m_javaScriptCallbacks))
-        varFun(QVariant());
+    QVariant var;
+    void *argv[] = { nullptr, &var };
+    for (const auto &[_, callback] : std::as_const(m_javaScriptCallbacks))
+        callback->call(nullptr, argv);
     m_javaScriptCallbacks.clear();
 }
 
@@ -1364,8 +1386,8 @@ void WebContentsAdapter::printToPDF(const QPageLayout &pageLayout, const QPageRa
 }
 
 void WebContentsAdapter::printToPDFCallbackResult(
-        std::function<void(QSharedPointer<QByteArray>)> &&callback, const QPageLayout &pageLayout,
-        const QPageRanges &pageRanges, bool colorMode, bool useCustomMargins, quint64 frameId)
+        QtPrivate::SlotObjUniquePtr callback, const QPageLayout &pageLayout,
+        const QPageRanges &pageRanges, bool colorMode, quint64 frameId)
 {
 #if QT_CONFIG(webengine_printing_and_pdf)
     CHECK_INITIALIZED();
@@ -1376,7 +1398,7 @@ void WebContentsAdapter::printToPDFCallbackResult(
     if (content::WebContents *guest = guestWebContents())
         webContents = guest;
     PrintViewManagerQt::FromWebContents(webContents)
-            ->PrintToPDFWithCallback(pageLayout, pageRanges, colorMode, useCustomMargins, frameId,
+            ->PrintToPDFWithCallback(pageLayout, pageRanges, colorMode, frameId,
                                      std::move(internalCallback));
     m_printCallbacks.emplace(m_nextRequestId++, std::move(callback));
 #else
@@ -1385,14 +1407,14 @@ void WebContentsAdapter::printToPDFCallbackResult(
 #endif // QT_CONFIG(webengine_printing_and_pdf)
 }
 
-void WebContentsAdapter::didPrintPage(quint64 requestId, QSharedPointer<QByteArray> result)
+void WebContentsAdapter::didPrintPage(quint64 requestId, std::shared_ptr<QByteArray> result)
 {
     Q_ASSERT(requestId);
-    auto mapIt = m_printCallbacks.find(requestId);
-    Q_ASSERT(mapIt != m_printCallbacks.end());
-    Q_ASSERT(mapIt->second);
-    mapIt->second(std::move(result));
-    m_printCallbacks.erase(mapIt);
+    auto callbackNode = m_printCallbacks.extract(requestId);
+    Q_ASSERT(callbackNode);
+    Q_ASSERT(callbackNode.mapped());
+    void *args[] = { nullptr, &result };
+    callbackNode.mapped()->call(nullptr, args);
 }
 
 QPointF WebContentsAdapter::lastScrollOffset() const
@@ -1411,17 +1433,18 @@ QSizeF WebContentsAdapter::lastContentsSize() const
     return QSizeF();
 }
 
-void WebContentsAdapter::setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType, QWebEnginePermission::State state)
+void WebContentsAdapter::setPermission(
+        const QUrl &origin,
+        QWebEnginePermission::PermissionType permissionType,
+        QWebEnginePermission::State state,
+        int childId, const std::string &serializedToken)
 {
+    auto *manager = static_cast<PermissionManagerQt*>(m_profileAdapter->profile()->GetPermissionControllerDelegate());
+
     if (QWebEnginePermission::isPersistent(permissionType)) {
         // Do not check for initialization in this path so permissions can be set before first navigation
         Q_ASSERT(m_profileAdapter);
-        if (!isInitialized()) {
-            m_profileAdapter->setPermission(origin, permissionType, state);
-        } else {
-            m_profileAdapter->setPermission(origin, permissionType, state, m_webContents.get()->GetPrimaryMainFrame());
-        }
-
+        manager->setPermission(origin, permissionType, state, childId, serializedToken);
         return;
     }
 
@@ -1434,115 +1457,87 @@ void WebContentsAdapter::setPermission(const QUrl &origin, QWebEnginePermission:
             // Do nothing
             break;
         case QWebEnginePermission::State::Denied:
-            grantMouseLockPermission(origin, false);
+            grantMouseLockPermission(origin, childId, serializedToken, false);
             break;
         case QWebEnginePermission::State::Granted:
-            grantMouseLockPermission(origin, true);
+            grantMouseLockPermission(origin, childId, serializedToken, true);
             break;
         }
 
         return;
     }
 
-    const WebContentsAdapterClient::MediaRequestFlags audioVideoCaptureFlags(
-        WebContentsAdapterClient::MediaVideoCapture |
-        WebContentsAdapterClient::MediaAudioCapture);
-    const WebContentsAdapterClient::MediaRequestFlags desktopAudioVideoCaptureFlags(
-        WebContentsAdapterClient::MediaDesktopVideoCapture |
-        WebContentsAdapterClient::MediaDesktopAudioCapture);
+    // If we reach this, we must be handling media access permissions
+    manager->setPermission(origin, permissionType, state, childId, serializedToken);
 
-    switch (state) {
-    case QWebEnginePermission::State::Invalid:
-    case QWebEnginePermission::State::Ask:
-        // Do nothing
-        return;
-    case QWebEnginePermission::State::Denied:
-        // Deny all media access
-        grantMediaAccessPermission(origin, WebContentsAdapterClient::MediaNone);
-        return;
-    case QWebEnginePermission::State::Granted:
-        // Enable only the requested capture type
-        break;
+    WebContentsAdapterClient::MediaRequestFlags flags = WebContentsAdapterClient::MediaNone;
+    if (state == QWebEnginePermission::State::Granted) {
+        switch (permissionType) {
+        case QWebEnginePermission::PermissionType::MediaAudioCapture:
+            flags.setFlag(WebContentsAdapterClient::MediaAudioCapture);
+            break;
+        case QWebEnginePermission::PermissionType::MediaVideoCapture:
+            flags.setFlag(WebContentsAdapterClient::MediaVideoCapture);
+            break;
+        case QWebEnginePermission::PermissionType::MediaAudioVideoCapture:
+            flags.setFlag(WebContentsAdapterClient::MediaAudioCapture);
+            flags.setFlag(WebContentsAdapterClient::MediaVideoCapture);
+            break;
+        case QWebEnginePermission::PermissionType::DesktopVideoCapture:
+            flags.setFlag(WebContentsAdapterClient::MediaDesktopVideoCapture);
+            break;
+        case QWebEnginePermission::PermissionType::DesktopAudioVideoCapture:
+            flags.setFlag(WebContentsAdapterClient::MediaDesktopAudioCapture);
+            flags.setFlag(WebContentsAdapterClient::MediaDesktopVideoCapture);
+            break;
+        default:
+            break;
+        }
     }
 
-    switch (permissionType) {
-    case QWebEnginePermission::PermissionType::MediaAudioVideoCapture:
-        grantMediaAccessPermission(origin, audioVideoCaptureFlags);
-        break;
-    case QWebEnginePermission::PermissionType::MediaAudioCapture:
-        grantMediaAccessPermission(origin, WebContentsAdapterClient::MediaAudioCapture);
-        break;
-    case QWebEnginePermission::PermissionType::MediaVideoCapture:
-        grantMediaAccessPermission(origin, WebContentsAdapterClient::MediaVideoCapture);
-        break;
-    case QWebEnginePermission::PermissionType::DesktopAudioVideoCapture:
-        grantMediaAccessPermission(origin, desktopAudioVideoCaptureFlags);
-        break;
-    case QWebEnginePermission::PermissionType::DesktopVideoCapture:
-        grantMediaAccessPermission(origin, WebContentsAdapterClient::MediaDesktopVideoCapture);
-        break;
-    default:
-        Q_UNREACHABLE();
-        break;
-    }
-}
-
-QWebEnginePermission::State WebContentsAdapter::getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType)
-{
-    return m_profileAdapter->getPermissionState(origin, permissionType, m_webContents.get()->GetPrimaryMainFrame());
-}
-
-void WebContentsAdapter::grantMediaAccessPermission(const QUrl &origin, WebContentsAdapterClient::MediaRequestFlags flags)
-{
-    CHECK_INITIALIZED();
-    // Let the permission manager remember the reply.
-    if (flags & WebContentsAdapterClient::MediaAudioCapture)
-        m_profileAdapter->setPermission(origin,
-            QWebEnginePermission::PermissionType::MediaAudioCapture,
-            QWebEnginePermission::State::Granted,
-            m_webContents.get()->GetPrimaryMainFrame());
-    if (flags & WebContentsAdapterClient::MediaVideoCapture)
-        m_profileAdapter->setPermission(origin,
-            QWebEnginePermission::PermissionType::MediaVideoCapture,
-            QWebEnginePermission::State::Granted,
-            m_webContents.get()->GetPrimaryMainFrame());
     MediaCaptureDevicesDispatcher::GetInstance()->handleMediaAccessPermissionResponse(m_webContents.get(), origin, flags);
 }
 
-void WebContentsAdapter::grantMouseLockPermission(const QUrl &securityOrigin, bool granted)
+void WebContentsAdapter::grantMouseLockPermission(const QUrl &securityOrigin, int childId,
+                                                  const std::string &serializedToken, bool granted)
 {
     CHECK_INITIALIZED();
-    if (securityOrigin != toQt(m_webContents->GetLastCommittedURL().DeprecatedGetOriginAsURL()))
-        return;
 
-    if (granted) {
-        if (RenderWidgetHostViewQt *rwhv = static_cast<RenderWidgetHostViewQt *>(m_webContents->GetRenderWidgetHostView())) {
-            rwhv->Focus();
-            if (!rwhv->HasFocus()) {
-                // We tried to activate our RWHVQtDelegate, but we failed. This probably means that
-                // the permission was granted from a modal dialog and the windowing system is not ready
-                // to set focus on the originating view. Since pointer lock strongly requires it, we just
-                // wait until the next FocusIn event.
-                m_pendingMouseLockPermissions.insert(securityOrigin, granted);
-                return;
-            }
-        } else
-            granted = false;
+    bool focused = false;
+    if (RenderWidgetHostViewQt *rwhv = static_cast<RenderWidgetHostViewQt *>(m_webContents->GetRenderWidgetHostView())) {
+        rwhv->Focus();
+        if (rwhv->HasFocus()) {
+            focused = true;
+        }
+    } else {
+        granted = false;
     }
 
-    m_webContents->GotResponseToLockMouseRequest(granted ? blink::mojom::PointerLockResult::kSuccess
-                                                         : blink::mojom::PointerLockResult::kPermissionDenied);
+    m_pendingMouseLockPermissions.enqueue({ securityOrigin, granted, childId, serializedToken });
+
+    if (focused) {
+        handlePendingMouseLockPermission();
+    }
 }
 
 void WebContentsAdapter::handlePendingMouseLockPermission()
 {
     CHECK_INITIALIZED();
-    auto it = m_pendingMouseLockPermissions.find(toQt(m_webContents->GetLastCommittedURL().DeprecatedGetOriginAsURL()));
-    if (it != m_pendingMouseLockPermissions.end()) {
-        m_webContents->GotResponseToLockMouseRequest(it.value() ? blink::mojom::PointerLockResult::kSuccess
-                                                                : blink::mojom::PointerLockResult::kPermissionDenied);
-        m_pendingMouseLockPermissions.erase(it);
-    }
+    if (!m_pendingMouseLockPermissions.size())
+        return;
+
+    auto pending = m_pendingMouseLockPermissions.dequeue();
+
+    // Simply set the permission in the manager. The callback from WebContentsDelegateQt::RequestPointerLock()
+    // will ensure WebContents receives the response
+    auto *manager = static_cast<PermissionManagerQt*>(m_profileAdapter->profile()->GetPermissionControllerDelegate());
+    manager->setPermission(
+        get<0>(pending),  // origin
+        QWebEnginePermission::PermissionType::MouseLock,
+        get<1>(pending)   // granted
+            ? QWebEnginePermission::State::Granted : QWebEnginePermission::State::Denied,
+        get<2>(pending),  // childId
+        get<3>(pending)); // serializedToken
 }
 
 void WebContentsAdapter::setBackgroundColor(const QColor &color)
@@ -1620,7 +1615,9 @@ static QMimeData *mimeDataFromDropData(const content::DropData &dropData)
     if (!dropData.custom_data.empty()) {
         base::Pickle pickle;
         ui::WriteCustomDataToPickle(dropData.custom_data, &pickle);
-        mimeData->setData(QLatin1String(ui::kMimeTypeWebCustomData), QByteArray((const char*)pickle.data(), pickle.size()));
+        mimeData->setData(QString::fromStdString(
+                                  ui::ClipboardFormatType::DataTransferCustomType().Serialize()),
+                          QByteArray((const char*)pickle.data(), pickle.size()));
     }
     return mimeData;
 }
@@ -1649,7 +1646,7 @@ void WebContentsAdapter::startDragging(QObject *dragSource, const content::DropD
     // Clear certain fields of the drop data to not run into DCHECKs
     // of DropDataToWebDragData in render_view_impl.cc.
     m_currentDropData.reset(new content::DropData(dropData));
-    m_currentDropData->download_metadata.clear();
+    m_currentDropData->download_metadata.reset();
     m_currentDropData->file_contents.clear();
     m_currentDropData->file_contents_content_disposition.clear();
 
@@ -1750,8 +1747,10 @@ static void fillDropDataFromMimeData(content::DropData *dropData, const QMimeDat
         dropData->html = toOptionalString16(mimeData->html());
     if (mimeData->hasText())
         dropData->text = toOptionalString16(mimeData->text());
-    if (mimeData->hasFormat(QLatin1String(ui::kMimeTypeWebCustomData))) {
-        const QByteArray customData = mimeData->data(QLatin1String(ui::kMimeTypeWebCustomData));
+    const QString serializedDataTransferCustomType =
+            QString::fromStdString(ui::ClipboardFormatType::DataTransferCustomType().Serialize());
+    if (mimeData->hasFormat(serializedDataTransferCustomType)) {
+        const QByteArray customData = mimeData->data(serializedDataTransferCustomType);
         const base::span custom_data(customData.constData(), (long unsigned)customData.length());
         if (auto maybe_data = ui::ReadCustomDataIntoMap(base::as_bytes(custom_data)))
             dropData->custom_data = *std::move(maybe_data);
@@ -1942,17 +1941,18 @@ void WebContentsAdapter::changeTextDirection(bool leftToRight)
 
 quint64 WebContentsAdapter::mainFrameId() const
 {
-    CHECK_INITIALIZED(content::RenderFrameHost::kNoFrameTreeNodeId);
-    return static_cast<quint64>(m_webContents->GetPrimaryMainFrame()->GetFrameTreeNodeId());
+    CHECK_INITIALIZED(-1); // content::RenderFrameHost::kNoFrameTreeNodeId);
+    return static_cast<quint64>(
+            m_webContents->GetPrimaryMainFrame()->GetFrameTreeNodeId().GetUnsafeValue());
 }
 
 #define CHECK_INITIALIZED_AND_VALID_FRAME(webengine_frame_id_variable, frame_tree_node_variable,   \
                                           return_value)                                            \
     CHECK_INITIALIZED(return_value);                                                               \
-    if (webengine_frame_id_variable == kInvalidFrameId)                                            \
+    if (webengine_frame_id_variable == -1) /* kInvalidFrameId)*/                                   \
         return return_value;                                                                       \
     auto *frame_tree_node_variable = content::FrameTreeNode::GloballyFindByID(                     \
-            static_cast<int>(webengine_frame_id_variable));                                        \
+            static_cast<content::FrameTreeNodeId>(webengine_frame_id_variable));                   \
     if (!frame_tree_node_variable)                                                                 \
     return return_value
 
@@ -1966,7 +1966,7 @@ QString WebContentsAdapter::frameHtmlName(quint64 id) const
 {
     CHECK_INITIALIZED_AND_VALID_FRAME(id, ftn, QString());
     auto &maybeName = ftn->html_name();
-    return maybeName ? QString::fromStdString(*maybeName) : QString("");
+    return maybeName ? QString::fromStdString(*maybeName) : ""_L1;
 }
 
 QList<quint64> WebContentsAdapter::frameChildren(quint64 id) const
@@ -1976,7 +1976,7 @@ QList<quint64> WebContentsAdapter::frameChildren(quint64 id) const
     size_t numChildren = ftn->child_count();
     result.reserve(numChildren);
     for (size_t i = 0; i < numChildren; ++i) {
-        result.push_back(ftn->child_at(i)->frame_tree_node_id());
+        result.push_back(ftn->child_at(i)->frame_tree_node_id().GetUnsafeValue());
     }
     return result;
 }
@@ -2002,7 +2002,7 @@ std::optional<quint64> WebContentsAdapter::findFrameIdByName(const QString &name
     auto *ftn = content::FrameTreeNode::From(m_webContents->GetPrimaryMainFrame());
     Q_ASSERT(ftn);
     if (auto *foundFtn = ftn->frame_tree().FindByName(name.toStdString()))
-        return foundFtn->frame_tree_node_id();
+        return foundFtn->frame_tree_node_id().GetUnsafeValue();
     return {};
 }
 
@@ -2228,7 +2228,7 @@ void WebContentsAdapter::discard()
 
     if (m_webContents->IsLoading()) {
         m_webContentsDelegate->didFailLoad(m_webContentsDelegate->url(webContents()), net::Error::ERR_ABORTED,
-                                           QStringLiteral("Discarded"));
+                                           u"Discarded"_s);
         m_webContentsDelegate->DidStopLoading();
     }
 
@@ -2283,7 +2283,7 @@ void WebContentsAdapter::undiscard()
     Q_ASSERT(rvh);
     if (!m_webContents->GetPrimaryMainFrame()->IsRenderFrameLive())
         static_cast<content::WebContentsImpl *>(m_webContents.get())
-                ->CreateRenderViewForRenderManager(rvh, absl::nullopt, nullptr);
+                ->CreateRenderViewForRenderManager(rvh, std::nullopt, nullptr, std::nullopt);
     m_webContentsDelegate->RenderViewHostChanged(nullptr, rvh);
     m_adapterClient->initializationFinished();
     m_adapterClient->selectionChanged();

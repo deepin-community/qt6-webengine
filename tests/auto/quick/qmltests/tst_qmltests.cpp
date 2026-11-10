@@ -17,6 +17,8 @@
 #include <QtTest/qtest.h>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#include <QtWebEngineCore/qtwebenginecore-config.h>
+#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 #include <qt_webengine_quicktest.h>
 
 #include <cstdio>
@@ -26,19 +28,6 @@
 #include <signal.h>
 #include <unistd.h>
 #endif
-
-class Setup : public QObject
-{
-    Q_OBJECT
-public:
-    Setup() { }
-
-public slots:
-    void qmlEngineAvailable(QQmlEngine *engine)
-    {
-        engine->addImportPath(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath() + "/mock-delegates");
-    }
-};
 
 #if defined(Q_OS_LINUX) && defined(QT_DEBUG)
 static bool debuggerPresent()
@@ -97,6 +86,14 @@ static void sigSegvHandler(int signum)
     qFatal("Received signal %d", signum);
 }
 #endif
+
+class TestEnvironment : public QObject
+{
+    Q_OBJECT
+
+public:
+    Q_INVOKABLE bool hasWebRTC() const { return QT_CONFIG(webengine_webrtc); }
+};
 
 class TempDir : public QObject {
     Q_OBJECT
@@ -158,6 +155,23 @@ public:
 
 private:
     bool m_visible = false;
+};
+
+class PopupWindowUtil : public QObject {
+    Q_OBJECT
+
+public:
+    Q_INVOKABLE static QQuickWindow *getActivePopupWindow() {
+        QWindowList allWindows = QGuiApplication::allWindows();
+
+        for (auto *win : allWindows) {
+            if (win->type() == Qt::Popup
+                    && win->transientParent() != nullptr) {
+                return static_cast<QQuickWindow *>(win);
+            }
+        }
+        return nullptr;
+    }
 };
 
 QT_BEGIN_NAMESPACE
@@ -237,6 +251,7 @@ int main(int argc, char **argv)
 
     sigaction(SIGSEGV, &sigAction, 0);
 #endif
+    qputenv("QTWEBENGINE_UI_DELEGATE_MODULE", "QtWebEngine.TestMockDelegates");
     QtWebEngineQuick::initialize();
     // Force to use English language for testing due to error message checks
     QLocale::setDefault(QLocale("en"));
@@ -252,8 +267,12 @@ int main(int argc, char **argv)
     qmlRegisterType<TempDir>("Test.util", 1, 0, "TempDir");
     qmlRegisterType<TestInputContext>("Test.util", 1, 0, "TestInputContext");
     qmlRegisterType<TestInputEvent>("Test.util", 1, 0, "TestInputEvent");
+    qmlRegisterType<PopupWindowUtil>("Test.util", 1, 0, "PopupWindowUtil");
 
     QTEST_SET_MAIN_SOURCE_PATH
+    qmlRegisterSingletonType<TestEnvironment>(
+            "Test.Shared", 1, 0, "TestEnvironment",
+            [&](QQmlEngine *, QJSEngine *) { return new TestEnvironment; });
     qmlRegisterSingletonType<HttpServer>("Test.Shared", 1, 0, "HttpServer", [&] (QQmlEngine *, QJSEngine *) {
         auto server = new HttpServer;
         server->setResourceDirs(
@@ -268,10 +287,9 @@ int main(int argc, char **argv)
                 return new HttpsServer(":/resources/server.pem", ":/resources/server.key", "");
             });
 #endif
-    Setup setup;
-    int i = quick_test_main_with_setup(
+    int i = quick_test_main(
             argc, argv, "qmltests",
-            qPrintable(QT_TESTCASE_BUILDDIR + QLatin1String("/webengine.qmltests")), &setup);
+            qPrintable(QT_TESTCASE_BUILDDIR + QLatin1String("/webengine.qmltests")));
     return i;
 }
 

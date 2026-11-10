@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/win/access_control_list.h"
 
-#include <windows.h>
+// clang-format off
+#include <windows.h>  // Must be in front of other Windows header files.
+// clang-format on
 
 #include <sddl.h>
 
@@ -55,12 +62,16 @@ std::vector<char> ConvertSddlToAcl(const wchar_t* sddl) {
 
 std::wstring ConvertAclToSddl(const AccessControlList& acl,
                               bool label = false) {
+  // WinAPI is not const-correct so even non-modifying methods accept non-const
+  // pointers. Copy the const-qualified `acl` so that we can call non-const
+  // versions of getters on it and pass the results to WinAPI.
+  auto acl_copy = acl.Clone();
   SECURITY_DESCRIPTOR sd = {};
   CHECK(::InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
   if (label) {
-    CHECK(::SetSecurityDescriptorSacl(&sd, TRUE, acl.get(), FALSE));
+    CHECK(::SetSecurityDescriptorSacl(&sd, TRUE, acl_copy.get(), FALSE));
   } else {
-    CHECK(::SetSecurityDescriptorDacl(&sd, TRUE, acl.get(), FALSE));
+    CHECK(::SetSecurityDescriptorDacl(&sd, TRUE, acl_copy.get(), FALSE));
   }
   LPWSTR sddl_str = nullptr;
   CHECK(::ConvertSecurityDescriptorToStringSecurityDescriptor(

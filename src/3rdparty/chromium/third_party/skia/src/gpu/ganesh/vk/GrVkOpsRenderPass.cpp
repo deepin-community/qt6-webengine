@@ -9,26 +9,52 @@
 
 #include "include/core/SkDrawable.h"
 #include "include/core/SkRect.h"
-#include "include/gpu/GrBackendDrawableInfo.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/core/SkSize.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/gpu/ganesh/vk/GrBackendDrawableInfo.h"
+#include "include/gpu/ganesh/vk/GrVkTypes.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkTo.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
+#include "src/gpu/GpuRefCnt.h"
+#include "src/gpu/ganesh/GrAttachment.h"
 #include "src/gpu/ganesh/GrBackendUtils.h"
+#include "src/gpu/ganesh/GrBuffer.h"
+#include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
+#include "src/gpu/ganesh/GrDrawIndirectCommand.h"
+#include "src/gpu/ganesh/GrGpuBuffer.h"
+#include "src/gpu/ganesh/GrNativeRect.h"
 #include "src/gpu/ganesh/GrOpFlushState.h"
 #include "src/gpu/ganesh/GrPipeline.h"
+#include "src/gpu/ganesh/GrProgramInfo.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
+#include "src/gpu/ganesh/GrScissorState.h"
+#include "src/gpu/ganesh/GrSurfaceProxy.h"
+#include "src/gpu/ganesh/GrTexture.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
-#include "src/gpu/ganesh/vk/GrVkBuffer.h"
+#include "src/gpu/ganesh/vk/GrVkCaps.h"
 #include "src/gpu/ganesh/vk/GrVkCommandBuffer.h"
 #include "src/gpu/ganesh/vk/GrVkCommandPool.h"
+#include "src/gpu/ganesh/vk/GrVkDescriptorSet.h"
 #include "src/gpu/ganesh/vk/GrVkFramebuffer.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
 #include "src/gpu/ganesh/vk/GrVkImage.h"
 #include "src/gpu/ganesh/vk/GrVkPipeline.h"
+#include "src/gpu/ganesh/vk/GrVkPipelineState.h"
 #include "src/gpu/ganesh/vk/GrVkRenderPass.h"
 #include "src/gpu/ganesh/vk/GrVkRenderTarget.h"
 #include "src/gpu/ganesh/vk/GrVkResourceProvider.h"
-#include "src/gpu/ganesh/vk/GrVkSemaphore.h"
 #include "src/gpu/ganesh/vk/GrVkTexture.h"
+
+#include <algorithm>
+#include <cstring>
+#include <functional>
+#include <utility>
+
+class GrGpu;
 
 using namespace skia_private;
 
@@ -70,7 +96,7 @@ void GrVkOpsRenderPass::setAttachmentLayouts(LoadFromResolve loadFromResolve) {
     bool withStencil = fCurrentRenderPass->hasStencilAttachment();
     bool withResolve = fCurrentRenderPass->hasResolveAttachment();
 
-    if (fSelfDependencyFlags == SelfDependencyFlags::kForInputAttachment) {
+    if (fSelfDependencyFlags & SelfDependencyFlags::kForInputAttachment) {
         // We need to use the GENERAL layout in this case since we'll be using texture barriers
         // with an input attachment.
         VkAccessFlags dstAccess = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT |
@@ -526,7 +552,6 @@ void GrVkOpsRenderPass::onClear(const GrScissorState& scissor, std::array<float,
 
     this->currentCommandBuffer()->clearAttachments(fGpu, 1, &attachment, 1, &clearRect);
     fCurrentCBIsEmpty = false;
-    return;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -598,11 +623,18 @@ void GrVkOpsRenderPass::addAdditionalRenderPass(bool mustUseSecondaryCommandBuff
     this->beginRenderPass(vkClearColor, loadFromResolve);
 }
 
-void GrVkOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) {
+bool GrVkOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) {
     if (!fCurrentRenderPass) {
         SkASSERT(fGpu->isDeviceLost());
-        return;
+        return false;
     }
+
+    // Skia should not manipulate a wrapped (externally-owned) secondary command buffer, which
+    // is necessary in order to perform the requested inline upload.
+    if (this->wrapsSecondaryCommandBuffer()) {
+        return false;
+    }
+
     if (fCurrentSecondaryCommandBuffer) {
         fCurrentSecondaryCommandBuffer->end(fGpu);
         fGpu->submitSecondaryCommandBuffer(std::move(fCurrentSecondaryCommandBuffer));
@@ -611,9 +643,11 @@ void GrVkOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUpl
 
     // We pass in true here to signal that after the upload we need to set the upload textures
     // layout back to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL.
-    state->doUpload(upload, true);
+    state->doUpload(upload, /*shouldPrepareSurfaceForSampling=*/true);
 
     this->addAdditionalRenderPass(false);
+
+    return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -711,7 +745,7 @@ bool GrVkOpsRenderPass::onBindTextures(const GrGeometryProcessor& geomProc,
                                                    this->currentCommandBuffer())) {
         return false;
     }
-    if (fSelfDependencyFlags == SelfDependencyFlags::kForInputAttachment) {
+    if (fSelfDependencyFlags & SelfDependencyFlags::kForInputAttachment) {
         // We bind the color attachment as an input attachment
         auto ds = fFramebuffer->colorAttachment()->inputDescSetForBlending(fGpu);
         if (!ds) {
@@ -746,17 +780,21 @@ void GrVkOpsRenderPass::onBindBuffers(sk_sp<const GrBuffer> indexBuffer,
     // Here our vertex and instance inputs need to match the same 0-based bindings they were
     // assigned in GrVkPipeline. That is, vertex first (if any) followed by instance.
     uint32_t binding = 0;
-    if (auto* gpuVertexBuffer = static_cast<const GrGpuBuffer*>(vertexBuffer.get())) {
+    if (vertexBuffer) {
+        SkDEBUGCODE(auto* gpuVertexBuffer = static_cast<const GrGpuBuffer*>(vertexBuffer.get()));
         SkASSERT(!gpuVertexBuffer->isCpuBuffer());
         SkASSERT(!gpuVertexBuffer->isMapped());
         currCmdBuf->bindInputBuffer(fGpu, binding++, std::move(vertexBuffer));
     }
-    if (auto* gpuInstanceBuffer = static_cast<const GrGpuBuffer*>(instanceBuffer.get())) {
+    if (instanceBuffer) {
+        SkDEBUGCODE(auto* gpuInstanceBuffer =
+                            static_cast<const GrGpuBuffer*>(instanceBuffer.get()));
         SkASSERT(!gpuInstanceBuffer->isCpuBuffer());
         SkASSERT(!gpuInstanceBuffer->isMapped());
         currCmdBuf->bindInputBuffer(fGpu, binding++, std::move(instanceBuffer));
     }
-    if (auto* gpuIndexBuffer = static_cast<const GrGpuBuffer*>(indexBuffer.get())) {
+    if (indexBuffer) {
+        SkDEBUGCODE(auto* gpuIndexBuffer = static_cast<const GrGpuBuffer*>(indexBuffer.get()));
         SkASSERT(!gpuIndexBuffer->isCpuBuffer());
         SkASSERT(!gpuIndexBuffer->isMapped());
         currCmdBuf->bindIndexBuffer(fGpu, std::move(indexBuffer));

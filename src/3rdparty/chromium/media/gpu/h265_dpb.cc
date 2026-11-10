@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/gpu/h265_dpb.h"
+
 #include <algorithm>
 
 #include "base/logging.h"
-#include "media/gpu/h265_dpb.h"
-#include "media/video/h265_parser.h"
+#include "media/parsers/h265_parser.h"
 
 namespace media {
 
@@ -58,8 +59,14 @@ void H265DPB::DeleteUnused() {
     auto& pic = *it;
     if ((!pic->pic_output_flag_ || pic->outputted_) &&
         (pic->ref_ == H265Picture::kUnused)) {
-      std::swap(pic, *(pics_.end() - 1));
-      pics_.pop_back();
+      auto last = pics_.end() - 1;
+      if (it == last) {
+        pics_.pop_back();
+        it = pics_.end();
+      } else {
+        std::swap(pic, *last);
+        pics_.pop_back();
+      }
     } else {
       it++;
     }

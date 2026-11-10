@@ -11,11 +11,11 @@ extern "C" {
 #endif
 
 // Decodes the jpeg file at path 'inputFilename' into 'avif'.
-// At most imageSizeLimit pixels will be read or an error returned.
+// At most sizeLimit pixels will be read or an error returned. At most sizeLimit
+// bytes of Exif or XMP metadata will be read or an error returned.
 // 'ignoreGainMap' is only relevant for jpeg files that have a gain map
-// and only if AVIF_ENABLE_EXPERIMENTAL_JPEG_GAIN_MAP_CONVERSION is ON
-// (requires AVIF_ENABLE_EXPERIMENTAL_GAIN_MAP and libxml2). Otherwise
-// it has no effect.
+// and only if AVIF_ENABLE_JPEG_GAIN_MAP_CONVERSION is ON
+// (requires libxml2). Otherwise it has no effect.
 avifBool avifJPEGRead(const char * inputFilename,
                       avifImage * avif,
                       avifPixelFormat requestedFormat,
@@ -25,12 +25,12 @@ avifBool avifJPEGRead(const char * inputFilename,
                       avifBool ignoreExif,
                       avifBool ignoreXMP,
                       avifBool ignoreGainMap,
-                      uint32_t imageSizeLimit);
+                      uint32_t sizeLimit);
 avifBool avifJPEGWrite(const char * outputFilename, const avifImage * avif, int jpegQuality, avifChromaUpsampling chromaUpsampling);
 
-#if defined(AVIF_ENABLE_EXPERIMENTAL_JPEG_GAIN_MAP_CONVERSION)
+#if defined(AVIF_ENABLE_JPEG_GAIN_MAP_CONVERSION)
 // Parses XMP gain map metadata. Visible for testing.
-avifBool avifJPEGParseGainMapXMP(const uint8_t * xmpData, size_t xmpSize, avifGainMapMetadata * metadata);
+avifBool avifJPEGParseGainMapXMP(const uint8_t * xmpData, size_t xmpSize, avifGainMap * gainMap);
 #endif
 
 #ifdef __cplusplus

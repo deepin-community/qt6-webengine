@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as CodeMirror from '../../../third_party/codemirror.next/codemirror.next.js';
 
@@ -100,9 +101,10 @@ export async function languageFromMIME(mimeType: string): Promise<CodeMirror.Lan
       return CodeMirror.css.css();
 
     case 'text/html':
-      return CodeMirror.html.html({selfClosingTags: true});
+      return CodeMirror.html.html({autoCloseTags: false, selfClosingTags: true});
 
     case 'application/xml':
+    case 'application/xhtml+xml':
     case 'image/svg+xml':
       return (await CodeMirror.xml()).xml();
 

@@ -10,7 +10,9 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_math.h"
+#include "base/pickle.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
 #include "gpu/command_buffer/service/decoder_client.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
@@ -21,12 +23,12 @@ static const size_t kDefaultMaxBucketSize = 1u << 30;  // 1 GB
 
 uint32_t LoadU32Unaligned(const void* ptr) {
   uint32_t ret;
-  memcpy(&ret, ptr, sizeof(uint32_t));
+  UNSAFE_TODO(memcpy(&ret, ptr, sizeof(uint32_t)));
   return ret;
 }
 
 void StoreU32Unaligned(uint32_t v, void* ptr) {
-  memcpy(ptr, &v, sizeof(uint32_t));
+  UNSAFE_TODO(memcpy(ptr, &v, sizeof(uint32_t)));
 }
 
 }  // namespace
@@ -50,7 +52,7 @@ CommonDecoder::Bucket::~Bucket() = default;
 
 void* CommonDecoder::Bucket::GetData(size_t offset, size_t size) const {
   if (OffsetSizeValid(offset, size)) {
-    return data_.get() + offset;
+    return UNSAFE_TODO(data_.get() + offset);
   }
   return nullptr;
 }
@@ -69,7 +71,8 @@ void CommonDecoder::Bucket::SetSize(size_t size) {
 bool CommonDecoder::Bucket::SetData(
     const volatile void* src, size_t offset, size_t size) {
   if (OffsetSizeValid(offset, size)) {
-    memcpy(data_.get() + offset, const_cast<const void*>(src), size);
+    UNSAFE_TODO(
+        memcpy(data_.get() + offset, const_cast<const void*>(src), size));
     return true;
   }
   return false;
@@ -115,7 +118,7 @@ bool CommonDecoder::Bucket::GetAsStrings(
   if (max_count < static_cast<size_t>(count)) {
     return false;
   }
-  GLint* length = header + 1;
+  GLint* length = UNSAFE_TODO(header + 1);
   std::vector<char*> strs(count);
   base::CheckedNumeric<size_t> total_size = sizeof(GLint);
   total_size *= count + 1;  // Header size.
@@ -123,10 +126,10 @@ bool CommonDecoder::Bucket::GetAsStrings(
     return false;
   for (GLsizei ii = 0; ii < count; ++ii) {
     strs[ii] = bucket_data + total_size.ValueOrDefault(0);
-    total_size += length[ii];
+    total_size += UNSAFE_TODO(length[ii]);
     total_size += 1;  // NUL char at the end of each char array.
     if (!total_size.IsValid() || total_size.ValueOrDefault(0) > bucket_size ||
-        strs[ii][length[ii]] != 0) {
+        UNSAFE_TODO(strs[ii][length[ii]]) != 0) {
       return false;
     }
   }
@@ -138,7 +141,7 @@ bool CommonDecoder::Bucket::GetAsStrings(
   *_string = strs;
   _length->resize(count);
   for (GLsizei ii = 0; ii < count; ++ii) {
-    (*_length)[ii] = length[ii];
+    (*_length)[ii] = UNSAFE_TODO(length[ii]);
   }
   return true;
 }
@@ -219,7 +222,8 @@ namespace {
 // Returns the address of the first byte after a struct.
 template <typename T>
 const volatile void* AddressAfterStruct(const volatile T& pod) {
-  return reinterpret_cast<const volatile uint8_t*>(&pod) + sizeof(pod);
+  return UNSAFE_TODO(reinterpret_cast<const volatile uint8_t*>(&pod) +
+                     sizeof(pod));
 }
 
 // Returns the address of the frst byte after the struct.
@@ -239,7 +243,7 @@ error::Error CommonDecoder::DoCommonCommand(unsigned int command,
                                             unsigned int arg_count,
                                             const volatile void* cmd_data) {
   if (command < std::size(command_info)) {
-    const CommandInfo& info = command_info[command];
+    const CommandInfo& info = UNSAFE_TODO(command_info[command]);
     unsigned int info_arg_count = static_cast<unsigned int>(info.arg_count);
     if ((info.arg_flags == cmd::kFixed && arg_count == info_arg_count) ||
         (info.arg_flags == cmd::kAtLeastN && arg_count >= info_arg_count)) {
@@ -361,7 +365,7 @@ error::Error CommonDecoder::HandleGetBucketStart(
   StoreU32Unaligned(bucket_size, result);
   if (data) {
     uint32_t size = std::min(data_memory_size, bucket_size);
-    memcpy(data, bucket->GetData(0, size), size);
+    UNSAFE_TODO(memcpy(data, bucket->GetData(0, size), size));
   }
   return error::kNoError;
 }
@@ -386,7 +390,7 @@ error::Error CommonDecoder::HandleGetBucketData(uint32_t immediate_data_size,
   if (!src) {
       return error::kInvalidArguments;
   }
-  memcpy(data, src, size);
+  UNSAFE_TODO(memcpy(data, src, size));
   return error::kNoError;
 }
 
@@ -415,15 +419,16 @@ bool CommonDecoder::ReadColorSpace(uint32_t shm_id,
     return true;
   }
 
-  const char* data = static_cast<const char*>(
+  const uint8_t* data = static_cast<const uint8_t*>(
       GetAddressAndCheckSize(shm_id, shm_offset, color_space_size));
   if (!data) {
     return false;
   }
 
-  // Make a copy to reduce the risk of a time of check to time of use attack.
-  std::vector<char> color_space_data(data, data + color_space_size);
-  base::Pickle color_space_pickle(color_space_data.data(), color_space_size);
+  base::span<const uint8_t> UNSAFE_TODO(
+      color_space_data(data, data + color_space_size));
+  base::Pickle color_space_pickle =
+      base::Pickle::WithUnownedBuffer(color_space_data);
   base::PickleIterator iterator(color_space_pickle);
   if (!IPC::ParamTraits<gfx::ColorSpace>::Read(&color_space_pickle, &iterator,
                                                color_space)) {

@@ -4,7 +4,6 @@
 
 #include "components/history/core/browser/features.h"
 
-#include "build/build_config.h"
 #include "components/history/core/browser/top_sites_impl.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
 #include "components/sync/base/features.h"
@@ -14,8 +13,7 @@ namespace history {
 namespace {
 constexpr auto is_android = !!BUILDFLAG(IS_ANDROID);
 constexpr auto kOrganicRepeatableQueriesDefaultValue =
-    is_android ? base::FEATURE_ENABLED_BY_DEFAULT
-               : base::FEATURE_DISABLED_BY_DEFAULT;
+    base::FEATURE_DISABLED_BY_DEFAULT;
 
 // Specifies the scaling behavior, i.e. whether the relevance scales of the
 // top sites and repeatable queries should be first aligned.
@@ -82,30 +80,15 @@ BASE_FEATURE(kPopulateVisitedLinkDatabase,
              "PopulateVisitedLinkDatabase",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSyncSegmentsData,
-             "SyncSegmentsData",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// If enabled, uses new scoring function for Most Visited Tiles computation.
+BASE_FEATURE(kMostVisitedTilesNewScoring,
+             "MostVisitedTilesNewScoring",
+             is_android ? base::FEATURE_ENABLED_BY_DEFAULT
+                        : base::FEATURE_DISABLED_BY_DEFAULT);
 
-// When enabled, prefer to use the new recovery module to recover the
-// `TopSitesDatabase` database. See https://crbug.com/1385500 for details.
-// This is a kill switch and is not intended to be used in a field trial.
-BASE_FEATURE(kTopSitesDatabaseUseBuiltInRecoveryIfSupported,
-             "TopSitesDatabaseUseBuiltInRecoveryIfSupported",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// The maximum number of New Tab Page displays to show with synced segments
-// data.
-const base::FeatureParam<int> kMaxNumNewTabPageDisplays(
-    &kSyncSegmentsData,
-    "MaxNumNumNewTabPageDisplays",
-    5);
-
-bool IsSyncSegmentsDataEnabled() {
-#if !BUILDFLAG(IS_QTWEBENGINE)
-  return base::FeatureList::IsEnabled(kSyncSegmentsData);
-#else
-  return false;
-#endif
-}
+// If enabled, heuristically remove possible visual duplicates from top sites.
+BASE_FEATURE(kMostVisitedTilesVisualDeduplication,
+             "MostVisitedTilesVisualDeduplication",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace history

@@ -516,7 +516,6 @@ CompositeOperator FillLayer::Composite() const {
       return kCompositePlusLighter;
     default:
       NOTREACHED();
-      break;
   }
 }
 

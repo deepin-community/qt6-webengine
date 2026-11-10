@@ -18,11 +18,11 @@
 
 #include "gtest/gtest.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 TEST(PCTableTest, SerializesAndDeserializesPCInfoSuccessfully) {
-  PCTable input = {{.pc = 0, .flags = 1}, {.pc = 2, .flags = 3}};
+  PCTable input = {{/*pc=*/0, /*flags=*/1}, {/*pc=*/2, /*flags=*/3}};
 
   std::stringstream stream;
   WritePcTable(input, stream);
@@ -33,4 +33,4 @@ TEST(PCTableTest, SerializesAndDeserializesPCInfoSuccessfully) {
 }
 
 }  // namespace
-}  // namespace centipede
+}  // namespace fuzztest::internal

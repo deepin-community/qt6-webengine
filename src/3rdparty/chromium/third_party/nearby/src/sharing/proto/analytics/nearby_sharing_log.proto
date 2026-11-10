@@ -18,10 +18,10 @@ package nearby.sharing.analytics.proto;
 
 import "google/protobuf/duration.proto";
 
+// "privacy/pattributes/annotations/proto_field.proto";
 // import "storage/datapol/annotations/proto/semantic_annotations.proto";
-import "third_party/nearby/proto/sharing_enums.proto";
-
-// "wireless/android/privacy/annotations/proto/collection_basis_annotations.proto";
+// import "storage/googlesql/public/proto/type_annotation.proto";
+import "proto/sharing_enums.proto";
 
 option optimize_for = LITE_RUNTIME;
 option java_package = "nearby.sharing.analytics.proto";
@@ -30,12 +30,13 @@ option objc_class_prefix = "GNCP";
 
 // Top-level log proto for all NearbySharing logging.
 // Each log contains a key (event_type), value (a verb-noun event) pair.
-// Next Tag: 76
+// Next Tag: 83
 // LINT.IfChange
 message SharingLog {
-  /* collection_basis = {
-    use_cases: UC_SERVICE_OR_API_MEASURING_USER_ENGAGEMENT
-  } */
+  /* justification = {
+      collection_basis: CB_CHECKBOX
+      purposes: [ INFRASTRUCTURE_METRICS, BUSINESS_ANALYSIS ]
+    } */
 
   reserved 71;  // Deprecated TransferUIEvent.
 
@@ -207,6 +208,20 @@ message SharingLog {
   // Used only for Nearby Share android app now.
   optional ShowAllowPermissionAutoAccess show_allow_permission_auto_access = 75;
 
+  optional ShowWaitingForAccept show_waiting_for_accept = 76;
+
+  optional HighQualityMediumSetup high_quality_medium_setup = 77;
+
+  optional RpcCallStatus rpc_call_status = 78;
+
+  optional StartQrCodeSession start_qr_code_session = 79;
+
+  optional QrCodeOpenedInWebClient qr_code_opened_in_web_client = 80;
+
+  optional HatsJointEvent hats_joint_event = 81;
+
+  optional ReceivePreviews receive_previews = 82;
+
   // Used only for Nearby Share Windows app now.
   message AppInfo {
     // e.g. "1.0.408"
@@ -234,6 +249,25 @@ message SharingLog {
     optional bool is_location_enabled = 6;
     // True if the wifi setting is enabled
     optional bool is_wifi_enabled = 7;
+    // Date(YYYYMMDD) in decimal format for the first successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 first_successful_transfer_date = 8
+        /* format = googlesql.format */;
+    // Date(YYYYMMDD) in decimal format for the previous successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 previous_successful_transfer_date = 9
+        /* format = googlesql.format */;
+    // The cumulative number of transfers the device has completed.
+    // Exact transfer count stored on device, but when logging put the transfer
+    // count in buckets, initially we use buckets: 1, 2, 3, …, 10, 11+
+    optional int32 lifetime_transfer_count = 10;
+    // Upload Contact data according to Device consent or Quick Share consent.
+    optional location.nearby.proto.sharing.ContactAccess contact_access = 11;
+    // Phone number verification.
+    optional location.nearby.proto.sharing.IdentityVerification
+        identity_verification = 12;
   }
 
   // Used only for Nearby Share Windows app now. Here is the screenshot about
@@ -266,9 +300,14 @@ message SharingLog {
     optional int64 duration_millis = 5;
     optional ShareTargetInfo share_target_info = 6;
     optional string referrer_name = 7;
-    optional bool qr_code_flow = 8;
+    // Deprecated. Use share_target_info.has_matching_qr_code instead.
+    optional bool qr_code_flow = 8 [deprecated = true];
     // True if the connection established from receiver
     optional bool is_incoming_connection = 9;
+    // Duration from when the receiver attempts to receive from a QR code to
+    // when the QR code sender successfully connects to this receiver. Only set
+    // for QR-code based receive flows.
+    optional google.protobuf.Duration qr_code_receiver_connect_latency = 10;
   }
 
   // EventType: ACCEPT_AGREEMENTS
@@ -329,6 +368,10 @@ message SharingLog {
     optional location.nearby.proto.sharing.ScanType scan_type = 3;
     optional int64 flow_id = 4 /* type = ST_SESSION_ID */;
     optional string referrer_name = 5;
+    // Represents whether this scan was started with an active QR code session
+    // that can be used to help discover targets that have scanned the same QR
+    // code
+    optional bool use_qr_code = 6;
   }
 
   // EventType: SCAN_FOR_SHARE_TARGETS_END
@@ -386,13 +429,16 @@ message SharingLog {
     optional location.nearby.proto.sharing.SharingUseCase use_case = 1;
     // The opt-in status before the user enters the first opt-in screen in each
     // time file share or it is always “true” if the user has opted in before.
-    optional bool initial_opt_in = 2;
+    // Deprecated.
+    optional bool initial_opt_in = 2 [deprecated = true];
     // The opt-in status after the user leaves the first opt-in screen in each
     // time file share or it is always “true” if the user has opted in before.
-    optional bool opt_in = 3;
+    // Deprecated.
+    optional bool opt_in = 3 [deprecated = true];
     // The Nearby Share enable status before the user enters the first
     // opt-in screen in each time file share.
-    optional bool initial_enable_status = 4;
+    // Deprecated.
+    optional bool initial_enable_status = 4 [deprecated = true];
     // The same id means it is in the same sharing file flow of sender side.
     // Ex: when sender share file to 2 receivers, the flow_id in sender side is
     // the same for all the discovery/connection/transfer events.
@@ -407,6 +453,7 @@ message SharingLog {
     // not designed to be joined with other sessions/events of the same user to
     // reconstruct particular user's activity pattern.
     optional int64 session_id = 6 /* type = ST_SESSION_ID */;
+    optional int32 vendor_id = 7 /* type = ST_PARTNER_ID */;
   }
 
   // TODO(fdi): may consider adding a field about decipherability later.
@@ -452,6 +499,9 @@ message SharingLog {
   // EventType: DESCRIBE_ATTACHMENTS
   message DescribeAttachments {
     optional AttachmentsInfo attachments_info = 1;
+
+    // Time taken to download the attachments before sending
+    optional google.protobuf.Duration download_duration = 2;
   }
 
   // TODO(fdi): may want to add duration_from_scanning_millis later.
@@ -486,7 +536,9 @@ message SharingLog {
     // 1-based number for transfer position.
     optional int32 transfer_position = 3;
     optional int32 concurrent_connections = 4;
-    optional bool qr_code_flow = 5;
+    // Deprecated. Use share_target_info.has_matching_qr_code instead.
+    optional bool qr_code_flow = 5 [deprecated = true];
+    optional ShareTargetInfo share_target_info = 6;
   }
 
   // EventType: SEND_ATTACHMENTS_END
@@ -506,6 +558,24 @@ message SharingLog {
     // connection status from nearby connections layer
     optional location.nearby.proto.sharing.ConnectionLayerStatus
         connection_layer_status = 10;
+    // Date(YYYYMMDD) in decimal format for the first successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 first_successful_transfer_date = 11
+        /* format = googlesql.format */;
+    // Date(YYYYMMDD) in decimal format for the previous successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 previous_successful_transfer_date = 12
+        /* format = googlesql.format */;
+    // The cumulative number of transfers the device has completed.
+    // Exact transfer count stored on device, but when logging put the transfer
+    // count in buckets, initially we use buckets: 1, 2, 3, …, 10, 11+
+    optional int32 lifetime_transfer_count = 13;
+    // The medium used for the connection.
+    optional int32 connection_medium = 14;
+    // The data usage of the user settings.
+    optional location.nearby.proto.sharing.DataUsage data_usage = 15;
   }
 
   // EventType: RECEIVE_ATTACHMENTS_START
@@ -523,6 +593,24 @@ message SharingLog {
         3;
     optional string referrer_name = 4;
     optional ShareTargetInfo share_target_info = 5;
+    // Date(YYYYMMDD) in decimal format for the first successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 first_successful_transfer_date = 6
+        /* format = googlesql.format */;
+    // Date(YYYYMMDD) in decimal format for the previous successful transfer in
+    // America/Los_Angeles timezone. If no successful transfer exists, the value
+    // is 0.
+    optional int32 previous_successful_transfer_date = 7
+        /* format = googlesql.format */;
+    // The cumulative number of transfers the device has completed.
+    // Exact transfer count stored on device, but when logging put the transfer
+    // count in buckets, initially we use buckets: 1, 2, 3, …, 10, 11+
+    optional int32 lifetime_transfer_count = 8;
+    // The medium used for the connection.
+    optional int32 connection_medium = 14;
+    // The data usage of the user settings.
+    optional location.nearby.proto.sharing.DataUsage data_usage = 15;
   }
 
   // EventType: CANCEL_CONNECTION
@@ -732,6 +820,17 @@ message SharingLog {
     optional location.nearby.proto.sharing.OSType os_type = 2;
     optional location.nearby.proto.sharing.DeviceRelationship
         device_relationship = 3;
+    // Represents whether the share target has the same QR code as the local
+    // device.
+    // In sender side events, this returns whether the receiver represented by
+    // this ShareTargetInfo has scanned the QR code generated by this sender.
+    // In receiver side events, this returns whether the sender represented by
+    // this ShareTargetInfo is the one that generated the QR code scanned by
+    // this receiver.
+    optional bool has_matching_qr_code = 4;
+
+    // Represents whether the share target is from external provider.
+    optional bool is_external = 5;
   }
 
   // The metadata of attachments to be shared.
@@ -813,6 +912,8 @@ message SharingLog {
   message SetupWizard {
     // The new visibility of the device.
     optional location.nearby.proto.sharing.Visibility visibility = 1;
+    // The previous visibility of the device.
+    optional location.nearby.proto.sharing.Visibility previous_visibility = 2;
   }
 
   message SendDesktopNotification {
@@ -822,6 +923,69 @@ message SharingLog {
 
   message SendDesktopTransferEvent {
     optional location.nearby.proto.sharing.DesktopTransferEventType event = 1;
+  }
+
+  message ShowWaitingForAccept {
+    optional location.nearby.proto.sharing.ButtonStatus button_status = 1;
+  }
+
+  message HighQualityMediumSetup {
+    optional ShareTargetInfo share_target_info = 1;
+    optional int64 session_id = 2 /* type = ST_SESSION_ID */;
+    optional int64 duration_millis = 3;
+    optional bool is_timeout = 4;
+    optional int32 original_quality = 5;
+    optional int32 connection_medium = 6;
+    optional int32 connection_mode = 7;
+    optional int32 instant_connection_result = 8;
+  }
+
+  message RpcCallStatus {
+    enum RpcDirection {
+      UNKNOWN_RPC_DIRECTION = 0;
+      INCOMING = 1;
+      OUTGOING = 2;
+    }
+
+    optional RpcDirection direction = 1;
+    // Name of RPC in <ServiceName>.<MethodName> format.
+    optional string rpc_name = 2;
+    // Canonical error code of RPC.
+    optional int32 error_code = 3;
+    // Latency of RPC call in milliseconds.
+    optional int64 latency_millis = 4;
+  }
+
+  // EventType: START_QR_CODE_SESSION
+  message StartQrCodeSession {}
+
+  // EventType: QR_CODE_OPENED_IN_WEB_CLIENT
+  message QrCodeOpenedInWebClient {
+    enum ClientPlatform {
+      UNKNOWN_CLIENT_PLATFORM = 0;
+      // Used when the client platform is not one of the types below
+      GENERIC = 1;
+      ANDROID = 2;
+      IOS = 3;
+      CHROME_OS = 4;
+      WINDOWS = 5;
+    }
+    optional ClientPlatform client_platform = 1;
+
+    // Whether the /qrcode page was opened in the browser again after the user
+    // clicked on the "Try again" button
+    optional bool is_retry = 2;
+  }
+  // EventType: HATS_JOINT_EVENT
+  message HatsJointEvent {
+    optional int64 flow_id = 1 /* type = ST_SESSION_ID */;
+    optional string hats_session_id = 2
+        /* type = ST_SESSION_ID */;
+  }
+
+  // EventType: RECEIVE_PREVIEWS
+  message ReceivePreviews {
+    optional int32 num_previews = 1;
   }
 }
 // LINT.ThenChange(//depot/google3/logs/proto/location/nearby/nearby_client_log.proto)

@@ -16,7 +16,6 @@
 
 #include <string>
 
-#include "absl/strings/str_format.h"
 #include "absl/time/time.h"
 
 namespace nearby {
@@ -24,11 +23,7 @@ namespace utils {
 
 std::string TimeFormatShortDateAndTimeWithTimeZone(absl::Time time) {
   absl::TimeZone tz = absl::LocalTimeZone();
-  return absl::FormatTime("%Y%M%D %H:%M:%S %z", time, tz);
-}
-
-std::string TimeDurationFormatWithSeconds(absl::Duration duration) {
-  return absl::StrFormat("%ds", duration / absl::Seconds(1));
+  return absl::FormatTime("%Y/%m/%d %H:%M:%S %z", time, tz);
 }
 
 }  // namespace utils

@@ -19,10 +19,9 @@ String StringFromTextItem(const InlineCursor& cursor) {
 
 }  // namespace
 
-class InlinePaintContextTest : public RenderingTest,
-                               private ScopedTextDecoratingBoxForTest {
+class InlinePaintContextTest : public RenderingTest {
  public:
-  InlinePaintContextTest() : ScopedTextDecoratingBoxForTest(true) {}
+  InlinePaintContextTest() {}
 
   Vector<float> GetFontSizes(
       const InlinePaintContext::DecoratingBoxList& boxes) {

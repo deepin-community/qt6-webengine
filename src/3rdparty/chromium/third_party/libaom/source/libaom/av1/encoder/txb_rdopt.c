@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2021, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -12,9 +12,10 @@
 #include "av1/encoder/txb_rdopt.h"
 #include "av1/encoder/txb_rdopt_utils.h"
 
+#include "aom_ports/mem.h"
 #include "av1/common/idct.h"
 
-static INLINE void update_coeff_general(
+static inline void update_coeff_general(
     int *accu_rate, int64_t *accu_dist, int si, int eob, TX_SIZE tx_size,
     TX_CLASS tx_class, int bhl, int width, int64_t rdmult, int shift,
     int dc_sign_ctx, const int16_t *dequant, const int16_t *scan,
@@ -77,8 +78,8 @@ static AOM_FORCE_INLINE void update_coeff_simple(
     int bhl, int64_t rdmult, int shift, const int16_t *dequant,
     const int16_t *scan, const LV_MAP_COEFF_COST *txb_costs,
     const tran_low_t *tcoeff, tran_low_t *qcoeff, tran_low_t *dqcoeff,
-    uint8_t *levels, const qm_val_t *iqmatrix, const qm_val_t *qmatrix) {
-  const int dqv = get_dqv(dequant, scan[si], iqmatrix);
+    uint8_t *levels, int sharpness, const qm_val_t *iqmatrix,
+    const qm_val_t *qmatrix) {
   (void)eob;
   // this simple version assumes the coeff's scan_idx is not DC (scan_idx != 0)
   // and not the last (scan_idx != eob - 1)
@@ -102,6 +103,7 @@ static AOM_FORCE_INLINE void update_coeff_simple(
       return;
     }
 
+    const int dqv = get_dqv(dequant, scan[si], iqmatrix);
     const int64_t dist = get_coeff_dist(abs_tqc, abs_dqc, shift, qmatrix, ci);
     const int64_t rd = RDCOST(rdmult, rate, dist);
 
@@ -111,7 +113,9 @@ static AOM_FORCE_INLINE void update_coeff_simple(
         get_coeff_dist(abs_tqc, abs_dqc_low, shift, qmatrix, ci);
     const int64_t rd_low = RDCOST(rdmult, rate_low, dist_low);
 
-    if (rd_low < rd) {
+    int allow_lower_qc = sharpness ? (abs_qc > 1) : 1;
+
+    if (rd_low < rd && allow_lower_qc) {
       const int sign = (qc < 0) ? 1 : 0;
       qcoeff[ci] = (-sign ^ abs_qc_low) + sign;
       dqcoeff[ci] = (-sign ^ abs_dqc_low) + sign;
@@ -131,7 +135,6 @@ static AOM_FORCE_INLINE void update_coeff_eob(
     const LV_MAP_COEFF_COST *txb_costs, const tran_low_t *tcoeff,
     tran_low_t *qcoeff, tran_low_t *dqcoeff, uint8_t *levels, int sharpness,
     const qm_val_t *iqmatrix, const qm_val_t *qmatrix) {
-  const int dqv = get_dqv(dequant, scan[si], iqmatrix);
   assert(si != *eob - 1);
   const int ci = scan[si];
   const tran_low_t qc = qcoeff[ci];
@@ -140,6 +143,7 @@ static AOM_FORCE_INLINE void update_coeff_eob(
   if (qc == 0) {
     *accu_rate += txb_costs->base_cost[coeff_ctx][0];
   } else {
+    const int dqv = get_dqv(dequant, scan[si], iqmatrix);
     int lower_level = 0;
     const tran_low_t abs_qc = abs(qc);
     const tran_low_t tqc = tcoeff[ci];
@@ -201,7 +205,10 @@ static AOM_FORCE_INLINE void update_coeff_eob(
       }
     }
 
-    if (sharpness == 0 || abs_qc > 1) {
+    const int qc_threshold = (si <= 5) ? 2 : 1;
+    const int allow_lower_qc = sharpness ? abs_qc > qc_threshold : 1;
+
+    if (allow_lower_qc) {
       if (rd_low < rd) {
         lower_level = 1;
         rd = rd_low;
@@ -210,7 +217,7 @@ static AOM_FORCE_INLINE void update_coeff_eob(
       }
     }
 
-    if (sharpness == 0 && rd_new_eob < rd) {
+    if ((sharpness == 0 || new_eob >= 5) && rd_new_eob < rd) {
       for (int ni = 0; ni < *nz_num; ++ni) {
         int last_ci = nz_ci[ni];
         levels[get_padded_idx(last_ci, bhl)] = 0;
@@ -239,7 +246,7 @@ static AOM_FORCE_INLINE void update_coeff_eob(
   }
 }
 
-static INLINE void update_skip(int *accu_rate, int64_t accu_dist, int *eob,
+static inline void update_skip(int *accu_rate, int64_t accu_dist, int *eob,
                                int nz_num, int *nz_ci, int64_t rdmult,
                                int skip_cost, int non_skip_cost,
                                tran_low_t *qcoeff, tran_low_t *dqcoeff) {
@@ -268,10 +275,11 @@ static int get_tx_type_cost(const MACROBLOCK *x, const MACROBLOCKD *xd,
 
   const MB_MODE_INFO *mbmi = xd->mi[0];
   const int is_inter = is_inter_block(mbmi);
-  if (get_ext_tx_types(tx_size, is_inter, reduced_tx_set_used) > 1 &&
+  const TxSetType set_type =
+      av1_get_ext_tx_set_type(tx_size, is_inter, reduced_tx_set_used);
+  if (av1_num_ext_tx_set[set_type] > 1 &&
       !xd->lossless[xd->mi[0]->segment_id]) {
-    const int ext_tx_set =
-        get_ext_tx_set(tx_size, is_inter, reduced_tx_set_used);
+    const int ext_tx_set = ext_tx_set_index[is_inter][set_type];
     if (is_inter) {
       if (ext_tx_set > 0)
         return x->mode_costs
@@ -290,6 +298,36 @@ static int get_tx_type_cost(const MACROBLOCK *x, const MACROBLOCKD *xd,
     }
   }
   return 0;
+}
+
+static AOM_FORCE_INLINE void update_coeff_eob_facade(
+    int *accu_rate, int64_t *accu_dist, int *eob, int *nz_num, int *nz_ci,
+    int *si, TX_SIZE tx_size, TX_CLASS tx_class, int bhl, int width,
+    int dc_sign_ctx, int64_t rdmult, int shift, const int16_t *dequant,
+    const int16_t *scan, const LV_MAP_EOB_COST *txb_eob_costs,
+    const LV_MAP_COEFF_COST *txb_costs, const tran_low_t *tcoeff,
+    tran_low_t *qcoeff, tran_low_t *dqcoeff, uint8_t *levels, int sharpness,
+    const qm_val_t *iqmatrix, const qm_val_t *qmatrix, int max_nz_num) {
+  for (; *si >= 0 && *nz_num <= max_nz_num; --*si) {
+    update_coeff_eob(accu_rate, accu_dist, eob, nz_num, nz_ci, *si, tx_size,
+                     tx_class, bhl, width, dc_sign_ctx, rdmult, shift, dequant,
+                     scan, txb_eob_costs, txb_costs, tcoeff, qcoeff, dqcoeff,
+                     levels, sharpness, iqmatrix, qmatrix);
+  }
+}
+
+static AOM_FORCE_INLINE void update_coeff_simple_facade(
+    int *accu_rate, int *si, int eob, TX_SIZE tx_size, TX_CLASS tx_class,
+    int bhl, int64_t rdmult, int shift, const int16_t *dequant,
+    const int16_t *scan, const LV_MAP_COEFF_COST *txb_costs,
+    const tran_low_t *tcoeff, tran_low_t *qcoeff, tran_low_t *dqcoeff,
+    uint8_t *levels, int sharpness, const qm_val_t *iqmatrix,
+    const qm_val_t *qmatrix) {
+  for (; *si >= 1; --*si) {
+    update_coeff_simple(accu_rate, *si, eob, tx_size, tx_class, bhl, rdmult,
+                        shift, dequant, scan, txb_costs, tcoeff, qcoeff,
+                        dqcoeff, levels, sharpness, iqmatrix, qmatrix);
+  }
 }
 
 int av1_optimize_txb(const struct AV1_COMP *cpi, MACROBLOCK *x, int plane,
@@ -335,13 +373,24 @@ int av1_optimize_txb(const struct AV1_COMP *cpi, MACROBLOCK *x, int plane,
   const LV_MAP_EOB_COST *txb_eob_costs =
       &coeff_costs->eob_costs[eob_multi_size][plane_type];
 
-  const int rshift = 2;
+  // For the IQ and SSIMULACRA 2 tunings, increase rshift from 2 to 4.
+  // This biases trellis quantization towards keeping more coefficients, and
+  // together with the IQ and SSIMULACRA2 rdmult adjustment in
+  // av1_compute_rd_mult_based_on_qindex(), this helps preserve image
+  // features (like repeating patterns and camera noise/film grain), which
+  // improves SSIMULACRA 2 scores.
+  const int rshift = (cpi->oxcf.tune_cfg.tuning == AOM_TUNE_IQ ||
+                      cpi->oxcf.tune_cfg.tuning == AOM_TUNE_SSIMULACRA2)
+                         ? 7
+                         : 5;
 
-  const int64_t rdmult =
-      (((int64_t)x->rdmult *
-        (plane_rd_mult[is_inter][plane_type] << (2 * (xd->bd - 8)))) +
-       2) >>
-      rshift;
+  const int(*trellis_rd_mult)[2] = cpi->sf.tx_sf.use_chroma_trellis_rd_mult
+                                       ? plane_rd_mult_chroma
+                                       : plane_rd_mult;
+  const int64_t rdmult = ROUND_POWER_OF_TWO(
+      (int64_t)x->rdmult * (8 - sharpness) *
+          (trellis_rd_mult[is_inter][plane_type] << (2 * (xd->bd - 8))),
+      rshift);
 
   uint8_t levels_buf[TX_PAD_2D];
   uint8_t *const levels = set_levels(levels_buf, height);
@@ -385,13 +434,11 @@ int av1_optimize_txb(const struct AV1_COMP *cpi, MACROBLOCK *x, int plane,
 
 #define UPDATE_COEFF_EOB_CASE(tx_class_literal)                            \
   case tx_class_literal:                                                   \
-    for (; si >= 0 && nz_num <= max_nz_num; --si) {                        \
-      update_coeff_eob(&accu_rate, &accu_dist, &eob, &nz_num, nz_ci, si,   \
-                       tx_size, tx_class_literal, bhl, width,              \
-                       txb_ctx->dc_sign_ctx, rdmult, shift, dequant, scan, \
-                       txb_eob_costs, txb_costs, tcoeff, qcoeff, dqcoeff,  \
-                       levels, sharpness, iqmatrix, qmatrix);              \
-    }                                                                      \
+    update_coeff_eob_facade(                                               \
+        &accu_rate, &accu_dist, &eob, &nz_num, nz_ci, &si, tx_size,        \
+        tx_class_literal, bhl, width, txb_ctx->dc_sign_ctx, rdmult, shift, \
+        dequant, scan, txb_eob_costs, txb_costs, tcoeff, qcoeff, dqcoeff,  \
+        levels, sharpness, iqmatrix, qmatrix, max_nz_num);                 \
     break
   switch (tx_class) {
     UPDATE_COEFF_EOB_CASE(TX_CLASS_2D);
@@ -406,13 +453,12 @@ int av1_optimize_txb(const struct AV1_COMP *cpi, MACROBLOCK *x, int plane,
                 non_skip_cost, qcoeff, dqcoeff);
   }
 
-#define UPDATE_COEFF_SIMPLE_CASE(tx_class_literal)                             \
-  case tx_class_literal:                                                       \
-    for (; si >= 1; --si) {                                                    \
-      update_coeff_simple(&accu_rate, si, eob, tx_size, tx_class_literal, bhl, \
-                          rdmult, shift, dequant, scan, txb_costs, tcoeff,     \
-                          qcoeff, dqcoeff, levels, iqmatrix, qmatrix);         \
-    }                                                                          \
+#define UPDATE_COEFF_SIMPLE_CASE(tx_class_literal)                            \
+  case tx_class_literal:                                                      \
+    update_coeff_simple_facade(&accu_rate, &si, eob, tx_size,                 \
+                               tx_class_literal, bhl, rdmult, shift, dequant, \
+                               scan, txb_costs, tcoeff, qcoeff, dqcoeff,      \
+                               levels, sharpness, iqmatrix, qmatrix);         \
     break
   switch (tx_class) {
     UPDATE_COEFF_SIMPLE_CASE(TX_CLASS_2D);
@@ -469,7 +515,7 @@ static AOM_FORCE_INLINE int warehouse_efficients_txb(
       &x->coeff_costs.eob_costs[eob_multi_size][plane_type];
   int cost = coeff_costs->txb_skip_cost[txb_skip_ctx][0];
 
-  av1_txb_init_levels(qcoeff, width, height, levels);
+  if (eob > 1) av1_txb_init_levels(qcoeff, width, height, levels);
 
   cost += get_tx_type_cost(x, xd, plane, tx_size, tx_type, reduced_tx_set_used);
 
@@ -483,12 +529,12 @@ static AOM_FORCE_INLINE int warehouse_efficients_txb(
   {
     const int pos = scan[c];
     const tran_low_t v = qcoeff[pos];
-    const int sign = AOMSIGN(v);
-    const int level = (v ^ sign) - sign;
-    const int coeff_ctx = coeff_contexts[pos];
-    cost += coeff_costs->base_eob_cost[coeff_ctx][AOMMIN(level, 3) - 1];
 
     if (v) {
+      const int sign = AOMSIGN(v);
+      const int level = (v ^ sign) - sign;
+      const int coeff_ctx = coeff_contexts[pos];
+      cost += coeff_costs->base_eob_cost[coeff_ctx][AOMMIN(level, 3) - 1];
       // sign bit cost
       if (level > NUM_BASE_LEVELS) {
         const int ctx = get_br_ctx_eob(pos, bhl, tx_class);
@@ -509,15 +555,17 @@ static AOM_FORCE_INLINE int warehouse_efficients_txb(
     const int pos = scan[c];
     const int coeff_ctx = coeff_contexts[pos];
     const tran_low_t v = qcoeff[pos];
+    if (!v) {
+      cost += base_cost[coeff_ctx][0];
+      continue;
+    }
     const int level = abs(v);
     cost += base_cost[coeff_ctx][AOMMIN(level, 3)];
-    if (v) {
-      // sign bit cost
-      cost += av1_cost_literal(1);
-      if (level > NUM_BASE_LEVELS) {
-        const int ctx = get_br_ctx(levels, pos, bhl, tx_class);
-        cost += get_br_cost(level, lps_cost[ctx]);
-      }
+    // sign bit cost
+    cost += av1_cost_literal(1);
+    if (level > NUM_BASE_LEVELS) {
+      const int ctx = get_br_ctx(levels, pos, bhl, tx_class);
+      cost += get_br_cost(level, lps_cost[ctx]);
     }
   }
   // c == 0 after previous loop
@@ -525,11 +573,12 @@ static AOM_FORCE_INLINE int warehouse_efficients_txb(
     const int pos = scan[c];
     const tran_low_t v = qcoeff[pos];
     const int coeff_ctx = coeff_contexts[pos];
-    const int sign = AOMSIGN(v);
-    const int level = (v ^ sign) - sign;
-    cost += base_cost[coeff_ctx][AOMMIN(level, 3)];
-
-    if (v) {
+    if (!v) {
+      cost += base_cost[coeff_ctx][0];
+    } else {
+      const int sign = AOMSIGN(v);
+      const int level = (v ^ sign) - sign;
+      cost += base_cost[coeff_ctx][AOMMIN(level, 3)];
       // sign bit cost
       const int sign01 = (sign ^ sign) - sign;
       const int dc_sign_ctx = txb_ctx->dc_sign_ctx;
@@ -543,9 +592,38 @@ static AOM_FORCE_INLINE int warehouse_efficients_txb(
   return cost;
 }
 
-int av1_cost_coeffs_txb_estimate(const MACROBLOCK *x, const int plane,
-                                 const int block, const TX_SIZE tx_size,
-                                 const TX_TYPE tx_type) {
+/*!\brief Estimate the entropy cost of transform coefficients using Laplacian
+ * distribution.
+ *
+ * \ingroup coefficient_coding
+ *
+ * This function assumes each transform coefficient is of its own Laplacian
+ * distribution and the coefficient is the only observation of the Laplacian
+ * distribution.
+ *
+ * Based on that, each coefficient's coding cost can be estimated by computing
+ * the entropy of the corresponding Laplacian distribution.
+ *
+ * This function then return the sum of the estimated entropy cost for all
+ * coefficients in the transform block.
+ *
+ * Note that the entropy cost of end of block (eob) and transform type (tx_type)
+ * are not included.
+ *
+ * \param[in]    x              Pointer to structure holding the data for the
+                                current encoding macroblock
+ * \param[in]    plane          The index of the current plane
+ * \param[in]    block          The index of the current transform block in the
+ * macroblock. It's defined by number of 4x4 units that have been coded before
+ * the currernt transform block
+ * \param[in]    tx_size        The transform size
+ * \param[in]    tx_type        The transform type
+ * \return       int            Estimated entropy cost of coefficients in the
+ * transform block.
+ */
+static int av1_cost_coeffs_txb_estimate(const MACROBLOCK *x, const int plane,
+                                        const int block, const TX_SIZE tx_size,
+                                        const TX_TYPE tx_type) {
   assert(plane == 0);
 
   int cost = 0;
@@ -617,9 +695,24 @@ int av1_cost_coeffs_txb(const MACROBLOCK *x, const int plane, const int block,
   const MACROBLOCKD *const xd = &x->e_mbd;
   const TX_CLASS tx_class = tx_type_to_class[tx_type];
 
-  return warehouse_efficients_txb(x, plane, block, tx_size, txb_ctx, p, eob,
-                                  plane_type, coeff_costs, xd, tx_type,
-                                  tx_class, reduced_tx_set_used);
+  switch (tx_class) {
+    case TX_CLASS_2D:
+      return warehouse_efficients_txb(x, plane, block, tx_size, txb_ctx, p, eob,
+                                      plane_type, coeff_costs, xd, tx_type,
+                                      TX_CLASS_2D, reduced_tx_set_used);
+
+    case TX_CLASS_VERT:
+      return warehouse_efficients_txb(x, plane, block, tx_size, txb_ctx, p, eob,
+                                      plane_type, coeff_costs, xd, tx_type,
+                                      TX_CLASS_VERT, reduced_tx_set_used);
+
+    case TX_CLASS_HORIZ:
+      return warehouse_efficients_txb(x, plane, block, tx_size, txb_ctx, p, eob,
+                                      plane_type, coeff_costs, xd, tx_type,
+                                      TX_CLASS_HORIZ, reduced_tx_set_used);
+
+    default: assert(0 && "Invalid TX_CLASS"); return 0;
+  }
 }
 
 int av1_cost_coeffs_txb_laplacian(const MACROBLOCK *x, const int plane,

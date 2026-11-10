@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/bits.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/page_size.h"
 #include "base/strings/stringprintf.h"
@@ -16,7 +17,7 @@
 namespace gwp_asan {
 namespace internal {
 
-AllocatorState::AllocatorState() {}
+AllocatorState::AllocatorState() = default;
 
 AllocatorState::GetMetadataReturnType AllocatorState::GetMetadataForAddress(
     uintptr_t exception_address,
@@ -34,7 +35,7 @@ AllocatorState::GetMetadataReturnType AllocatorState::GetMetadataForAddress(
     return GetMetadataReturnType::kErrorBadSlot;
   }
 
-  AllocatorState::MetadataIdx index = slot_to_metadata[slot_idx];
+  AllocatorState::MetadataIdx index = UNSAFE_TODO(slot_to_metadata[slot_idx]);
   if (index == kInvalidMetadataIdx)
     return GetMetadataReturnType::kGwpAsanCrashWithMissingMetadata;
 
@@ -44,10 +45,10 @@ AllocatorState::GetMetadataReturnType AllocatorState::GetMetadataForAddress(
     return GetMetadataReturnType::kErrorBadMetadataIndex;
   }
 
-  if (GetNearestSlot(metadata_arr[index].alloc_ptr) != slot_idx) {
+  if (GetNearestSlot(UNSAFE_TODO(metadata_arr[index]).alloc_ptr) != slot_idx) {
     *error = base::StringPrintf(
         "Outdated metadata index %u: slot for %zx does not match %zx", index,
-        metadata_arr[index].alloc_ptr, exception_address);
+        UNSAFE_TODO(metadata_arr[index]).alloc_ptr, exception_address);
     return GetMetadataReturnType::kErrorOutdatedMetadataIndex;
   }
 

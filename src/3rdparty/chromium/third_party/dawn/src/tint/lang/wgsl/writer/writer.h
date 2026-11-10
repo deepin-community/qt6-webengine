@@ -31,7 +31,7 @@
 #include "src/tint/lang/wgsl/writer/ir_to_program/program_options.h"
 #include "src/tint/lang/wgsl/writer/options.h"
 #include "src/tint/lang/wgsl/writer/output.h"
-#include "src/tint/utils/result/result.h"
+#include "src/tint/utils/result.h"
 
 // Forward declarations
 namespace tint {
@@ -55,6 +55,11 @@ Result<Output> Generate(const Program& program, const Options& options);
 /// @param options the configuration options to use when generating WGSL
 /// @returns the resulting WGSL, or failure
 Result<Output> WgslFromIR(core::ir::Module& module, const ProgramOptions& options);
+
+/// Generate a Program from a core-dialect ir::Module.
+/// @param module the core-dialect ir::Module.
+/// @returns the resulting Program, or failure
+Result<Program> ProgramFromIR(core::ir::Module& module, const ProgramOptions& options);
 
 }  // namespace tint::wgsl::writer
 

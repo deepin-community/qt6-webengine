@@ -11,18 +11,16 @@
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
 #include "base/values.h"
+#include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/parsing_utils.h"
 #include "components/attribution_reporting/trigger_registration_error.mojom.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace attribution_reporting {
 
 namespace {
 
 using ::attribution_reporting::mojom::TriggerRegistrationError;
-
-constexpr char kTriggerData[] = "trigger_data";
 
 }  // namespace
 
@@ -37,23 +35,22 @@ EventTriggerData::FromJSON(base::Value& value) {
 
   EventTriggerData out;
 
-  ASSIGN_OR_RETURN(out.filters, FilterPair::FromJSON(*dict));
-
   ASSIGN_OR_RETURN(
       out.data,
       ParseUint64(*dict, kTriggerData).transform(&ValueOrZero<uint64_t>),
-      [](absl::monostate) {
+      [](ParseError) {
         return TriggerRegistrationError::kEventTriggerDataValueInvalid;
       });
 
-  ASSIGN_OR_RETURN(out.priority, ParsePriority(*dict), [](absl::monostate) {
+  ASSIGN_OR_RETURN(out.priority, ParsePriority(*dict), [](ParseError) {
     return TriggerRegistrationError::kEventPriorityValueInvalid;
   });
 
-  ASSIGN_OR_RETURN(
-      out.dedup_key, ParseDeduplicationKey(*dict), [](absl::monostate) {
-        return TriggerRegistrationError::kEventDedupKeyValueInvalid;
-      });
+  ASSIGN_OR_RETURN(out.dedup_key, ParseDeduplicationKey(*dict), [](ParseError) {
+    return TriggerRegistrationError::kEventDedupKeyValueInvalid;
+  });
+
+  ASSIGN_OR_RETURN(out.filters, FilterPair::FromJSON(*dict));
 
   return out;
 }
@@ -62,7 +59,7 @@ EventTriggerData::EventTriggerData() = default;
 
 EventTriggerData::EventTriggerData(uint64_t data,
                                    int64_t priority,
-                                   absl::optional<uint64_t> dedup_key,
+                                   std::optional<uint64_t> dedup_key,
                                    FilterPair filters)
     : data(data),
       priority(priority),

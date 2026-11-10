@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/span.h"
 #include "base/strings/string_util.h"
@@ -26,9 +27,9 @@ const char kWebTestOriginTrialHeaderName[] = "X-Web-Test-Enabled-Origin-Trials";
 }  // namespace
 
 WebTestOriginTrialThrottle::WebTestOriginTrialThrottle(
-    NavigationHandle* navigation_handle,
+    NavigationThrottleRegistry& registry,
     OriginTrialsControllerDelegate* delegate)
-    : NavigationThrottle(navigation_handle),
+    : NavigationThrottle(registry),
       origin_trials_controller_delegate_(delegate) {}
 
 NavigationThrottle::ThrottleCheckResult
@@ -60,8 +61,7 @@ void WebTestOriginTrialThrottle::SetHeaderForRequest() {
     trials = origin_trials_controller_delegate_->GetPersistedTrialsForOrigin(
         origin, partition_origin, base::Time::Now());
   }
-  std::string header_value = base::JoinString(
-      base::span<std::string>(trials.begin(), trials.end()), ", ");
+  std::string header_value = base::JoinString(trials, ", ");
   if (!header_value.empty()) {
     navigation_handle()->SetRequestHeader(kWebTestOriginTrialHeaderName,
                                           header_value);

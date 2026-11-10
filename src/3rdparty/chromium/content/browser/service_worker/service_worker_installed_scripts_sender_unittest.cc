@@ -4,8 +4,6 @@
 
 #include "content/browser/service_worker/service_worker_installed_scripts_sender.h"
 
-#include <optional>
-
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -135,7 +133,7 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
     scope_ = GURL("http://www.example.com/test/");
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope_;
-    registration_ = base::MakeRefCounted<ServiceWorkerRegistration>(
+    registration_ = ServiceWorkerRegistration::Create(
         options,
         blink::StorageKey::CreateFirstParty(url::Origin::Create(scope_)), 1L,
         context()->AsWeakPtr(), blink::mojom::AncestorFrameType::kNormalFrame);
@@ -156,7 +154,7 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
 
   EmbeddedWorkerTestHelper* helper() { return helper_.get(); }
   ServiceWorkerContextCore* context() { return helper_->context(); }
-  ServiceWorkerRegistry* registry() { return context()->registry(); }
+  ServiceWorkerRegistry& registry() { return context()->registry(); }
   ServiceWorkerVersion* version() { return version_.get(); }
 
  private:
@@ -709,7 +707,7 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, StorageDisabled) {
   version()->script_cache_map()->SetResources(records);
 
   base::RunLoop loop;
-  registry()->DisableStorageForTesting(loop.QuitClosure());
+  registry().DisableStorageForTesting(loop.QuitClosure());
   loop.Run();
 
   auto sender =

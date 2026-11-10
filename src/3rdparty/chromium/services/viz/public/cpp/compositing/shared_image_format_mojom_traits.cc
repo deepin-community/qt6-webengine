@@ -23,7 +23,6 @@ EnumTraits<viz::mojom::PlaneConfig, viz::SharedImageFormat::PlaneConfig>::
       return viz::mojom::PlaneConfig::kY_U_V_A;
   }
   NOTREACHED();
-  return viz::mojom::PlaneConfig::kY_UV;
 }
 
 // static
@@ -63,7 +62,6 @@ EnumTraits<viz::mojom::Subsampling, viz::SharedImageFormat::Subsampling>::
       return viz::mojom::Subsampling::k444;
   }
   NOTREACHED();
-  return viz::mojom::Subsampling::k420;
 }
 
 // static
@@ -99,7 +97,6 @@ EnumTraits<viz::mojom::ChannelFormat, viz::SharedImageFormat::ChannelFormat>::
       return viz::mojom::ChannelFormat::k16F;
   }
   NOTREACHED();
-  return viz::mojom::ChannelFormat::k8;
 }
 
 // static

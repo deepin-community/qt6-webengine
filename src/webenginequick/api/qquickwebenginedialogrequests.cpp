@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qquickwebenginedialogrequests_p.h"
 #include "authentication_dialog_controller.h"
@@ -186,8 +187,10 @@ void QQuickWebEngineAuthenticationDialogRequest::dialogAccept(const QString &use
     m_accepted = true;
     QSharedPointer<AuthenticationDialogController> controller
             = m_controller.toStrongRef();
-    if (controller)
-        controller->accept(user,password);
+    if (controller) {
+        controller->credentials(user, password);
+        controller->accept();
+    }
 }
 
 /*!
@@ -620,7 +623,8 @@ QString QQuickWebEngineFileDialogRequest::defaultFileName() const
 
 QQuickWebEngineFileDialogRequest::FileMode QQuickWebEngineFileDialogRequest::mode() const
 {
-    return m_mode;
+    // map opendirectory to openmultiple
+    return m_mode > FileMode::FileModeSave ? FileMode::FileModeOpenMultiple : m_mode;
 }
 
 /*!

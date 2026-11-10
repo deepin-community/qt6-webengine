@@ -17,6 +17,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/enterprise/buildflags/buildflags.h"
 #include "content/public/browser/global_routing_id.h"
 #include "printing/print_settings.h"
 
@@ -24,10 +25,6 @@
 #include <string>
 
 #include "chromeos/crosapi/mojom/local_printer.mojom.h"
-#endif
-
-#if BUILDFLAG(IS_WIN)
-#include <optional>
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -96,7 +93,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob> {
                           uint32_t page_count);
 
 #if BUILDFLAG(IS_WIN)
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   void StartConversionToNativeFormat(
       scoped_refptr<base::RefCountedMemory> print_data,
       const gfx::Size& page_size,
@@ -138,7 +135,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob> {
   // since Cancel() calls Stop(). See WARNING above for Stop().
   virtual void Cancel();
 
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   // Cleanup a printing job after content analysis denies printing.  Performs
   // any extra cleanup for this particular case that can't be safely done from
   // within Cancel().
@@ -229,7 +226,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob> {
 
   void HoldUntilStopIsCalled();
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
   virtual void StartPdfToEmfConversion(
       scoped_refptr<base::RefCountedMemory> bytes,
       const gfx::Size& page_size,
@@ -282,7 +279,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob> {
   // the notified calls Cancel() again.
   bool is_canceling_ = false;
 
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
   class PdfConversionState;
   std::unique_ptr<PdfConversionState> pdf_conversion_state_;
   std::vector<uint32_t> pdf_page_mapping_;

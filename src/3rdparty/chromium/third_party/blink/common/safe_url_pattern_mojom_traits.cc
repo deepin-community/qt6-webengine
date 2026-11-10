@@ -24,7 +24,6 @@ bool EnumTraits<blink::mojom::Modifier, ::liburlpattern::Modifier>::FromMojom(
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 bool StructTraits<blink::mojom::FixedPatternDataView, ::liburlpattern::Part>::
@@ -68,7 +67,6 @@ UnionTraits<blink::mojom::PatternTemplateDataView,
       return blink::mojom::PatternTemplate::Tag::kSegmentWildcard;
     case liburlpattern::PartType::kRegex:
       NOTREACHED();
-      return blink::mojom::PatternTemplate::Tag::kFixed;
   }
 }
 

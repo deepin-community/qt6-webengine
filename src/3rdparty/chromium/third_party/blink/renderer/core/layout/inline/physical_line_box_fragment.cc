@@ -65,18 +65,11 @@ PhysicalLineBoxFragment::PhysicalLineBoxFragment(
 
 PhysicalLineBoxFragment::~PhysicalLineBoxFragment() = default;
 
-void PhysicalLineBoxFragment::Dispose() {}
-
 FontHeight PhysicalLineBoxFragment::BaselineMetrics() const {
   // TODO(kojii): Computing other baseline types than the used one is not
   // implemented yet.
   // TODO(kojii): We might need locale/script to look up OpenType BASE table.
   return metrics_;
-}
-
-bool PhysicalLineBoxFragment::HasSoftWrapToNextLine() const {
-  const auto* break_token = To<InlineBreakToken>(GetBreakToken());
-  return break_token && !break_token->IsForcedBreak();
 }
 
 void PhysicalLineBoxFragment::TraceAfterDispatch(Visitor* visitor) const {

@@ -30,7 +30,6 @@ class CFX_Barcode {
 
   bool RenderDevice(CFX_RenderDevice* device, const CFX_Matrix& matrix);
 
-  void SetCharEncoding(BC_CHAR_ENCODING encoding);
   bool SetModuleHeight(int32_t moduleHeight);
   bool SetModuleWidth(int32_t moduleWidth);
   void SetHeight(int32_t height);
@@ -40,7 +39,7 @@ class CFX_Barcode {
   bool SetDataLength(int32_t length);
   bool SetCalChecksum(bool state);
 
-  bool SetFont(CFX_Font* pFont);
+  bool SetFont(CFX_Font* font);
   bool SetFontSize(float size);
   bool SetFontColor(FX_ARGB color);
 
@@ -53,7 +52,7 @@ class CFX_Barcode {
  private:
   CFX_Barcode();
 
-  std::unique_ptr<CBC_CodeBase> m_pBCEngine;
+  std::unique_ptr<CBC_CodeBase> bc_engine_;
 };
 
 #endif  // FXBARCODE_CFX_BARCODE_H_

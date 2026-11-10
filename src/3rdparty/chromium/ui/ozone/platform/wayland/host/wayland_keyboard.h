@@ -6,12 +6,12 @@
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_KEYBOARD_H_
 
 #include <cstdint>
+#include <optional>
 
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/buildflags.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -58,13 +58,11 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
   // Called when it turns out that KeyEvent is not handled.
   void OnUnhandledKeyEvent(const KeyEvent& key_event);
 
-  // Creates a new PlatformKeyboardHook/shortcuts inhibitor for |window|. For
-  // now used only for non-Lacros windows due to divergences between CrOS/Lacros
-  // and Linux Desktop requirements and their actual implementation. See
+  // Creates a new PlatformKeyboardHook/shortcuts inhibitor for |window|. See
   // comments in this function's definition for more context.
   std::unique_ptr<PlatformKeyboardHook> CreateKeyboardHook(
       WaylandWindow* window,
-      absl::optional<base::flat_set<DomCode>> dom_codes,
+      std::optional<base::flat_set<DomCode>> dom_codes,
       PlatformKeyboardHook::KeyEventCallback callback);
   wl::Object<zwp_keyboard_shortcuts_inhibitor_v1> CreateShortcutsInhibitor(
       WaylandWindow* window);
@@ -128,7 +126,7 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
                    unsigned int scan_code,
                    bool down,
                    bool repeat,
-                   absl::optional<uint32_t> serial,
+                   std::optional<uint32_t> serial,
                    base::TimeTicks timestamp,
                    int device_id,
                    int flags,
@@ -166,10 +164,15 @@ class WaylandKeyboard::Delegate {
   virtual uint32_t OnKeyboardKeyEvent(EventType type,
                                       DomCode dom_code,
                                       bool repeat,
-                                      absl::optional<uint32_t> serial,
+                                      std::optional<uint32_t> serial,
                                       base::TimeTicks timestamp,
                                       int device_id,
                                       WaylandKeyboard::KeyEventKind kind) = 0;
+  // Dispatches a synthesized key event for `dom_code` and `timestamp`. Keyboard
+  // focus is temporarily transferred to `window` during this function.
+  virtual void OnSynthesizedKeyPressEvent(WaylandWindow* window,
+                                          DomCode dom_code,
+                                          base::TimeTicks timestamp) = 0;
 
  protected:
   // Prevent deletion through a WaylandKeyboard::Delegate pointer.

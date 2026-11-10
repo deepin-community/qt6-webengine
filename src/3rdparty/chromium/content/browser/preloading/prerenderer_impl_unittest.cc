@@ -4,7 +4,11 @@
 
 #include "content/browser/preloading/prerenderer_impl.h"
 
+#include <array>
+
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "content/browser/preloading/preloading_confidence.h"
 #include "content/browser/preloading/prerender/prerender_features.h"
 #include "content/browser/preloading/prerender/prerender_host_registry.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -64,7 +68,8 @@ class PrerendererTest : public RenderViewHostTestHarness {
     candidate->action = blink::mojom::SpeculationAction::kPrerender;
     candidate->url = url;
     candidate->referrer = blink::mojom::Referrer::New();
-    candidate->eagerness = blink::mojom::SpeculationEagerness::kEager;
+    candidate->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
+    candidate->tags = {std::nullopt};
     return candidate;
   }
 
@@ -96,6 +101,27 @@ TEST_F(PrerendererTest, StartPrerender) {
   candidates.push_back(CreatePrerenderCandidate(kPrerenderingUrl));
 
   prerenderer.ProcessCandidatesForPrerender(std::move(candidates));
+  EXPECT_TRUE(registry->FindHostByUrlForTesting(kPrerenderingUrl));
+}
+
+// Tests that Prerenderer should not start prerendering when
+// kLCPTimingPredictorPrerender2 is enabled and until OnLCPPredicted is called.
+TEST_F(PrerendererTest, LCPTimingPredictorPrerender2) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      blink::features::kLCPTimingPredictorPrerender2);
+
+  PrerenderHostRegistry* registry = GetPrerenderHostRegistry();
+  PrerendererImpl prerenderer(*GetRenderFrameHost());
+
+  const GURL kPrerenderingUrl = GetSameOriginUrl("/empty.html");
+  std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
+  candidates.push_back(CreatePrerenderCandidate(kPrerenderingUrl));
+
+  prerenderer.ProcessCandidatesForPrerender(std::move(candidates));
+  EXPECT_FALSE(registry->FindHostByUrlForTesting(kPrerenderingUrl));
+
+  prerenderer.OnLCPPredicted();
   EXPECT_TRUE(registry->FindHostByUrlForTesting(kPrerenderingUrl));
 }
 
@@ -179,8 +205,8 @@ TEST_F(PrerendererTest, RemoveRendererHostAfterCandidateRemoved) {
   PrerenderHostRegistry* registry = GetPrerenderHostRegistry();
   PrerendererImpl prerenderer(*GetRenderFrameHost());
 
-  const GURL urls[]{GetSameOriginUrl("/title1.html"),
-                    GetSameOriginUrl("/title2.html")};
+  const auto urls = std::to_array<GURL>(
+      {GetSameOriginUrl("/title1.html"), GetSameOriginUrl("/title2.html")});
   std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
   for (const auto& url : urls) {
     candidates.push_back(CreatePrerenderCandidate(url));
@@ -201,27 +227,9 @@ TEST_F(PrerendererTest, RemoveRendererHostAfterCandidateRemoved) {
   EXPECT_FALSE(registry->FindHostByUrlForTesting(urls[1]));
 }
 
-class PrerendererNewLimitAndSchedulerTest : public PrerendererTest {
- public:
-  PrerendererNewLimitAndSchedulerTest() {
-    feature_list_.InitWithFeaturesAndParameters(
-        {{features::kPrerender2NewLimitAndScheduler,
-          {{"max_num_of_running_speculation_rules_non_eager_prerenders",
-            base::NumberToString(
-                MaxNumOfRunningSpeculationRulesNonEagerPrerenders())}}}},
-        {});
-  }
-
-  int MaxNumOfRunningSpeculationRulesNonEagerPrerenders() { return 2; }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
 // Tests that Prerenderer will remove the host if the host is canceled with
-// non-eager limit, and the canceled host can be reprocessed.
-TEST_F(PrerendererNewLimitAndSchedulerTest,
-       RemoveRendererHostAfterNonEagerLimitCancel) {
+// non-immediate limit, and the canceled host can be reprocessed.
+TEST_F(PrerendererTest, RemoveRendererHostAfterNonImmediateLimitCancel) {
   PrerenderHostRegistry* registry = GetPrerenderHostRegistry();
   PrerendererImpl prerenderer(*GetRenderFrameHost());
 
@@ -229,19 +237,27 @@ TEST_F(PrerendererNewLimitAndSchedulerTest,
 
   // Prerender as many times as limit + 1. All prerenders should be started
   // once.
-  for (int i = 0; i < MaxNumOfRunningSpeculationRulesNonEagerPrerenders() + 1;
+  for (int i = 0;
+       i < PrerenderHostRegistry::
+                   kMaxRunningSpeculationRulesNonImmediatePrerenders +
+               1;
        i++) {
     const GURL url = GetSameOriginUrl("/empty.html?" + base::ToString(i));
     urls.push_back(url);
     blink::mojom::SpeculationCandidatePtr candidate =
         CreatePrerenderCandidateWithEagerness(
             url, blink::mojom::SpeculationEagerness::kConservative);
-    prerenderer.MaybePrerender(std::move(candidate));
+    prerenderer.MaybePrerender(std::move(candidate),
+                               preloading_predictor::kUnspecified,
+                               PreloadingConfidence{100});
 
     EXPECT_TRUE(registry->FindHostByUrlForTesting(url));
   }
 
-  for (int i = 0; i < MaxNumOfRunningSpeculationRulesNonEagerPrerenders() + 1;
+  for (int i = 0;
+       i < PrerenderHostRegistry::
+                   kMaxRunningSpeculationRulesNonImmediatePrerenders +
+               1;
        i++) {
     if (i == 0) {
       // The first (= oldest) prerender should be removed since the (limit +
@@ -257,8 +273,13 @@ TEST_F(PrerendererNewLimitAndSchedulerTest,
   blink::mojom::SpeculationCandidatePtr candidate =
       CreatePrerenderCandidateWithEagerness(
           urls[0], blink::mojom::SpeculationEagerness::kConservative);
-  prerenderer.MaybePrerender(std::move(candidate));
-  for (int i = 0; i < MaxNumOfRunningSpeculationRulesNonEagerPrerenders() + 1;
+  prerenderer.MaybePrerender(std::move(candidate),
+                             preloading_predictor::kUnspecified,
+                             PreloadingConfidence{100});
+  for (int i = 0;
+       i < PrerenderHostRegistry::
+                   kMaxRunningSpeculationRulesNonImmediatePrerenders +
+               1;
        i++) {
     if (i == 1) {
       EXPECT_FALSE(registry->FindHostByUrlForTesting(urls[i]));
@@ -295,7 +316,9 @@ TEST_F(PrerendererTest, MaybePrerenderAndShouldWaitForPrerenderResult) {
   EXPECT_FALSE(prerenderer.ShouldWaitForPrerenderResult(kPrerenderingUrl));
   // MaybePrerender the candidate and check if ShouldWaitForPrerenderResult
   // returns true.
-  EXPECT_TRUE(prerenderer.MaybePrerender(candidate));
+  EXPECT_TRUE(prerenderer.MaybePrerender(candidate,
+                                         preloading_predictor::kUnspecified,
+                                         PreloadingConfidence{100}));
   EXPECT_TRUE(prerenderer.ShouldWaitForPrerenderResult(kPrerenderingUrl));
   EXPECT_TRUE(registry->FindHostByUrlForTesting(kPrerenderingUrl));
 }

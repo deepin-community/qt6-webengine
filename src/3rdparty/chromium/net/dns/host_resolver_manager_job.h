@@ -5,19 +5,23 @@
 #ifndef NET_DNS_HOST_RESOLVER_MANAGER_JOB_H_
 #define NET_DNS_HOST_RESOLVER_MANAGER_JOB_H_
 
+#include <array>
 #include <deque>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "base/containers/linked_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/safe_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/address_family.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_handle.h"
 #include "net/base/prioritized_dispatcher.h"
+#include "net/dns/dns_task_results_manager.h"
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_dns_task.h"
@@ -25,7 +29,6 @@
 #include "net/dns/public/dns_query_type.h"
 #include "net/dns/public/secure_dns_mode.h"
 #include "net/log/net_log_with_source.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace net {
 
@@ -35,7 +38,7 @@ class HostResolverNat64Task;
 
 // Key used to identify a HostResolverManager::Job.
 struct HostResolverManager::JobKey {
-  explicit JobKey(ResolveContext* resolve_context);
+  JobKey(HostResolver::Host host, ResolveContext* resolve_context);
   ~JobKey();
 
   JobKey(const JobKey& other);
@@ -44,7 +47,7 @@ struct HostResolverManager::JobKey {
   bool operator<(const JobKey& other) const;
   bool operator==(const JobKey& other) const;
 
-  absl::variant<url::SchemeHostPort, std::string> host;
+  HostResolver::Host host;
   NetworkAnonymizationKey network_anonymization_key;
   DnsQueryTypeSet query_types;
   HostResolverFlags flags;
@@ -60,7 +63,8 @@ struct HostResolverManager::JobKey {
 // Aggregates all Requests for the same Key. Dispatched via
 // PrioritizedDispatcher.
 class HostResolverManager::Job : public PrioritizedDispatcher::Job,
-                                 public HostResolverDnsTask::Delegate {
+                                 public HostResolverDnsTask::Delegate,
+                                 public DnsTaskResultsManager::Delegate {
  public:
   // Creates new job for |key| where |request_net_log| is bound to the
   // request that spawned it.
@@ -86,6 +90,16 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
   // Detach cancelled request. If it was the last active Request, also finishes
   // this Job.
   void CancelRequest(RequestImpl* request);
+
+  void AddServiceEndpointRequest(ServiceEndpointRequestImpl* request);
+
+  // Similar to CancelRequest(), if `request` was the last active one, finishes
+  // this job.
+  void CancelServiceEndpointRequest(ServiceEndpointRequestImpl* request);
+
+  // Similar to ChangeRequestPriority(), but for a ServiceEndpointRequest.
+  void ChangeServiceEndpointRequestPriority(ServiceEndpointRequestImpl* request,
+                                            RequestPriority priority);
 
   // Called from AbortJobsWithoutTargetNetwork(). Completes all requests and
   // destroys the job. This currently assumes the abort is due to a network
@@ -131,6 +145,10 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
     return key_.GetTargetNetwork() != handles::kInvalidNetworkHandle;
   }
 
+  DnsTaskResultsManager* dns_task_results_manager() const {
+    return dns_task_results_manager_.get();
+  }
+
  private:
   // Keeps track of the highest priority.
   class PriorityTracker {
@@ -169,7 +187,7 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
    private:
     RequestPriority highest_priority_;
     size_t total_count_ = 0;
-    size_t counts_[NUM_PRIORITIES] = {};
+    std::array<size_t, NUM_PRIORITIES> counts_ = {};
   };
 
   base::Value::Dict NetLogJobCreationParams(const NetLogSource& source);
@@ -183,6 +201,13 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
   // job. Otherwise, the next Job has been started by the PrioritizedDispatcher,
   // so signals it is complete.
   void ReduceByOneJobSlot();
+
+  // Common helper methods for adding and canceling a request.
+  void AddRequestCommon(RequestPriority request_priority,
+                        const NetLogWithSource& request_net_log,
+                        bool is_speculative);
+  void CancelRequestCommon(RequestPriority request_priority,
+                           const NetLogWithSource& request_net_log);
 
   void UpdatePriority();
 
@@ -215,10 +240,16 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
   // HostResolverDnsTask::Delegate implementation:
   void OnDnsTaskComplete(base::TimeTicks start_time,
                          bool allow_fallback,
-                         HostCache::Entry results,
+                         HostResolverDnsTask::Results results,
                          bool secure) override;
-  void OnIntermediateTransactionsComplete() override;
+  void OnIntermediateTransactionsComplete(
+      std::optional<HostResolverDnsTask::SingleTransactionResults>
+          single_transaction_results) override;
+  bool IsHappyEyeballsV3Enabled() const override;
   void AddTransactionTimeQueued(base::TimeDelta time_queued) override;
+
+  // DnsTaskResultsManager::Delegate implementation:
+  void OnServiceEndpointsUpdated() override;
 
   void StartMdnsTask();
   void OnMdnsTaskComplete();
@@ -263,7 +294,7 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
 
   const JobKey key_;
   const ResolveHostParameters::CacheUsage cache_usage_;
-  // TODO(crbug.com/969847): Consider allowing requests within a single Job to
+  // TODO(crbug.com/41462480): Consider allowing requests within a single Job to
   // have different HostCaches.
   const raw_ptr<HostCache> host_cache_;
 
@@ -321,6 +352,14 @@ class HostResolverManager::Job : public PrioritizedDispatcher::Job,
 
   // All Requests waiting for the result of this Job. Some can be canceled.
   base::LinkedList<RequestImpl> requests_;
+
+  // All ServiceEndpointRequests waiting for the result of this Job. Some can
+  // be canceled.
+  base::LinkedList<ServiceEndpointRequestImpl> service_endpoint_requests_;
+
+  // Builds and updates intermediate service endpoints while executing
+  // a DnsTransaction.
+  std::unique_ptr<DnsTaskResultsManager> dns_task_results_manager_;
 
   // A handle used for |dispatcher_|.
   PrioritizedDispatcher::Handle handle_;

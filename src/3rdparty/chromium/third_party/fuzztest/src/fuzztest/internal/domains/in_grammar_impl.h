@@ -26,12 +26,14 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/random/bit_gen_ref.h"
 #include "absl/random/distributions.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "./fuzztest/internal/domains/container_of_impl.h"
 #include "./fuzztest/internal/domains/domain_base.h"
 #include "./fuzztest/internal/domains/in_regexp_impl.h"
+#include "./fuzztest/internal/domains/regexp_dfa.h"
 #include "./fuzztest/internal/logging.h"
 #include "./fuzztest/internal/meta.h"
 #include "./fuzztest/internal/serialization.h"
@@ -50,8 +52,7 @@ using ASTTypeId = int;
 struct ASTNode {
   ASTTypeId type_id;
   std::variant<std::monostate,        // If the node is a string terminal.
-               DFAPath,               // If the node is a regex
-                                      // terminal.
+               RegexpDFA::Path,       // If the node is a regex terminal.
                std::vector<ASTNode>>  // If the node is a non-terminal.
       children;
 
@@ -104,7 +105,8 @@ class StringLiteralDomain {
     return ASTNode{id, std::monostate()};
   }
 
-  static void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {}
+  static void Mutate(ASTNode& val, absl::BitGenRef prng,
+                     const domain_implementor::MutationMetadata&, bool) {}
 
   static ASTTypeId TypeId() { return id; }
 
@@ -133,6 +135,13 @@ class StringLiteralDomain {
     result.children.emplace<std::monostate>();
     return result;
   }
+
+  static absl::Status ValidateCorpusValue(const ASTNode& astnode) {
+    if (!CheckASTNodeTypeIdAndChildType<std::monostate>(astnode, id)) {
+      return absl::InvalidArgumentError("Invalid node type!");
+    }
+    return absl::OkStatus();
+  }
 };
 
 template <ASTTypeId id, const absl::string_view& value>
@@ -147,30 +156,36 @@ class RegexLiteralDomain {
     return ASTNode{id, GetInnerRegexpDomain().Init(prng)};
   }
 
-  static void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {
-    GetInnerRegexpDomain().Mutate(std::get<1>(val.children), prng, only_shrink);
+  static void Mutate(ASTNode& val, absl::BitGenRef prng,
+                     const domain_implementor::MutationMetadata& metadata,
+                     bool only_shrink) {
+    GetInnerRegexpDomain().Mutate(std::get<RegexpDFA::Path>(val.children), prng,
+                                  metadata, only_shrink);
   }
 
   static ASTTypeId TypeId() { return id; }
 
   static void ToString(std::string& output, const ASTNode& val) {
-    FUZZTEST_INTERNAL_CHECK(val.children.index() == 1, "Not a regex literal!");
-    absl::StrAppend(&output,
-                    GetInnerRegexpDomain().GetValue(std::get<1>(val.children)));
+    FUZZTEST_INTERNAL_CHECK(
+        CheckASTNodeTypeIdAndChildType<RegexpDFA::Path>(val, id),
+        "Not a regex literal!");
+    absl::StrAppend(&output, GetInnerRegexpDomain().GetValue(
+                                 std::get<RegexpDFA::Path>(val.children)));
   }
 
   static bool IsMutable(const ASTNode& /*val*/) { return true; }
 
   static IRObject SerializeCorpus(const ASTNode& astnode) {
     FUZZTEST_INTERNAL_CHECK(
-        CheckASTNodeTypeIdAndChildType<DFAPath>(astnode, id), "Invalid node!");
-    return WrapASTIntoIRObject(astnode,
-                               GetInnerRegexpDomain().SerializeCorpus(
-                                   std::get<DFAPath>(astnode.children)));
+        CheckASTNodeTypeIdAndChildType<RegexpDFA::Path>(astnode, id),
+        "Not a regex literal!");
+    return WrapASTIntoIRObject(
+        astnode, GetInnerRegexpDomain().SerializeCorpus(
+                     std::get<RegexpDFA::Path>(astnode.children)));
   }
 
   static std::optional<ASTNode> ParseCorpus(const IRObject& obj) {
-    if (!CheckASTCorpusStructure<DFAPath>(obj)) {
+    if (!CheckASTCorpusStructure<RegexpDFA::Path>(obj)) {
       return std::nullopt;
     }
     auto subs = obj.Subs();
@@ -182,8 +197,15 @@ class RegexLiteralDomain {
     if (!path) {
       return std::nullopt;
     }
-    result.children.emplace<DFAPath>(*path);
+    result.children.emplace<RegexpDFA::Path>(*path);
     return result;
+  }
+
+  static absl::Status ValidateCorpusValue(const ASTNode& astnode) {
+    if (!CheckASTNodeTypeIdAndChildType<RegexpDFA::Path>(astnode, id)) {
+      return absl::InvalidArgumentError("Not a regex literal!");
+    }
+    return absl::OkStatus();
   }
 
  private:
@@ -233,9 +255,14 @@ class VectorDomain {
 
   static ASTTypeId TypeId() { return id; }
 
-  static void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {
-    FUZZTEST_INTERNAL_CHECK(val.children.index() == 2, "Not a vector!");
-    std::vector<ASTNode>& elements = std::get<2>(val.children);
+  static void Mutate(ASTNode& val, absl::BitGenRef prng,
+                     const domain_implementor::MutationMetadata& metadata,
+                     bool only_shrink) {
+    FUZZTEST_INTERNAL_CHECK(
+        CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(val, id),
+        "Not a vector!");
+    std::vector<ASTNode>& elements =
+        std::get<std::vector<ASTNode>>(val.children);
     if (only_shrink) {
       ShrinkElements(elements, prng);
       return;
@@ -253,20 +280,20 @@ class VectorDomain {
     } else if (!can_change_element_num) {
       ElementT::Mutate(
           elements[absl::Uniform<size_t>(prng, 0, elements.size())], prng,
-          only_shrink);
+          metadata, only_shrink);
     } else {
       if (absl::Bernoulli(prng, 0.5)) {
         ChangeElementNum(elements, prng);
       } else {
         ElementT::Mutate(
             elements[absl::Uniform<size_t>(prng, 0, elements.size())], prng,
-            only_shrink);
+            metadata, only_shrink);
       }
     }
   }
 
   static void ToString(std::string& output, const ASTNode& val) {
-    for (const auto& child : std::get<2>(val.children)) {
+    for (const auto& child : std::get<std::vector<ASTNode>>(val.children)) {
       ElementT::ToString(output, child);
     }
   }
@@ -276,7 +303,7 @@ class VectorDomain {
   static IRObject SerializeCorpus(const ASTNode& astnode) {
     FUZZTEST_INTERNAL_CHECK(
         CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(astnode, id),
-        "Invalid node!");
+        "Not a vector!");
     IRObject expansion_obj;
     auto& inner_subs = expansion_obj.MutableSubs();
     for (auto& node : std::get<std::vector<ASTNode>>(astnode.children)) {
@@ -313,6 +340,18 @@ class VectorDomain {
     return result;
   }
 
+  static absl::Status ValidateCorpusValue(const ASTNode& astnode) {
+    if (!CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(astnode, id)) {
+      return absl::InvalidArgumentError("Not a vector!");
+    }
+    absl::Status status = absl::OkStatus();
+    for (const auto& child : std::get<std::vector<ASTNode>>(astnode.children)) {
+      status.Update(ElementT::ValidateCorpusValue(child));
+      if (!status.ok()) return status;
+    }
+    return status;
+  }
+
  private:
   static void ShrinkElements(std::vector<ASTNode>& elements,
                              absl::BitGenRef prng) {
@@ -323,7 +362,7 @@ class VectorDomain {
     if (!can_remove_element) {
       // Cannot remove elements, let's shrink them.
       ElementT::Mutate(*ChoosePosition(elements, IncludeEnd::kNo, prng), prng,
-                       true);
+                       {}, /*only_shrink=*/true);
     } else if (!can_shrink_element) {
       // Cannot shrink elements, let's remove one.
       elements.erase(ChoosePosition(elements, IncludeEnd::kNo, prng));
@@ -334,7 +373,7 @@ class VectorDomain {
 
       } else {
         ElementT::Mutate(*ChoosePosition(elements, IncludeEnd::kNo, prng), prng,
-                         true);
+                         {}, /*only_shrink=*/true);
       }
     }
   }
@@ -383,15 +422,18 @@ class TupleDomain {
                 generation_budget / static_cast<int>(sizeof...(ElementT)))...}};
   }
 
-  static void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {
+  static void Mutate(ASTNode& val, absl::BitGenRef prng,
+                     const domain_implementor::MutationMetadata& metadata,
+                     bool only_shrink) {
     FUZZTEST_INTERNAL_CHECK(
-        val.children.index() == 2 &&
-            std::get<2>(val.children).size() == sizeof...(ElementT),
+        CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(val, id) &&
+            std::get<std::vector<ASTNode>>(val.children).size() ==
+                sizeof...(ElementT),
         "Tuple elements number doesn't match!");
 
     std::vector<int> mutables;
     ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
-      ((ElementT::IsMutable(std::get<2>(val.children)[I])
+      ((ElementT::IsMutable(std::get<std::vector<ASTNode>>(val.children)[I])
             ? mutables.push_back(I)
             : (void)0),
        ...);
@@ -403,23 +445,28 @@ class TupleDomain {
 
     int choice = mutables[absl::Uniform<int>(prng, 0, mutables.size())];
     ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
-      ((choice == I ? (ElementT::Mutate(std::get<2>(val.children)[I], prng,
-                                        only_shrink))
-                    : (void)0),
+      ((choice == I
+            ? (ElementT::Mutate(std::get<std::vector<ASTNode>>(val.children)[I],
+                                prng, metadata, only_shrink))
+            : (void)0),
        ...);
     });
   }
 
   static void ToString(std::string& output, const ASTNode& val) {
     ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
-      (ElementT::ToString(output, std::get<2>(val.children)[I]), ...);
+      (ElementT::ToString(output,
+                          std::get<std::vector<ASTNode>>(val.children)[I]),
+       ...);
     });
   }
 
   static bool IsMutable(const ASTNode& val) {
     bool result = false;
     ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
-      result = (ElementT::IsMutable(std::get<2>(val.children)[I]) || ...);
+      result = (ElementT::IsMutable(
+                    std::get<std::vector<ASTNode>>(val.children)[I]) ||
+                ...);
     });
     return result;
   }
@@ -431,8 +478,8 @@ class TupleDomain {
     IRObject expansion_obj;
     auto& inner_subs = expansion_obj.MutableSubs();
     ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
-      (inner_subs.push_back(
-           ElementT::SerializeCorpus(std::get<2>(astnode.children)[I])),
+      (inner_subs.push_back(ElementT::SerializeCorpus(
+           std::get<std::vector<ASTNode>>(astnode.children)[I])),
        ...);
     });
     return WrapASTIntoIRObject(astnode, expansion_obj);
@@ -468,6 +515,24 @@ class TupleDomain {
     }
     return result;
   }
+
+  static absl::Status ValidateCorpusValue(const ASTNode& astnode) {
+    if (!CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(astnode, id)) {
+      return absl::InvalidArgumentError("Not a vector!");
+    }
+    if (std::get<std::vector<ASTNode>>(astnode.children).size() ==
+        sizeof...(ElementT)) {
+      return absl::InvalidArgumentError("Tuple elements number doesn't match!");
+    }
+    absl::Status status = absl::OkStatus();
+    ApplyIndex<sizeof...(ElementT)>([&](auto... I) {
+      (void)((status.Update(ElementT::ValidateCorpusValue(
+                  std::get<std::vector<ASTNode>>(astnode.children)[I])),
+              status.ok()) &&
+             ...);
+    });
+    return status;
+  }
 };
 
 template <ASTTypeId id, int fallback_index, typename... ElementT>
@@ -485,16 +550,19 @@ class VariantDomain {
                      : absl::Uniform<int>(prng, 0, (sizeof...(ElementT)));
     ASTNode result{id, std::vector<ASTNode>()};
     Switch<sizeof...(ElementT)>(choice, [&](auto I) {
-      std::get<2>(result.children)
+      std::get<std::vector<ASTNode>>(result.children)
           .push_back(std::tuple_element<I, std::tuple<ElementT...>>::type::
                          InitWithBudget(prng, generation_budget));
     });
     return result;
   }
 
-  static void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {
+  static void Mutate(ASTNode& val, absl::BitGenRef prng,
+                     const domain_implementor::MutationMetadata& metadata,
+                     bool only_shrink) {
     constexpr bool has_alternative = sizeof...(ElementT) > 1;
-    ASTNode current_value = std::get<2>(val.children).front();
+    ASTNode current_value =
+        std::get<std::vector<ASTNode>>(val.children).front();
     ASTTypeId current_value_id = current_value.type_id;
     bool is_current_value_mutable;
     ((ElementT::TypeId() == current_value_id
@@ -507,7 +575,7 @@ class VariantDomain {
                             "Impossible at" + std::to_string(id));
     if (only_shrink) {
       if (is_current_value_mutable) {
-        MutateCurrentValue(val, prng, only_shrink);
+        MutateCurrentValue(val, prng, metadata, only_shrink);
       }
       return;
     }
@@ -515,10 +583,10 @@ class VariantDomain {
     if (!is_current_value_mutable) {
       SwitchToAlternative(val, prng);
     } else if (!has_alternative) {
-      MutateCurrentValue(val, prng, only_shrink);
+      MutateCurrentValue(val, prng, metadata, only_shrink);
     } else {
       if (absl::Bernoulli(prng, 0.5)) {
-        MutateCurrentValue(val, prng, only_shrink);
+        MutateCurrentValue(val, prng, metadata, only_shrink);
       } else {
         SwitchToAlternative(val, prng);
       }
@@ -526,12 +594,12 @@ class VariantDomain {
   }
 
   static void ToString(std::string& output, const ASTNode& val) {
-    FUZZTEST_INTERNAL_CHECK(std::get<2>(val.children).size() == 1,
-                            "This is not a variant ast node.");
-    ASTTypeId child_id = std::get<2>(val.children).front().type_id;
-    ((ElementT::TypeId() == child_id
-          ? (ElementT::ToString(output, std::get<2>(val.children).front()))
-          : (void)0),
+    FUZZTEST_INTERNAL_CHECK(
+        std::get<std::vector<ASTNode>>(val.children).size() == 1,
+        "This is not a variant ast node.");
+    auto child = std::get<std::vector<ASTNode>>(val.children).front();
+    ((ElementT::TypeId() == child.type_id ? (ElementT::ToString(output, child))
+                                          : (void)0),
      ...);
   }
 
@@ -541,10 +609,9 @@ class VariantDomain {
 
     // Otherwise, we check whether the only choice is mutable.
     bool result = false;
-    ASTTypeId child_id = std::get<2>(val.children).front().type_id;
-    ((ElementT::TypeId() == child_id
-          ? (result = ElementT::IsMutable(std::get<2>(val.children).front()),
-             (void)0)
+    auto child = std::get<std::vector<ASTNode>>(val.children).front();
+    ((ElementT::TypeId() == child.type_id
+          ? (result = ElementT::IsMutable(child), (void)0)
           : (void)0),
      ...);
     return result;
@@ -593,19 +660,39 @@ class VariantDomain {
     return result;
   }
 
+  static absl::Status ValidateCorpusValue(const ASTNode& astnode) {
+    if (!CheckASTNodeTypeIdAndChildType<std::vector<ASTNode>>(astnode, id)) {
+      return absl::InvalidArgumentError("Invalid node type!");
+    }
+    if (std::get<std::vector<ASTNode>>(astnode.children).size() != 1) {
+      return absl::InvalidArgumentError("This is not a variant ast node.");
+    }
+    absl::Status status = absl::OkStatus();
+    auto child = std::get<std::vector<ASTNode>>(astnode.children).front();
+    (void)((ElementT::TypeId() == child.type_id
+                ? (status.Update(ElementT::ValidateCorpusValue(child)),
+                   status.ok())
+                : true) &&
+           ...);
+    return status;
+  }
+
  private:
-  static void MutateCurrentValue(ASTNode& val, absl::BitGenRef prng,
-                                 bool only_shrink) {
-    ASTNode& current_value = std::get<2>(val.children).front();
+  static void MutateCurrentValue(
+      ASTNode& val, absl::BitGenRef prng,
+      const domain_implementor::MutationMetadata& metadata, bool only_shrink) {
+    ASTNode& current_value =
+        std::get<std::vector<ASTNode>>(val.children).front();
     ((ElementT::TypeId() == current_value.type_id
-          ? (ElementT::Mutate(current_value, prng, only_shrink))
+          ? (ElementT::Mutate(current_value, prng, metadata, only_shrink))
           : (void)0),
      ...);
   }
   static void SwitchToAlternative(ASTNode& val, absl::BitGenRef prng) {
     constexpr int n_alternative = sizeof...(ElementT);
     FUZZTEST_INTERNAL_CHECK(n_alternative > 1, "No alternative to switch!");
-    int child_type_id = std::get<2>(val.children).front().type_id;
+    int child_type_id =
+        std::get<std::vector<ASTNode>>(val.children).front().type_id;
     int current_choice = 0;
     ApplyIndex<n_alternative>([&](auto... I) {
       ((ElementT::TypeId() == child_type_id ? (current_choice = I, (void)0)
@@ -619,7 +706,7 @@ class VariantDomain {
 
     // Switch to an alternative value.
     ApplyIndex<n_alternative>([&](auto... I) {
-      ((choice == I ? (std::get<2>(val.children).front() =
+      ((choice == I ? (std::get<std::vector<ASTNode>>(val.children).front() =
                            ElementT::InitWithBudget(prng, kMaxGenerationNum),
                        (void)0)
                     : (void)0),
@@ -634,7 +721,8 @@ void GroupElementByASTType(
 
 template <typename TopDomain>
 class InGrammarImpl
-    : public DomainBase<InGrammarImpl<TopDomain>, std::string, ASTNode> {
+    : public domain_implementor::DomainBase<InGrammarImpl<TopDomain>,
+                                            std::string, ASTNode> {
  public:
   using typename InGrammarImpl::DomainBase::corpus_type;
   using typename InGrammarImpl::DomainBase::value_type;
@@ -644,12 +732,14 @@ class InGrammarImpl
     return TopDomain::Init(prng);
   }
 
-  void Mutate(ASTNode& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(ASTNode& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
     if (only_shrink && absl::Bernoulli(prng, 0.5) &&
         ShrinkByReplaceWithSubElementOfSameType(val, prng)) {
       return;
     }
-    TopDomain::Mutate(val, prng, only_shrink);
+    TopDomain::Mutate(val, prng, metadata, only_shrink);
   }
 
   auto GetPrinter() const { return StringPrinter{}; }
@@ -676,8 +766,7 @@ class InGrammarImpl
   absl::Status ValidateCorpusValue(const corpus_type& corpus_value) const {
     // Validation is currently done during Parsing, and UserToCorpusValue() is
     // not supported yet.
-    // TODO(lszekeres): Refactor so that validation happens here instead.
-    return absl::OkStatus();
+    return TopDomain::ValidateCorpusValue(corpus_value);
   }
 
  private:

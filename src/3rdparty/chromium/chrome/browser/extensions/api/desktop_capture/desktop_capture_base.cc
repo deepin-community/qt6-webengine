@@ -10,7 +10,6 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -86,7 +85,7 @@ DesktopCaptureChooseDesktopMediaFunctionBase::Execute(
     bool suppress_local_audio_playback_intended,
     content::RenderFrameHost* render_frame_host,
     const GURL& origin,
-    const std::u16string target_name) {
+    const std::u16string& target_name) {
   DCHECK(!picker_controller_);
 
   if (!render_frame_host->IsActive())
@@ -222,10 +221,10 @@ bool DesktopCaptureRequestsRegistry::RequestId::operator<(
 }
 
 DesktopCaptureCancelChooseDesktopMediaFunctionBase::
-    DesktopCaptureCancelChooseDesktopMediaFunctionBase() {}
+    DesktopCaptureCancelChooseDesktopMediaFunctionBase() = default;
 
 DesktopCaptureCancelChooseDesktopMediaFunctionBase::
-    ~DesktopCaptureCancelChooseDesktopMediaFunctionBase() {}
+    ~DesktopCaptureCancelChooseDesktopMediaFunctionBase() = default;
 
 ExtensionFunction::ResponseAction
 DesktopCaptureCancelChooseDesktopMediaFunctionBase::Run() {
@@ -238,8 +237,8 @@ DesktopCaptureCancelChooseDesktopMediaFunctionBase::Run() {
   return RespondNow(NoArguments());
 }
 
-DesktopCaptureRequestsRegistry::DesktopCaptureRequestsRegistry() {}
-DesktopCaptureRequestsRegistry::~DesktopCaptureRequestsRegistry() {}
+DesktopCaptureRequestsRegistry::DesktopCaptureRequestsRegistry() = default;
+DesktopCaptureRequestsRegistry::~DesktopCaptureRequestsRegistry() = default;
 
 // static
 DesktopCaptureRequestsRegistry* DesktopCaptureRequestsRegistry::GetInstance() {

@@ -4,10 +4,11 @@
 
 #include "content/browser/web_package/signed_exchange_utils.h"
 
+#include <string_view>
+
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -19,7 +20,6 @@
 #include "content/common/features.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
@@ -51,16 +51,11 @@ void ReportErrorAndTraceEvent(
 }
 
 bool IsSignedExchangeHandlingEnabled(BrowserContext* context) {
-  if (!GetContentClient()->browser()->AllowSignedExchange(context))
-    return false;
-
-  return base::FeatureList::IsEnabled(features::kSignedHTTPExchange);
+  return GetContentClient()->browser()->AllowSignedExchange(context);
 }
 
 bool IsSignedExchangeReportingForDistributorsEnabled() {
-  return base::FeatureList::IsEnabled(network::features::kReporting) &&
-         base::FeatureList::IsEnabled(
-             features::kSignedExchangeReportingForDistributors);
+  return base::FeatureList::IsEnabled(network::features::kReporting);
 }
 
 bool ShouldHandleAsSignedHTTPExchange(
@@ -68,7 +63,7 @@ bool ShouldHandleAsSignedHTTPExchange(
     const network::mojom::URLResponseHead& head) {
   // Currently we don't support the signed exchange which is returned from a
   // service worker.
-  // TODO(crbug/803774): Decide whether we should support it or not.
+  // TODO(crbug.com/40558902): Decide whether we should support it or not.
   if (head.was_fetched_via_service_worker)
     return false;
   if (!SignedExchangeRequestHandler::IsSupportedMimeType(head.mime_type))
@@ -85,7 +80,7 @@ bool ShouldHandleAsSignedHTTPExchange(
 }
 
 std::optional<SignedExchangeVersion> GetSignedExchangeVersion(
-    const std::string& content_type) {
+    std::string_view content_type) {
   // https://wicg.github.io/webpackage/loading.html#signed-exchange-version
   // Step 1. Let mimeType be the supplied MIME type of response. [spec text]
   // |content_type| is the supplied MIME type.
@@ -100,12 +95,11 @@ std::optional<SignedExchangeVersion> GetSignedExchangeVersion(
 
   // Step 4.Let params be mimeType's parameters. [spec text]
   std::map<std::string, std::string> params;
-  if (semicolon != base::StringPiece::npos) {
+  if (semicolon != std::string_view::npos) {
     net::HttpUtil::NameValuePairsIterator parser(
-        content_type.begin() + semicolon + 1, content_type.end(), ';');
+        content_type.substr(semicolon + 1), ';');
     while (parser.GetNext()) {
-      const base::StringPiece name = parser.name_piece();
-      params[base::ToLowerASCII(name)] = parser.value();
+      params[base::ToLowerASCII(parser.name())] = parser.value();
     }
     if (!parser.valid())
       return std::nullopt;
@@ -197,11 +191,9 @@ SignedExchangeLoadResult GetLoadResultFromSignatureVerifierResult(
     case SignedExchangeSignatureVerifier::Result::
         kErrInvalidTimestamp_deprecated:
       NOTREACHED();
-      return SignedExchangeLoadResult::kSignatureVerificationError;
   }
 
   NOTREACHED();
-  return SignedExchangeLoadResult::kSignatureVerificationError;
 }
 
 net::RedirectInfo CreateRedirectInfo(
@@ -216,8 +208,8 @@ net::RedirectInfo CreateRedirectInfo(
       outer_request.update_first_party_url_on_redirect
           ? net::RedirectInfo::FirstPartyURLPolicy::UPDATE_URL_ON_REDIRECT
           : net::RedirectInfo::FirstPartyURLPolicy::NEVER_CHANGE_URL,
-      outer_request.referrer_policy, outer_request.referrer.spec(), 303,
-      new_url,
+      outer_request.referrer_policy, outer_request.referrer.spec(),
+      outer_request.request_initiator, 303, new_url,
       net::RedirectUtil::GetReferrerPolicyHeader(outer_response.headers.get()),
       false /* insecure_scheme_was_upgraded */, true /* copy_fragment */,
       is_fallback_redirect);
@@ -232,7 +224,8 @@ network::mojom::URLResponseHeadPtr CreateRedirectResponseHead(
   std::string link_header;
   if (!is_fallback_redirect &&
       outer_response.headers) {
-    outer_response.headers->GetNormalizedHeader("link", &link_header);
+    link_header = outer_response.headers->GetNormalizedHeader("link").value_or(
+        std::string());
   }
   if (link_header.empty()) {
     buf = base::StringPrintf("HTTP/1.1 %d %s\r\n", 303, "See Other");
@@ -278,11 +271,12 @@ void SetVerificationTimeForTesting(
 }
 
 bool IsCookielessOnlyExchange(const net::HttpResponseHeaders& inner_headers) {
-  std::string value;
+  std::optional<std::string_view> value;
   size_t iter = 0;
-  while (inner_headers.EnumerateHeader(&iter, "Vary", &value)) {
-    if (base::EqualsCaseInsensitiveASCII(value, "cookie"))
+  while ((value = inner_headers.EnumerateHeader(&iter, "Vary"))) {
+    if (base::EqualsCaseInsensitiveASCII(*value, "cookie")) {
       return true;
+    }
   }
   return false;
 }

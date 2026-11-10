@@ -20,13 +20,14 @@
 #include "ui/aura/window.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
-#include "ui/base/pointer/touch_editing_controller.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/event_observer.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/touch_selection/touch_editing_controller.h"
 #include "ui/touch_selection/touch_handle_drawable_aura.h"
 #include "ui/touch_selection/touch_selection_magnifier_aura.h"
 #include "ui/touch_selection/touch_selection_menu_runner.h"
@@ -49,8 +50,9 @@ class TouchSelectionControllerClientAura::EnvEventObserver
       : selection_controller_(selection_controller), window_(window) {
     // Observe certain event types sent to any event target, to hide this ui.
     aura::Env* env = aura::Env::GetInstance();
-    std::set<ui::EventType> types = {ui::ET_MOUSE_PRESSED, ui::ET_MOUSE_MOVED,
-                                     ui::ET_KEY_PRESSED, ui::ET_MOUSEWHEEL};
+    std::set<ui::EventType> types = {
+        ui::EventType::kMousePressed, ui::EventType::kMouseMoved,
+        ui::EventType::kKeyPressed, ui::EventType::kMousewheel};
     env->AddEventObserver(this, env, types);
   }
 
@@ -84,7 +86,7 @@ class TouchSelectionControllerClientAura::EnvEventObserver
       }
     }
 
-    selection_controller_->OnSessionEndEvent(event);
+    selection_controller_->HideAndDisallowShowingAutomatically();
   }
 
   raw_ptr<ui::TouchSelectionController> selection_controller_;
@@ -144,8 +146,8 @@ void TouchSelectionControllerClientAura::OnScrollCompleted() {
 
 bool TouchSelectionControllerClientAura::HandleContextMenu(
     const ContextMenuParams& params) {
-  if ((params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
-       params.source_type == ui::MENU_SOURCE_LONG_TAP) &&
+  if ((params.source_type == ui::mojom::MenuSourceType::kLongPress ||
+       params.source_type == ui::mojom::MenuSourceType::kLongTap) &&
       params.is_editable && params.selection_text.empty() &&
       IsQuickMenuAvailable()) {
     quick_menu_requested_ = true;
@@ -154,8 +156,8 @@ bool TouchSelectionControllerClientAura::HandleContextMenu(
   }
 
   if (::features::IsTouchTextEditingRedesignEnabled() &&
-      params.source_type == ui::MENU_SOURCE_TOUCH && params.is_editable &&
-      params.selection_text.empty()) {
+      params.source_type == ui::mojom::MenuSourceType::kTouch &&
+      params.is_editable && params.selection_text.empty()) {
     if (IsQuickMenuAvailable()) {
       // The selection controller might have been reset between the last
       // selection bound update and the current context menu event (e.g. if
@@ -176,9 +178,10 @@ bool TouchSelectionControllerClientAura::HandleContextMenu(
     return true;
   }
 
-  const bool from_touch = params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
-                          params.source_type == ui::MENU_SOURCE_LONG_TAP ||
-                          params.source_type == ui::MENU_SOURCE_TOUCH;
+  const bool from_touch =
+      params.source_type == ui::mojom::MenuSourceType::kLongPress ||
+      params.source_type == ui::mojom::MenuSourceType::kLongTap ||
+      params.source_type == ui::mojom::MenuSourceType::kTouch;
   if (from_touch && !params.selection_text.empty())
     return true;
 
@@ -367,7 +370,6 @@ bool TouchSelectionControllerClientAura::SupportsAnimation() const {
 bool TouchSelectionControllerClientAura::InternalClient::SupportsAnimation()
     const {
   NOTREACHED();
-  return false;
 }
 
 void TouchSelectionControllerClientAura::SetNeedsAnimate() {
@@ -491,7 +493,6 @@ void TouchSelectionControllerClientAura::DidScroll() {}
 std::unique_ptr<ui::TouchHandleDrawable>
 TouchSelectionControllerClientAura::InternalClient::CreateDrawable() {
   NOTREACHED();
-  return nullptr;
 }
 
 // Since the top-level client can only ever have its selection position changed
@@ -513,7 +514,7 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
     case ui::TouchEditable::kPaste: {
       std::u16string result;
       ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
-          ui::EndpointType::kDefault, /*notify_if_restricted=*/false);
+          ui::EndpointType::kDefault, {.notify_if_restricted = false});
       ui::Clipboard::GetForCurrentThread()->ReadText(
           ui::ClipboardBuffer::kCopyPaste, &data_dst, &result);
       return editable && !result.empty();
@@ -539,11 +540,10 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
 
 void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
                                                         int event_flags) {
-  const bool should_dismiss_handles =
-      command_id != ui::TouchEditable::kSelectAll &&
-      command_id != ui::TouchEditable::kSelectWord;
-  rwhva_->selection_controller()->OnMenuCommand(should_dismiss_handles);
-
+  if (command_id != ui::TouchEditable::kSelectAll &&
+      command_id != ui::TouchEditable::kSelectWord) {
+    rwhva_->selection_controller()->HideAndDisallowShowingAutomatically();
+  }
   RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (!host_delegate)
     return;
@@ -569,7 +569,6 @@ void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -580,7 +579,7 @@ void TouchSelectionControllerClientAura::RunContextMenu() {
       gfx::PointF(anchor_rect.CenterPoint().x(), anchor_rect.y());
   RenderWidgetHostImpl* host = rwhva_->host();
   host->ShowContextMenuAtPoint(gfx::ToRoundedPoint(anchor_point),
-                               ui::MENU_SOURCE_TOUCH_EDIT_MENU);
+                               ui::mojom::MenuSourceType::kTouchEditMenu);
 
   // Hide selection handles after getting rect-between-bounds from touch
   // selection controller; otherwise, rect would be empty and the above

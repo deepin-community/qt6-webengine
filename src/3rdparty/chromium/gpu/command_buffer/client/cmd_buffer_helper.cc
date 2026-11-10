@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #include <algorithm>
+
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -156,6 +158,17 @@ void CommandBufferHelper::UpdateCachedState(const CommandBuffer::State& state) {
   service_on_old_buffer_ =
       (state.set_get_buffer_count != set_get_buffer_count_);
   cached_get_offset_ = service_on_old_buffer_ ? 0 : state.get_offset;
+
+  if (!service_on_old_buffer_ &&
+      (cached_get_offset_ < 0 || cached_get_offset_ > total_entry_count_)) {
+    command_buffer_->ForceLostContext(error::kGuilty);
+    FreeRingBuffer();
+    usable_ = false;
+    context_lost_ = true;
+    cached_get_offset_ = 0;  // Safe fallback
+    return;
+  }
+
   cached_last_token_read_ = state.token;
   // Don't transition from a lost context to a working context.
   context_lost_ |= error::IsError(state.error);
@@ -317,7 +330,7 @@ void CommandBufferHelper::WaitForAvailableEntries(int32_t count) {
     int32_t num_entries = total_entry_count_ - put_;
     while (num_entries > 0) {
       int32_t num_to_skip = std::min(CommandHeader::kMaxSize, num_entries);
-      cmd::Noop::Set(&entries_[put_], num_to_skip);
+      cmd::Noop::Set(UNSAFE_TODO(&entries_[put_]), num_to_skip);
       put_ += num_to_skip;
       num_entries -= num_to_skip;
     }
@@ -382,7 +395,7 @@ bool CommandBufferHelper::OnMemoryDump(
           ->GetTracingProcessId();
 
   MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(base::StringPrintf(
-      "gpu/command_buffer_memory/buffer_%d", ring_buffer_id_));
+      "gpu/command_buffer_memory/buffer_0x%x", ring_buffer_id_));
   dump->AddScalar(MemoryAllocatorDump::kNameSize,
                   MemoryAllocatorDump::kUnitsBytes, ring_buffer_size_);
 

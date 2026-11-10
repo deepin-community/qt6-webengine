@@ -25,16 +25,11 @@ struct NET_EXPORT_PRIVATE NetworkID {
             const std::string& id,
             int32_t signal_strength);
   NetworkID(const NetworkID& other);
+  NetworkID& operator=(const NetworkID& other);
   ~NetworkID();
 
-  bool operator==(const NetworkID& other) const;
-
-  bool operator!=(const NetworkID& other) const;
-
-  NetworkID& operator=(const NetworkID& other);
-
-  // Overloaded to support ordered collections.
-  bool operator<(const NetworkID& other) const;
+  friend bool operator==(const NetworkID&, const NetworkID&) = default;
+  friend auto operator<=>(const NetworkID&, const NetworkID&) = default;
 
   std::string ToString() const;
 
@@ -58,7 +53,7 @@ struct NET_EXPORT_PRIVATE NetworkID {
   // range is capped between 0 and 4 to ensure that a change in the value
   // indicates a non-negligible change in the signal quality.
   //
-  // TODO(crbug.com/1495477): This should use absl::optional instead of a magic
+  // TODO(crbug.com/40937712): This should use std::optional instead of a magic
   // value.
   int32_t signal_strength;
 };

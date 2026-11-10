@@ -43,6 +43,7 @@ package main
 
 import (
 	"debug/macho"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -55,6 +56,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"upload_system_symbols/arch"
+	"upload_system_symbols/archive"
 )
 
 var (
@@ -66,6 +70,7 @@ var (
 	apiKey           = flag.String("api-key", "", "API key to use. If this is present, the `sym-upload-v2` protocol is used.\nSee https://chromium.googlesource.com/breakpad/breakpad/+/HEAD/docs/sym_upload_v2_protocol.md or\n`symupload`'s help for more information.")
 	installer        = flag.String("installer", "", "Path to macOS installer. Mutually exclusive with --system-root and --ipsw.")
 	ipsw             = flag.String("ipsw", "", "Path to macOS IPSW. Mutually exclusive with --system-root and --installer.")
+	separateArch     = flag.Bool("separate-arch", false, "Whether to separate symbols into architecture-specific directories when dumping.")
 )
 
 var (
@@ -110,6 +115,7 @@ var (
 		regexp.MustCompile(`\.a$`),
 		regexp.MustCompile(`\.dat$`),
 	}
+	maxFileCreateTries = 10
 )
 
 func main() {
@@ -161,7 +167,7 @@ func main() {
 		}
 	}
 
-	dq := StartDumpQueue(roots, dumpPath, uq)
+	dq := StartDumpQueue(roots, dumpPath, *separateArch, uq)
 	dq.Wait()
 	if uq != nil {
 		uq.Wait()
@@ -179,7 +185,7 @@ func getSystemRoots(tempDir string) []string {
 		if hasIPSW || hasRoot {
 			log.Fatalf("--installer, --ipsw, and --system-root are mutually exclusive")
 		}
-		if rs, err := extractSystems(Installer, *installer, tempDir); err != nil {
+		if rs, err := extractSystems(archive.Installer, *installer, tempDir); err != nil {
 			log.Fatalf("Couldn't extract installer at %s: %v", *installer, err)
 		} else {
 			return rs
@@ -188,7 +194,7 @@ func getSystemRoots(tempDir string) []string {
 		if hasRoot {
 			log.Fatalf("--installer, --ipsw, and --system-root are mutually exclusive")
 		}
-		if rs, err := extractSystems(IPSW, *ipsw, tempDir); err != nil {
+		if rs, err := extractSystems(archive.IPSW, *ipsw, tempDir); err != nil {
 			log.Fatalf("Couldn't extract IPSW at %s: %v", *ipsw, err)
 		} else {
 			return rs
@@ -221,6 +227,34 @@ func manglePath(path string) string {
 		}
 	}
 	return builder.String()
+}
+
+// createSymbolFile creates a writable file in `base` with a name derived from
+// `original_path`. It ensures that multiple threads can't simultaneously create
+// the same file for two `original_paths` that map to the same mangled name.
+// Returns the filename, the file, and an error if creating the file failed.
+func createSymbolFile(base string, original_path string, arch string) (filename string, f *os.File, err error) {
+	mangled := manglePath(original_path)
+	counter := 0
+	filebase := path.Join(base, mangled)
+	for {
+		var symfile string
+		if counter == 0 {
+			symfile = fmt.Sprintf("%s_%s.sym", filebase, arch)
+		} else {
+			symfile = fmt.Sprintf("%s_%s_%d.sym", filebase, arch, counter)
+		}
+		f, err := os.OpenFile(symfile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err == nil {
+			return symfile, f, nil
+		}
+		if os.IsExist(err) && counter < maxFileCreateTries {
+			counter++
+			continue
+		}
+		return "", nil, err
+	}
+
 }
 
 type WorkerPool struct {
@@ -306,9 +340,10 @@ func (uq *UploadQueue) worker() {
 
 type DumpQueue struct {
 	*WorkerPool
-	dumpPath string
-	queue    chan dumpRequest
-	uq       *UploadQueue
+	dumpPath     string
+	queue        chan dumpRequest
+	separateArch bool
+	uq           *UploadQueue
 }
 
 type dumpRequest struct {
@@ -319,11 +354,12 @@ type dumpRequest struct {
 // StartDumpQueue creates a new worker pool to find all the Mach-O libraries in
 // root and dump their symbols to dumpPath. If an UploadQueue is passed, the
 // path to the symbol file will be enqueued there, too.
-func StartDumpQueue(roots []string, dumpPath string, uq *UploadQueue) *DumpQueue {
+func StartDumpQueue(roots []string, dumpPath string, separateArch bool, uq *UploadQueue) *DumpQueue {
 	dq := &DumpQueue{
-		dumpPath: dumpPath,
-		queue:    make(chan dumpRequest),
-		uq:       uq,
+		dumpPath:     dumpPath,
+		queue:        make(chan dumpRequest),
+		separateArch: separateArch,
+		uq:           uq,
 	}
 	dq.WorkerPool = StartWorkerPool(12, dq.worker)
 
@@ -356,9 +392,14 @@ func (dq *DumpQueue) worker() {
 	dumpSyms := path.Join(*breakpadTools, "dump_syms")
 
 	for req := range dq.queue {
-		filebase := path.Join(dq.dumpPath, manglePath(req.path))
-		symfile := fmt.Sprintf("%s_%s.sym", filebase, req.arch)
-		f, err := os.Create(symfile)
+		dumpPath := dq.dumpPath
+		if dq.separateArch {
+			dumpPath = path.Join(dumpPath, req.arch)
+			if err := ensureDirectory(dumpPath); err != nil {
+				log.Fatalf("Error creating directory %s: %v", dumpPath, err)
+			}
+		}
+		symfile, f, err := createSymbolFile(dumpPath, req.path, req.arch)
 		if err != nil {
 			log.Fatalf("Error creating symbol file: %v", err)
 		}
@@ -506,11 +547,13 @@ func (fq *findQueue) worker() {
 }
 
 func (fq *findQueue) dumpMachOFile(fp string, image *macho.File) {
-	if image.Type != MachODylib && image.Type != MachOBundle && image.Type != MachODylinker {
+	if image.Type != arch.MachODylib &&
+		image.Type != arch.MachOBundle &&
+		image.Type != arch.MachODylinker {
 		return
 	}
 
-	arch := getArchStringFromHeader(image.FileHeader)
+	arch := arch.GetArchStringFromHeader(image.FileHeader)
 	if arch == "" {
 		// Don't know about this architecture type.
 		return
@@ -521,14 +564,14 @@ func (fq *findQueue) dumpMachOFile(fp string, image *macho.File) {
 	}
 }
 
-// extractSystems extracts any dyld shared caches from `archive`, then extracts the caches
+// extractSystems extracts any dyld shared caches from `archivePath`, then extracts the caches
 // into macOS system libraries, returning the locations on disk of any systems extracted.
-func extractSystems(format ArchiveFormat, archive string, extractPath string) ([]string, error) {
+func extractSystems(format archive.ArchiveFormat, archivePath string, extractPath string) ([]string, error) {
 	cachesPath := path.Join(extractPath, "caches")
 	if err := os.MkdirAll(cachesPath, 0755); err != nil {
 		return nil, err
 	}
-	if err := ExtractCaches(format, archive, cachesPath, true); err != nil {
+	if err := archive.ExtractCaches(format, archivePath, cachesPath, true); err != nil {
 		return nil, err
 	}
 	files, err := os.ReadDir(cachesPath)
@@ -537,7 +580,7 @@ func extractSystems(format ArchiveFormat, archive string, extractPath string) ([
 	}
 	cachePrefix := "dyld_shared_cache_"
 	extractedDirPath := path.Join(extractPath, "extracted")
-	roots := make([]string, len(files))
+	roots := make([]string, 0)
 	for _, file := range files {
 		fileName := file.Name()
 		if filepath.Ext(fileName) == "" && strings.HasPrefix(fileName, cachePrefix) {
@@ -561,4 +604,13 @@ func extractDyldSharedCache(cachePath string, destination string) error {
 		return fmt.Errorf("extracting shared cache at %s: %v. dsc_extractor said %v", cachePath, err, output)
 	}
 	return nil
+}
+
+// ensureDirectory creates a directory at `path` if one does not already exist.
+func ensureDirectory(path string) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return os.MkdirAll(path, 0755)
+	} else {
+		return err
+	}
 }

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "chrome/browser/prefs/profile_pref_store_manager.h"
 
 #include <stddef.h>
@@ -58,7 +59,7 @@ class RegistryVerifier : public PrefStore::Observer {
       : pref_registry_(pref_registry) {}
 
   // PrefStore::Observer implementation
-  void OnPrefValueChanged(const std::string& key) override {
+  void OnPrefValueChanged(std::string_view key) override {
     EXPECT_TRUE(base::Contains(*pref_registry_, key,
                                &PrefValueMap::Map::value_type::first))
         << "Unregistered key " << key << " was changed.";
@@ -91,8 +92,6 @@ class PrefStoreReadObserver : public PrefStore::Observer {
   }
 
   // PrefStore::Observer implementation
-  void OnPrefValueChanged(const std::string& key) override {}
-
   void OnInitializationCompleted(bool succeeded) override {
     if (stop_waiting_) {
       std::move(stop_waiting_).Run();
@@ -143,12 +142,11 @@ class ProfilePrefStoreManagerTest : public testing::Test,
         mock_validation_delegate_record_);
 
     ProfilePrefStoreManager::RegisterProfilePrefs(profile_pref_registry_.get());
-    for (const prefs::TrackedPreferenceMetadata* it = kConfiguration;
-         it != kConfiguration + std::size(kConfiguration); ++it) {
-      if (it->strategy == PrefTrackingStrategy::ATOMIC) {
-        profile_pref_registry_->RegisterStringPref(it->name, std::string());
+    for (const prefs::TrackedPreferenceMetadata& config : kConfiguration) {
+      if (config.strategy == PrefTrackingStrategy::ATOMIC) {
+        profile_pref_registry_->RegisterStringPref(config.name, std::string());
       } else {
-        profile_pref_registry_->RegisterDictionaryPref(it->name);
+        profile_pref_registry_->RegisterDictionaryPref(config.name);
       }
     }
     profile_pref_registry_->RegisterStringPref(kUnprotectedPref, std::string());
@@ -171,7 +169,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
 
   void ReloadConfiguration() {
     manager_ = std::make_unique<ProfilePrefStoreManager>(profile_dir_.GetPath(),
-                                                         seed_, "device_id");
+                                                         seed_);
   }
 
   void TearDown() override {
@@ -223,7 +221,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
         manager_->CreateProfilePrefStore(
             prefs::CloneTrackedConfiguration(configuration_), kReportingIdCount,
             base::SingleThreadTaskRunner::GetCurrentDefault(),
-            std::move(observer), std::move(validation_delegate));
+            std::move(observer), std::move(validation_delegate), nullptr);
     InitializePrefStore(pref_store.get());
     pref_store = nullptr;
   }
@@ -275,7 +273,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
     pref_store_ = manager_->CreateProfilePrefStore(
         prefs::CloneTrackedConfiguration(configuration_), kReportingIdCount,
         base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(observer),
-        std::move(validation_delegate));
+        std::move(validation_delegate), nullptr);
     pref_store_->AddObserver(&registry_verifier_);
     PrefStoreReadObserver read_observer(pref_store_);
     read_observer.Read();
@@ -392,7 +390,7 @@ TEST_F(ProfilePrefStoreManagerTest, InitializePrefsFromMasterPrefs) {
   master_prefs.Set(kProtectedAtomic, kHelloWorld);
   EXPECT_TRUE(manager_->InitializePrefsFromMasterPrefs(
       prefs::CloneTrackedConfiguration(configuration_), kReportingIdCount,
-      std::move(master_prefs)));
+      std::move(master_prefs), nullptr));
 
   LoadExistingPrefs();
 

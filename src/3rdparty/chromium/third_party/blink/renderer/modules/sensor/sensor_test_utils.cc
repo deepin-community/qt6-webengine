@@ -9,8 +9,8 @@
 #include "base/functional/callback.h"
 #include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/sensor/web_sensor_provider.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -77,7 +77,7 @@ void SensorTestContext::BindSensorProviderRequest(
 
 // static
 void SensorTestUtils::WaitForEvent(EventTarget* event_target,
-                                   const WTF::AtomicString& event_type) {
+                                   const AtomicString& event_type) {
   base::RunLoop run_loop;
   auto* event_listener =
       MakeGarbageCollected<SyncEventListener>(run_loop.QuitClosure());

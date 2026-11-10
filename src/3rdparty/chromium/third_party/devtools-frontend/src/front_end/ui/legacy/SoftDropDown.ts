@@ -1,9 +1,11 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import type * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 import * as IconButton from '../components/icon_button/icon_button.js';
 import * as VisualLogging from '../visual_logging/visual_logging.js';
 
@@ -12,17 +14,16 @@ import {Size} from './Geometry.js';
 import {AnchorBehavior, GlassPane, MarginBehavior, PointerEventsBehavior} from './GlassPane.js';
 import {ListControl, type ListDelegate, ListMode} from './ListControl.js';
 import {Events as ListModelEvents, type ItemsReplacedEvent, type ListModel} from './ListModel.js';
-import softDropDownStyles from './softDropDown.css.legacy.js';
-import softDropDownButtonStyles from './softDropDownButton.css.legacy.js';
-import * as ThemeSupport from './theme_support/theme_support.js';
-import * as Utils from './utils/utils.js';
+import softDropDownStyles from './softDropDown.css.js';
+import softDropDownButtonStyles from './softDropDownButton.css.js';
+import {createShadowRootWithCoreStyles} from './UIUtils.js';
 
 const UIStrings = {
   /**
    *@description Placeholder text in Soft Drop Down
    */
   noItemSelected: '(no item selected)',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/SoftDropDown.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -54,28 +55,29 @@ export class SoftDropDown<T> implements ListDelegate<T> {
       );
     }
     this.element.classList.add('soft-dropdown');
-    ThemeSupport.ThemeSupport.instance().appendStyle(this.element, softDropDownButtonStyles);
+    Platform.DOMUtilities.appendStyle(this.element, softDropDownButtonStyles);
     this.titleElement = this.element.createChild('span', 'title');
     const dropdownArrowIcon = IconButton.Icon.create('triangle-down');
     this.element.appendChild(dropdownArrowIcon);
     ARIAUtils.setExpanded(this.element, false);
 
     this.glassPane = new GlassPane();
-    this.glassPane.setMarginBehavior(MarginBehavior.NoMargin);
-    this.glassPane.setAnchorBehavior(AnchorBehavior.PreferBottom);
+    this.glassPane.setMarginBehavior(MarginBehavior.NO_MARGIN);
+    this.glassPane.setAnchorBehavior(AnchorBehavior.PREFER_BOTTOM);
     this.glassPane.setOutsideClickCallback(this.hide.bind(this));
-    this.glassPane.setPointerEventsBehavior(PointerEventsBehavior.BlockedByGlassPane);
+    this.glassPane.setPointerEventsBehavior(PointerEventsBehavior.BLOCKED_BY_GLASS_PANE);
     this.list = new ListControl(model, this, ListMode.EqualHeightItems);
     this.list.element.classList.add('item-list');
     this.rowHeight = 36;
     this.width = 315;
-    Utils
-        .createShadowRootWithCoreStyles(this.glassPane.contentElement, {
-          cssFile: softDropDownStyles,
-          delegatesFocus: undefined,
-        })
-        .appendChild(this.list.element);
+    createShadowRootWithCoreStyles(this.glassPane.contentElement, {
+      cssFile: softDropDownStyles,
+    }).appendChild(this.list.element);
     ARIAUtils.markAsMenu(this.list.element);
+    VisualLogging.setMappedParent(this.list.element, this.element);
+    this.list.element.setAttribute(
+        'jslog',
+        `${VisualLogging.menu().parent('mapped').track({resize: true, keydown: 'ArrowUp|ArrowDown|PageUp|PageDown'})}`);
 
     this.listWasShowing200msAgo = false;
     this.element.addEventListener('mousedown', event => {
@@ -98,9 +100,13 @@ export class SoftDropDown<T> implements ListDelegate<T> {
         return;
       }
       this.selectHighlightedItem();
+      if (event.target instanceof Element && event.target?.parentElement) {
+        // hide() will consume the mouseup event and click won't be triggered
+        void VisualLogging.logClick(event.target.parentElement, event);
+      }
       this.hide(event);
     }, false);
-    model.addEventListener(ListModelEvents.ItemsReplaced, this.itemsReplaced, this);
+    model.addEventListener(ListModelEvents.ITEMS_REPLACED, this.itemsReplaced, this);
   }
 
   private show(event: Event): void {
@@ -108,7 +114,7 @@ export class SoftDropDown<T> implements ListDelegate<T> {
       return;
     }
     this.glassPane.setContentAnchorBox(this.element.boxInWindow());
-    this.glassPane.show((this.element.ownerDocument as Document));
+    this.glassPane.show((this.element.ownerDocument));
     this.list.element.focus();
     ARIAUtils.setExpanded(this.element, true);
     this.updateGlasspaneSize();
@@ -138,8 +144,7 @@ export class SoftDropDown<T> implements ListDelegate<T> {
     event.consume(true);
   }
 
-  private onKeyDownButton(ev: Event): void {
-    const event = (ev as KeyboardEvent);
+  private onKeyDownButton(event: KeyboardEvent): void {
     let handled = false;
     switch (event.key) {
       case 'ArrowUp':
@@ -166,8 +171,7 @@ export class SoftDropDown<T> implements ListDelegate<T> {
     }
   }
 
-  private onKeyDownList(ev: Event): void {
-    const event = (ev as KeyboardEvent);
+  private onKeyDownList(event: KeyboardEvent): void {
     let handled = false;
     switch (event.key) {
       case 'ArrowLeft':
@@ -300,7 +304,7 @@ export class SoftDropDown<T> implements ListDelegate<T> {
 
     ARIAUtils.setActiveDescendant(this.list.element, toElement);
     this.delegate.highlightedItemChanged(
-        from, to, fromElement && fromElement.firstElementChild, toElement && toElement.firstElementChild);
+        from, to, fromElement?.firstElementChild ?? null, toElement?.firstElementChild ?? null);
   }
 
   updateSelectedItemARIA(_fromElement: Element|null, _toElement: Element|null): boolean {

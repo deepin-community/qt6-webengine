@@ -20,14 +20,12 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "extensions/browser/api/declarative_net_request/action_tracker.h"
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
-#include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
-#include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/extension_event_histogram_value.h"
-#include "extensions/browser/guest_view/guest_view_events.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/url_pattern_set.h"
+#include "net/base/completion_once_callback.h"
 
 namespace content {
 class BrowserContext;
@@ -47,16 +45,20 @@ class WebRequestRulesRegistry;
 class WebRequestEventDetails;
 struct WebRequestInfo;
 
-// This class defines common types for the two types of event routers.
-class WebRequestEventRouter {
+class WebRequestEventRouter : public KeyedService {
  public:
+  explicit WebRequestEventRouter(content::BrowserContext* browser_context);
+  ~WebRequestEventRouter() override;
   WebRequestEventRouter(const WebRequestEventRouter&) = delete;
   WebRequestEventRouter& operator=(const WebRequestEventRouter&) = delete;
+
+  // KeyedService overrides.
+  void Shutdown() override;
 
   struct BlockedRequest;
 
   // The events denoting the lifecycle of a given network request.
-  enum EventTypes {
+  enum class EventTypes {
     kInvalidEvent = 0,
     kOnBeforeRequest = 1 << 0,
     kOnBeforeSendHeaders = 1 << 1,
@@ -69,7 +71,7 @@ class WebRequestEventRouter {
     kOnCompleted = 1 << 8,
   };
 
-  // Get the instance of the WebRequestEventRouter for |browser_context|.
+  // Get the instance of the WebRequestEventRouter for `browser_context`.
   static WebRequestEventRouter* Get(content::BrowserContext* browser_context);
 
   static std::vector<std::string> GetEventNames();
@@ -99,7 +101,7 @@ class WebRequestEventRouter {
 
   // Contains an extension's response to a blocking event.
   struct EventResponse {
-    EventResponse(const std::string& extension_id,
+    EventResponse(const ExtensionId& extension_id,
                   const base::Time& extension_install_time);
 
     EventResponse(const EventResponse&) = delete;
@@ -108,7 +110,7 @@ class WebRequestEventRouter {
     ~EventResponse();
 
     // ID of the extension that sent this response.
-    std::string extension_id;
+    ExtensionId extension_id;
 
     // The time that the extension was installed. Used for deciding order of
     // precedence in case multiple extensions respond with conflicting
@@ -134,7 +136,7 @@ class WebRequestEventRouter {
     AUTH_REQUIRED_RESPONSE_SET_AUTH,
     // The request should be canceled.
     AUTH_REQUIRED_RESPONSE_CANCEL_AUTH,
-    // The action will be decided asynchronously. |callback| will be invoked
+    // The action will be decided asynchronously. `callback` will be invoked
     // when the decision is made, and one of the other AuthRequiredResponse
     // values will be passed in with the same semantics as described above.
     AUTH_REQUIRED_RESPONSE_IO_PENDING,
@@ -152,8 +154,8 @@ class WebRequestEventRouter {
     kDeactivate,
   };
 
-  // Registers a rule registry. Pass null for |rules_registry| to unregister
-  // the rule registry for |browser_context|.
+  // Registers a rule registry. Pass null for `rules_registry` to unregister
+  // the rule registry for `browser_context`.
   void RegisterRulesRegistry(
       content::BrowserContext* browser_context,
       int rules_registry_id,
@@ -163,7 +165,7 @@ class WebRequestEventRouter {
   // the given request. Returns net::ERR_IO_PENDING if an extension is
   // intercepting the request and OK if the request should proceed normally.
   // net::ERR_BLOCKED_BY_CLIENT is returned if the request should be blocked. In
-  // this case, |should_collapse_initiator| might be set to true indicating
+  // this case, `should_collapse_initiator` might be set to true indicating
   // whether the DOM element which initiated the request should be blocked.
   int OnBeforeRequest(content::BrowserContext* browser_context,
                       WebRequestInfo* request,
@@ -194,24 +196,25 @@ class WebRequestEventRouter {
   // Dispatches the onHeadersReceived event. This is fired for HTTP(s)
   // requests only, and allows modification of incoming response headers.
   // Returns net::ERR_IO_PENDING if an extension is intercepting the request,
-  // OK otherwise. |original_response_headers| is reference counted. |callback|
-  // |override_response_headers| and |preserve_fragment_on_redirect_url| are not
-  // owned but are guaranteed to be valid until |callback| is called or
+  // OK otherwise. `original_response_headers` is reference counted. `callback`
+  // `override_response_headers` and `preserve_fragment_on_redirect_url` are not
+  // owned but are guaranteed to be valid until `callback` is called or
   // OnRequestWillBeDestroyed is called (whatever comes first).
-  // Do not modify |original_response_headers| directly but write new ones
-  // into |override_response_headers|.
+  // Do not modify `original_response_headers` directly but write new ones
+  // into `override_response_headers`.
   int OnHeadersReceived(
       content::BrowserContext* browser_context,
-      const WebRequestInfo* request,
+      WebRequestInfo* request,
       net::CompletionOnceCallback callback,
       const net::HttpResponseHeaders* original_response_headers,
       scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
-      GURL* preserve_fragment_on_redirect_url);
+      GURL* preserve_fragment_on_redirect_url,
+      bool* should_collapse_initiator);
 
   // Dispatches the OnAuthRequired event to any extensions whose filters match
   // the given request. If the listener is not registered as "blocking", then
   // AUTH_REQUIRED_RESPONSE_NO_ACTION is returned. Otherwise,
-  // AUTH_REQUIRED_RESPONSE_IO_PENDING is returned and |callback| will be
+  // AUTH_REQUIRED_RESPONSE_IO_PENDING is returned and `callback` will be
   // invoked later.
   AuthRequiredResponse OnAuthRequired(content::BrowserContext* browser_context,
                                       const WebRequestInfo* request,
@@ -242,7 +245,7 @@ class WebRequestEventRouter {
                        bool started,
                        int net_error);
 
-  // Notificaties when |request| is no longer being processed, regardless of
+  // Notificaties when `request` is no longer being processed, regardless of
   // whether it has gone to completion or merely been cancelled. This is
   // guaranteed to be called eventually for any request observed by this object,
   // and |*request| will be immintently destroyed after this returns.
@@ -251,7 +254,7 @@ class WebRequestEventRouter {
 
   // Called when an event listener handles a blocking event and responds.
   void OnEventHandled(content::BrowserContext* browser_context,
-                      const std::string& extension_id,
+                      const ExtensionId& extension_id,
                       const std::string& event_name,
                       const std::string& sub_event_name,
                       uint64_t request_id,
@@ -261,12 +264,12 @@ class WebRequestEventRouter {
                       int64_t service_worker_version_id,
                       std::unique_ptr<EventResponse> response);
 
-  // Adds a listener to the given event. |event_name| specifies the event being
-  // listened to. |sub_event_name| is an internal event uniquely generated in
+  // Adds a listener to the given event. `event_name` specifies the event being
+  // listened to. `sub_event_name` is an internal event uniquely generated in
   // the extension process to correspond to the given filter and
   // extra_info_spec. It returns true on success, false on failure.
   bool AddEventListener(content::BrowserContext* browser_context,
-                        const std::string& extension_id,
+                        const ExtensionId& extension_id,
                         const std::string& extension_name,
                         const std::string& event_name,
                         const std::string& sub_event_name,
@@ -293,7 +296,7 @@ class WebRequestEventRouter {
       content::BrowserContext* original_browser_context,
       content::BrowserContext* otr_browser_context);
 
-  // Registers a |callback| that is executed when the next page load happens.
+  // Registers a `callback` that is executed when the next page load happens.
   // The callback is then deleted.
   static void AddCallbackForPageLoad(base::OnceClosure callback);
 
@@ -333,12 +336,6 @@ class WebRequestEventRouter {
                          service_worker_version_id);
   }
 
- protected:
-  WebRequestEventRouter();
-  virtual ~WebRequestEventRouter();
-
-  static void ClearCrossContextData(content::BrowserContext* browser_context);
-
  private:
   FRIEND_TEST_ALL_PREFIXES(ExtensionWebRequestTest, BrowserContextShutdown);
 
@@ -358,7 +355,7 @@ class WebRequestEventRouter {
   struct EventListener {
     struct ID {
       ID(content::BrowserContext* browser_context,
-         const std::string& extension_id,
+         const ExtensionId& extension_id,
          const std::string& sub_event_name,
          int render_process_id,
          int web_view_instance_id,
@@ -371,7 +368,7 @@ class WebRequestEventRouter {
       bool operator==(const ID& that) const;
 
       raw_ptr<content::BrowserContext> browser_context;
-      std::string extension_id;
+      ExtensionId extension_id;
       std::string sub_event_name;
       // In the case of a webview, this is the process ID of the embedder.
       int render_process_id;
@@ -482,10 +479,10 @@ class WebRequestEventRouter {
 
   using DataMap = std::map<BrowserContextID, BrowserContextData>;
 
-  // Returns the EventListener with the given |id|, or nullptr.
+  // Returns the EventListener with the given `id`, or nullptr.
   EventListener* FindEventListener(const EventListener::ID& id);
 
-  // Returns the EventListener with the given |id| from |listeners|.
+  // Returns the EventListener with the given `id` from `listeners`.
   EventListener* FindEventListenerInContainer(const EventListener::ID& id,
                                               const Listeners& listeners);
 
@@ -521,7 +518,7 @@ class WebRequestEventRouter {
   void CleanUpForListener(const EventListener& listener,
                           ListenerUpdateType removal_type);
 
-  // Ensures that future callbacks for |request| are ignored so that it can be
+  // Ensures that future callbacks for `request` are ignored so that it can be
   // destroyed safely.
   void ClearPendingCallbacks(content::BrowserContext* browser_context,
                              const WebRequestInfo& request);
@@ -538,7 +535,7 @@ class WebRequestEventRouter {
       std::unique_ptr<WebRequestEventDetails> event_details);
 
   // Returns a list of event listeners that care about the given event, based
-  // on their filter parameters. |extra_info_spec| will contain the combined
+  // on their filter parameters. `extra_info_spec` will contain the combined
   // set of extra_info_spec flags that every matching listener asked for.
   RawListeners GetMatchingListeners(content::BrowserContext* browser_context,
                                     const std::string& event_name,
@@ -571,17 +568,17 @@ class WebRequestEventRouter {
   // method requested by the extension with the highest precedence. Precedence
   // is decided by extension install time.
   void DecrementBlockCount(content::BrowserContext* browser_context,
-                           const std::string& extension_id,
+                           const ExtensionId& extension_id,
                            const std::string& event_name,
                            uint64_t request_id,
                            std::unique_ptr<EventResponse> response,
                            int extra_info_spec);
 
   // Processes the generated deltas from blocked_requests_ on the specified
-  // request. If |call_callback| is true, the callback registered in
-  // |blocked_requests_| is called.
+  // request. If `call_callback` is true, the callback registered in
+  // `blocked_requests_` is called.
   // The function returns the error code for the network request. This is
-  // mostly relevant in case the caller passes |call_callback| = false
+  // mostly relevant in case the caller passes `call_callback` = false
   // and wants to return the correct network error code themself.
   int ExecuteDeltas(content::BrowserContext* browser_context,
                     const WebRequestInfo* request,
@@ -589,7 +586,7 @@ class WebRequestEventRouter {
 
   // Evaluates the rules of the declarative webrequest API and stores
   // modifications to the request that result from WebRequestActions as
-  // deltas in |blocked_requests_|. |filtered_response_headers| should only be
+  // deltas in `blocked_requests_`. `filtered_response_headers` should only be
   // set for the OnHeadersReceived stage and NULL otherwise. Returns whether any
   // deltas were generated.
   bool ProcessDeclarativeRules(
@@ -607,34 +604,34 @@ class WebRequestEventRouter {
 
   // Called when the RulesRegistry is ready to unblock a request that was
   // waiting for said event.
-  void OnRulesRegistryReady(content::BrowserContext* browser_context,
+  void OnRulesRegistryReady(void* browser_context_id,
                             const std::string& event_name,
                             uint64_t request_id,
                             RequestStage request_stage);
 
-  // Sets the flag that |event_type| has been signaled for |request_id|.
+  // Sets the flag that `event_type` has been signaled for `request_id`.
   // Returns the value of the flag before setting it.
   bool GetAndSetSignaled(content::BrowserContext* browser_context,
                          uint64_t request_id,
                          EventTypes event_type);
 
-  // Clears the flag that |event_type| has been signaled for |request_id|.
+  // Clears the flag that `event_type` has been signaled for `request_id`.
   void ClearSignaled(content::BrowserContext* browser_context,
                      uint64_t request_id,
                      EventTypes event_type);
 
-  // Returns whether |request| represents a top level window navigation.
+  // Returns whether `request` represents a top level window navigation.
   bool IsPageLoad(const WebRequestInfo& request) const;
 
   // Called on a page load to process all registered callbacks.
   void NotifyPageLoad();
 
   // Returns the matching cross browser_context (the regular browser_context if
-  // |browser_context| is OTR and vice versa).
+  // `browser_context` is OTR and vice versa).
   static content::BrowserContext* GetCrossBrowserContext(
       content::BrowserContext* browser_context);
 
-  // Returns true if |request_id| was already signaled to some event handlers.
+  // Returns true if `request_id` was already signaled to some event handlers.
   bool WasSignaled(content::BrowserContext* browser_context,
                    uint64_t request_id) const;
 
@@ -687,29 +684,9 @@ class WebRequestEventRouter {
   // A map of data associated with given BrowserContexts.
   DataMap data_;
 
-  base::WeakPtrFactory<WebRequestEventRouter> weak_ptr_factory_{this};
-};
-
-// This class observes network events and routes them to the appropriate
-// extensions listening to those events.
-class KeyedWebRequestEventRouter : public WebRequestEventRouter,
-                                   public KeyedService {
- public:
-  explicit KeyedWebRequestEventRouter(content::BrowserContext* browser_context);
-
-  KeyedWebRequestEventRouter(const KeyedWebRequestEventRouter&) = delete;
-  KeyedWebRequestEventRouter& operator=(const KeyedWebRequestEventRouter&) =
-      delete;
-
-  ~KeyedWebRequestEventRouter() override;
-
-  void Shutdown() override;
-
-  // Get the instance of the WebRequestEventRouter for |browser_context|.
-  static WebRequestEventRouter* Get(content::BrowserContext* browser_context);
-
- private:
   const raw_ptr<content::BrowserContext> browser_context_;
+
+  base::WeakPtrFactory<WebRequestEventRouter> weak_ptr_factory_{this};
 };
 
 }  // namespace extensions

@@ -21,17 +21,6 @@ extern "C" {
 #ifndef GL_MAILBOX_SIZE_CHROMIUM
 #define GL_MAILBOX_SIZE_CHROMIUM 16
 #endif
-#ifdef GL_GLEXT_PROTOTYPES
-GL_APICALL void GL_APIENTRY glProduceTextureDirectCHROMIUM(GLuint texture,
-                                                           GLbyte* mailbox);
-GL_APICALL GLuint GL_APIENTRY
-glCreateAndConsumeTextureCHROMIUM(const GLbyte* mailbox);
-#endif
-typedef void (GL_APIENTRYP PFNGLGENMAILBOXCHROMIUMPROC) (GLbyte* mailbox);
-typedef void (GL_APIENTRYP PFNGLPRODUCETEXTUREDIRECTCHROMIUMPROC) (
-    GLuint texture, GLenum target, const GLbyte* mailbox);
-typedef GLuint(GL_APIENTRYP PFNGLCREATEANDCONSUMETEXTURECHROMIUMPROC)(
-    const GLbyte* mailbox);
 #endif  /* GL_CHROMIUM_texture_mailbox */
 
 /* GL_CHROMIUM_pixel_transfer_buffer_object */
@@ -63,17 +52,16 @@ typedef GLboolean (GL_APIENTRY PFNGLUNMAPBUFFERCHROMIUM) (GLuint target);
 #endif
 #endif  /* GL_CHROMIUM_pixel_transfer_buffer_object */
 
-#ifndef GL_RGB_YCRCB_420_CHROMIUM
-#define GL_RGB_YCRCB_420_CHROMIUM 0x78FA
+#ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY glGetBufferSubDataCHROMIUM(GLenum target,
+                                                       GLintptr offset,
+                                                       GLsizeiptr size,
+                                                       void* data);
 #endif
-
-#ifndef GL_RGB_YCBCR_420V_CHROMIUM
-#define GL_RGB_YCBCR_420V_CHROMIUM 0x78FC
-#endif
-
-#ifndef GL_RGB_YCBCR_P010_CHROMIUM
-#define GL_RGB_YCBCR_P010_CHROMIUM 0x78FD
-#endif
+typedef void(GL_APIENTRY PFNGLGETBUFFERSUBDATACHROMIUM)(GLenum target,
+                                                        GLintptr offset,
+                                                        GLsizeiptr size,
+                                                        void* data);
 
 /* GL_CHROMIUM_deschedule */
 #ifndef GL_CHROMIUM_deschedule
@@ -305,60 +293,56 @@ typedef void(GL_APIENTRYP PFNGLPROVOKINGVERTEXANGLEPROC)(GLenum provokeMode);
 #define GL_MAX_PIXEL_LOCAL_STORAGE_PLANES_ANGLE 0x96E0
 #endif
 
-#ifndef GL_MAX_COLOR_ATTACHMENTS_WITH_ACTIVE_PIXEL_LOCAL_STORAGE_ANGLE
-#define GL_MAX_COLOR_ATTACHMENTS_WITH_ACTIVE_PIXEL_LOCAL_STORAGE_ANGLE 0x96E1
-#endif
-
 #ifndef GL_MAX_COMBINED_DRAW_BUFFERS_AND_PIXEL_LOCAL_STORAGE_PLANES_ANGLE
-#define GL_MAX_COMBINED_DRAW_BUFFERS_AND_PIXEL_LOCAL_STORAGE_PLANES_ANGLE 0x96E2
+#define GL_MAX_COMBINED_DRAW_BUFFERS_AND_PIXEL_LOCAL_STORAGE_PLANES_ANGLE 0x96E1
 #endif
 
 #ifndef GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE
-#define GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE 0x96E3
+#define GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE 0x96E2
 #endif
 
 #ifndef GL_LOAD_OP_ZERO_ANGLE
-#define GL_LOAD_OP_ZERO_ANGLE 0x96E4
+#define GL_LOAD_OP_ZERO_ANGLE 0x96E3
 #endif
 
 #ifndef GL_LOAD_OP_CLEAR_ANGLE
-#define GL_LOAD_OP_CLEAR_ANGLE 0x96E5
+#define GL_LOAD_OP_CLEAR_ANGLE 0x96E4
 #endif
 
 #ifndef GL_LOAD_OP_LOAD_ANGLE
-#define GL_LOAD_OP_LOAD_ANGLE 0x96E6
+#define GL_LOAD_OP_LOAD_ANGLE 0x96E5
 #endif
 
 #ifndef GL_STORE_OP_STORE_ANGLE
-#define GL_STORE_OP_STORE_ANGLE 0x96E7
+#define GL_STORE_OP_STORE_ANGLE 0x96E6
 #endif
 
 #ifndef GL_PIXEL_LOCAL_FORMAT_ANGLE
-#define GL_PIXEL_LOCAL_FORMAT_ANGLE 0x96E8
+#define GL_PIXEL_LOCAL_FORMAT_ANGLE 0x96E7
 #endif
 
 #ifndef GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE
-#define GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE 0x96E9
+#define GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE 0x96E8
 #endif
 
 #ifndef GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE
-#define GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE 0x96EA
+#define GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE 0x96E9
 #endif
 
 #ifndef GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE
-#define GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE 0x96EB
+#define GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE 0x96EA
 #endif
 
 #ifndef GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE
-#define GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE 0x96EC
+#define GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE 0x96EB
 #endif
 
 #ifndef GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE
-#define GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE 0x96ED
+#define GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE 0x96EC
 #endif
 
 #ifndef GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE
-#define GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE 0x96EE
+#define GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE 0x96ED
 #endif
 
 #ifdef GL_GLEXT_PROTOTYPES
@@ -621,16 +605,6 @@ typedef void (GL_APIENTRYP PFNGLLOSECONTEXTCHROMIUMPROC) (
 #define GL_TEXTURE_RECTANGLE_ARB 0x84F5
 #endif
 #endif  /* GL_ARB_texture_rectangle */
-
-/* GL_CHROMIUM_enable_feature */
-#ifndef GL_CHROMIUM_enable_feature
-#define GL_CHROMIUM_enable_feature 1
-#ifdef GL_GLEXT_PROTOTYPES
-GL_APICALL GLboolean GL_APIENTRY glEnableFeatureCHROMIUM(const char* feature);
-#endif
-typedef GLboolean (GL_APIENTRYP PFNGLENABLEFEATURECHROMIUMPROC) (
-    const char* feature);
-#endif  /* GL_CHROMIUM_enable_feature */
 
 /* GL_ARB_robustness */
 #ifndef GL_ARB_robustness

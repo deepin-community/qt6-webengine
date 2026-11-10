@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-qc4w-gemm/avx512-broadcast.c.in
 //   Generator: tools/xngen
@@ -8,11 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
 
 
 void xnn_f32_qc4w_gemm_minmax_ukernel_2x32__avx512skx_broadcast(
@@ -25,7 +30,7 @@ void xnn_f32_qc4w_gemm_minmax_ukernel_2x32__avx512skx_broadcast(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_qc4w_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_qc4w_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 2);
@@ -44,10 +49,14 @@ void xnn_f32_qc4w_gemm_minmax_ukernel_2x32__avx512skx_broadcast(
     a1 = a0;
     c1 = c0;
   }
-  const __m512i vmagic_bias_c0 = _mm512_set1_epi32(params->avx512.magic_bias_c0);
-  const __m512i vmagic_bias_c1 = _mm512_set1_epi32(params->avx512.magic_bias_c1);
-  const __m512 vmagic_bias_plus_kernel_zero_point_c0 = _mm512_set1_ps(params->avx512.magic_bias_plus_kernel_zero_point_c0);
-  const __m512 vmagic_bias_plus_kernel_zero_point_c1 = _mm512_set1_ps(params->avx512.magic_bias_plus_kernel_zero_point_c1);
+  const __m512i vmagic_bias_c0 = _mm512_set1_epi32(0x4B0000F0);
+  const __m512i vmagic_bias_c1 = _mm512_set1_epi32(0x4900000F);
+  const __m512 vmagic_bias_plus_kernel_zero_point_c0 = _mm512_set1_ps(0x1.0001E0p+23f + (float) params->scalar.kernel_zero_point);
+  const __m512 vmagic_bias_plus_kernel_zero_point_c1 = _mm512_set1_ps(0x1.00001Ep+19f + (float) params->scalar.kernel_zero_point);
+  XNN_FORCE_REALIZATION(vmagic_bias_c0);
+  XNN_FORCE_REALIZATION(vmagic_bias_c1);
+  XNN_FORCE_REALIZATION(vmagic_bias_plus_kernel_zero_point_c0);
+  XNN_FORCE_REALIZATION(vmagic_bias_plus_kernel_zero_point_c1);
 
   do {
     __m512 vacc0x0123456789ABCDEF = _mm512_loadu_ps((const float*) w + 0);
@@ -157,7 +166,7 @@ void xnn_f32_qc4w_gemm_minmax_ukernel_2x32__avx512skx_broadcast(
       }
       if (nc & 15) {
         // Prepare mask for valid 32-bit elements (depends on nc).
-        const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << (nc & 15)) - UINT32_C(1)));
+        const __mmask16 vmask = _cvtu32_mask16((uint32_t) (UINT32_C(1) << (nc & 15)) - UINT32_C(1));
         _mm512_mask_storeu_ps(c1, vmask, vacc1x0123456789ABCDEF);
         _mm512_mask_storeu_ps(c0, vmask, vacc0x0123456789ABCDEF);
       }

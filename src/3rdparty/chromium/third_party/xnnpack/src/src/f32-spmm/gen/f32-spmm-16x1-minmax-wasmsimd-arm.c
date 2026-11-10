@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-spmm/wasmsimd.c.in
 //   Generator: tools/xngen
@@ -11,7 +12,7 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/spmm.h>
+#include "src/xnnpack/spmm.h"
 
 
 void xnn_f32_spmm_minmax_ukernel_16x1__wasmsimd_arm(
@@ -23,14 +24,16 @@ void xnn_f32_spmm_minmax_ukernel_16x1__wasmsimd_arm(
     const uint32_t* nidx_nnzmap,
     float* output,
     size_t output_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mc != 0);
   assert(mc % sizeof(float) == 0);
   assert(nc != 0);
 
-  const v128_t vmin = wasm_v128_load64_splat(params->wasmsimd.min);
-  const v128_t vmax = wasm_v128_load64_splat(params->wasmsimd.max);
+  const v128_t vmin = wasm_v128_load32_splat(&params->scalar.min);
+  const v128_t vmax = wasm_v128_load32_splat(&params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   size_t output_decrement = output_stride * nc - 16 * sizeof(float);
   while XNN_LIKELY(mc >= 16 * sizeof(float)) {
     const float* w = weights;

@@ -10,12 +10,14 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 
 #include "fxbarcode/BC_Library.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "xfa/fwl/cfwl_edit.h"
 
 class CFX_Barcode;
+
+namespace pdfium {
 
 class CFWL_Barcode final : public CFWL_Edit {
  public:
@@ -36,7 +38,6 @@ class CFWL_Barcode final : public CFWL_Edit {
   void SetType(BC_TYPE type);
   bool IsProtectedType() const;
 
-  void SetCharEncoding(BC_CHAR_ENCODING encoding);
   void SetModuleHeight(int32_t height);
   void SetModuleWidth(int32_t width);
   void SetDataLength(int32_t dataLength);
@@ -60,20 +61,24 @@ class CFWL_Barcode final : public CFWL_Edit {
   void GenerateBarcodeImageCache();
   void CreateBarcodeEngine();
 
-  BC_TYPE m_type = BC_TYPE::kUnknown;
-  Status m_eStatus = Status::kNormal;
-  absl::optional<BC_TEXT_LOC> m_eTextLocation;
-  absl::optional<BC_CHAR_ENCODING> m_eCharEncoding;
-  absl::optional<bool> m_bCalChecksum;
-  absl::optional<bool> m_bPrintChecksum;
-  absl::optional<char> m_cStartChar;
-  absl::optional<char> m_cEndChar;
-  absl::optional<int8_t> m_nWideNarrowRatio;
-  absl::optional<int32_t> m_nModuleHeight;
-  absl::optional<int32_t> m_nModuleWidth;
-  absl::optional<int32_t> m_nDataLength;
-  absl::optional<int32_t> m_nECLevel;
-  std::unique_ptr<CFX_Barcode> m_pBarcodeEngine;
+  BC_TYPE type_ = BC_TYPE::kUnknown;
+  Status status_ = Status::kNormal;
+  std::optional<BC_TEXT_LOC> text_location_;
+  std::optional<bool> cal_checksum_;
+  std::optional<bool> print_checksum_;
+  std::optional<char> start_char_;
+  std::optional<char> end_char_;
+  std::optional<int8_t> wide_narrow_ratio_;
+  std::optional<int32_t> module_height_;
+  std::optional<int32_t> module_width_;
+  std::optional<int32_t> data_length_;
+  std::optional<int32_t> eclevel_;
+  std::unique_ptr<CFX_Barcode> barcode_engine_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_Barcode;
 
 #endif  // XFA_FWL_CFWL_BARCODE_H_

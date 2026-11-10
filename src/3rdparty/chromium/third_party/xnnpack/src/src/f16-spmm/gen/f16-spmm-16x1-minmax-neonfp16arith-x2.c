@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-spmm/neonfp16arith.c.in
 //   Generator: tools/xngen
@@ -7,24 +8,28 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/prefetch.h>
-#include <xnnpack/spmm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/prefetch.h"
+#include "src/xnnpack/spmm.h"
 
 
 void xnn_f16_spmm_minmax_ukernel_16x1__neonfp16arith_x2(
     size_t mc,
     size_t nc,
-    const void* input,
-    const void* weights,
+    const xnn_float16* input,
+    const xnn_float16* weights,
     const int32_t* widx_dmap,
     const uint32_t* nidx_nnzmap,
-    void* output,
+    xnn_float16* output,
     size_t output_stride,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f16_minmax_params* restrict params)
 {
   assert(mc != 0);
   assert(mc % sizeof(uint16_t) == 0);
@@ -34,12 +39,12 @@ void xnn_f16_spmm_minmax_ukernel_16x1__neonfp16arith_x2(
   uint16_t* o = (uint16_t*) output;
 
   #if XNN_ARCH_ARM64
-    const uint16x8x2_t vminmax = vld2q_dup_u16(&params->fp16arith.min);
+    const uint16x8x2_t vminmax = vld2q_dup_u16((const uint16_t*) &params->scalar.min);
     const float16x8_t vmin = vreinterpretq_f16_u16(vminmax.val[0]);
     const float16x8_t vmax = vreinterpretq_f16_u16(vminmax.val[1]);
   #else
     // vld2_dup is to work around aarch32 clang bug with vld1q_dup
-    const uint16x4x2_t vminmax = vld2_dup_u16(&params->fp16arith.min);
+    const uint16x4x2_t vminmax = vld2_dup_u16((const uint16_t*) &params->scalar.min);
     const float16x8_t vmin = vreinterpretq_f16_u16(vcombine_u16(vminmax.val[0], vminmax.val[0]));
     const float16x8_t vmax = vreinterpretq_f16_u16(vcombine_u16(vminmax.val[1], vminmax.val[1]));
   #endif

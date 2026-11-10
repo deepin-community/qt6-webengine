@@ -32,6 +32,7 @@
 
 #include "dawn/wire/client/EventManager.h"
 
+#include "dawn/common/Log.h"
 #include "dawn/wire/client/Client.h"
 
 namespace dawn::wire::client {
@@ -70,6 +71,11 @@ EventManager::~EventManager() {
 }
 
 std::pair<FutureID, bool> EventManager::TrackEvent(std::unique_ptr<TrackedEvent> event) {
+    if (!ValidateCallbackMode(event->GetCallbackMode())) {
+        dawn::ErrorLog() << "Invalid callback mode: " << event->GetCallbackMode();
+        return {kNullFutureID, false};
+    }
+
     FutureID futureID = mNextFutureID++;
 
     switch (mState) {
@@ -116,6 +122,8 @@ void EventManager::TransitionTo(EventManager::State state) {
                         if (event->GetCallbackMode() != WGPUCallbackMode_AllowSpontaneous) {
                             events.emplace(it->first, std::move(event));
                             it = trackedEvents->erase(it);
+                        } else {
+                            ++it;
                         }
                     }
                 });
@@ -169,7 +177,8 @@ WGPUWaitStatus EventManager::WaitAny(size_t count, WGPUFutureWaitInfo* infos, ui
         // UnsupportedMixedSources validation here, because those only apply to timed waits.)
         //
         // TODO(crbug.com/dawn/1987): CreateInstance needs to validate timedWaitEnable was false.
-        return WGPUWaitStatus_UnsupportedTimeout;
+        dawn::ErrorLog() << "Dawn wire does not currently support timed waits.";
+        return WGPUWaitStatus_Error;
     }
 
     if (count == 0) {

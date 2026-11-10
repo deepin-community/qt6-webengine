@@ -36,7 +36,7 @@
   position: absolute;
   top: 0;
   width: 100%;
-  background-color: var(--sys-color-cdt-base);
+  background-color: var(--app-color-toolbar-background);
   border-bottom: 1px solid var(--sys-color-divider);
   overflow: hidden;
   z-index: 1;
@@ -56,14 +56,19 @@
   margin-top: 0;
 }
 
-.scripts-debug-toolbar-drawer > [is="dt-checkbox"] {
+.scripts-debug-toolbar-drawer > devtools-checkbox {
   display: none;
   padding-left: 3px;
   height: 28px;
 }
 
-.scripts-debug-toolbar-drawer.expanded > [is="dt-checkbox"] {
+.scripts-debug-toolbar-drawer.expanded > devtools-checkbox {
   display: flex;
+}
+
+.y-overflow-only {
+  overflow: hidden auto;
+  background-color: var(--sys-color-cdt-base-container);
 }
 
 .cursor-auto {

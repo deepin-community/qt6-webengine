@@ -37,9 +37,12 @@ scoped_refptr<base::RefCountedMemory> EncodeImageAsJPEG(
   }
   DCHECK(!image.AsImageSkia().GetRepresentation(1.0f).is_null());
 
-  std::vector<uint8_t> result;
-  gfx::JPEG1xEncodedDataFromImage(image, 100, &result);
-  return base::RefCountedBytes::TakeVector(&result);
+  std::optional<std::vector<uint8_t>> result =
+      gfx::JPEG1xEncodedDataFromImage(image, /*quality=*/100);
+  if (!result.has_value()) {
+    return nullptr;
+  }
+  return base::MakeRefCounted<base::RefCountedBytes>(std::move(result).value());
 }
 
 void EncodeImageAndScheduleCallback(
@@ -54,15 +57,15 @@ void EncodeImageAndScheduleCallback(
 
 }  // namespace
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_IOS) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
 
 // Note that Android and Aura versions of this function are in
 // snapshot_android.cc and snapshot_aura.cc respectively.
 
-void GrabWindowSnapshotAndScaleAsync(gfx::NativeWindow window,
-                                     const gfx::Rect& source_rect,
-                                     const gfx::Size& target_size,
-                                     GrabSnapshotImageCallback callback) {
+void GrabWindowSnapshotAndScale(gfx::NativeWindow window,
+                                const gfx::Rect& source_rect,
+                                const gfx::Size& target_size,
+                                GrabSnapshotImageCallback callback) {
   auto resize_image = [](const gfx::Size& target_size,
                          GrabSnapshotImageCallback callback, gfx::Image image) {
     if (image.IsEmpty()) {
@@ -75,29 +78,27 @@ void GrabWindowSnapshotAndScaleAsync(gfx::NativeWindow window,
         std::move(callback));
   };
 
-  GrabWindowSnapshotAsync(
+  GrabWindowSnapshot(
       window, source_rect,
       base::BindOnce(resize_image, target_size, std::move(callback)));
 }
 
-#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_IOS) || BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
 
-void GrabWindowSnapshotAsyncPNG(gfx::NativeWindow window,
-                                const gfx::Rect& source_rect,
-                                GrabSnapshotDataCallback callback) {
-  GrabWindowSnapshotAsync(
-      window, source_rect,
-      base::BindOnce(&EncodeImageAndScheduleCallback, &EncodeImageAsPNG,
-                     std::move(callback)));
+void GrabWindowSnapshotAsPNG(gfx::NativeWindow window,
+                             const gfx::Rect& source_rect,
+                             GrabSnapshotDataCallback callback) {
+  GrabWindowSnapshot(window, source_rect,
+                     base::BindOnce(&EncodeImageAndScheduleCallback,
+                                    &EncodeImageAsPNG, std::move(callback)));
 }
 
-void GrabWindowSnapshotAsyncJPEG(gfx::NativeWindow window,
-                                 const gfx::Rect& source_rect,
-                                 GrabSnapshotDataCallback callback) {
-  GrabWindowSnapshotAsync(
-      window, source_rect,
-      base::BindOnce(&EncodeImageAndScheduleCallback, &EncodeImageAsJPEG,
-                     std::move(callback)));
+void GrabWindowSnapshotAsJPEG(gfx::NativeWindow window,
+                              const gfx::Rect& source_rect,
+                              GrabSnapshotDataCallback callback) {
+  GrabWindowSnapshot(window, source_rect,
+                     base::BindOnce(&EncodeImageAndScheduleCallback,
+                                    &EncodeImageAsJPEG, std::move(callback)));
 }
 
 }  // namespace ui

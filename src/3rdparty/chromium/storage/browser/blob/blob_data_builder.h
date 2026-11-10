@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #ifndef STORAGE_BROWSER_BLOB_BLOB_DATA_BUILDER_H_
 #define STORAGE_BROWSER_BLOB_BLOB_DATA_BUILDER_H_
 
@@ -52,7 +53,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
 
   // Copies the given data into the blob.
   void AppendData(const std::string& data) {
-    AppendData(base::as_bytes(base::make_span(data.c_str(), data.size())));
+    AppendData(base::as_byte_span(data));
   }
 
   // Copies the given data into the blob.

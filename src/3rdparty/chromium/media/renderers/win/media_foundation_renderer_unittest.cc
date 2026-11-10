@@ -122,8 +122,6 @@ class MediaFoundationRendererTest : public testing::Test {
     EXPECT_CALL(media_resource_, GetAllStreams())
         .WillRepeatedly(
             Invoke(this, &MediaFoundationRendererTest::GetAllStreams));
-    EXPECT_CALL(media_resource_, GetType())
-        .WillRepeatedly(Return(MediaResource::Type::kStream));
   }
 
   ~MediaFoundationRendererTest() override { mf_renderer_.reset(); }
@@ -132,8 +130,8 @@ class MediaFoundationRendererTest : public testing::Test {
     streams_.push_back(CreateMockDemuxerStream(type, encrypted));
   }
 
-  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> GetAllStreams() {
-    std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams;
+  std::vector<DemuxerStream*> GetAllStreams() {
+    std::vector<DemuxerStream*> streams;
 
     for (auto& stream : streams_) {
       streams.push_back(stream.get());

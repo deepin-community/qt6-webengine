@@ -39,19 +39,15 @@
 namespace dawn::native::d3d {
 
 SharedTextureMemory::SharedTextureMemory(d3d::Device* device,
-                                         const char* label,
-                                         SharedTextureMemoryProperties properties,
-                                         IUnknown* resource)
-    : SharedTextureMemoryBase(device, label, properties) {
-    // If the resource has IDXGIKeyedMutex interface, it will be used for synchronization.
-    // TODO(dawn:1906): remove the mDXGIKeyedMutex when it is not used in chrome.
-    resource->QueryInterface(IID_PPV_ARGS(&mDXGIKeyedMutex));
-}
+                                         StringView label,
+                                         SharedTextureMemoryProperties properties)
+    : SharedTextureMemoryBase(device, label, properties) {}
 
 MaybeError SharedTextureMemory::BeginAccessImpl(
     TextureBase* texture,
     const UnpackedPtr<BeginAccessDescriptor>& descriptor) {
-    DAWN_TRY(descriptor.ValidateSubset<>());
+    DAWN_TRY((descriptor.ValidateSubset<SharedTextureMemoryD3DSwapchainBeginState,
+                                        SharedTextureMemoryD3D11BeginState>()));
     for (size_t i = 0; i < descriptor->fenceCount; ++i) {
         SharedFenceBase* fence = descriptor->fences[i];
 
@@ -68,36 +64,23 @@ MaybeError SharedTextureMemory::BeginAccessImpl(
                 return DAWN_VALIDATION_ERROR("Unsupported fence type %s.", exportInfo.type);
         }
     }
-
-    // Acquire keyed mutex for the first access.
-    if (mDXGIKeyedMutex &&
-        (HasWriteAccess() || HasExclusiveReadAccess() || GetReadAccessCount() == 1)) {
-        DAWN_TRY(CheckHRESULT(mDXGIKeyedMutex->AcquireSync(kDXGIKeyedMutexAcquireKey, INFINITE),
-                              "Acquire keyed mutex"));
-    }
     return {};
 }
 
 ResultOrError<FenceAndSignalValue> SharedTextureMemory::EndAccessImpl(
     TextureBase* texture,
+    ExecutionSerial lastUsageSerial,
     UnpackedPtr<EndAccessState>& state) {
     DAWN_TRY(state.ValidateSubset<>());
-    DAWN_INVALID_IF(!GetDevice()->HasFeature(Feature::SharedFenceDXGISharedHandle),
-                    "Required feature (%s) is missing.",
-                    wgpu::FeatureName::SharedFenceDXGISharedHandle);
 
-    // Release keyed mutex for the last access.
-    if (mDXGIKeyedMutex && !HasWriteAccess() && !HasExclusiveReadAccess() &&
-        GetReadAccessCount() == 0) {
-        mDXGIKeyedMutex->ReleaseSync(kDXGIKeyedMutexAcquireKey);
+    if (!GetDevice()->HasFeature(Feature::SharedFenceDXGISharedHandle)) {
+        return FenceAndSignalValue{nullptr, 0};
     }
 
     Ref<SharedFence> sharedFence;
     DAWN_TRY_ASSIGN(sharedFence, ToBackend(GetDevice()->GetQueue())->GetOrCreateSharedFence());
 
-    return FenceAndSignalValue{
-        std::move(sharedFence),
-        static_cast<uint64_t>(texture->GetSharedTextureMemoryContents()->GetLastUsageSerial())};
+    return FenceAndSignalValue{std::move(sharedFence), static_cast<uint64_t>(lastUsageSerial)};
 }
 
 }  // namespace dawn::native::d3d

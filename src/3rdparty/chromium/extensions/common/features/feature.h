@@ -38,11 +38,10 @@ class Feature {
   enum Platform {
     UNSPECIFIED_PLATFORM,
     CHROMEOS_PLATFORM,
-    LACROS_PLATFORM,
     LINUX_PLATFORM,
     MACOSX_PLATFORM,
     WIN_PLATFORM,
-    FUCHSIA_PLATFORM,
+    DESKTOP_ANDROID_PLATFORM,
   };
 
   // Whether a feature is available in a given situation or not, and if not,
@@ -148,7 +147,7 @@ class Feature {
                                              Platform platform,
                                              int context_id) const = 0;
 
-  // Returns true if the feature is available to |extension|.
+  // Returns true if the feature is available to `extension`.
   Availability IsAvailableToExtension(const Extension* extension) const;
 
   // Returns true if the feature is available to be used in the specified

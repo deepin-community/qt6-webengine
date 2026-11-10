@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include <algorithm>
 #include <memory>
 #include <string_view>
 
@@ -14,7 +15,6 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
@@ -89,8 +89,7 @@ void TestDohServer::AddAddressRecord(std::string_view name,
 
 void TestDohServer::AddRecord(const DnsResourceRecord& record) {
   base::AutoLock lock(lock_);
-  records_.insert(
-      std::make_pair(std::make_pair(record.name, record.type), record));
+  records_.emplace(std::pair(record.name, record.type), record);
 }
 
 bool TestDohServer::Start() {
@@ -144,7 +143,7 @@ int TestDohServer::QueriesServedForSubdomains(std::string_view domain) {
     return net::IsSubdomainOf(candidate, domain);
   };
   base::AutoLock lock(lock_);
-  return base::ranges::count_if(query_qnames_, is_subdomain);
+  return std::ranges::count_if(query_qnames_, is_subdomain);
 }
 
 std::unique_ptr<test_server::HttpResponse> TestDohServer::HandleRequest(
@@ -185,13 +184,13 @@ std::unique_ptr<test_server::HttpResponse> TestDohServer::HandleRequest(
 
   // Parse the DNS query.
   auto query_buf = base::MakeRefCounted<IOBufferWithSize>(query.size());
-  memcpy(query_buf->data(), query.data(), query.size());
+  query_buf->span().copy_from(base::as_byte_span(query));
   DnsQuery dns_query(std::move(query_buf));
   if (!dns_query.Parse(query.size())) {
     return MakeHttpErrorResponse(HTTP_BAD_REQUEST, "invalid DNS query");
   }
 
-  absl::optional<std::string> name = dns_names_util::NetworkToDottedName(
+  std::optional<std::string> name = dns_names_util::NetworkToDottedName(
       dns_query.qname(), /*require_complete=*/true);
   if (!name) {
     DnsResponse response(dns_query.id(), /*is_authoritative=*/false,
@@ -202,7 +201,7 @@ std::unique_ptr<test_server::HttpResponse> TestDohServer::HandleRequest(
   }
   query_qnames_.push_back(*name);
 
-  auto range = records_.equal_range(std::make_pair(*name, dns_query.qtype()));
+  auto range = records_.equal_range(std::pair(*name, dns_query.qtype()));
   std::vector<DnsResourceRecord> answers;
   for (auto i = range.first; i != range.second; ++i) {
     answers.push_back(i->second);
@@ -217,7 +216,7 @@ std::unique_ptr<test_server::HttpResponse> TestDohServer::HandleRequest(
   // For now, this server does not support configuring additional records. When
   // testing more complex HTTPS record cases, this will need to be extended.
   //
-  // TODO(crbug.com/1251204): Add SOA records to test the default TTL.
+  // TODO(crbug.com/40198298): Add SOA records to test the default TTL.
   DnsResponse response(dns_query.id(), /*is_authoritative=*/true,
                        /*answers=*/answers, /*authority_records=*/{},
                        /*additional_records=*/{}, dns_query);

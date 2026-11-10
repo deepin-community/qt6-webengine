@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "content_main_delegate_qt.h"
 
@@ -11,7 +12,6 @@
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/grit/generated_resources.h"
-#include "content/public/browser/browser_main_runner.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -26,7 +26,6 @@
 #include "content_client_qt.h"
 #include "renderer/content_renderer_client_qt.h"
 #include "type_conversion.h"
-#include "web_engine_context.h"
 #include "web_engine_library_info.h"
 
 #if defined(ARCH_CPU_ARM_FAMILY) && (BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX))
@@ -46,14 +45,9 @@
 #if BUILDFLAG(IS_MAC)
 #include "base/trace_event/trace_event.h"
 #include "content/public/common/content_features.h"
-#include "media/gpu/mac/vt_video_decode_accelerator_mac.h"
 #endif
 
 #include <QtCore/qcoreapplication.h>
-
-namespace content {
-ContentClient *GetContentClient();
-}
 
 namespace QtWebEngineCore {
 
@@ -171,13 +165,6 @@ void ContentMainDelegateQt::PreSandboxStartup()
 #if BUILDFLAG(IS_WIN)
         media::PreSandboxMediaFoundationInitialization();
 #endif
-
-#if BUILDFLAG(IS_MAC)
-        {
-            TRACE_EVENT0("gpu", "Initialize VideoToolbox");
-            media::InitializeVideoToolbox();
-        }
-#endif
     }
 
     if (parsedCommandLine->HasSwitch(switches::kApplicationName)) {
@@ -201,13 +188,11 @@ content::ContentBrowserClient *ContentMainDelegateQt::CreateContentBrowserClient
     return m_browserClient.get();
 }
 
-#if defined(USE_OZONE) || BUILDFLAG(IS_WIN)
 content::ContentGpuClient *ContentMainDelegateQt::CreateContentGpuClient()
 {
     m_gpuClient.reset(new ContentGpuClientQt);
     return m_gpuClient.get();
 }
-#endif
 
 content::ContentRendererClient *ContentMainDelegateQt::CreateContentRendererClient()
 {
@@ -253,7 +238,7 @@ static void SafeOverridePathImpl(const char *keyName, int key, const base::FileP
 
 #define SafeOverridePath(KEY, PATH) SafeOverridePathImpl(#KEY, KEY, PATH)
 
-absl::optional<int> ContentMainDelegateQt::BasicStartupComplete()
+std::optional<int> ContentMainDelegateQt::BasicStartupComplete()
 {
     SafeOverridePath(base::FILE_EXE, WebEngineLibraryInfo::getPath(base::FILE_EXE));
     SafeOverridePath(base::DIR_QT_LIBRARY_DATA, WebEngineLibraryInfo::getPath(base::DIR_QT_LIBRARY_DATA));
@@ -266,7 +251,7 @@ absl::optional<int> ContentMainDelegateQt::BasicStartupComplete()
 
     url::CustomScheme::LoadSchemes(base::CommandLine::ForCurrentProcess());
 
-    return absl::nullopt;
+    return std::nullopt;
 }
 
 } // namespace QtWebEngineCore

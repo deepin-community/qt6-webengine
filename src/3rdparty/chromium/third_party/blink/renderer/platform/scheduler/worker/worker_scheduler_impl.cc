@@ -156,6 +156,7 @@ scoped_refptr<base::SingleThreadTaskRunner> WorkerSchedulerImpl::GetTaskRunner(
     case TaskType::kJavascriptTimerDelayedLowNesting:
     case TaskType::kJavascriptTimerDelayedHighNesting:
     case TaskType::kPostedMessage:
+    case TaskType::kBackForwardCachePostedMessage:
     case TaskType::kWorkerAnimation:
       return throttleable_task_queue_->CreateTaskRunner(type);
     case TaskType::kNetworking:
@@ -197,6 +198,8 @@ scoped_refptr<base::SingleThreadTaskRunner> WorkerSchedulerImpl::GetTaskRunner(
     case TaskType::kWakeLock:
     case TaskType::kStorage:
     case TaskType::kClipboard:
+    case TaskType::kMachineLearning:
+    case TaskType::kInternalAutofill:
       // UnthrottledTaskRunner is generally discouraged in future.
       // TODO(nhiroki): Identify which tasks can be throttled / suspendable and
       // move them into other task runners. See also comments in
@@ -222,7 +225,8 @@ scoped_refptr<base::SingleThreadTaskRunner> WorkerSchedulerImpl::GetTaskRunner(
                  ? unpausable_task_queue_->CreateTaskRunner(type)
                  : pausable_non_vt_task_queue_->CreateTaskRunner(type);
     case TaskType::kMainThreadTaskQueueV8:
-    case TaskType::kMainThreadTaskQueueV8LowPriority:
+    case TaskType::kMainThreadTaskQueueV8UserVisible:
+    case TaskType::kMainThreadTaskQueueV8BestEffort:
     case TaskType::kMainThreadTaskQueueCompositor:
     case TaskType::kMainThreadTaskQueueDefault:
     case TaskType::kMainThreadTaskQueueInput:
@@ -246,10 +250,8 @@ scoped_refptr<base::SingleThreadTaskRunner> WorkerSchedulerImpl::GetTaskRunner(
     case TaskType::kMainThreadTaskQueueIPCTracking:
     case TaskType::kInternalPostMessageForwarding:
       NOTREACHED();
-      break;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 void WorkerSchedulerImpl::OnLifecycleStateChanged(
@@ -296,7 +298,7 @@ WorkerSchedulerImpl::ThrottleableTaskQueue() {
 void WorkerSchedulerImpl::OnStartedUsingNonStickyFeature(
     SchedulingPolicy::Feature feature,
     const SchedulingPolicy& policy,
-    std::unique_ptr<SourceLocation> source_location,
+    SourceLocation* source_location,
     SchedulingAffectingFeatureHandle* handle) {
   if (policy.disable_align_wake_ups) {
     scheduler::DisableAlignWakeUpsForProcess();
@@ -306,13 +308,13 @@ void WorkerSchedulerImpl::OnStartedUsingNonStickyFeature(
     return;
   }
   back_forward_cache_disabling_feature_tracker_.AddNonStickyFeature(
-      feature, std::move(source_location), handle);
+      feature, source_location, handle);
 }
 
 void WorkerSchedulerImpl::OnStartedUsingStickyFeature(
     SchedulingPolicy::Feature feature,
     const SchedulingPolicy& policy,
-    std::unique_ptr<SourceLocation> source_location) {
+    SourceLocation* source_location) {
   if (policy.disable_align_wake_ups) {
     scheduler::DisableAlignWakeUpsForProcess();
   }
@@ -321,7 +323,7 @@ void WorkerSchedulerImpl::OnStartedUsingStickyFeature(
     return;
   }
   back_forward_cache_disabling_feature_tracker_.AddStickyFeature(
-      feature, std::move(source_location));
+      feature, source_location);
 }
 
 void WorkerSchedulerImpl::OnStoppedUsingNonStickyFeature(

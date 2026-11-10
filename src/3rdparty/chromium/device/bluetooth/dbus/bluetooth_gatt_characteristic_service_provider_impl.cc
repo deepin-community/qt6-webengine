@@ -6,6 +6,7 @@
 
 #include <cstddef>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -331,7 +332,7 @@ void BluetoothGattCharacteristicServiceProviderImpl::WriteValue(
                  << method_call->ToString();
   }
   if (bytes)
-    value.assign(bytes, bytes + length);
+    value.assign(bytes, UNSAFE_TODO(bytes + length));
 
   std::map<std::string, dbus::MessageReader> options;
   dbus::ObjectPath device_path;
@@ -381,7 +382,7 @@ void BluetoothGattCharacteristicServiceProviderImpl::PrepareWriteValue(
                  << "with incorrect parameters: " << method_call->ToString();
   }
   if (bytes)
-    value.assign(bytes, bytes + length);
+    value.assign(bytes, UNSAFE_TODO(bytes + length));
 
   std::map<std::string, dbus::MessageReader> options;
   dbus::ObjectPath device_path;
@@ -496,7 +497,7 @@ void BluetoothGattCharacteristicServiceProviderImpl::OnExported(
 void BluetoothGattCharacteristicServiceProviderImpl::OnReadValue(
     dbus::MethodCall* method_call,
     dbus::ExportedObject::ResponseSender response_sender,
-    absl::optional<device::BluetoothGattService::GattErrorCode> error_code,
+    std::optional<device::BluetoothGattService::GattErrorCode> error_code,
     const std::vector<uint8_t>& value) {
   if (error_code.has_value()) {
     DVLOG(2) << "Failed to read characteristic value. Report error.";

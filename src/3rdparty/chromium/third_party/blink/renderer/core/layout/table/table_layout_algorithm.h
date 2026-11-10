@@ -21,9 +21,12 @@ class CORE_EXPORT TableLayoutAlgorithm
  public:
   explicit TableLayoutAlgorithm(const LayoutAlgorithmParams& params)
       : LayoutAlgorithm(params) {}
-  const LayoutResult* Layout() override;
 
-  MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesFloatInput&) override;
+  void SetupRelayoutData(const TableLayoutAlgorithm& previous, RelayoutType);
+
+  const LayoutResult* Layout();
+
+  MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesFloatInput&);
 
   static LayoutUnit ComputeTableInlineSize(const TableNode& node,
                                            const ConstraintSpace& space,
@@ -52,8 +55,6 @@ class CORE_EXPORT TableLayoutAlgorithm
   };
 
  private:
-  const LayoutResult* RelayoutAsLastTableBox();
-
   void ComputeRows(const LayoutUnit table_grid_inline_size,
                    const TableGroupedChildren& grouped_children,
                    const Vector<TableColumnLocation>& column_locations,

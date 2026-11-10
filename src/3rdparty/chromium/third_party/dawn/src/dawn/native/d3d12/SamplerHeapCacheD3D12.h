@@ -37,6 +37,8 @@
 #include "dawn/native/BindingInfo.h"
 #include "dawn/native/d3d12/CPUDescriptorHeapAllocationD3D12.h"
 #include "dawn/native/d3d12/GPUDescriptorHeapAllocationD3D12.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
+#include "partition_alloc/pointers/raw_ref.h"
 
 // |SamplerHeapCacheEntry| maintains a cache of sampler descriptor heap allocations.
 // Each entry represents one or more sampler descriptors that co-exist in a CPU and
@@ -60,10 +62,8 @@ class ShaderVisibleDescriptorAllocator;
 // Wraps sampler descriptor heap allocations in a cache.
 class SamplerHeapCacheEntry : public RefCounted {
   public:
-    explicit SamplerHeapCacheEntry(MutexProtected<StagingDescriptorAllocator>& allocator,
-                                   std::vector<Sampler*> samplers);
+    explicit SamplerHeapCacheEntry(std::vector<Sampler*> samplers);
     SamplerHeapCacheEntry(SamplerHeapCache* cache,
-                          MutexProtected<StagingDescriptorAllocator>& allocator,
                           std::vector<Sampler*> samplers,
                           CPUDescriptorHeapAllocation allocation);
     ~SamplerHeapCacheEntry() override;
@@ -72,7 +72,7 @@ class SamplerHeapCacheEntry : public RefCounted {
 
     std::vector<Sampler*>&& AcquireSamplers();
 
-    bool Populate(Device* device, MutexProtected<ShaderVisibleDescriptorAllocator>& allocator);
+    bool Populate(MutexProtected<ShaderVisibleDescriptorAllocator>& allocator);
 
     // Functors necessary for the unordered_map<SamplerHeapCacheEntry*>-based cache.
     struct HashFunc {
@@ -91,8 +91,7 @@ class SamplerHeapCacheEntry : public RefCounted {
     // by the device and will already be unique.
     std::vector<Sampler*> mSamplers;
 
-    MutexProtected<StagingDescriptorAllocator>& mAllocator;
-    SamplerHeapCache* mCache = nullptr;
+    raw_ptr<SamplerHeapCache> mCache = nullptr;
 };
 
 // Cache descriptor heap allocations so that we don't create duplicate ones for every
@@ -102,14 +101,14 @@ class SamplerHeapCache {
     explicit SamplerHeapCache(Device* device);
     ~SamplerHeapCache();
 
-    ResultOrError<Ref<SamplerHeapCacheEntry>> GetOrCreate(
-        const BindGroup* group,
-        MutexProtected<StagingDescriptorAllocator>& samplerAllocator);
+    ResultOrError<Ref<SamplerHeapCacheEntry>> GetOrCreate(const BindGroup* group);
 
     void RemoveCacheEntry(SamplerHeapCacheEntry* entry);
 
+    Device* GetDevice() const;
+
   private:
-    Device* mDevice;
+    raw_ptr<Device> mDevice;
 
     using Cache = absl::flat_hash_set<SamplerHeapCacheEntry*,
                                       SamplerHeapCacheEntry::HashFunc,

@@ -8,6 +8,7 @@
 #include <list>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -17,6 +18,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/net_errors.h"
 #include "net/base/upload_data_stream.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_request_info.h"
@@ -26,8 +28,7 @@
 #include "net/socket/next_proto.h"
 #include "net/spdy/spdy_http_utils.h"
 #include "net/spdy/spdy_session.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 #include "url/scheme_host_port.h"
 
 namespace net {
@@ -116,7 +117,14 @@ int SpdyHttpStream::ReadResponseBody(IOBuffer* buf,
 
   // If we have data buffered, complete the IO immediately.
   if (!response_body_queue_.IsEmpty()) {
-    return response_body_queue_.Dequeue(buf->data(), buf_len);
+    // Dequeueing can fire consume callbacks that trigger session
+    // teardown and destroy `this`.
+    base::WeakPtr<SpdyHttpStream> self = weak_factory_.GetWeakPtr();
+    int rv = response_body_queue_.Dequeue(buf->first(buf_len));
+    if (!self) {
+      return ERR_CONNECTION_CLOSED;
+    }
+    return rv;
   } else if (stream_closed_) {
     return closed_stream_status_;
   }
@@ -239,7 +247,7 @@ int SpdyHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
     return result;
   response_info_->remote_endpoint = address;
 
-  spdy::Http2HeaderBlock headers;
+  quiche::HttpHeaderBlock headers;
   CreateSpdyHeadersFromHttpRequest(*request_info_, priority_, request_headers,
                                    &headers);
   DispatchRequestHeadersCallback(headers);
@@ -277,7 +285,7 @@ void SpdyHttpStream::OnHeadersSent() {
 }
 
 void SpdyHttpStream::OnEarlyHintsReceived(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   DCHECK(!response_headers_complete_);
   DCHECK(response_info_);
   DCHECK_EQ(stream_->type(), SPDY_REQUEST_RESPONSE_STREAM);
@@ -291,7 +299,7 @@ void SpdyHttpStream::OnEarlyHintsReceived(
 }
 
 void SpdyHttpStream::OnHeadersReceived(
-    const spdy::Http2HeaderBlock& response_headers) {
+    const quiche::HttpHeaderBlock& response_headers) {
   DCHECK(!response_headers_complete_);
   DCHECK(response_info_);
   response_headers_complete_ = true;
@@ -306,10 +314,11 @@ void SpdyHttpStream::OnHeadersReceived(
     return;
   }
 
-  response_info_->response_time = stream_->response_time();
+  response_info_->response_time = response_info_->original_response_time =
+      stream_->response_time();
   // Don't store the SSLInfo in the response here, HttpNetworkTransaction
   // will take care of that part.
-  CHECK_EQ(stream_->GetNegotiatedProtocol(), kProtoHTTP2);
+  CHECK_EQ(stream_->GetNegotiatedProtocol(), NextProto::kProtoHTTP2);
   response_info_->was_alpn_negotiated = true;
   response_info_->request_time = stream_->GetRequestTime();
   response_info_->connection_info = HttpConnectionInfo::kHTTP2;
@@ -352,7 +361,7 @@ void SpdyHttpStream::OnDataSent() {
 }
 
 // TODO(xunjieli): Maybe do something with the trailers. crbug.com/422958.
-void SpdyHttpStream::OnTrailers(const spdy::Http2HeaderBlock& trailers) {}
+void SpdyHttpStream::OnTrailers(const quiche::HttpHeaderBlock& trailers) {}
 
 void SpdyHttpStream::OnClose(int status) {
   DCHECK(stream_);
@@ -525,11 +534,19 @@ void SpdyHttpStream::DoBufferedReadCallback() {
     return;
 
   if (!response_body_queue_.IsEmpty()) {
+    // Dequeueing can fire consume callbacks that trigger synchronous session
+    // teardown and destroy `this`.
+    base::WeakPtr<SpdyHttpStream> self = weak_factory_.GetWeakPtr();
     int rv =
-        response_body_queue_.Dequeue(user_buffer_->data(), user_buffer_len_);
+        response_body_queue_.Dequeue(user_buffer_->first(user_buffer_len_));
+    if (!self) {
+      return;
+    }
     user_buffer_ = nullptr;
     user_buffer_len_ = 0;
-    DoResponseCallback(rv);
+    if (response_callback_) {
+      DoResponseCallback(rv);
+    }
     return;
   }
 
@@ -591,12 +608,21 @@ const std::set<std::string>& SpdyHttpStream::GetDnsAliases() const {
   return dns_aliases_;
 }
 
-base::StringPiece SpdyHttpStream::GetAcceptChViaAlps() const {
+std::string_view SpdyHttpStream::GetAcceptChViaAlps() const {
   if (!request_info_) {
     return {};
   }
 
   return session()->GetAcceptChViaAlps(url::SchemeHostPort(request_info_->url));
+}
+
+void SpdyHttpStream::SetHTTP11Required() {
+  if (spdy_session_) {
+    spdy_session_->CloseSessionOnError(
+        ERR_HTTP_1_1_REQUIRED,
+        std::string(SpdySession::kHTTP11RequiredErrorMessage),
+        /*force_send_go_away=*/true);
+  }
 }
 
 }  // namespace net

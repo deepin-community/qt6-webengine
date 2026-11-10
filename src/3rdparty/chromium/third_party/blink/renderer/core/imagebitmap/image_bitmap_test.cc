@@ -44,7 +44,6 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
-#include "third_party/blink/renderer/platform/graphics/color_correction_test_utils.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
@@ -54,9 +53,9 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
+#include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -97,7 +96,7 @@ class ImageBitmapTest : public testing::Test {
         ThreadState::StackState::kNoHeapPointers);
 
     ReplaceMemoryCacheForTesting(global_memory_cache_.Release());
-    SharedGpuContext::ResetForTesting();
+    SharedGpuContext::Reset();
   }
 
  protected:
@@ -122,7 +121,7 @@ TEST_F(ImageBitmapTest, ImageResourceConsistency) {
           UnacceleratedStaticBitmapImage::Create(image).get());
   image_element->SetImageForTest(original_image_content);
 
-  absl::optional<gfx::Rect> crop_rect =
+  std::optional<gfx::Rect> crop_rect =
       gfx::Rect(0, 0, image_element->width(), image_element->height());
   auto* image_bitmap_no_crop = MakeGarbageCollected<ImageBitmap>(
       image_element, crop_rect, default_options);
@@ -192,7 +191,7 @@ TEST_F(ImageBitmapTest, ImageBitmapSourceChanged) {
   image->SetImageForTest(original_image_content);
 
   const ImageBitmapOptions* default_options = ImageBitmapOptions::Create();
-  absl::optional<gfx::Rect> crop_rect =
+  std::optional<gfx::Rect> crop_rect =
       gfx::Rect(0, 0, image->width(), image->height());
   auto* image_bitmap =
       MakeGarbageCollected<ImageBitmap>(image, crop_rect, default_options);
@@ -260,9 +259,10 @@ TEST_F(ImageBitmapTest, AvoidGPUReadback) {
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper =
       SharedGpuContext::ContextProviderWrapper();
   auto resource_provider = CanvasResourceProvider::CreateSharedImageProvider(
-      SkImageInfo::MakeN32Premul(100, 100), cc::PaintFlags::FilterQuality::kLow,
+      gfx::Size(100, 100), GetN32FormatForCanvas(), kPremul_SkAlphaType,
+      gfx::ColorSpace::CreateSRGB(),
       CanvasResourceProvider::ShouldInitialize::kNo, context_provider_wrapper,
-      RasterMode::kGPU, /*shared_image_usage_flags=*/0u);
+      RasterMode::kGPU, gpu::SharedImageUsageSet());
 
   scoped_refptr<StaticBitmapImage> bitmap =
       resource_provider->Snapshot(FlushReason::kTesting);
@@ -339,6 +339,68 @@ TEST_F(ImageBitmapTest,
   auto* image_bitmap = MakeGarbageCollected<ImageBitmap>(
       image_data, gfx::Rect(image_data->Size()), options);
   DCHECK(image_bitmap);
+}
+
+TEST_F(ImageBitmapTest, ImageAlphaState) {
+  auto dummy = std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
+  auto* image_element =
+      MakeGarbageCollected<HTMLImageElement>(dummy->GetDocument());
+
+  // Load a 2x2 png file which has pixels (255, 102, 153, 0). It is a fully
+  // transparent image.
+  ResourceRequest resource_request(
+      "data:image/"
+      "png;base64,"
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR42mP8nzaTAQQYYQwA"
+      "LssD/5ca+r8AAAAASUVORK5CYII=");
+
+  FetchParameters params =
+      FetchParameters::CreateForTest(std::move(resource_request));
+
+  ImageResourceContent* resource_content =
+      ImageResourceContent::Fetch(params, dummy->GetDocument().Fetcher());
+
+  image_element->SetImageForTest(resource_content);
+
+  ImageBitmapOptions* options = ImageBitmapOptions::Create();
+  // ImageBitmap created from unpremul source image result.
+  options->setPremultiplyAlpha("none");
+
+  // Additional operation shouldn't affect alpha op.
+  options->setImageOrientation("flipY");
+
+  std::optional<gfx::Rect> crop_rect =
+      gfx::Rect(0, 0, image_element->width(), image_element->height());
+  auto* image_bitmap =
+      MakeGarbageCollected<ImageBitmap>(image_element, crop_rect, options);
+  ASSERT_TRUE(image_bitmap);
+
+  // Read 1 pixel
+  sk_sp<SkImage> result =
+      image_bitmap->BitmapImage()->PaintImageForCurrentFrame().GetSwSkImage();
+  SkPixmap pixmap;
+  ASSERT_TRUE(result->peekPixels(&pixmap));
+  const uint32_t* pixels = pixmap.addr32();
+
+  SkColorType result_color_type = result->colorType();
+  SkColor expected = SkColorSetARGB(0, 0, 0, 0);
+
+  switch (result_color_type) {
+    case SkColorType::kRGBA_8888_SkColorType:
+      // Set ABGR value as reverse of RGBA
+      expected =
+          SkColorSetARGB(/* a */ 0, /* b */ 153, /* g */ 102, /* r */ 255);
+      break;
+    case SkColorType::kBGRA_8888_SkColorType:
+      // Set ARGB value as reverse of BGRA
+      expected =
+          SkColorSetARGB(/* a */ 0, /* r */ 255, /* g */ 102, /* b */ 153);
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  ASSERT_EQ(pixels[0], expected);
 }
 
 }  // namespace blink

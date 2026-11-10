@@ -35,7 +35,6 @@
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
-#include "internal.h"
 #include "video.h"
 #include "filters.h"
 #include "framerate.h"
@@ -53,9 +52,9 @@ static const AVOption framerate_options[] = {
     {"interp_end",          "point to end linear interpolation",      OFFSET(interp_end),      AV_OPT_TYPE_INT,      {.i64=240},                0,       255,     V|F },
     {"scene",               "scene change level",                     OFFSET(scene_score),     AV_OPT_TYPE_DOUBLE,   {.dbl=8.2},                0,       100., V|F },
 
-    {"flags",               "set flags",                              OFFSET(flags),           AV_OPT_TYPE_FLAGS,    {.i64=1},                  0,       INT_MAX, V|F, "flags" },
-    {"scene_change_detect", "enable scene change detection",          0,                       AV_OPT_TYPE_CONST,    {.i64=FRAMERATE_FLAG_SCD}, INT_MIN, INT_MAX, V|F, "flags" },
-    {"scd",                 "enable scene change detection",          0,                       AV_OPT_TYPE_CONST,    {.i64=FRAMERATE_FLAG_SCD}, INT_MIN, INT_MAX, V|F, "flags" },
+    {"flags",               "set flags",                              OFFSET(flags),           AV_OPT_TYPE_FLAGS,    {.i64=1},                  0,       INT_MAX, V|F, .unit = "flags" },
+    {"scene_change_detect", "enable scene change detection",          0,                       AV_OPT_TYPE_CONST,    {.i64=FRAMERATE_FLAG_SCD}, INT_MIN, INT_MAX, V|F, .unit = "flags" },
+    {"scd",                 "enable scene change detection",          0,                       AV_OPT_TYPE_CONST,    {.i64=FRAMERATE_FLAG_SCD}, INT_MIN, INT_MAX, V|F, .unit = "flags" },
 
     {NULL}
 };
@@ -374,6 +373,7 @@ retry:
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
+    FilterLink *l = ff_filter_link(outlink);
     FrameRateContext *s = ctx->priv;
     int exact;
 
@@ -399,7 +399,7 @@ static int config_output(AVFilterLink *outlink)
         av_log(ctx, AV_LOG_WARNING, "Timebase conversion is not exact\n");
     }
 
-    outlink->frame_rate = s->dest_frame_rate;
+    l->frame_rate = s->dest_frame_rate;
     outlink->time_base = s->dest_time_base;
 
     ff_dlog(ctx,
@@ -432,16 +432,16 @@ static const AVFilterPad framerate_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_framerate = {
-    .name          = "framerate",
-    .description   = NULL_IF_CONFIG_SMALL("Upsamples or downsamples progressive source between specified frame rates."),
+const FFFilter ff_vf_framerate = {
+    .p.name        = "framerate",
+    .p.description = NULL_IF_CONFIG_SMALL("Upsamples or downsamples progressive source between specified frame rates."),
+    .p.priv_class  = &framerate_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(FrameRateContext),
-    .priv_class    = &framerate_class,
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(framerate_inputs),
     FILTER_OUTPUTS(framerate_outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SLICE_THREADS,
     .activate      = activate,
 };

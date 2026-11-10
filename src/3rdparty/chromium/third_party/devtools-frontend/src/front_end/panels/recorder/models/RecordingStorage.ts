@@ -4,7 +4,7 @@
 
 import * as Common from '../../../core/common/common.js';
 
-import {type UserFlow} from './Schema.js';
+import type {UserFlow} from './Schema.js';
 
 let instance: RecordingStorage|null = null;
 
@@ -14,7 +14,6 @@ interface IdGenerator {
 
 class UUIDGenerator implements IdGenerator {
   next(): string {
-    // @ts-ignore
     return crypto.randomUUID();
   }
 }
@@ -26,7 +25,7 @@ export class RecordingStorage {
 
   constructor() {
     this.#recordingsSetting = Common.Settings.Settings.instance().createSetting(
-        'recorder_recordings_ng',
+        'recorder-recordings-ng',
         [],
     );
   }

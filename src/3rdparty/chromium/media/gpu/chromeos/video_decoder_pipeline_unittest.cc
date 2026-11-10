@@ -23,16 +23,17 @@
 #include "media/base/status.h"
 #include "media/base/video_decoder_config.h"
 #include "media/gpu/chromeos/dmabuf_video_frame_pool.h"
+#include "media/gpu/chromeos/frame_resource_converter.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libdrm/src/include/drm/drm_fourcc.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // gn check does not account for BUILDFLAG(), so including this header will
-// make gn check fail for builds other than ash-chrome. See gn help nogncheck
+// make gn check fail for builds other than ChromeOS. See gn help nogncheck
 // for more information.
 #include "chromeos/components/cdm_factory_daemon/chromeos_cdm_context.h"  // nogncheck
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using base::test::RunClosure;
 using ::testing::_;
@@ -51,6 +52,34 @@ MATCHER_P(MatchesStatusCode, status_code, "") {
   return arg.code() == status_code;
 }
 
+MATCHER_P(MatchesDecoderBuffer, buffer, "") {
+  DCHECK(arg);
+  return arg->MatchesForTesting(*buffer);
+}
+
+class FakeFrameResourceConverter : public FrameResourceConverter {
+ public:
+  static std::unique_ptr<FrameResourceConverter> Create() {
+    return base::WrapUnique<FrameResourceConverter>(
+        new FakeFrameResourceConverter());
+  }
+
+  FakeFrameResourceConverter(const FakeFrameResourceConverter&) = delete;
+  FakeFrameResourceConverter& operator=(const FakeFrameResourceConverter&) =
+      delete;
+
+ private:
+  FakeFrameResourceConverter() = default;
+  ~FakeFrameResourceConverter() override = default;
+
+  // FrameResourceConverter overrides.
+  void ConvertFrameImpl(scoped_refptr<FrameResource> frame) override {
+    // It is fine to output a nullptr VideoFrame. The output frames are not
+    // checked.
+    Output(nullptr);
+  }
+};
+
 class MockVideoFramePool : public DmabufVideoFramePool {
  public:
   MockVideoFramePool() = default;
@@ -65,11 +94,12 @@ class MockVideoFramePool : public DmabufVideoFramePool {
                                               size_t,
                                               bool,
                                               bool));
-  MOCK_METHOD0(GetFrame, scoped_refptr<VideoFrame>());
+  MOCK_METHOD0(GetFrame, scoped_refptr<FrameResource>());
+  MOCK_CONST_METHOD0(GetFrameStorageType, VideoFrame::StorageType());
   MOCK_METHOD0(IsExhausted, bool());
   MOCK_METHOD1(NotifyWhenFrameAvailable, void(base::OnceClosure));
   MOCK_METHOD0(ReleaseAllFrames, void());
-  MOCK_METHOD0(GetGpuBufferLayout, absl::optional<GpuBufferLayout>());
+  MOCK_METHOD0(GetGpuBufferLayout, std::optional<GpuBufferLayout>());
 
   bool IsFakeVideoFramePool() override { return true; }
 };
@@ -87,7 +117,7 @@ class MockDecoder : public VideoDecoderMixin {
                     bool,
                     CdmContext*,
                     InitCB,
-                    const OutputCB&,
+                    const PipelineOutputCB&,
                     const WaitingCB&));
   MOCK_METHOD2(Decode, void(scoped_refptr<DecoderBuffer>, DecodeCB));
   MOCK_METHOD1(Reset, void(base::OnceClosure));
@@ -98,7 +128,7 @@ class MockDecoder : public VideoDecoderMixin {
   MOCK_CONST_METHOD0(GetDecoderType, VideoDecoderType());
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 constexpr uint8_t kEncryptedData[] = {1, 8, 9};
 constexpr uint8_t kTranscryptedData[] = {9, 2, 4};
 constexpr uint64_t kFakeSecureHandle = 75;
@@ -143,7 +173,7 @@ class FakeCdmContextRef : public CdmContextRef {
  private:
   raw_ptr<CdmContext> cdm_context_;
 };
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class MockImageProcessor : public ImageProcessor {
  public:
@@ -194,9 +224,11 @@ class VideoDecoderPipelineTest
     auto pool = std::make_unique<MockVideoFramePool>();
     pool_ = pool.get();
     decoder_ = base::WrapUnique(new VideoDecoderPipeline(
+        VideoDecoderPipeline::DecoderReservation::Take(
+            std::numeric_limits<int>::max()),
         gpu::GpuDriverBugWorkarounds(),
         base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(pool),
-        /*frame_converter=*/nullptr,
+        FakeFrameResourceConverter::Create(),
         VideoDecoderPipeline::DefaultPreferredRenderableFourccs(),
         std::make_unique<MockMediaLog>(),
         // This callback needs to be configured in the individual tests.
@@ -204,16 +236,19 @@ class VideoDecoderPipelineTest
         /*uses_oop_video_decoder=*/false,
         /*in_video_decoder_process=*/true));
 
-    SetSupportedVideoDecoderConfigs({SupportedVideoDecoderConfig(
-        /*profile_min,=*/VP8PROFILE_ANY,
-        /*profile_max=*/VP8PROFILE_ANY, kMinSupportedResolution,
-        kMaxSupportedResolution,
-        /*allow_encrypted=*/true,
-        /*require_encrypted=*/false)});
+    SetSupportedVideoDecoderConfigs({
+        SupportedVideoDecoderConfig(
+            /*profile_min,=*/VP8PROFILE_ANY,
+            /*profile_max=*/VP9PROFILE_PROFILE0, kMinSupportedResolution,
+            kMaxSupportedResolution,
+            /*allow_encrypted=*/true,
+            /*require_encrypted=*/false),
+    });
   }
   ~VideoDecoderPipelineTest() override = default;
 
   void TearDown() override {
+    pool_ = nullptr;
     VideoDecoderPipeline::DestroyAsync(std::move(decoder_));
     task_environment_.RunUntilIdle();
   }
@@ -258,9 +293,16 @@ class VideoDecoderPipelineTest
     testing::Mock::VerifyAndClearExpectations(this);
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  void InitializeForTranscrypt() {
+#if BUILDFLAG(IS_CHROMEOS)
+  void InitializeForTranscrypt(bool vp9 = false) {
     decoder_->allow_encrypted_content_for_testing_ = true;
+    if (vp9) {
+      config_ = VideoDecoderConfig(
+          VideoCodec::kVP9, VP9PROFILE_PROFILE0,
+          VideoDecoderConfig::AlphaMode::kIsOpaque, VideoColorSpace(),
+          kNoTransformation, kCodedSize, gfx::Rect(kCodedSize), kCodedSize,
+          EmptyExtraData(), EncryptionScheme::kCenc);
+    }
     EXPECT_CALL(cdm_context_, GetChromeOsCdmContext())
         .WillRepeatedly(Return(&chromeos_cdm_context_));
     EXPECT_CALL(cdm_context_, RegisterEventCB(_))
@@ -281,12 +323,10 @@ class VideoDecoderPipelineTest
     // GetDecryptor() will be called again, so set that expectation.
     EXPECT_CALL(cdm_context_, GetDecryptor())
         .WillRepeatedly(Return(&decryptor_));
-    encrypted_buffer_ =
-        DecoderBuffer::CopyFrom(kEncryptedData, std::size(kEncryptedData));
-    transcrypted_buffer_ = DecoderBuffer::CopyFrom(
-        kTranscryptedData, std::size(kTranscryptedData));
+    encrypted_buffer_ = DecoderBuffer::CopyFrom(kEncryptedData);
+    transcrypted_buffer_ = DecoderBuffer::CopyFrom(kTranscryptedData);
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   static std::unique_ptr<VideoDecoderMixin> CreateNullMockDecoder(
       std::unique_ptr<MediaLog> /* media_log */,
@@ -381,16 +421,16 @@ class VideoDecoderPipelineTest
   }
 
   base::test::TaskEnvironment task_environment_;
-  const VideoDecoderConfig config_;
+  VideoDecoderConfig config_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   MockCdmContext cdm_context_;  // Keep this before |decoder_|.
   MockChromeOsCdmContext chromeos_cdm_context_;
   StrictMock<MockDecryptor> decryptor_;
   scoped_refptr<DecoderBuffer> encrypted_buffer_;
   scoped_refptr<DecoderBuffer> transcrypted_buffer_;
   media::CallbackRegistry<CdmContext::EventCB::RunType> event_callbacks_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<VideoDecoderPipeline> decoder_;
   raw_ptr<MockVideoFramePool> pool_;
 };
@@ -415,7 +455,7 @@ const struct DecoderPipelineTestParams kDecoderPipelineTestParams[] = {
     {base::BindRepeating(&VideoDecoderPipelineTest::CreateGoodMockDecoder),
      DecoderStatus::Codes::kOk},
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // A CreateDecoderFunctionCB for transcryption, where Create() is ok, and
     // the decoder will Initialize OK, but then the pipeline will not create the
     // transcryptor due to a missing CdmContext. This will succeed if called
@@ -423,7 +463,7 @@ const struct DecoderPipelineTestParams kDecoderPipelineTestParams[] = {
     {base::BindRepeating(
          &VideoDecoderPipelineTest::CreateGoodMockTranscryptDecoder),
      DecoderStatus::Codes::kUnsupportedEncryptionMode},
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
     // A CreateDecoderFunctionCB that Create()s ok but fails to Initialize()
     // correctly.
@@ -475,7 +515,7 @@ TEST_F(VideoDecoderPipelineTest, Reset) {
                                  base::Unretained(this)));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(VideoDecoderPipelineTest, TranscryptThenEos) {
   InitializeForTranscrypt();
 
@@ -531,8 +571,8 @@ TEST_F(VideoDecoderPipelineTest, TranscryptThenEos) {
 
 TEST_F(VideoDecoderPipelineTest, TranscryptReset) {
   InitializeForTranscrypt();
-  scoped_refptr<DecoderBuffer> encrypted_buffer2 = DecoderBuffer::CopyFrom(
-      &kEncryptedData[1], std::size(kEncryptedData) - 1);
+  scoped_refptr<DecoderBuffer> encrypted_buffer2 =
+      DecoderBuffer::CopyFrom(base::span(kEncryptedData).subspan<1>());
   // Send in a buffer, but don't invoke the Decrypt callback so it stays as
   // pending. Then send in 2 more buffers so they are in the queue.
   {
@@ -860,7 +900,193 @@ TEST_F(VideoDecoderPipelineTest, SecureBufferFailure) {
                                   base::Unretained(this)));
   task_environment_.RunUntilIdle();
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(USE_V4L2_CODEC)
+TEST_F(VideoDecoderPipelineTest, SplitVp9Superframe) {
+  InitializeForTranscrypt(true);
+
+  // This one requires specially crafted DecoderBuffer data so that the frame
+  // split occurs. The superframe (which contains 2 frames) gets sent into the
+  // pipeline for decoding, it then goes into the transcryptor...but then before
+  // it gets sent for decrypt + decode it should get split into the 2 separate
+  // frames.
+
+  constexpr uint8_t kEncryptedSuperframe[] = {
+      // Frame 0
+      // Clear data
+      1,
+      2,
+      3,
+      4,
+      // Encrypted Data (one block to cause IV increment)
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      // Frame 1
+      // Clear data
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      // Encrypted Data (must be at least a block size)
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      // Superframe marker (2 frames, mag 1)
+      0xc1,
+      // Frame sizes (1 byte each)
+      0x14,
+      0x16,
+      // Superframe marker (2 frames, mag 1)
+      0xc1,
+  };
+  constexpr uint8_t kEncryptedFrame0[] = {
+      // Clear data
+      1,
+      2,
+      3,
+      4,
+      // Encrypted Data (one block to cause IV increment)
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+  };
+  constexpr uint8_t kEncryptedFrame1[] = {
+      // Clear data
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      // Encrypted Data (must be at least a block size)
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+  };
+
+  scoped_refptr<DecoderBuffer> superframe_buffer =
+      DecoderBuffer::CopyFrom(kEncryptedSuperframe);
+  superframe_buffer->set_decrypt_config(DecryptConfig::CreateCencConfig(
+      "fakekey", std::string(16, '0'),
+      {SubsampleEntry(4, 16), SubsampleEntry(6, 16), SubsampleEntry(4, 0)}));
+
+  std::string iv(16, '0');
+  scoped_refptr<DecoderBuffer> frame0_buffer =
+      DecoderBuffer::CopyFrom(kEncryptedFrame0);
+  frame0_buffer->set_decrypt_config(
+      DecryptConfig::CreateCencConfig("fakekey", iv, {SubsampleEntry(4, 16)}));
+
+  scoped_refptr<DecoderBuffer> frame1_buffer =
+      DecoderBuffer::CopyFrom(kEncryptedFrame1);
+  // The IV should be incremented by one.
+  iv[15]++;
+  frame1_buffer->set_decrypt_config(
+      DecryptConfig::CreateCencConfig("fakekey", iv, {SubsampleEntry(6, 16)}));
+
+  {
+    InSequence sequence;
+    EXPECT_CALL(*reinterpret_cast<MockDecoder*>(GetUnderlyingDecoder()),
+                AttachSecureBuffer(MatchesDecoderBuffer(frame0_buffer)))
+        .WillOnce(Return(CroStatus::Codes::kOk));
+    EXPECT_CALL(decryptor_, Decrypt(Decryptor::kVideo,
+                                    MatchesDecoderBuffer(frame0_buffer), _))
+        .WillOnce([&frame0_buffer](Decryptor::StreamType stream_type,
+                                   scoped_refptr<DecoderBuffer> encrypted,
+                                   Decryptor::DecryptCB decrypt_cb) {
+          std::move(decrypt_cb).Run(Decryptor::kSuccess, frame0_buffer);
+        });
+    EXPECT_CALL(*reinterpret_cast<MockDecoder*>(GetUnderlyingDecoder()),
+                Decode(MatchesDecoderBuffer(frame0_buffer), _))
+        .WillOnce([](scoped_refptr<DecoderBuffer> transcrypted,
+                     VideoDecoderMixin::DecodeCB decode_cb) {
+          std::move(decode_cb).Run(DecoderStatus::Codes::kOk);
+        });
+    EXPECT_CALL(*reinterpret_cast<MockDecoder*>(GetUnderlyingDecoder()),
+                AttachSecureBuffer(MatchesDecoderBuffer(frame1_buffer)))
+        .WillOnce(Return(CroStatus::Codes::kOk));
+    EXPECT_CALL(decryptor_, Decrypt(Decryptor::kVideo,
+                                    MatchesDecoderBuffer(frame1_buffer), _))
+        .WillOnce([&frame1_buffer](Decryptor::StreamType stream_type,
+                                   scoped_refptr<DecoderBuffer> encrypted,
+                                   Decryptor::DecryptCB decrypt_cb) {
+          std::move(decrypt_cb).Run(Decryptor::kSuccess, frame1_buffer);
+        });
+    EXPECT_CALL(*reinterpret_cast<MockDecoder*>(GetUnderlyingDecoder()),
+                Decode(MatchesDecoderBuffer(frame1_buffer), _))
+        .WillOnce([](scoped_refptr<DecoderBuffer> transcrypted,
+                     VideoDecoderMixin::DecodeCB decode_cb) {
+          std::move(decode_cb).Run(DecoderStatus::Codes::kOk);
+        });
+    EXPECT_CALL(*this,
+                OnDecodeDone(MatchesStatusCode(DecoderStatus::Codes::kOk)));
+  }
+  decoder_->Decode(std::move(superframe_buffer),
+                   base::BindOnce(&VideoDecoderPipelineTest::OnDecodeDone,
+                                  base::Unretained(this)));
+  task_environment_.RunUntilIdle();
+
+  testing::Mock::VerifyAndClearExpectations(&decryptor_);
+  testing::Mock::VerifyAndClearExpectations(
+      reinterpret_cast<MockDecoder*>(GetUnderlyingDecoder()));
+  testing::Mock::VerifyAndClearExpectations(this);
+}
+#endif  // BUILDFLAG(USE_V4L2_CODEC)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Verifies the algorithm for choosing formats in PickDecoderOutputFormat works
 // as expected.
@@ -922,9 +1148,9 @@ TEST_F(VideoDecoderPipelineTest, PickDecoderOutputFormat) {
     auto status_or_chosen_candidate = decoder_->PickDecoderOutputFormat(
         test_vector.input_candidates, kVisibleRect,
         /*decoder_natural_size=*/kVisibleRect.size(),
-        /*output_size=*/absl::nullopt,
+        /*output_size=*/std::nullopt,
         /*num_codec_reference_frames=*/kNumCodecReferenceFrames,
-        /*use_protected=*/false, /*need_aux_frame_pool=*/false, absl::nullopt);
+        /*use_protected=*/false, /*need_aux_frame_pool=*/false, std::nullopt);
     ASSERT_TRUE(status_or_chosen_candidate.has_value());
     const PixelLayoutCandidate chosen_candidate =
         std::move(status_or_chosen_candidate).value();
@@ -938,10 +1164,9 @@ TEST_F(VideoDecoderPipelineTest, PickDecoderOutputFormat) {
   DetachDecoderSequenceChecker();
 }
 
-// These tests only work on non-linux and non-lacros vaapi systems, since on
-// linux and lacros there is no support for different modifiers.
-#if BUILDFLAG(USE_VAAPI) && !BUILDFLAG(IS_LINUX) && \
-    !BUILDFLAG(IS_CHROMEOS_LACROS)
+// These tests only work on non-linux vaapi systems, since on linux there is no
+// support for different modifiers.
+#if BUILDFLAG(USE_VAAPI) && !BUILDFLAG(IS_LINUX)
 
 // Verifies the algorithm for choosing formats in PickDecoderOutputFormat works
 // as expected when the pool returns linear buffers. It should allocate an image
@@ -981,9 +1206,9 @@ TEST_F(VideoDecoderPipelineTest, PickDecoderOutputFormatLinearModifier) {
   auto status_or_chosen_candidate = decoder_->PickDecoderOutputFormat(
       {candidate}, kVisibleRect,
       /*decoder_natural_size=*/kVisibleRect.size(),
-      /*output_size=*/absl::nullopt,
+      /*output_size=*/std::nullopt,
       /*num_codec_reference_frames=*/kNumCodecReferenceFrames,
-      /*use_protected=*/false, /*need_aux_frame_pool=*/false, absl::nullopt);
+      /*use_protected=*/false, /*need_aux_frame_pool=*/false, std::nullopt);
 
   EXPECT_TRUE(status_or_chosen_candidate.has_value());
   // Main concern is that the image processor was set.
@@ -1015,17 +1240,16 @@ TEST_F(VideoDecoderPipelineTest, PickDecoderOutputFormatUnsupportedModifier) {
   auto status_or_chosen_candidate = decoder_->PickDecoderOutputFormat(
       {candidate}, kVisibleRect,
       /*decoder_natural_size=*/kVisibleRect.size(),
-      /*output_size=*/absl::nullopt,
+      /*output_size=*/std::nullopt,
       /*num_codec_reference_frames=*/kNumCodecReferenceFrames,
-      /*use_protected=*/false, /*need_aux_frame_pool=*/false, absl::nullopt);
+      /*use_protected=*/false, /*need_aux_frame_pool=*/false, std::nullopt);
 
   EXPECT_FALSE(status_or_chosen_candidate.has_value());
   EXPECT_FALSE(DecoderHasImageProcessor());
   DetachDecoderSequenceChecker();
 }
 
-#endif  // BUILDFLAG(USE_VAAPI) && !BUILDFLAG(IS_LINUX) &&
-        // !BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(USE_VAAPI) && !BUILDFLAG(IS_LINUX)
 
 // Verifies that ReleaseAllFrames is called on the frame pool when we receive
 // the kDecoderStateLost event through the waiting callback. This can occur

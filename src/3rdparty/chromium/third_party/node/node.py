@@ -9,31 +9,20 @@ import subprocess
 import sys
 import os
 
-def which(cmd):
-    pathenv = os.getenv('PATH')
-    for p in pathenv.split(os_path.pathsep):
-        p = os_path.join(p, cmd)
-        if os_path.exists(p) and os.access(p, os.X_OK):
-            return p
-    return None
-
 def GetBinaryPath():
-  if sys.platform == 'win32':
-    nodejs = which('node.exe')
-    if nodejs:
-      return nodejs
-  else:
-    nodejs = which('nodejs')
-    if nodejs:
-      return nodejs
-    nodejs = which('node')
-    if nodejs:
-      return nodejs
+  # qtwebengine: This is set with cmake -E env when calling ninja.
+  node_path = os.getenv('NODEJS_EXECUTABLE')
+  assert node_path, "NODEJS_EXECUTABLE must be set to the nodejs executable"
+  return node_path
 
-  darwin_name = ('node-darwin-arm64' if platform.machine() == 'arm64' else
-                 'node-darwin-x64')
+  if platform.machine() == 'arm64':
+    darwin_path = 'mac_arm64'
+    darwin_name = 'node-darwin-arm64'
+  else:
+    darwin_path = 'mac'
+    darwin_name = 'node-darwin-x64'
   return os_path.join(os_path.dirname(__file__), *{
-    'Darwin': ('mac', darwin_name, 'bin', 'node'),
+    'Darwin': (darwin_path, darwin_name, 'bin', 'node'),
     'Linux': ('linux', 'node-linux-x64', 'bin', 'node'),
     'Windows': ('win', 'node.exe'),
   }[platform.system()])
@@ -43,7 +32,7 @@ def RunNode(cmd_parts, stdout=None):
   cmd = [GetBinaryPath()] + cmd_parts
   process = subprocess.Popen(
       cmd, cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-      universal_newlines=True)
+      universal_newlines=True, encoding='utf-8')
   stdout, stderr = process.communicate()
 
   if process.returncode != 0:

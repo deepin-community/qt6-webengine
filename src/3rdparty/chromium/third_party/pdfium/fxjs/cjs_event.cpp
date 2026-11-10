@@ -91,9 +91,9 @@ CJS_Result CJS_Event::set_commit_key(CJS_Runtime* pRuntime,
 
 CJS_Result CJS_Event::get_field_full(CJS_Runtime* pRuntime) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Name() != "Keystroke")
-    return CJS_Result::Failure(L"unrecognized event");
-
+  if (pEvent->Name() != "Keystroke") {
+    return CJS_Result::Failure(WideString::FromASCII("unrecognized event"));
+  }
   return CJS_Result::Success(pRuntime->NewBoolean(pEvent->FieldFull()));
 }
 
@@ -171,8 +171,9 @@ CJS_Result CJS_Event::set_rich_value(CJS_Runtime* pRuntime,
 
 CJS_Result CJS_Event::get_sel_end(CJS_Runtime* pRuntime) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Name() != "Keystroke")
+  if (pEvent->Name() != "Keystroke") {
     return CJS_Result::Success();
+  }
 
   return CJS_Result::Success(pRuntime->NewNumber(pEvent->SelEnd()));
 }
@@ -180,16 +181,18 @@ CJS_Result CJS_Event::get_sel_end(CJS_Runtime* pRuntime) {
 CJS_Result CJS_Event::set_sel_end(CJS_Runtime* pRuntime,
                                   v8::Local<v8::Value> vp) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Name() == "Keystroke")
+  if (pEvent->Name() == "Keystroke") {
     pEvent->SetSelEnd(pRuntime->ToInt32(vp));
+  }
 
   return CJS_Result::Success();
 }
 
 CJS_Result CJS_Event::get_sel_start(CJS_Runtime* pRuntime) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Name() != "Keystroke")
+  if (pEvent->Name() != "Keystroke") {
     return CJS_Result::Success();
+  }
 
   return CJS_Result::Success(pRuntime->NewNumber(pEvent->SelStart()));
 }
@@ -197,8 +200,9 @@ CJS_Result CJS_Event::get_sel_start(CJS_Runtime* pRuntime) {
 CJS_Result CJS_Event::set_sel_start(CJS_Runtime* pRuntime,
                                     v8::Local<v8::Value> vp) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Name() == "Keystroke")
+  if (pEvent->Name() == "Keystroke") {
     pEvent->SetSelStart(pRuntime->ToInt32(vp));
+  }
 
   return CJS_Result::Success();
 }
@@ -215,8 +219,9 @@ CJS_Result CJS_Event::set_shift(CJS_Runtime* pRuntime,
 
 CJS_Result CJS_Event::get_source(CJS_Runtime* pRuntime) {
   CJS_Field* pField = pRuntime->GetCurrentEventContext()->SourceField();
-  if (!pField)
+  if (!pField) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
+  }
   return CJS_Result::Success(pField->ToV8Object());
 }
 
@@ -227,8 +232,9 @@ CJS_Result CJS_Event::set_source(CJS_Runtime* pRuntime,
 
 CJS_Result CJS_Event::get_target(CJS_Runtime* pRuntime) {
   CJS_Field* pField = pRuntime->GetCurrentEventContext()->TargetField();
-  if (!pField)
+  if (!pField) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
+  }
   return CJS_Result::Success(pField->ToV8Object());
 }
 
@@ -259,12 +265,12 @@ CJS_Result CJS_Event::set_type(CJS_Runtime* pRuntime, v8::Local<v8::Value> vp) {
 
 CJS_Result CJS_Event::get_value(CJS_Runtime* pRuntime) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Type() != "Field")
-    return CJS_Result::Failure(L"Bad event type.");
-
-  if (!pEvent->HasValue())
+  if (pEvent->Type() != "Field") {
+    return CJS_Result::Failure(WideString::FromASCII("Bad event type."));
+  }
+  if (!pEvent->HasValue()) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
-
+  }
   return CJS_Result::Success(
       pRuntime->NewString(pEvent->Value().AsStringView()));
 }
@@ -272,18 +278,18 @@ CJS_Result CJS_Event::get_value(CJS_Runtime* pRuntime) {
 CJS_Result CJS_Event::set_value(CJS_Runtime* pRuntime,
                                 v8::Local<v8::Value> vp) {
   CJS_EventContext* pEvent = pRuntime->GetCurrentEventContext();
-  if (pEvent->Type() != "Field")
-    return CJS_Result::Failure(L"Bad event type.");
-
-  if (!pEvent->HasValue())
+  if (pEvent->Type() != "Field") {
+    return CJS_Result::Failure(WideString::FromASCII("Bad event type."));
+  }
+  if (!pEvent->HasValue()) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
-
-  if (vp.IsEmpty())
+  }
+  if (vp.IsEmpty()) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
-
-  if (vp->IsNullOrUndefined() || vp->IsBoolean())
+  }
+  if (vp->IsNullOrUndefined() || vp->IsBoolean()) {
     return CJS_Result::Failure(JSMessage::kInvalidSetError);
-
+  }
   pEvent->Value() = pRuntime->ToWideString(vp);
   return CJS_Result::Success();
 }

@@ -9,13 +9,15 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/lazy_instance.h"
 #include "base/location.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -48,8 +50,10 @@ using content::BrowserThread;
 
 namespace {
 
-base::LazyInstance<GURL>::Leaky g_download_url_for_testing =
-    LAZY_INSTANCE_INITIALIZER;
+GURL& GetDownloadUrlForTesting() {
+  static base::NoDestructor<GURL> download_url_for_testing;
+  return *download_url_for_testing;
+}
 
 // Close the file.
 void CloseDictionary(base::File file) {
@@ -164,7 +168,6 @@ void SpellcheckHunspellDictionary::RetryDownloadDictionary(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (dictionary_file_.file.IsValid()) {
     NOTREACHED();
-    return;
   }
   browser_context_ = browser_context;
   DownloadDictionary(GetDictionaryURL());
@@ -247,7 +250,7 @@ void SpellcheckHunspellDictionary::OnSimpleLoaderComplete(
 #if !BUILDFLAG(IS_ANDROID)
   // To prevent corrupted dictionary data from causing a renderer crash, scan
   // the dictionary data and verify it is sane before save it to a file.
-  if (!hunspell::BDict::Verify(data->data(), data->size())) {
+  if (!hunspell::BDict::Verify(base::as_byte_span(*data))) {
     // Let PostTaskAndReply caller send to InformListenersOfInitialization
     // through SaveDictionaryDataComplete().
     SaveDictionaryDataComplete(false);
@@ -264,12 +267,13 @@ void SpellcheckHunspellDictionary::OnSimpleLoaderComplete(
 }
 
 void SpellcheckHunspellDictionary::SetDownloadURLForTesting(const GURL url) {
-  g_download_url_for_testing.Get() = url;
+  GetDownloadUrlForTesting() = url;
 }
 
 GURL SpellcheckHunspellDictionary::GetDictionaryURL() {
-  if (g_download_url_for_testing.Get() != GURL())
-    return g_download_url_for_testing.Get();
+  if (GetDownloadUrlForTesting() != GURL()) {
+    return GetDownloadUrlForTesting();
+  }
 
   std::string bdict_file = dictionary_file_.path.BaseName().MaybeAsASCII();
   DCHECK(!bdict_file.empty());
@@ -361,24 +365,23 @@ SpellcheckHunspellDictionary::OpenDictionaryFile(base::TaskRunner* task_runner,
   dictionary.path = path;
 #endif  // BUILDFLAG(IS_WIN)
 
-  // Read the dictionary file and scan its data to check for corruption. The
-  // scoping closes the memory-mapped file before it is opened or deleted.
-  bool bdict_is_valid = false;
+  // Open the dictionary file and verify there is no corruption. If verification
+  // fails the file must be deleted.
 
-  {
-    base::MemoryMappedFile map;
-    bdict_is_valid =
-        base::PathExists(dictionary.path) &&
-        map.Initialize(dictionary.path) &&
-        hunspell::BDict::Verify(reinterpret_cast<const char*>(map.data()),
-                                map.length());
+  dictionary.file.Initialize(dictionary.path,
+                             base::File::FLAG_READ | base::File::FLAG_OPEN);
+  if (!dictionary.file.IsValid()) {
+    dictionary.file.Close();
+    base::DeleteFile(dictionary.path);
+    return dictionary;
   }
 
-  if (bdict_is_valid) {
-    dictionary.file.Initialize(dictionary.path,
-                               base::File::FLAG_READ | base::File::FLAG_OPEN);
-  } else {
+  std::vector<uint8_t> data;
+  data.resize(dictionary.file.GetLength());
+  if (!dictionary.file.ReadAndCheck(0, data) ||
+      !hunspell::BDict::Verify(data)) {
 #if !BUILDFLAG(IS_QTWEBENGINE)
+    dictionary.file.Close();
     base::DeleteFile(dictionary.path);
 #endif
   }

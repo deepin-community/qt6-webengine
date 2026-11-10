@@ -5,6 +5,8 @@
 #include "src/compiler/js-graph.h"
 
 #include "src/codegen/code-factory.h"
+#include "src/compiler/heap-refs.h"
+#include "src/compiler/js-heap-broker.h"
 #include "src/objects/objects-inl.h"
 
 namespace v8 {
@@ -52,6 +54,9 @@ Node* JSGraph::ConstantNoHole(ObjectRef ref, JSHeapBroker* broker) {
   CHECK(ref.IsSmi() || ref.IsHeapNumber() ||
         ref.AsHeapObject().GetHeapObjectType(broker).hole_type() ==
             HoleType::kNone);
+  if (ref.IsString()) {
+    ref = ref.AsString().UnpackIfThin(broker);
+  }
   return Constant(ref, broker);
 }
 
@@ -60,9 +65,9 @@ Node* JSGraph::ConstantMaybeHole(ObjectRef ref, JSHeapBroker* broker) {
 }
 
 Node* JSGraph::Constant(ObjectRef ref, JSHeapBroker* broker) {
-  if (ref.IsSmi()) return Constant(ref.AsSmi());
+  if (ref.IsSmi()) return ConstantMaybeHole(ref.AsSmi());
   if (ref.IsHeapNumber()) {
-    return Constant(ref.AsHeapNumber().value());
+    return ConstantMaybeHole(ref.AsHeapNumber().value());
   }
 
   switch (ref.AsHeapObject().GetHeapObjectType(broker).hole_type()) {
@@ -87,6 +92,7 @@ Node* JSGraph::Constant(ObjectRef ref, JSHeapBroker* broker) {
     case HoleType::kArgumentsMarker:
     case HoleType::kSelfReferenceMarker:
     case HoleType::kBasicBlockCountersMarker:
+    case HoleType::kUndefinedContextCell:
       UNREACHABLE();
   }
 
@@ -111,12 +117,17 @@ Node* JSGraph::Constant(ObjectRef ref, JSHeapBroker* broker) {
   }
 }
 
-Node* JSGraph::ConstantNoHole(double value) {
-  CHECK(value != (double)kHoleNanInt64);
-  return Constant(value);
+Node* JSGraph::ConstantMutableHeapNumber(HeapNumberRef ref,
+                                         JSHeapBroker* broker) {
+  return HeapConstantNoHole(ref.AsHeapObject().object());
 }
 
-Node* JSGraph::Constant(double value) {
+Node* JSGraph::ConstantNoHole(double value) {
+  CHECK_NE(base::bit_cast<uint64_t>(value), kHoleNanInt64);
+  return ConstantMaybeHole(value);
+}
+
+Node* JSGraph::ConstantMaybeHole(double value) {
   if (base::bit_cast<int64_t>(value) == base::bit_cast<int64_t>(0.0))
     return ZeroConstant();
   if (base::bit_cast<int64_t>(value) == base::bit_cast<int64_t>(1.0))
@@ -156,6 +167,14 @@ Node* JSGraph::HeapConstantHole(Handle<HeapObject> value) {
     *loc = graph()->NewNode(common()->HeapConstant(value));
   }
   return *loc;
+}
+
+Node* JSGraph::TrustedHeapConstant(Handle<HeapObject> value) {
+  DCHECK(IsTrustedObject(*value));
+  // TODO(pthier): Consider also caching trusted constants. Right now they are
+  // only used for RegExp data as part of RegExp literals and it should be
+  // uncommon for the same literal to appear multiple times.
+  return graph()->NewNode(common()->TrustedHeapConstant(value));
 }
 
 void JSGraph::GetCachedNodes(NodeVector* nodes) {
@@ -277,6 +296,9 @@ DEFINE_GETTER(
 
 DEFINE_GETTER(ExternalObjectMapConstant, Map,
               HeapConstantNoHole(factory()->external_map()))
+
+DEFINE_GETTER(ContextCellMapConstant, Map,
+              HeapConstantNoHole(factory()->context_cell_map()))
 
 #undef DEFINE_GETTER
 #undef GET_CACHED_FIELD

@@ -171,10 +171,11 @@ void PermissionServiceContext::CreateServiceForWorker(
 }
 
 void PermissionServiceContext::CreateSubscription(
-    blink::PermissionType permission_type,
+    const blink::mojom::PermissionDescriptorPtr& permission,
     const url::Origin& origin,
     PermissionStatus current_status,
     PermissionStatus last_known_status,
+    bool should_include_device_status,
     mojo::PendingRemote<blink::mojom::PermissionObserver> observer) {
   BrowserContext* browser_context = GetBrowserContext();
   if (!browser_context) {
@@ -198,8 +199,9 @@ void PermissionServiceContext::CreateSubscription(
   auto subscription_id =
       PermissionControllerImpl::FromBrowserContext(browser_context)
           ->SubscribeToPermissionStatusChange(
-              permission_type, render_process_host_, render_frame_host_,
-              requesting_origin,
+              blink::PermissionDescriptorToPermissionType(permission),
+              render_process_host_, render_frame_host_, requesting_origin,
+              should_include_device_status,
               base::BindRepeating(
                   &PermissionSubscription::OnPermissionStatusChanged,
                   subscription->GetWeakPtr()));
@@ -223,10 +225,15 @@ BrowserContext* PermissionServiceContext::GetBrowserContext() const {
   return nullptr;
 }
 
-GURL PermissionServiceContext::GetEmbeddingOrigin() const {
-  return render_frame_host_ ? PermissionUtil::GetLastCommittedOriginAsURL(
-                                  render_frame_host_->GetMainFrame())
-                            : GURL();
+std::optional<GURL> PermissionServiceContext::GetEmbeddingOrigin() const {
+  if (render_frame_host_) {
+    GURL origin_as_url(PermissionUtil::GetLastCommittedOriginAsURL(
+        render_frame_host_->GetMainFrame()));
+    if (!origin_as_url.is_empty()) {
+      return origin_as_url;
+    }
+  }
+  return std::nullopt;
 }
 
 void PermissionServiceContext::RenderProcessHostDestroyed(

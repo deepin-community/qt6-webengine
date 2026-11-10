@@ -3,7 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/chrome_build.gni")
-import("//build/config/chromeos/ui_mode.gni")
+
+assert(!is_fuchsia, "Fuchsia shouldn't use anything in //chrome")
 
 source_set("google") {
   sources = [
@@ -11,14 +12,16 @@ source_set("google") {
     "google_brand.h",
   ]
 
+  public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+
   deps = [
     "//base",
     "//chrome/common:constants",
-    "//components/prefs:prefs",
+    "//components/prefs",
     "//content/public/browser",
   ]
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [
       "google_brand_chromeos.cc",
       "google_brand_chromeos.h",
@@ -28,7 +31,8 @@ source_set("google") {
 
     deps += [
       "//chrome/browser:browser_process",
-      "//chromeos/ash/components/system:system",
+      "//chrome/browser/ash/policy/core",
+      "//chromeos/ash/components/system",
       "//components/policy/core/common:common_constants",
     ]
   }
@@ -37,6 +41,8 @@ source_set("google") {
     sources += [
       "did_run_updater_win.cc",
       "did_run_updater_win.h",
+      "google_update_app_command.cc",
+      "google_update_app_command.h",
     ]
     if (is_chrome_branded) {
       sources += [
@@ -49,8 +55,6 @@ source_set("google") {
         "switches.cc",
         "switches.h",
       ]
-
-      deps += [ "//chrome/updater/app/server/win:updater_legacy_idl" ]
     }
 
     deps += [
@@ -58,6 +62,7 @@ source_set("google") {
       "//chrome/common",
       "//chrome/install_static:install_static_util",
       "//chrome/installer/util:with_no_strings",
+      "//chrome/updater/app/server/win:updater_legacy_idl",
       "//components/policy/core/browser",
       "//components/policy/core/common",
     ]
@@ -65,10 +70,13 @@ source_set("google") {
 
   if (is_mac) {
     sources += [ "google_brand_mac.mm" ]
-    deps += [ "//chrome/common:channel_info" ]
+    deps += [
+      "//chrome/common:channel_info",
+      "//chrome/updater:tagging",
+    ]
   }
 
-  if (is_posix || is_fuchsia) {
+  if (is_posix) {
     sources += [ "google_update_settings_posix.cc" ]
   }
   if (is_posix) {
@@ -88,10 +96,10 @@ source_set("unit_tests") {
     "//chrome/common:constants",
     "//chrome/installer/util:with_no_strings",
     "//content/test:test_support",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
   ]
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [ "google_brand_code_map_chromeos_unittest.cc" ]
   }
 

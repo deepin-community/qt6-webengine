@@ -34,6 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include "partition_alloc/pointers/raw_ptr.h"
+
 namespace dawn::native {
 
 // Blob represents a block of bytes. It may be constructed from
@@ -54,29 +56,31 @@ class Blob {
     Blob(Blob&&);
     Blob& operator=(Blob&&);
 
+    void Shrink(size_t extent);
+
     bool Empty() const;
     const uint8_t* Data() const;
     uint8_t* Data();
     size_t Size() const;
 
-    // If the blob data is not aligned to |alignment|, copy it into a new backing store which
-    // is aligned.
-    void AlignTo(size_t alignment);
+    bool operator==(const Blob& other) const;
 
   private:
     // The constructor should be responsible to take ownership of |data| and releases ownership by
     // calling |deleter|. The deleter function is called at ~Blob() and during std::move.
     explicit Blob(uint8_t* data, size_t size, std::function<void()> deleter);
 
-    uint8_t* mData;
+    raw_ptr<uint8_t> mData;
     size_t mSize;
     std::function<void()> mDeleter;
 };
 
-Blob CreateBlob(size_t size, size_t alignment = 1);
+Blob CreateBlob(size_t size);
 
-template <typename T, typename = std::enable_if_t<std::is_fundamental_v<T>>>
-Blob CreateBlob(std::vector<T> vec) {
+template <typename T>
+Blob CreateBlob(std::vector<T> vec)
+    requires std::is_fundamental_v<T>
+{
     uint8_t* data = reinterpret_cast<uint8_t*>(vec.data());
     size_t size = vec.size() * sizeof(T);
     // Move the vector into a new allocation so we can destruct it in the deleter.

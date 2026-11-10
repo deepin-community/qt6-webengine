@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-vtanh/avx-polynomial.c.in
 //   Generator: tools/xngen
@@ -9,41 +10,50 @@
 
 #include <assert.h>
 #include <stddef.h>
-#include <math.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <immintrin.h>
-
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/microparams.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f16_vtanh_ukernel__fma3_polynomial_p19h9t2_u8(
     size_t batch,
-    const void* input,
-    void* output,
-    const union xnn_f16_tanh_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const xnn_float16* input,
+    xnn_float16* output,
+    const struct xnn_f16_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-
-  const __m256 vneg_sat_cutoff = _mm256_load_ps(params->avx_polynomial_p19h9t2.neg_sat_cutoff);
-  const __m256 vpos_sat_cutoff = _mm256_load_ps(params->avx_polynomial_p19h9t2.pos_sat_cutoff);
-  const __m256 vc19 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c19);
-  const __m256 vc17 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c17);
-  const __m256 vc15 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c15);
-  const __m256 vc13 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c13);
-  const __m256 vc11 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c11);
-  const __m256 vc9 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c9);
-  const __m256 vc7 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c7);
-  const __m256 vc5 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c5);
-  const __m256 vc3 = _mm256_load_ps(params->avx_polynomial_p19h9t2.c3);
+  const __m256 vneg_sat_cutoff = _mm256_set1_ps(-0x1.1F0000p+2f);
+  const __m256 vpos_sat_cutoff = _mm256_set1_ps(0x1.1F0000p+2f);
+  XNN_FORCE_REALIZATION(vneg_sat_cutoff);
+  XNN_FORCE_REALIZATION(vpos_sat_cutoff);
+  const __m256 vc19 = _mm256_set1_ps(-0x1.1D841Cp-32f);
+  XNN_FORCE_REALIZATION(vc19);
+  const __m256 vc17 = _mm256_set1_ps(0x1.C4FC88p-26f);
+  XNN_FORCE_REALIZATION(vc17);
+  const __m256 vc15 = _mm256_set1_ps(-0x1.332066p-20f);
+  XNN_FORCE_REALIZATION(vc15);
+  const __m256 vc13 = _mm256_set1_ps(0x1.D1AEA2p-16f);
+  XNN_FORCE_REALIZATION(vc13);
+  const __m256 vc11 = _mm256_set1_ps(-0x1.B2782Ep-12f);
+  XNN_FORCE_REALIZATION(vc11);
+  const __m256 vc9 = _mm256_set1_ps(0x1.03CAEAp-8f);
+  XNN_FORCE_REALIZATION(vc9);
+  const __m256 vc7 = _mm256_set1_ps(-0x1.967628p-6f);
+  XNN_FORCE_REALIZATION(vc7);
+  const __m256 vc5 = _mm256_set1_ps(0x1.ABC35Cp-4f);
+  XNN_FORCE_REALIZATION(vc5);
+  const __m256 vc3 = _mm256_set1_ps(-0x1.499D08p-2f);
+  XNN_FORCE_REALIZATION(vc3);
 
   const uint16_t* i = (const uint16_t*) input;
   uint16_t* o = (uint16_t*) output;

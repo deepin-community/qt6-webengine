@@ -43,13 +43,7 @@ egl::Error DeviceEGL::initialize()
 egl::Error DeviceEGL::getAttribute(const egl::Display *display, EGLint attribute, void **outValue)
 {
     UNREACHABLE();
-    return egl::EglBadAttribute();
-}
-
-EGLint DeviceEGL::getType()
-{
-    UNREACHABLE();
-    return EGL_NONE;
+    return egl::Error(EGL_BAD_ATTRIBUTE);
 }
 
 void DeviceEGL::generateExtensions(egl::DeviceExtensions *outExtensions) const

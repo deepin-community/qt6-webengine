@@ -11,20 +11,30 @@
 #ifndef TEST_PC_E2E_ANALYZER_VIDEO_QUALITY_ANALYZING_VIDEO_ENCODER_H_
 #define TEST_PC_E2E_ANALYZER_VIDEO_QUALITY_ANALYZING_VIDEO_ENCODER_H_
 
+#include <cstdint>
 #include <list>
+#include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "api/environment/environment.h"
+#include "api/fec_controller_override.h"
 #include "api/test/pclf/media_configuration.h"
 #include "api/test/video_quality_analyzer_interface.h"
+#include "api/video/encoded_image.h"
+#include "api/video/video_bitrate_allocation.h"
 #include "api/video/video_frame.h"
+#include "api/video/video_frame_type.h"
 #include "api/video_codecs/sdp_video_format.h"
 #include "api/video_codecs/video_codec.h"
 #include "api/video_codecs/video_encoder.h"
 #include "api/video_codecs/video_encoder_factory.h"
 #include "rtc_base/synchronization/mutex.h"
+#include "rtc_base/thread_annotations.h"
 #include "test/pc/e2e/analyzer/video/encoded_image_data_injector.h"
 
 namespace webrtc {
@@ -51,7 +61,7 @@ class QualityAnalyzingVideoEncoder : public VideoEncoder,
                                      public EncodedImageCallback {
  public:
   using EmulatedSFUConfigMap =
-      std::map<std::string, absl::optional<EmulatedSFUConfig>>;
+      std::map<std::string, std::optional<EmulatedSFUConfig>>;
 
   QualityAnalyzingVideoEncoder(absl::string_view peer_name,
                                std::unique_ptr<VideoEncoder> delegate,
@@ -137,7 +147,7 @@ class QualityAnalyzingVideoEncoder : public VideoEncoder,
   const double bitrate_multiplier_;
   // Contains mapping from stream label to optional spatial index.
   // If we have stream label "Foo" and mapping contains
-  // 1. `absl::nullopt` means all streams are required
+  // 1. `std::nullopt` means all streams are required
   // 2. Concrete value means that particular simulcast/SVC stream have to be
   //    analyzed.
   EmulatedSFUConfigMap stream_to_sfu_config_;
@@ -175,9 +185,9 @@ class QualityAnalyzingVideoEncoderFactory : public VideoEncoderFactory {
   std::vector<SdpVideoFormat> GetSupportedFormats() const override;
   VideoEncoderFactory::CodecSupport QueryCodecSupport(
       const SdpVideoFormat& format,
-      absl::optional<std::string> scalability_mode) const override;
-  std::unique_ptr<VideoEncoder> CreateVideoEncoder(
-      const SdpVideoFormat& format) override;
+      std::optional<std::string> scalability_mode) const override;
+  std::unique_ptr<VideoEncoder> Create(const Environment& env,
+                                       const SdpVideoFormat& format) override;
 
  private:
   const std::string peer_name_;

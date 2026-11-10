@@ -32,8 +32,17 @@
 #include <cstring>
 #include <utility>
 
+#include "src/tint/utils/macros/compiler.h"
 #include "src/tint/utils/math/math.h"
 #include "src/tint/utils/memory/bitcast.h"
+
+// This file implements a custom allocator & iterator using C-style data access. It is not
+// unexpected that -Wunsafe-buffer-usage triggers in this code, since the type of dynamic access
+// being used cannot be guaranteed to be safe via static analysis. Attempting to change this code in
+// simple ways to quiet these errors either a) negatively affects the performance by introducing
+// unneeded copes, or b) uses typing shenanigans to work around the warning that other
+// linters/analyses are unhappy with.
+TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 namespace tint {
 
@@ -131,13 +140,16 @@ class BlockAllocator {
     template <bool IS_CONST>
     class TView {
       public:
+        /// The iterator type
+        using iterator = TIterator<IS_CONST>;
+        /// The const iterator type
+        using const_iterator = TIterator<true>;
+
         /// @returns an iterator to the beginning of the view
-        TIterator<IS_CONST> begin() const {
-            return TIterator<IS_CONST>{allocator_->data.pointers.root, 0};
-        }
+        iterator begin() const { return iterator{allocator_->data.pointers.root, 0}; }
 
         /// @returns an iterator to the end of the view
-        TIterator<IS_CONST> end() const { return TIterator<IS_CONST>{nullptr, 0}; }
+        iterator end() const { return iterator{nullptr, 0}; }
 
       private:
         friend BlockAllocator;  // For BlockAllocator::operator View()
@@ -312,5 +324,7 @@ class BlockAllocator {
 };
 
 }  // namespace tint
+
+TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 #endif  // SRC_TINT_UTILS_MEMORY_BLOCK_ALLOCATOR_H_

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:network-protocol
 
 #include "qwebengineprofile.h"
 #include "qwebengineprofile_p.h"
@@ -7,6 +8,7 @@
 #include "qwebenginecookiestore.h"
 #include "qwebenginedownloadrequest.h"
 #include "qwebenginedownloadrequest_p.h"
+#include "qwebengineextensionmanager.h"
 #include "qwebenginenotification.h"
 #include "qwebenginesettings.h"
 #include "qwebenginescriptcollection.h"
@@ -17,7 +19,7 @@
 #include "visited_links_manager_qt.h"
 #include "web_engine_settings.h"
 
-#include <QDir>
+#include <QFileInfo>
 #include <QtWebEngineCore/qwebengineurlscheme.h>
 
 QT_BEGIN_NAMESPACE
@@ -88,7 +90,7 @@ using QtWebEngineCore::ProfileAdapter;
     \value DiskHttpCache Use a disk cache. This is the default if the profile
     is not \c off-the-record. If set on an \c off-the-record profile will instead
     set \c MemoryHttpCache.
-    \value NoCache Disable both in-memory and disk caching. (Added in Qt 5.7)
+    \value [since 5.7] NoCache Disable both in-memory and disk caching.
 */
 
 /*!
@@ -102,6 +104,9 @@ using QtWebEngineCore::ProfileAdapter;
     \value  AllowPersistentCookies
             Cookies marked persistent are saved to and restored from disk, whereas session cookies
             are only stored to disk for crash recovery. This is the default setting.
+    \value [since 6.11] OnlyPersistentCookies
+            Cookies marked persistent are saved to and restored from disk, whereas session cookies
+            are not stored to disk, even for crash recovery.
     \value  ForcePersistentCookies
             Both session and persistent cookies are saved to and restored from disk.
 */
@@ -216,9 +221,15 @@ void QWebEngineProfilePrivate::cleanDownloads()
     m_ongoingDownloads.clear();
 }
 
-void QWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
+void QWebEngineProfilePrivate::downloadRequested(const DownloadItemInfo &info)
 {
     Q_Q(QWebEngineProfile);
+
+    if (!q->receivers(SIGNAL(downloadRequested(QWebEngineDownloadRequest*)))) {
+        m_profileAdapter->acceptDownload(info.id, info.accepted, info.useDownloadTargetCallback, info.path,
+                                         info.savePageFormat);
+        return;
+    }
 
     Q_ASSERT(!m_ongoingDownloads.contains(info.id));
     QWebEngineDownloadRequestPrivate *itemPrivate =
@@ -235,6 +246,7 @@ void QWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
     itemPrivate->mimeType = info.mimeType;
     itemPrivate->savePageFormat = static_cast<QWebEngineDownloadRequest::SavePageFormat>(info.savePageFormat);
     itemPrivate->isSavePageDownload = info.isSavePageDownload;
+    itemPrivate->useDownloadTargetCallback = info.useDownloadTargetCallback;
     if (info.page && info.page->clientType() == QtWebEngineCore::WebContentsAdapterClient::WidgetsClient)
         itemPrivate->adapterClient = info.page;
     else
@@ -247,18 +259,9 @@ void QWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
 
     Q_EMIT q->downloadRequested(download);
 
-    QWebEngineDownloadRequest::DownloadState state = download->state();
-
-    info.path = QDir(download->downloadDirectory()).filePath(download->downloadFileName());
-    info.savePageFormat = static_cast<QtWebEngineCore::ProfileAdapterClient::SavePageFormat>(
-                download->savePageFormat());
-    info.accepted = state != QWebEngineDownloadRequest::DownloadCancelled;
-
-    if (state == QWebEngineDownloadRequest::DownloadRequested) {
-        // Delete unaccepted downloads.
-        info.accepted = false;
-        delete download;
-    }
+    // Callbacks of automatically accepted save operations have to be called here
+    if (info.isSavePageDownload && info.accepted)
+        itemPrivate->answer();
 }
 
 void QWebEngineProfilePrivate::downloadUpdated(const DownloadItemInfo &info)
@@ -372,7 +375,7 @@ bool QWebEngineProfile::isOffTheRecord() const
 }
 
 /*!
-    Returns the path used to store persistent data for the browser and web content.
+    Returns the path used to store persistent data for the profile.
 
     Persistent data includes persistent cookies, HTML5 local storage, and visited links.
 
@@ -437,7 +440,7 @@ void QWebEngineProfile::setDownloadPath(const QString &path)
     \since 6.5
 
     Returns \c true if the push messaging service is enabled.
-    \note By default the push messaging service is disabled.
+    \note By default, the push messaging service is disabled.
 
     \sa setPushServiceEnabled()
 */
@@ -453,7 +456,7 @@ bool QWebEngineProfile::isPushServiceEnabled() const
     Enables the push messaging service if \a enable is \c true, otherwise disables it.
 
     \note \QWE uses \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)}
-    as a browser push service. Therefore, all push messages will go through the
+    as an HTML5 push notification service. Therefore, all push messages will go through the
     Google push service and its respective servers.
 
     \sa isPushServiceEnabled()
@@ -495,7 +498,7 @@ void QWebEngineProfile::setCachePath(const QString &path)
 }
 
 /*!
-    Returns the user-agent string sent with HTTP to identify the browser.
+    Returns the user-agent string sent with HTTP to identify the application.
 
     \note On Windows 8.1 and newer, the default user agent will always report
     "Windows NT 6.2" (Windows 8), unless the application does contain a manifest
@@ -914,6 +917,23 @@ QWebEngineClientCertificateStore *QWebEngineProfile::clientCertificateStore()
 }
 
 /*!
+    \since 6.10
+
+    Returns additional trusted certificates in this profile's CA certificate database.
+
+    \sa QWebEngineProfileBuilder::setAdditionalTrustedCertificates()
+*/
+QList<QSslCertificate> QWebEngineProfile::additionalTrustedCertificates() const
+{
+#if QT_CONFIG(ssl)
+    Q_D(const QWebEngineProfile);
+    return d->profileAdapter()->additionalTrustedCertificates();
+#else
+    return {};
+#endif
+}
+
+/*!
  * Requests an icon for a previously loaded page with this profile from the database. Each profile
  * has its own icon database and it is stored in the persistent storage thus the stored icons
  * can be accessed without network connection too. The icon must be previously loaded to be
@@ -1002,7 +1022,7 @@ QWebEnginePermission QWebEngineProfile::queryPermission(const QUrl &securityOrig
         return QWebEnginePermission(new QWebEnginePermissionPrivate());
     }
 
-    auto *pvt = new QWebEnginePermissionPrivate(securityOrigin, permissionType, nullptr, d->profileAdapter());
+    auto *pvt = new QWebEnginePermissionPrivate(securityOrigin, permissionType, d->profileAdapter());
     return QWebEnginePermission(pvt);
 }
 
@@ -1072,7 +1092,7 @@ QList<QWebEnginePermission> QWebEngineProfile::listPermissionsForPermissionType(
 }
 
 /*!
-    Return the Client Hints settings associated with this browsing context.
+    Return the Client Hints settings associated with this profile.
 
     \since 6.8
     \sa QWebEngineClientHints
@@ -1081,6 +1101,39 @@ QWebEngineClientHints *QWebEngineProfile::clientHints() const
 {
     Q_D(const QWebEngineProfile);
     return d->m_clientHints.data();
+}
+
+/*!
+    Returns the extension manager associated with this profile.
+
+    \since 6.10
+    \sa QWebEngineExtensionManager
+*/
+QWebEngineExtensionManager *QWebEngineProfile::extensionManager() const
+{
+#if QT_CONFIG(webengine_extensions)
+    Q_D(const QWebEngineProfile);
+    return d->profileAdapter()->extensionManager();
+#else
+    return nullptr;
+#endif
+}
+
+/*!
+    Sets the function NSS will use to request passwords for PKCS#11 tokens
+
+    The supplied \a passwordFunction must take three arguments; the first module/slot name, second host name, and finally if the request is a retry.
+    Returning an empty string as a result is interpreted as cancelling the authentication.
+    The function is allowed to block and wait on user input.
+
+    Has no effect on macOS and Windows platforms.
+
+    \since 6.12
+*/
+void QWebEngineProfile::setCryptoModulePasswordFunction(std::function<std::string(std::string, std::string, bool)> passwordFunction)
+{
+    Q_D(QWebEngineProfile);
+    d->profileAdapter()->setCryptoModulePasswordFunction(std::move(passwordFunction));
 }
 
 QT_END_NAMESPACE

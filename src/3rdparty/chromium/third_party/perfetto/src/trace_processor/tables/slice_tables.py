@@ -16,13 +16,15 @@
 from python.generators.trace_processor_table.public import Column as C
 from python.generators.trace_processor_table.public import ColumnDoc
 from python.generators.trace_processor_table.public import ColumnFlag
-from python.generators.trace_processor_table.public import CppInt32
+from python.generators.trace_processor_table.public import CppAccess
+from python.generators.trace_processor_table.public import CppAccessDuration
 from python.generators.trace_processor_table.public import CppInt64
 from python.generators.trace_processor_table.public import CppOptional
 from python.generators.trace_processor_table.public import CppSelfTableId
 from python.generators.trace_processor_table.public import CppString
 from python.generators.trace_processor_table.public import CppTableId
 from python.generators.trace_processor_table.public import CppUint32
+from python.generators.trace_processor_table.public import SqlAccess
 from python.generators.trace_processor_table.public import Table
 from python.generators.trace_processor_table.public import TableDoc
 from python.generators.trace_processor_table.public import WrappingSqlView
@@ -32,22 +34,89 @@ from src.trace_processor.tables.track_tables import TRACK_TABLE
 SLICE_TABLE = Table(
     python_module=__file__,
     class_name='SliceTable',
-    sql_name='internal_slice',
+    sql_name='__intrinsic_slice',
     columns=[
-        C('ts', CppInt64(), flags=ColumnFlag.SORTED),
-        C('dur', CppInt64()),
-        C('track_id', CppTableId(TRACK_TABLE)),
-        C('category', CppOptional(CppString())),
-        C('name', CppOptional(CppString())),
-        C('depth', CppUint32()),
-        C('stack_id', CppInt64()),
-        C('parent_stack_id', CppInt64()),
-        C('parent_id', CppOptional(CppSelfTableId())),
-        C('arg_set_id', CppUint32()),
-        C('thread_ts', CppOptional(CppInt64())),
-        C('thread_dur', CppOptional(CppInt64())),
-        C('thread_instruction_count', CppOptional(CppInt64())),
-        C('thread_instruction_delta', CppOptional(CppInt64())),
+        C(
+            'ts',
+            CppInt64(),
+            flags=ColumnFlag.SORTED,
+            cpp_access=CppAccess.READ,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'dur',
+            CppInt64(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'track_id',
+            CppTableId(TRACK_TABLE),
+            cpp_access=CppAccess.READ,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'category',
+            CppOptional(CppString()),
+            cpp_access=CppAccess.READ,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'name',
+            CppOptional(CppString()),
+            sql_access=SqlAccess.HIGH_PERF,
+            cpp_access=CppAccess.READ_AND_HIGH_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'depth',
+            CppUint32(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C('stack_id', CppInt64(), cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE),
+        C(
+            'parent_stack_id',
+            CppInt64(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'parent_id',
+            CppOptional(CppSelfTableId()),
+            sql_access=SqlAccess.HIGH_PERF,
+            cpp_access=CppAccess.READ_AND_HIGH_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'arg_set_id',
+            CppOptional(CppUint32()),
+            cpp_access=CppAccess.READ_AND_HIGH_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'thread_ts',
+            CppOptional(CppInt64()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'thread_dur',
+            CppOptional(CppInt64()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'thread_instruction_count',
+            CppOptional(CppInt64()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
+        C(
+            'thread_instruction_delta',
+            CppOptional(CppInt64()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+            cpp_access_duration=CppAccessDuration.POST_FINALIZATION,
+        ),
     ],
     wrapping_sql_view=WrappingSqlView('slice'),
     tabledoc=TableDoc(
@@ -120,164 +189,17 @@ SLICE_TABLE = Table(
                 ''',
         }))
 
-GPU_SLICE_TABLE = Table(
-    python_module=__file__,
-    class_name='GpuSliceTable',
-    sql_name='gpu_slice',
-    columns=[
-        C('context_id', CppOptional(CppInt64())),
-        C('render_target', CppOptional(CppInt64())),
-        C('render_target_name', CppString()),
-        C('render_pass', CppOptional(CppInt64())),
-        C('render_pass_name', CppString()),
-        C('command_buffer', CppOptional(CppInt64())),
-        C('command_buffer_name', CppString()),
-        C('frame_id', CppOptional(CppUint32())),
-        C('submission_id', CppOptional(CppUint32())),
-        C('hw_queue_id', CppOptional(CppInt64())),
-        C('render_subpasses', CppString()),
-    ],
-    parent=SLICE_TABLE,
-    tabledoc=TableDoc(
-        doc='''''',
-        group='Slice',
-        columns={
-            'context_id': '''''',
-            'render_target': '''''',
-            'render_target_name': '''''',
-            'render_pass': '''''',
-            'render_pass_name': '''''',
-            'command_buffer': '''''',
-            'command_buffer_name': '''''',
-            'frame_id': '''''',
-            'submission_id': '''''',
-            'hw_queue_id': '''''',
-            'render_subpasses': ''''''
-        }))
-
-GRAPHICS_FRAME_SLICE_TABLE = Table(
-    python_module=__file__,
-    class_name='GraphicsFrameSliceTable',
-    sql_name='frame_slice',
-    columns=[
-        C('frame_number', CppUint32()),
-        C('layer_name', CppString()),
-        C('queue_to_acquire_time', CppInt64()),
-        C('acquire_to_latch_time', CppInt64()),
-        C('latch_to_present_time', CppInt64()),
-    ],
-    parent=SLICE_TABLE,
-    tabledoc=TableDoc(
-        doc='''''',
-        group='Slice',
-        columns={
-            'frame_number': '''''',
-            'layer_name': '''''',
-            'queue_to_acquire_time': '''''',
-            'acquire_to_latch_time': '''''',
-            'latch_to_present_time': ''''''
-        }))
-
-EXPECTED_FRAME_TIMELINE_SLICE_TABLE = Table(
-    python_module=__file__,
-    class_name='ExpectedFrameTimelineSliceTable',
-    sql_name='expected_frame_timeline_slice',
-    columns=[
-        C('display_frame_token', CppInt64()),
-        C('surface_frame_token', CppInt64()),
-        C('upid', CppUint32()),
-        C('layer_name', CppString()),
-    ],
-    parent=SLICE_TABLE,
-    tabledoc=TableDoc(
-        doc='''
-        This table contains information on the expected timeline of either
-        a display frame or a surface frame.
-        ''',
-        group='Slice',
-        columns={
-            'display_frame_token':
-                'Display frame token (vsync id).',
-            'surface_frame_token':
-                '''
-                Surface frame token (vsync id), null if this is a display frame.
-                ''',
-            'upid':
-                '''
-                Unique process id of the app that generates the surface frame.
-                ''',
-            'layer_name':
-                'Layer name if this is a surface frame.',
-        }))
-
-ACTUAL_FRAME_TIMELINE_SLICE_TABLE = Table(
-    python_module=__file__,
-    class_name='ActualFrameTimelineSliceTable',
-    sql_name='actual_frame_timeline_slice',
-    columns=[
-        C('display_frame_token', CppInt64()),
-        C('surface_frame_token', CppInt64()),
-        C('upid', CppUint32()),
-        C('layer_name', CppString()),
-        C('present_type', CppString()),
-        C('on_time_finish', CppInt32()),
-        C('gpu_composition', CppInt32()),
-        C('jank_type', CppString()),
-        C('jank_severity_type', CppString()),
-        C('prediction_type', CppString()),
-        C('jank_tag', CppString()),
-    ],
-    parent=SLICE_TABLE,
-    tabledoc=TableDoc(
-        doc='''
-        This table contains information on the actual timeline and additional
-        analysis related to the performance of either a display frame or a
-        surface frame.
-        ''',
-        group='Slice',
-        columns={
-            'display_frame_token':
-                'Display frame token (vsync id).',
-            'surface_frame_token':
-                '''
-                Surface frame token (vsync id), null if this is a display frame.
-                ''',
-            'upid':
-                '''
-                Unique process id of the app that generates the surface frame.
-                ''',
-            'layer_name':
-                'Layer name if this is a surface frame.',
-            'present_type':
-                'Frame\'s present type (eg. on time / early / late).',
-            'on_time_finish':
-                'Whether the frame finishes on time.',
-            'gpu_composition':
-                'Whether the frame used gpu composition.',
-            'jank_type':
-                '''
-                Specify the jank types for this frame if there's jank, or
-                none if no jank occured.
-                ''',
-            'jank_severity_type':
-                'Severity of the jank: none if no jank.',
-            'prediction_type':
-                'Frame\'s prediction type (eg. valid / expired).',
-            'jank_tag':
-                'Jank tag based on jank type, used for slice visualization.'
-        }))
-
 EXPERIMENTAL_FLAT_SLICE_TABLE = Table(
     python_module=__file__,
     class_name='ExperimentalFlatSliceTable',
     sql_name='experimental_flat_slice',
     columns=[
-        C('ts', CppInt64()),
-        C('dur', CppInt64()),
+        C('ts', CppInt64(), cpp_access=CppAccess.READ),
+        C('dur', CppInt64(), cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE),
         C('track_id', CppTableId(TRACK_TABLE)),
         C('category', CppOptional(CppString())),
         C('name', CppOptional(CppString())),
-        C('arg_set_id', CppUint32()),
+        C('arg_set_id', CppOptional(CppUint32())),
         C('source_id', CppOptional(CppTableId(SLICE_TABLE))),
         C('start_bound', CppInt64(), flags=ColumnFlag.HIDDEN),
         C('end_bound', CppInt64(), flags=ColumnFlag.HIDDEN),
@@ -314,12 +236,33 @@ EXPERIMENTAL_FLAT_SLICE_TABLE = Table(
                 'The id of the slice which this row originated from.',
         }))
 
+ANDROID_NETWORK_PACKETS_TABLE = Table(
+    python_module=__file__,
+    class_name='AndroidNetworkPacketsTable',
+    sql_name='__intrinsic_android_network_packets',
+    columns=[
+        C('id', CppTableId(SLICE_TABLE), flags=ColumnFlag.SORTED),
+        C('iface', CppString()),
+        C('direction', CppString()),
+        C('packet_transport', CppString()),
+        C('packet_length', CppInt64()),
+        C('packet_count', CppInt64()),
+        C('socket_tag', CppUint32()),
+        C('socket_tag_str', CppString()),
+        C('socket_uid', CppUint32()),
+        C('local_port', CppOptional(CppUint32())),
+        C('remote_port', CppOptional(CppUint32())),
+        C('packet_icmp_type', CppOptional(CppUint32())),
+        C('packet_icmp_code', CppOptional(CppUint32())),
+        C('packet_tcp_flags', CppOptional(CppUint32())),
+        C('packet_tcp_flags_str', CppOptional(CppString())),
+    ],
+    add_implicit_column=False,
+)
+
 # Keep this list sorted.
 ALL_TABLES = [
-    ACTUAL_FRAME_TIMELINE_SLICE_TABLE,
-    EXPECTED_FRAME_TIMELINE_SLICE_TABLE,
+    ANDROID_NETWORK_PACKETS_TABLE,
     EXPERIMENTAL_FLAT_SLICE_TABLE,
-    GPU_SLICE_TABLE,
-    GRAPHICS_FRAME_SLICE_TABLE,
     SLICE_TABLE,
 ]

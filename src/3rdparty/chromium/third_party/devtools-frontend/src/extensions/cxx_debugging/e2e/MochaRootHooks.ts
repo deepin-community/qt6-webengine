@@ -11,9 +11,10 @@ import {
   getBrowserAndPages,
   registerHandlers,
   setBrowserAndPages,
-  setTestServerPort,
 } from 'test/conductor/puppeteer-state.js';
-import {click} from 'test/shared/helper';
+import {setTestServerPort} from 'test/conductor/server_port.js';
+import {TestConfig} from 'test/conductor/test_config.js';
+import {click} from 'test/shared/helper.js';
 
 const EXTENSION_DIR = path.join(__dirname, '..', '..', '..', 'DevTools_CXX_Debugging.stage2', 'gen');
 const DEVTOOLS_DIR = path.join(__dirname, '..', '..', '..', 'devtools-frontend', 'gen');
@@ -22,7 +23,7 @@ async function beforeAll() {
   setTestServerPort(Number(process.env.testServerPort));
   registerHandlers();
 
-  const executablePath = process.env['CHROME_BIN'];
+  const executablePath = TestConfig.chromeBinary;
 
   const defaultViewport = {
     width: 1280,
@@ -30,9 +31,9 @@ async function beforeAll() {
   };
 
   const browser = await puppeteer.launch({
-    headless: process.env['DEBUG_TEST'] ? false : 'new',
+    headless: !TestConfig.debug,
     devtools: true,
-    dumpio: !process.env['DEBUG_TEST'],
+    dumpio: !TestConfig.debug,
     executablePath,
     defaultViewport,
     args: [
@@ -42,6 +43,7 @@ async function beforeAll() {
       `--disable-extensions-except=${EXTENSION_DIR}`,
       `--window-size=${defaultViewport.width + 20, defaultViewport.height + 100}`,
       `--custom-devtools-frontend=${new URL(`${DEVTOOLS_DIR}/front_end`, 'file://').href}`,
+      '--disable-features=RenderDocument',
     ],
   });
 
@@ -60,6 +62,9 @@ async function beforeAll() {
     throw new Error('Could not find frontend page');
   }
   await frontend.setViewport(defaultViewport);
+  const devToolsVeLogging = {enabled: true, testing: true};
+  await frontend.evaluateOnNewDocument(`globalThis.hostConfigForTesting = ${JSON.stringify({devToolsVeLogging})};`);
+  await frontend.reload();
 
   setBrowserAndPages({frontend, target, browser: conn});
 }

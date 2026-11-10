@@ -53,14 +53,6 @@ static int ARGBTranspose(const uint8_t* src_argb,
     }
   }
 #endif
-#if defined(HAS_SCALEARGBROWDOWNEVEN_MSA)
-  if (TestCpuFlag(kCpuHasMSA)) {
-    ScaleARGBRowDownEven = ScaleARGBRowDownEven_Any_MSA;
-    if (IS_ALIGNED(height, 4)) {  // Width of dest.
-      ScaleARGBRowDownEven = ScaleARGBRowDownEven_MSA;
-    }
-  }
-#endif
 #if defined(HAS_SCALEARGBROWDOWNEVEN_LSX)
   if (TestCpuFlag(kCpuHasLSX)) {
     ScaleARGBRowDownEven = ScaleARGBRowDownEven_Any_LSX;
@@ -120,7 +112,6 @@ static int ARGBRotate180(const uint8_t* src_argb,
                          int width,
                          int height) {
   // Swap first and last row and mirror the content. Uses a temporary row.
-  align_buffer_64(row, width * 4);
   const uint8_t* src_bot = src_argb + src_stride_argb * (height - 1);
   uint8_t* dst_bot = dst_argb + dst_stride_argb * (height - 1);
   int half_height = (height + 1) >> 1;
@@ -129,6 +120,9 @@ static int ARGBRotate180(const uint8_t* src_argb,
       ARGBMirrorRow_C;
   void (*CopyRow)(const uint8_t* src_argb, uint8_t* dst_argb, int width) =
       CopyRow_C;
+  align_buffer_64(row, width * 4);
+  if (!row)
+    return 1;
 #if defined(HAS_ARGBMIRRORROW_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     ARGBMirrorRow = ARGBMirrorRow_Any_NEON;
@@ -150,14 +144,6 @@ static int ARGBRotate180(const uint8_t* src_argb,
     ARGBMirrorRow = ARGBMirrorRow_Any_AVX2;
     if (IS_ALIGNED(width, 8)) {
       ARGBMirrorRow = ARGBMirrorRow_AVX2;
-    }
-  }
-#endif
-#if defined(HAS_ARGBMIRRORROW_MSA)
-  if (TestCpuFlag(kCpuHasMSA)) {
-    ARGBMirrorRow = ARGBMirrorRow_Any_MSA;
-    if (IS_ALIGNED(width, 16)) {
-      ARGBMirrorRow = ARGBMirrorRow_MSA;
     }
   }
 #endif
@@ -187,6 +173,12 @@ static int ARGBRotate180(const uint8_t* src_argb,
     CopyRow = IS_ALIGNED(width * 4, 64) ? CopyRow_AVX : CopyRow_Any_AVX;
   }
 #endif
+#if defined(HAS_COPYROW_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    CopyRow =
+        IS_ALIGNED(width * 4, 128) ? CopyRow_AVX512BW : CopyRow_Any_AVX512BW;
+  }
+#endif
 #if defined(HAS_COPYROW_ERMS)
   if (TestCpuFlag(kCpuHasERMS)) {
     CopyRow = CopyRow_ERMS;
@@ -195,6 +187,11 @@ static int ARGBRotate180(const uint8_t* src_argb,
 #if defined(HAS_COPYROW_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     CopyRow = IS_ALIGNED(width * 4, 32) ? CopyRow_NEON : CopyRow_Any_NEON;
+  }
+#endif
+#if defined(HAS_COPYROW_SME)
+  if (TestCpuFlag(kCpuHasSME)) {
+    CopyRow = CopyRow_SME;
   }
 #endif
 #if defined(HAS_COPYROW_RVV)

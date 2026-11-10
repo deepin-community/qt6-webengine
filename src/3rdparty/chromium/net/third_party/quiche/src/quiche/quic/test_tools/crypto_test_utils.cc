@@ -105,13 +105,9 @@ void MovePackets(const QuicConnection& source_conn,
   QUICHE_CHECK(!packets.empty());
 
   SimpleQuicFramer framer(source_conn.supported_versions(), dest_perspective);
-  QuicFramerPeer::SetLastSerializedServerConnectionId(framer.framer(),
-                                                      TestConnectionId());
 
   SimpleQuicFramer null_encryption_framer(source_conn.supported_versions(),
                                           dest_perspective);
-  QuicFramerPeer::SetLastSerializedServerConnectionId(
-      null_encryption_framer.framer(), TestConnectionId());
 
   for (const QuicEncryptedPacket* const packet : packets) {
     if (!dest_conn.connected()) {
@@ -316,10 +312,11 @@ class FullChloGenerator {
 
 }  // namespace
 
-std::unique_ptr<QuicCryptoServerConfig> CryptoServerConfigForTesting() {
+std::unique_ptr<QuicCryptoServerConfig> CryptoServerConfigForTesting(
+    const std::string& trust_anchor_id) {
   return std::make_unique<QuicCryptoServerConfig>(
       QuicCryptoServerConfig::TESTING, QuicRandom::GetInstance(),
-      ProofSourceForTesting(), KeyExchangeSource::Default());
+      ProofSourceForTesting(trust_anchor_id), KeyExchangeSource::Default());
 }
 
 int HandshakeWithFakeServer(QuicConfig* server_quic_config,
@@ -814,8 +811,10 @@ CryptoHandshakeMessage CreateCHLO(
     size_t value_len = value.length();
     if (value_len > 0 && value[0] == '#') {
       // This is ascii encoded hex.
-      std::string hex_value =
-          absl::HexStringToBytes(absl::string_view(&value[1]));
+      std::string hex_value;
+      QUICHE_CHECK(
+          absl::HexStringToBytes(absl::string_view(&value[1]), &hex_value));
+
       msg.SetStringPiece(quic_tag, hex_value);
       continue;
     }
@@ -863,7 +862,7 @@ std::string GenerateClientNonceHex(const QuicClock* clock,
   std::unique_ptr<CryptoHandshakeMessage> msg =
       crypto_config->AddConfig(primary_config, clock->WallNow());
   absl::string_view orbit;
-  QUICHE_CHECK(msg->GetStringPiece(kORBT, &orbit));
+  QUICHE_CHECK(msg->GetStringPiece(kOBIT, &orbit));
   std::string nonce;
   CryptoUtils::GenerateNonce(clock->WallNow(), QuicRandom::GetInstance(), orbit,
                              &nonce);
@@ -901,11 +900,12 @@ constexpr char kTestProofHostname[] = "test.example.com";
 
 class TestProofSource : public ProofSourceX509 {
  public:
-  TestProofSource()
+  explicit TestProofSource(const std::string& trust_anchor_id)
       : ProofSourceX509(
             quiche::QuicheReferenceCountedPointer<ProofSource::Chain>(
                 new ProofSource::Chain(
-                    std::vector<std::string>{std::string(kTestCertificate)})),
+                    std::vector<std::string>{std::string(kTestCertificate)},
+                    trust_anchor_id)),
             std::move(*CertificatePrivateKey::LoadFromDer(
                 kTestCertificatePrivateKey))) {
     QUICHE_DCHECK(valid());
@@ -987,8 +987,9 @@ class TestProofVerifier : public ProofVerifier {
 
 }  // namespace
 
-std::unique_ptr<ProofSource> ProofSourceForTesting() {
-  return std::make_unique<TestProofSource>();
+std::unique_ptr<ProofSource> ProofSourceForTesting(
+    const std::string& trust_anchor_id) {
+  return std::make_unique<TestProofSource>(trust_anchor_id);
 }
 
 std::unique_ptr<ProofVerifier> ProofVerifierForTesting() {

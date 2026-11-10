@@ -42,7 +42,7 @@ protected:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     // Call before draw, allows the benchmark to do setup work outside of the
@@ -60,8 +60,8 @@ protected:
                                              fAdobeCS.get(), kPremul_SkAlphaType);
 
         // Build up a pipeline.
-        fSrcCtx = SkRasterPipeline_MemoryCtx{fSrcPixels, kWidth};
-        fDstCtx = SkRasterPipeline_MemoryCtx{fDstPixels, kWidth};
+        fSrcCtx = SkRasterPipelineContexts::MemoryCtx{fSrcPixels, kWidth};
+        fDstCtx = SkRasterPipelineContexts::MemoryCtx{fDstPixels, kWidth};
 
         fPipeline.append(SkRasterPipelineOp::load_8888, &fSrcCtx);
         fXformSteps.apply(&fPipeline);
@@ -104,8 +104,8 @@ private:
     sk_sp<SkColorSpace> fSRGBCS;
 
     SkRasterPipeline_<256> fPipeline;
-    SkRasterPipeline_MemoryCtx fSrcCtx;
-    SkRasterPipeline_MemoryCtx fDstCtx;
+    SkRasterPipelineContexts::MemoryCtx fSrcCtx;
+    SkRasterPipelineContexts::MemoryCtx fDstCtx;
     SkColorSpaceXformSteps fXformSteps;
 
     static constexpr int kWidth = 512;
@@ -129,7 +129,7 @@ protected:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     // Call before draw, allows the benchmark to do setup work outside of the

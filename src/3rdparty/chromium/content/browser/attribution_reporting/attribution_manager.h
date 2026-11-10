@@ -15,6 +15,11 @@
 #include "content/public/browser/storage_partition.h"
 #include "services/network/public/mojom/attribution.mojom-forward.h"
 
+namespace attribution_reporting {
+class SuitableOrigin;
+struct RegistrationHeaderError;
+}  // namespace attribution_reporting
+
 namespace base {
 class Time;
 }  // namespace base
@@ -42,7 +47,7 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
   static AttributionManager* FromBrowserContext(BrowserContext*);
 
   static network::mojom::AttributionSupport GetAttributionSupport(
-      WebContents* web_contents);
+      bool client_os_disabled);
 
   ~AttributionManager() override = default;
 
@@ -65,6 +70,8 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
 
   virtual void HandleOsRegistration(OsRegistration) = 0;
 
+  virtual void UpdateLastNavigationTime(base::Time navigation_time) = 0;
+
   // Get all sources that are currently stored in this partition. Used for
   // populating WebUI.
   virtual void GetActiveSourcesForWebUI(
@@ -76,11 +83,9 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
       int limit,
       base::OnceCallback<void(std::vector<AttributionReport>)> callback) = 0;
 
-  // Sends the given reports immediately, and runs |done| once they have all
-  // been sent.
-  virtual void SendReportsForWebUI(
-      const std::vector<AttributionReport::Id>& ids,
-      base::OnceClosure done) = 0;
+  // Sends the given report immediately, and runs |done| once it has been sent.
+  virtual void SendReportForWebUI(AttributionReport::Id,
+                                  base::OnceClosure done) = 0;
 
   // Deletes all data in storage for storage keys matching `filter`, between
   // `delete_begin` and `delete_end` time.
@@ -106,6 +111,14 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
   // falls back to `switches::kAttributionReportingDebugMode`.
   virtual void SetDebugMode(std::optional<bool> enabled,
                             base::OnceClosure done) = 0;
+
+  // Report errors from header validation.
+  virtual void ReportRegistrationHeaderError(
+      attribution_reporting::SuitableOrigin reporting_origin,
+      attribution_reporting::RegistrationHeaderError,
+      const attribution_reporting::SuitableOrigin& context_origin,
+      bool is_within_fenced_frame,
+      GlobalRenderFrameHostId render_frame_id) = 0;
 };
 
 }  // namespace content

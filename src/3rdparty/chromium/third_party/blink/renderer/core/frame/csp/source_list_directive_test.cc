@@ -96,10 +96,7 @@ TEST_F(SourceListDirectiveTest, BasicMatchingStar) {
             CSPCheckResult::Allowed());
   EXPECT_EQ(CSPSourceListAllows(*source_list, *self_source,
                                 KURL(base, "ftp://example.com/")),
-            base::FeatureList::IsEnabled(
-                network::features::kCspStopMatchingWildcardDirectivesToFtp)
-                ? CSPCheckResult::Blocked()
-                : CSPCheckResult::AllowedOnlyIfWildcardMatchesFtp());
+            CSPCheckResult::Blocked());
   EXPECT_EQ(CSPSourceListAllows(*source_list, *self_source,
                                 KURL(base, "ws://example.com/")),
             CSPCheckResult::AllowedOnlyIfWildcardMatchesWs());
@@ -523,7 +520,7 @@ TEST_F(SourceListDirectiveTest, ParseSourceListHost) {
 
       // Dots.
       {"a.b.c", true},
-      {"a.b.", false},
+      {"a.b.", true},
       {".b.c", false},
       {"a..c", false},
 

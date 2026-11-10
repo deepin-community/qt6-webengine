@@ -36,6 +36,7 @@
 #include "dawn/native/BindGroupLayoutInternal.h"
 #include "dawn/native/d3d12/BindGroupD3D12.h"
 #include "dawn/native/d3d12/d3d12_platform.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
 
 namespace dawn::native::d3d12 {
 
@@ -56,7 +57,9 @@ class BindGroupLayout final : public BindGroupLayoutInternalBase {
 
     ResultOrError<Ref<BindGroup>> AllocateBindGroup(Device* device,
                                                     const BindGroupDescriptor* descriptor);
-    void DeallocateBindGroup(BindGroup* bindGroup, CPUDescriptorHeapAllocation* viewAllocation);
+    void DeallocateBindGroup(BindGroup* bindGroup);
+    void DeallocateDescriptor(CPUDescriptorHeapAllocation* viewAllocation);
+    void ReduceMemoryUsage() override;
 
     // The offset (in descriptor count) into the corresponding descriptor heap. Not valid for
     // dynamic binding indexes.
@@ -70,8 +73,11 @@ class BindGroupLayout final : public BindGroupLayoutInternalBase {
     uint32_t GetCbvUavSrvDescriptorCount() const;
     uint32_t GetSamplerDescriptorCount() const;
 
+    uint32_t GetViewSizeIncrement() const;
+
     const std::vector<D3D12_DESCRIPTOR_RANGE1>& GetCbvUavSrvDescriptorRanges() const;
     const std::vector<D3D12_DESCRIPTOR_RANGE1>& GetSamplerDescriptorRanges() const;
+    const std::vector<D3D12_STATIC_SAMPLER_DESC>& GetStaticSamplers() const;
 
   private:
     BindGroupLayout(Device* device, const BindGroupLayoutDescriptor* descriptor);
@@ -90,14 +96,14 @@ class BindGroupLayout final : public BindGroupLayoutInternalBase {
 
     uint32_t mCbvUavSrvDescriptorCount;
     uint32_t mSamplerDescriptorCount;
+    uint32_t mViewSizeIncrement;
 
     std::vector<D3D12_DESCRIPTOR_RANGE1> mCbvUavSrvDescriptorRanges;
     std::vector<D3D12_DESCRIPTOR_RANGE1> mSamplerDescriptorRanges;
 
-    MutexProtected<SlabAllocator<BindGroup>> mBindGroupAllocator;
+    std::vector<D3D12_STATIC_SAMPLER_DESC> mStaticSamplers;
 
-    MutexProtected<StagingDescriptorAllocator>* mSamplerAllocator = nullptr;
-    MutexProtected<StagingDescriptorAllocator>* mViewAllocator = nullptr;
+    MutexProtected<SlabAllocator<BindGroup>> mBindGroupAllocator;
 };
 
 }  // namespace dawn::native::d3d12

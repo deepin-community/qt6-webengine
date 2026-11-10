@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/layout/inline/fragment_items.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -26,24 +27,6 @@ class FragmentItemTest : public RenderingTest {
     return To<LayoutBlockFlow>(GetLayoutObjectByElementId(id));
   }
 
-  Vector<InlineCursorPosition> GetLines(InlineCursor* cursor) {
-    Vector<InlineCursorPosition> lines;
-    for (cursor->MoveToFirstLine(); *cursor; cursor->MoveToNextLine())
-      lines.push_back(cursor->Current());
-    return lines;
-  }
-
-  wtf_size_t IndexOf(const Vector<InlineCursorPosition>& items,
-                     const FragmentItem* target) {
-    wtf_size_t index = 0;
-    for (const auto& item : items) {
-      if (item.Item() == target)
-        return index;
-      ++index;
-    }
-    return kNotFound;
-  }
-
   void TestFirstDirtyLineIndex(const char* id, wtf_size_t expected_index) {
     LayoutBlockFlow* block_flow = GetLayoutBlockFlowByElementId(id);
     const PhysicalBoxFragment* fragment = block_flow->GetPhysicalFragment(0);
@@ -53,8 +36,17 @@ class FragmentItemTest : public RenderingTest {
         items->EndOfReusableItems(*fragment);
 
     InlineCursor cursor(*fragment, *items);
-    const auto lines = GetLines(&cursor);
-    EXPECT_EQ(IndexOf(lines, end_reusable_item), expected_index);
+    wtf_size_t index = 0;
+    bool found = false;
+    for (cursor.MoveToFirstLine(); cursor; cursor.MoveToNextLine()) {
+      if (cursor.Current().Item() == end_reusable_item) {
+        found = true;
+        break;
+      }
+      index++;
+    }
+    EXPECT_TRUE(found);
+    EXPECT_EQ(index, expected_index);
   }
 
   Vector<const FragmentItem*> ItemsForAsVector(
@@ -786,7 +778,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByRemoveChildAfterForcedBreak) {
       line 3<br>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.remove();
   // TODO(kojii): This can be optimized more.
   TestFirstDirtyLineIndex("container", 0);
@@ -800,7 +792,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByRemoveForcedBreak) {
       line 3<br>
     </div>"
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.remove();
   // TODO(kojii): This can be optimized more.
   TestFirstDirtyLineIndex("container", 0);
@@ -815,7 +807,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByRemoveSpanWithForcedBreak) {
     </div>
   )HTML");
   // |target| is a culled inline box. There is no fragment in fragment tree.
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.remove();
   // TODO(kojii): This can be optimized more.
   TestFirstDirtyLineIndex("container", 0);
@@ -829,7 +821,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByInsertAtStart) {
       line 3<br>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.parentNode()->insertBefore(Text::Create(GetDocument(), "XYZ"),
                                     &target);
   GetDocument().UpdateStyleAndLayoutTree();
@@ -845,7 +837,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByInsertAtLast) {
       line 3<br>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.parentNode()->appendChild(Text::Create(GetDocument(), "XYZ"));
   GetDocument().UpdateStyleAndLayoutTree();
   TestFirstDirtyLineIndex("container", 1);
@@ -859,7 +851,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByInsertAtMiddle) {
       line 3<br>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.parentNode()->insertBefore(Text::Create(GetDocument(), "XYZ"),
                                     target.nextSibling());
   GetDocument().UpdateStyleAndLayoutTree();
@@ -875,7 +867,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyByTextSetData) {
       line 3<br>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   To<Text>(*target.firstChild()).setData("abc");
   // TODO(kojii): This can be optimized more.
   TestFirstDirtyLineIndex("container", 0);
@@ -894,7 +886,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyWrappedLine) {
       123456<span id="target">7</span>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.remove();
   // TODO(kojii): This can be optimized more.
   TestFirstDirtyLineIndex("container", 0);
@@ -908,7 +900,7 @@ TEST_F(FragmentItemTest, MarkLineBoxesDirtyInsideInlineBlock) {
       </div>
     </div>
   )HTML");
-  Element& target = *GetDocument().getElementById(AtomicString("target"));
+  Element& target = *GetElementById("target");
   target.remove();
   TestFirstDirtyLineIndex("container", 0);
 }

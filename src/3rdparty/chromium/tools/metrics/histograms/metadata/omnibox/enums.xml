@@ -33,11 +33,18 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Directions"/>
   <int value="3" label="Website"/>
   <int value="4" label="Reviews"/>
+  <int value="5" label="Aim"/>
+  <int value="6" label="Lens"/>
 </enum>
 
 <enum name="BooleanNavigated">
   <int value="0" label="Navigation did not occur"/>
   <int value="1" label="Navigation occurred"/>
+</enum>
+
+<enum name="BooleanNonNull">
+  <int value="0" label="Null"/>
+  <int value="1" label="Non-null"/>
 </enum>
 
 <enum name="BooleanOffered">
@@ -50,21 +57,13 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Off the record"/>
 </enum>
 
-<enum name="ClientSummarizedResultType">
-  <int value="0" label="URL"/>
-  <int value="1" label="Search"/>
-  <int value="2" label="App"/>
-  <int value="3" label="Contact"/>
-  <int value="4" label="OnDevice"/>
-  <int value="5" label="Unknown"/>
-</enum>
-
 <enum name="DocumentProviderAllowedReason">
   <int value="0" label="Allowed"/>
   <int value="1" label="Unknown"/>
   <int value="2" label="Not allowed because feature disabled"/>
   <int value="3" label="Not allowed because the suggest setting is disabled"/>
-  <int value="4" label="Not allowed because the Drive setting is disabled"/>
+  <int value="4"
+      label="Not allowed because the Drive setting is disabled (obsolete)"/>
   <int value="5" label="Not allowed because the profile is off the record"/>
   <int value="6" label="Not allowed because the user is not logged in"/>
   <int value="7" label="Not allowed because the user is not Syncing"/>
@@ -73,6 +72,26 @@ chromium-metrics-reviews@google.com.
   <int value="10" label="Not allowed because the input is a focus or is empty"/>
   <int value="11" label="Not allowed because the input length is too short"/>
   <int value="12" label="Not allowed because the input looks like a URL"/>
+  <int value="13"
+      label="Not allowed because the user is not enterprise eligible"/>
+</enum>
+
+<enum name="DocumentSuggestRequestEvent">
+  <int value="1" label="requests sent">Request was sent.</int>
+  <int value="2" label="requests invalidated">
+    Request was invalidated (cancelled because URLLoader was deleted before the
+    callback was invoked).
+  </int>
+  <int value="3" label="responses received">
+    Response was received asynchronously.
+  </int>
+</enum>
+
+<enum name="DuplicateNavigationServingResult">
+  <int value="0" label="Not served then not served"/>
+  <int value="1" label="Not served then served"/>
+  <int value="2" label="Served then not served"/>
+  <int value="3" label="Served then served"/>
 </enum>
 
 <enum name="GroupId">
@@ -99,19 +118,20 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="SearchTerms"/>
 </enum>
 
+<!-- LINT.IfChange(OmniboxBuiltinEngineType) -->
+
 <enum name="OmniboxBuiltinEngineType">
   <int value="0" label="Non built-in engine"/>
   <int value="1" label="Prepopulated Engine"/>
   <int value="2" label="@bookmarks starter pack engine"/>
   <int value="3" label="@history starter pack engine"/>
   <int value="4" label="@tabs starter pack engine"/>
+  <int value="5" label="@gemini starter pack engine"/>
+  <int value="6" label="@page starter pack engine"/>
+  <int value="7" label="@aimode starter pack engine"/>
 </enum>
 
-<enum name="OmniboxDocumentSuggestRequests">
-  <int value="1" label="requests sent"/>
-  <int value="2" label="requests invalidated"/>
-  <int value="3" label="(non-invalidated) replies received"/>
-</enum>
+<!-- LINT.ThenChange(//components/search_engines/search_engine_type.h:BuiltinEngineType) -->
 
 <enum name="OmniboxEnteredKeywordMode2">
   <int value="0" label="invalid"/>
@@ -123,6 +143,7 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="mouse click on hint view"/>
   <int value="7" label="tap gesture on hint view"/>
   <int value="8" label="select suggestion"/>
+  <int value="9" label="toolbelt"/>
 </enum>
 
 <enum name="OmniboxEscapeAction">
@@ -134,12 +155,6 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Cleared user input"/>
   <int value="4" label="Closed popup and cleared user input"/>
   <int value="5" label="Blurred"/>
-</enum>
-
-<enum name="OmniboxFocusType">
-  <int value="0" label="INTERACTION_DEFAULT"/>
-  <int value="1" label="INTERACTION_FOCUS"/>
-  <int value="2" label="INTERACTION_CLOBBER"/>
 </enum>
 
 <enum name="OmniboxInputType">
@@ -159,36 +174,58 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Shortcut text prefix"/>
 </enum>
 
-<enum name="OmniboxSuggestRequests">
-  <int value="1" label="requests sent"/>
-  <int value="2" label="requests invalidated"/>
-  <int value="3" label="(non-invalidated) replies received"/>
+<!-- LINT.IfChange(PaywallSignal) -->
+
+<enum name="PaywallSignal">
+  <summary>
+    Indicates the paywall signal for a given page, if available.
+  </summary>
+  <int value="0" label="Unknown"/>
+  <int value="1" label="Signal present"/>
+  <int value="2" label="Signal not present"/>
 </enum>
 
-<enum name="OmniboxZeroSuggestRequests">
-  <obsolete>
-    Obsolete as of M105.
-  </obsolete>
-  <int value="1" label="requests sent">Suggest requests that were sent.</int>
-  <int value="2" label="requests invalidated">
-    Suggest requests that were invalidated, e.g., due to user starting to type.
-  </int>
-  <int value="3" label="responses received">
-    Suggest responses that were received. Includes both those received directly
-    from the server and those loaded from the HTTP cache.
-  </int>
-  <int value="4" label="responses loaded from HTTP cache">
-    Subset of Suggest responses that were loaded from the HTTP cache.
-  </int>
-  <int value="5"
-      label="out-of-date responses loaded from HTTP cache (deprecated)">
-    Subset of Suggest responses that were loaded from the HTTP cache and were
-    out-of-date.
-  </int>
-  <int value="6" label="responses updated displayed results">
-    Subset of Suggest responses that ended up updating the displayed results.
-  </int>
+<!-- LINT.ThenChange(//components/omnibox/browser/lens_suggest_inputs_utils.h:PaywallSignal) -->
+
+<enum name="ReconciliationType">
+  <int value="0" label="No Reconciliation"/>
+  <int value="1" label="By prepopulate_id"/>
+  <int value="2" label="By keyword"/>
+  <int value="3" label="By domain based keyword"/>
 </enum>
+
+<enum name="RegulatoryExtensionVariant">
+  <int value="0" label="Default extension"/>
+  <int value="1" label="Android EEA"/>
+</enum>
+
+<!-- LINT.IfChange(RemoteRequestType) -->
+
+<enum name="RemoteRequestType">
+  <int value="0" label="search suggestion"/>
+  <int value="1" label="search suggestion warm-up"/>
+  <int value="2" label="search suggestion for images"/>
+  <int value="3" label="zero-prefix suggestion"/>
+  <int value="4" label="zero-prefix suggestion prefetching"/>
+  <int value="5" label="document suggestion"/>
+  <int value="6" label="suggestion deletion"/>
+  <int value="7" label="enterprise search aggregator suggestion"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/omnibox/browser/remote_suggestions_service.h:RemoteRequestType) -->
+
+<!-- LINT.IfChange(SearchPrefetchCacheAliasFallbackReasonEnum) -->
+
+<enum name="SearchPrefetchCacheAliasFallbackReason">
+  <int value="0" label="kNoFallback"/>
+  <int value="1" label="kNoResponseHeaders"/>
+  <int value="2" label="kNon2xxResponse"/>
+  <int value="3" label="kRedirectResponse"/>
+  <int value="4" label="kErrorOnComplete"/>
+  <int value="5" label="kMojoDisconnect"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/preloading/prefetch/search_prefetch/cache_alias_search_prefetch_url_loader.h:FallbackReason) -->
 
 <enum name="SearchPrefetchEligibilityReason">
   <int value="0" label="Prefetch started"/>
@@ -200,6 +237,7 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="Duplicate prefetch request"/>
   <int value="7" label="Too many recent prefetches"/>
   <int value="8" label="Throttle prevented the prefetch"/>
+  <int value="9" label="SlowNetwork suppressed the prefetch"/>
 </enum>
 
 <enum name="SearchPrefetchResponseDataReaderStatus">
@@ -217,30 +255,31 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Navigation URL was not a default search URL"/>
   <int value="4" label="No prefetch issued for the search terms"/>
   <int value="5" label="Prefetch was for a different origin"/>
-  <int value="6" label="Prefetch request was cancelled"/>
+  <int value="6" label="Prefetch request was cancelled (Obsolete)"/>
   <int value="7" label="Prefetch request failed"/>
   <int value="8" label="Another reason (unexpected)"/>
   <int value="9" label="POST, reload, form, link, or other non-cache loads."/>
   <int value="10"
-      label="A prerender navigation request has taken this response away."/>
+      label="A prerender navigation request has taken this response away
+             (Obsolete)."/>
 </enum>
 
 <enum name="SearchPrefetchStatus">
   <int value="0" label="Not started"/>
-  <int value="1" label="In flight"/>
+  <int value="1" label="In flight (Obsolete)"/>
   <int value="2" label="Headers received (for streaming responses)"/>
   <int value="3"
       label="Headers received and user navigated to search terms (for
-             streaming responses)"/>
+             streaming responses) (Obsolete)"/>
   <int value="4" label="Completed the prefetch"/>
   <int value="5" label="Request failed"/>
-  <int value="6" label="Request cancelled"/>
+  <int value="6" label="Request cancelled (Obsolete)"/>
   <int value="7" label="Prefetch request served for real navigation"/>
-  <int value="8" label="Was served to prerender navigation stack"/>
+  <int value="8" label="Was served to prerender navigation stack (Obsolete)"/>
   <int value="9"
       label="Serving to prerender navigation stack and user navigated to
-             search terms"/>
-  <int value="10" label="Upgraded to prerender and succeeded"/>
+             search terms (Obsolete)"/>
+  <int value="10" label="Upgraded to prerender and succeeded (Obsolete)"/>
 </enum>
 
 <enum name="SearchPreloadForwardingResult">
@@ -249,6 +288,57 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="kFailed"/>
   <int value="3" label="kCompleted"/>
 </enum>
+
+<!-- LINT.IfChange(SearchPreloadSignalResult) -->
+
+<enum name="SearchPreloadSignalResult">
+  <int value="0" label="kNotTriggeredMisc">kNotTriggeredMisc</int>
+  <int value="1" label="kPrefetchTriggered">kPrefetchTriggered</int>
+  <int value="2" label="kPrerenderTriggered">kPrerenderTriggered</int>
+  <int value="3" label="kNotTriggeredAlreadyTriggered">
+    kNotTriggeredAlreadyTriggered
+  </int>
+  <int value="4" label="kNotTriggeredPrefetchNotAlive">
+    kNotTriggeredPrefetchNotAlive
+  </int>
+  <int value="5" label="kNotTriggeredLimitExceeded">
+    kNotTriggeredLimitExceeded
+  </int>
+  <int value="6" label="kNotTriggeredIncognito">kNotTriggeredIncognito</int>
+  <int value="7" label="kNotTriggeredOnPressNotSearchType">
+    kNotTriggeredOnPressNotSearchType
+  </int>
+  <int value="8" label="kNotTriggeredOnPressNoSearchProviderOptIn">
+    kNotTriggeredOnPressNoSearchProviderOptIn
+  </int>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/preloading/search_preload/search_preload_signal_result.h) -->
+
+<enum name="SearchSuggestRequestEvent">
+  <int value="1" label="requests sent">Request was sent.</int>
+  <int value="2" label="requests invalidated">
+    Request was invalidated (cancelled because URLLoader was deleted before the
+    callback was invoked).
+  </int>
+  <int value="3" label="responses received">
+    Response was received asynchronously.
+  </int>
+</enum>
+
+<!-- LINT.IfChange(ServerAimEligibilityRequestStatus) -->
+
+<enum name="ServerAimEligibilityRequestStatus">
+  <summary>
+    The status of a HTTP GET request sent to a backend to fetch AIM eligibility.
+  </summary>
+  <int value="0" label="kSent"/>
+  <int value="1" label="kErrorResponse"/>
+  <int value="2" label="kFailedToParse"/>
+  <int value="3" label="kSuccess"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/omnibox/browser/aim_eligibility_service.h:ServerRequestStatus) -->
 
 <enum name="SuggestionAnswerOptionalType">
   <summary>
@@ -284,16 +374,6 @@ chromium-metrics-reviews@google.com.
   <int value="10" label="Currency"/>
   <int value="11" label="Local time"/>
   <int value="12" label="Play install"/>
-</enum>
-
-<enum name="SuggestionGroupId">
-  <summary>
-    Suggestion group IDs toggled visible or hidden in the omnibox result list.
-    Based on the SuggestionGroupIds enum in suggestion_config.proto, contains
-    values currently known to Chrome.
-  </summary>
-  <int value="40001" label="Onboarding"/>
-  <int value="40009" label="Proactive zero-suggest"/>
 </enum>
 
 <enum name="SuggestionPedalType">
@@ -363,40 +443,23 @@ chromium-metrics-reviews@google.com.
   </int>
 </enum>
 
-<enum name="ZeroSuggestEligibleOnFocus">
-  <obsolete>
-    Obsolete as of M106.
-  </obsolete>
-  <int value="0" label="Eligible">
-    URL can be currently sent to the suggest server.
-  </int>
-  <int value="1"
-      label="Generally eligible in current context but particular URL
-             ineligible">
-    URL cannot be sent to the suggest server but another URL would be eligible
-    at this time.
-  </int>
-  <int value="2" label="Generally ineligible in current context">
-    No URL can be sent to the suggest server at this time.
-  </int>
-</enum>
-
-<enum name="ZeroSuggestProviderEvent">
+<enum name="ZeroSuggestRequestEvent">
   <int value="0" label="cached response converted to results">
     Cached response was synchronously converted to displayed matches.
   </int>
-  <int value="1" label="request sent">Remote request was sent.</int>
+  <int value="1" label="request sent">Request was sent.</int>
   <int value="2" label="request invalidated">
-    Remote request was invalidated (due to user starting to type or another
-    zero-suggest request).
+    Request was invalidated (cancelled because URLLoader was deleted before the
+    callback was invoked).
   </int>
   <int value="3" label="response received">
-    Remote response was received asynchronously.
+    Response was received asynchronously.
   </int>
-  <int value="4" label="response cached">Remote response was cached.</int>
+  <int value="4" label="response cached">Response was cached.</int>
   <int value="5" label="response converted to results">
-    Remote response ended up being converted to displayed matches. This may
-    happen due to an empty displayed result set or an empty remote result set.
+    Response was converted to displayed matches. This can happen if the
+    displayed result set is empty and the response result set is non-empty; or
+    vice versa.
   </int>
 </enum>
 

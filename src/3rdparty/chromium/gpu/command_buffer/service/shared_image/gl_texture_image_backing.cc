@@ -11,6 +11,7 @@
 
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
@@ -37,6 +38,10 @@
 
 #if BUILDFLAG(USE_DAWN) && BUILDFLAG(DAWN_ENABLE_BACKEND_OPENGLES)
 #include "gpu/command_buffer/service/shared_image/dawn_gl_texture_representation.h"
+#endif
+
+#if BUILDFLAG(IS_WIN)
+#include "gpu/command_buffer/service/shared_image/d3d_image_representation.h"
 #endif
 
 namespace gpu {
@@ -142,8 +147,7 @@ class SkiaGaneshImageRepresentationImpl : public SkiaGaneshImageRepresentation {
     }
 
     for (int plane = 0; plane < format().NumberOfPlanes(); ++plane) {
-      SkColorType sk_color_type = viz::ToClosestSkColorType(
-          /*gpu_compositing=*/true, format(), plane);
+      SkColorType sk_color_type = viz::ToClosestSkColorType(format(), plane);
       // Gray is not a renderable single channel format, but alpha is.
       if (sk_color_type == kGray_8_SkColorType) {
         sk_color_type = kAlpha_8_SkColorType;
@@ -259,7 +263,8 @@ GLTextureImageBacking::GLTextureImageBacking(const Mailbox& mailbox,
                                              const gfx::ColorSpace& color_space,
                                              GrSurfaceOrigin surface_origin,
                                              SkAlphaType alpha_type,
-                                             uint32_t usage,
+                                             SharedImageUsageSet usage,
+                                             std::string debug_label,
                                              bool is_passthrough)
     : ClearTrackingSharedImageBacking(mailbox,
                                       format,
@@ -268,6 +273,7 @@ GLTextureImageBacking::GLTextureImageBacking(const Mailbox& mailbox,
                                       surface_origin,
                                       alpha_type,
                                       usage,
+                                      std::move(debug_label),
                                       format.EstimatedSizeInBytes(size),
                                       /*is_thread_safe=*/false),
       is_passthrough_(is_passthrough) {
@@ -392,17 +398,17 @@ std::unique_ptr<DawnImageRepresentation> GLTextureImageBacking::ProduceDawn(
       image = ProduceGLTexture(manager, tracker);
     }
     auto result = std::make_unique<DawnGLTextureRepresentation>(
-        std::move(image), manager, this, tracker, device);
+        std::move(image), manager, this, tracker, device,
+        std::move(view_formats));
     return result;
   }
 #endif
 
   // TODO (crbug.com/1434885) - Delete this code path if it's not used.
   // Otherwise optimize this path with a GPU copy.
-  SCOPED_CRASH_KEY_STRING256("", "GLSharedImage_DebugLabel",
-                             debug_label_from_client_);
+  SCOPED_CRASH_KEY_STRING256("", "GLSharedImage_DebugLabel", debug_label());
   SCOPED_CRASH_KEY_STRING32("", "GLSharedImage_Usage",
-                            base::NumberToString(usage()));
+                            base::NumberToString(uint32_t(usage())));
   base::debug::DumpWithoutCrashing();
 
 #if BUILDFLAG(USE_DAWN)
@@ -432,14 +438,37 @@ GLTextureImageBacking::ProduceSkiaGanesh(
       tracker);
 }
 
+std::unique_ptr<VideoImageRepresentation> GLTextureImageBacking::ProduceVideo(
+    SharedImageManager* manager,
+    MemoryTypeTracker* tracker,
+    VideoDevice device) {
+#if BUILDFLAG(IS_WIN)
+  DCHECK_EQ(textures_.size(), 1u);
+  DCHECK(device);
+
+  return D3D11VideoImageCopyRepresentation::CreateFromGL(
+      textures_[0].GetServiceId(), debug_label(), device.Get(), manager, this,
+      tracker);
+#else
+  return nullptr;
+#endif
+}
+
 void GLTextureImageBacking::InitializeGLTexture(
     const std::vector<GLCommonImageBackingFactory::FormatInfo>& format_info,
     base::span<const uint8_t> pixel_data,
     gl::ProgressReporter* progress_reporter,
-    bool framebuffer_attachment_angle,
-    std::string debug_label_from_client) {
-  const std::string debug_label = "GLSharedImage_" + debug_label_from_client;
-  debug_label_from_client_ = debug_label_from_client;
+    bool framebuffer_attachment_angle) {
+  // Drain any pre-existing GL errors so the post-allocation check below is
+  // attributable to the storage call. Silently squelching these errors is
+  // unfortunate, but is done in order to mirror other allocation checks done in
+  // the command decoder.
+  gl::GLApi* const api = gl::g_current_gl_context;
+  while (api->glGetErrorFn() != GL_NO_ERROR) {
+  }
+
+  const std::string debug_label =
+      "GLSharedImage_" + SharedImageBacking::debug_label();
   int num_planes = format().NumberOfPlanes();
   textures_.reserve(num_planes);
   for (int plane = 0; plane < num_planes; ++plane) {
@@ -451,8 +480,23 @@ void GLTextureImageBacking::InitializeGLTexture(
                                 debug_label);
   }
 
-  if (!pixel_data.empty()) {
-    SetCleared();
+  // Update the cleared state for passthrough textures if the pixel data upload
+  // was successful. We don't need to update the cleared state for validating
+  // decoder textures because we track the cleared state in the decoder texture
+  // objects whose cleared state is set in TextureHolder::Initialize above.
+  if (is_passthrough_ && !pixel_data.empty()) {
+    // The storage allocation allocates undefined-content storage on a context
+    // without robust-resource-init. If the subsequent upload failed (e.g.
+    // GL_OUT_OF_MEMORY) the storage is still uninitialised; only mark the
+    // backing cleared if no GL error was raised.
+    GLenum error = api->glGetErrorFn();
+    if (error == GL_NO_ERROR) {
+      SetCleared();
+    } else {
+      LOG(ERROR)
+          << "GLTextureImageBacking: initial pixel upload failed (GL error 0x"
+          << std::hex << error << ")";
+    }
   }
 }
 

@@ -9,14 +9,18 @@
 #include <string_view>
 
 #include "base/memory/scoped_refptr.h"
-#include "components/safe_search_api/safe_search/safe_search_url_checker_client.h"
 #include "components/safe_search_api/url_checker_client.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
-#include "components/supervised_user/core/browser/proto/kidschromemanagement_messages.pb.h"
+#include "components/supervised_user/core/browser/parallel_fetch_manager.h"
+#include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
 #include "components/supervised_user/core/browser/proto_fetcher.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 class GURL;
+
+namespace version_info {
+enum class Channel;
+}
 
 namespace supervised_user {
 // This class uses the KidsChromeManagement::ClassifyUrl to check the
@@ -26,11 +30,14 @@ class KidsChromeManagementURLCheckerClient
     : public safe_search_api::URLCheckerClient {
  public:
   // `country` should be a two-letter country code (ISO 3166-1 alpha-2), e.g.,
-  // "us".
+  // "us". `is_subject_to_parental_controls` indicates if the caller is subject
+  // to Family Link parental controls.
   KidsChromeManagementURLCheckerClient(
       signin::IdentityManager* identity_manager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::string_view country);
+      const PrefService& pref_service,
+      std::string_view country,
+      version_info::Channel channel);
 
   KidsChromeManagementURLCheckerClient(
       const KidsChromeManagementURLCheckerClient&) = delete;
@@ -47,11 +54,10 @@ class KidsChromeManagementURLCheckerClient
   void CheckURL(const GURL& url, ClientCheckCallback callback) override;
 
  private:
-  safe_search_api::SafeSearchURLCheckerClient safe_search_client_;
   const std::string country_;
 
-  ParallelFetchManager<kids_chrome_management::ClassifyUrlRequest,
-                       kids_chrome_management::ClassifyUrlResponse>
+  ParallelFetchManager<kidsmanagement::ClassifyUrlRequest,
+                       kidsmanagement::ClassifyUrlResponse>
       fetch_manager_;
 };
 

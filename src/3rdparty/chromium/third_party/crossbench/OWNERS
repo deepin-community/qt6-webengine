@@ -1,9 +1,11 @@
 alexschulze@chromium.org
-ashwinpv@google.com
 cbruni@chromium.org
 johnchen@chromium.org
+kalutes@google.com
+khokhlov@google.com
 machenbach@chromium.org
-maxqli@google.com
 pthier@chromium.org
 vahl@chromium.org
-victorgomes@chromium.org
+
+# Dependency rolls.
+per-file DEPS=chromium-autoroll@skia-public.iam.gserviceaccount.com

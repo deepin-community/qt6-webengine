@@ -49,9 +49,15 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
       iconUrl: String,
       password: Object,
 
-      flowState: Number,
+      flowState: {
+        type: Number,
+        lalue: ShareFlowState.NO_DIALOG,
+      },
 
-      fetchResults_: Object,
+      fetchResults_: {
+        type: Object,
+        value: null,
+      },
 
       recipients_: {
         type: Array,
@@ -66,12 +72,13 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
     };
   }
 
-  passwordName: string;
-  iconUrl: string;
-  password: chrome.passwordsPrivate.PasswordUiEntry;
-  flowState: ShareFlowState = ShareFlowState.NO_DIALOG;
-  private recipients_: chrome.passwordsPrivate.RecipientInfo[];
-  private fetchResults_: chrome.passwordsPrivate.FamilyFetchResults|null = null;
+  declare passwordName: string;
+  declare iconUrl: string;
+  declare password: chrome.passwordsPrivate.PasswordUiEntry;
+  declare flowState: ShareFlowState;
+  declare private recipients_: chrome.passwordsPrivate.RecipientInfo[];
+  declare private fetchResults_: chrome.passwordsPrivate.FamilyFetchResults|
+      null;
   private passwordManager_: PasswordManagerProxy =
       PasswordManagerImpl.getInstance();
 
@@ -82,7 +89,7 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
   }
 
   private async startSharing_() {
-    // TODO(crbug/1445526): Add timeout to avoid flickering.
+    // TODO(crbug.com/40268194): Add timeout to avoid flickering.
     this.flowState = ShareFlowState.FETCHING;
 
     this.fetchResults_ = await this.passwordManager_.fetchFamilyMembers();
@@ -91,7 +98,7 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
         this.flowState = ShareFlowState.ERROR;
         break;
       case chrome.passwordsPrivate.FamilyFetchStatus.NO_MEMBERS:
-        // TODO(crbug/1445526): Rename FamilyFetchStatus.NO_MEMBERS to
+        // TODO(crbug.com/40268194): Rename FamilyFetchStatus.NO_MEMBERS to
         // NOT_FAMILY_MEMBER.
         this.flowState = ShareFlowState.NOT_FAMILY_MEMBER;
         break;

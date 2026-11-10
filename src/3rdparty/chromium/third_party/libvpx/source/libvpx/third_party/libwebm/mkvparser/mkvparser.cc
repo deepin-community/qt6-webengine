@@ -8,7 +8,6 @@
 #include "mkvparser/mkvparser.h"
 
 #if defined(_MSC_VER) && _MSC_VER < 1800
-#include <float.h>  // _isnan() / _finite()
 #define MSC_COMPAT
 #endif
 
@@ -16,6 +15,7 @@
 #include <cfloat>
 #include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -55,7 +55,7 @@ Type* SafeArrayAlloc(unsigned long long num_elements,
 void GetVersion(int& major, int& minor, int& build, int& revision) {
   major = 1;
   minor = 1;
-  build = 1;
+  build = 3;
   revision = 0;
 }
 
@@ -246,7 +246,8 @@ long UnserializeFloat(IMkvReader* pReader, long long pos, long long size_,
   if (size == 4) {
     union {
       float f;
-      unsigned long ff;
+      uint32_t ff;
+      static_assert(sizeof(float) == sizeof(uint32_t), "");
     };
 
     ff = 0;
@@ -264,7 +265,8 @@ long UnserializeFloat(IMkvReader* pReader, long long pos, long long size_,
   } else {
     union {
       double d;
-      unsigned long long dd;
+      uint64_t dd;
+      static_assert(sizeof(double) == sizeof(uint64_t), "");
     };
 
     dd = 0;
@@ -4569,7 +4571,8 @@ int Track::Info::CopyStr(char* Info::*str, Info& dst_) const {
   if (dst == NULL)
     return -1;
 
-  strcpy(dst, src);
+  memcpy(dst, src, len);
+  dst[len] = '\0';
 
   return 0;
 }
@@ -7887,8 +7890,10 @@ long Block::Parse(const Cluster* pCluster) {
     if (frame_size <= 0)
       return E_FILE_FORMAT_INVALID;
 
+#if LLONG_MAX > LONG_MAX
     if (frame_size > LONG_MAX)
       return E_FILE_FORMAT_INVALID;
+#endif
 
     if ((pos + len) > stop)
       return E_FILE_FORMAT_INVALID;
@@ -7954,8 +7959,10 @@ long Block::Parse(const Cluster* pCluster) {
       if (frame_size <= 0)
         return E_FILE_FORMAT_INVALID;
 
+#if LLONG_MAX > LONG_MAX
       if (frame_size > LONG_MAX)
         return E_FILE_FORMAT_INVALID;
+#endif
 
       curr.len = static_cast<long>(frame_size);
       // Check if size + curr.len could overflow.

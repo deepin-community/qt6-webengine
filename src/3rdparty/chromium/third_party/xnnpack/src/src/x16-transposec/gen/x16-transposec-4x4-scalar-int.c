@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x32-transposec/scalar.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,13 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
 
 void xnn_x16_transposec_ukernel__4x4_scalar_int(
     const uint16_t *input,
@@ -20,11 +22,10 @@ void xnn_x16_transposec_ukernel__4x4_scalar_int(
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x16_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height)
 {
-  assert(output_stride >= block_height * sizeof(int16_t));
-  assert(input_stride >= block_width * sizeof(int16_t));
+  assert(block_width == 1 || output_stride >= block_height * sizeof(int16_t));
+  assert(block_height == 1 || input_stride >= block_width * sizeof(int16_t));
 
   const size_t tile_height = 4;
   const size_t tile_width = 4;

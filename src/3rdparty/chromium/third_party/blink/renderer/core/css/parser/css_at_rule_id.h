@@ -23,14 +23,13 @@ enum class CSSAtRuleID {
   kCSSAtRuleMedia,
   kCSSAtRuleNamespace,
   kCSSAtRulePage,
-  kCSSAtRulePositionFallback,
+  kCSSAtRulePositionTry,
   kCSSAtRuleProperty,
   kCSSAtRuleContainer,
   kCSSAtRuleCounterStyle,
   kCSSAtRuleScope,
   kCSSAtRuleStartingStyle,
   kCSSAtRuleSupports,
-  kCSSAtRuleTry,
   kCSSAtRuleWebkitKeyframes,
   // Font-feature-values related at-rule ids below:
   kCSSAtRuleAnnotation,
@@ -57,6 +56,13 @@ enum class CSSAtRuleID {
   kCSSAtRuleRightTop,
   kCSSAtRuleRightMiddle,
   kCSSAtRuleRightBottom,
+  // CSS Functions and Mixins
+  kCSSAtRuleFunction,
+  kCSSAtRuleMixin,
+  kCSSAtRuleApplyMixin,
+  kCSSAtRuleCustomMedia,
+
+  kCount  // Must go last.
 };
 
 CSSAtRuleID CssAtRuleID(StringView name);

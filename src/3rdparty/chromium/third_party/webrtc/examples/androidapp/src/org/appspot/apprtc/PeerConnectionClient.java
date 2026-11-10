@@ -333,12 +333,10 @@ public class PeerConnectionClient {
 
     Log.d(TAG, "Preferred video codec: " + getSdpVideoCodecName(peerConnectionParameters));
 
-    final String fieldTrials = getFieldTrials(peerConnectionParameters);
     executor.execute(() -> {
-      Log.d(TAG, "Initialize WebRTC. Field trials: " + fieldTrials);
+      Log.d(TAG, "Initialize WebRTC.");
       PeerConnectionFactory.initialize(
           PeerConnectionFactory.InitializationOptions.builder(appContext)
-              .setFieldTrials(fieldTrials)
               .setEnableInternalTracer(true)
               .createInitializationOptions());
     });
@@ -446,13 +444,15 @@ public class PeerConnectionClient {
     if (peerConnectionParameters.loopback) {
       options.disableEncryption = true;
     }
+    final String fieldTrials = getFieldTrials(peerConnectionParameters);
     factory = PeerConnectionFactory.builder()
+                  .setFieldTrials(fieldTrials)
                   .setOptions(options)
                   .setAudioDeviceModule(adm)
                   .setVideoEncoderFactory(encoderFactory)
                   .setVideoDecoderFactory(decoderFactory)
                   .createPeerConnectionFactory();
-    Log.d(TAG, "Peer connection factory created.");
+    Log.d(TAG, "Peer connection factory created. Field trials: " + fieldTrials);
     adm.release();
   }
 
@@ -1269,7 +1269,7 @@ public class PeerConnectionClient {
 
     @Override
     public void onSelectedCandidatePairChanged(CandidatePairChangeEvent event) {
-      Log.d(TAG, "Selected candidate pair changed because: " + event);
+      Log.d(TAG, "Selected candidate pair changed because: " + event.reason);
     }
 
     @Override

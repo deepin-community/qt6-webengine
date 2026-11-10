@@ -13,16 +13,21 @@
 #include "core/fxcrt/cfx_datetime.h"
 #include "testing/fx_string_testhelpers.h"
 #include "testing/fxgc_unittest.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/scoped_set_tz.h"
 #include "v8/include/cppgc/persistent.h"
 #include "xfa/fxfa/parser/cxfa_localemgr.h"
 
-class CFGAS_StringFormatterTest : public FXGCUnitTest {
- public:
-  CFGAS_StringFormatterTest() : scoped_tz_("UTC") { CPDF_PageModule::Create(); }
+using ::testing::ElementsAre;
 
-  ~CFGAS_StringFormatterTest() override { CPDF_PageModule::Destroy(); }
+class CFGASStringFormatterTest : public FXGCUnitTest {
+ public:
+  CFGASStringFormatterTest() : scoped_tz_("UTC") {
+    pdfium::InitializePageModule();
+  }
+
+  ~CFGASStringFormatterTest() override { pdfium::DestroyPageModule(); }
 
   CXFA_LocaleMgr* Mgr(const WideString& locale) {
     return cppgc::MakeGarbageCollected<CXFA_LocaleMgr>(
@@ -35,13 +40,13 @@ class CFGAS_StringFormatterTest : public FXGCUnitTest {
 
 // TODO(dsinclair): Looks like the formatter/parser does not handle the various
 // 'g' flags.
-TEST_F(CFGAS_StringFormatterTest, DateFormat) {
+TEST_F(CFGASStringFormatterTest, DateFormat) {
   struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {
+  } kTests[] = {
       {L"en", L"2002-10-25", L"MMMM DD, YYYY", L"October 25, 2002"},
       // Note, this is in the doc as 5 but it's wrong and should be 3 by the
       // example in the Picture Clause Reference section.
@@ -90,47 +95,50 @@ TEST_F(CFGAS_StringFormatterTest, DateFormat) {
   // as they are not supported. In theory there are the full width versions
   // of DDD, DDDD, MMM, MMMM, E, e, gg, YYY, YYYYY.
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.FormatDateTime(Mgr(tests[i].locale), tests[i].input,
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.FormatDateTime(Mgr(test.locale), test.input,
                                    CFGAS_StringFormatter::DateTimeType::kDate,
                                    &result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, TimeFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, TimeFormat) {
+  static const struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {{L"en", L"01:01:11", L"h:M A", L"1:1 AM"},
-               {L"en", L"13:01:11", L"h:M A", L"1:1 PM"},
-               {L"en", L"01:01:11", L"hh:MM:SS A", L"01:01:11 AM"},
-               {L"en", L"13:01:11", L"hh:MM:SS A", L"01:01:11 PM"},
-               {L"en", L"01:01:11", L"hh:MM:SS A Z", L"01:01:11 AM GMT-02:00"},
-               {L"en", L"01:01:11", L"hh:MM:SS A z", L"01:01:11 AM -02:00"},
-               // {L"en", L"01:01:11", L"hh:MM:SS A zz", L"01:01:11 AM GMT"},
-               // Should change ?*+ into ' ' when formatting.
-               // {L"en", L"01:01:11", L"hh:MM:SS?*+A", L"01:01:11   AM"},
-               {L"en", L"12:01:01", L"k:MM:SS", L"12:01:01"},
-               {L"en", L"14:01:01", L"k:MM:SS", L"2:01:01"},
-               {L"en", L"12:01:11", L"kk:MM", L"12:01"},
-               {L"en", L"14:01:11", L"kk:MM", L"02:01"},
-               {L"en", L"12:01:11 +04:30", L"kk:MM", L"05:31"},
-               {L"en", L"12:01:11", L"kk:MM A", L"12:01 PM"},
-               {L"en", L"00:01:01", L"H:M:S", L"0:1:1"},
-               {L"en", L"13:02:11", L"H:M:S", L"13:2:11"},
-               {L"en", L"00:01:11.001", L"HH:M:S.FFF", L"00:1:11.001"},
-               {L"en", L"13:02:11", L"HH:M", L"13:2"},
-               {L"en", L"00:01:11", L"K:M", L"24:1"},
-               {L"en", L"00:02:11", L"KK:M", L"24:2"},
-               {L"en", L"11:11:11", L"HH:MM:SS 'o''clock' A Z",
-                L"11:11:11 o'clock AM GMT-02:00"},
-               {L"en", L"14:30:59", L"h:MM A", L"2:30 PM"},
-               {L"en", L"14:30:59", L"HH:MM:SS A Z", L"14:30:59 PM GMT-02:00"}};
+  } kTests[] = {
+      {L"en", L"01:01:11", L"h:M A", L"1:1 AM"},
+      {L"en", L"13:01:11", L"h:M A", L"1:1 PM"},
+      {L"en", L"01:01:11", L"hh:MM:SS A", L"01:01:11 AM"},
+      {L"en", L"13:01:11", L"hh:MM:SS A", L"01:01:11 PM"},
+      {L"en", L"01:01:11", L"hh:MM:SS A Z", L"01:01:11 AM GMT-02:00"},
+      {L"en", L"01:01:11", L"hh:MM:SS A z", L"01:01:11 AM -02:00"},
+      // {L"en", L"01:01:11", L"hh:MM:SS A zz", L"01:01:11 AM GMT"},
+      // Should change ?*+ into ' ' when formatting.
+      // {L"en", L"01:01:11", L"hh:MM:SS?*+A", L"01:01:11   AM"},
+      {L"en", L"12:01:01", L"k:MM:SS", L"12:01:01"},
+      {L"en", L"14:01:01", L"k:MM:SS", L"2:01:01"},
+      {L"en", L"12:01:11", L"kk:MM", L"12:01"},
+      {L"en", L"14:01:11", L"kk:MM", L"02:01"},
+      {L"en", L"12:01:11 +04:30", L"kk:MM", L"05:31"},
+      {L"en", L"12:01:11", L"kk:MM A", L"12:01 PM"},
+      {L"en", L"00:01:01", L"H:M:S", L"0:1:1"},
+      {L"en", L"13:02:11", L"H:M:S", L"13:2:11"},
+      {L"en", L"00:01:11.001", L"HH:M:S.FFF", L"00:1:11.001"},
+      {L"en", L"13:02:11", L"HH:M", L"13:2"},
+      {L"en", L"00:01:11", L"K:M", L"24:1"},
+      {L"en", L"00:02:11", L"KK:M", L"24:2"},
+      {L"en", L"11:11:11", L"HH:MM:SS 'o''clock' A Z",
+       L"11:11:11 o'clock AM GMT-02:00"},
+      {L"en", L"14:30:59", L"h:MM A", L"2:30 PM"},
+      {L"en", L"14:30:59", L"HH:MM:SS A Z", L"14:30:59 PM GMT-02:00"}};
   // Note, none of the full width time symbols are listed here
   // as they are not supported. In theory there are the full
   // width versions of kkk, kkkk, HHH, HHHH, KKK, KKKK, MMM, MMMM,
@@ -140,25 +148,26 @@ TEST_F(CFGAS_StringFormatterTest, TimeFormat) {
   // The z modifier only appends if the TZ is outside of +0
   {
     ScopedSetTZ scoped_tz("UTC+2");
-
-    for (size_t i = 0; i < std::size(tests); ++i) {
+    size_t i = 0;
+    for (const auto& test : kTests) {
       WideString result;
-      CFGAS_StringFormatter fmt(tests[i].pattern);
-      EXPECT_TRUE(fmt.FormatDateTime(Mgr(tests[i].locale), tests[i].input,
+      CFGAS_StringFormatter fmt(test.pattern);
+      EXPECT_TRUE(fmt.FormatDateTime(Mgr(test.locale), test.input,
                                      CFGAS_StringFormatter::DateTimeType::kTime,
                                      &result));
-      EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+      EXPECT_EQ(test.output, result) << " TEST: " << i;
     }
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, DateTimeFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, DateTimeFormat) {
+  static const struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {
+  } kTests[] = {
       {L"en", L"1999-07-16T10:30Z",
        L"'At' time{HH:MM Z} 'on' date{MMM DD, YYYY}",
        L"At 10:30 GMT on Jul 16, 1999"},
@@ -173,23 +182,25 @@ TEST_F(CFGAS_StringFormatterTest, DateTimeFormat) {
       {L"en", L"9111T1111:", L"MMM D, YYYYTh:MM:SS A",
        L"Jan 1, 9111 11:11:00 AM"}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
+    CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.FormatDateTime(
-        Mgr(tests[i].locale), tests[i].input,
+        Mgr(test.locale), test.input,
         CFGAS_StringFormatter::DateTimeType::kDateTime, &result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, TimeDateFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, TimeDateFormat) {
+  static const struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {
+  } kTests[] = {
       {L"en", L"1999-07-16T10:30Z",
        L"'At' time{HH:MM Z} 'on' date{MMM DD, YYYY}",
        L"At 10:30 GMT on Jul 16, 1999"},
@@ -202,23 +213,25 @@ TEST_F(CFGAS_StringFormatterTest, TimeDateFormat) {
        L"time{'At 'HH:MM Z}date{' on 'MMM DD, YYYY}",
        L"At 10:30 GMT on Jul 16, 1999"}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
+    CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.FormatDateTime(
-        Mgr(tests[i].locale), tests[i].input,
+        Mgr(test.locale), test.input,
         CFGAS_StringFormatter::DateTimeType::kTimeDate, &result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, DateParse) {
-  struct {
+TEST_F(CFGASStringFormatterTest, DateParse) {
+  static const struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     CFX_DateTime output;
-  } tests[] = {
+  } kTests[] = {
       {L"en", L"12/2/99", L"MM/D/YY", CFX_DateTime(1999, 12, 2, 0, 0, 0, 0)},
       {L"en", L"2/2/99", L"M/D/YY", CFX_DateTime(1999, 2, 2, 0, 0, 0, 0)},
       {L"en", L"2/2/10", L"M/D/YY", CFX_DateTime(2010, 2, 2, 0, 0, 0, 0)},
@@ -264,19 +277,21 @@ TEST_F(CFGAS_StringFormatterTest, DateParse) {
   // not supported. In theory there are the full width versions of DDD,
   // DDDD, MMM, MMMM, E, e, gg, YYY, YYYYY.
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     CFX_DateTime result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.ParseDateTime(Mgr(tests[i].locale), tests[i].input,
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.ParseDateTime(Mgr(test.locale), test.input,
                                   CFGAS_StringFormatter::DateTimeType::kDate,
                                   &result));
-    EXPECT_EQ(tests[i].output, result) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
 // TODO(dsinclair): GetDateTimeFormat is broken and doesn't allow just returning
 // a parsed Time. It will assume it's a Date. The method needs to be re-written.
-// TEST_F(CFGAS_StringFormatterTest, TimeParse) {
+// TEST_F(CFGASStringFormatterTest, TimeParse) {
 //   struct {
 //     const wchar_t* locale;
 //     const wchar_t* input;
@@ -302,7 +317,7 @@ TEST_F(CFGAS_StringFormatterTest, DateParse) {
 //   }
 // }
 
-TEST_F(CFGAS_StringFormatterTest, SplitFormatString) {
+TEST_F(CFGASStringFormatterTest, SplitFormatString) {
   std::vector<WideString> results = CFGAS_StringFormatter::SplitOnBars(L"");
   EXPECT_EQ(1UL, results.size());
   EXPECT_TRUE(results[0].IsEmpty());
@@ -314,16 +329,12 @@ TEST_F(CFGAS_StringFormatterTest, SplitFormatString) {
 
   results = CFGAS_StringFormatter::SplitOnBars(
       L"null{'No|data'} | null{} | text{999*9999} | text{999*999*9999}");
-  EXPECT_EQ(4UL, results.size());
-
-  const wchar_t* patterns[] = {L"null{'No|data'} ", L" null{} ",
-                               L" text{999*9999} ", L" text{999*999*9999}"};
-  for (size_t i = 0; i < results.size(); ++i) {
-    EXPECT_STREQ(patterns[i], results[i].c_str());
-  }
+  EXPECT_THAT(results,
+              ElementsAre(L"null{'No|data'} ", L" null{} ", L" text{999*9999} ",
+                          L" text{999*999*9999}"));
 }
 
-TEST_F(CFGAS_StringFormatterTest, NumParse) {
+TEST_F(CFGASStringFormatterTest, NumParse) {
   struct TestCase {
     const wchar_t* locale;
     const wchar_t* input;
@@ -459,7 +470,7 @@ TEST_F(CFGAS_StringFormatterTest, NumParse) {
     CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.ParseNum(Mgr(test.locale), test.input, &result))
         << " TEST: " << test.input << ", " << test.pattern;
-    EXPECT_STREQ(test.output, result.c_str())
+    EXPECT_EQ(test.output, result)
         << " TEST: " << test.input << ", " << test.pattern;
   }
 
@@ -471,7 +482,7 @@ TEST_F(CFGAS_StringFormatterTest, NumParse) {
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, NumFormat) {
+TEST_F(CFGASStringFormatterTest, NumFormat) {
   struct TestCase {
     const wchar_t* locale;
     const wchar_t* input;
@@ -590,7 +601,7 @@ TEST_F(CFGAS_StringFormatterTest, NumFormat) {
     CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.FormatNum(Mgr(test.locale), test.input, &result))
         << " TEST: " << test.input << ", " << test.pattern;
-    EXPECT_STREQ(test.output, result.c_str())
+    EXPECT_EQ(test.output, result)
         << " TEST: " << test.input << ", " << test.pattern;
   }
 
@@ -602,44 +613,45 @@ TEST_F(CFGAS_StringFormatterTest, NumFormat) {
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, TextParse) {
-  struct {
+TEST_F(CFGASStringFormatterTest, TextParse) {
+  static const struct {
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {// TODO(dsinclair) Missing support for the global modifiers:
-               //  ? - wildcard
-               //  * - zero or more whitespace
-               //  + - one or more whitespace
-               // {L"en", L"555-1212", L"text(th_TH){999*9999}", L"5551212"},
-               {L"ABC-1234-5", L"AAA-9999-X", L"ABC12345"},
-               {L"ABC-1234-D", L"AAA-9999-X", L"ABC1234D"},
-               {L"A1C-1234-D", L"OOO-9999-X", L"A1C1234D"},
-               {L"A1C-1234-D", L"000-9999-X", L"A1C1234D"},
-               {L"A1C-1234-D text", L"000-9999-X 'text'", L"A1C1234D"}};
+  } kTests[] = {// TODO(dsinclair) Missing support for the global modifiers:
+                //  ? - wildcard
+                //  * - zero or more whitespace
+                //  + - one or more whitespace
+                // {L"en", L"555-1212", L"text(th_TH){999*9999}", L"5551212"},
+                {L"ABC-1234-5", L"AAA-9999-X", L"ABC12345"},
+                {L"ABC-1234-D", L"AAA-9999-X", L"ABC1234D"},
+                {L"A1C-1234-D", L"OOO-9999-X", L"A1C1234D"},
+                {L"A1C-1234-D", L"000-9999-X", L"A1C1234D"},
+                {L"A1C-1234-D text", L"000-9999-X 'text'", L"A1C1234D"}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.ParseText(tests[i].input, &result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.ParseText(test.input, &result));
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, InvalidTextParse) {
+TEST_F(CFGASStringFormatterTest, InvalidTextParse) {
   // Input does not match mask.
   WideString result;
   CFGAS_StringFormatter fmt(L"AAA-9999-X");
   EXPECT_FALSE(fmt.ParseText(L"123-4567-8", &result));
 }
 
-TEST_F(CFGAS_StringFormatterTest, TextFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, TextFormat) {
+  static const struct {
     const wchar_t* locale;
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {
+  } kTests[] = {
       {L"en", L"K1S5K2", L"A9A 9A9", L"K1S 5K2"},
       {L"en", L"K1S5K2", L"text(fr){A9A 9A9}", L"K1S 5K2"},
       {L"en", L"6135551212", L"'+1 ('9\u002399') '999-9999",
@@ -649,76 +661,85 @@ TEST_F(CFGAS_StringFormatterTest, TextFormat) {
       {L"en", L"K1#5K2", L"00X OO9", L"K1# 5K2"},
   };
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.FormatText(tests[i].input, &result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.FormatText(test.input, &result));
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, NullParse) {
-  struct {
+TEST_F(CFGASStringFormatterTest, NullParse) {
+  static const struct {
     const wchar_t* input;
     const wchar_t* pattern;
-  } tests[] = {
+  } kTests[] = {
       {L"", L"null{}"},
       {L"No data", L"null{'No data'}"},
   };
-
-  for (size_t i = 0; i < std::size(tests); ++i) {
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.ParseNull(tests[i].input)) << " TEST: " << i;
+  size_t i = 0;
+  for (const auto& test : kTests) {
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.ParseNull(test.input)) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, NullFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, NullFormat) {
+  static const struct {
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {{L"null{'n/a'}", L"n/a"}, {L"null{}", L""}};
+  } kTests[] = {{L"null{'n/a'}", L"n/a"}, {L"null{}", L""}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
+    CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.FormatNull(&result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, ZeroParse) {
-  struct {
+TEST_F(CFGASStringFormatterTest, ZeroParse) {
+  static const struct {
     const wchar_t* input;
     const wchar_t* pattern;
-  } tests[] = {{L"", L"zero{}"}, {L"9", L"zero{9}"}, {L"a", L"zero{'a'}"}};
+  } kTests[] = {{L"", L"zero{}"}, {L"9", L"zero{9}"}, {L"a", L"zero{'a'}"}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
-    CFGAS_StringFormatter fmt(tests[i].pattern);
-    EXPECT_TRUE(fmt.ParseZero(tests[i].input)) << " TEST: " << i;
+  size_t i = 0;
+  for (const auto& test : kTests) {
+    CFGAS_StringFormatter fmt(test.pattern);
+    EXPECT_TRUE(fmt.ParseZero(test.input)) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, ZeroFormat) {
-  struct {
+TEST_F(CFGASStringFormatterTest, ZeroFormat) {
+  static const struct {
     const wchar_t* input;
     const wchar_t* pattern;
     const wchar_t* output;
-  } tests[] = {// TODO(dsinclair): The zero format can take a number specifier
-               // which we don't take into account.
-               // {L"", L"zero {9}", L""},
-               // {L"0", L"zero {9}", L"0"},
-               // {L"0.0", L"zero{9}", L"0"},
-               {L"0", L"zero{}", L""}};
+  } kTests[] = {// TODO(dsinclair): The zero format can take a number specifier
+                // which we don't take into account.
+                // {L"", L"zero {9}", L""},
+                // {L"0", L"zero {9}", L"0"},
+                // {L"0.0", L"zero{9}", L"0"},
+                {L"0", L"zero{}", L""}};
 
-  for (size_t i = 0; i < std::size(tests); ++i) {
+  size_t i = 0;
+  for (const auto& test : kTests) {
     WideString result;
-    CFGAS_StringFormatter fmt(tests[i].pattern);
+    CFGAS_StringFormatter fmt(test.pattern);
     EXPECT_TRUE(fmt.FormatZero(&result));
-    EXPECT_STREQ(tests[i].output, result.c_str()) << " TEST: " << i;
+    EXPECT_EQ(test.output, result) << " TEST: " << i;
+    ++i;
   }
 }
 
-TEST_F(CFGAS_StringFormatterTest, GetCategory) {
+TEST_F(CFGASStringFormatterTest, GetCategory) {
   EXPECT_EQ(CFGAS_StringFormatter::Category::kUnknown,
             CFGAS_StringFormatter(L"'just text'").GetCategory());
   EXPECT_EQ(CFGAS_StringFormatter::Category::kNull,

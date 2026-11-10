@@ -33,16 +33,19 @@ def LoadPList(path):
     return plistlib.load(f)
 
 
-# This contains binaries from Xcode 15.0 15A240d along with the macOS 14.0 SDK
-# (14.0 23A334). To build these packages, see comments in
-# build/xcode_binaries.yaml
-# To update the version numbers, open Xcode's "About Xcode" for the first number
-# and run `xcrun --show-sdk-build-version` for the second.
-# To update the _TAG, use the output of the `cipd create` command mentioned in
-# xcode_binaries.yaml.
+# This contains binaries from Xcode 16.4 (16F6) along with the macOS SDK 15.5
+# (24F74). To build these packages, see comments in build/xcode_binaries.yaml.
+#
+# To update the version numbers, open Xcode's "About Xcode" or run `xcodebuild
+# -version` for the Xcode version, and run `xcrun --show-sdk-version` and `xcrun
+# --show-sdk-build-version` for the SDK version. To update the _TAG, use the
+# output of the `cipd create` command mentioned in xcode_binaries.yaml; it's the
+# part after the colon. Or check the CIPD site
+# (https://chrome-infra-packages.appspot.com/) at the path given in
+# MAC_BINARIES_LABEL.
 
 MAC_BINARIES_LABEL = 'infra_internal/ios/xcode/xcode_binaries/mac-amd64'
-MAC_BINARIES_TAG = 'dC_BLs9U850OLk8m4V7yxysPhP-ixJ2b5c7hVm8B7tIC'
+MAC_BINARIES_TAG = 'F1uq3udJtPSmTDjMME_VqfH5PfdlNy2zKWvgVy-tBZoC'
 
 # The toolchain will not be downloaded if the minimum OS version is not met. 19
 # is the major version number for macOS 10.15. Xcode 15.0 only runs on macOS

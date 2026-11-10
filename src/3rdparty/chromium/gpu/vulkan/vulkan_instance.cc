@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/vulkan/vulkan_instance.h"
 
+#include <array>
 #include <vector>
 
 #include "base/logging.h"
@@ -16,7 +22,7 @@
 #include "ui/gl/gl_angle_util_vulkan.h"
 #include "ui/gl/gl_switches.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include <sys/sysmacros.h>
 #endif
 
@@ -25,10 +31,10 @@ namespace gpu {
 namespace {
 
 #if DCHECK_IS_ON()
-constexpr const char* kSkippedErrors[] = {
+constexpr auto kSkippedErrors = std::to_array<const char*>({
     // http://anglebug.com/4583
     "VUID-VkGraphicsPipelineCreateInfo-blendEnable-02023",
-};
+});
 
 VKAPI_ATTR VkBool32 VKAPI_CALL
 VulkanErrorCallback(VkDebugReportFlagsEXT flags,
@@ -39,7 +45,7 @@ VulkanErrorCallback(VkDebugReportFlagsEXT flags,
                     const char* layer_prefix,
                     const char* message,
                     void* user_data) {
-  static bool encountered_errors[std::size(kSkippedErrors)];
+  static std::array<bool, std::size(kSkippedErrors)> encountered_errors;
   for (size_t i = 0; i < std::size(kSkippedErrors); ++i) {
     if (strstr(message, kSkippedErrors[i])) {
       if (encountered_errors[i]) {
@@ -150,6 +156,12 @@ bool VulkanInstance::CreateInstance(
           VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
     }
   }
+
+  skia_features_.init(app_info.apiVersion);
+  skia_features_.addToInstanceExtensions(
+      vulkan_info_.instance_extensions.data(),
+      vulkan_info_.instance_extensions.size(),
+      vulkan_info_.enabled_instance_extensions);
 
 #if DCHECK_IS_ON()
   for (const char* enabled_extension :
@@ -323,7 +335,8 @@ bool VulkanInstance::CollectBasicInfo(
     result = vkEnumerateInstanceExtensionProperties(
         layer_name, &num_instance_exts, nullptr);
     if (VK_SUCCESS != result) {
-      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
+      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties("
+                 << (layer_name ? layer_name : "nullptr")
                  << ") failed: " << result;
       return false;
     }
@@ -336,7 +349,8 @@ bool VulkanInstance::CollectBasicInfo(
         layer_name, &num_instance_exts,
         &vulkan_info_.instance_extensions.data()[previous_extension_count]);
     if (VK_SUCCESS != result) {
-      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
+      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties("
+                 << (layer_name ? layer_name : "nullptr")
                  << ") failed: " << result;
       return false;
     }
@@ -424,7 +438,7 @@ bool VulkanInstance::CollectDeviceInfo(VkPhysicalDevice physical_device) {
     static_assert(kVulkanRequiredApiVersion >= VK_API_VERSION_1_1, "");
     if (info.properties.apiVersion >= kVulkanRequiredApiVersion) {
       bool has_drm_extension =
-          base::ranges::any_of(info.extensions, [](const auto& ext) {
+          std::ranges::any_of(info.extensions, [](const auto& ext) {
             return strcmp(ext.extensionName,
                           VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0;
           });
@@ -445,7 +459,7 @@ bool VulkanInstance::CollectDeviceInfo(VkPhysicalDevice physical_device) {
       };
       vkGetPhysicalDeviceProperties2(device, &properties2);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       if (has_drm_extension &&
           (drm_properties.hasRender || drm_properties.hasPrimary)) {
         static_assert(sizeof(dev_t) <= sizeof(info.drm_device_id),

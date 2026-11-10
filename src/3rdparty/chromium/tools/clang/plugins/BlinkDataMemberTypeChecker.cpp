@@ -20,15 +20,15 @@ BlinkDataMemberTypeChecker::BlinkDataMemberTypeChecker(
       diagnostic_(instance.getDiagnostics()),
       discouraged_types_({
           {"GURL", "KURL"},
-          {"std::deque", "WTF::Deque"},
-          {"std::map", "WTF::HashMap or WTF::LinkedHashSet"},
+          {"std::deque", "blink::Deque"},
+          {"std::map", "blink::HashMap or blink::LinkedHashSet"},
           {"std::multimap",
-           "WTF::HashMap<K, WTF::Vector<V>> or WTF::HashCountedSet<T>"},
-          {"std::multiset", "WTF::HashCountedSet<T>"},
-          {"std::set", "WTF::HashSet or WTF::LinkedHashSet"},
-          {"std::unordered_set", "WTF::HashSet"},
-          {"std::unordered_map", "WTF::HashMap"},
-          {"std::vector", "WTF::Vector"},
+           "blink::HashMap<K, blink::Vector<V>> or blink::HashCountedSet<T>"},
+          {"std::multiset", "blink::HashCountedSet<T>"},
+          {"std::set", "blink::HashSet or blink::LinkedHashSet"},
+          {"std::unordered_set", "blink::HashSet"},
+          {"std::unordered_map", "blink::HashMap"},
+          {"std::vector", "blink::Vector"},
       }),
       included_filenames_regex_("/third_party/blink/renderer/"),
       excluded_filenames_regex_(
@@ -51,7 +51,8 @@ BlinkDataMemberTypeChecker::BlinkDataMemberTypeChecker(
 
 void BlinkDataMemberTypeChecker::CheckClass(SourceLocation location,
                                             const CXXRecordDecl* record) {
-  std::string filename = GetFilename(instance_.getSourceManager(), location);
+  std::string filename = GetFilename(instance_.getSourceManager(), location,
+                                     FilenameLocationType::kSpellingLoc);
   if (!included_filenames_regex_.match(filename))
     return;
   if (excluded_filenames_regex_.match(filename))
@@ -148,7 +149,8 @@ void BlinkDataMemberTypeChecker::CheckField(const FieldDecl* field) {
     // type is defined in a file that should not be checked, e.g. in a file
     // under third_party/blink/public/common.
     std::string filename =
-        GetFilename(instance_.getSourceManager(), decl->getLocation());
+        GetFilename(instance_.getSourceManager(), decl->getLocation(),
+                    FilenameLocationType::kSpellingLoc);
     if (!included_filenames_regex_.match(filename))
       return;
   }

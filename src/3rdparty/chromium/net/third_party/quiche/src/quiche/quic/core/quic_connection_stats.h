@@ -5,14 +5,17 @@
 #ifndef QUICHE_QUIC_CORE_QUIC_CONNECTION_STATS_H_
 #define QUICHE_QUIC_CORE_QUIC_CONNECTION_STATS_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ostream>
 
 #include "quiche/quic/core/quic_bandwidth.h"
-#include "quiche/quic/core/quic_packets.h"
+#include "quiche/quic/core/quic_packet_number.h"
 #include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/core/quic_time_accumulator.h"
-#include "quiche/quic/platform/api/quic_export.h"
+#include "quiche/quic/core/quic_types.h"
+#include "quiche/common/platform/api/quiche_export.h"
 
 namespace quic {
 
@@ -23,6 +26,9 @@ struct QUICHE_EXPORT QuicConnectionStats {
 
   QuicByteCount bytes_sent = 0;  // Includes retransmissions.
   QuicPacketCount packets_sent = 0;
+  // Number of ACK packets sent by the dispatcher on behalf of this connection,
+  // prior to the construction of QuicConnection.
+  QuicPacketCount packets_sent_by_dispatcher = 0;
   // Non-retransmitted bytes sent in a stream frame.
   QuicByteCount stream_bytes_sent = 0;
   // Packets serialized and discarded before sending.
@@ -96,7 +102,6 @@ struct QUICHE_EXPORT QuicConnectionStats {
   // be lost when the alarm fires.
   size_t loss_timeout_count = 0;
   size_t tlp_count = 0;
-  size_t rto_count = 0;  // Count of times the rto timer fired.
   size_t pto_count = 0;
 
   int64_t min_rtt_us = 0;                 // Minimum RTT in microseconds.
@@ -229,6 +234,10 @@ struct QUICHE_EXPORT QuicConnectionStats {
   size_t num_path_degrading = 0;
   // Number of forward progress made after path degrading.
   size_t num_forward_progress_after_path_degrading = 0;
+  // Number of path degrading.
+  size_t num_flow_label_changes = 0;
+  // Number of forward progress made after aflow label change.
+  size_t num_forward_progress_after_flow_label_change = 0;
 
   bool server_preferred_address_validated = false;
   bool failed_to_validate_server_preferred_address = false;
@@ -253,6 +262,10 @@ struct QUICHE_EXPORT QuicConnectionStats {
 
   // The total number of streams which were pending from some time.
   size_t num_total_pending_streams = 0;
+
+  // Statistics to measure how many client path probes are reset.
+  uint32_t num_client_probing_attempts = 0;
+  uint32_t num_stateless_resets_on_alternate_path = 0;
 };
 
 }  // namespace quic

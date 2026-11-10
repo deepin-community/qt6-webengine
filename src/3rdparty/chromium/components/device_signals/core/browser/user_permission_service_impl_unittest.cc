@@ -4,6 +4,8 @@
 
 #include "components/device_signals/core/browser/user_permission_service_impl.h"
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -17,14 +19,15 @@
 #include "components/prefs/pref_registry.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using policy::EnterpriseManagementAuthority;
 using policy::ScopedManagementServiceOverrideForTesting;
 using testing::_;
 using testing::AnyNumber;
+using testing::Eq;
 using testing::Return;
 
 namespace device_signals {
@@ -79,6 +82,11 @@ class UserPermissionServiceImplTest : public testing::Test,
     test_prefs_.SetBoolean(prefs::kDeviceSignalsConsentReceived, true);
   }
 
+  void SetPermanentUserConsentGiven() {
+    // Fake as if user has given permanent consent.
+    test_prefs_.SetBoolean(prefs::kDeviceSignalsPermanentConsentReceived, true);
+  }
+
   void SetPolicyScopesNeedingSignals(bool machine_scope, bool user_scope) {
     std::set<policy::PolicyScope> scopes;
     if (machine_scope) {
@@ -104,7 +112,7 @@ class UserPermissionServiceImplTest : public testing::Test,
 
   base::test::ScopedFeatureList scoped_feature_list_;
   TestManagementService management_service_;
-  absl::optional<ScopedManagementServiceOverrideForTesting> scoped_override_;
+  std::optional<ScopedManagementServiceOverrideForTesting> scoped_override_;
   raw_ptr<testing::StrictMock<MockUserDelegate>> mock_user_delegate_;
   TestingPrefServiceSimple test_prefs_;
 
@@ -114,6 +122,11 @@ class UserPermissionServiceImplTest : public testing::Test,
 // Tests that consent does not need to be collected if it was already given.
 TEST_P(UserPermissionServiceImplTest, ShouldCollectConsent_ConsentGiven) {
   SetUserConsentGiven();
+  EXPECT_FALSE(permission_service_->ShouldCollectConsent());
+}
+TEST_P(UserPermissionServiceImplTest,
+       ShouldCollectConsent_PermanentConsentGiven) {
+  SetPermanentUserConsentGiven();
   EXPECT_FALSE(permission_service_->ShouldCollectConsent());
 }
 
@@ -272,7 +285,7 @@ TEST_P(UserPermissionServiceImplTest,
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 namespace {
-constexpr char kUserGaiaId[] = "some-gaia-id";
+constexpr GaiaId::Literal kUserGaiaId("some-gaia-id");
 }  // namespace
 
 // Tests CanUserCollectSignals with a missing user ID.
@@ -294,7 +307,7 @@ TEST_P(UserPermissionServiceImplTest,
   user_context.user_id = kUserGaiaId;
 
   // Mock that it is not the same user.
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(false));
 
   EXPECT_EQ(permission_service_->CanUserCollectSignals(user_context),
@@ -309,7 +322,7 @@ TEST_P(UserPermissionServiceImplTest, CanUserCollectSignals_User_NotManaged) {
   UserContext user_context;
   user_context.user_id = kUserGaiaId;
 
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(false));
 
@@ -326,7 +339,7 @@ TEST_P(UserPermissionServiceImplTest,
   UserContext user_context;
   user_context.user_id = kUserGaiaId;
 
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
 
@@ -344,7 +357,7 @@ TEST_P(UserPermissionServiceImplTest,
   UserContext user_context;
   user_context.user_id = kUserGaiaId;
 
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
 
@@ -362,7 +375,7 @@ TEST_P(UserPermissionServiceImplTest,
   UserContext user_context;
   user_context.user_id = kUserGaiaId;
 
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsAffiliated()).WillOnce(Return(false));
@@ -381,7 +394,7 @@ TEST_P(UserPermissionServiceImplTest,
   UserContext user_context;
   user_context.user_id = kUserGaiaId;
 
-  EXPECT_CALL(*mock_user_delegate_, IsSameUser(kUserGaiaId))
+  EXPECT_CALL(*mock_user_delegate_, IsSameUser(Eq(kUserGaiaId)))
       .WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
   EXPECT_CALL(*mock_user_delegate_, IsAffiliated()).WillOnce(Return(true));
@@ -396,6 +409,14 @@ TEST_P(UserPermissionServiceImplTest,
 TEST_P(UserPermissionServiceImplTest, CanCollectSignals_AlreadyConsented) {
   SetUserConsentGiven();
   EXPECT_EQ(permission_service_->CanCollectSignals(), UserPermission::kGranted);
+  EXPECT_EQ(permission_service_->CanCollectReportSignals(),
+            UserPermission::kMissingConsent);
+}
+TEST_P(UserPermissionServiceImplTest, CanCollectSignals_PermanentConsent) {
+  SetPermanentUserConsentGiven();
+  EXPECT_EQ(permission_service_->CanCollectSignals(), UserPermission::kGranted);
+  EXPECT_EQ(permission_service_->CanCollectReportSignals(),
+            UserPermission::kMissingConsent);
 }
 
 // Tests that consent is required before allowing to collect signals from an
@@ -403,6 +424,8 @@ TEST_P(UserPermissionServiceImplTest, CanCollectSignals_AlreadyConsented) {
 TEST_P(UserPermissionServiceImplTest, CanCollectSignals_BrowserNotManaged) {
   SetUserAsCloudManaged();
   EXPECT_EQ(permission_service_->CanCollectSignals(),
+            UserPermission::kMissingConsent);
+  EXPECT_EQ(permission_service_->CanCollectReportSignals(),
             UserPermission::kMissingConsent);
 }
 
@@ -412,9 +435,13 @@ TEST_P(UserPermissionServiceImplTest,
        CanCollectSignals_BrowserManaged_UnmanagedUser) {
   SetDeviceAsCloudManaged();
 
-  EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(false));
+  EXPECT_CALL(*mock_user_delegate_, IsManagedUser())
+      .Times(2)
+      .WillRepeatedly(Return(false));
 
   EXPECT_EQ(permission_service_->CanCollectSignals(), UserPermission::kGranted);
+  EXPECT_EQ(permission_service_->CanCollectReportSignals(),
+            UserPermission::kMissingConsent);
 }
 
 // Tests that signals can be collected when on a managed browser in an
@@ -423,10 +450,16 @@ TEST_P(UserPermissionServiceImplTest,
        CanCollectSignals_BrowserManaged_AffiliatedUser) {
   SetDeviceAsCloudManaged();
 
-  EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
-  EXPECT_CALL(*mock_user_delegate_, IsAffiliated()).WillOnce(Return(true));
+  EXPECT_CALL(*mock_user_delegate_, IsManagedUser())
+      .Times(2)
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*mock_user_delegate_, IsAffiliated())
+      .Times(2)
+      .WillRepeatedly(Return(true));
 
   EXPECT_EQ(permission_service_->CanCollectSignals(), UserPermission::kGranted);
+  EXPECT_EQ(permission_service_->CanCollectReportSignals(),
+            UserPermission::kGranted);
 }
 
 struct UnaffiliatedUserTestCase {
@@ -453,8 +486,12 @@ TEST_P(UserPermissionServiceImplTest,
   };
 
   for (const auto& test_case : test_cases) {
-    EXPECT_CALL(*mock_user_delegate_, IsManagedUser()).WillOnce(Return(true));
-    EXPECT_CALL(*mock_user_delegate_, IsAffiliated()).WillOnce(Return(false));
+    EXPECT_CALL(*mock_user_delegate_, IsManagedUser())
+        .Times(2)
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_user_delegate_, IsAffiliated())
+        .Times(2)
+        .WillRepeatedly(Return(false));
 
     SetPolicyScopesNeedingSignals(test_case.machine_scope,
                                   test_case.user_scope);
@@ -462,59 +499,8 @@ TEST_P(UserPermissionServiceImplTest,
     EXPECT_EQ(permission_service_->CanCollectSignals(),
               test_case.can_collect ? UserPermission::kGranted
                                     : UserPermission::kMissingConsent);
-  }
-}
-
-// Tests that the consent flow policy is being observed and can cause the
-// consent received pref to reset.
-TEST_P(UserPermissionServiceImplTest, ResetConsentIfNeeded_PolicyPrefObserver) {
-  SetUserConsentGiven();
-
-  // Enabling the policy should not clear consent.
-  SetPolicyScopesNeedingSignals(/*machine_scope=*/false, /*user_scope=*/false);
-  EnableConsentFlowPolicy();
-
-  EXPECT_TRUE(test_prefs_.GetBoolean(prefs::kDeviceSignalsConsentReceived));
-
-  // Disabling the policy should clear consent.
-  SetPolicyScopesNeedingSignals(/*machine_scope=*/false, /*user_scope=*/false);
-  test_prefs_.SetBoolean(prefs::kUnmanagedDeviceSignalsConsentFlowEnabled,
-                         false);
-
-  EXPECT_FALSE(test_prefs_.GetBoolean(prefs::kDeviceSignalsConsentReceived));
-}
-
-struct ResetDependentPolicyTestCase {
-  bool machine_scope = false;
-  bool user_scope = false;
-  bool expect_consent_reset = false;
-};
-
-// Tests that the consent received policy can be reset based on changes in
-// dependent user-level policies.
-TEST_P(UserPermissionServiceImplTest,
-       ResetConsentIfNeeded_DependentPolicyChanged) {
-  std::array<ResetDependentPolicyTestCase, 4> test_cases = {
-      ResetDependentPolicyTestCase{/*machine_scope=*/true, /*user_scope=*/true,
-                                   /*expect_consent_reset=*/false},
-      ResetDependentPolicyTestCase{/*machine_scope=*/false, /*user_scope=*/true,
-                                   /*expect_consent_reset=*/false},
-      ResetDependentPolicyTestCase{/*machine_scope=*/true, /*user_scope=*/false,
-                                   /*expect_consent_reset=*/true},
-      ResetDependentPolicyTestCase{/*machine_scope=*/false,
-                                   /*user_scope=*/false,
-                                   /*expect_consent_reset=*/true},
-  };
-
-  for (const auto& test_case : test_cases) {
-    SetUserConsentGiven();
-    SetPolicyScopesNeedingSignals(test_case.machine_scope,
-                                  test_case.user_scope);
-
-    permission_service_->ResetUserConsentIfNeeded();
-
-    EXPECT_EQ(test_prefs_.GetBoolean(prefs::kDeviceSignalsConsentReceived),
-              !test_case.expect_consent_reset);
+    EXPECT_EQ(permission_service_->CanCollectReportSignals(),
+              UserPermission::kMissingConsent);
   }
 }
 

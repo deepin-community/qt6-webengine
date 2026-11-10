@@ -31,16 +31,17 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_set>
 #include <utility>
 
-#include "src/tint/lang/core/address_space.h"
-#include "src/tint/lang/core/builtin_value.h"
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/interpolation.h"
+#include "src/tint/lang/core/io_attributes.h"
 #include "src/tint/lang/core/type/node.h"
 #include "src/tint/lang/core/type/type.h"
+#include "src/tint/utils/containers/hashset.h"
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/symbol/symbol.h"
+#include "src/tint/utils/text/styled_text.h"
 
 // Forward declarations
 namespace tint::core::type {
@@ -63,6 +64,8 @@ enum class PipelineStageUsage {
 enum StructFlag {
     /// The structure is a block-decorated structure (for SPIR-V or GLSL).
     kBlock,
+    /// The structure requires explicit layout decorations
+    kExplicitLayout,
 };
 
 /// An alias to tint::EnumSet<StructFlag>
@@ -72,17 +75,26 @@ using StructFlags = tint::EnumSet<StructFlag>;
 class Struct : public Castable<Struct, Type> {
   public:
     /// Constructor
+    /// Note: this constructs an empty structure, which should only be used find a struct with the
+    /// same name in a type::Manager.
+    /// @param name the name of the structure
+    /// @param is_wgsl_internal `true` if the structure is an internally defined structure in WGSL
+    Struct(Symbol name, bool is_wgsl_internal);
+
+    /// Constructor
     /// @param name the name of the structure
     /// @param members the structure members
     /// @param align the byte alignment of the structure
     /// @param size the byte size of the structure
     /// @param size_no_padding size of the members without the end of structure
+    /// @param is_wgsl_internal `true` if the structure is an internally defined structure in WGSL
     /// alignment padding
     Struct(Symbol name,
            VectorRef<const StructMember*> members,
            uint32_t align,
            uint32_t size,
-           uint32_t size_no_padding);
+           uint32_t size_no_padding,
+           bool is_wgsl_internal = false);
 
     /// Destructor
     ~Struct() override;
@@ -130,36 +142,21 @@ class Struct : public Castable<Struct, Type> {
 
     /// Adds the AddressSpace usage to the structure.
     /// @param usage the storage usage
-    void AddUsage(core::AddressSpace usage) { address_space_usage_.emplace(usage); }
+    void AddUsage(core::AddressSpace usage) { address_space_usage_.Add(usage); }
 
     /// @returns the set of address space uses of this structure
-    const std::unordered_set<core::AddressSpace>& AddressSpaceUsage() const {
-        return address_space_usage_;
-    }
+    const Hashset<core::AddressSpace, 1>& AddressSpaceUsage() const { return address_space_usage_; }
 
     /// @param usage the AddressSpace usage type to query
     /// @returns true iff this structure has been used as the given address space
-    bool UsedAs(core::AddressSpace usage) const { return address_space_usage_.count(usage) > 0; }
-
-    /// @returns true iff this structure has been used by address space that's
-    /// host-shareable.
-    bool IsHostShareable() const {
-        for (auto sc : address_space_usage_) {
-            if (core::IsHostShareable(sc)) {
-                return true;
-            }
-        }
-        return false;
-    }
+    bool UsedAs(core::AddressSpace usage) const { return address_space_usage_.Contains(usage); }
 
     /// Adds the pipeline stage usage to the structure.
     /// @param usage the storage usage
-    void AddUsage(PipelineStageUsage usage) { pipeline_stage_uses_.emplace(usage); }
+    void AddUsage(PipelineStageUsage usage) { pipeline_stage_uses_.Add(usage); }
 
     /// @returns the set of entry point uses of this structure
-    const std::unordered_set<PipelineStageUsage>& PipelineStageUses() const {
-        return pipeline_stage_uses_;
-    }
+    const Hashset<PipelineStageUsage, 1>& PipelineStageUses() const { return pipeline_stage_uses_; }
 
     /// @returns the name for this type that closely resembles how it would be
     /// declared in WGSL.
@@ -167,7 +164,7 @@ class Struct : public Castable<Struct, Type> {
 
     /// @returns a multiline string that describes the layout of this struct,
     /// including size and alignment information.
-    std::string Layout() const;
+    StyledText Layout() const;
 
     /// @param concrete the conversion-rank ordered concrete versions of this abstract structure.
     void SetConcreteTypes(VectorRef<const Struct*> concrete) { concrete_types_ = concrete; }
@@ -184,6 +181,9 @@ class Struct : public Castable<Struct, Type> {
     /// @copydoc Type::Element
     const Type* Element(uint32_t index) const override;
 
+    /// @returns `true` if this struct is internally defined in WGSL
+    bool IsWgslInternal() const { return is_wgsl_internal_; }
+
     /// @param ctx the clone context
     /// @returns a clone of this type
     Struct* Clone(CloneContext& ctx) const override;
@@ -194,26 +194,11 @@ class Struct : public Castable<Struct, Type> {
     const uint32_t align_;
     const uint32_t size_;
     const uint32_t size_no_padding_;
+    const bool is_wgsl_internal_;
     core::type::StructFlags struct_flags_;
-    std::unordered_set<core::AddressSpace> address_space_usage_;
-    std::unordered_set<PipelineStageUsage> pipeline_stage_uses_;
+    Hashset<core::AddressSpace, 1> address_space_usage_;
+    Hashset<PipelineStageUsage, 1> pipeline_stage_uses_;
     tint::Vector<const Struct*, 2> concrete_types_;
-};
-
-/// Attributes that can be applied to the StructMember
-struct StructMemberAttributes {
-    /// The value of a `@location` attribute
-    std::optional<uint32_t> location;
-    /// The value of a `@index` attribute
-    std::optional<uint32_t> index;
-    /// The value of a `@color` attribute
-    std::optional<uint32_t> color;
-    /// The value of a `@builtin` attribute
-    std::optional<core::BuiltinValue> builtin;
-    /// The values of a `@interpolate` attribute
-    std::optional<core::Interpolation> interpolation;
-    /// True if the member was annotated with `@invariant`
-    bool invariant = false;
 };
 
 /// StructMember holds the type information for structure members.
@@ -233,7 +218,7 @@ class StructMember : public Castable<StructMember, Node> {
                  uint32_t offset,
                  uint32_t align,
                  uint32_t size,
-                 const StructMemberAttributes& attributes);
+                 const IOAttributes& attributes);
 
     /// Destructor
     ~StructMember() override;
@@ -264,11 +249,32 @@ class StructMember : public Castable<StructMember, Node> {
     uint32_t Size() const { return size_; }
 
     /// @returns the optional attributes
-    const StructMemberAttributes& Attributes() const { return attributes_; }
+    const IOAttributes& Attributes() const { return attributes_; }
 
-    /// Set the attributes of the struct member.
-    /// @param attributes the new attributes
-    void SetAttributes(StructMemberAttributes&& attributes) { attributes_ = std::move(attributes); }
+    /// Sets the interpolation.
+    /// @param interpolation the optional location interpolation settings
+    void SetInterpolation(std::optional<core::Interpolation> interpolation) {
+        attributes_.interpolation = interpolation;
+    }
+
+    /// Sets the location.
+    /// @param loc the optional location value
+    void SetLocation(std::optional<uint32_t> loc) { attributes_.location = loc; }
+
+    /// Resets the attributes to empty
+    void ResetAttributes() { attributes_ = {}; }
+
+    /// Sets this member to be row major
+    void SetRowMajor() { is_row_major_ = true; }
+    /// Returns if this member is row major
+    bool RowMajor() const { return is_row_major_; }
+
+    /// Sets the matrix stride for the member
+    void SetMatrixStride(uint32_t matrix_stride) { matrix_stride_ = matrix_stride; }
+    /// Returns true if a matrix stride is set
+    bool HasMatrixStride() const { return matrix_stride_ > 0; }
+    /// Returns the matrix stride
+    uint32_t MatrixStride() const { return matrix_stride_; }
 
     /// @param ctx the clone context
     /// @returns a clone of this struct member
@@ -282,7 +288,9 @@ class StructMember : public Castable<StructMember, Node> {
     const uint32_t offset_;
     const uint32_t align_;
     const uint32_t size_;
-    StructMemberAttributes attributes_;
+    bool is_row_major_ = false;
+    uint32_t matrix_stride_ = 0;
+    IOAttributes attributes_;
 };
 
 }  // namespace tint::core::type

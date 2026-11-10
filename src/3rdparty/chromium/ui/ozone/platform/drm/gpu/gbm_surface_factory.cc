@@ -13,6 +13,7 @@
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -40,10 +41,6 @@
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
 #include "ui/ozone/platform/drm/gpu/screen_manager.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "ui/gfx/linux/gbm_util.h"  // nogncheck
-#endif
 
 #if BUILDFLAG(ENABLE_VULKAN)
 #include "gpu/vulkan/vulkan_function_pointers.h"
@@ -122,9 +119,13 @@ class GLOzoneEGLGbm : public GLOzoneEGL {
 
   ~GLOzoneEGLGbm() override = default;
 
-  bool CanImportNativePixmap() override {
-    return gl::GLSurfaceEGL::GetGLDisplayEGL()
-        ->ext->b_EGL_EXT_image_dma_buf_import;
+  bool CanImportNativePixmap(gfx::BufferFormat format) override {
+    if (!gl::GLSurfaceEGL::GetGLDisplayEGL()
+             ->ext->b_EGL_EXT_image_dma_buf_import) {
+      return false;
+    }
+
+    return NativePixmapEGLBinding::IsBufferFormatSupported(format);
   }
 
   std::unique_ptr<NativePixmapGLBinding> ImportNativePixmap(
@@ -204,10 +205,6 @@ class GLOzoneEGLGbm : public GLOzoneEGL {
 };
 
 std::vector<gfx::BufferFormat> EnumerateSupportedBufferFormatsForTexturing() {
-#if BUILDFLAG(IS_CHROMEOS)
-  CHECK(ui::IntelMediaCompressionEnvVarIsSet());
-#endif
-
   std::vector<gfx::BufferFormat> supported_buffer_formats;
   // We cannot use FileEnumerator here because the sandbox is already closed.
   constexpr char kRenderNodeFilePattern[] = "/dev/dri/renderD%d";
@@ -248,18 +245,6 @@ std::vector<gfx::BufferFormat> EnumerateSupportedBufferFormatsForTexturing() {
   return supported_buffer_formats;
 }
 
-void OnNativePixmapCreated(GbmSurfaceFactory::NativePixmapCallback callback,
-                           base::WeakPtr<GbmSurfaceFactory> weak_ptr,
-                           std::unique_ptr<GbmBuffer> buffer,
-                           scoped_refptr<DrmFramebuffer> framebuffer) {
-  if (!weak_ptr || !buffer) {
-    std::move(callback).Run(nullptr);
-  } else {
-    std::move(callback).Run(base::MakeRefCounted<GbmPixmap>(
-        weak_ptr.get(), std::move(buffer), std::move(framebuffer)));
-  }
-}
-
 }  // namespace
 
 GbmSurfaceFactory::GbmSurfaceFactory(DrmThreadProxy* drm_thread_proxy)
@@ -286,7 +271,7 @@ GbmSurfaceless* GbmSurfaceFactory::GetSurface(
     gfx::AcceleratedWidget widget) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   auto it = widget_to_surface_map_.find(widget);
-  DCHECK(it != widget_to_surface_map_.end());
+  CHECK(it != widget_to_surface_map_.end());
   return it->second;
 }
 
@@ -294,7 +279,6 @@ std::vector<gl::GLImplementationParts>
 GbmSurfaceFactory::GetAllowedGLImplementations() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return std::vector<gl::GLImplementationParts>{
-      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
       gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
       gl::GLImplementationParts(gl::ANGLEImplementation::kSwiftShader)};
 }
@@ -316,7 +300,7 @@ GbmSurfaceFactory::CreateVulkanImplementation(bool use_swiftshader,
                                               bool allow_protected_memory) {
   DCHECK(!use_swiftshader)
       << "Vulkan Swiftshader is not supported on this platform.";
-  return std::make_unique<VulkanImplementationGbm>();
+  return std::make_unique<VulkanImplementationGbm>(allow_protected_memory);
 }
 
 scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmapForVulkan(
@@ -402,7 +386,7 @@ scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    absl::optional<gfx::Size> framebuffer_size) {
+    std::optional<gfx::Size> framebuffer_size) {
   if (framebuffer_size &&
       !gfx::Rect(size).Contains(gfx::Rect(*framebuffer_size))) {
     return nullptr;
@@ -416,19 +400,6 @@ scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
     return nullptr;
   return base::MakeRefCounted<GbmPixmap>(this, std::move(buffer),
                                          std::move(framebuffer));
-}
-
-void GbmSurfaceFactory::CreateNativePixmapAsync(
-    gfx::AcceleratedWidget widget,
-    gpu::VulkanDeviceQueue* device_queue,
-    gfx::Size size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    NativePixmapCallback callback) {
-  drm_thread_proxy_->CreateBufferAsync(
-      widget, size, format, usage, 0 /* flags */,
-      base::BindOnce(OnNativePixmapCreated, std::move(callback),
-                     weak_factory_.GetWeakPtr()));
 }
 
 scoped_refptr<gfx::NativePixmap>

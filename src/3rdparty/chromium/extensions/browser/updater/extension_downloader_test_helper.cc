@@ -4,7 +4,10 @@
 
 #include "extensions/browser/updater/extension_downloader_test_helper.h"
 
+#include "base/json/json_writer.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "extensions/common/verifier_formats.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 
@@ -117,8 +120,9 @@ void ExtensionDownloaderTestHelper::StartUpdateCheck(
 
 network::TestURLLoaderFactory::PendingRequest*
 ExtensionDownloaderTestHelper::GetPendingRequest(size_t index) {
-  if (index >= test_url_loader_factory_.pending_requests()->size())
+  if (index >= test_url_loader_factory_.pending_requests()->size()) {
     return nullptr;
+  }
   return &(*test_url_loader_factory_.pending_requests())[index];
 }
 
@@ -130,6 +134,15 @@ std::unique_ptr<ExtensionDownloader>
 ExtensionDownloaderTestHelper::CreateDownloader() {
   return std::make_unique<ExtensionDownloader>(
       &delegate_, test_shared_url_loader_factory_, GetTestVerifierFormat());
+}
+
+const DownloadPingData* ExtensionDownloaderTestHelper::GetTestPingData() {
+  static const DownloadPingData kNeverPingedData =
+      DownloadPingData(/*rollcall=*/ManifestFetchData::kNeverPinged,
+                       /*active=*/ManifestFetchData::kNeverPinged,
+                       /*enabled=*/true,
+                       /*disable_reasons=*/{});
+  return &kNeverPingedData;
 }
 
 ExtensionDownloaderTask CreateDownloaderTask(const ExtensionId& id,
@@ -144,7 +157,7 @@ void AddExtensionToFetchDataForTesting(ManifestFetchData* fetch_data,
                                        const ExtensionId& id,
                                        const std::string& version,
                                        const GURL& update_url,
-                                       DownloadPingData ping_data) {
+                                       const DownloadPingData& ping_data) {
   fetch_data->AddExtension(id, version, &ping_data,
                            ExtensionDownloaderTestHelper::kEmptyUpdateUrlData,
                            std::string(), mojom::ManifestLocation::kInternal,
@@ -158,7 +171,7 @@ void AddExtensionToFetchDataForTesting(ManifestFetchData* fetch_data,
                                        const GURL& update_url) {
   AddExtensionToFetchDataForTesting(
       fetch_data, id, version, update_url,
-      ExtensionDownloaderTestHelper::kNeverPingedData);
+      *ExtensionDownloaderTestHelper::GetTestPingData());
 }
 
 UpdateManifestItem::UpdateManifestItem(ExtensionId id) : id(std::move(id)) {}
@@ -169,6 +182,50 @@ UpdateManifestItem& UpdateManifestItem::operator=(const UpdateManifestItem&) =
 UpdateManifestItem::UpdateManifestItem(UpdateManifestItem&&) = default;
 UpdateManifestItem& UpdateManifestItem::operator=(UpdateManifestItem&&) =
     default;
+
+std::string CreateUpdateManifestV4(
+    const std::vector<UpdateManifestItem>& extensions) {
+  base::DictValue response_outer;
+  base::DictValue* response_inner = response_outer.EnsureDict("response");
+  response_inner->Set("protocol", "4.0");
+  base::ListValue* app_list = response_inner->EnsureList("apps");
+  for (const auto& update_item : extensions) {
+    base::DictValue app;
+    app.Set("appid", update_item.id);
+    app.Set("status", "ok");
+    base::DictValue* update_check = app.EnsureDict("updatecheck");
+    update_check->Set("status", "ok");
+    update_check->Set("nextversion",
+                      update_item.updatecheck_params.at("version"));
+    base::ListValue* pipelines = update_check->EnsureList("pipelines");
+    base::DictValue pipeline;
+    base::ListValue* operations = pipeline.EnsureList("operations");
+    {  // Download
+      base::DictValue download;
+      download.Set("type", "download");
+      base::DictValue* hash = download.EnsureDict("out");
+      hash->Set("sha256", update_item.updatecheck_params.at("hash_sha256"));
+      download.Set("size", static_cast<double>(update_item.size_));
+      base::ListValue* urls = download.EnsureList("urls");
+      base::DictValue url_item;
+      url_item.Set("url", update_item.updatecheck_params.at("codebase"));
+      urls->Append(std::move(url_item));
+      operations->Append(std::move(download));
+    }
+    {  // Install
+      base::DictValue install;
+      install.Set("type", "crx3");
+      base::DictValue* hash = install.EnsureDict("in");
+      hash->Set("sha256", update_item.updatecheck_params.at("hash_sha256"));
+      operations->Append(std::move(install));
+    }
+    pipelines->Append(std::move(pipeline));
+    app_list->Append(std::move(app));
+  }
+  std::string json;
+  base::JSONWriter::Write(response_outer, &json);
+  return ")]}'\n" + json;
+}
 
 std::string CreateUpdateManifest(
     const std::vector<UpdateManifestItem>& extensions) {

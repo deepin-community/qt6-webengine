@@ -3,8 +3,7 @@
 # found in the LICENSE file.
 
 import("../../../../scripts/build/ninja/copy.gni")
-import(
-    "../../../../scripts/build/ninja/devtools_entrypoint.gni")
+import("../../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../../scripts/build/ninja/devtools_module.gni")
 import("../../../../scripts/build/ninja/node.gni")
 
@@ -29,7 +28,6 @@ devtools_module("injected") {
     ":*",
     "../:*",
     "../../../../test/interactions/front_end/panels/recorder/*",
-    "../../../../test/unittests/front_end/panels/recorder/*",
     "../../../ui/components/docs/recorder_injected/*",
     "../controllers:*",
     "../models:*",
@@ -48,7 +46,6 @@ devtools_entrypoint("bundle") {
     ":*",
     "../:*",
     "../../../../test/interactions/panels/recorder/*",
-    "../../../../test/unittests/front_end/panels/recorder/*",
     "../../../ui/components/docs/recorder_injected/*",
     "../controllers:*",
     "../models:*",
@@ -58,14 +55,14 @@ devtools_entrypoint("bundle") {
 }
 
 node_action("bundled_library") {
-  script = "node_modules/rollup/dist/bin/rollup"
+  script = "node_modules/@rollup/wasm-node/dist/bin/rollup"
 
   _bundled_entrypoint = target_gen_dir + "/injected.js"
   _output_file_location = target_gen_dir + "/injected.generated.js"
 
   inputs = [
     _bundled_entrypoint,
-    "rollup.config.js",
+    "rollup.config.mjs",
   ]
 
   deps = [ ":bundle" ]
@@ -76,7 +73,7 @@ node_action("bundled_library") {
     # and instead looks if `stderr` is empty.
     "--silent",
     "--config",
-    rebase_path("rollup.config.js", root_build_dir),
+    rebase_path("rollup.config.mjs", root_build_dir),
     "--input",
     rebase_path(_bundled_entrypoint, root_build_dir),
     "--file",
@@ -84,7 +81,7 @@ node_action("bundled_library") {
   ]
 
   if (is_debug) {
-    args += [ "--environment DEBUG_INJECTED" ]
+    args += [ "--environment=DEBUG_INJECTED" ]
   }
 
   outputs = [ _output_file_location ]

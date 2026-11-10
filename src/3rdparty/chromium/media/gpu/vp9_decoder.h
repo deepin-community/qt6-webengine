@@ -14,10 +14,10 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "media/base/video_types.h"
-#include "media/filters/vp9_parser.h"
 #include "media/gpu/accelerated_video_decoder.h"
 #include "media/gpu/vp9_picture.h"
 #include "media/gpu/vp9_reference_frame_vector.h"
+#include "media/parsers/vp9_parser.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
@@ -111,10 +111,6 @@ class MEDIA_GPU_EXPORT VP9Decoder : public AcceleratedVideoDecoder {
     //
     // Return true when successful, false otherwise.
     virtual bool OutputPicture(scoped_refptr<VP9Picture> pic) = 0;
-
-    // Return true if the accelerator requires us to provide the compressed
-    // header fully parsed.
-    virtual bool NeedsCompressedHeaderParsed() const = 0;
   };
 
   explicit VP9Decoder(
@@ -128,7 +124,8 @@ class MEDIA_GPU_EXPORT VP9Decoder : public AcceleratedVideoDecoder {
   ~VP9Decoder() override;
 
   // AcceleratedVideoDecoder implementation.
-  void SetStream(int32_t id, const DecoderBuffer& decoder_buffer) override;
+  void SetStream(int32_t id,
+                 scoped_refptr<DecoderBuffer> decoder_buffer) override;
   [[nodiscard]] bool Flush() override;
   void Reset() override;
   [[nodiscard]] DecodeResult Decode() override;
@@ -138,7 +135,7 @@ class MEDIA_GPU_EXPORT VP9Decoder : public AcceleratedVideoDecoder {
   uint8_t GetBitDepth() const override;
   VideoChromaSampling GetChromaSampling() const override;
   VideoColorSpace GetVideoColorSpace() const override;
-  absl::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
+  std::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
   size_t GetRequiredNumOfPictures() const override;
   size_t GetNumReferenceFrames() const override;
 
@@ -168,6 +165,9 @@ class MEDIA_GPU_EXPORT VP9Decoder : public AcceleratedVideoDecoder {
 
   // Current stream buffer id; to be assigned to pictures decoded from it.
   int32_t stream_id_ = -1;
+
+  // Most recent call to SetStream().
+  scoped_refptr<media::DecoderBuffer> decoder_buffer_;
 
   // Current frame header and decrypt config to be used in decoding the next
   // picture.

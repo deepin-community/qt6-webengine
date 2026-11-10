@@ -24,7 +24,7 @@ class AudioParameters;
 // Trailer.
 // Clients will push encoded VPx or AV1 video frames and Opus or PCM audio
 // frames one by one via OnEncoded{Video|Audio}(). libwebm will eventually ping
-// the WriteDataCB passed on contructor with the wrapped encoded data.
+// the WriteDataCB passed on constructor with the wrapped encoded data.
 // WebmMuxer is designed for use on a single thread.
 // [1] http://www.webmproject.org/docs/container/
 // [2] http://www.matroska.org/technical/specs/index.html
@@ -54,7 +54,7 @@ class MEDIA_EXPORT WebmMuxer : public Muxer {
     // Does the actual writing of |len| bytes from the given |buf| depending on
     // the mode desired by the concrete implementation of this delegate.
     // Returns 0 on success, -1 otherwise.
-    virtual mkvmuxer::int32 DoWrite(const void* buf, mkvmuxer::uint32 len) = 0;
+    virtual mkvmuxer::int32 DoWrite(base::span<const uint8_t> buf) = 0;
 
     SEQUENCE_CHECKER(sequence_checker_);
 
@@ -74,7 +74,7 @@ class MEDIA_EXPORT WebmMuxer : public Muxer {
             bool has_video_,
             bool has_audio_,
             std::unique_ptr<Delegate> delegate,
-            absl::optional<base::TimeDelta> max_data_output_interval);
+            std::optional<base::TimeDelta> max_data_output_interval);
 
   WebmMuxer(const WebmMuxer&) = delete;
   WebmMuxer& operator=(const WebmMuxer&) = delete;
@@ -90,6 +90,7 @@ class MEDIA_EXPORT WebmMuxer : public Muxer {
 
  private:
   friend class WebmMuxerTest;
+  friend class WebmMuxerTestUnparametrized;
 
   // Methods for creating and adding video and audio tracks, called upon
   // receiving the first frame of a given Track.
@@ -98,7 +99,8 @@ class MEDIA_EXPORT WebmMuxer : public Muxer {
   // frame size.
   void AddVideoTrack(const gfx::Size& frame_size,
                      double frame_rate,
-                     const absl::optional<gfx::ColorSpace>& color_space);
+                     std::optional<gfx::ColorSpace> color_space,
+                     std::optional<VideoTransformation> transformation);
   void AddAudioTrack(const AudioParameters& params);
   bool WriteWebmFrame(EncodedFrame frame, base::TimeDelta relative_timestamp);
 
@@ -129,7 +131,7 @@ class MEDIA_EXPORT WebmMuxer : public Muxer {
   // |duration| after the last write.
   // The maximum duration between forced clusters is internally limited to not
   // go below 100 ms.
-  // TODO(crbug.com/1381323): consider if cluster output should be based on
+  // TODO(crbug.com/40876732): consider if cluster output should be based on
   // media timestamps.
   base::TimeDelta max_data_output_interval_;
 

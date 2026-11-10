@@ -23,8 +23,6 @@
 #include "./centipede/runner.h"
 
 #include <pthread.h>  // NOLINT: use pthread to avoid extra dependencies.
-#include <sys/auxv.h>
-#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -41,12 +39,13 @@
 #include <ctime>
 #include <functional>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "./centipede/byte_array_mutator.h"
-#include "./centipede/defs.h"
 #include "./centipede/execution_metadata.h"
 #include "./centipede/feature.h"
 #include "./centipede/int_utils.h"
@@ -58,13 +57,14 @@
 #include "./centipede/runner_result.h"
 #include "./centipede/runner_utils.h"
 #include "./centipede/shared_memory_blob_sequence.h"
+#include "./common/defs.h"
 
-__attribute__((
-    weak)) extern centipede::feature_t __start___centipede_extra_features;
-__attribute__((
-    weak)) extern centipede::feature_t __stop___centipede_extra_features;
+__attribute__((weak)) extern fuzztest::internal::feature_t
+    __start___centipede_extra_features;
+__attribute__((weak)) extern fuzztest::internal::feature_t
+    __stop___centipede_extra_features;
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 // Returns the length of the common prefix of `s1` and `s2`, but not more
@@ -93,10 +93,6 @@ thread_local ThreadTerminationDetector termination_detector;
 
 }  // namespace
 
-// Use of the fixed init priority allows to call CentipedeRunnerMain
-// from constructor functions (CentipedeRunnerMain needs to run after
-// state constructor).
-// Note: it must run after ForkServerCallMeVeryEarly, see comment there.
 GlobalRunnerState state __attribute__((init_priority(200)));
 // We use __thread instead of thread_local so that the compiler warns if
 // the initializer for `tls` is not a constant expression.
@@ -104,34 +100,13 @@ GlobalRunnerState state __attribute__((init_priority(200)));
 // This avoids calls to __tls_init() in hot functions that use `tls`.
 __thread ThreadLocalRunnerState tls;
 
-// Tries to write `description` to `state.failure_description_path`.
-static void WriteFailureDescription(const char *description) {
-  // TODO(b/264715830): Remove I/O error logging once the bug is fixed?
-  if (state.failure_description_path == nullptr) return;
-  FILE *f = fopen(state.failure_description_path, "w");
-  if (f == nullptr) {
-    perror("FAILURE: fopen()");
-    return;
-  }
-  const auto len = strlen(description);
-  if (fwrite(description, 1, len, f) != len) {
-    perror("FAILURE: fwrite()");
-  }
-  if (fflush(f) != 0) {
-    perror("FAILURE: fflush()");
-  }
-  if (fclose(f) != 0) {
-    perror("FAILURE: fclose()");
-  }
-}
-
 void ThreadLocalRunnerState::TraceMemCmp(uintptr_t caller_pc, const uint8_t *s1,
                                          const uint8_t *s2, size_t n,
                                          bool is_equal) {
   if (state.run_time_flags.use_cmp_features) {
     const uintptr_t pc_offset = caller_pc - state.main_object.start_address;
     const uintptr_t hash =
-        centipede::Hash64Bits(pc_offset) ^ tls.path_ring_buffer.hash();
+        fuzztest::internal::Hash64Bits(pc_offset) ^ tls.path_ring_buffer.hash();
     const size_t lcp = LengthOfCommonPrefix(s1, s2, n);
     // lcp is a 6-bit number.
     state.cmp_feature_set.set((hash << 6) | lcp);
@@ -143,6 +118,7 @@ void ThreadLocalRunnerState::TraceMemCmp(uintptr_t caller_pc, const uint8_t *s1,
 
 void ThreadLocalRunnerState::OnThreadStart() {
   termination_detector.EnsureAlive();
+  tls.started = true;
   tls.lowest_sp = tls.top_frame_sp =
       reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
   tls.stack_region_low = GetCurrentThreadStackRegionLow();
@@ -190,8 +166,14 @@ void ThreadLocalRunnerState::OnThreadStop() {
 static size_t GetPeakRSSMb() {
   struct rusage usage = {};
   if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
+#ifdef __APPLE__
+  // On MacOS, the unit seems to be byte according to experiment, while some
+  // documents mentioned KiB. This could depend on OS variants.
+  return usage.ru_maxrss >> 20;
+#else   // __APPLE__
   // On Linux, ru_maxrss is in KiB
   return usage.ru_maxrss >> 10;
+#endif  // __APPLE__
 }
 
 // Returns the current time in microseconds.
@@ -209,33 +191,37 @@ static void CheckWatchdogLimits() {
     const char *units;
     uint64_t value;
     uint64_t limit;
+    bool ignore_report;
     const char *failure;
   };
   const uint64_t input_start_time = state.input_start_time;
   const uint64_t batch_start_time = state.batch_start_time;
   if (input_start_time == 0 || batch_start_time == 0) return;
   const Resource resources[] = {
-      {
-          .what = "Per-input timeout",
-          .units = "sec",
-          .value = curr_time - input_start_time,
-          .limit = state.run_time_flags.timeout_per_input,
-          .failure = kExecutionFailurePerInputTimeout.data(),
-      },
-      {
-          .what = "Per-batch timeout",
-          .units = "sec",
-          .value = curr_time - batch_start_time,
-          .limit = state.run_time_flags.timeout_per_batch,
-          .failure = kExecutionFailurePerBatchTimeout.data(),
-      },
-      {
-          .what = "RSS limit",
-          .units = "MB",
-          .value = GetPeakRSSMb(),
-          .limit = state.run_time_flags.rss_limit_mb,
-          .failure = kExecutionFailureRssLimitExceeded.data(),
-      },
+      {Resource{
+          /*what=*/"Per-input timeout",
+          /*units=*/"sec",
+          /*value=*/curr_time - input_start_time,
+          /*limit=*/state.run_time_flags.timeout_per_input,
+          /*ignore_report=*/state.run_time_flags.ignore_timeout_reports != 0,
+          /*failure=*/kExecutionFailurePerInputTimeout.data(),
+      }},
+      {Resource{
+          /*what=*/"Per-batch timeout",
+          /*units=*/"sec",
+          /*value=*/curr_time - batch_start_time,
+          /*limit=*/state.run_time_flags.timeout_per_batch,
+          /*ignore_report=*/state.run_time_flags.ignore_timeout_reports != 0,
+          /*failure=*/kExecutionFailurePerBatchTimeout.data(),
+      }},
+      {Resource{
+          /*what=*/"RSS limit",
+          /*units=*/"MB",
+          /*value=*/GetPeakRSSMb(),
+          /*limit=*/state.run_time_flags.rss_limit_mb,
+          /*ignore_report=*/false,
+          /*failure=*/kExecutionFailureRssLimitExceeded.data(),
+      }},
   };
   for (const auto &resource : resources) {
     if (resource.limit != 0 && resource.value > resource.limit) {
@@ -244,12 +230,32 @@ static void CheckWatchdogLimits() {
       // `RunOneInput()` after all the work is done.
       static std::atomic<bool> already_handling_failure = false;
       if (!already_handling_failure.exchange(true)) {
+        if (resource.ignore_report) {
+          fprintf(stderr,
+                  "========= %s exceeded: %" PRIu64 " > %" PRIu64
+                  " (%s); exiting without reporting as an error\n",
+                  resource.what, resource.value, resource.limit,
+                  resource.units);
+          std::_Exit(0);
+          // should not return here.
+        }
         fprintf(stderr,
                 "========= %s exceeded: %" PRIu64 " > %" PRIu64
                 " (%s); exiting\n",
                 resource.what, resource.value, resource.limit, resource.units);
-        WriteFailureDescription(resource.failure);
-        abort();
+        fprintf(
+            stderr,
+            "=============================================================="
+            "===\n"
+            "=== BUG FOUND!\n The %s is set to %" PRIu64
+            " (%s), but it exceeded %" PRIu64
+            ".\n"
+            "Find out how to adjust the resource limits at "
+            "https://github.com/google/fuzztest/tree/main/doc/flags-reference.md"
+            "\n",
+            resource.what, resource.limit, resource.units, resource.value);
+        CentipedeSetFailureDescription(resource.failure);
+        std::abort();
       }
     }
   }
@@ -271,17 +277,22 @@ static void CheckWatchdogLimits() {
 }
 
 __attribute__((noinline)) void CheckStackLimit(uintptr_t sp) {
+  static std::atomic_flag stack_limit_exceeded = ATOMIC_FLAG_INIT;
   const size_t stack_limit = state.run_time_flags.stack_limit_kb.load() << 10;
   // Check for the stack limit only if sp is inside the stack region.
   if (stack_limit > 0 && tls.stack_region_low &&
       tls.top_frame_sp - sp > stack_limit) {
+    const bool test_not_running = state.input_start_time == 0;
+    if (test_not_running) return;
+    if (stack_limit_exceeded.test_and_set()) return;
     fprintf(stderr,
-            "========= Stack limit exceeded: %" PRIuPTR " > %" PRIu64
+            "========= Stack limit exceeded: %" PRIuPTR
+            " > %zu"
             " (byte); aborting\n",
             tls.top_frame_sp - sp, stack_limit);
-    centipede::WriteFailureDescription(
-        centipede::kExecutionFailureStackLimitExceeded.data());
-    abort();
+    CentipedeSetFailureDescription(
+        fuzztest::internal::kExecutionFailureStackLimitExceeded.data());
+    std::abort();
   }
 }
 
@@ -299,10 +310,11 @@ void GlobalRunnerState::StartWatchdogThread() {
   fprintf(stderr,
           "Starting watchdog thread: timeout_per_input: %" PRIu64
           " sec; timeout_per_batch: %" PRIu64 " sec; rss_limit_mb: %" PRIu64
-          " MB\n",
+          " MB; stack_limit_kb: %" PRIu64 " KB\n",
           state.run_time_flags.timeout_per_input.load(),
           state.run_time_flags.timeout_per_batch,
-          state.run_time_flags.rss_limit_mb.load());
+          state.run_time_flags.rss_limit_mb.load(),
+          state.run_time_flags.stack_limit_kb.load());
   pthread_t watchdog_thread;
   pthread_create(&watchdog_thread, nullptr, WatchdogThread, nullptr);
   pthread_detach(watchdog_thread);
@@ -324,8 +336,8 @@ void GlobalRunnerState::ResetTimers() {
 
 // Byte array mutation fallback for a custom mutator, as defined here:
 // https://github.com/google/fuzzing/blob/master/docs/structure-aware-fuzzing.md
-extern "C" size_t LLVMFuzzerMutate(uint8_t *data, size_t size,
-                                   size_t max_size) {
+extern "C" __attribute__((weak)) size_t
+CentipedeLLVMFuzzerMutateCallback(uint8_t *data, size_t size, size_t max_size) {
   // TODO(kcc): [as-needed] fix the interface mismatch.
   // LLVMFuzzerMutate is an array-based interface (for compatibility reasons)
   // while ByteArray has a vector-based interface.
@@ -339,12 +351,18 @@ extern "C" size_t LLVMFuzzerMutate(uint8_t *data, size_t size,
   }
 
   ByteArray array(data, data + size);
+  state.byte_array_mutator->set_max_len(max_size);
   state.byte_array_mutator->Mutate(array);
   if (array.size() > max_size) {
     array.resize(max_size);
   }
   memcpy(data, array.data(), array.size());
   return array.size();
+}
+
+extern "C" size_t LLVMFuzzerMutate(uint8_t *data, size_t size,
+                                   size_t max_size) {
+  return CentipedeLLVMFuzzerMutateCallback(data, size, max_size);
 }
 
 // An arbitrary large size for input data.
@@ -378,6 +396,12 @@ PrepareCoverage(bool full_clear) {
       tls.lowest_sp = tls.top_frame_sp;
     });
   }
+  {
+    fuzztest::internal::LockGuard lock(state.execution_result_override_mu);
+    if (state.execution_result_override != nullptr) {
+      state.execution_result_override->ClearAndResize(0);
+    }
+  }
   if (!full_clear) return;
   state.ForEachTls([](ThreadLocalRunnerState &tls) {
     if (state.run_time_flags.use_auto_dictionary) {
@@ -387,7 +411,9 @@ PrepareCoverage(bool full_clear) {
       tls.cmp_traceN.Clear();
     }
   });
-  state.pc_counter_set.ForEachNonZeroByte([](size_t idx, uint8_t value) {});
+  state.pc_counter_set.ForEachNonZeroByte(
+      [](size_t idx, uint8_t value) {}, 0,
+      state.actual_pc_counter_set_size_aligned);
   if (state.run_time_flags.use_dataflow_features)
     state.data_flow_feature_set.ForEachNonZeroBit([](size_t idx) {});
   if (state.run_time_flags.use_cmp_features) {
@@ -533,6 +559,17 @@ void RunnerCallbacks::GetSeeds(std::function<void(ByteSpan)> seed_callback) {
   seed_callback({0});
 }
 
+std::string RunnerCallbacks::GetSerializedTargetConfig() { return ""; }
+
+bool RunnerCallbacks::Mutate(
+    const std::vector<MutationInputRef> & /*inputs*/, size_t /*num_mutants*/,
+    std::function<void(ByteSpan)> /*new_mutant_callback*/) {
+  RunnerCheck(!HasCustomMutator(),
+              "Class deriving from RunnerCallbacks must implement Mutate() if "
+              "HasCustomMutator() returns true.");
+  return true;
+}
+
 class LegacyRunnerCallbacks : public RunnerCallbacks {
  public:
   LegacyRunnerCallbacks(FuzzerTestOneInputCallback test_one_input_cb,
@@ -551,6 +588,11 @@ class LegacyRunnerCallbacks : public RunnerCallbacks {
         "test_on_input_cb returns invalid value other than -1 and 0");
     return retval == 0;
   }
+
+  bool HasCustomMutator() const override {
+    return custom_mutator_cb_ != nullptr;
+  }
+
   bool Mutate(const std::vector<MutationInputRef> &inputs, size_t num_mutants,
               std::function<void(ByteSpan)> new_mutant_callback) override;
 
@@ -585,7 +627,9 @@ static void RunOneInput(const uint8_t *data, size_t size,
   int target_return_value = callbacks.Execute({data, size}) ? 0 : -1;
   state.stats.exec_time_usec = UsecSinceLast();
   CheckWatchdogLimits();
-  PostProcessCoverage(target_return_value);
+  if (fuzztest::internal::state.input_start_time.exchange(0) != 0) {
+    PostProcessCoverage(target_return_value);
+  }
   state.stats.post_time_usec = UsecSinceLast();
   state.stats.peak_rss_mb = GetPeakRSSMb();
 }
@@ -664,6 +708,26 @@ static size_t CopyFeatures(uint8_t *data, size_t capacity) {
 // Finishes sending the outputs (coverage, etc.) to `outputs_blobseq`.
 // Returns true on success.
 static bool FinishSendingOutputsToEngine(BlobSequence &outputs_blobseq) {
+  {
+    LockGuard lock(state.execution_result_override_mu);
+    bool has_overridden_execution_result = false;
+    if (state.execution_result_override != nullptr) {
+      RunnerCheck(state.execution_result_override->results().size() <= 1,
+                  "unexpected number of overridden execution results");
+      has_overridden_execution_result =
+          state.execution_result_override->results().size() == 1;
+    }
+    if (has_overridden_execution_result) {
+      const auto &result = state.execution_result_override->results()[0];
+      return BatchResult::WriteOneFeatureVec(result.features().data(),
+                                             result.features().size(),
+                                             outputs_blobseq) &&
+             BatchResult::WriteMetadata(result.metadata(), outputs_blobseq) &&
+             BatchResult::WriteStats(result.stats(), outputs_blobseq) &&
+             BatchResult::WriteInputEnd(outputs_blobseq);
+    }
+  }
+
   // Copy features to shared memory.
   if (!BatchResult::WriteOneFeatureVec(
           state.g_features.data(), state.g_features.size(), outputs_blobseq)) {
@@ -698,18 +762,16 @@ static int ExecuteInputsFromShmem(BlobSequence &inputs_blobseq,
                                   BlobSequence &outputs_blobseq,
                                   RunnerCallbacks &callbacks) {
   size_t num_inputs = 0;
-  if (!runner_request::IsExecutionRequest(inputs_blobseq.Read()))
-    return EXIT_FAILURE;
-  if (!runner_request::IsNumInputs(inputs_blobseq.Read(), num_inputs))
-    return EXIT_FAILURE;
+  if (!IsExecutionRequest(inputs_blobseq.Read())) return EXIT_FAILURE;
+  if (!IsNumInputs(inputs_blobseq.Read(), num_inputs)) return EXIT_FAILURE;
 
-  PrepareCoverage(/*full_clear=*/true);  // Clear the startup coverage.
+  CentipedeBeginExecutionBatch();
 
   for (size_t i = 0; i < num_inputs; i++) {
     auto blob = inputs_blobseq.Read();
     // TODO(kcc): distinguish bad input from end of stream.
     if (!blob.IsValid()) return EXIT_SUCCESS;  // no more blobs to read.
-    if (!runner_request::IsDataInput(blob)) return EXIT_FAILURE;
+    if (!IsDataInput(blob)) return EXIT_FAILURE;
 
     // TODO(kcc): [impl] handle sizes larger than kMaxDataSize.
     size_t size = std::min(kMaxDataSize, blob.size);
@@ -723,12 +785,15 @@ static int ExecuteInputsFromShmem(BlobSequence &inputs_blobseq,
 
     if (!FinishSendingOutputsToEngine(outputs_blobseq)) break;
   }
+
+  CentipedeEndExecutionBatch();
+
   return EXIT_SUCCESS;
 }
 
 // Dumps the pc table to `output_path`.
 // Requires that state.main_object is already computed.
-static void DumpPcTable(const char *output_path) {
+static void DumpPcTable(const char *absl_nonnull output_path) {
   PrintErrorAndExitIf(!state.main_object.IsSet(), "main_object is not set");
   FILE *output_file = fopen(output_path, "w");
   PrintErrorAndExitIf(output_file == nullptr, "can't open output file");
@@ -744,7 +809,7 @@ static void DumpPcTable(const char *output_path) {
 
 // Dumps the control-flow table to `output_path`.
 // Requires that state.main_object is already computed.
-static void DumpCfTable(const char *output_path) {
+static void DumpCfTable(const char *absl_nonnull output_path) {
   PrintErrorAndExitIf(!state.main_object.IsSet(), "main_object is not set");
   FILE *output_file = fopen(output_path, "w");
   PrintErrorAndExitIf(output_file == nullptr, "can't open output file");
@@ -760,7 +825,7 @@ static void DumpCfTable(const char *output_path) {
 
 // Dumps a DsoTable as a text file. Each line contains the file path and the
 // number of instrumented PCs.
-static void DumpDsoTable(const char *output_path) {
+static void DumpDsoTable(const char *absl_nonnull output_path) {
   FILE *output_file = fopen(output_path, "w");
   RunnerCheck(output_file != nullptr, "DumpDsoTable: can't open output file");
   DsoTable dso_table = state.sancov_objects.CreateDsoTable();
@@ -771,7 +836,7 @@ static void DumpDsoTable(const char *output_path) {
   fclose(output_file);
 }
 
-// Dumps seed inputs to `output_dir`. Also see GetSeedsViaExternalBinary().
+// Dumps seed inputs to `output_dir`. Also see `GetSeedsViaExternalBinary()`.
 static void DumpSeedsToDir(RunnerCallbacks &callbacks, const char *output_dir) {
   size_t seed_index = 0;
   callbacks.GetSeeds([&](ByteSpan seed) {
@@ -793,6 +858,20 @@ static void DumpSeedsToDir(RunnerCallbacks &callbacks, const char *output_dir) {
   });
 }
 
+// Dumps serialized target config to `output_file_path`. Also see
+// `GetSerializedTargetConfigViaExternalBinary()`.
+static void DumpSerializedTargetConfigToFile(RunnerCallbacks &callbacks,
+                                             const char *output_file_path) {
+  const std::string config = callbacks.GetSerializedTargetConfig();
+  FILE *output_file = fopen(output_file_path, "w");
+  const size_t num_bytes_written =
+      fwrite(config.data(), 1, config.size(), output_file);
+  PrintErrorAndExitIf(
+      num_bytes_written != config.size(),
+      "wrong number of bytes written for serialized target configuration");
+  fclose(output_file);
+}
+
 // Returns a random seed. No need for a more sophisticated seed.
 // TODO(kcc): [as-needed] optionally pass an external seed.
 static unsigned GetRandomSeed() { return time(nullptr); }
@@ -812,12 +891,9 @@ static int MutateInputsFromShmem(BlobSequence &inputs_blobseq,
   // Read max_num_mutants.
   size_t num_mutants = 0;
   size_t num_inputs = 0;
-  if (!runner_request::IsMutationRequest(inputs_blobseq.Read()))
-    return EXIT_FAILURE;
-  if (!runner_request::IsNumMutants(inputs_blobseq.Read(), num_mutants))
-    return EXIT_FAILURE;
-  if (!runner_request::IsNumInputs(inputs_blobseq.Read(), num_inputs))
-    return EXIT_FAILURE;
+  if (!IsMutationRequest(inputs_blobseq.Read())) return EXIT_FAILURE;
+  if (!IsNumMutants(inputs_blobseq.Read(), num_mutants)) return EXIT_FAILURE;
+  if (!IsNumInputs(inputs_blobseq.Read(), num_inputs)) return EXIT_FAILURE;
 
   // Mutation input with ownership.
   struct MutationInput {
@@ -836,21 +912,34 @@ static int MutateInputsFromShmem(BlobSequence &inputs_blobseq,
     // If inputs_blobseq have overflown in the engine, we still want to
     // handle the first few inputs.
     ExecutionMetadata metadata;
-    if (!runner_request::IsExecutionMetadata(inputs_blobseq.Read(), metadata)) {
+    if (!IsExecutionMetadata(inputs_blobseq.Read(), metadata)) {
       break;
     }
     auto blob = inputs_blobseq.Read();
-    if (!runner_request::IsDataInput(blob)) break;
-    inputs.push_back({.data = {blob.data, blob.data + blob.size},
-                      .metadata = std::move(metadata)});
+    if (!IsDataInput(blob)) break;
+    inputs.push_back(
+        MutationInput{/*data=*/ByteArray{blob.data, blob.data + blob.size},
+                      /*metadata=*/std::move(metadata)});
     input_refs.push_back(
-        {.data = inputs.back().data, .metadata = &inputs.back().metadata});
+        MutationInputRef{/*data=*/inputs.back().data,
+                         /*metadata=*/&inputs.back().metadata});
   }
 
-  if (!callbacks.Mutate(input_refs, num_mutants, [&](ByteSpan mutant) {
-        outputs_blobseq.Write({1 /*unused tag*/, mutant.size(), mutant.data()});
-      }))
+  if (!inputs.empty()) {
+    state.byte_array_mutator->SetMetadata(inputs[0].metadata);
+  }
+
+  if (!MutationResult::WriteHasCustomMutator(callbacks.HasCustomMutator(),
+                                             outputs_blobseq)) {
     return EXIT_FAILURE;
+  }
+  if (!callbacks.HasCustomMutator()) return EXIT_SUCCESS;
+
+  if (!callbacks.Mutate(input_refs, num_mutants, [&](ByteSpan mutant) {
+        MutationResult::WriteMutant(mutant, outputs_blobseq);
+      })) {
+    return EXIT_FAILURE;
+  }
   return EXIT_SUCCESS;
 }
 
@@ -860,16 +949,16 @@ bool LegacyRunnerCallbacks::Mutate(
   if (custom_mutator_cb_ == nullptr) return false;
   unsigned int seed = GetRandomSeed();
   const size_t num_inputs = inputs.size();
-  constexpr size_t kMaxMutantSize = kMaxDataSize;
+  const size_t max_mutant_size = state.run_time_flags.max_len;
   constexpr size_t kAverageMutationAttempts = 2;
-  ByteArray mutant(kMaxMutantSize);
+  ByteArray mutant(max_mutant_size);
   for (size_t attempt = 0, num_outputs = 0;
        attempt < num_mutants * kAverageMutationAttempts &&
        num_outputs < num_mutants;
        ++attempt) {
     const auto &input_data = inputs[rand_r(&seed) % num_inputs].data;
 
-    size_t size = std::min(input_data.size(), kMaxMutantSize);
+    size_t size = std::min(input_data.size(), max_mutant_size);
     std::copy(input_data.cbegin(), input_data.cbegin() + size, mutant.begin());
     size_t new_size = 0;
     if ((custom_crossover_cb_ != nullptr) &&
@@ -878,9 +967,9 @@ bool LegacyRunnerCallbacks::Mutate(
       const auto &other_data = inputs[rand_r(&seed) % num_inputs].data;
       new_size = custom_crossover_cb_(
           input_data.data(), input_data.size(), other_data.data(),
-          other_data.size(), mutant.data(), kMaxMutantSize, rand_r(&seed));
+          other_data.size(), mutant.data(), max_mutant_size, rand_r(&seed));
     } else {
-      new_size = custom_mutator_cb_(mutant.data(), size, kMaxMutantSize,
+      new_size = custom_mutator_cb_(mutant.data(), size, max_mutant_size,
                                     rand_r(&seed));
     }
     if (new_size == 0) continue;
@@ -898,13 +987,17 @@ static size_t GetVmSizeInBytes() {
   // NOTE: Ignore any (unlikely) failures to suppress a compiler warning.
   (void)fscanf(f, "%zd", &vm_size);
   fclose(f);
-  return vm_size * getauxval(AT_PAGESZ);  // proc gives VmSize in pages.
+  return vm_size * getpagesize();  // proc gives VmSize in pages.
 }
 
 // Sets RLIMIT_CORE, RLIMIT_AS
 static void SetLimits() {
-  // no core files anywhere.
-  prctl(PR_SET_DUMPABLE, 0);
+  // Disable core dumping.
+  struct rlimit core_limits;
+  getrlimit(RLIMIT_CORE, &core_limits);
+  core_limits.rlim_cur = 0;
+  core_limits.rlim_max = 0;
+  setrlimit(RLIMIT_CORE, &core_limits);
 
   // ASAN/TSAN/MSAN can not be used with RLIMIT_AS.
   // We get the current VmSize, if it is greater than 1Tb, we assume we
@@ -960,6 +1053,9 @@ extern void RunnerInterceptor();
     &RunnerInterceptor;
 
 GlobalRunnerState::GlobalRunnerState() {
+  // Make sure fork server is started if needed.
+  ForkServerCallMeVeryEarly();
+
   // TODO(kcc): move some code from CentipedeRunnerMain() here so that it works
   // even if CentipedeRunnerMain() is not called.
   tls.OnThreadStart();
@@ -1011,6 +1107,13 @@ GlobalRunnerState::~GlobalRunnerState() {
     StartSendingOutputsToEngine(outputs_blobseq);
     FinishSendingOutputsToEngine(outputs_blobseq);
   }
+  {
+    LockGuard lock(state.execution_result_override_mu);
+    if (state.execution_result_override != nullptr) {
+      delete state.execution_result_override;
+      state.execution_result_override = nullptr;
+    }
+  }
   // Always clean up detached TLSs to avoid leakage.
   CleanUpDetachedTls();
 }
@@ -1028,6 +1131,12 @@ int RunnerMain(int argc, char **argv, RunnerCallbacks &callbacks) {
   fprintf(stderr, "Centipede fuzz target runner; argv[0]: %s flags: %s\n",
           argv[0], state.centipede_runner_flags);
 
+  if (state.HasFlag(":dump_configuration:")) {
+    DumpSerializedTargetConfigToFile(callbacks,
+                                     /*output_file_path=*/state.arg1);
+    return EXIT_SUCCESS;
+  }
+
   if (state.HasFlag(":dump_seed_inputs:")) {
     // Seed request.
     DumpSeedsToDir(callbacks, /*output_dir=*/state.arg1);
@@ -1041,7 +1150,7 @@ int RunnerMain(int argc, char **argv, RunnerCallbacks &callbacks) {
     SharedMemoryBlobSequence outputs_blobseq(state.arg2);
     // Read the first blob. It indicates what further actions to take.
     auto request_type_blob = inputs_blobseq.Read();
-    if (runner_request::IsMutationRequest(request_type_blob)) {
+    if (IsMutationRequest(request_type_blob)) {
       // Since we are mutating, no need to spend time collecting the coverage.
       // We still pay for executing the coverage callbacks, but those will
       // return immediately.
@@ -1056,7 +1165,7 @@ int RunnerMain(int argc, char **argv, RunnerCallbacks &callbacks) {
           new ByteArrayMutator(state.knobs, GetRandomSeed());
       return MutateInputsFromShmem(inputs_blobseq, outputs_blobseq, callbacks);
     }
-    if (runner_request::IsExecutionRequest(request_type_blob)) {
+    if (IsExecutionRequest(request_type_blob)) {
       // Execution request.
       inputs_blobseq.Reset();
       return ExecuteInputsFromShmem(inputs_blobseq, outputs_blobseq, callbacks);
@@ -1071,13 +1180,14 @@ int RunnerMain(int argc, char **argv, RunnerCallbacks &callbacks) {
   return EXIT_SUCCESS;
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 extern "C" int LLVMFuzzerRunDriver(
-    int *argc, char ***argv, FuzzerTestOneInputCallback test_one_input_cb) {
+    int *absl_nonnull argc, char ***absl_nonnull argv,
+    FuzzerTestOneInputCallback test_one_input_cb) {
   if (LLVMFuzzerInitialize) LLVMFuzzerInitialize(argc, argv);
   return RunnerMain(*argc, *argv,
-                    *centipede::CreateLegacyRunnerCallbacks(
+                    *fuzztest::internal::CreateLegacyRunnerCallbacks(
                         test_one_input_cb, LLVMFuzzerCustomMutator,
                         LLVMFuzzerCustomCrossOver));
 }
@@ -1088,13 +1198,13 @@ extern "C" __attribute__((used)) void __libfuzzer_is_present() {}
 extern "C" void CentipedeSetRssLimit(size_t rss_limit_mb) {
   fprintf(stderr, "CentipedeSetRssLimit: changing rss_limit_mb to %zu\n",
           rss_limit_mb);
-  centipede::state.run_time_flags.rss_limit_mb = rss_limit_mb;
+  fuzztest::internal::state.run_time_flags.rss_limit_mb = rss_limit_mb;
 }
 
 extern "C" void CentipedeSetStackLimit(size_t stack_limit_kb) {
   fprintf(stderr, "CentipedeSetStackLimit: changing stack_limit_kb to %zu\n",
           stack_limit_kb);
-  centipede::state.run_time_flags.stack_limit_kb = stack_limit_kb;
+  fuzztest::internal::state.run_time_flags.stack_limit_kb = stack_limit_kb;
 }
 
 extern "C" void CentipedeSetTimeoutPerInput(uint64_t timeout_per_input) {
@@ -1102,10 +1212,12 @@ extern "C" void CentipedeSetTimeoutPerInput(uint64_t timeout_per_input) {
           "CentipedeSetTimeoutPerInput: changing timeout_per_input to %" PRIu64
           "\n",
           timeout_per_input);
-  centipede::state.run_time_flags.timeout_per_input = timeout_per_input;
+  fuzztest::internal::state.run_time_flags.timeout_per_input =
+      timeout_per_input;
 }
 
-extern "C" __attribute__((weak)) const char *CentipedeGetRunnerFlags() {
+extern "C" __attribute__((weak)) const char *absl_nullable
+CentipedeGetRunnerFlags() {
   if (const char *runner_flags_env = getenv("CENTIPEDE_RUNNER_FLAGS"))
     return strdup(runner_flags_env);
   return nullptr;
@@ -1121,7 +1233,7 @@ extern "C" void CentipedeBeginExecutionBatch() {
     _exit(EXIT_FAILURE);
   }
   in_execution_batch = true;
-  centipede::PrepareCoverage(/*full_clear=*/true);
+  fuzztest::internal::PrepareCoverage(/*full_clear=*/true);
 }
 
 extern "C" void CentipedeEndExecutionBatch() {
@@ -1132,27 +1244,70 @@ extern "C" void CentipedeEndExecutionBatch() {
     _exit(EXIT_FAILURE);
   }
   in_execution_batch = false;
-  centipede::state.input_start_time = 0;
-  centipede::state.batch_start_time = 0;
+  fuzztest::internal::state.input_start_time = 0;
+  fuzztest::internal::state.batch_start_time = 0;
 }
 
 extern "C" void CentipedePrepareProcessing() {
-  centipede::PrepareCoverage(/*full_clear=*/!in_execution_batch);
-  centipede::state.ResetTimers();
+  fuzztest::internal::PrepareCoverage(/*full_clear=*/!in_execution_batch);
+  fuzztest::internal::state.ResetTimers();
 }
 
 extern "C" void CentipedeFinalizeProcessing() {
-  centipede::CheckWatchdogLimits();
-  centipede::PostProcessCoverage(/*target_return_value=*/0);
+  fuzztest::internal::CheckWatchdogLimits();
+  if (fuzztest::internal::state.input_start_time.exchange(0) != 0) {
+    fuzztest::internal::PostProcessCoverage(/*target_return_value=*/0);
+  }
 }
 
 extern "C" size_t CentipedeGetExecutionResult(uint8_t *data, size_t capacity) {
-  centipede::BlobSequence outputs_blobseq(data, capacity);
-  if (!centipede::StartSendingOutputsToEngine(outputs_blobseq)) return 0;
-  if (!centipede::FinishSendingOutputsToEngine(outputs_blobseq)) return 0;
+  fuzztest::internal::BlobSequence outputs_blobseq(data, capacity);
+  if (!fuzztest::internal::StartSendingOutputsToEngine(outputs_blobseq))
+    return 0;
+  if (!fuzztest::internal::FinishSendingOutputsToEngine(outputs_blobseq))
+    return 0;
   return outputs_blobseq.offset();
 }
 
 extern "C" size_t CentipedeGetCoverageData(uint8_t *data, size_t capacity) {
-  return centipede::CopyFeatures(data, capacity);
+  return fuzztest::internal::CopyFeatures(data, capacity);
+}
+
+extern "C" void CentipedeSetExecutionResult(const uint8_t *data, size_t size) {
+  using fuzztest::internal::state;
+  fuzztest::internal::LockGuard lock(state.execution_result_override_mu);
+  if (!state.execution_result_override)
+    state.execution_result_override = new fuzztest::internal::BatchResult();
+  state.execution_result_override->ClearAndResize(1);
+  if (data == nullptr) return;
+  // Removing const here should be fine as we don't write to `blobseq`.
+  fuzztest::internal::BlobSequence blobseq(const_cast<uint8_t *>(data), size);
+  state.execution_result_override->Read(blobseq);
+  fuzztest::internal::RunnerCheck(
+      state.execution_result_override->num_outputs_read() == 1,
+      "Failed to set execution result from CentipedeSetExecutionResult");
+}
+
+extern "C" void CentipedeSetFailureDescription(const char *description) {
+  using fuzztest::internal::state;
+  if (state.failure_description_path == nullptr) return;
+  // Make sure that the write is atomic and only happens once.
+  [[maybe_unused]] static int write_once = [=] {
+    FILE *f = fopen(state.failure_description_path, "w");
+    if (f == nullptr) {
+      perror("FAILURE: fopen()");
+      return 0;
+    }
+    const auto len = strlen(description);
+    if (fwrite(description, 1, len, f) != len) {
+      perror("FAILURE: fwrite()");
+    }
+    if (fflush(f) != 0) {
+      perror("FAILURE: fflush()");
+    }
+    if (fclose(f) != 0) {
+      perror("FAILURE: fclose()");
+    }
+    return 0;
+  }();
 }

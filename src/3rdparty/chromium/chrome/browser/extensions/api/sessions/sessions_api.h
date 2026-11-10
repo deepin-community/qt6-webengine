@@ -31,25 +31,25 @@ class SessionId;
 
 class SessionsGetRecentlyClosedFunction : public ExtensionFunction {
  protected:
-  ~SessionsGetRecentlyClosedFunction() override {}
+  ~SessionsGetRecentlyClosedFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("sessions.getRecentlyClosed",
                              SESSIONS_GETRECENTLYCLOSED)
 
  private:
-  api::tabs::Tab CreateTabModel(const sessions::TabRestoreService::Tab& tab,
+  api::tabs::Tab CreateTabModel(const sessions::tab_restore::Tab& tab,
                                 bool active);
   api::windows::Window CreateWindowModel(
-      const sessions::TabRestoreService::Window& window);
+      const sessions::tab_restore::Window& window);
   api::tab_groups::TabGroup CreateGroupModel(
-      const sessions::TabRestoreService::Group& group);
+      const sessions::tab_restore::Group& group);
   api::sessions::Session CreateSessionModel(
-      const sessions::TabRestoreService::Entry& entry);
+      const sessions::tab_restore::Entry& entry);
 };
 
 class SessionsGetDevicesFunction : public ExtensionFunction {
  protected:
-  ~SessionsGetDevicesFunction() override {}
+  ~SessionsGetDevicesFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("sessions.getDevices", SESSIONS_GETDEVICES)
 
@@ -70,7 +70,7 @@ class SessionsGetDevicesFunction : public ExtensionFunction {
 
 class SessionsRestoreFunction : public ExtensionFunction {
  protected:
-  ~SessionsRestoreFunction() override {}
+  ~SessionsRestoreFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("sessions.restore", SESSIONS_RESTORE)
 

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:data-parser
 
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -11,6 +12,7 @@
 
 #include "base/containers/map_util.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_offset_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/variant_util.h"
@@ -31,6 +33,8 @@
 #include <QMimeData>
 
 #include <memory>
+
+using namespace Qt::StringLiterals;
 
 namespace QtWebEngineCore {
 
@@ -95,8 +99,9 @@ extern void CFHtmlExtractMetadata(const std::string &cf_html, std::string *base_
 
 void ClipboardQt::WritePortableAndPlatformRepresentations(ui::ClipboardBuffer type,
                                                           const ObjectMap &objects,
+                                                          const std::vector<RawData> &raw_objects,
                                                           std::vector<ui::Clipboard::PlatformRepresentation> platform_representations,
-                                                          std::unique_ptr<ui::DataTransferEndpoint> data_src)
+                                                          std::unique_ptr<ui::DataTransferEndpoint> data_src, uint32_t val)
 {
     DCHECK(CalledOnValidThread());
     DCHECK(IsSupportedClipboardBuffer(type));
@@ -118,29 +123,30 @@ void ClipboardQt::WritePortableAndPlatformRepresentations(ui::ClipboardBuffer ty
             // Copy text and SourceTag to the selection clipboard.
             WritePortableAndPlatformRepresentations(ui::ClipboardBuffer::kSelection,
                                                     ObjectMap(text_iter, ++text_iter),
+                                                    raw_objects,
                                                     {},
-                                                    nullptr);
+                                                    nullptr, val);
         }
     }
     m_dataSrc[type] = std::move(data_src);
 }
 
-void ClipboardQt::WriteText(base::StringPiece text)
+void ClipboardQt::WriteText(std::string_view text)
 {
     getUncommittedData()->setText(toQString(text));
 }
 
-void ClipboardQt::WriteHTML(base::StringPiece markup, absl::optional<base::StringPiece> source_url,
-                            ui::ClipboardContentType /*content_type*/)
+void ClipboardQt::WriteHTML(std::string_view markup, std::optional<std::string_view> source_url)
 {
 
-    QString markup_string = toQString(markup);
+    QString markup_string;
 #if defined (Q_OS_MACOS)
     // We need to prepend the charset on macOS to prevent garbled Unicode characters
     // when pasting to certain applications (e.g. Notes, TextEdit)
     // Mirrors the behavior in ui/base/clipboard/clipboard_mac.mm in Chromium.
-    markup_string.prepend(QLatin1String("<meta charset='utf-8'>"));
+    markup_string += "<meta charset='utf-8'>"_L1;
 #endif
+    markup_string += toQString(markup);
 
 #if !defined(Q_OS_WIN)
     getUncommittedData()->setHtml(markup_string);
@@ -163,9 +169,9 @@ void ClipboardQt::WriteHTML(base::StringPiece markup, absl::optional<base::Strin
 #endif // !defined(Q_OS_WIN)
 }
 
-void ClipboardQt::WriteRTF(base::StringPiece rtf)
+void ClipboardQt::WriteRTF(std::string_view rtf)
 {
-    getUncommittedData()->setData(QString::fromLatin1(ui::kMimeTypeRTF), toQByteArray(rtf));
+    getUncommittedData()->setData(QString::fromLatin1(ui::kMimeTypeRtf), toQByteArray(rtf));
 }
 
 void ClipboardQt::WriteWebSmartPaste()
@@ -178,18 +184,18 @@ void ClipboardQt::WriteBitmap(const SkBitmap &bitmap)
     getUncommittedData()->setImageData(toQImage(bitmap).copy());
 }
 
-void ClipboardQt::WriteBookmark(base::StringPiece title_in, base::StringPiece url_in)
+void ClipboardQt::WriteBookmark(std::string_view title_in, std::string_view url_in)
 {
     // FIXME: Untested, seems to be used only for drag-n-drop.
     // Write as a mozilla url (UTF16: URL, newline, title).
-    QString url = toQString(url_in);
-    QString title = toQString(title_in);
+    const QString url = toQString(url_in);
+    const QString title = toQString(title_in);
 
     QByteArray data;
     data.append(reinterpret_cast<const char *>(url.utf16()), url.size() * 2);
     data.append('\n');
     data.append(reinterpret_cast<const char *>(title.utf16()), title.size() * 2);
-    getUncommittedData()->setData(QString::fromLatin1(ui::kMimeTypeMozillaURL), data);
+    getUncommittedData()->setData(QString::fromLatin1(ui::kMimeTypeMozillaUrl), data);
 }
 
 void ClipboardQt::WriteData(const ui::ClipboardFormatType &format, base::span<const uint8_t> data)
@@ -236,8 +242,10 @@ void ClipboardQt::ReadAvailableTypes(ui::ClipboardBuffer type,
     for (const auto& mime_type : GetStandardFormats(type, data_dst))
         types->push_back(mime_type);
 
-    if (mimeData->hasFormat(QString::fromLatin1(ui::kMimeTypeWebCustomData))) {
-        const QByteArray customData = mimeData->data(QString::fromLatin1(ui::kMimeTypeWebCustomData));
+    const QString serializedDataTransferCustomType =
+            QString::fromStdString(ui::ClipboardFormatType::DataTransferCustomType().Serialize());
+    if (mimeData->hasFormat(serializedDataTransferCustomType)) {
+        const QByteArray customData = mimeData->data(serializedDataTransferCustomType);
         const base::span custom_data(customData.constData(), (unsigned long)customData.size());
         ui::ReadCustomDataTypes(base::as_bytes(custom_data), types);
     }
@@ -317,7 +325,7 @@ void ClipboardQt::ReadRTF(ui::ClipboardBuffer type,
             type == ui::ClipboardBuffer::kCopyPaste ? QClipboard::Clipboard : QClipboard::Selection);
     if (!mimeData)
         return;
-    const QByteArray byteArray = mimeData->data(QString::fromLatin1(ui::kMimeTypeRTF));
+    const QByteArray byteArray = mimeData->data(QString::fromLatin1(ui::kMimeTypeRtf));
     *result = std::string(byteArray.constData(), byteArray.length());
 }
 
@@ -338,15 +346,17 @@ void ClipboardQt::ReadPng(ui::ClipboardBuffer type, const ui::DataTransferEndpoi
     return std::move(callback).Run(std::move(pngData));
 }
 
-void ClipboardQt::ReadCustomData(ui::ClipboardBuffer clipboard_type, const std::u16string &type,
-                                 const ui::DataTransferEndpoint *data_dst,
-                                 std::u16string *result) const
+void ClipboardQt::ReadDataTransferCustomData(ui::ClipboardBuffer clipboard_type, const std::u16string &type,
+                                             const ui::DataTransferEndpoint *data_dst,
+                                             std::u16string *result) const
 {
     const QMimeData *mimeData = QGuiApplication::clipboard()->mimeData(
             clipboard_type == ui::ClipboardBuffer::kCopyPaste ? QClipboard::Clipboard : QClipboard::Selection);
     if (!mimeData)
         return;
-    const QByteArray customData = mimeData->data(QString::fromLatin1(ui::kMimeTypeWebCustomData));
+    const QString serializedDataTransferCustomType =
+            QString::fromStdString(ui::ClipboardFormatType::DataTransferCustomType().Serialize());
+    const QByteArray customData = mimeData->data(serializedDataTransferCustomType);
     const base::span custom_data(customData.constData(), (unsigned long)customData.size());
     if (auto maybe_result = ui::ReadCustomDataForType(base::as_bytes(custom_data), type))
         *result = *std::move(maybe_result);
@@ -370,7 +380,7 @@ void ClipboardQt::ReadSvg(ui::ClipboardBuffer clipboard_type,
         *result = toString16(QString::fromUtf8(svgData));
 }
 
-void ClipboardQt::WriteSvg(base::StringPiece markup)
+void ClipboardQt::WriteSvg(std::string_view markup)
 {
     getUncommittedData()->setData(QString::fromLatin1(ui::kMimeTypeSvg),
                                   toQByteArray(markup));
@@ -394,7 +404,7 @@ const ui::ClipboardSequenceNumberToken &ClipboardQt::GetSequenceNumber(ui::Clipb
             : clipboardChangeObserver()->getSelectionSequenceNumber();
 }
 
-absl::optional<ui::DataTransferEndpoint> ClipboardQt::GetSource(ui::ClipboardBuffer buffer) const
+std::optional<ui::DataTransferEndpoint> ClipboardQt::GetSource(ui::ClipboardBuffer buffer) const
 {
     return base::OptionalFromPtr(base::FindPtrOrNull(m_dataSrc, buffer));
 }
@@ -426,7 +436,7 @@ void ClipboardQt::WriteFilenames(std::vector<ui::FileInfo> filenames)
     getUncommittedData()->setUrls(urls);
 }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 bool ClipboardQt::IsSelectionBufferAvailable() const
 {
     return QGuiApplication::clipboard()->supportsSelection();
@@ -444,13 +454,13 @@ std::vector<std::u16string> ClipboardQt::GetStandardFormats(ui::ClipboardBuffer 
 
     std::vector<std::u16string> types;
     if (mimeData->hasImage())
-        types.push_back(base::UTF8ToUTF16(ui::kMimeTypePNG));
+        types.push_back(ui::kMimeTypePng16);
     if (mimeData->hasHtml())
-        types.push_back(base::UTF8ToUTF16(ui::kMimeTypeHTML));
+        types.push_back(ui::kMimeTypeHtml16);
     if (mimeData->hasText())
-        types.push_back(base::UTF8ToUTF16(ui::kMimeTypeText));
+        types.push_back(ui::kMimeTypePlainText16);
     if (mimeData->hasUrls())
-        types.push_back(base::UTF8ToUTF16(ui::kMimeTypeURIList));
+        types.push_back(ui::kMimeTypeUriList16);
     const QStringList formats = mimeData->formats();
     for (const QString &mimeType : formats) {
         auto mime_type = mimeType.toStdString();

@@ -63,13 +63,13 @@ class MODULES_EXPORT EncoderBase
               const EncodeOptionsType* opts,
               ExceptionState& exception_state);
 
-  ScriptPromise flush(ExceptionState&);
+  ScriptPromise<IDLUndefined> flush(ExceptionState&);
 
   void reset(ExceptionState&);
 
   void close(ExceptionState&);
 
-  String state() { return state_; }
+  V8CodecState state() { return state_; }
 
   // EventTarget override.
   ExecutionContext* GetExecutionContext() const override;
@@ -113,7 +113,8 @@ class MODULES_EXPORT EncoderBase
     uint32_t reset_count = 0;
     Member<InputType> input;                     // used by kEncode
     Member<const EncodeOptionsType> encodeOpts;  // used by kEncode
-    Member<ScriptPromiseResolver> resolver;      // used by kFlush
+    // used by kFlush
+    Member<ScriptPromiseResolver<IDLUndefined>> resolver;
     Member<InternalConfigType> config;  // used by kConfigure and kReconfigure
 
 #if DCHECK_IS_ON()
@@ -135,10 +136,16 @@ class MODULES_EXPORT EncoderBase
 
   virtual bool CanReconfigure(InternalConfigType& original_config,
                               InternalConfigType& new_config) = 0;
-  virtual InternalConfigType* ParseConfig(const ConfigType*,
-                                          ExceptionState&) = 0;
+  virtual InternalConfigType* OnNewConfigure(const ConfigType*,
+                                             ExceptionState&) = 0;
   virtual bool VerifyCodecSupport(InternalConfigType*,
                                   String* js_error_message) = 0;
+
+  // Called for each new input passed to encode(). If an exception is thrown on
+  // `exception_state` the encode() call will be aborted and the exception will
+  // be passed back to the caller.
+  virtual void OnNewEncode(InputType* input,
+                           ExceptionState& exception_state) = 0;
 
   // ReclaimableCodec implementation.
   void OnCodecReclaimed(DOMException*) override;

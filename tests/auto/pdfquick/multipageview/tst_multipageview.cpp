@@ -8,6 +8,7 @@
 #include <QtGui/QPointingDevice>
 #include <QtGui/QStyleHints>
 #include <QtQuick/QQuickView>
+#include <QtPdf/private/qtpdfglobal_p.h>
 #include <QtPdfQuick/private/qquickpdflinkmodel_p.h>
 #include <QtPdfQuick/private/qquickpdfsearchmodel_p.h>
 #include <QtPdfQuick/private/qquickpdfpageimage_p.h>
@@ -15,7 +16,7 @@
 
 using namespace Qt::StringLiterals;
 
-Q_LOGGING_CATEGORY(lcTests, "qt.pdf.tests")
+Q_PDF_LOGGING_CATEGORY(lcTests, "qt.pdf.tests")
 
 class tst_MultiPageView : public QQuickDataTest
 {
@@ -355,7 +356,7 @@ void tst_MultiPageView::search()
         contentPos = tableViewContentPos(table);
     }
     qCDebug(lcTests) << "total movements" << movements;
-    QVERIFY(movements > 4);
+    QCOMPARE_GT(movements, 4);
 }
 
 void tst_MultiPageView::pinchDragPinch()
@@ -381,8 +382,8 @@ void tst_MultiPageView::pinchDragPinch()
         const int movement = 100;
         QCOMPARE_GT(movement, threshold);
         const qreal initialScale = paper->scale();
-        QPoint p0(100, 200);
-        QPoint p1(200, 200);
+        QPoint p0(100, 250);
+        QPoint p1(200, 250);
         QTest::QTouchEventSequence seq = QTest::touchEvent(&window, touchscreen.get());
         seq.press(0, p0, &window).commit();
         seq.stationary(0).press(1, p1, &window).commit();

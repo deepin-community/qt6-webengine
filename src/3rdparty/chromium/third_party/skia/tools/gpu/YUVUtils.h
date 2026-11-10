@@ -11,12 +11,14 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkYUVAPixmaps.h"
-#include "include/gpu/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
 #include "src/base/SkAutoMalloc.h"
 
 #include <tuple>
 
 class SkData;
+class GrRecordingContext;
+
 #if defined(SK_GRAPHITE)
 namespace skgpu::graphite { class Recorder; }
 #endif

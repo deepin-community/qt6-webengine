@@ -5,6 +5,7 @@
 #include "base/test/multiprocess_test.h"
 
 #include <string.h>
+
 #include <vector>
 
 #include "base/android/jni_android.h"
@@ -13,6 +14,8 @@
 #include "base/base_switches.h"
 #include "base/check.h"
 #include "base/command_line.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "base/test/test_support_jni_headers/MainReturnCodeResult_jni.h"
 #include "base/test/test_support_jni_headers/MultiprocessTestClientLauncher_jni.h"
 
@@ -49,6 +52,7 @@ Process SpawnMultiProcessTestChild(const std::string& procname,
 
   android::ScopedJavaLocalRef<jobjectArray> j_argv =
       android::ToJavaArrayOfStrings(env, command_line.argv());
+
   jint pid = android::Java_MultiprocessTestClientLauncher_launchClient(
       env, j_argv, fds);
   return Process(pid);

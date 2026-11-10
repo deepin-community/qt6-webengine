@@ -11,7 +11,6 @@
 #include "base/component_export.h"
 #include "base/functional/callback.h"
 #include "base/observer_list_types.h"
-#include "build/chromeos_buildflags.h"
 #include "components/account_manager_core/account.h"
 #include "components/account_manager_core/account_upsertion_result.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -133,7 +132,7 @@ class COMPONENT_EXPORT(ACCOUNT_MANAGER_CORE) AccountManagerFacade {
 
   // Launches account addition dialog and calls the `callback` with the result.
   // If `result` is `kSuccess`, the added account will be passed to the
-  // callback. Otherwise `account` will be set to `absl::nullopt`.
+  // callback. Otherwise `account` will be set to `std::nullopt`.
   virtual void ShowAddAccountDialog(
       AccountAdditionSource source,
       base::OnceCallback<void(const AccountUpsertionResult& result)>

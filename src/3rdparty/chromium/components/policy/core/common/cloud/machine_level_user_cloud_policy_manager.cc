@@ -32,7 +32,7 @@ MachineLevelUserCloudPolicyManager::MachineLevelUserCloudPolicyManager(
     const base::FilePath& policy_dir,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     network::NetworkConnectionTrackerGetter network_connection_tracker_getter)
-    : CloudPolicyManager(GetMachineLevelUserCloudPolicyTypeForCurrentOS(),
+    : CloudPolicyManager(dm_protocol::kChromeMachineLevelUserCloudPolicyType,
                          std::string(),
                          std::move(store),
                          task_runner,
@@ -42,7 +42,8 @@ MachineLevelUserCloudPolicyManager::MachineLevelUserCloudPolicyManager(
       external_data_manager_(std::move(external_data_manager)),
       policy_dir_(policy_dir) {}
 
-MachineLevelUserCloudPolicyManager::~MachineLevelUserCloudPolicyManager() {}
+MachineLevelUserCloudPolicyManager::~MachineLevelUserCloudPolicyManager() =
+    default;
 
 void MachineLevelUserCloudPolicyManager::Connect(
     PrefService* local_state,

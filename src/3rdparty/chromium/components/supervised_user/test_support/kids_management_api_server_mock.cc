@@ -5,24 +5,34 @@
 #include "components/supervised_user/test_support/kids_management_api_server_mock.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/functional/bind.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/supervised_user/core/browser/fetcher_config.h"
-#include "components/supervised_user/core/browser/proto/kidschromemanagement_messages.pb.h"
+#include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
 #include "components/supervised_user/test_support/kids_chrome_management_test_utils.h"
 #include "net/http/http_status_code.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 namespace supervised_user {
+
+const std::multimap<kidsmanagement::FamilyRole, std::string> kSimpsonFamily = {
+    {kidsmanagement::HEAD_OF_HOUSEHOLD, "marge@gmail.com"},
+    {kidsmanagement::PARENT, "homer@gmail.com"},
+    {kidsmanagement::MEMBER, "abraham@gmail.com"},
+    {kidsmanagement::CHILD, "lisa@gmail.com"},
+    {kidsmanagement::CHILD, "bart@gmail.com"},
+};
 
 namespace {
 
 std::unique_ptr<net::test_server::HttpResponse> FromProtoData(
-    base::StringPiece data) {
+    std::string_view data) {
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response =
       std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(net::HttpStatusCode::HTTP_OK);
@@ -31,10 +41,9 @@ std::unique_ptr<net::test_server::HttpResponse> FromProtoData(
   return http_response;
 }
 
-kids_chrome_management::ClassifyUrlResponse ClassifyUrlResponse(
-    kids_chrome_management::ClassifyUrlResponse::DisplayClassification
-        classification) {
-  kids_chrome_management::ClassifyUrlResponse response;
+kidsmanagement::ClassifyUrlResponse ClassifyUrlResponse(
+    kidsmanagement::ClassifyUrlResponse::DisplayClassification classification) {
+  kidsmanagement::ClassifyUrlResponse response;
   response.set_display_classification(classification);
   return response;
 }
@@ -42,7 +51,7 @@ kids_chrome_management::ClassifyUrlResponse ClassifyUrlResponse(
 
 void SetHttpEndpointsForKidsManagementApis(
     base::test::ScopedFeatureList& feature_list,
-    base::StringPiece hostname) {
+    std::string_view hostname) {
   feature_list.InitAndEnableFeatureWithParameters(
       kSupervisedUserProtoFetcherConfig,
       {{"service_endpoint", base::StrCat({"http://", hostname})}});
@@ -60,8 +69,7 @@ KidsManagementClassifyUrlMock::KidsManagementClassifyUrlMock() {
 KidsManagementClassifyUrlMock::~KidsManagementClassifyUrlMock() = default;
 
 void KidsManagementClassifyUrlMock::set_display_classification(
-    kids_chrome_management::ClassifyUrlResponse::DisplayClassification
-        classification) {
+    kidsmanagement::ClassifyUrlResponse::DisplayClassification classification) {
   display_classification_ = classification;
 }
 
@@ -77,10 +85,6 @@ void KidsManagementApiServerMock::InstallOn(
       &KidsManagementApiServerMock::ClassifyUrl, base::Unretained(this)));
   test_server_.RegisterRequestHandler(base::BindRepeating(
       &KidsManagementApiServerMock::ListFamilyMembers, base::Unretained(this)));
-
-  test_server_.RegisterRequestMonitor(base::BindRepeating(
-      &KidsManagementApiServerMock::RequestMonitorDispatcher,
-      base::Unretained(this)));
 }
 
 // Return a default Simpson family.
@@ -91,20 +95,12 @@ KidsManagementApiServerMock::ListFamilyMembers(
     return nullptr;
   }
 
-  kids_chrome_management::ListFamilyMembersResponse response;
-  supervised_user::SetFamilyMemberAttributesForTesting(
-      response.add_members(), kids_chrome_management::HEAD_OF_HOUSEHOLD,
-      "marge@gmail.com");
-  supervised_user::SetFamilyMemberAttributesForTesting(
-      response.add_members(), kids_chrome_management::PARENT,
-      "homer@gmail.com");
-  supervised_user::SetFamilyMemberAttributesForTesting(
-      response.add_members(), kids_chrome_management::MEMBER,
-      "abraham@gmail.com");
-  supervised_user::SetFamilyMemberAttributesForTesting(
-      response.add_members(), kids_chrome_management::CHILD, "lisa@gmail.com");
-  supervised_user::SetFamilyMemberAttributesForTesting(
-      response.add_members(), kids_chrome_management::CHILD, "bart@gmail.com");
+  kidsmanagement::ListMembersResponse response;
+  for (const auto& [role, email] : kSimpsonFamily) {
+    supervised_user::SetFamilyMemberAttributesForTesting(response.add_members(),
+                                                         role, email);
+  }
+
   return FromProtoData(response.SerializeAsString());
 }
 
@@ -121,25 +117,15 @@ KidsManagementApiServerMock::ClassifyUrl(
           .SerializeAsString());
 }
 
-base::CallbackListSubscription KidsManagementApiServerMock::Subscribe(
-    base::RepeatingCallback<RequestMonitor> monitor) {
-  return request_monitors_.Add(monitor);
-}
-
-void KidsManagementApiServerMock::RequestMonitorDispatcher(
-    const net::test_server::HttpRequest& request) {
-  request_monitors_.Notify(request.GetURL().path(), request.content);
-}
-
 void KidsManagementApiServerMock::AllowSubsequentClassifyUrl() {
   classify_url_mock_.set_display_classification(
-      kids_chrome_management::ClassifyUrlResponse::DisplayClassification::
+      kidsmanagement::ClassifyUrlResponse::DisplayClassification::
           ClassifyUrlResponse_DisplayClassification_ALLOWED);
 }
 
 void KidsManagementApiServerMock::RestrictSubsequentClassifyUrl() {
   classify_url_mock_.set_display_classification(
-      kids_chrome_management::ClassifyUrlResponse::DisplayClassification::
+      kidsmanagement::ClassifyUrlResponse::DisplayClassification::
           ClassifyUrlResponse_DisplayClassification_RESTRICTED);
 }
 

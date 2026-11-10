@@ -5,6 +5,7 @@
 import("../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../scripts/build/ninja/devtools_module.gni")
 import("../../../scripts/build/ninja/devtools_pre_built.gni")
+import("../../../scripts/build/typescript/typescript.gni")
 import("../visibility.gni")
 
 devtools_module("issues_manager") {
@@ -20,6 +21,7 @@ devtools_module("issues_manager") {
     "CorsIssue.ts",
     "CrossOriginEmbedderPolicyIssue.ts",
     "DeprecationIssue.ts",
+    "ElementAccessibilityIssue.ts",
     "FederatedAuthRequestIssue.ts",
     "FederatedAuthUserInfoRequestIssue.ts",
     "GenericIssue.ts",
@@ -31,12 +33,16 @@ devtools_module("issues_manager") {
     "LowTextContrastIssue.ts",
     "MarkdownIssueDescription.ts",
     "MixedContentIssue.ts",
+    "PartitioningBlobURLIssue.ts",
     "PropertyRuleIssue.ts",
     "QuirksModeIssue.ts",
     "RelatedIssue.ts",
+    "SRIMessageSignatureIssue.ts",
     "SharedArrayBufferIssue.ts",
+    "SharedDictionaryIssue.ts",
     "SourceFrameIssuesManager.ts",
     "StylesheetLoadingIssue.ts",
+    "UserReidentificationIssue.ts",
   ]
 
   deps = [
@@ -51,6 +57,7 @@ devtools_module("issues_manager") {
     "../../models/text_utils:bundle",
     "../../models/workspace:bundle",
     "../../third_party/marked:bundle",
+    "../../third_party/third-party-web:bundle",
   ]
 
   public_deps = [ ":descriptions" ]
@@ -58,10 +65,18 @@ devtools_module("issues_manager") {
 
 devtools_issue_description_files = [
   "arInsecureContext.md",
+  "arInvalidInfoHeader.md",
   "arInvalidRegisterOsSourceHeader.md",
   "arInvalidRegisterOsTriggerHeader.md",
   "arInvalidRegisterSourceHeader.md",
   "arInvalidRegisterTriggerHeader.md",
+  "arNavigationRegistrationWithoutTransientUserActivation.md",
+  "arNavigationRegistrationUniqueScopeAlreadySet.md",
+  "arNoRegisterOsSourceHeader.md",
+  "arNoRegisterOsTriggerHeader.md",
+  "arNoRegisterSourceHeader.md",
+  "arNoRegisterTriggerHeader.md",
+  "arNoWebOrOsSupport.md",
   "arOsSourceIgnored.md",
   "arOsTriggerIgnored.md",
   "arPermissionPolicyDisabled.md",
@@ -89,6 +104,7 @@ devtools_issue_description_files = [
   "corsHeaderDisallowedByPreflightResponse.md",
   "corsInsecurePrivateNetwork.md",
   "corsInvalidHeaderValues.md",
+  "corsLocalNetworkAccessPermissionDenied.md",
   "corsMethodDisallowedByPreflightResponse.md",
   "corsNoCorsRedirectModeNotFollow.md",
   "corsOriginMismatch.md",
@@ -103,7 +119,6 @@ devtools_issue_description_files = [
   "cspTrustedTypesSinkViolation.md",
   "cspURLViolation.md",
   "deprecation.md",
-  "genericCrossOriginPortalPostMessageError.md",
   "genericFormLabelForNameError.md",
   "genericFormDuplicateIdForInputError.md",
   "genericFormInputHasWrongButWellIntendedAutocompleteValueError.md",
@@ -163,14 +178,71 @@ devtools_issue_description_files = [
   "cookieWarnThirdPartyPhaseoutRead.md",
   "cookieExcludeThirdPartyPhaseoutSet.md",
   "cookieExcludeThirdPartyPhaseoutRead.md",
+  "cookieExcludePortMismatch.md",
+  "cookieExcludeSchemeMismatch.md",
   "cookieWarnMetadataGrantRead.md",
   "cookieWarnMetadataGrantSet.md",
   "propertyRuleIssue.md",
   "propertyRuleInvalidNameIssue.md",
   "SameSiteWarnStrictLaxDowngradeStrict.md",
+  "selectElementAccessibilityDisallowedOptGroupChild.md",
+  "selectElementAccessibilityDisallowedSelectChild.md",
+  "selectElementAccessibilityInteractiveContentAttributesSelectDescendant.md",
+  "selectElementAccessibilityInteractiveContentLegendChild.md",
+  "selectElementAccessibilityInteractiveContentOptionChild.md",
+  "selectElementAccessibilityNonPhrasingContentOptionChild.md",
+  "summaryElementAccessibilityInteractiveContentSummaryDescendant.md",
   "sharedArrayBuffer.md",
   "stylesheetLateImport.md",
   "stylesheetRequestFailed.md",
+  "sharedDictionaryUseErrorCrossOriginNoCorsRequest.md",
+  "sharedDictionaryUseErrorDictionaryLoadFailure.md",
+  "sharedDictionaryUseErrorMatchingDictionaryNotUsed.md",
+  "sharedDictionaryUseErrorUnexpectedContentDictionaryHeader.md",
+  "sharedDictionaryWriteErrorCossOriginNoCorsRequest.md",
+  "sharedDictionaryWriteErrorDisallowedBySettings.md",
+  "sharedDictionaryWriteErrorExpiredResponse.md",
+  "sharedDictionaryWriteErrorFeatureDisabled.md",
+  "sharedDictionaryWriteErrorInsufficientResources.md",
+  "sharedDictionaryWriteErrorInvalidMatchField.md",
+  "sharedDictionaryWriteErrorInvalidStructuredHeader.md",
+  "sharedDictionaryWriteErrorNavigationRequest.md",
+  "sharedDictionaryWriteErrorNoMatchField.md",
+  "sharedDictionaryWriteErrorNonListMatchDestField.md",
+  "sharedDictionaryWriteErrorNonSecureContext.md",
+  "sharedDictionaryWriteErrorNonStringIdField.md",
+  "sharedDictionaryWriteErrorNonStringInMatchDestList.md",
+  "sharedDictionaryWriteErrorNonStringMatchField.md",
+  "sharedDictionaryWriteErrorNonTokenTypeField.md",
+  "sharedDictionaryWriteErrorRequestAborted.md",
+  "sharedDictionaryWriteErrorShuttingDown.md",
+  "sharedDictionaryWriteErrorTooLongIdField.md",
+  "sharedDictionaryWriteErrorUnsupportedType.md",
+  "sriInvalidSignatureHeader.md",
+  "sriInvalidSignatureInputHeader.md",
+  "sriMissingSignatureHeader.md",
+  "sriMissingSignatureInputHeader.md",
+  "sriSignatureHeaderValueIsIncorrectLength.md",
+  "sriSignatureHeaderValueIsNotByteSequence.md",
+  "sriSignatureHeaderValueIsParameterized.md",
+  "sriSignatureInputHeaderInvalidComponentName.md",
+  "sriSignatureInputHeaderInvalidComponentType.md",
+  "sriSignatureInputHeaderInvalidDerivedComponentParameter.md",
+  "sriSignatureInputHeaderInvalidHeaderComponentParameter.md",
+  "sriSignatureInputHeaderInvalidParameter.md",
+  "sriSignatureInputHeaderKeyIdLength.md",
+  "sriSignatureInputHeaderMissingLabel.md",
+  "sriSignatureInputHeaderMissingRequiredParameters.md",
+  "sriSignatureInputHeaderValueMissingComponents.md",
+  "sriSignatureInputHeaderValueNotInnerList.md",
+  "sriValidationFailedIntegrityMismatch.md",
+  "sriValidationFailedInvalidLength.md",
+  "sriValidationFailedSignatureExpired.md",
+  "sriValidationFailedSignatureMismatch.md",
+  "placeholderDescriptionForInvisibleIssues.md",
+  "fetchingPartitionedBlobURL.md",
+  "navigatingPartitionedBlobURL.md",
+  "userReidentificationBlocked.md",
 ]
 
 devtools_pre_built("descriptions") {
@@ -180,6 +252,10 @@ devtools_pre_built("descriptions") {
     sources += [ "descriptions/$file" ]
     data += [ "$target_gen_dir/descriptions/$file" ]
   }
+
+  write_file("$target_gen_dir/description_list.json",
+             devtools_issue_description_files,
+             "json")
 }
 
 devtools_entrypoint("bundle") {
@@ -189,10 +265,6 @@ devtools_entrypoint("bundle") {
 
   visibility = [
     ":*",
-    "../../../test/unittests/front_end/helpers/*",
-    "../../../test/unittests/front_end/models/issues_manager/*",
-    "../../../test/unittests/front_end/panels/console/*",
-    "../../../test/unittests/front_end/ui/components/issue_counter/*",
     "../../entrypoints/main/*",
     "../../panels/application/*",
     "../../panels/console/*",
@@ -200,11 +272,43 @@ devtools_entrypoint("bundle") {
     "../../panels/elements/*",
     "../../panels/issues/*",
     "../../panels/network/*",
+    "../../panels/security/*",
     "../../panels/sources/*",
+    "../../testing/*",
     "../../ui/components/docs/issue_counter/*",
     "../../ui/components/issue_counter/*",
+    "../../ui/components/markdown_view/*",
     "../../ui/legacy/components/cookie_table/*",
   ]
 
   visibility += devtools_models_visibility
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "CheckFormsIssuesTrigger.test.ts",
+    "DeprecationIssue.test.ts",
+    "ElementAccessibilityIssue.test.ts",
+    "FederatedAuthUserInfoRequestIssue.test.ts",
+    "GenericIssue.test.ts",
+    "Issue.test.ts",
+    "IssueResolver.test.ts",
+    "IssuesManager.test.ts",
+    "LowTextContrastIssue.test.ts",
+    "MarkdownIssueDescription.test.ts",
+    "PropertyRuleIssue.test.ts",
+    "RelatedIssue.test.ts",
+    "SRIMessageSignatureIssue.test.ts",
+    "SharedDictionaryIssue.test.ts",
+    "StylesheetLoadingIssue.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../core/common:bundle",
+    "../../core/sdk:bundle",
+    "../../testing",
+  ]
 }

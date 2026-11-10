@@ -49,16 +49,14 @@ class ScopedDisableBrowserSpellCheckerForTesting {
 //    --enable-features=WinDelaySpellcheckServiceInit
 //    --disable-sync-types="Dictionary"
 BASE_DECLARE_FEATURE(kWinDelaySpellcheckServiceInit);
-
-// When set, do not perform the expensive operation of retrieving suggestions
-// for all misspelled words while performing a text check. Instead retrieve
-// suggestions on demand when the context menu is brought up with a misspelled
-// word selected.
-BASE_DECLARE_FEATURE(kWinRetrieveSuggestionsOnlyOnDemand);
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_ANDROID)
 bool IsAndroidSpellCheckFeatureEnabled();
+
+BASE_DECLARE_FEATURE(kAndroidGrammarCheck);
+
+BASE_DECLARE_FEATURE(kAndroidSpellcheckNativeUi);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #endif  // BUILDFLAG(ENABLE_SPELLCHECK)

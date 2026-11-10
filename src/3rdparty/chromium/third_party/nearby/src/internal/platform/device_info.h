@@ -15,12 +15,13 @@
 #ifndef PLATFORM_PUBLIC_DEVICE_INFO_H_
 #define PLATFORM_PUBLIC_DEVICE_INFO_H_
 
-#include <filesystem>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "internal/base/file_path.h"
 #include "internal/platform/implementation/device_info.h"
 
 namespace nearby {
@@ -33,17 +34,14 @@ class DeviceInfo {
   virtual std::string GetOsDeviceName() const = 0;
   virtual api::DeviceInfo::DeviceType GetDeviceType() const = 0;
   virtual api::DeviceInfo::OsType GetOsType() const = 0;
-  virtual std::optional<std::string> GetFullName() const = 0;
-  virtual std::optional<std::string> GetGivenName() const = 0;
-  virtual std::optional<std::string> GetLastName() const = 0;
-  virtual std::optional<std::string> GetProfileUserName() const = 0;
 
-  virtual std::filesystem::path GetDownloadPath() const = 0;
-  virtual std::filesystem::path GetAppDataPath() const = 0;
-  virtual std::filesystem::path GetTemporaryPath() const = 0;
+  virtual FilePath GetDownloadPath() const = 0;
+  virtual FilePath GetAppDataPath() const = 0;
+  virtual FilePath GetTemporaryPath() const = 0;
+  virtual FilePath GetLogPath() const = 0;
 
   virtual std::optional<size_t> GetAvailableDiskSpaceInBytes(
-      const std::filesystem::path& path) const = 0;
+      const FilePath& path) const = 0;
 
   virtual bool IsScreenLocked() const = 0;
   virtual void RegisterScreenLockedListener(

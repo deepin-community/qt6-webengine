@@ -9,6 +9,8 @@
 #include "xfa/fwl/cfwl_datetimepicker.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 
+namespace pdfium {
+
 CFWL_DateTimePickerTP::CFWL_DateTimePickerTP() = default;
 
 CFWL_DateTimePickerTP::~CFWL_DateTimePickerTP() = default;
@@ -17,14 +19,16 @@ void CFWL_DateTimePickerTP::DrawBackground(
     const CFWL_ThemeBackground& pParams) {
   switch (pParams.GetPart()) {
     case CFWL_ThemePart::Part::kBorder:
-      DrawBorder(pParams.GetGraphics(), pParams.m_PartRect, pParams.m_matrix);
+      DrawBorder(pParams.GetGraphics(), pParams.part_rect_, pParams.matrix_);
       break;
     case CFWL_ThemePart::Part::kDropDownButton:
-      DrawArrowBtn(pParams.GetGraphics(), pParams.m_PartRect,
+      DrawArrowBtn(pParams.GetGraphics(), pParams.part_rect_,
                    FWLTHEME_DIRECTION::kDown, pParams.GetThemeState(),
-                   pParams.m_matrix);
+                   pParams.matrix_);
       break;
     default:
       break;
   }
 }
+
+}  // namespace pdfium

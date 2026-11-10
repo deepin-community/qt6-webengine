@@ -4,6 +4,9 @@
 
 #include "quiche/quic/core/quic_ping_manager.h"
 
+#include <algorithm>
+
+#include "quiche/quic/core/quic_connection_alarms.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 
 namespace quic {
@@ -15,45 +18,27 @@ namespace {
 // << 10) = 204.8s
 const int kMaxRetransmittableOnWireDelayShift = 10;
 
-class AlarmDelegate : public QuicAlarm::DelegateWithContext {
- public:
-  explicit AlarmDelegate(QuicPingManager* manager,
-                         QuicConnectionContext* context)
-      : QuicAlarm::DelegateWithContext(context), manager_(manager) {}
-  AlarmDelegate(const AlarmDelegate&) = delete;
-  AlarmDelegate& operator=(const AlarmDelegate&) = delete;
-
-  void OnAlarm() override { manager_->OnAlarm(); }
-
- private:
-  QuicPingManager* manager_;
-};
-
 }  // namespace
 
 QuicPingManager::QuicPingManager(Perspective perspective, Delegate* delegate,
-                                 QuicConnectionArena* arena,
-                                 QuicAlarmFactory* alarm_factory,
-                                 QuicConnectionContext* context)
-    : perspective_(perspective),
-      delegate_(delegate),
-      alarm_(alarm_factory->CreateAlarm(
-          arena->New<AlarmDelegate>(this, context), arena)) {}
+                                 QuicAlarmProxy alarm)
+    : perspective_(perspective), delegate_(delegate), alarm_(alarm) {}
 
 void QuicPingManager::SetAlarm(QuicTime now, bool should_keep_alive,
-                               bool has_in_flight_packets) {
-  UpdateDeadlines(now, should_keep_alive, has_in_flight_packets);
+                               bool has_in_flight_packets,
+                               QuicTime::Delta pto_delay) {
+  UpdateDeadlines(now, should_keep_alive, has_in_flight_packets, pto_delay);
   const QuicTime earliest_deadline = GetEarliestDeadline();
   if (!earliest_deadline.IsInitialized()) {
-    alarm_->Cancel();
+    alarm_.Cancel();
     return;
   }
   if (earliest_deadline == keep_alive_deadline_) {
     // Use 1s granularity for keep-alive time.
-    alarm_->Update(earliest_deadline, QuicTime::Delta::FromSeconds(1));
+    alarm_.Update(earliest_deadline, QuicTime::Delta::FromSeconds(1));
     return;
   }
-  alarm_->Update(earliest_deadline, kAlarmGranularity);
+  alarm_.Update(earliest_deadline, kAlarmGranularity);
 }
 
 void QuicPingManager::OnAlarm() {
@@ -82,13 +67,14 @@ void QuicPingManager::OnAlarm() {
 }
 
 void QuicPingManager::Stop() {
-  alarm_->PermanentCancel();
+  alarm_.PermanentCancel();
   retransmittable_on_wire_deadline_ = QuicTime::Zero();
   keep_alive_deadline_ = QuicTime::Zero();
 }
 
 void QuicPingManager::UpdateDeadlines(QuicTime now, bool should_keep_alive,
-                                      bool has_in_flight_packets) {
+                                      bool has_in_flight_packets,
+                                      QuicTime::Delta pto_delay) {
   // Reset keep-alive deadline given it will be set later (with left edge
   // |now|).
   keep_alive_deadline_ = QuicTime::Zero();
@@ -112,7 +98,8 @@ void QuicPingManager::UpdateDeadlines(QuicTime now, bool should_keep_alive,
     // Clients send 15s PINGs to avoid NATs from timing out.
     keep_alive_deadline_ = now + keep_alive_timeout_;
   }
-  if (initial_retransmittable_on_wire_timeout_.IsInfinite() ||
+  if ((num_ptos_for_retransmittable_on_wire_timeout_ == 0 &&
+       initial_retransmittable_on_wire_timeout_.IsInfinite()) ||
       has_in_flight_packets ||
       retransmittable_on_wire_count_ >
           GetQuicFlag(quic_max_retransmittable_on_wire_ping_count)) {
@@ -121,10 +108,18 @@ void QuicPingManager::UpdateDeadlines(QuicTime now, bool should_keep_alive,
     return;
   }
 
-  QUICHE_DCHECK_LT(initial_retransmittable_on_wire_timeout_,
-                   keep_alive_timeout_);
-  QuicTime::Delta retransmittable_on_wire_timeout =
-      initial_retransmittable_on_wire_timeout_;
+  QuicTime::Delta retransmittable_on_wire_timeout = QuicTime::Delta::Zero();
+  if (num_ptos_for_retransmittable_on_wire_timeout_ > 0) {
+    QUICHE_DCHECK_NE(pto_delay, QuicTime::Delta::Zero());
+    retransmittable_on_wire_timeout =
+        static_cast<int>(num_ptos_for_retransmittable_on_wire_timeout_) *
+        pto_delay;
+  } else {
+    QUICHE_DCHECK_LT(initial_retransmittable_on_wire_timeout_,
+                     keep_alive_timeout_);
+    retransmittable_on_wire_timeout = initial_retransmittable_on_wire_timeout_;
+  }
+
   const int max_aggressive_retransmittable_on_wire_count =
       GetQuicFlag(quic_max_aggressive_retransmittable_on_wire_ping_count);
   QUICHE_DCHECK_LE(0, max_aggressive_retransmittable_on_wire_count);
@@ -136,8 +131,9 @@ void QuicPingManager::UpdateDeadlines(QuicTime now, bool should_keep_alive,
                              max_aggressive_retransmittable_on_wire_count,
                          kMaxRetransmittableOnWireDelayShift);
     retransmittable_on_wire_timeout =
-        initial_retransmittable_on_wire_timeout_ * (1 << shift);
+        retransmittable_on_wire_timeout * (1 << shift);
   }
+
   if (retransmittable_on_wire_deadline_.IsInitialized() &&
       retransmittable_on_wire_deadline_ <
           now + retransmittable_on_wire_timeout) {

@@ -4,13 +4,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing_extensions import override
 
-from ..applescript import AppleScriptBrowser
-from .safari import Safari
-
-if TYPE_CHECKING:
-  from crossbench.runner.runner import Runner
+from crossbench.browsers.applescript import AppleScriptBrowser
+from crossbench.browsers.attributes import BrowserAttributes
+from crossbench.browsers.safari.safari import Safari
 
 
 class SafariAppleScript(Safari, AppleScriptBrowser):
@@ -21,6 +19,7 @@ class SafariAppleScript(Safari, AppleScriptBrowser):
   APPLE_SCRIPT_SET_URL: str = (
       "set URL of the current tab of front window to %(url)s")
 
+  @override
   def _setup_window(self) -> None:
     self._exec_apple_script(f"""
       tell application "System Events"
@@ -42,12 +41,19 @@ class SafariAppleScript(Safari, AppleScriptBrowser):
     else:
       bounds = (f"{self.viewport.x},{self.viewport.y},"
                 f"{self.viewport.width},{self.viewport.height}")
-      self._exec_apple_script(f"set the bounds of the first window to {bounds}")
+      self._exec_apple_script("set the bounds of the first window to {%s}" %
+                              bounds)
 
-  def quit(self, runner: Runner) -> None:
-    super().quit(runner)
+  @override
+  def quit(self) -> None:
+    super().quit()
     # Safari doesn't react to "quit" when using the full app path.
     self.platform.exec_apple_script(f"""
         tell application "{self.bundle_name}"
           quit
         end tell""")
+
+  @classmethod
+  @override
+  def attributes(cls) -> BrowserAttributes:
+    return BrowserAttributes.SAFARI | BrowserAttributes.APPLESCRIPT

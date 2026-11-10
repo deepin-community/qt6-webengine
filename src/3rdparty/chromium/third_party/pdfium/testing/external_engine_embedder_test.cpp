@@ -21,17 +21,17 @@ void ExternalEngineEmbedderTest::SetUp() {
 
   v8::Isolate::Scope isolate_scope(isolate());
   v8::HandleScope handle_scope(isolate());
-  FXJS_PerIsolateData::SetUp(isolate());
-  m_Engine = std::make_unique<CFXJS_Engine>(isolate());
-  m_Engine->InitializeEngine();
+  CFXJS_PerIsolateData::SetUp(isolate());
+  engine_ = std::make_unique<CFXJS_Engine>(isolate());
+  engine_->InitializeEngine();
 }
 
 void ExternalEngineEmbedderTest::TearDown() {
-  m_Engine->ReleaseEngine();
-  m_Engine.reset();
+  engine_->ReleaseEngine();
+  engine_.reset();
   JSEmbedderTest::TearDown();
 }
 
 v8::Local<v8::Context> ExternalEngineEmbedderTest::GetV8Context() {
-  return m_Engine->GetV8Context();
+  return engine_->GetV8Context();
 }

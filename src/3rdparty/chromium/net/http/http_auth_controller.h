@@ -6,6 +6,7 @@
 #define NET_HTTP_HTTP_AUTH_CONTROLLER_H_
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -18,7 +19,6 @@
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_preferences.h"
 #include "net/log/net_log_with_source.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
@@ -34,6 +34,7 @@ class HostResolver;
 class NetLogWithSource;
 struct HttpRequestInfo;
 class SSLInfo;
+class X509Certificate;
 
 // HttpAuthController is the main entry point for external callers into the HTTP
 // authentication stack. A single instance of an HttpAuthController can be used
@@ -125,7 +126,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   bool NeedsHTTP11() const;
 
   // Swaps the authentication challenge info into |other|.
-  void TakeAuthInfo(absl::optional<AuthChallengeInfo>* other);
+  void TakeAuthInfo(std::optional<AuthChallengeInfo>* other);
 
   bool IsAuthSchemeDisabled(HttpAuth::Scheme scheme) const;
   void DisableAuthScheme(HttpAuth::Scheme scheme);
@@ -211,6 +212,13 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // associated auth handler.
   std::unique_ptr<HttpAuthHandler> handler_;
 
+  // The server certificate from the connection on which |handler_| was
+  // created. Connection-based handlers derive per-connection state (such as
+  // channel bindings) from this certificate at creation time, so the handler
+  // must be dropped if a later challenge arrives over a connection with a
+  // different certificate.
+  scoped_refptr<X509Certificate> handler_server_cert_;
+
   // |identity_| holds the credentials that should be used by the handler_ to
   // generate challenge responses. This identity can come from a number of
   // places (url, cache, prompt).
@@ -221,7 +229,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   std::string auth_token_;
 
   // Contains information about the auth challenge.
-  absl::optional<AuthChallengeInfo> auth_info_;
+  std::optional<AuthChallengeInfo> auth_info_;
 
   // True if we've used the username:password embedded in the URL.  This
   // makes sure we use the embedded identity only once for the transaction,
@@ -235,10 +243,9 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // These two are owned by the HttpNetworkSession/IOThread, which own the
   // objects which reference |this|. Therefore, these raw pointers are valid
   // for the lifetime of this object.
-  const raw_ptr<HttpAuthCache, DanglingUntriaged> http_auth_cache_;
-  const raw_ptr<HttpAuthHandlerFactory, DanglingUntriaged>
-      http_auth_handler_factory_;
-  const raw_ptr<HostResolver, DanglingUntriaged> host_resolver_;
+  const raw_ptr<HttpAuthCache> http_auth_cache_;
+  const raw_ptr<HttpAuthHandlerFactory> http_auth_handler_factory_;
+  const raw_ptr<HostResolver> host_resolver_;
 
   std::set<HttpAuth::Scheme> disabled_schemes_;
 

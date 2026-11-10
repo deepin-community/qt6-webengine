@@ -7,6 +7,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -70,14 +71,26 @@ void CreateRegistryKey() {
   ASSERT_EQ(res, ERROR_SUCCESS);
 }
 
-void DeleteRegistryKey() {
-  base::win::RegKey key(HKEY_LOCAL_MACHINE);
-  LONG res = key.DeleteKey(kCSAgentRegPath);
+// Overwrite the registry values for both agent and customer ID with empty
+// strings, instead of simply removing the key itself since the mocked registry
+// doesn't work well with local machine environments.
+void DeleteRegistryValues() {
+  base::win::RegKey key;
+  LONG res = key.Open(HKEY_LOCAL_MACHINE, kCSAgentRegPath, KEY_WRITE);
+  ASSERT_EQ(res, ERROR_SUCCESS);
+
+  std::string empty_string = std::string();
+  res = key.WriteValue(kCSCURegKey, empty_string.data(), empty_string.size(),
+                       REG_BINARY);
+  ASSERT_EQ(res, ERROR_SUCCESS);
+
+  res = key.WriteValue(kCSAGRegKey, empty_string.data(), empty_string.size(),
+                       REG_BINARY);
   ASSERT_EQ(res, ERROR_SUCCESS);
 }
 
-void SetUpCrowdStrikeInfo(const absl::optional<std::string>& customer_id,
-                          const absl::optional<std::string>& agent_id) {
+void SetUpCrowdStrikeInfo(const std::optional<std::string>& customer_id,
+                          const std::optional<std::string>& agent_id) {
   CreateRegistryKey();
 
   base::win::RegKey key;
@@ -117,8 +130,11 @@ class CrowdStrikeClientTest : public testing::Test {
 #endif
 
     ASSERT_TRUE(scoped_temp_dir_.CreateUniqueTempDir());
+  }
 
-    client_ = CrowdStrikeClient::CreateForTesting(GetDataFilePath());
+  void InitializeClient(bool empty_file = true) {
+    client_ = CrowdStrikeClient::CreateForTesting(
+        empty_file ? GetDataFilePath() : base::FilePath());
   }
 
   void CreateFakeFileWithContent(const std::string& file_content) {
@@ -131,10 +147,10 @@ class CrowdStrikeClientTest : public testing::Test {
     return scoped_temp_dir_.GetPath().Append(kFakeFileName);
   }
 
-  absl::optional<CrowdStrikeSignals> GetSignals(
-      absl::optional<SignalCollectionError> expected_error = absl::nullopt) {
-    base::test::TestFuture<absl::optional<CrowdStrikeSignals>,
-                           absl::optional<SignalCollectionError>>
+  std::optional<CrowdStrikeSignals> GetSignals(
+      std::optional<SignalCollectionError> expected_error = std::nullopt) {
+    base::test::TestFuture<std::optional<CrowdStrikeSignals>,
+                           std::optional<SignalCollectionError>>
         future;
     client_->GetIdentifiers(future.GetCallback());
 
@@ -148,9 +164,9 @@ class CrowdStrikeClientTest : public testing::Test {
     return future.Get<0>();
   }
 
-  absl::optional<SignalCollectionError> GetSignalCollectionError() {
-    base::test::TestFuture<absl::optional<CrowdStrikeSignals>,
-                           absl::optional<SignalCollectionError>>
+  std::optional<SignalCollectionError> GetSignalCollectionError() {
+    base::test::TestFuture<std::optional<CrowdStrikeSignals>,
+                           std::optional<SignalCollectionError>>
         future;
     client_->GetIdentifiers(future.GetCallback());
 
@@ -160,7 +176,7 @@ class CrowdStrikeClientTest : public testing::Test {
     return future.Get<1>();
   }
 
-  void ValidateHistogram(absl::optional<SignalsParsingError> error) {
+  void ValidateHistogram(std::optional<SignalsParsingError> error) {
     static constexpr char kCrowdStrikeErrorHistogram[] =
         "Enterprise.DeviceSignals.Collection.CrowdStrike.Error";
     if (error) {
@@ -184,25 +200,37 @@ class CrowdStrikeClientTest : public testing::Test {
   std::unique_ptr<CrowdStrikeClient> client_;
 };
 
-TEST_F(CrowdStrikeClientTest, Identifiers_NoFile) {
+TEST_F(CrowdStrikeClientTest, Identifiers_EmptyFilePath) {
+  InitializeClient(/*empty_file=*/true);
   // Expect no signals and no error.
   EXPECT_FALSE(GetSignalCollectionError());
 
   // No value logged, not having the file available is not considered a failure.
-  ValidateHistogram(absl::nullopt);
+  ValidateHistogram(std::nullopt);
+}
+
+TEST_F(CrowdStrikeClientTest, Identifiers_NoFile) {
+  InitializeClient();
+  // Expect no signals and no error.
+  EXPECT_FALSE(GetSignalCollectionError());
+
+  // No value logged, not having the file available is not considered a failure.
+  ValidateHistogram(std::nullopt);
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_EmptyFile) {
+  InitializeClient();
   CreateFakeFileWithContent("");
 
   // Expect no signals and no error.
   EXPECT_FALSE(GetSignalCollectionError());
 
   // No value logged, having an empty file is not considered a failure.
-  ValidateHistogram(absl::nullopt);
+  ValidateHistogram(std::nullopt);
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_NotJwt) {
+  InitializeClient();
   CreateFakeFileWithContent("some.random.content");
 
   const auto& error = GetSignalCollectionError();
@@ -213,6 +241,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_NotJwt) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_MaxDataSize) {
+  InitializeClient();
   std::string content(33 * 1024, 'a');
   CreateFakeFileWithContent(content);
 
@@ -224,6 +253,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_MaxDataSize) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_DecodingFailed) {
+  InitializeClient();
   CreateFakeFileWithContent("some.random%%.content");
 
   const auto& error = GetSignalCollectionError();
@@ -234,6 +264,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_DecodingFailed) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_MissingJwtSection) {
+  InitializeClient();
   constexpr char kFakeJwtZtaContent[] =
       "eyJhbGciOiJSUzI1NiIsImtpZCI6InYxIiwidHlwIjoiSldUIn0."
       "eyJhc3Nlc3NtZW50Ijp7Im92ZXJhbGwiOjU1LCJvcyI6NTAsInNlbnNvcl9jb25maWciOjYw"
@@ -251,6 +282,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_MissingJwtSection) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_MissingSub) {
+  InitializeClient();
   // JWT value where `sub` is missing from the payload.
   static constexpr char kFakeJwtZtaContent[] =
       "eyJhbGciOiJSUzI1NiIsImtpZCI6InYxIiwidHlwIjoiSldUIn0."
@@ -279,6 +311,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_MissingSub) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_Success) {
+  InitializeClient();
   CreateFakeFileWithContent(kValidFakeJwtZtaContent);
   auto signals = GetSignals();
 
@@ -286,10 +319,11 @@ TEST_F(CrowdStrikeClientTest, Identifiers_Success) {
   EXPECT_EQ(signals->agent_id, kExpectedAgentId);
   EXPECT_EQ(signals->customer_id, kExpectedCustomerId);
 
-  ValidateHistogram(absl::nullopt);
+  ValidateHistogram(std::nullopt);
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_Success_CachedValue) {
+  InitializeClient();
   CreateFakeFileWithContent(kValidFakeJwtZtaContent);
   auto signals = GetSignals();
 
@@ -318,7 +352,8 @@ TEST_F(CrowdStrikeClientTest, Identifiers_Success_CachedValue) {
 // Tests that only having the customer ID in the registry is treated
 // as insufficient, and no value is returned.
 TEST_F(CrowdStrikeClientTest, Identifiers_NoFile_RegistryNoAgentId) {
-  SetUpCrowdStrikeInfo(kFakeHexCSCustomerId, absl::nullopt);
+  InitializeClient();
+  SetUpCrowdStrikeInfo(kFakeHexCSCustomerId, std::nullopt);
 
   auto signals = GetSignals();
 
@@ -328,7 +363,8 @@ TEST_F(CrowdStrikeClientTest, Identifiers_NoFile_RegistryNoAgentId) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_NoFile_RegistryNoCustomerId) {
-  SetUpCrowdStrikeInfo(absl::nullopt, kFakeHexCSAgentId);
+  InitializeClient();
+  SetUpCrowdStrikeInfo(std::nullopt, kFakeHexCSAgentId);
 
   auto signals = GetSignals();
 
@@ -336,13 +372,18 @@ TEST_F(CrowdStrikeClientTest, Identifiers_NoFile_RegistryNoCustomerId) {
   EXPECT_EQ(signals->agent_id, base::ToLowerASCII(kFakeHexCSAgentId));
   EXPECT_TRUE(signals->customer_id.empty());
 
-  DeleteRegistryKey();
+  DeleteRegistryValues();
 
   // Expect the value to not have been cached.
-  EXPECT_FALSE(GetSignals());
+  signals = GetSignals();
+
+  ASSERT_TRUE(signals);
+  EXPECT_TRUE(signals->agent_id.empty());
+  EXPECT_TRUE(signals->customer_id.empty());
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_FileHasPrecendence) {
+  InitializeClient();
   SetUpCrowdStrikeInfo(kFakeHexCSCustomerId, kFakeHexCSAgentId);
 
   CreateFakeFileWithContent(kValidFakeJwtZtaContent);
@@ -355,6 +396,7 @@ TEST_F(CrowdStrikeClientTest, Identifiers_FileHasPrecendence) {
 }
 
 TEST_F(CrowdStrikeClientTest, Identifiers_DecodingFailed_RegistryFallback) {
+  InitializeClient();
   CreateFakeFileWithContent("some.random%%.content");
   SetUpCrowdStrikeInfo(kFakeHexCSCustomerId, kFakeHexCSAgentId);
 

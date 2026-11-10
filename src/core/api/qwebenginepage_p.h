@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QWEBENGINEPAGE_P_H
 #define QWEBENGINEPAGE_P_H
@@ -37,6 +38,7 @@ class WebContentsAdapter;
 
 QT_BEGIN_NAMESPACE
 class QPrinter;
+class QThread;
 class QWebEngineFindTextResult;
 class QWebEngineHistory;
 class QWebEnginePage;
@@ -71,7 +73,7 @@ public:
     virtual void unhandledKeyEvent(QKeyEvent *event) = 0;
     virtual bool passOnFocus(bool reverse) = 0;
     virtual QObject *accessibilityParentObject() = 0;
-    virtual void didPrintPage(QPrinter *&printer, QSharedPointer<QByteArray> result) = 0;
+    virtual QThread *didPrintPage(QPrinter *&printer, std::shared_ptr<QByteArray> result) = 0;
     virtual void didPrintPageToPdf(const QString &filePath, bool success) = 0;
     virtual void printRequested() = 0;
     virtual void printRequestedByFrame(QWebEngineFrame frame) = 0;
@@ -126,19 +128,20 @@ public:
     void windowCloseRejected() override;
     void desktopMediaRequested(QtWebEngineCore::DesktopMediaController *) override;
     void contextMenuRequested(QWebEngineContextMenuRequest *request) override;
-    void navigationRequested(int navigationType, const QUrl &url, bool &accepted, bool isMainFrame, bool hasFormData) override;
+    void navigationRequested(int navigationType, const QUrl &url, bool &accepted,
+                             bool isMainFrame, bool hasFormData, bool userInitiated) override;
     void requestFullScreenMode(const QUrl &origin, bool fullscreen) override;
     bool isFullScreenMode() const override;
     void javascriptDialog(QSharedPointer<QtWebEngineCore::JavaScriptDialogController>) override;
     void runFileChooser(QSharedPointer<QtWebEngineCore::FilePickerController>) override;
     void showColorDialog(QSharedPointer<QtWebEngineCore::ColorChooserController>) override;
     void runJavaScript(const QString &script, quint32 worldId, quint64 frameId,
-                       const std::function<void(const QVariant &)> &callback) override;
+                       QtPrivate::SlotObjUniquePtr callback) override;
     void didFetchDocumentMarkup(quint64 requestId, const QString &result) override;
     void didFetchDocumentInnerText(quint64 requestId, const QString &result) override;
     void printToPdf(const QString &filePath, const QPageLayout &layout, const QPageRanges &ranges,
                     quint64 frameId) override;
-    void printToPdf(std::function<void(QSharedPointer<QByteArray>)> &&callback,
+    void printToPdf(QtPrivate::SlotObjUniquePtr callback,
                     const QPageLayout &layout, const QPageRanges &ranges, quint64 frameId) override;
     void didPrintPageToPdf(const QString &filePath, bool success) override;
     bool passOnFocus(bool reverse) override;
@@ -147,9 +150,8 @@ public:
     void authenticationRequired(
             QSharedPointer<QtWebEngineCore::AuthenticationDialogController>) override;
     void releaseProfile() override;
-    void runMediaAccessPermissionRequest(const QUrl &securityOrigin, MediaRequestFlags requestFlags) override;
-    void runFeaturePermissionRequest(QWebEnginePermission::PermissionType permissionType, const QUrl &securityOrigin) override;
-    void runMouseLockPermissionRequest(const QUrl &securityOrigin) override;
+    void runFeaturePermissionRequest(QWebEnginePermission::PermissionType permissionType, const QUrl &securityOrigin,
+        int childId, const std::string &serializedToken) override;
     void runRegisterProtocolHandlerRequest(QWebEngineRegisterProtocolHandlerRequest) override;
     void runFileSystemAccessRequest(QWebEngineFileSystemAccessRequest) override;
     QObject *accessibilityParentObject() override;
@@ -180,7 +182,6 @@ public:
                            const QRect &bounds, bool autoselectFirstSuggestion) override;
     void hideAutofillPopup() override;
     void showWebAuthDialog(QWebEngineWebAuthUxRequest *controller) override;
-    QWebEnginePermission createFeaturePermissionObject(const QUrl &securityOrigin, QWebEnginePermission::PermissionType permissionType) override;
 
     QtWebEngineCore::ProfileAdapter *profileAdapter() override;
     QtWebEngineCore::WebContentsAdapter *webContentsAdapter() override;
@@ -192,7 +193,7 @@ public:
     bool adoptWebContents(QtWebEngineCore::WebContentsAdapter *webContents);
     QtWebEngineCore::WebContentsAdapter *webContents() { return adapter.data(); }
     void recreateFromSerializedHistory(QDataStream &input);
-    void didPrintPage(QSharedPointer<QByteArray> result);
+    void didPrintPage(std::shared_ptr<QByteArray> result);
 
     void setFullScreenMode(bool);
     void ensureInitialized() const;
@@ -221,6 +222,7 @@ public:
     QtWebEngineCore::RenderWidgetHostViewQtDelegateItem *delegateItem = nullptr;
 #if QT_CONFIG(webengine_printing_and_pdf)
     QPrinter *currentPrinter = nullptr;
+    QThread *printerThread = nullptr;
 #endif
 
     mutable QMap<quint64, std::function<void(const QString &)>> m_stringCallbacks;

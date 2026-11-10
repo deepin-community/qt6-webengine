@@ -79,8 +79,8 @@ void tst_QWebEngineCookieStore::cookieSignals()
     QWebEngineCookieStore *client = m_profile->cookieStore();
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
 
     page.load(QUrl("qrc:///resources/index.html"));
 
@@ -90,14 +90,14 @@ void tst_QWebEngineCookieStore::cookieSignals()
     QWE_TRY_COMPARE(cookieAddedSpy.size(), 2);
 
     // try whether updating a cookie to be expired results in that cookie being removed.
-    QNetworkCookie expiredCookie(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=delete; expires=Thu, 01-Jan-1970 00:00:00 GMT; path=///resources")).first());
+    QNetworkCookie expiredCookie(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=delete; expires=Thu, 01-Jan-1970 00:00:00 GMT; path=/resources")).first());
     client->setCookie(expiredCookie, QUrl("qrc:///resources/index.html"));
 
     QWE_TRY_COMPARE(cookieRemovedSpy.size(), 1);
     cookieRemovedSpy.clear();
 
     // try removing the other cookie.
-    QNetworkCookie nonSessionCookie(QNetworkCookie::parseCookies(QByteArrayLiteral("CookieWithExpiresField=QtWebEngineCookieTest; path=///resources")).first());
+    QNetworkCookie nonSessionCookie(QNetworkCookie::parseCookies(QByteArrayLiteral("CookieWithExpiresField=QtWebEngineCookieTest; path=/resources")).first());
     client->deleteCookie(nonSessionCookie, QUrl("qrc:///resources/index.html"));
     QWE_TRY_COMPARE(cookieRemovedSpy.size(), 1);
 }
@@ -108,13 +108,13 @@ void tst_QWebEngineCookieStore::setAndDeleteCookie()
     QWebEngineCookieStore *client = m_profile->cookieStore();
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
 
     QNetworkCookie cookie1(QNetworkCookie::parseCookies(QByteArrayLiteral("khaos=I9GX8CWI; Domain=.example.com; Path=/docs")).first());
     QNetworkCookie cookie2(QNetworkCookie::parseCookies(QByteArrayLiteral("Test%20Cookie=foobar; domain=example.com; Path=/")).first());
-    QNetworkCookie cookie3(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=QtWebEngineCookieTest; Path=///resources")).first());
-    QNetworkCookie expiredCookie3(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=delete; expires=Thu, 01-Jan-1970 00:00:00 GMT; path=///resources")).first());
+    QNetworkCookie cookie3(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=QtWebEngineCookieTest; Path=/resources")).first());
+    QNetworkCookie expiredCookie3(QNetworkCookie::parseCookies(QByteArrayLiteral("SessionCookie=delete; expires=Thu, 01-Jan-1970 00:00:00 GMT; path=/resources")).first());
 
     // force to init storage as it's done lazily upon first navigation
     client->loadAllCookies();
@@ -155,8 +155,8 @@ void tst_QWebEngineCookieStore::setInvalidCookie()
     QWebEngineCookieStore *client = m_profile->cookieStore();
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
 
     QNetworkCookie goodCookie(
             QNetworkCookie::parseCookies(
@@ -186,8 +186,8 @@ void tst_QWebEngineCookieStore::batchCookieTasks()
     QWebEngineCookieStore *client = m_profile->cookieStore();
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
 
     QNetworkCookie cookie1(QNetworkCookie::parseCookies(QByteArrayLiteral("khaos=I9GX8CWI; Domain=.example.com; Path=/docs")).first());
     QNetworkCookie cookie2(QNetworkCookie::parseCookies(QByteArrayLiteral("Test%20Cookie=foobar; domain=example.com; Path=/")).first());
@@ -230,8 +230,8 @@ void tst_QWebEngineCookieStore::basicFilter()
     client->setCookieFilter([&](const QWebEngineCookieStore::FilterRequest &){ ++accessTested; return true;});
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
 
     page.load(QUrl("qrc:///resources/index.html"));
 
@@ -268,6 +268,7 @@ void tst_QWebEngineCookieStore::basicFilterOverHTTP()
 
     HttpServer httpServer;
     httpServer.setHostDomain(QString("sub.test.localhost"));
+    httpServer.setResourceDirs({ ":/resources" });
     QVERIFY(httpServer.start());
 
     QByteArray cookieRequestHeader;
@@ -276,7 +277,7 @@ void tst_QWebEngineCookieStore::basicFilterOverHTTP()
             cookieRequestHeader = rr->requestHeader(QByteArrayLiteral("Cookie"));
             if (cookieRequestHeader.isEmpty())
                 rr->setResponseHeader(QByteArrayLiteral("Set-Cookie"), QByteArrayLiteral("Test=test"));
-            rr->setResponseBody("<head><link rel='icon' type='image/png' href='resources/Fav.png'/>"
+            rr->setResponseBody("<head><link rel='icon' type='image/png' href='fav.png'/>"
                                 "<title>Page with a favicon and an icon</title></head>"
                                 "<body><img src='resources/Img.ico'></body>");
             rr->sendResponse();
@@ -284,14 +285,16 @@ void tst_QWebEngineCookieStore::basicFilterOverHTTP()
     });
 
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
-    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(const QNetworkCookie &)));
-    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(const QNetworkCookie &)));
-    QSignalSpy serverSpy(&httpServer, SIGNAL(newRequest(HttpReqRep *)));
+    QSignalSpy iconUrlChangedSpy(&page, SIGNAL(iconUrlChanged(QUrl)));
+    QSignalSpy cookieAddedSpy(client, SIGNAL(cookieAdded(QNetworkCookie)));
+    QSignalSpy cookieRemovedSpy(client, SIGNAL(cookieRemoved(QNetworkCookie)));
+    QSignalSpy serverSpy(&httpServer, SIGNAL(newRequest(HttpReqRep*)));
 
     QUrl firstPartyUrl = httpServer.url("/test.html");
     page.load(firstPartyUrl);
 
     QWE_TRY_COMPARE(loadSpy.size(), 1);
+    QWE_TRY_COMPARE(iconUrlChangedSpy.size(), 1);
     QVERIFY(loadSpy.takeFirst().takeFirst().toBool());
     QWE_TRY_COMPARE(cookieAddedSpy.size(), 1);
     QWE_TRY_COMPARE(accessTested.loadAcquire(), 4);
@@ -301,12 +304,13 @@ void tst_QWebEngineCookieStore::basicFilterOverHTTP()
 
     page.triggerAction(QWebEnginePage::Reload);
     QWE_TRY_COMPARE(loadSpy.size(), 1);
+    QWE_TRY_COMPARE(iconUrlChangedSpy.size(), 3);
     QVERIFY(loadSpy.takeFirst().takeFirst().toBool());
     QVERIFY(!cookieRequestHeader.isEmpty());
     QWE_TRY_COMPARE(cookieAddedSpy.size(), 1);
-    QWE_TRY_COMPARE(accessTested.loadAcquire(), 6);
+    QWE_TRY_COMPARE(accessTested.loadAcquire(), 7);
 
-    QWE_TRY_COMPARE(serverSpy.size(), 5);
+    QWE_TRY_COMPARE(serverSpy.size(), 6);
 
     client->deleteAllCookies();
     QWE_TRY_COMPARE(cookieRemovedSpy.size(), 1);
@@ -319,22 +323,24 @@ void tst_QWebEngineCookieStore::basicFilterOverHTTP()
     page.triggerAction(QWebEnginePage::ReloadAndBypassCache);
     QWE_TRY_COMPARE(loadSpy.size(), 1);
     QVERIFY(loadSpy.takeFirst().takeFirst().toBool());
+    QWE_TRY_COMPARE(iconUrlChangedSpy.size(), 5);
     QVERIFY(cookieRequestHeader.isEmpty());
     // Test cookies are NOT added:
     QTest::qWait(100);
     QCOMPARE(cookieAddedSpy.size(), 1);
-    QWE_TRY_COMPARE(accessTested.loadAcquire(), 9);
+    QWE_TRY_COMPARE(accessTested.loadAcquire(), 11);
 
-    QWE_TRY_COMPARE(serverSpy.size(), 7);
+    QWE_TRY_COMPARE(serverSpy.size(), 9);
 
     page.triggerAction(QWebEnginePage::Reload);
     QWE_TRY_COMPARE(loadSpy.size(), 1);
     QVERIFY(loadSpy.takeFirst().takeFirst().toBool());
     QVERIFY(cookieRequestHeader.isEmpty());
+    QWE_TRY_COMPARE(iconUrlChangedSpy.size(), 7);
     QCOMPARE(cookieAddedSpy.size(), 1);
 
     // Wait for last GET /favicon.ico
-    QWE_TRY_COMPARE(serverSpy.size(), 9);
+    QWE_TRY_COMPARE(serverSpy.size(), 12);
     (void) httpServer.stop();
 
     QCOMPARE(resourceFirstParty.size(), accessTested.loadAcquire());

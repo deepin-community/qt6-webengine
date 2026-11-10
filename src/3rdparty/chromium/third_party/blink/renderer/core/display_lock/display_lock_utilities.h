@@ -42,7 +42,6 @@ class CORE_EXPORT DisplayLockUtilities {
         impl_->Destroy();
     }
 
-   private:
     // It is important not to create multiple ScopedChainForcedUpdate scopes.
     // The following functions update some combination of Style, Layout, Paint
     // information after forcing the display locks. It should be enough to use
@@ -55,7 +54,8 @@ class CORE_EXPORT DisplayLockUtilities {
         DocumentUpdateReason reason);
     friend void Document::UpdateStyleAndLayoutTreeForElement(
         const Element* node,
-        DocumentUpdateReason reason);
+        DocumentUpdateReason reason,
+        bool only_cv_auto);
     friend void Document::UpdateStyleAndLayoutTreeForSubtree(
         const Element* node,
         DocumentUpdateReason reason);
@@ -149,27 +149,26 @@ class CORE_EXPORT DisplayLockUtilities {
       }
     }
 
-   private:
     friend class DisplayLockUtilities;
     LockCheckMemoizationScope() {
       if (!DisplayLockUtilities::memoizer_)
         DisplayLockUtilities::memoizer_ = this;
     }
 
-    absl::optional<bool> IsNodeLocked(const Node* node) {
+    std::optional<bool> IsNodeLocked(const Node* node) {
       if (nodes_preventing_paint.Contains(node))
         return true;
       if (unlocked_nodes.Contains(node))
         return false;
-      return absl::nullopt;
+      return std::nullopt;
     }
 
-    absl::optional<bool> IsNodeLockedForAccessibility(const Node* node) {
+    std::optional<bool> IsNodeLockedForAccessibility(const Node* node) {
       if (nodes_preventing_accessibility.Contains(node))
         return true;
       if (unlocked_nodes.Contains(node))
         return false;
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     void NotifyLocked(const Node* node) {
@@ -206,6 +205,8 @@ class CORE_EXPORT DisplayLockUtilities {
     return LockCheckMemoizationScope();
   }
 
+  public:
+
   // Activates all the nodes within a find-in-page match |range|.
   // Returns true if at least one node gets activated.
   // See: http://bit.ly/2RXULVi, "beforeactivate Event" part.
@@ -221,6 +222,10 @@ class CORE_EXPORT DisplayLockUtilities {
   static const HeapVector<Member<Element>> ActivatableLockedInclusiveAncestors(
       const Node& node,
       DisplayLockActivationReason reason);
+
+  // Returns a list of the elements in a range and all of their flat tree
+  // ancestors.
+  static VectorOf<Element> InclusiveAncestorsOfRange(const Range& range);
 
   // Ancestor navigation functions.
 
@@ -308,7 +313,7 @@ class CORE_EXPORT DisplayLockUtilities {
   // Walks up the ancestor chain and expands all elements with the
   // hidden=until-found attribute found along by removing the hidden attribute.
   // If any were expanded, returns true.
-  // This method may run script because of the mutation events fired when
+  // This method may run script because of the synchronous events fired when
   // removing the hidden attribute.
   static bool RevealHiddenUntilFoundAncestors(const Node&);
 
@@ -326,7 +331,6 @@ class CORE_EXPORT DisplayLockUtilities {
   // See StyleEngine::style_recalc_root_.
   static bool IsPotentialStyleRecalcRoot(const Node& node);
 
- private:
   static bool IsDisplayLockedPreventingPaintUnmemoized(const Node& node,
                                                        bool inclusive_check);
 
@@ -337,6 +341,14 @@ class CORE_EXPORT DisplayLockUtilities {
   static bool IsLockedForAccessibility(const Node& node);
 
   static LockCheckMemoizationScope* memoizer_;
+};
+
+template <typename T>
+struct ThreadingTrait<
+    T,
+    std::enable_if_t<
+        std::is_base_of_v<DisplayLockUtilities::ScopedForcedUpdate::Impl, T>>> {
+  static constexpr ThreadAffinity kAffinity = kMainThreadOnly;
 };
 
 }  // namespace blink

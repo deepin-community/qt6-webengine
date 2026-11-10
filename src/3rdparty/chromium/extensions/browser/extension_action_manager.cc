@@ -39,15 +39,15 @@ class ExtensionActionManagerFactory : public BrowserContextKeyedServiceFactory {
             "ExtensionActionManager",
             BrowserContextDependencyManager::GetInstance()) {}
 
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* browser_context) const override {
-    return new ExtensionActionManager(browser_context);
+    return std::make_unique<ExtensionActionManager>(browser_context);
   }
 
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override {
     return ExtensionsBrowserClient::Get()->GetContextRedirectedToOriginal(
-        context, /*force_guest_profile=*/true);
+        context);
   }
 };
 
@@ -60,8 +60,8 @@ ExtensionActionManagerFactory* ExtensionActionManagerFactory::GetInstance() {
 ExtensionActionManager::ExtensionActionManager(
     content::BrowserContext* browser_context)
     : browser_context_(browser_context) {
-  CHECK(!browser_context_->IsOffTheRecord())
-      << "Don't instantiate this with an off-the-record context.";
+  // CHECK(!browser_context_->IsOffTheRecord())
+  //     << "Don't instantiate this with an off-the-record context.";
   extension_registry_observation_.Observe(
       ExtensionRegistry::Get(browser_context_));
 }
@@ -87,14 +87,19 @@ void ExtensionActionManager::OnExtensionUnloaded(
 ExtensionAction* ExtensionActionManager::GetExtensionAction(
     const Extension& extension) const {
   auto iter = actions_.find(extension.id());
-  if (iter != actions_.end())
+  if (iter != actions_.end()) {
     return iter->second.get();
+  }
 
   const ActionInfo* action_info =
       ActionInfo::GetExtensionActionInfo(&extension);
-  if (!action_info)
+  if (!action_info) {
     return nullptr;
+  }
 
+// Extensions are always loaded in disabled state in WebEngine
+// and the ExtensionsAction is created when the loading is finished.
+#if !BUILDFLAG(IS_QTWEBENGINE)
   // Only create action info for enabled extensions.
   // This avoids bugs where actions are recreated just after being removed
   // in response to OnExtensionUnloaded().
@@ -103,6 +108,7 @@ ExtensionAction* ExtensionActionManager::GetExtensionAction(
            .Contains(extension.id())) {
     return nullptr;
   }
+#endif
 
   auto action = std::make_unique<ExtensionAction>(extension, *action_info);
 
@@ -119,8 +125,8 @@ ExtensionAction* ExtensionActionManager::GetExtensionAction(
 }
 
 // static
-void ExtensionActionManager::EnsureFactoryBuilt() {
-  ExtensionActionManagerFactory::GetInstance();
+BrowserContextKeyedServiceFactory* ExtensionActionManager::GetFactory() {
+  return ExtensionActionManagerFactory::GetInstance();
 }
 
 }  // namespace extensions

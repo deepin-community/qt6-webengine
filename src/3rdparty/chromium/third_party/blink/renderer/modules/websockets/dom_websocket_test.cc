@@ -122,14 +122,15 @@ TEST(DOMWebSocketTest, connectToNonWsURL) {
   test::TaskEnvironment task_environment;
   V8TestingScope scope;
   DOMWebSocketTestScope websocket_scope(scope.GetExecutionContext());
-  websocket_scope.Socket().Connect("http://example.com/", Vector<String>(),
-                                   scope.GetExceptionState());
+  websocket_scope.Socket().Connect("bad-scheme://example.com/",
+                                   Vector<String>(), scope.GetExceptionState());
 
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(DOMExceptionCode::kSyntaxError,
             scope.GetExceptionState().CodeAs<DOMExceptionCode>());
   EXPECT_EQ(
-      "The URL's scheme must be either 'ws' or 'wss'. 'http' is not allowed.",
+      "The URL's scheme must be either 'http', 'https', 'ws', or 'wss'. "
+      "'bad-scheme' is not allowed.",
       scope.GetExceptionState().Message());
   EXPECT_EQ(DOMWebSocket::kClosed, websocket_scope.Socket().readyState());
 }
@@ -390,7 +391,7 @@ TEST(DOMWebSocketTest, reasonSizeExceeding) {
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(DOMExceptionCode::kSyntaxError,
             scope.GetExceptionState().CodeAs<DOMExceptionCode>());
-  EXPECT_EQ("The message must not be greater than 123 bytes.",
+  EXPECT_EQ("The close reason must not be greater than 123 UTF-8 bytes.",
             scope.GetExceptionState().Message());
   EXPECT_EQ(DOMWebSocket::kConnecting, websocket_scope.Socket().readyState());
 }
@@ -865,13 +866,15 @@ TEST(DOMWebSocketTest, binaryType) {
   DOMWebSocketTestScope websocket_scope(scope.GetExecutionContext());
   EXPECT_EQ("blob", websocket_scope.Socket().binaryType());
 
-  websocket_scope.Socket().setBinaryType("arraybuffer");
+  websocket_scope.Socket().setBinaryType(
+      V8BinaryType(V8BinaryType::Enum::kArraybuffer));
 
-  EXPECT_EQ("arraybuffer", websocket_scope.Socket().binaryType());
+  EXPECT_EQ("arraybuffer", websocket_scope.Socket().binaryType().AsString());
 
-  websocket_scope.Socket().setBinaryType("blob");
+  websocket_scope.Socket().setBinaryType(
+      V8BinaryType(V8BinaryType::Enum::kBlob));
 
-  EXPECT_EQ("blob", websocket_scope.Socket().binaryType());
+  EXPECT_EQ("blob", websocket_scope.Socket().binaryType().AsString());
 }
 
 // FIXME: We should add tests for suspend / resume.
@@ -931,8 +934,8 @@ TEST_P(DOMWebSocketInvalidClosingCodeTest, test) {
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(DOMExceptionCode::kInvalidAccessError,
             scope.GetExceptionState().CodeAs<DOMExceptionCode>());
-  EXPECT_EQ(String::Format("The code must be either 1000, or between 3000 and "
-                           "4999. %d is neither.",
+  EXPECT_EQ(String::Format("The close code must be either 1000, or between "
+                           "3000 and 4999. %d is neither.",
                            GetParam()),
             scope.GetExceptionState().Message());
   EXPECT_EQ(DOMWebSocket::kConnecting, websocket_scope.Socket().readyState());

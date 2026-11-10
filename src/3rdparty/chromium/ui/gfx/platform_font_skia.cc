@@ -7,9 +7,8 @@
 #include <algorithm>
 #include <string>
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -49,8 +48,10 @@ const char kFallbackFontFamilyName[] = "sans";
 constexpr SkGlyphID kUnsupportedGlyph = 0;
 
 // The default font, used for the default constructor.
-base::LazyInstance<scoped_refptr<PlatformFontSkia>>::Leaky g_default_font =
-    LAZY_INSTANCE_INITIALIZER;
+scoped_refptr<PlatformFontSkia>& GetDefaultFont() {
+  static base::NoDestructor<scoped_refptr<PlatformFontSkia>> default_font;
+  return *default_font;
+}
 
 // Creates a SkTypeface for the passed-in Font::FontStyle and family. If a
 // fallback typeface is used instead of the requested family, |family| will be
@@ -100,7 +101,7 @@ std::string* PlatformFontSkia::default_font_description_ = NULL;
 
 PlatformFontSkia::PlatformFontSkia() {
   EnsuresDefaultFontIsInitialized();
-  InitFromPlatformFont(g_default_font.Get().get());
+  InitFromPlatformFont(GetDefaultFont().get());
 }
 
 PlatformFontSkia::PlatformFontSkia(const std::string& font_name,
@@ -116,7 +117,7 @@ PlatformFontSkia::PlatformFontSkia(const std::string& font_name,
 PlatformFontSkia::PlatformFontSkia(
     sk_sp<SkTypeface> typeface,
     int font_size_pixels,
-    const absl::optional<FontRenderParams>& params) {
+    const std::optional<FontRenderParams>& params) {
   DCHECK(typeface);
 
   SkString family_name;
@@ -147,8 +148,9 @@ PlatformFontSkia::PlatformFontSkia(
 
 // static
 void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
-  if (g_default_font.Get())
+  if (GetDefaultFont()) {
     return;
+  }
 
   std::string family = kFallbackFontFamilyName;
   int size_pixels = PlatformFont::kDefaultBaseFontSize;
@@ -171,11 +173,13 @@ void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
 #if BUILDFLAG(IS_LINUX)
   // On Linux, LinuxUi is used to query the native toolkit (e.g.
   // GTK) for the default UI font.
-  if (const auto* linux_ui = ui::LinuxUi::instance()) {
-    int weight_int;
-    linux_ui->GetDefaultFontDescription(
-        &family, &size_pixels, &style, static_cast<int*>(&weight_int), &params);
-    weight = static_cast<Font::Weight>(weight_int);
+  if (auto* linux_ui = ui::LinuxUi::instance()) {
+    const auto& font_settings = linux_ui->GetDefaultFontDescription();
+    family = font_settings.family;
+    size_pixels = font_settings.size_pixels;
+    style = font_settings.style;
+    weight = static_cast<Font::Weight>(font_settings.weight);
+    params = linux_ui->GetDefaultFontRenderParams();
   } else
 #endif
       if (default_font_description_) {
@@ -192,7 +196,7 @@ void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
     style = query.style;
     weight = query.weight;
 #else
-    NOTREACHED();
+        NOTREACHED();
 #endif
   } else {
     params = gfx::GetFontRenderParams(FontRenderParamsQuery(), nullptr);
@@ -215,14 +219,14 @@ void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
   // nothing we can do about it and Chrome won't be able to work.
   CHECK(typeface.get()) << "No typeface available";
 
-  g_default_font.Get() = new PlatformFontSkia(
-      std::move(typeface), family, size_pixels, style, weight, params);
+  GetDefaultFont() = new PlatformFontSkia(std::move(typeface), family,
+                                          size_pixels, style, weight, params);
 }
 
 // static
 void PlatformFontSkia::ReloadDefaultFont() {
   // Reset the scoped_refptr.
-  g_default_font.Get() = nullptr;
+  GetDefaultFont() = nullptr;
 }
 
 // static
@@ -361,7 +365,7 @@ void PlatformFontSkia::InitFromDetails(sk_sp<SkTypeface> typeface,
 
   if (!success) {
     EnsuresDefaultFontIsInitialized();
-    InitFromPlatformFont(g_default_font.Get().get());
+    InitFromPlatformFont(GetDefaultFont().get());
     return;
   }
 
@@ -478,7 +482,7 @@ PlatformFont* PlatformFont::CreateFromNameAndSize(const std::string& font_name,
 PlatformFont* PlatformFont::CreateFromSkTypeface(
     sk_sp<SkTypeface> typeface,
     int font_size_pixels,
-    const absl::optional<FontRenderParams>& params) {
+    const std::optional<FontRenderParams>& params) {
   TRACE_EVENT0("fonts", "PlatformFont::CreateFromSkTypeface");
   return new PlatformFontSkia(typeface, font_size_pixels, params);
 }

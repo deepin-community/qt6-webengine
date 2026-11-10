@@ -5,12 +5,16 @@
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme_fluent.h"
 
 #include "base/numerics/safe_conversions.h"
+#include "third_party/blink/public/common/css/forced_colors.h"
 #include "third_party/blink/public/platform/web_theme_engine.h"
+#include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
+#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_helper.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
 
@@ -45,7 +49,7 @@ ScrollbarThemeFluent::ScrollbarThemeFluent() {
   WebThemeEngineHelper::GetNativeThemeEngine()->GetOverlayScrollbarStyle(
       &style_);
   if (WebTestSupport::IsRunningWebTest()) {
-    style_.fade_out_delay = base::TimeDelta();
+    style_.fade_out_delay = base::TimeDelta::Max();
     style_.fade_out_duration = base::TimeDelta();
   }
 }
@@ -57,7 +61,7 @@ int ScrollbarThemeFluent::ScrollbarThickness(
                           Proportion(scrollbar_width) * scale_from_dip);
 }
 
-gfx::Rect ScrollbarThemeFluent::ThumbRect(const Scrollbar& scrollbar) {
+gfx::Rect ScrollbarThemeFluent::ThumbRect(const Scrollbar& scrollbar) const {
   gfx::Rect thumb_rect = ScrollbarTheme::ThumbRect(scrollbar);
   const int thumb_thickness =
       ThumbThickness(scrollbar.ScaleFromDIP(), scrollbar.CSSScrollbarWidth());
@@ -115,6 +119,10 @@ bool ScrollbarThemeFluent::UsesOverlayScrollbars() const {
   return is_fluent_overlay_scrollbar_enabled_;
 }
 
+bool ScrollbarThemeFluent::UsesFluentScrollbars() const {
+  return true;
+}
+
 bool ScrollbarThemeFluent::UsesFluentOverlayScrollbars() const {
   return UsesOverlayScrollbars();
 }
@@ -125,6 +133,13 @@ base::TimeDelta ScrollbarThemeFluent::OverlayScrollbarFadeOutDelay() const {
 
 base::TimeDelta ScrollbarThemeFluent::OverlayScrollbarFadeOutDuration() const {
   return style_.fade_out_duration;
+}
+
+ScrollbarPart ScrollbarThemeFluent::PartsToInvalidateOnThumbPositionChange(
+    const Scrollbar& scrollbar,
+    float old_position,
+    float new_position) const {
+  return ScrollbarPart::kNoPart;
 }
 
 int ScrollbarThemeFluent::ThumbThickness(
@@ -141,25 +156,42 @@ int ScrollbarThemeFluent::ThumbThickness(
   return thumb_thickness - ((scrollbar_thickness - thumb_thickness) % 2);
 }
 
-void ScrollbarThemeFluent::PaintTrack(GraphicsContext& context,
-                                      const Scrollbar& scrollbar,
-                                      const gfx::Rect& rect) {
+void ScrollbarThemeFluent::PaintTrackBackground(const PaintInfo& paint_info,
+                                                const Scrollbar& scrollbar,
+                                                const gfx::Rect& rect) {
   if (rect.IsEmpty()) {
     return;
   }
-  ScrollbarThemeAura::PaintTrack(
-      context, scrollbar,
+  ScrollbarThemeAura::PaintTrackBackground(
+      paint_info, scrollbar,
       UsesOverlayScrollbars() ? InsetTrackRect(scrollbar, rect) : rect);
 }
 
-void ScrollbarThemeFluent::PaintButton(GraphicsContext& context,
+void ScrollbarThemeFluent::PaintButton(const PaintInfo& paint_info,
                                        const Scrollbar& scrollbar,
                                        const gfx::Rect& rect,
                                        ScrollbarPart part) {
   ScrollbarThemeAura::PaintButton(
-      context, scrollbar,
+      paint_info, scrollbar,
       UsesOverlayScrollbars() ? InsetButtonRect(scrollbar, rect, part) : rect,
       part);
+}
+WebThemeEngine::ScrollbarThumbExtraParams
+ScrollbarThemeFluent::BuildScrollbarThumbExtraParams(
+    const Scrollbar& scrollbar) const {
+  WebThemeEngine::ScrollbarThumbExtraParams scrollbar_thumb;
+  if (scrollbar.ScrollbarThumbColor().has_value()) {
+    scrollbar_thumb.thumb_color =
+        scrollbar.ScrollbarThumbColor().value().toSkColor4f().toSkColor();
+  }
+  if (scrollbar.ScrollbarTrackColor().has_value()) {
+    scrollbar_thumb.track_color =
+        scrollbar.ScrollbarTrackColor().value().toSkColor4f().toSkColor();
+  }
+  scrollbar_thumb.is_thumb_minimal_mode =
+      scrollbar.IsFluentOverlayScrollbarMinimalMode();
+  scrollbar_thumb.is_web_test = WebTestSupport::IsRunningWebTest();
+  return scrollbar_thumb;
 }
 
 gfx::Rect ScrollbarThemeFluent::InsetTrackRect(const Scrollbar& scrollbar,
@@ -204,20 +236,25 @@ int ScrollbarThemeFluent::ScrollbarTrackInsetPx(float scale) const {
 }
 
 gfx::Rect ScrollbarThemeFluent::ShrinkMainThreadedMinimalModeThumbRect(
-    Scrollbar& scrollbar,
-    gfx::Rect& rect) const {
+    const Scrollbar& scrollbar,
+    const gfx::Rect& rect) const {
   CHECK(UsesOverlayScrollbars());
   const float idle_thickness_scale = style_.idle_thickness_scale;
+  gfx::RectF thumb_rect(rect);
   if (scrollbar.Orientation() == kHorizontalScrollbar) {
-    rect.set_y(rect.y() + rect.height() * (1 - idle_thickness_scale));
-    rect.set_height(rect.height() * idle_thickness_scale);
+    thumb_rect.set_y(rect.y() + rect.height() * (1 - idle_thickness_scale));
+    thumb_rect.set_height(rect.height() * idle_thickness_scale);
   } else {
     if (!scrollbar.IsLeftSideVerticalScrollbar()) {
-      rect.set_x(rect.x() + rect.width() * (1 - idle_thickness_scale));
+      thumb_rect.set_x(rect.x() + rect.width() * (1 - idle_thickness_scale));
     }
-    rect.set_width(rect.width() * idle_thickness_scale);
+    thumb_rect.set_width(rect.width() * idle_thickness_scale);
   }
-  return rect;
+  return gfx::ToEnclosingRect(thumb_rect);
+}
+
+bool ScrollbarThemeFluent::UsesNinePatchTrackAndButtonsResource() const {
+  return true;
 }
 
 }  // namespace blink

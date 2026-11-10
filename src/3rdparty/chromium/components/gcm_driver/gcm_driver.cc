@@ -23,7 +23,8 @@ namespace gcm {
 
 namespace {
 
-// Copied from components/invalidation/impl/fcm_invalidation_service_base.cc.
+// Copied from
+// https://source.chromium.org/chromium/chromium/src/+/main:components/invalidation/invalidation_listener.h;l=76;drc=16479132e8be0c0b5740b34ddfd62817ec490945.
 constexpr char kFcmInvalidationsApplicationName[] =
     "com.google.chrome.fcm.invalidations";
 // Copied from components/sync/invalidations/sync_invalidations_service_impl.cc.
@@ -38,7 +39,7 @@ void LogDeliveredToAppHandler(const std::string& app_id, bool has_app_handler) {
   if (app_id == kSyncInvalidationsApplicationName) {
     base::UmaHistogramBoolean("GCM.DeliveredToAppHandler.SyncInvalidations",
                               has_app_handler);
-  } else if (app_id == kFcmInvalidationsApplicationName) {
+  } else if (app_id.starts_with(kFcmInvalidationsApplicationName)) {
     base::UmaHistogramBoolean("GCM.DeliveredToAppHandler.FcmInvalidations",
                               has_app_handler);
   }
@@ -311,7 +312,7 @@ void GCMDriver::DispatchMessageInternal(const std::string& app_id,
       GCMAppHandler* handler = GetAppHandler(app_id);
       LogDeliveredToAppHandler(app_id, !!handler);
 
-      // TODO(crbug.com/1408769): store incoming messages in memory while
+      // TODO(crbug.com/40888673): store incoming messages in memory while
       // AppHandler is not registered.
       if (handler)
         handler->OnMessage(app_id, message);

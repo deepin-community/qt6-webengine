@@ -12,6 +12,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import android.content.SharedPreferences;
+
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
@@ -401,6 +403,29 @@ public class SharedPreferencesManagerTest {
 
     @Test
     @SmallTest
+    public void testRemoveKeys_2() {
+        // Write some values
+        mSubject.writeInt(TEST_PREFIX.createKey("infix1"), 111);
+        mSubject.writeInt(TEST_PREFIX.createKey("infix2"), 222);
+        mSubject.writeInt(TEST_PREFIX.createKey("infix3"), 333);
+        mSubject.writeInt(PREFIXED_KEY_1, 444);
+        mSubject.writeInt(PREFIXED_KEY_2, 555);
+        mSubject.writeInt(PREFIXED_KEY_3, 666);
+
+        // Remove some of them
+        mSubject.removeKeysWithPrefix(TEST_PREFIX, "infix");
+
+        // Verify only values with the given prefix were removed.
+        assertEquals(0, mSubject.readInt(TEST_PREFIX.createKey("infix1"), 0));
+        assertEquals(0, mSubject.readInt(TEST_PREFIX.createKey("infix2"), 0));
+        assertEquals(0, mSubject.readInt(TEST_PREFIX.createKey("infix3"), 0));
+        assertEquals(444, mSubject.readInt(PREFIXED_KEY_1, 0));
+        assertEquals(555, mSubject.readInt(PREFIXED_KEY_2, 0));
+        assertEquals(666, mSubject.readInt(PREFIXED_KEY_3, 0));
+    }
+
+    @Test
+    @SmallTest
     public void testReadStringsWithPrefix() {
         // Write some values.
         mSubject.writeString(PREFIXED_KEY_1, "first");
@@ -565,5 +590,33 @@ public class SharedPreferencesManagerTest {
         verify(mChecker, times(6)).checkIsPrefixInUse(eq(TEST_PREFIX));
         mSubject.removeKeysWithPrefix(TEST_PREFIX);
         verify(mChecker, times(7)).checkIsPrefixInUse(eq(TEST_PREFIX));
+        mSubject.removeKeysWithPrefix(TEST_PREFIX, "some_key");
+        verify(mChecker, times(8)).checkIsPrefixInUse(eq(TEST_PREFIX));
+    }
+
+    @Test
+    @SmallTest
+    public void testCheckerIsCalledInEditor() {
+        final SharedPreferences.Editor ed = mSubject.getEditor();
+        ed.putInt("int_key", 123);
+        verify(mChecker).checkIsKeyInUse(eq("int_key"));
+
+        ed.putBoolean("bool_key", true);
+        verify(mChecker).checkIsKeyInUse(eq("bool_key"));
+
+        ed.putString("string_key", "foo");
+        verify(mChecker).checkIsKeyInUse(eq("string_key"));
+
+        ed.putLong("long_key", 999L);
+        verify(mChecker).checkIsKeyInUse(eq("long_key"));
+
+        ed.putFloat("float_key", 2.5f);
+        verify(mChecker).checkIsKeyInUse(eq("float_key"));
+
+        ed.putStringSet("string_set_key", new HashSet<>());
+        verify(mChecker).checkIsKeyInUse(eq("string_set_key"));
+
+        ed.remove("some_key");
+        verify(mChecker).checkIsKeyInUse(eq("some_key"));
     }
 }

@@ -39,11 +39,10 @@
 namespace blink {
 
 class DOMWindow;
-class ExceptionState;
 class LocalDOMWindow;
 class Location;
 class Node;
-struct WrapperTypeInfo;
+class ScriptState;
 
 // BindingSecurity provides utility functions that determine access permission
 // between two realms. For example, is the current Window allowed to access the
@@ -90,10 +89,24 @@ class CORE_EXPORT BindingSecurity {
       v8::Local<v8::Context> accessing_context,
       v8::MaybeLocal<v8::Context> target_context);
 
-  static void FailedAccessCheckFor(v8::Isolate*,
-                                   const WrapperTypeInfo*,
-                                   v8::Local<v8::Object> holder,
-                                   ExceptionState&);
+  static bool ShouldAllowAccessToV8Context(ScriptState* accessing_script_state,
+                                           ScriptState* target_script_state) {
+    DCHECK(accessing_script_state);
+
+    // Fast path for the most likely case.
+    if (accessing_script_state == target_script_state) [[likely]] {
+      return true;
+    }
+    return ShouldAllowAccessToV8ContextInternal(accessing_script_state,
+                                                target_script_state);
+  }
+
+  static void FailedAccessCheckFor(v8::Local<v8::Object> holder);
+
+ private:
+  static bool ShouldAllowAccessToV8ContextInternal(
+      ScriptState* accessing_script_state,
+      ScriptState* target_script_state);
 };
 
 }  // namespace blink

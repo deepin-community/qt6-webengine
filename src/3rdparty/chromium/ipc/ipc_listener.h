@@ -21,8 +21,8 @@ class Message;
 class COMPONENT_EXPORT(IPC) Listener {
  public:
   // Called when a message is received.  Returns true iff the message was
-  // handled.
-  virtual bool OnMessageReceived(const Message& message) = 0;
+  // handled. Default implementation rejects all messages.
+  virtual bool OnMessageReceived(const Message& message);
 
   // Called when the channel is connected and we have received the internal
   // Hello message from the peer.
@@ -52,7 +52,7 @@ class COMPONENT_EXPORT(IPC) Listener {
 #endif  // BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 
   // Debugging helper for identifying what kind of a Listener this is.
-  // TODO(https://crbug.com/1113159): Remove this method once the bug is fixed.
+  // TODO(crbug.com/40143346): Remove this method once the bug is fixed.
   virtual std::string ToDebugString();
 
  protected:

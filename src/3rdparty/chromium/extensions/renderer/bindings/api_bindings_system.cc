@@ -155,6 +155,10 @@ void APIBindingsSystem::RegisterCustomType(const std::string& type_name,
   custom_types_[type_name] = std::move(function);
 }
 
+void APIBindingsSystem::DidCreateContext(v8::Local<v8::Context> context) {
+  binding::InitializeContext(context);
+}
+
 void APIBindingsSystem::WillReleaseContext(v8::Local<v8::Context> context) {
   binding::InvalidateContext(context);
   request_handler_.InvalidateContext(context);
@@ -167,7 +171,7 @@ v8::Local<v8::Object> APIBindingsSystem::CreateCustomType(
     const std::string& property_name,
     const base::Value::List* property_values) {
   auto iter = custom_types_.find(type_name);
-  DCHECK(iter != custom_types_.end()) << "Custom type not found: " << type_name;
+  CHECK(iter != custom_types_.end()) << "Custom type not found: " << type_name;
   return iter->second.Run(isolate, property_name, property_values,
                           &request_handler_, &event_handler_,
                           &type_reference_map_, &access_checker_);

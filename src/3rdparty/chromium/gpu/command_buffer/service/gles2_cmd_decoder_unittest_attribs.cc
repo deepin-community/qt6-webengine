@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 
 #include "base/command_line.h"
@@ -14,7 +19,6 @@
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_unittest.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
-#include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "gpu/command_buffer/service/program_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
@@ -84,6 +88,12 @@ TEST_P(GLES2DecoderWithShaderTest, EnabledVertexAttribArrayIsDisabledIfUnused) {
   EXPECT_CALL(*gl_, DisableVertexAttribArray(3)).Times(1).RetiresOnSaturation();
   // Perform a draw which uses only attributes 0, 1, 2 - not attrib 3
   {
+    EXPECT_CALL(*gl_, BindTexture(GL_TEXTURE_2D, _))
+        .Times(2)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE0))
+        .Times(3)
+        .RetiresOnSaturation();
     EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
         .Times(1)
         .RetiresOnSaturation();
@@ -276,7 +286,6 @@ class GLES2DecoderVertexArraysOESTest : public GLES2DecoderWithShaderTest {
   void SetUp() override {
     InitState init;
     init.gl_version = "OpenGL ES 2.0";
-    init.bind_generates_resource = true;
     InitDecoder(init);
     SetupDefaultProgram();
 
@@ -407,7 +416,6 @@ class GLES2DecoderEmulatedVertexArraysOESTest
 
   void SetUp() override {
     InitState init;
-    init.bind_generates_resource = true;
     init.use_native_vao = false;
     InitDecoder(init);
     SetupDefaultProgram();

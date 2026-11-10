@@ -8,18 +8,19 @@
 
 #include <stdint.h>
 
-#include <iterator>
+#include <array>
+#include <limits>
+#include <string>
+#include <vector>
 
 #include "build/build_config.h"
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/code_point_view.h"
 #include "core/fxcrt/fx_extension.h"
-#include "core/fxcrt/span_util.h"
-#include "core/fxcrt/string_view_template.h"
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/utf16.h"
 #include "core/fxcrt/widestring.h"
-#include "third_party/base/compiler_specific.h"
-#include "third_party/base/containers/span.h"
+#include "third_party/fast_float/src/include/fast_float/fast_float.h"
 
 #if !defined(WCHAR_T_IS_16_BIT) && !defined(WCHAR_T_IS_32_BIT)
 #error "Unknown wchar_t size"
@@ -54,7 +55,7 @@ void AppendCodePointToByteString(char32_t code_point, ByteString& buffer) {
     byte_size = 4;
   }
 
-  static constexpr uint8_t kPrefix[] = {0xc0, 0xe0, 0xf0};
+  static constexpr std::array<uint8_t, 3> kPrefix = {{0xc0, 0xe0, 0xf0}};
   int order = 1 << ((byte_size - 1) * 6);
   buffer += kPrefix[byte_size - 2] | (code_point / order);
   for (int i = 0; i < byte_size - 1; i++) {
@@ -62,6 +63,67 @@ void AppendCodePointToByteString(char32_t code_point, ByteString& buffer) {
     order >>= 6;
     buffer += 0x80 | (code_point / order);
   }
+}
+
+template <typename IntType, typename StringViewType>
+IntType StringToIntImpl(StringViewType str) {
+  if (str.IsEmpty()) {
+    return 0;
+  }
+
+  // Process the sign.
+  bool neg = str.CharAt(0u) == '-';
+  if (neg || str.CharAt(0u) == '+') {
+    str = str.Substr(1u);
+  }
+
+  IntType num = 0;
+  while (!str.IsEmpty() && FXSYS_IsDecimalDigit(str.CharAt(0u))) {
+    IntType val = FXSYS_DecimalCharToInt(str.CharAt(0u));
+    if (num > (std::numeric_limits<IntType>::max() - val) / 10) {
+      if (neg && std::numeric_limits<IntType>::is_signed) {
+        // Return MIN when the represented number is signed type and is smaller
+        // than the min value.
+        return std::numeric_limits<IntType>::min();
+      }
+      // Return MAX when the represented number is signed type and is larger
+      // than the max value, or the number is unsigned type and out of range.
+      return std::numeric_limits<IntType>::max();
+    }
+    num = num * 10 + val;
+    str = str.Substr(1u);
+  }
+  // When it is a negative value, -num should be returned. Since num may be of
+  // unsigned type, use ~num + 1 to avoid the warning of applying unary minus
+  // operator to unsigned type.
+  return neg ? ~num + 1 : num;
+}
+
+// Intended to work for the cases where `ReturnType` is float or double, and
+// `InputType` is ByteStringView or WideStringView.
+template <class ReturnType, class InputType>
+ReturnType StringToFloatImpl(InputType strc) {
+  // Skip leading whitespaces.
+  size_t start = 0;
+  size_t len = strc.GetLength();
+  while (start < len && strc[start] == ' ') {
+    ++start;
+  }
+
+  InputType sub_strc = strc.Substr(start, len - start);
+
+  ReturnType value;
+  auto result =
+      fast_float::from_chars(sub_strc.begin(), sub_strc.end(), value,
+                             static_cast<fast_float::chars_format>(
+                                 fast_float::chars_format::general |
+                                 fast_float::chars_format::allow_leading_plus));
+
+  // Return 0 for parsing errors. Some examples of errors are an empty string
+  // and a string that cannot be converted to `ReturnType`.
+  return result.ec == std::errc() || result.ec == std::errc::result_out_of_range
+             ? value
+             : 0;
 }
 
 }  // namespace
@@ -97,130 +159,28 @@ std::u16string FX_UTF16Encode(WideStringView wsStr) {
   return result;
 }
 
-namespace {
-
-constexpr float kFractionScalesFloat[] = {
-    0.1f,         0.01f,         0.001f,        0.0001f,
-    0.00001f,     0.000001f,     0.0000001f,    0.00000001f,
-    0.000000001f, 0.0000000001f, 0.00000000001f};
-
-const double kFractionScalesDouble[] = {
-    0.1,       0.01,       0.001,       0.0001,       0.00001,      0.000001,
-    0.0000001, 0.00000001, 0.000000001, 0.0000000001, 0.00000000001};
-
-template <class T>
-T StringTo(ByteStringView strc, pdfium::span<const T> fractional_scales) {
-  if (strc.IsEmpty())
-    return 0;
-
-  bool bNegative = false;
-  size_t cc = 0;
-  size_t len = strc.GetLength();
-  if (strc[0] == '+') {
-    cc++;
-  } else if (strc[0] == '-') {
-    bNegative = true;
-    cc++;
-  }
-  while (cc < len) {
-    if (strc[cc] != '+' && strc[cc] != '-')
-      break;
-    cc++;
-  }
-  T value = 0;
-  while (cc < len) {
-    if (strc[cc] == '.')
-      break;
-    value = value * 10 + FXSYS_DecimalCharToInt(strc.CharAt(cc));
-    cc++;
-  }
-  size_t scale = 0;
-  if (cc < len && strc[cc] == '.') {
-    cc++;
-    while (cc < len) {
-      value +=
-          fractional_scales[scale] * FXSYS_DecimalCharToInt(strc.CharAt(cc));
-      scale++;
-      if (scale == fractional_scales.size())
-        break;
-      cc++;
-    }
-  }
-  return bNegative ? -value : value;
+int32_t StringToInt(ByteStringView str) {
+  return StringToIntImpl<int32_t, ByteStringView>(str);
 }
 
-template <class T>
-size_t ToString(T value, int (*round_func)(T), pdfium::span<char> buf) {
-  buf[0] = '0';
-  buf[1] = '\0';
-  if (value == 0) {
-    return 1;
-  }
-  bool bNegative = false;
-  if (value < 0) {
-    bNegative = true;
-    value = -value;
-  }
-  int scale = 1;
-  int scaled = round_func(value);
-  while (scaled < 100000) {
-    if (scale == 1000000) {
-      break;
-    }
-    scale *= 10;
-    scaled = round_func(value * scale);
-  }
-  if (scaled == 0) {
-    return 1;
-  }
-  char buf2[32];
-  size_t buf_size = 0;
-  if (bNegative) {
-    buf[buf_size++] = '-';
-  }
-  int i = scaled / scale;
-  FXSYS_itoa(i, buf2, 10);
-  size_t len = strlen(buf2);
-  fxcrt::spancpy(buf.subspan(buf_size), pdfium::make_span(buf2).first(len));
-  buf_size += len;
-  int fraction = scaled % scale;
-  if (fraction == 0) {
-    return buf_size;
-  }
-  buf[buf_size++] = '.';
-  scale /= 10;
-  while (fraction) {
-    buf[buf_size++] = '0' + fraction / scale;
-    fraction %= scale;
-    scale /= 10;
-  }
-  return buf_size;
+int32_t StringToInt(WideStringView wsStr) {
+  return StringToIntImpl<int32_t, WideStringView>(wsStr);
 }
-
-}  // namespace
 
 float StringToFloat(ByteStringView strc) {
-  return StringTo<float>(strc, kFractionScalesFloat);
+  return StringToFloatImpl<float>(strc);
 }
 
 float StringToFloat(WideStringView wsStr) {
-  return StringToFloat(FX_UTF8Encode(wsStr).AsStringView());
-}
-
-size_t FloatToString(float f, pdfium::span<char> buf) {
-  return ToString<float>(f, FXSYS_roundf, buf);
+  return StringToFloatImpl<float>(wsStr);
 }
 
 double StringToDouble(ByteStringView strc) {
-  return StringTo<double>(strc, kFractionScalesDouble);
+  return StringToFloatImpl<double>(strc);
 }
 
 double StringToDouble(WideStringView wsStr) {
-  return StringToDouble(FX_UTF8Encode(wsStr).AsStringView());
-}
-
-size_t DoubleToString(double d, pdfium::span<char> buf) {
-  return ToString<double>(d, FXSYS_round, buf);
+  return StringToFloatImpl<double>(wsStr);
 }
 
 namespace fxcrt {

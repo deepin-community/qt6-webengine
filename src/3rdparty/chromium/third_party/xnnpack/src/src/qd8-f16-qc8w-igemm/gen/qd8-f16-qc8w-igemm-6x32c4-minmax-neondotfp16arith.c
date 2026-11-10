@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/c4-neondot.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,16 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/igemm.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qd8_f16_qc8w_igemm_minmax_ukernel_6x32c4__neondotfp16arith(
@@ -22,14 +27,14 @@ void xnn_qd8_f16_qc8w_igemm_minmax_ukernel_6x32c4__neondotfp16arith(
     size_t ks,
     const int8_t** restrict a,
     const void* restrict w,
-    void* restrict c,
+    xnn_float16* restrict c,
     size_t cm_stride,
     size_t cn_stride,
     size_t a_offset,
     const int8_t* zero,
     const int8_t* zero_data,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f16_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 6);
@@ -628,7 +633,7 @@ void xnn_qd8_f16_qc8w_igemm_minmax_ukernel_6x32c4__neondotfp16arith(
     float16x8_t vfp16out5xGHIJKLMN = vcombine_f16(vcvt_f16_f32(vout5xGHIJ), vcvt_f16_f32(vout5xKLMN));
     float16x8_t vfp16out5xOPQRSTUV = vcombine_f16(vcvt_f16_f32(vout5xOPQR), vcvt_f16_f32(vout5xSTUV));
 
-    const float16x8_t voutput_min = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.min));
+    const float16x8_t voutput_min = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.min));
     vfp16out0x01234567 = vmaxq_f16(vfp16out0x01234567, voutput_min);
     vfp16out0x89ABCDEF = vmaxq_f16(vfp16out0x89ABCDEF, voutput_min);
     vfp16out0xGHIJKLMN = vmaxq_f16(vfp16out0xGHIJKLMN, voutput_min);
@@ -653,7 +658,7 @@ void xnn_qd8_f16_qc8w_igemm_minmax_ukernel_6x32c4__neondotfp16arith(
     vfp16out5x89ABCDEF = vmaxq_f16(vfp16out5x89ABCDEF, voutput_min);
     vfp16out5xGHIJKLMN = vmaxq_f16(vfp16out5xGHIJKLMN, voutput_min);
     vfp16out5xOPQRSTUV = vmaxq_f16(vfp16out5xOPQRSTUV, voutput_min);
-    const float16x8_t voutput_max = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.max));
+    const float16x8_t voutput_max = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.max));
     vfp16out0x01234567 = vminq_f16(vfp16out0x01234567, voutput_max);
     vfp16out0x89ABCDEF = vminq_f16(vfp16out0x89ABCDEF, voutput_max);
     vfp16out0xGHIJKLMN = vminq_f16(vfp16out0xGHIJKLMN, voutput_max);

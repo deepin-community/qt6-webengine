@@ -11,7 +11,6 @@
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/account_info.h"
@@ -21,21 +20,19 @@
 
 namespace password_manager {
 
-SyncCredentialsFilter::SyncCredentialsFilter(
-    PasswordManagerClient* client,
-    SyncServiceFactoryFunction sync_service_factory_function)
-    : client_(client),
-      sync_service_factory_function_(std::move(sync_service_factory_function)) {
-}
+SyncCredentialsFilter::SyncCredentialsFilter(PasswordManagerClient* client)
+    : client_(client) {}
 
 SyncCredentialsFilter::~SyncCredentialsFilter() = default;
 
 bool SyncCredentialsFilter::ShouldSave(const PasswordForm& form) const {
-  if (client_->IsOffTheRecord())
+  if (client_->IsOffTheRecord()) {
     return false;
+  }
 
-  if (form.form_data.is_gaia_with_skip_save_password_form)
+  if (form.form_data.is_gaia_with_skip_save_password_form()) {
     return false;
+  }
 
   if (!sync_util::IsGaiaCredentialPage(form.signon_realm)) {
     return true;
@@ -43,8 +40,7 @@ bool SyncCredentialsFilter::ShouldSave(const PasswordForm& form) const {
 
   // Note that `sync_service` may be null in advanced cases like --disable-sync
   // being used as per syncer::IsSyncAllowedByFlag().
-  const syncer::SyncService* sync_service =
-      sync_service_factory_function_.Run();
+  const syncer::SyncService* sync_service = client_->GetSyncService();
 
   // The requirement to fulfill is "don't offer to save a Gaia password inside
   // its own account".
@@ -79,11 +75,8 @@ bool SyncCredentialsFilter::ShouldSave(const PasswordForm& form) const {
 
 bool SyncCredentialsFilter::ShouldSaveGaiaPasswordHash(
     const PasswordForm& form) const {
-  if (base::FeatureList::IsEnabled(features::kPasswordReuseDetectionEnabled)) {
-    return !client_->IsOffTheRecord() &&
-           sync_util::IsGaiaCredentialPage(form.signon_realm);
-  }
-  return false;
+  return !client_->IsOffTheRecord() &&
+         sync_util::IsGaiaCredentialPage(form.signon_realm);
 }
 
 bool SyncCredentialsFilter::ShouldSaveEnterprisePasswordHash(
@@ -95,7 +88,7 @@ bool SyncCredentialsFilter::ShouldSaveEnterprisePasswordHash(
 
 bool SyncCredentialsFilter::IsSyncAccountEmail(
     const std::string& username) const {
-  // TODO(https://crbug.com/1464264): `signin::ConsentLevel::kSync` is
+  // TODO(crbug.com/40067296): `signin::ConsentLevel::kSync` is
   // deprecated. Remove this usage.
   return sync_util::IsSyncAccountEmail(username, client_->GetIdentityManager(),
                                        signin::ConsentLevel::kSync);

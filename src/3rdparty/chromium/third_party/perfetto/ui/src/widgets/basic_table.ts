@@ -13,49 +13,34 @@
 // limitations under the License.
 
 import m from 'mithril';
+import {CustomTable} from './custom_table';
 
 export interface ColumnDescriptor<T> {
-  title: m.Children;
+  readonly title: m.Children;
   render: (row: T) => m.Children;
 }
 
-export interface TableAttrs<T> {
-  data: T[];
-  columns: ColumnDescriptor<T>[];
+export interface BasicTableAttrs<T> {
+  readonly data: ReadonlyArray<T>;
+  readonly columns: ReadonlyArray<ColumnDescriptor<T>>;
+  onreorder?: (from: number, to: number) => void;
+  readonly className?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export class BasicTable implements m.ClassComponent<TableAttrs<any>> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  renderColumnHeader(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      _vnode: m.Vnode<TableAttrs<any>>,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      column: ColumnDescriptor<any>): m.Children {
-    return m('td', column.title);
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  view(vnode: m.Vnode<TableAttrs<any>>): m.Child {
-    const attrs = vnode.attrs;
-
-    return m(
-        'table.generic-table',
+export class BasicTable<T> implements m.ClassComponent<BasicTableAttrs<T>> {
+  view({attrs}: m.Vnode<BasicTableAttrs<T>>): m.Children {
+    return m(CustomTable<T>, {
+      columns: [
         {
-          // TODO(altimin, stevegolton): this should be the default for
-          // generic-table, but currently it is overriden by
-          // .pf-details-shell .pf-content table, so specify this here for now.
-          style: {
-            'table-layout': 'auto',
-          },
+          columns: attrs.columns.map((c) => ({
+            title: c.title,
+            render: (row: T) => ({cell: c.render(row)}),
+          })),
+          reorder: attrs.onreorder,
         },
-        m('thead',
-          m('tr.header',
-            attrs.columns.map(
-                (column) => this.renderColumnHeader(vnode, column)))),
-        attrs.data.map(
-            (row) =>
-                m('tr',
-                  attrs.columns.map((column) => m('td', column.render(row))))));
+      ],
+      data: attrs.data,
+      className: attrs.className,
+    });
   }
 }

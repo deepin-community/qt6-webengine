@@ -1,6 +1,7 @@
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
@@ -11,6 +12,7 @@ import type * as Bindings from '../../models/bindings/bindings.js';
 import type * as BreakpointManager from '../../models/breakpoints/breakpoints.js';
 import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {getLocalizedBreakpointName} from './CategorizedBreakpointL10n.js';
 import debuggerPausedMessageStyles from './debuggerPausedMessage.css.js';
@@ -109,7 +111,7 @@ const UIStrings = {
    *@example {"script-src 'self'"} PH1
    */
   scriptBlockedDueToContent: 'Script blocked due to Content Security Policy directive: {PH1}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/sources/DebuggerPausedMessage.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
@@ -121,9 +123,10 @@ export class DebuggerPausedMessage {
     this.elementInternal = document.createElement('div');
     this.elementInternal.classList.add('paused-message');
     this.elementInternal.classList.add('flex-none');
-    const root = UI.Utils.createShadowRootWithCoreStyles(
-        this.elementInternal, {cssFile: [debuggerPausedMessageStyles], delegatesFocus: undefined});
-    this.contentElement = (root.createChild('div') as HTMLElement);
+    this.elementInternal.setAttribute('jslog', `${VisualLogging.dialog('debugger-paused')}`);
+    const root =
+        UI.UIUtils.createShadowRootWithCoreStyles(this.elementInternal, {cssFile: debuggerPausedMessageStyles});
+    this.contentElement = root.createChild('div');
     UI.ARIAUtils.markAsPoliteLiveRegion(this.elementInternal, false);
   }
 
@@ -263,8 +266,7 @@ export class DebuggerPausedMessage {
     } else if (details.reason === Protocol.Debugger.PausedEventReason.OOM) {
       messageWrapper = buildWrapper(i18nString(UIStrings.pausedBeforePotentialOutofmemory));
     } else if (
-        details.reason === Protocol.Debugger.PausedEventReason.CSPViolation && details.auxData &&
-        details.auxData['violationType']) {
+        details.reason === Protocol.Debugger.PausedEventReason.CSPViolation && details.auxData?.['violationType']) {
       const text = (details.auxData['violationType'] as string);
       if (text === Protocol.DOMDebugger.CSPViolationType.TrustedtypeSinkViolation) {
         messageWrapper =

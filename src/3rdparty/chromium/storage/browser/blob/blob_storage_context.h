@@ -34,7 +34,6 @@
 namespace content {
 
 class ChromeBlobStorageContext;
-class ShareableBlobDataItem;
 
 namespace indexed_db_backing_store_unittest {
 class BlobStorageContextShim;
@@ -47,6 +46,7 @@ namespace storage {
 class BlobDataBuilder;
 class BlobDataHandle;
 class BlobDataSnapshot;
+class ShareableBlobDataItem;
 
 // This class handles the logistics of blob storage within the browser process.
 // This class is not threadsafe, access on IO thread. In Chromium there is one
@@ -255,6 +255,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobStorageContext
                        const base::FilePath& path,
                        bool flush_on_write,
                        std::optional<base::Time> last_modified,
+                       uint64_t expected_size,
                        WriteBlobToFileCallback callback) override;
   void Clone(mojo::PendingReceiver<mojom::BlobStorageContext> cloned) override;
 

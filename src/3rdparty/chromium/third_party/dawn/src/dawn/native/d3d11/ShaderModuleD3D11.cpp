@@ -28,11 +28,12 @@
 #include "dawn/native/d3d11/ShaderModuleD3D11.h"
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "dawn/common/Assert.h"
-#include "dawn/common/BitSetIterator.h"
 #include "dawn/common/Log.h"
+#include "dawn/native/ImmediateConstantsLayout.h"
 #include "dawn/native/Pipeline.h"
 #include "dawn/native/TintUtils.h"
 #include "dawn/native/d3d/D3DCompilationRequest.h"
@@ -56,20 +57,20 @@ namespace dawn::native::d3d11 {
 ResultOrError<Ref<ShaderModule>> ShaderModule::Create(
     Device* device,
     const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
-    ShaderModuleParseResult* parseResult,
-    OwnedCompilationMessages* compilationMessages) {
-    Ref<ShaderModule> module = AcquireRef(new ShaderModule(device, descriptor));
-    DAWN_TRY(module->Initialize(parseResult, compilationMessages));
+    const std::vector<tint::wgsl::Extension>& internalExtensions,
+    ShaderModuleParseResult* parseResult) {
+    Ref<ShaderModule> module = AcquireRef(new ShaderModule(device, descriptor, internalExtensions));
+    DAWN_TRY(module->Initialize(parseResult));
     return module;
 }
 
-ShaderModule::ShaderModule(Device* device, const UnpackedPtr<ShaderModuleDescriptor>& descriptor)
-    : ShaderModuleBase(device, descriptor) {}
+ShaderModule::ShaderModule(Device* device,
+                           const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
+                           std::vector<tint::wgsl::Extension> internalExtensions)
+    : ShaderModuleBase(device, descriptor, std::move(internalExtensions)) {}
 
-MaybeError ShaderModule::Initialize(ShaderModuleParseResult* parseResult,
-                                    OwnedCompilationMessages* compilationMessages) {
-    ScopedTintICEHandler scopedICEHandler(GetDevice());
-    return InitializeBase(parseResult, compilationMessages);
+MaybeError ShaderModule::Initialize(ShaderModuleParseResult* parseResult) {
+    return InitializeBase(parseResult);
 }
 
 ResultOrError<d3d::CompiledShader> ShaderModule::Compile(
@@ -77,28 +78,30 @@ ResultOrError<d3d::CompiledShader> ShaderModule::Compile(
     SingleShaderStage stage,
     const PipelineLayout* layout,
     uint32_t compileFlags,
+    const ImmediateConstantMask& pipelineImmediateMask,
     const std::optional<dawn::native::d3d::InterStageShaderVariablesMask>& usedInterstageVariables,
-    const std::optional<tint::PixelLocalOptions>& pixelLocalOptions) {
+    const std::optional<tint::hlsl::writer::PixelLocalOptions>& pixelLocalOptions) {
     Device* device = ToBackend(GetDevice());
     TRACE_EVENT0(device->GetPlatform(), General, "ShaderModuleD3D11::Compile");
     DAWN_ASSERT(!IsError());
 
-    ScopedTintICEHandler scopedICEHandler(device);
     const EntryPointMetadata& entryPoint = GetEntryPoint(programmableStage.entryPoint);
 
     d3d::D3DCompilationRequest req = {};
-    req.tracePlatform = UnsafeUnkeyedValue(device->GetPlatform());
+    req.tracePlatform = UnsafeUnserializedValue(device->GetPlatform());
     req.hlsl.shaderModel = 50;
     req.hlsl.disableSymbolRenaming = device->IsToggleEnabled(Toggle::DisableSymbolRenaming);
     req.hlsl.dumpShaders = device->IsToggleEnabled(Toggle::DumpShaders);
+    req.hlsl.dumpShadersOnFailure = device->IsToggleEnabled(Toggle::DumpShadersOnFailure);
+    req.hlsl.tintOptions.remapped_entry_point_name = device->GetIsolatedEntryPointName();
 
     req.bytecode.hasShaderF16Feature = false;
     req.bytecode.compileFlags = compileFlags;
 
     // D3D11 only supports FXC.
     req.bytecode.compiler = d3d::Compiler::FXC;
-    req.bytecode.d3dCompile = device->GetFunctions()->d3dCompile;
-    req.bytecode.compilerVersion = D3D_COMPILER_VERSION;
+    req.bytecode.d3dCompile =
+        UnsafeUnserializedValue(pD3DCompile{device->GetFunctions()->d3dCompile});
     DAWN_ASSERT(device->GetDeviceInfo().shaderModel == 50);
     switch (stage) {
         case SingleShaderStage::Vertex:
@@ -112,85 +115,105 @@ ResultOrError<d3d::CompiledShader> ShaderModule::Compile(
             break;
     }
 
-    tint::BindingRemapperOptions bindingRemapper;
-
     const BindingInfoArray& moduleBindingInfo = entryPoint.bindings;
 
-    for (BindGroupIndex group : IterateBitSet(layout->GetBindGroupLayoutsMask())) {
-        const BindGroupLayout* groupLayout = ToBackend(layout->GetBindGroupLayout(group));
-        const auto& indices = layout->GetBindingIndexInfo()[group];
-        const auto& groupBindingInfo = moduleBindingInfo[group];
+    tint::hlsl::writer::Bindings bindings;
 
-        for (const auto& [binding, bindingInfo] : groupBindingInfo) {
-            BindingIndex bindingIndex = groupLayout->GetBindingIndex(binding);
+    for (BindGroupIndex group : layout->GetBindGroupLayoutsMask()) {
+        const BindGroupLayout* bgl = ToBackend(layout->GetBindGroupLayout(group));
+        const auto& indices = layout->GetBindingTableIndexMap()[group];
+        const BindingGroupInfoMap& moduleGroupBindingInfo = moduleBindingInfo[group];
+
+        for (const auto& [binding, shaderBindingInfo] : moduleGroupBindingInfo) {
+            BindingIndex bindingIndex = bgl->GetBindingIndex(binding);
             tint::BindingPoint srcBindingPoint{static_cast<uint32_t>(group),
                                                static_cast<uint32_t>(binding)};
-            tint::BindingPoint dstBindingPoint{0u, indices[bindingIndex]};
-            if (srcBindingPoint != dstBindingPoint) {
-                bindingRemapper.binding_points.emplace(srcBindingPoint, dstBindingPoint);
+            tint::BindingPoint dstBindingPoint{0u, indices[bindingIndex][stage]};
+            DAWN_ASSERT(dstBindingPoint.binding != PipelineLayout::kInvalidSlot);
+
+            auto* const bufferBindingInfo =
+                std::get_if<BufferBindingInfo>(&shaderBindingInfo.bindingInfo);
+
+            if (bufferBindingInfo) {
+                switch (bufferBindingInfo->type) {
+                    case wgpu::BufferBindingType::Uniform:
+                        bindings.uniform.emplace(
+                            srcBindingPoint, tint::hlsl::writer::binding::Uniform{
+                                                 dstBindingPoint.group, dstBindingPoint.binding});
+                        break;
+                    case kInternalStorageBufferBinding:
+                    case wgpu::BufferBindingType::Storage:
+                    case wgpu::BufferBindingType::ReadOnlyStorage:
+                    case kInternalReadOnlyStorageBufferBinding:
+                        bindings.storage.emplace(
+                            srcBindingPoint, tint::hlsl::writer::binding::Storage{
+                                                 dstBindingPoint.group, dstBindingPoint.binding});
+                        break;
+                    case wgpu::BufferBindingType::BindingNotUsed:
+                    case wgpu::BufferBindingType::Undefined:
+                        DAWN_UNREACHABLE();
+                        break;
+                }
+            } else if (std::holds_alternative<SamplerBindingInfo>(shaderBindingInfo.bindingInfo)) {
+                bindings.sampler.emplace(
+                    srcBindingPoint, tint::hlsl::writer::binding::Sampler{dstBindingPoint.group,
+                                                                          dstBindingPoint.binding});
+            } else if (std::holds_alternative<TextureBindingInfo>(shaderBindingInfo.bindingInfo)) {
+                bindings.texture.emplace(
+                    srcBindingPoint, tint::hlsl::writer::binding::Texture{dstBindingPoint.group,
+                                                                          dstBindingPoint.binding});
+            } else if (std::holds_alternative<StorageTextureBindingInfo>(
+                           shaderBindingInfo.bindingInfo)) {
+                bindings.storage_texture.emplace(
+                    srcBindingPoint, tint::hlsl::writer::binding::StorageTexture{
+                                         dstBindingPoint.group, dstBindingPoint.binding});
+            } else if (std::holds_alternative<ExternalTextureBindingInfo>(
+                           shaderBindingInfo.bindingInfo)) {
+                const auto& etBindingMap = bgl->GetExternalTextureBindingExpansionMap();
+                const auto& expansion = etBindingMap.find(binding);
+                DAWN_ASSERT(expansion != etBindingMap.end());
+
+                const auto& bindingExpansion = expansion->second;
+                tint::hlsl::writer::binding::BindingInfo plane0{
+                    0u, indices[bgl->GetBindingIndex(bindingExpansion.plane0)][stage]};
+                tint::hlsl::writer::binding::BindingInfo plane1{
+                    0u, indices[bgl->GetBindingIndex(bindingExpansion.plane1)][stage]};
+                tint::hlsl::writer::binding::BindingInfo metadata{
+                    0u, indices[bgl->GetBindingIndex(bindingExpansion.params)][stage]};
+                bindings.external_texture.emplace(
+                    srcBindingPoint,
+                    tint::hlsl::writer::binding::ExternalTexture{metadata, plane0, plane1});
             }
         }
-
-        // Tint will add two bindings (plane1, params) for one external texture binding.
-        // We need to remap the binding points for the two bindings.
-        // we cannot specified the final slot of those two bindings in
-        // req.hlsl.externalTextureOptions because the final slots may be conflict with
-        // existing other bindings, and then they will be remapped again with bindingRemapper
-        // incorrectly. So we have to use intermediate binding slots in
-        // req.hlsl.externalTextureOptions, and then map them to the final slots with
-        // bindingRemapper.
-        for (const auto& [_, expansion] : groupLayout->GetExternalTextureBindingExpansionMap()) {
-            uint32_t plane1Slot = indices[groupLayout->GetBindingIndex(expansion.plane1)];
-            uint32_t paramsSlot = indices[groupLayout->GetBindingIndex(expansion.params)];
-            bindingRemapper.binding_points.emplace(
-                tint::BindingPoint{static_cast<uint32_t>(group),
-                                   static_cast<uint32_t>(expansion.plane1)},
-                tint::BindingPoint{0u, plane1Slot});
-            bindingRemapper.binding_points.emplace(
-                tint::BindingPoint{static_cast<uint32_t>(group),
-                                   static_cast<uint32_t>(expansion.params)},
-                tint::BindingPoint{0u, paramsSlot});
-        }
     }
 
-    std::optional<tint::ast::transform::SubstituteOverride::Config> substituteOverrideConfig;
-    if (!programmableStage.metadata->overrides.empty()) {
-        substituteOverrideConfig = BuildSubstituteOverridesTransformConfig(programmableStage);
-    }
-
-    req.hlsl.inputProgram = GetTintProgram();
+    req.hlsl.shaderModuleHash = GetHash();
+    req.hlsl.inputProgram = UnsafeUnserializedValue(UseTintProgram());
     req.hlsl.entryPointName = programmableStage.entryPoint.c_str();
     req.hlsl.stage = stage;
-    // Put the firstIndex into the internally reserved group and binding to avoid conflicting with
-    // any existing bindings.
-    req.hlsl.firstIndexOffsetRegisterSpace = PipelineLayout::kReservedConstantsBindGroupIndex;
-    req.hlsl.firstIndexOffsetShaderRegister = PipelineLayout::kFirstIndexOffsetBindingNumber;
-    // Remap to the desired space and binding, [0, kFirstIndexOffsetConstantBufferSlot].
-    {
-        tint::BindingPoint srcBindingPoint{req.hlsl.firstIndexOffsetRegisterSpace,
-                                           req.hlsl.firstIndexOffsetShaderRegister};
-        // D3D11 (HLSL SM5.0) doesn't support spaces, so we have to put the firstIndex in the
-        // default space(0)
-        tint::BindingPoint dstBindingPoint{0u, PipelineLayout::kFirstIndexOffsetConstantBufferSlot};
-        bindingRemapper.binding_points.emplace(srcBindingPoint, dstBindingPoint);
-    }
-
-    req.hlsl.substituteOverrideConfig = std::move(substituteOverrideConfig);
-
-    const CombinedLimits& limits = device->GetLimits();
-    req.hlsl.limits = LimitsForCompilationRequest::Create(limits.v1);
+    req.hlsl.substituteOverrideConfig = BuildSubstituteOverridesTransformConfig(programmableStage);
+    req.hlsl.limits = LimitsForCompilationRequest::Create(device->GetLimits().v1);
+    req.hlsl.adapterSupportedLimits = UnsafeUnserializedValue(
+        LimitsForCompilationRequest::Create(device->GetAdapter()->GetLimits().v1));
+    req.hlsl.maxSubgroupSize = device->GetAdapter()->GetPhysicalDevice()->GetSubgroupMaxSize();
 
     req.hlsl.tintOptions.disable_robustness = !device->IsRobustnessEnabled();
     req.hlsl.tintOptions.disable_workgroup_init =
         device->IsToggleEnabled(Toggle::DisableWorkgroupInit);
-    req.hlsl.tintOptions.binding_remapper_options = std::move(bindingRemapper);
-    req.hlsl.tintOptions.external_texture_options = BuildExternalTextureTransformBindings(layout);
+    req.hlsl.tintOptions.bindings = std::move(bindings);
+    req.hlsl.tintOptions.scalarize_max_min_clamp =
+        device->IsToggleEnabled(Toggle::ScalarizeMaxMinClamp);
 
-    if (entryPoint.usesNumWorkgroups) {
-        // D3D11 (HLSL SM5.0) doesn't support spaces, so we have to put the numWorkgroups in the
-        // default space(0)
-        req.hlsl.tintOptions.root_constant_binding_point =
-            tint::BindingPoint{0, PipelineLayout::kNumWorkgroupsConstantBufferSlot};
+    req.hlsl.tintOptions.immediate_binding_point =
+        tint::BindingPoint{0, PipelineLayout::kReservedConstantBufferSlot};
+    if (stage == SingleShaderStage::Compute) {
+        req.hlsl.tintOptions.num_workgroups_start_offset = GetImmediateByteOffsetInPipelineIfAny(
+            &ComputeImmediateConstants::numWorkgroups, pipelineImmediateMask);
+    } else {
+        req.hlsl.tintOptions.first_index_offset = GetImmediateByteOffsetInPipelineIfAny(
+            &RenderImmediateConstants::firstVertex, pipelineImmediateMask);
+        req.hlsl.tintOptions.first_instance_offset = GetImmediateByteOffsetInPipelineIfAny(
+            &RenderImmediateConstants::firstInstance, pipelineImmediateMask);
     }
 
     if (stage == SingleShaderStage::Vertex) {
@@ -203,9 +226,12 @@ ResultOrError<d3d::CompiledShader> ShaderModule::Compile(
         req.hlsl.tintOptions.truncate_interstage_variables = true;
     } else if (stage == SingleShaderStage::Fragment) {
         if (pixelLocalOptions.has_value()) {
-            req.hlsl.tintOptions.pixel_local_options = *pixelLocalOptions;
+            req.hlsl.tintOptions.pixel_local = *pixelLocalOptions;
         }
     }
+
+    // D3D11 only supports FXC
+    req.hlsl.tintOptions.compiler = tint::hlsl::writer::Options::Compiler::kFXC;
 
     // TODO(dawn:1705): do we need to support it?
     req.hlsl.tintOptions.polyfill_reflect_vec2_f32 = false;
@@ -215,18 +241,12 @@ ResultOrError<d3d::CompiledShader> ShaderModule::Compile(
     req.hlsl.tintOptions.polyfill_pack_unpack_4x8 = true;
 
     CacheResult<d3d::CompiledShader> compiledShader;
-    MaybeError compileError = [&]() -> MaybeError {
-        DAWN_TRY_LOAD_OR_RUN(compiledShader, device, std::move(req), d3d::CompiledShader::FromBlob,
-                             d3d::CompileShader, "D3D11.CompileShader");
-        return {};
-    }();
+    DAWN_TRY_LOAD_OR_RUN(compiledShader, device, std::move(req),
+                         d3d::CompiledShader::FromValidatedBlob, d3d::CompileShader,
+                         "D3D11.CompileShader");
 
     if (device->IsToggleEnabled(Toggle::DumpShaders)) {
         d3d::DumpFXCCompiledShader(device, *compiledShader, compileFlags);
-    }
-
-    if (compileError.IsError()) {
-        return {compileError.AcquireError()};
     }
 
     device->GetBlobCache()->EnsureStored(compiledShader);

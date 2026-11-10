@@ -1,5 +1,6 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QQUICKWEBENGINESCRIPTCOLLECTION_H
 #define QQUICKWEBENGINESCRIPTCOLLECTION_H
@@ -18,19 +19,21 @@
 #include <QtCore/qlist.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qscopedpointer.h>
-#include <QtQml/qjsvalue.h>
+#include <QtCore/qvariant.h>
+#include <QtQml/qqmlregistration.h>
 #include <QtWebEngineCore/qwebenginescript.h>
 #include <QtWebEngineQuick/private/qtwebenginequickglobal_p.h>
 
 QT_BEGIN_NAMESPACE
-class QQmlEngine;
-class QQuickWebEngineScriptCollectionPrivate;
+class QWebEngineScriptCollection;
 
 class Q_WEBENGINEQUICK_EXPORT QQuickWebEngineScriptCollection : public QObject
 {
     Q_OBJECT
+    QML_ANONYMOUS
+
 public:
-    Q_PROPERTY(QJSValue collection READ collection WRITE setCollection NOTIFY collectionChanged)
+    Q_PROPERTY(QList<QWebEngineScript> collection READ collection WRITE setCollection NOTIFY collectionChanged)
     ~QQuickWebEngineScriptCollection();
 
     Q_INVOKABLE bool contains(const QWebEngineScript &value) const;
@@ -40,20 +43,18 @@ public:
     Q_INVOKABLE bool remove(const QWebEngineScript &);
     Q_INVOKABLE void clear();
 
-    QJSValue collection() const;
-    void setCollection(const QJSValue &scripts);
+    QList<QWebEngineScript> collection() const;
+    void setCollection(const QList<QWebEngineScript> &scripts);
 
 Q_SIGNALS:
     void collectionChanged();
 
 private:
     Q_DISABLE_COPY(QQuickWebEngineScriptCollection)
-    QQuickWebEngineScriptCollection(QQuickWebEngineScriptCollectionPrivate *d);
-    QScopedPointer<QQuickWebEngineScriptCollectionPrivate> d;
+    QQuickWebEngineScriptCollection(QWebEngineScriptCollection *d);
+    QScopedPointer<QWebEngineScriptCollection> d;
     friend class QQuickWebEngineProfilePrivate;
     friend class QQuickWebEngineViewPrivate;
-    QQmlEngine* qmlEngine();
-    void setQmlEngine(QQmlEngine *engine);
 };
 
 QT_END_NAMESPACE

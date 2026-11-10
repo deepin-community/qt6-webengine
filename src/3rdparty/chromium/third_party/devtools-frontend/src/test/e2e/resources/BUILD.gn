@@ -7,6 +7,7 @@ import("../../../scripts/build/ninja/copy.gni")
 group("resources") {
   deps = [
     ":shared",
+    "ai_assistance",
     "animations",
     "application",
     "changes",
@@ -27,12 +28,12 @@ group("resources") {
     "network",
     "pages",
     "performance",
-    "profiler",
+    "recorder",
     "search",
+    "security",
     "sensors",
     "sources",
     "webaudio",
-    "recorder",
   ]
 }
 

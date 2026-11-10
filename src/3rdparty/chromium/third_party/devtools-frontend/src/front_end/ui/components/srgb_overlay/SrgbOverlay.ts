@@ -1,29 +1,26 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import * as Common from '../../../core/common/common.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as Coordinator from '../../../ui/components/render_coordinator/render_coordinator.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as RenderCoordinator from '../../../ui/components/render_coordinator/render_coordinator.js';
+import {html, render} from '../../../ui/lit/lit.js';
 
 import srgbOverlayStyles from './srgbOverlay.css.js';
 
-const coordinator = Coordinator.RenderCoordinator.RenderCoordinator.instance();
-
-type SrgbOverlayProps = {
+interface SrgbOverlayProps {
   // [0 - 1] corresponding to HSV hue
-  hue: number,
-  width: number,
-  height: number,
-};
+  hue: number;
+  width: number;
+  height: number;
+}
 
 const SRGB_LABEL_HEIGHT = 10;
 const SRGB_LABEL_BOTTOM = 3;
 const SRGB_TEXT_UPPER_POINT_FROM_BOTTOM = SRGB_LABEL_HEIGHT + SRGB_LABEL_BOTTOM;
 
 const EPSILON = 0.001;
-// TODO(crbug.com/1409892): Use `Color` class here for a better code (and not duplicate isInGamut logic here)
 function isColorInSrgbGamut(hsv: Common.ColorUtils.Color3D): boolean {
   const rgba = Common.Color.hsva2rgba([...hsv, 1]);
   const xyzd50 = Common.ColorConverter.ColorConverter.displayP3ToXyzd50(rgba[0], rgba[1], rgba[2]);
@@ -32,17 +29,9 @@ function isColorInSrgbGamut(hsv: Common.ColorUtils.Color3D): boolean {
 }
 
 export class SrgbOverlay extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-spectrum-srgb-overlay`;
   readonly #shadow = this.attachShadow({mode: 'open'});
 
-  constructor() {
-    super();
-    this.#shadow.adoptedStyleSheets = [
-      srgbOverlayStyles,
-    ];
-  }
-
-  #getLinePoints({hue, width, height}: SrgbOverlayProps): {x: number, y: number}[]|null {
+  #getLinePoints({hue, width, height}: SrgbOverlayProps): Array<{x: number, y: number}>|null {
     if (width === 0 || height === 0) {
       return null;
     }
@@ -77,7 +66,7 @@ export class SrgbOverlay extends HTMLElement {
     return linePoints;
   }
 
-  #closestPointAtHeight(points: {x: number, y: number}[], atHeight: number): {x: number, y: number}|null {
+  #closestPointAtHeight(points: Array<{x: number, y: number}>, atHeight: number): {x: number, y: number}|null {
     let min = Infinity;
     let closestPoint = null;
     for (const point of points) {
@@ -91,7 +80,7 @@ export class SrgbOverlay extends HTMLElement {
   }
 
   render({hue, width, height}: SrgbOverlayProps): Promise<void> {
-    return coordinator.write('Srgb Overlay render', () => {
+    return RenderCoordinator.write('Srgb Overlay render', () => {
       const points = this.#getLinePoints({hue, width, height});
       if (!points || points.length === 0) {
         return;
@@ -102,8 +91,9 @@ export class SrgbOverlay extends HTMLElement {
         return;
       }
 
-      LitHtml.render(
-          LitHtml.html`
+      render(
+          html`
+          <style>${srgbOverlayStyles}</style>
           <span class="label" style="right: ${width - closestPoint.x}px">sRGB</span>
           <svg>
             <polyline points=${
@@ -115,10 +105,9 @@ export class SrgbOverlay extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-spectrum-srgb-overlay', SrgbOverlay);
+customElements.define('devtools-spectrum-srgb-overlay', SrgbOverlay);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-spectrum-srgb-overlay': SrgbOverlay;
   }

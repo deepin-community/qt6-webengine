@@ -45,7 +45,7 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // processed any such pending changes to computed values.  Notably, changes
   // to animation-play-state and display:none must update the play state.
   // https://drafts.csswg.org/css-animations-2/#requirements-on-pending-style-changes
-  String playState() const override;
+  V8AnimationPlayState playState() const override;
   bool pending() const override;
 
   // Explicit calls to the web-animation API that update the play state are
@@ -64,30 +64,38 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // Conditionally updates both boundaries of the animation range.
   // If the corresponding boundary has been explicitly set via WAAPI
   // the new value will be ignored.
-  void SetRange(const absl::optional<TimelineOffset>& range_start,
-                const absl::optional<TimelineOffset>& range_end) override;
+  void SetRange(const std::optional<TimelineOffset>& range_start,
+                const std::optional<TimelineOffset>& range_end) override;
 
   // When set, subsequent changes to animation-<property> no longer affect
   // <property>.
   // https://drafts.csswg.org/css-animations-2/#interaction-between-animation-play-state-and-web-animations-API
   bool GetIgnoreCSSPlayState() { return ignore_css_play_state_; }
+  void SetIgnoreCSSPlayState(bool ignore) { ignore_css_play_state_ = ignore; }
   void ResetIgnoreCSSPlayState() { ignore_css_play_state_ = false; }
   bool GetIgnoreCSSTimeline() const { return ignore_css_timeline_; }
+  void SetIgnoreCSSTimeline(bool ignore) { ignore_css_timeline_ = ignore; }
   void ResetIgnoreCSSTimeline() { ignore_css_timeline_ = false; }
   bool GetIgnoreCSSRangeStart() { return ignore_css_range_start_; }
+  void SetIgnoreCSSRangeStart(bool ignore) { ignore_css_range_start_ = ignore; }
   void ResetIgnoreCSSRangeStart() { ignore_css_range_start_ = false; }
   bool GetIgnoreCSSRangeEnd() { return ignore_css_range_end_; }
+  void SetIgnoreCSSRangeEnd(bool ignore) { ignore_css_range_end_ = ignore; }
   void ResetIgnoreCSSRangeEnd() { ignore_css_range_end_ = false; }
 
-  void Trace(blink::Visitor* visitor) const override {
-    Animation::Trace(visitor);
-    visitor->Trace(owning_element_);
-  }
+  void Trace(blink::Visitor* visitor) const override;
 
   // Force pending animation properties to be applied, as these may alter the
   // animation. This step is required before any web animation API calls that
   // depends on computed values.
   void FlushPendingUpdates() const override { FlushStyles(); }
+
+  const std::optional<Vector<AtomicString>>& GetTriggerNames() {
+    return trigger_names_;
+  }
+  void SetTriggerNames(const std::optional<Vector<AtomicString>>& names) {
+    trigger_names_ = names;
+  }
 
  protected:
   AnimationEffect::EventDelegate* CreateEventDelegate(
@@ -128,6 +136,9 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // whose animation-name property was applied that generated the animation
   // The spec: https://drafts.csswg.org/css-animations-2/#owning-element-section
   Member<Element> owning_element_;
+
+  // Names of Triggers corresponding to the animation-trigger property.
+  std::optional<Vector<AtomicString>> trigger_names_;
 };
 
 template <>

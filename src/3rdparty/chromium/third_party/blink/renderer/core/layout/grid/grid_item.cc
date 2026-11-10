@@ -20,6 +20,7 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
                                   bool is_replaced,
                                   bool is_out_of_flow,
                                   const ComputedStyle& item_style,
+                                  const ComputedStyle& parent_grid_style,
                                   const ComputedStyle& root_grid_style,
                                   AutoSizeBehavior* auto_behavior,
                                   bool* is_overflow_safe) {
@@ -32,14 +33,36 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
   }
 
   const bool is_for_columns = track_direction == kForColumns;
-  const auto& alignment = is_for_columns
-                              ? item_style.ResolvedJustifySelf(
-                                    ItemPosition::kNormal, &root_grid_style)
-                              : item_style.ResolvedAlignSelf(
-                                    ItemPosition::kNormal, &root_grid_style);
+  const auto root_grid_writing_direction =
+      root_grid_style.GetWritingDirection();
+  const StyleSelfAlignmentData normal_value(ItemPosition::kNormal,
+                                            OverflowAlignment::kDefault);
+
+  const auto& alignment =
+      (is_for_columns ==
+       IsParallelWritingMode(root_grid_writing_direction.GetWritingMode(),
+                             parent_grid_style.GetWritingMode()))
+          ? item_style.ResolvedJustifySelf(normal_value, &parent_grid_style)
+          : item_style.ResolvedAlignSelf(normal_value, &parent_grid_style);
 
   *auto_behavior = AutoSizeBehavior::kFitContent;
   *is_overflow_safe = alignment.Overflow() == OverflowAlignment::kSafe;
+
+  const bool is_masonry = parent_grid_style.IsDisplayMasonryBox();
+  const bool applies_alignment = ([&]() {
+    if (!is_masonry) {
+      return true;
+    }
+
+    // We currently only apply alignment in the grid axis of a masonry
+    // container.
+    //
+    // TODO(almaher): Update alignment logic if needed once we resolve on
+    // https://github.com/w3c/csswg-drafts/issues/10275.
+    //
+    // TODO(almaher): We need more masonry alignment tests.
+    return parent_grid_style.MasonryTrackSizingDirection() == track_direction;
+  })();
 
   // Auto-margins take precedence over any alignment properties.
   if (item_style.MayHaveMargin() && !is_out_of_flow) {
@@ -65,11 +88,7 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
       return AxisEdge::kStart;
   }
 
-  const auto root_grid_writing_direction =
-      root_grid_style.GetWritingDirection();
-  const auto item_position = alignment.GetPosition();
-
-  switch (item_position) {
+  switch (const auto item_position = alignment.GetPosition()) {
     case ItemPosition::kSelfStart:
     case ItemPosition::kSelfEnd: {
       // In order to determine the correct "self" axis-edge without a
@@ -87,13 +106,12 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
                                           physical.Top(), physical.Right(),
                                           physical.Bottom(), physical.Left());
 
-      if (is_for_columns) {
-        return item_position == ItemPosition::kSelfStart ? logical.InlineStart()
-                                                         : logical.InlineEnd();
+      if (item_position == ItemPosition::kSelfStart) {
+        return is_for_columns ? logical.InlineStart() : logical.BlockStart();
       }
-      return item_position == ItemPosition::kSelfStart ? logical.BlockStart()
-                                                       : logical.BlockEnd();
+      return is_for_columns ? logical.InlineEnd() : logical.BlockEnd();
     }
+    case ItemPosition::kAnchorCenter:
     case ItemPosition::kCenter:
       return AxisEdge::kCenter;
     case ItemPosition::kFlexStart:
@@ -103,7 +121,9 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
     case ItemPosition::kEnd:
       return AxisEdge::kEnd;
     case ItemPosition::kStretch:
-      *auto_behavior = AutoSizeBehavior::kStretchExplicit;
+      if (applies_alignment) {
+        *auto_behavior = AutoSizeBehavior::kStretchExplicit;
+      }
       return AxisEdge::kStart;
     case ItemPosition::kBaseline:
       return AxisEdge::kFirstBaseline;
@@ -118,37 +138,35 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
       return root_grid_writing_direction.IsRtl() ? AxisEdge::kStart
                                                  : AxisEdge::kEnd;
     case ItemPosition::kNormal:
-      *auto_behavior = is_replaced ? AutoSizeBehavior::kFitContent
-                                   : AutoSizeBehavior::kStretchImplicit;
+      if (applies_alignment) {
+        // Don't apply special 'fit-content' behavior for replaced items in
+        // a masonry container.
+        if (is_masonry) {
+          *auto_behavior = AutoSizeBehavior::kStretchImplicit;
+        } else {
+          *auto_behavior = is_replaced ? AutoSizeBehavior::kFitContent
+                                       : AutoSizeBehavior::kStretchImplicit;
+        }
+      }
       return AxisEdge::kStart;
     case ItemPosition::kLegacy:
     case ItemPosition::kAuto:
       NOTREACHED();
-      return AxisEdge::kStart;
-    case ItemPosition::kAnchorCenter:
-      NOTREACHED();
-      return AxisEdge::kCenter;
   }
 }
 
 }  // namespace
 
 GridItemData::GridItemData(
-    BlockNode node,
+    BlockNode item_node,
+    const ComputedStyle& parent_grid_style,
     const ComputedStyle& root_grid_style,
-    FontBaseline parent_grid_font_baseline,
     bool parent_must_consider_grid_items_for_column_sizing,
     bool parent_must_consider_grid_items_for_row_sizing)
-    : node(node),
-      has_subgridded_columns(false),
-      has_subgridded_rows(false),
+    : node(std::move(item_node)),
       is_considered_for_column_sizing(false),
       is_considered_for_row_sizing(false),
-      is_sizing_dependent_on_block_size(false),
-      is_subgridded_to_parent_grid(false),
-      must_consider_grid_items_for_column_sizing(false),
-      must_consider_grid_items_for_row_sizing(false),
-      parent_grid_font_baseline(parent_grid_font_baseline) {
+      parent_grid_font_baseline(parent_grid_style.GetFontBaseline()) {
   const auto& style = node.Style();
 
   const auto root_grid_writing_direction =
@@ -175,7 +193,8 @@ GridItemData::GridItemData(
   //   https://drafts.csswg.org/css-contain-2/#containment-layout
   //   https://drafts.csswg.org/css-contain-2/#containment-paint
   if (node.IsGrid() && !node.ShouldApplyLayoutContainment() &&
-      !node.ShouldApplyPaintContainment()) {
+      !node.ShouldApplyPaintContainment() &&
+      !style.IsContainerForSizeContainerQueries()) {
     has_subgridded_columns =
         is_parallel_with_root_grid
             ? style.GridTemplateColumns().IsSubgriddedAxis()
@@ -193,7 +212,8 @@ GridItemData::GridItemData(
   bool is_overflow_safe;
   column_alignment = AxisEdgeFromItemPosition(
       kForColumns, has_subgridded_columns, is_replaced, is_out_of_flow, style,
-      root_grid_style, &column_auto_behavior, &is_overflow_safe);
+      parent_grid_style, root_grid_style, &column_auto_behavior,
+      &is_overflow_safe);
   is_overflow_safe_for_columns = is_overflow_safe;
 
   column_baseline_group = DetermineBaselineGroup(
@@ -203,7 +223,8 @@ GridItemData::GridItemData(
 
   row_alignment = AxisEdgeFromItemPosition(
       kForRows, has_subgridded_rows, is_replaced, is_out_of_flow, style,
-      root_grid_style, &row_auto_behavior, &is_overflow_safe);
+      parent_grid_style, root_grid_style, &row_auto_behavior,
+      &is_overflow_safe);
   is_overflow_safe_for_rows = is_overflow_safe;
 
   row_baseline_group = DetermineBaselineGroup(
@@ -267,13 +288,13 @@ void GridItemData::SetAlignmentFallback(
           is_parallel_with_root_grid == (track_direction == kForRows);
 
       if (is_parallel_to_baseline_axis) {
-        return !item_style.LogicalHeight().IsPercentOrCalcOrStretch() &&
-               !item_style.LogicalMinHeight().IsPercentOrCalcOrStretch() &&
-               !item_style.LogicalMaxHeight().IsPercentOrCalcOrStretch();
+        return !item_style.LogicalHeight().HasPercentOrStretch() &&
+               !item_style.LogicalMinHeight().HasPercentOrStretch() &&
+               !item_style.LogicalMaxHeight().HasPercentOrStretch();
       } else {
-        return !item_style.LogicalWidth().IsPercentOrCalcOrStretch() &&
-               !item_style.LogicalMinWidth().IsPercentOrCalcOrStretch() &&
-               !item_style.LogicalMaxWidth().IsPercentOrCalcOrStretch();
+        return !item_style.LogicalWidth().HasPercentOrStretch() &&
+               !item_style.LogicalMinWidth().HasPercentOrStretch() &&
+               !item_style.LogicalMaxWidth().HasPercentOrStretch();
       }
     }
     return true;
@@ -408,11 +429,29 @@ void GridItemData::ComputeOutOfFlowItemPlacement(
   }
 }
 
+LayoutUnit GridItemData::CalculateAvailableSize(
+    const GridLayoutTrackCollection& track_collection,
+    LayoutUnit* start_offset) const {
+  DCHECK(!is_subgridded_to_parent_grid);
+  DCHECK(!IsOutOfFlow());
+
+  const auto& [begin_set_index, end_set_index] =
+      SetIndices(track_collection.Direction());
+
+  if (start_offset) {
+    *start_offset = track_collection.GetSetOffset(begin_set_index);
+  }
+
+  const auto available_size =
+      track_collection.CalculateSetSpanSize(begin_set_index, end_set_index);
+  return available_size.MightBeSaturated() ? LayoutUnit() : available_size;
+}
+
 GridItems::GridItems(const GridItems& other)
     : first_subgridded_item_index_(other.first_subgridded_item_index_) {
   item_data_.ReserveInitialCapacity(other.item_data_.size());
   for (const auto& grid_item : other.item_data_) {
-    item_data_.emplace_back(std::make_unique<GridItemData>(*grid_item));
+    item_data_.emplace_back(MakeGarbageCollected<GridItemData>(*grid_item));
   }
 }
 
@@ -423,11 +462,10 @@ void GridItems::Append(GridItems* other) {
 }
 
 void GridItems::SortByOrderProperty() {
-  auto CompareItemsByOrderProperty =
-      [](const std::unique_ptr<GridItemData>& lhs,
-         const std::unique_ptr<GridItemData>& rhs) {
-        return lhs->node.Style().Order() < rhs->node.Style().Order();
-      };
+  auto CompareItemsByOrderProperty = [](const GridItemData* lhs,
+                                        const GridItemData* rhs) {
+    return lhs->node.Style().Order() < rhs->node.Style().Order();
+  };
   std::stable_sort(item_data_.begin(), item_data_.end(),
                    CompareItemsByOrderProperty);
 }

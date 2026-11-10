@@ -9,12 +9,12 @@
 
 #include <memory>
 
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fxjs/cfxjs_engine.h"
 #include "fxjs/cjs_result.h"
 #include "fxjs/cjs_runtime.h"
 #include "fxjs/js_resources.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/v8-local-handle.h"
 
 class CJS_Object;
@@ -43,11 +43,9 @@ bool IsExpandedParamKnown(v8::Local<v8::Value> value);
 // to construct native object state.
 
 template <class T>
-static void JSConstructor(CFXJS_Engine* pEngine,
-                          v8::Local<v8::Object> obj,
-                          v8::Local<v8::Object> proxy) {
-  pEngine->SetObjectPrivate(
-      obj, std::make_unique<T>(proxy, static_cast<CJS_Runtime*>(pEngine)));
+static void JSConstructor(CFXJS_Engine* pEngine, v8::Local<v8::Object> obj) {
+  pEngine->SetBinding(
+      obj, std::make_unique<T>(obj, static_cast<CJS_Runtime*>(pEngine)));
 }
 
 // CJS_Object has virtual dtor, template not required.
@@ -55,28 +53,34 @@ void JSDestructor(v8::Local<v8::Object> obj);
 
 template <class C>
 UnownedPtr<C> JSGetObject(v8::Isolate* isolate, v8::Local<v8::Object> obj) {
-  if (CFXJS_Engine::GetObjDefnID(obj) != C::GetObjDefnID())
+  CFXJS_PerObjectData* pData = CFXJS_PerObjectData::GetFromObject(obj);
+  if (!pData) {
     return nullptr;
-
-  CJS_Object* pJSObj = CFXJS_Engine::GetObjectPrivate(isolate, obj);
-  if (!pJSObj)
+  }
+  if (pData->GetObjDefnID() != C::GetObjDefnID()) {
     return nullptr;
-
-  return UnownedPtr<C>(static_cast<C*>(pJSObj));
+  }
+  CFXJS_PerObjectData::Binding* pBinding = pData->GetBinding();
+  if (!pBinding) {
+    return nullptr;
+  }
+  return UnownedPtr<C>(static_cast<C*>(pBinding));
 }
 
 template <class C, CJS_Result (C::*M)(CJS_Runtime*)>
 void JSPropGetter(const char* prop_name_string,
                   const char* class_name_string,
-                  v8::Local<v8::String> property,
+                  v8::Local<v8::Name> property,
                   const v8::PropertyCallbackInfo<v8::Value>& info) {
-  auto pObj = JSGetObject<C>(info.GetIsolate(), info.Holder());
-  if (!pObj)
+  auto pObj = JSGetObject<C>(info.GetIsolate(), info.HolderV2());
+  if (!pObj) {
     return;
+  }
 
   CJS_Runtime* pRuntime = pObj->GetRuntime();
-  if (!pRuntime)
+  if (!pRuntime) {
     return;
+  }
 
   CJS_Result result = (pObj.get()->*M)(pRuntime);
   if (result.HasError()) {
@@ -85,23 +89,26 @@ void JSPropGetter(const char* prop_name_string,
     return;
   }
 
-  if (result.HasReturn())
+  if (result.HasReturn()) {
     info.GetReturnValue().Set(result.Return());
+  }
 }
 
 template <class C, CJS_Result (C::*M)(CJS_Runtime*, v8::Local<v8::Value>)>
 void JSPropSetter(const char* prop_name_string,
                   const char* class_name_string,
-                  v8::Local<v8::String> property,
+                  v8::Local<v8::Name> property,
                   v8::Local<v8::Value> value,
                   const v8::PropertyCallbackInfo<void>& info) {
-  auto pObj = JSGetObject<C>(info.GetIsolate(), info.Holder());
-  if (!pObj)
+  auto pObj = JSGetObject<C>(info.GetIsolate(), info.HolderV2());
+  if (!pObj) {
     return;
+  }
 
   CJS_Runtime* pRuntime = pObj->GetRuntime();
-  if (!pRuntime)
+  if (!pRuntime) {
     return;
+  }
 
   CJS_Result result = (pObj.get()->*M)(pRuntime, value);
   if (result.HasError()) {
@@ -115,41 +122,46 @@ template <class C,
 void JSMethod(const char* method_name_string,
               const char* class_name_string,
               const v8::FunctionCallbackInfo<v8::Value>& info) {
-  auto pObj = JSGetObject<C>(info.GetIsolate(), info.Holder());
-  if (!pObj)
+  auto pObj = JSGetObject<C>(info.GetIsolate(), info.This());
+  if (!pObj) {
     return;
+  }
 
   CJS_Runtime* pRuntime = pObj->GetRuntime();
-  if (!pRuntime)
+  if (!pRuntime) {
     return;
+  }
 
   v8::LocalVector<v8::Value> parameters(info.GetIsolate());
-  for (unsigned int i = 0; i < (unsigned int)info.Length(); i++)
+  for (unsigned int i = 0; i < (unsigned int)info.Length(); i++) {
     parameters.push_back(info[i]);
+  }
 
-  CJS_Result result = (pObj.get()->*M)(pRuntime, parameters);
+  // TODO(tsepez): why does the compiler think this is sometimes unsafe?
+  CJS_Result result = UNSAFE_TODO((pObj.get()->*M)(pRuntime, parameters));
   if (result.HasError()) {
     pRuntime->Error(JSFormatErrorString(class_name_string, method_name_string,
                                         result.Error()));
     return;
   }
 
-  if (result.HasReturn())
+  if (result.HasReturn()) {
     info.GetReturnValue().Set(result.Return());
+  }
 }
 
-#define JS_STATIC_PROP(err_name, prop_name, class_name)           \
-  static void get_##prop_name##_static(                           \
-      v8::Local<v8::String> property,                             \
-      const v8::PropertyCallbackInfo<v8::Value>& info) {          \
-    JSPropGetter<class_name, &class_name::get_##prop_name>(       \
-        #err_name, class_name::kName, property, info);            \
-  }                                                               \
-  static void set_##prop_name##_static(                           \
-      v8::Local<v8::String> property, v8::Local<v8::Value> value, \
-      const v8::PropertyCallbackInfo<void>& info) {               \
-    JSPropSetter<class_name, &class_name::set_##prop_name>(       \
-        #err_name, class_name::kName, property, value, info);     \
+#define JS_STATIC_PROP(err_name, prop_name, class_name)         \
+  static void get_##prop_name##_static(                         \
+      v8::Local<v8::Name> property,                             \
+      const v8::PropertyCallbackInfo<v8::Value>& info) {        \
+    JSPropGetter<class_name, &class_name::get_##prop_name>(     \
+        #err_name, class_name::kName, property, info);          \
+  }                                                             \
+  static void set_##prop_name##_static(                         \
+      v8::Local<v8::Name> property, v8::Local<v8::Value> value, \
+      const v8::PropertyCallbackInfo<void>& info) {             \
+    JSPropSetter<class_name, &class_name::set_##prop_name>(     \
+        #err_name, class_name::kName, property, value, info);   \
   }
 
 #define JS_STATIC_METHOD(method_name, class_name)                            \

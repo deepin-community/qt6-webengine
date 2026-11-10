@@ -20,7 +20,7 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 #define R 0
@@ -440,14 +440,14 @@ static const AVOption huesaturation_options[] = {
     { "hue",        "set the hue shift",               OFFSET(hue),        AV_OPT_TYPE_FLOAT, {.dbl=0},-180, 180, VF },
     { "saturation", "set the saturation shift",        OFFSET(saturation), AV_OPT_TYPE_FLOAT, {.dbl=0},  -1,   1, VF },
     { "intensity",  "set the intensity shift",         OFFSET(intensity),  AV_OPT_TYPE_FLOAT, {.dbl=0},  -1,   1, VF },
-    { "colors",     "set colors range",                OFFSET(colors),     AV_OPT_TYPE_FLAGS, {.i64=ALL},     0,ALL,VF, "colors" },
-    {  "r",         "set reds",                        0,                  AV_OPT_TYPE_CONST, {.i64=RED},     0, 0, VF, "colors" },
-    {  "y",         "set yellows",                     0,                  AV_OPT_TYPE_CONST, {.i64=YELLOW},  0, 0, VF, "colors" },
-    {  "g",         "set greens",                      0,                  AV_OPT_TYPE_CONST, {.i64=GREEN},   0, 0, VF, "colors" },
-    {  "c",         "set cyans",                       0,                  AV_OPT_TYPE_CONST, {.i64=CYAN},    0, 0, VF, "colors" },
-    {  "b",         "set blues",                       0,                  AV_OPT_TYPE_CONST, {.i64=BLUE},    0, 0, VF, "colors" },
-    {  "m",         "set magentas",                    0,                  AV_OPT_TYPE_CONST, {.i64=MAGENTA}, 0, 0, VF, "colors" },
-    {  "a",         "set all colors",                  0,                  AV_OPT_TYPE_CONST, {.i64=ALL},     0, 0, VF, "colors" },
+    { "colors",     "set colors range",                OFFSET(colors),     AV_OPT_TYPE_FLAGS, {.i64=ALL},     0,ALL,VF, .unit = "colors" },
+    {  "r",         "set reds",                        0,                  AV_OPT_TYPE_CONST, {.i64=RED},     0, 0, VF, .unit = "colors" },
+    {  "y",         "set yellows",                     0,                  AV_OPT_TYPE_CONST, {.i64=YELLOW},  0, 0, VF, .unit = "colors" },
+    {  "g",         "set greens",                      0,                  AV_OPT_TYPE_CONST, {.i64=GREEN},   0, 0, VF, .unit = "colors" },
+    {  "c",         "set cyans",                       0,                  AV_OPT_TYPE_CONST, {.i64=CYAN},    0, 0, VF, .unit = "colors" },
+    {  "b",         "set blues",                       0,                  AV_OPT_TYPE_CONST, {.i64=BLUE},    0, 0, VF, .unit = "colors" },
+    {  "m",         "set magentas",                    0,                  AV_OPT_TYPE_CONST, {.i64=MAGENTA}, 0, 0, VF, .unit = "colors" },
+    {  "a",         "set all colors",                  0,                  AV_OPT_TYPE_CONST, {.i64=ALL},     0, 0, VF, .unit = "colors" },
     { "strength",   "set the filtering strength",      OFFSET(strength),   AV_OPT_TYPE_FLOAT, {.dbl=1},       0,100,VF },
     { "rw",         "set the red weight",              OFFSET(rlw),        AV_OPT_TYPE_FLOAT, {.dbl=.333},    0, 1, VF },
     { "gw",         "set the green weight",            OFFSET(glw),        AV_OPT_TYPE_FLOAT, {.dbl=.334},    0, 1, VF },
@@ -458,14 +458,14 @@ static const AVOption huesaturation_options[] = {
 
 AVFILTER_DEFINE_CLASS(huesaturation);
 
-const AVFilter ff_vf_huesaturation = {
-    .name            = "huesaturation",
-    .description     = NULL_IF_CONFIG_SMALL("Apply hue-saturation-intensity adjustments."),
+const FFFilter ff_vf_huesaturation = {
+    .p.name          = "huesaturation",
+    .p.description   = NULL_IF_CONFIG_SMALL("Apply hue-saturation-intensity adjustments."),
+    .p.priv_class    = &huesaturation_class,
+    .p.flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size       = sizeof(HueSaturationContext),
-    .priv_class      = &huesaturation_class,
     FILTER_INPUTS(huesaturation_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pixel_fmts),
-    .flags           = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,
 };

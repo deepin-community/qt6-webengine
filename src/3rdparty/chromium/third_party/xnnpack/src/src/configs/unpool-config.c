@@ -6,66 +6,50 @@
 #include <assert.h>
 #include <stddef.h>
 
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <pthread.h>
-#endif
-
-#include <xnnpack/common.h>
-#include <xnnpack/config.h>
-#include <xnnpack/microparams-init.h>
-#include <xnnpack/unpool.h>
-
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/config-types.h"
+#include "src/xnnpack/config.h"
+#include "src/xnnpack/hardware-config.h"
+#include "src/xnnpack/init-once.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/microfnptr.h"
+#include "src/xnnpack/unpool.h"
 
 static struct xnn_unpool_config x32_unpool_config = {0};
 
-#if XNN_PLATFORM_WINDOWS
-  static INIT_ONCE init_guard_x32_unpool = INIT_ONCE_STATIC_INIT;
-#else
-  static pthread_once_t init_guard_x32_unpool = PTHREAD_ONCE_INIT;
-#endif
+XNN_INIT_ONCE_GUARD(x32_unpool);
+
+// Macros to log the microkernel names if and when they are registered.
+#define XNN_INIT_UNPOOL_UKERNEL(ukernel) \
+  (xnn_unpool_ukernel_fn) ukernel;       \
+  xnn_log_info("Using unpool microkernel '%s'.", #ukernel);
 
 static void init_x32_unpool_config(void) {
   #if XNN_ARCH_ARM
     const struct xnn_hardware_config* hardware_config = xnn_init_hardware_config();
     assert(hardware_config != NULL);
-    if (hardware_config->use_arm_neon) {
-      x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__neon;
-    } else if (!XNN_PLATFORM_MOBILE) {
-      x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__scalar;
+    if ((hardware_config->arch_flags & xnn_arch_arm_neon)) {
+      x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__neon);
+    } else {
+      x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__scalar);
     }
   #elif XNN_ARCH_ARM64
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__neon;
+    x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__neon);
   #elif XNN_ARCH_X86 || XNN_ARCH_X86_64
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__sse2;
+    x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__sse2);
   #elif XNN_ARCH_WASMSIMD || XNN_ARCH_WASMRELAXEDSIMD
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__wasmsimd;
-  #elif XNN_ARCH_WASM
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__scalar;
-  #elif XNN_ARCH_RISCV
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__scalar;
-  #elif XNN_ARCH_PPC64
-    x32_unpool_config.unpool = (xnn_unpool_ukernel_fn) xnn_x32_unpool_ukernel__scalar;
+    x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__wasmsimd);
+  #else
+    x32_unpool_config.unpool = XNN_INIT_UNPOOL_UKERNEL(xnn_x32_unpool_ukernel__scalar);
   #endif
-}
 
-#if XNN_PLATFORM_WINDOWS
-  static BOOL CALLBACK init_x32_unpool_config_windows(PINIT_ONCE init_once, PVOID parameter, PVOID* context) {
-    init_x32_unpool_config();
-    return TRUE;
-  }
-#endif
+}
 
 const struct xnn_unpool_config* xnn_init_x32_unpool_config() {
   const struct xnn_hardware_config* hardware_config = xnn_init_hardware_config();
   if (hardware_config == NULL) {
     return NULL;
   }
-  #if XNN_PLATFORM_WINDOWS
-    InitOnceExecuteOnce(&init_guard_x32_unpool, &init_x32_unpool_config_windows, NULL, NULL);
-  #else
-    pthread_once(&init_guard_x32_unpool, &init_x32_unpool_config);
-  #endif
+  XNN_INIT_ONCE(x32_unpool);
   return &x32_unpool_config;
 }

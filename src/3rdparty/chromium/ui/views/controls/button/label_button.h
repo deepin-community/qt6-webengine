@@ -7,21 +7,26 @@
 
 #include <array>
 #include <memory>
+#include <optional>
+#include <string_view>
 
 #include "base/functional/bind.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_variant.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/views/action_view_interface.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/label_button_image_container.h"
 #include "ui/views/controls/button/label_button_label.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/layout/delegating_layout_manager.h"
 #include "ui/views/layout/layout_provider.h"
+#include "ui/views/layout/proposed_layout.h"
 #include "ui/views/metadata/view_factory.h"
 #include "ui/views/native_theme_delegate.h"
 #include "ui/views/style/typography.h"
@@ -37,7 +42,9 @@ class InkDropContainerView;
 class LabelButtonBorder;
 
 // LabelButton is a button with text and an icon.
-class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
+class VIEWS_EXPORT LabelButton : public Button,
+                                 public NativeThemeDelegate,
+                                 public LayoutDelegate {
   METADATA_HEADER(LabelButton, Button)
 
  public:
@@ -46,7 +53,7 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // determines the appearance of `text`.
   explicit LabelButton(
       PressedCallback callback = PressedCallback(),
-      const std::u16string& text = std::u16string(),
+      std::u16string_view text = {},
       int button_context = style::CONTEXT_BUTTON,
       std::unique_ptr<LabelButtonImageContainer> image_container =
           std::make_unique<SingleImageContainer>());
@@ -54,18 +61,25 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   LabelButton& operator=(const LabelButton&) = delete;
   ~LabelButton() override;
 
-  // Gets or sets the image shown for the specified button state.
-  // GetImage returns the image for STATE_NORMAL if the state's image is empty.
-  virtual gfx::ImageSkia GetImage(ButtonState for_state) const;
+  // Gets the image shown for state.
+  virtual gfx::ImageSkia GetImage(ButtonState state) const;
 
-  const ui::ImageModel& GetImageModel(ButtonState for_state) const;
-  virtual void SetImageModel(ButtonState for_state,
-                             const ui::ImageModel& image_model);
-  bool HasImage(ButtonState for_state) const;
+  // Gets the image model set for `state`. This may not be the image shown,
+  // since a nullopt image model will use the STATE_NORMAL image.
+  const std::optional<ui::ImageModel>& GetImageModel(ButtonState state) const;
+
+  // Sets the image show for `state`. If `image_model` is nullopt, it will use
+  // the STATE_NORMAL image. If `image_model` is empty, image won't be shown in
+  // the button.
+  virtual void SetImageModel(ButtonState state,
+                             const std::optional<ui::ImageModel>& image_model);
+
+  // Returns whether the image shown for `state` is not empty.
+  bool HasImage(ButtonState state) const;
 
   // Gets or sets the text shown on the button.
-  const std::u16string& GetText() const;
-  virtual void SetText(const std::u16string& text);
+  std::u16string_view GetText() const;
+  virtual void SetText(std::u16string_view text);
 
   // Set the text style of the label.
   void SetLabelStyle(views::style::TextStyle text_style);
@@ -80,20 +94,10 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   void ShrinkDownThenClearText();
 
   // Sets the text color shown for the specified button |for_state| to |color|.
-  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
-  // favor of the ColorId versions.
-  void SetTextColor(ButtonState for_state, SkColor color);
-
-  // Sets the text color as above but using ColorId.
-  void SetTextColorId(ButtonState for_state, ui::ColorId color_id);
+  void SetTextColor(ButtonState for_state, ui::ColorVariant color);
 
   // Sets the text colors shown for the non-disabled states to |color|.
-  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
-  // favor of the ColorId versions.
-  virtual void SetEnabledTextColors(absl::optional<SkColor> color);
-
-  // Sets the text colors shown for the non-disabled states to |color_id|.
-  void SetEnabledTextColorIds(ui::ColorId color_id);
+  virtual void SetEnabledTextColors(std::optional<ui::ColorVariant> color);
 
   // Gets the current state text color.
   SkColor GetCurrentTextColor() const;
@@ -131,8 +135,9 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   bool GetImageCentered() const;
   void SetImageCentered(bool image_centered);
 
-  // Sets the corner radius of the focus ring around the button.
-  float GetFocusRingCornerRadius() const;
+  // Sets the corner radii of the focus ring around the button.
+  gfx::RoundedCornersF GetFocusRingCornerRadii() const;
+  void SetFocusRingCornerRadii(const gfx::RoundedCornersF& radii);
   void SetFocusRingCornerRadius(float radius);
 
   // Creates the default border for this button. This can be overridden by
@@ -147,11 +152,9 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // Button:
   void SetBorder(std::unique_ptr<Border> border) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
-  int GetHeightForWidth(int w) const override;
-  void Layout() override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void AddLayerToRegion(ui::Layer* new_layer,
                         views::LayerRegion region) override;
   void RemoveLayerFromRegions(ui::Layer* old_layer) override;
@@ -168,10 +171,18 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   ui::NativeTheme::State GetForegroundThemeState(
       ui::NativeTheme::ExtraParams* params) const override;
 
+  // LayoutDelegate:
+  ProposedLayout CalculateProposedLayout(
+      const SizeBounds& size_bounds) const override;
+
   // Returns the current visual appearance of the button. This takes into
   // account both the button's underlying state, the state of the containing
   // widget, and the parent of the containing widget.
   ButtonState GetVisualState() const;
+
+  bool has_paint_as_active_subscription_for_testing() {
+    return !!paint_as_active_subscription_;
+  }
 
  protected:
   LabelButtonImageContainer* image_container() {
@@ -184,11 +195,6 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
     return image_container_->GetView();
   }
   View* image_container_view() { return image_container_->GetView(); }
-  // TODO(ahmedmoussa): `image()` to be removed in the following CL.
-  const ImageView* image() const {
-    return static_cast<const ImageView*>(image_container_view());
-  }
-  ImageView* image() { return static_cast<ImageView*>(image_container_view()); }
   Label* label() const { return label_; }
   InkDropContainerView* ink_drop_container() const {
     return ink_drop_container_;
@@ -228,7 +234,7 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   void StateChanged(ButtonState old_state) override;
 
  private:
-  void SetTextInternal(const std::u16string& text);
+  void SetTextInternal(std::u16string_view text);
 
   void ClearTextIfShrunkDown();
 
@@ -253,8 +259,8 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // correct for the current background.
   void ResetLabelEnabledColor();
 
-  // Returns the state whose image is shown for |for_state|, by falling back to
-  // STATE_NORMAL when |for_state|'s image is empty.
+  // Returns the state whose image is shown for `for_state`, by falling back to
+  // STATE_NORMAL when `for_state` has not been set.
   ButtonState ImageStateForState(ButtonState for_state) const;
 
   void FlipCanvasOnPaintForRTLUIChanged();
@@ -274,8 +280,9 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   gfx::FontList cached_default_button_font_list_;
 
   // The image models and colors for each button state.
-  ui::ImageModel button_state_image_models_[STATE_COUNT] = {};
-  absl::variant<SkColor, ui::ColorId> button_state_colors_[STATE_COUNT] = {};
+  std::array<std::optional<ui::ImageModel>, STATE_COUNT>
+      button_state_image_models_;
+  std::array<std::optional<ui::ColorVariant>, STATE_COUNT> button_state_colors_;
 
   // Used to track whether SetTextColor() has been invoked.
   std::array<bool, STATE_COUNT> explicitly_set_colors_ = {};
@@ -312,8 +319,9 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // UI direction).
   gfx::HorizontalAlignment horizontal_alignment_ = gfx::ALIGN_LEFT;
 
-  // Corner radius of the focus ring.
-  float focus_ring_corner_radius_ = FocusRing::kDefaultCornerRadiusDp;
+  // Corner radii of the focus ring.
+  gfx::RoundedCornersF focus_ring_corner_radii_ =
+      gfx::RoundedCornersF(FocusRing::kDefaultCornerRadiusDp);
 
   base::CallbackListSubscription paint_as_active_subscription_;
 
@@ -341,12 +349,15 @@ class VIEWS_EXPORT LabelButtonActionViewInterface
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, LabelButton, Button)
 VIEW_BUILDER_PROPERTY(std::u16string, Text)
 VIEW_BUILDER_PROPERTY(gfx::HorizontalAlignment, HorizontalAlignment)
+VIEW_BUILDER_PROPERTY(views::style::TextStyle, LabelStyle)
 VIEW_BUILDER_PROPERTY(gfx::Size, MinSize)
 VIEW_BUILDER_PROPERTY(gfx::Size, MaxSize)
-VIEW_BUILDER_PROPERTY(absl::optional<SkColor>, EnabledTextColors)
+VIEW_BUILDER_PROPERTY(std::optional<ui::ColorVariant>, EnabledTextColors)
 VIEW_BUILDER_PROPERTY(bool, IsDefault)
 VIEW_BUILDER_PROPERTY(int, ImageLabelSpacing)
 VIEW_BUILDER_PROPERTY(bool, ImageCentered)
+VIEW_BUILDER_METHOD(SetImageModel, Button::ButtonState, const ui::ImageModel&)
+VIEW_BUILDER_METHOD(SetTextColor, Button::ButtonState, ui::ColorVariant)
 END_VIEW_BUILDER
 
 }  // namespace views

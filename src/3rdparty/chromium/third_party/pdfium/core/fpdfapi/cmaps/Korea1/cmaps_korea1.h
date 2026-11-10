@@ -7,7 +7,6 @@
 #ifndef CORE_FPDFAPI_CMAPS_KOREA1_CMAPS_KOREA1_H_
 #define CORE_FPDFAPI_CMAPS_KOREA1_CMAPS_KOREA1_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "core/fpdfapi/cmaps/fpdf_cmaps.h"
@@ -24,9 +23,9 @@ extern const uint16_t kKSCpc_EUC_H_0[];
 extern const uint16_t kUniKS_UCS2_H_1[];
 extern const uint16_t kUniKS_UCS2_V_1[];
 extern const uint16_t kUniKS_UTF16_H_0[];
-extern const uint16_t kKorea1CID2Unicode_2[18352];
-extern const CMap kKorea1_cmaps[];
-extern const size_t kKorea1_cmaps_size;
+
+#include "Adobe-Korea1-UCS2_2.inc"
+#include "cmaps_korea1.inc"
 
 }  // namespace fxcmap
 

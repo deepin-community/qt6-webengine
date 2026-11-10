@@ -10,7 +10,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/functional/bind.h"
-#include "components/content_relationship_verification/android/jni_headers/OriginVerifier_jni.h"
 #include "components/content_relationship_verification/digital_asset_links_handler.h"
 #include "content/public/browser/android/browser_context_handle.h"
 #include "content/public/browser/browser_context.h"
@@ -20,6 +19,9 @@
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/content_relationship_verification/android/jni_headers/OriginVerifier_jni.h"
 
 using base::android::AppendJavaStringArrayToStringVector;
 using base::android::ConvertJavaStringToUTF8;
@@ -43,7 +45,6 @@ OriginVerifier::~OriginVerifier() = default;
 
 bool OriginVerifier::VerifyOrigin(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_package_name,
     const JavaParamRef<jobjectArray>& j_fingerprints,
     const JavaParamRef<jstring>& j_origin,
@@ -99,8 +100,7 @@ jlong OriginVerifier::Init(
   return reinterpret_cast<intptr_t>(native_verifier);
 }
 
-void OriginVerifier::Destroy(JNIEnv* env,
-                             const base::android::JavaRef<jobject>& obj) {
+void OriginVerifier::Destroy(JNIEnv* env) {
   delete this;
 }
 

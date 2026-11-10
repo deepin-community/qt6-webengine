@@ -14,6 +14,8 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -22,7 +24,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
@@ -44,8 +45,6 @@
 #include "net/dns/system_dns_config_change_notifier.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/datagram_client_socket.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-#include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
 namespace base {
@@ -56,6 +55,7 @@ namespace net {
 
 class DnsClient;
 class DnsProbeRunner;
+class HostResolverInternalResult;
 class IPAddress;
 class MDnsClient;
 class ClientSocketFactory;
@@ -109,6 +109,7 @@ class NET_EXPORT HostResolverManager
   struct NET_EXPORT_PRIVATE JobKey;
   class NET_EXPORT_PRIVATE Job;
   class NET_EXPORT_PRIVATE RequestImpl;
+  class NET_EXPORT_PRIVATE ServiceEndpointRequestImpl;
 
   // Creates a HostResolver as specified by |options|. Blocking tasks are run in
   // ThreadPool.
@@ -151,7 +152,7 @@ class NET_EXPORT HostResolverManager
   // `host_cache()` coming from a ContextHostResolver that owns
   // `resolve_context`.
   std::unique_ptr<HostResolver::ResolveHostRequest> CreateRequest(
-      absl::variant<url::SchemeHostPort, HostPortPair> host,
+      std::variant<url::SchemeHostPort, HostPortPair> host,
       NetworkAnonymizationKey network_anonymization_key,
       NetLogWithSource net_log,
       std::optional<ResolveHostParameters> optional_parameters,
@@ -168,6 +169,15 @@ class NET_EXPORT HostResolverManager
       ResolveContext* resolve_context);
   std::unique_ptr<MdnsListener> CreateMdnsListener(const HostPortPair& host,
                                                    DnsQueryType query_type);
+
+  // Creates a service endpoint resolution request.
+  std::unique_ptr<HostResolver::ServiceEndpointRequest>
+  CreateServiceEndpointRequest(
+      url::SchemeHostPort scheme_host_port,
+      NetworkAnonymizationKey network_anonymization_key,
+      NetLogWithSource net_log,
+      ResolveHostParameters parameters,
+      ResolveContext* resolve_context);
 
   // Enables or disables the built-in asynchronous DnsClient. If enabled, by
   // default (when no |ResolveHostParameters::source| is specified), the
@@ -187,6 +197,9 @@ class NET_EXPORT HostResolverManager
   void SetDnsConfigOverrides(DnsConfigOverrides overrides);
 
   void SetIPv6ReachabilityOverride(bool reachability_override);
+
+  void SetIsHappyEyeballsV3Enabled(bool enabled);
+  bool IsHappyEyeballsV3Enabled() const;
 
   // Support for invalidating cached per-context data on changes to network or
   // DNS configuration. ContextHostResolvers should register/deregister
@@ -304,7 +317,6 @@ class NET_EXPORT HostResolverManager
   // reachability. These job key and IP address are used to call
   // ResolveLocally() and CreateAndStartJob().
   void InitializeJobKeyAndIPAddress(
-      const HostResolver::Host& host,
       const NetworkAnonymizationKey& network_anonymization_key,
       const ResolveHostParameters& parameters,
       const NetLogWithSource& source_net_log,
@@ -352,6 +364,12 @@ class NET_EXPORT HostResolverManager
       RequestPriority priority,
       const NetLogWithSource& source_net_log);
 
+  // Similar to CreateAndStartJob(), but for a ServiceEndpointRequest.
+  void CreateAndStartJobForServiceEndpointRequest(
+      JobKey key,
+      std::deque<TaskType> tasks,
+      ServiceEndpointRequestImpl* request);
+
   // Resolves the IP literal hostname represented by `ip_address`.
   HostCache::Entry ResolveAsIP(DnsQueryTypeSet query_types,
                                bool resolve_canonname,
@@ -381,9 +399,9 @@ class NET_EXPORT HostResolverManager
 
   // Iff we have a DnsClient with a valid DnsConfig and we're not about to
   // attempt a system lookup, then try to resolve the query using the HOSTS
-  // file.
-  std::optional<HostCache::Entry> ServeFromHosts(
-      base::StringPiece hostname,
+  // file. Returns empty set if HOSTS lookup not attempted.
+  std::set<std::unique_ptr<HostResolverInternalResult>> ServeFromHosts(
+      std::string_view hostname,
       DnsQueryTypeSet query_types,
       bool default_family_due_to_no_ipv6,
       const std::deque<TaskType>& tasks);
@@ -391,7 +409,7 @@ class NET_EXPORT HostResolverManager
   // Iff |key| is for a localhost name (RFC 6761) and address DNS query type,
   // returns a results entry with the loopback IP.
   std::optional<HostCache::Entry> ServeLocalhost(
-      base::StringPiece hostname,
+      std::string_view hostname,
       DnsQueryTypeSet query_types,
       bool default_family_due_to_no_ipv6);
 
@@ -559,6 +577,9 @@ class NET_EXPORT HostResolverManager
   // When true, query AAAA even when the globally reachable check failed.
   bool ipv6_reachability_override_ = false;
 
+  // Enables or disables the HappyEyeballsV3 feature.
+  bool is_happy_eyeballs_v3_enabled_;
+
   // Any resolver flags that should be added to a request by default.
   HostResolverFlags additional_resolver_flags_ = 0;
 
@@ -597,7 +618,7 @@ class NET_EXPORT HostResolverManager
 // TODO(tfarina): It would be better to change the tests so this function
 // gets exercised indirectly through HostResolverManager.
 NET_EXPORT_PRIVATE bool ResolveLocalHostname(
-    base::StringPiece host,
+    std::string_view host,
     std::vector<IPEndPoint>* address_list);
 
 }  // namespace net

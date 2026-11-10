@@ -10,8 +10,9 @@
 #include "base/base_export.h"
 #include "base/containers/intrusive_heap.h"
 #include "base/dcheck_is_on.h"
-#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/stack_allocated.h"
 #include "base/sequence_token.h"
 #include "base/task/common/checked_lock.h"
 #include "base/task/task_traits.h"
@@ -34,6 +35,9 @@ enum class TaskSourceExecutionMode {
 };
 
 struct BASE_EXPORT ExecutionEnvironment {
+  STACK_ALLOCATED();
+
+ public:
   ExecutionEnvironment(SequenceToken token) : token(token) {}
 
   ExecutionEnvironment(SequenceToken token,
@@ -52,9 +56,9 @@ struct BASE_EXPORT ExecutionEnvironment {
   ~ExecutionEnvironment();
 
   const SequenceToken token;
-  const raw_ptr<SequenceLocalStorageMap> sequence_local_storage;
-  const raw_ptr<SingleThreadTaskRunner> single_thread_task_runner;
-  const raw_ptr<SequencedTaskRunner> sequenced_task_runner;
+  SequenceLocalStorageMap* const sequence_local_storage = nullptr;
+  SingleThreadTaskRunner* const single_thread_task_runner = nullptr;
+  SequencedTaskRunner* const sequenced_task_runner = nullptr;
 };
 
 // A TaskSource is a virtual class that provides a series of Tasks that must be
@@ -125,6 +129,8 @@ class BASE_EXPORT TaskSource : public RefCountedThreadSafe<TaskSource> {
   // lifetime of the Transaction. No Transaction must be held when ~TaskSource()
   // is called.
   class BASE_EXPORT Transaction {
+    STACK_ALLOCATED();
+
    public:
     Transaction(Transaction&& other);
     Transaction(const Transaction&) = delete;
@@ -149,12 +155,11 @@ class BASE_EXPORT TaskSource : public RefCountedThreadSafe<TaskSource> {
    private:
     friend class TaskSource;
 
-    raw_ptr<TaskSource> task_source_;
+    TaskSource* task_source_ = nullptr;
   };
 
   // |traits| is metadata that applies to all Tasks in the TaskSource.
-  TaskSource(const TaskTraits& traits,
-             TaskSourceExecutionMode execution_mode);
+  TaskSource(const TaskTraits& traits, TaskSourceExecutionMode execution_mode);
   TaskSource(const TaskSource&) = delete;
   TaskSource& operator=(const TaskSource&) = delete;
 
@@ -216,6 +221,8 @@ class BASE_EXPORT TaskSource : public RefCountedThreadSafe<TaskSource> {
 
   void ClearForTesting();
 
+  const TaskTraits& traits() const { return traits_; }
+
  protected:
   virtual ~TaskSource();
 
@@ -232,7 +239,7 @@ class BASE_EXPORT TaskSource : public RefCountedThreadSafe<TaskSource> {
   // The implementation needs to support this being called multiple times;
   // unless it guarantees never to hand-out multiple RegisteredTaskSources that
   // are concurrently ready.
-  virtual absl::optional<Task> Clear(TaskSource::Transaction* transaction) = 0;
+  virtual std::optional<Task> Clear(TaskSource::Transaction* transaction) = 0;
 
   // Sets TaskSource priority to |priority|.
   void UpdatePriority(TaskPriority priority);
@@ -320,7 +327,7 @@ class BASE_EXPORT RegisteredTaskSource {
   // Returns a task that clears this TaskSource to make it empty. |transaction|
   // is optional and should only be provided if this operation is already part
   // of a transaction.
-  [[nodiscard]] absl::optional<Task> Clear(
+  [[nodiscard]] std::optional<Task> Clear(
       TaskSource::Transaction* transaction = nullptr);
 
  private:
@@ -331,20 +338,24 @@ class BASE_EXPORT RegisteredTaskSource {
 #if DCHECK_IS_ON()
   // Indicates the step of a task execution chain.
   enum class State {
-    kInitial,       // WillRunTask() may be called.
-    kReady,         // After WillRunTask() returned a valid RunStatus.
+    kInitial,  // WillRunTask() may be called.
+    kReady,    // After WillRunTask() returned a valid RunStatus.
   };
 
   State run_step_ = State::kInitial;
 #endif  // DCHECK_IS_ON()
 
   scoped_refptr<TaskSource> task_source_;
-  raw_ptr<TaskTracker> task_tracker_ = nullptr;
+  // RAW_PTR_EXCLUSION: Performance reasons (visible in sampling profiler
+  // stacks).
+  RAW_PTR_EXCLUSION TaskTracker* task_tracker_ = nullptr;
 };
 
 // A pair of Transaction and RegisteredTaskSource. Useful to carry a
 // RegisteredTaskSource with an associated Transaction.
 struct BASE_EXPORT RegisteredTaskSourceAndTransaction {
+  STACK_ALLOCATED();
+
  public:
   RegisteredTaskSourceAndTransaction(RegisteredTaskSource task_source_in,
                                      TaskSource::Transaction transaction_in);
@@ -365,6 +376,8 @@ struct BASE_EXPORT RegisteredTaskSourceAndTransaction {
 };
 
 struct BASE_EXPORT TaskSourceAndTransaction {
+  STACK_ALLOCATED();
+
  public:
   TaskSourceAndTransaction(scoped_refptr<TaskSource> task_source_in,
                            TaskSource::Transaction transaction_in);

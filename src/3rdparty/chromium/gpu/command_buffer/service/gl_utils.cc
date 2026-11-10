@@ -2,11 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/gl_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <unordered_set>
 
+#include "base/containers/span.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/service/error_state.h"
@@ -14,9 +21,10 @@
 #include "gpu/command_buffer/service/gles2_cmd_copy_texture_chromium.h"
 #include "gpu/command_buffer/service/logger.h"
 #include "gpu/command_buffer/service/texture_manager.h"
+#include "ui/gl/gl_utils.h"
 #include "ui/gl/gl_version_info.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include <sys/stat.h>
 #include "ui/gl/gl_surface_egl.h"
 #endif
@@ -42,11 +50,22 @@ typedef struct {
   int blockHeight;
 } ASTCBlockArray;
 
-const ASTCBlockArray kASTCBlockArray[] = {
+const auto kASTCBlockArray = std::to_array<ASTCBlockArray>({
     {4, 4}, /* GL_COMPRESSED_RGBA_ASTC_4x4_KHR */
     {5, 4}, /* and GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR */
-    {5, 5},  {6, 5},  {6, 6},  {8, 5},   {8, 6},   {8, 8},
-    {10, 5}, {10, 6}, {10, 8}, {10, 10}, {12, 10}, {12, 12}};
+    {5, 5},
+    {6, 5},
+    {6, 6},
+    {8, 5},
+    {8, 6},
+    {8, 8},
+    {10, 5},
+    {10, 6},
+    {10, 8},
+    {10, 10},
+    {12, 10},
+    {12, 12},
+});
 
 bool IsValidPVRTCSize(GLint level, GLsizei size) {
   return GLES2Util::IsPOT(size);
@@ -57,61 +76,6 @@ bool IsValidS3TCSizeForWebGLAndANGLE(GLint level, GLsizei size) {
   // WEBGL_compressed_texture_s3tc and ANGLE_compressed_texture_dxt*
   return (level > 0) || (size % kS3TCBlockWidth == 0);
 }
-
-const char* GetDebugSourceString(GLenum source) {
-  switch (source) {
-    case GL_DEBUG_SOURCE_API:
-      return "OpenGL";
-    case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
-      return "Window System";
-    case GL_DEBUG_SOURCE_SHADER_COMPILER:
-      return "Shader Compiler";
-    case GL_DEBUG_SOURCE_THIRD_PARTY:
-      return "Third Party";
-    case GL_DEBUG_SOURCE_APPLICATION:
-      return "Application";
-    case GL_DEBUG_SOURCE_OTHER:
-      return "Other";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-const char* GetDebugTypeString(GLenum type) {
-  switch (type) {
-    case GL_DEBUG_TYPE_ERROR:
-      return "Error";
-    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
-      return "Deprecated behavior";
-    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
-      return "Undefined behavior";
-    case GL_DEBUG_TYPE_PORTABILITY:
-      return "Portability";
-    case GL_DEBUG_TYPE_PERFORMANCE:
-      return "Performance";
-    case GL_DEBUG_TYPE_OTHER:
-      return "Other";
-    case GL_DEBUG_TYPE_MARKER:
-      return "Marker";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-const char* GetDebugSeverityString(GLenum severity) {
-  switch (severity) {
-    case GL_DEBUG_SEVERITY_HIGH:
-      return "High";
-    case GL_DEBUG_SEVERITY_MEDIUM:
-      return "Medium";
-    case GL_DEBUG_SEVERITY_LOW:
-      return "Low";
-    case GL_DEBUG_SEVERITY_NOTIFICATION:
-      return "Notification";
-    default:
-      return "UNKNOWN";
-  }
-}
 }  // namespace
 
 bool PrecisionMeetsSpecForHighpFloat(GLint rangeMin,
@@ -120,10 +84,9 @@ bool PrecisionMeetsSpecForHighpFloat(GLint rangeMin,
   return (rangeMin >= 62) && (rangeMax >= 62) && (precision >= 16);
 }
 
-void QueryShaderPrecisionFormat(const gl::GLVersionInfo& gl_version_info,
-                                GLenum shader_type,
+void QueryShaderPrecisionFormat(GLenum shader_type,
                                 GLenum precision_type,
-                                GLint* range,
+                                base::span<GLint> range,
                                 GLint* precision) {
   switch (precision_type) {
     case GL_LOW_INT:
@@ -144,35 +107,33 @@ void QueryShaderPrecisionFormat(const gl::GLVersionInfo& gl_version_info,
       break;
     default:
       NOTREACHED();
-      break;
   }
 
-  if (gl_version_info.is_es) {
-    // This function is sometimes defined even though it's really just
-    // a stub, so we need to set range and precision as if it weren't
-    // defined before calling it.
-    // On Mac OS with some GPUs, calling this generates a
-    // GL_INVALID_OPERATION error. Avoid calling it on non-GLES2
-    // platforms.
-    glGetShaderPrecisionFormat(shader_type, precision_type, range, precision);
+  // This function is sometimes defined even though it's really just
+  // a stub, so we need to set range and precision as if it weren't
+  // defined before calling it.
+  // On Mac OS with some GPUs, calling this generates a
+  // GL_INVALID_OPERATION error. Avoid calling it on non-GLES2
+  // platforms.
+  glGetShaderPrecisionFormat(shader_type, precision_type, range.data(),
+                             precision);
 
-    // TODO(brianderson): Make the following official workarounds.
+  // TODO(brianderson): Make the following official workarounds.
 
-    // Some drivers have bugs where they report the ranges as a negative number.
-    // Taking the absolute value here shouldn't hurt because negative numbers
-    // aren't expected anyway.
-    range[0] = abs(range[0]);
-    range[1] = abs(range[1]);
+  // Some drivers have bugs where they report the ranges as a negative number.
+  // Taking the absolute value here shouldn't hurt because negative numbers
+  // aren't expected anyway.
+  range[0] = abs(range[0]);
+  range[1] = abs(range[1]);
 
-    // If the driver reports a precision for highp float that isn't actually
-    // highp, don't pretend like it's supported because shader compilation will
-    // fail anyway.
-    if (precision_type == GL_HIGH_FLOAT &&
-        !PrecisionMeetsSpecForHighpFloat(range[0], range[1], *precision)) {
-      range[0] = 0;
-      range[1] = 0;
-      *precision = 0;
-    }
+  // If the driver reports a precision for highp float that isn't actually
+  // highp, don't pretend like it's supported because shader compilation will
+  // fail anyway.
+  if (precision_type == GL_HIGH_FLOAT &&
+      !PrecisionMeetsSpecForHighpFloat(range[0], range[1], *precision)) {
+    range[0] = 0;
+    range[1] = 0;
+    *precision = 0;
   }
 }
 
@@ -180,32 +141,23 @@ void PopulateNumericCapabilities(Capabilities* caps,
                                  const FeatureInfo* feature_info) {
   DCHECK(caps != nullptr);
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &caps->max_texture_size);
-
-  if (feature_info->IsWebGL2OrES3OrHigherContext()) {
-    caps->major_version = 3;
-    if (feature_info->IsES31ForTestingContext()) {
-      caps->minor_version = 1;
-    } else {
-      caps->minor_version = 0;
-    }
-  }
 }
 
 void PopulateGLCapabilities(GLCapabilities* caps,
                             const FeatureInfo* feature_info) {
   CHECK(caps);
 
-  const gl::GLVersionInfo& version_info = feature_info->gl_version_info();
-  caps->VisitPrecisions([&version_info](
-                            GLenum shader, GLenum type,
-                            GLCapabilities::ShaderPrecision* shader_precision) {
+  caps->VisitPrecisions([](GLenum shader, GLenum type,
+                           GLCapabilities::ShaderPrecision* shader_precision) {
     GLint range[2] = {0, 0};
     GLint precision = 0;
-    QueryShaderPrecisionFormat(version_info, shader, type, range, &precision);
+    QueryShaderPrecisionFormat(shader, type, range, &precision);
     shader_precision->min_range = range[0];
     shader_precision->max_range = range[1];
     shader_precision->precision = precision;
   });
+
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &caps->max_texture_size);
 
   glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,
                 &caps->max_combined_texture_image_units);
@@ -289,9 +241,18 @@ void PopulateGLCapabilities(GLCapabilities* caps,
       feature_info->IsWebGL2OrES3OrHigherContext()) {
     glGetIntegerv(GL_MAX_SAMPLES, &caps->max_samples);
   }
+
+  if (feature_info->IsWebGL2OrES3OrHigherContext()) {
+    caps->major_version = 3;
+    if (feature_info->IsES31ForTestingContext()) {
+      caps->minor_version = 1;
+    } else {
+      caps->minor_version = 0;
+    }
+  }
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void PopulateDRMCapabilities(Capabilities* caps,
                              const FeatureInfo* feature_info) {
   DCHECK(caps != nullptr);
@@ -416,15 +377,21 @@ void LogGLDebugMessage(GLenum source,
                        const GLchar* message,
                        Logger* error_logger) {
   std::string id_string = GLES2Util::GetStringEnum(id);
-  if (type == GL_DEBUG_TYPE_ERROR && source == GL_DEBUG_SOURCE_API) {
+  // Suppresses GL_DEBUG_TYPE_PERFORMANCE log messages for web tests that can
+  // get sent to the JS console and cause unnecessary test failures due test
+  // output log expectation comparisons.
+  if (type == GL_DEBUG_TYPE_PERFORMANCE &&
+      error_logger->SuppressPerformanceLogs()) {
+    return;
+  } else if (type == GL_DEBUG_TYPE_ERROR && source == GL_DEBUG_SOURCE_API) {
     error_logger->LogMessage(__FILE__, __LINE__,
                              " " + id_string + ": " + message);
   } else {
     error_logger->LogMessage(
         __FILE__, __LINE__,
-        std::string("GL Driver Message (") + GetDebugSourceString(source) +
-            ", " + GetDebugTypeString(type) + ", " + id_string + ", " +
-            GetDebugSeverityString(severity) + "): " + message);
+        std::string("GL Driver Message (") + gl::GetDebugSourceString(source) +
+            ", " + gl::GetDebugTypeString(type) + ", " + id_string + ", " +
+            gl::GetDebugSeverityString(severity) + "): " + message);
   }
 }
 
@@ -455,9 +422,9 @@ void InitializeGLDebugLogging(bool log_non_errors,
 bool ValidContextLostReason(GLenum reason) {
   switch (reason) {
     case GL_NO_ERROR:
-    case GL_GUILTY_CONTEXT_RESET_ARB:
-    case GL_INNOCENT_CONTEXT_RESET_ARB:
-    case GL_UNKNOWN_CONTEXT_RESET_ARB:
+    case GL_GUILTY_CONTEXT_RESET:
+    case GL_INNOCENT_CONTEXT_RESET:
+    case GL_UNKNOWN_CONTEXT_RESET:
       return true;
     default:
       return false;
@@ -471,16 +438,15 @@ error::ContextLostReason GetContextLostReasonFromResetStatus(
       // TODO(kbr): improve the precision of the error code in this case.
       // Consider delegating to context for error code if MakeCurrent fails.
       return error::kUnknown;
-    case GL_GUILTY_CONTEXT_RESET_ARB:
+    case GL_GUILTY_CONTEXT_RESET:
       return error::kGuilty;
-    case GL_INNOCENT_CONTEXT_RESET_ARB:
+    case GL_INNOCENT_CONTEXT_RESET:
       return error::kInnocent;
-    case GL_UNKNOWN_CONTEXT_RESET_ARB:
+    case GL_UNKNOWN_CONTEXT_RESET:
       return error::kUnknown;
   }
 
   NOTREACHED();
-  return error::kUnknown;
 }
 
 bool GetCompressedTexSizeInBytes(const char* function_name,
@@ -499,8 +465,10 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
     case GL_COMPRESSED_SRGB_S3TC_DXT1_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
     case GL_ETC1_RGB8_OES:
-      bytes_required = (width + kS3TCBlockWidth - 1) / kS3TCBlockWidth;
-      bytes_required *= (height + kS3TCBlockHeight - 1) / kS3TCBlockHeight;
+      bytes_required = base::CheckDiv(
+          base::CheckAdd(width, kS3TCBlockWidth - 1), kS3TCBlockWidth);
+      bytes_required *= base::CheckDiv(
+          base::CheckAdd(height, kS3TCBlockHeight - 1), kS3TCBlockHeight);
       bytes_required *= kS3TCDXT1BlockSize;
       break;
     case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
@@ -540,8 +508,10 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
       const int kBlockWidth = kASTCBlockArray[index].blockWidth;
       const int kBlockHeight = kASTCBlockArray[index].blockHeight;
 
-      bytes_required = (width + kBlockWidth - 1) / kBlockWidth;
-      bytes_required *= (height + kBlockHeight - 1) / kBlockHeight;
+      bytes_required =
+          base::CheckDiv(base::CheckAdd(width, kBlockWidth - 1), kBlockWidth);
+      bytes_required *= base::CheckDiv(base::CheckAdd(height, kBlockHeight - 1),
+                                       kBlockHeight);
 
       bytes_required *= kASTCBlockSize;
       break;
@@ -552,8 +522,10 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
-      bytes_required = (width + kS3TCBlockWidth - 1) / kS3TCBlockWidth;
-      bytes_required *= (height + kS3TCBlockHeight - 1) / kS3TCBlockHeight;
+      bytes_required = base::CheckDiv(
+          base::CheckAdd(width, kS3TCBlockWidth - 1), kS3TCBlockWidth);
+      bytes_required *= base::CheckDiv(
+          base::CheckAdd(height, kS3TCBlockHeight - 1), kS3TCBlockHeight);
       bytes_required *= kS3TCDXT3AndDXT5BlockSize;
       break;
     case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG:
@@ -581,45 +553,50 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
     case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
     case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
       bytes_required =
-          (width + kEACAndETC2BlockSize - 1) / kEACAndETC2BlockSize;
+          base::CheckDiv(base::CheckAdd(width, kEACAndETC2BlockSize - 1),
+                         kEACAndETC2BlockSize);
       bytes_required *=
-          (height + kEACAndETC2BlockSize - 1) / kEACAndETC2BlockSize;
+          base::CheckDiv(base::CheckAdd(height, kEACAndETC2BlockSize - 1),
+                         kEACAndETC2BlockSize);
       bytes_required *= 8;
-      bytes_required *= depth;
       break;
     case GL_COMPRESSED_RG11_EAC:
     case GL_COMPRESSED_SIGNED_RG11_EAC:
     case GL_COMPRESSED_RGBA8_ETC2_EAC:
     case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
       bytes_required =
-          (width + kEACAndETC2BlockSize - 1) / kEACAndETC2BlockSize;
+          base::CheckDiv(base::CheckAdd(width, kEACAndETC2BlockSize - 1),
+                         kEACAndETC2BlockSize);
       bytes_required *=
-          (height + kEACAndETC2BlockSize - 1) / kEACAndETC2BlockSize;
+          base::CheckDiv(base::CheckAdd(height, kEACAndETC2BlockSize - 1),
+                         kEACAndETC2BlockSize);
       bytes_required *= 16;
-      bytes_required *= depth;
       break;
     case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
     case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
     case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
     case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
-      bytes_required = (width + kBPTCBlockWidth - 1) / kBPTCBlockWidth;
-      bytes_required *= (height + kBPTCBlockHeight - 1) / kBPTCBlockHeight;
+      bytes_required = base::CheckDiv(
+          base::CheckAdd(width, kBPTCBlockWidth - 1), kBPTCBlockWidth);
+      bytes_required *= base::CheckDiv(
+          base::CheckAdd(height, kBPTCBlockHeight - 1), kBPTCBlockHeight);
       bytes_required *= 16;
-      bytes_required *= depth;
       break;
     case GL_COMPRESSED_RED_RGTC1_EXT:
     case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
-      bytes_required = (width + kRGTCBlockWidth - 1) / kRGTCBlockWidth;
-      bytes_required *= (height + kRGTCBlockHeight - 1) / kRGTCBlockHeight;
+      bytes_required = base::CheckDiv(
+          base::CheckAdd(width, kRGTCBlockWidth - 1), kRGTCBlockWidth);
+      bytes_required *= base::CheckDiv(
+          base::CheckAdd(height, kRGTCBlockHeight - 1), kRGTCBlockHeight);
       bytes_required *= 8;
-      bytes_required *= depth;
       break;
     case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
     case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
-      bytes_required = (width + kRGTCBlockWidth - 1) / kRGTCBlockWidth;
-      bytes_required *= (height + kRGTCBlockHeight - 1) / kRGTCBlockHeight;
+      bytes_required = base::CheckDiv(
+          base::CheckAdd(width, kRGTCBlockWidth - 1), kRGTCBlockWidth);
+      bytes_required *= base::CheckDiv(
+          base::CheckAdd(height, kRGTCBlockHeight - 1), kRGTCBlockHeight);
       bytes_required *= 16;
-      bytes_required *= depth;
       break;
     default:
       if (function_name && error_state) {
@@ -628,6 +605,8 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
       }
       return false;
   }
+
+  bytes_required *= depth;
 
   if (!bytes_required.IsValid()) {
     if (function_name && error_state) {
@@ -998,15 +977,6 @@ bool ValidateCopyTexFormatHelper(const FeatureInfo* feature_info,
     *output_error_msg = std::string("no valid color image");
     return false;
   }
-  // YUV formats are not valid for CopyTex[Sub]Image.
-  if (internal_format == GL_RGB_YCRCB_420_CHROMIUM ||
-      internal_format == GL_RGB_YCBCR_420V_CHROMIUM ||
-      internal_format == GL_RGB_YCBCR_P010_CHROMIUM ||
-      read_format == GL_RGB_YCRCB_420_CHROMIUM ||
-      read_format == GL_RGB_YCBCR_420V_CHROMIUM ||
-      read_format == GL_RGB_YCBCR_P010_CHROMIUM) {
-    return false;
-  }
   // Check we have compatible formats.
   uint32_t channels_exist = GLES2Util::GetChannelsForFormat(read_format);
   uint32_t channels_needed = GLES2Util::GetChannelsForFormat(internal_format);
@@ -1089,9 +1059,7 @@ CopyTextureMethod GetCopyTextureCHROMIUMMethod(const FeatureInfo* feature_info,
 #endif
     // RGB9_E5 isn't accepted by glCopyTexImage2D if underlying context is ES.
     case GL_RGB9_E5:
-      if (feature_info->gl_version_info().is_es)
-        return CopyTextureMethod::DRAW_AND_READBACK;
-      break;
+      return CopyTextureMethod::DRAW_AND_READBACK;
     // SRGB format has color-space conversion issue. WebGL spec doesn't define
     // clearly if linear-to-srgb color space conversion is required or not when
     // uploading DOM elements to SRGB textures. WebGL conformance test expects
@@ -1126,10 +1094,10 @@ CopyTextureMethod GetCopyTextureCHROMIUMMethod(const FeatureInfo* feature_info,
   // GL_RGB10_A2 attachment to an unsized internal format is valid. Most drivers
   // interpreted the explicit call out as not valid (and dEQP actually checks
   // this), so avoid DIRECT_COPY in that case.
-  if (feature_info->gl_version_info().is_es &&
-      source_internal_format == GL_RGB10_A2 &&
-      dest_internal_format != source_internal_format)
+  if (source_internal_format == GL_RGB10_A2 &&
+      dest_internal_format != source_internal_format) {
     copy_tex_image_format_valid = false;
+  }
 
   // TODO(qiankun.miao@intel.com): for WebGL 2.0 or OpenGL ES 3.0, both
   // DIRECT_DRAW path for dest_level > 0 and DIRECT_COPY path for source_level >
@@ -1246,9 +1214,6 @@ bool ValidateCopyTextureCHROMIUMInternalFormats(const FeatureInfo* feature_info,
       source_internal_format == GL_LUMINANCE_ALPHA ||
       source_internal_format == GL_BGRA_EXT ||
       source_internal_format == GL_BGRA8_EXT ||
-      source_internal_format == GL_RGB_YCRCB_420_CHROMIUM ||
-      source_internal_format == GL_RGB_YCBCR_420V_CHROMIUM ||
-      source_internal_format == GL_RGB_YCBCR_P010_CHROMIUM ||
       source_internal_format == GL_R16_EXT ||
       source_internal_format == GL_RG16_EXT ||
       source_internal_format == GL_RGBA16_EXT ||
@@ -1281,32 +1246,12 @@ GLenum GetTextureBindingQuery(GLenum texture_type) {
       return GL_TEXTURE_BINDING_3D;
     case GL_TEXTURE_EXTERNAL_OES:
       return GL_TEXTURE_BINDING_EXTERNAL_OES;
-    case GL_TEXTURE_RECTANGLE:
-      return GL_TEXTURE_BINDING_RECTANGLE;
+    case GL_TEXTURE_RECTANGLE_ANGLE:
+      return GL_TEXTURE_BINDING_RECTANGLE_ANGLE;
     case GL_TEXTURE_CUBE_MAP:
       return GL_TEXTURE_BINDING_CUBE_MAP;
     default:
       NOTREACHED();
-      return 0;
-  }
-}
-
-bool GetGFXBufferFormat(GLenum internal_format, gfx::BufferFormat* out_format) {
-  switch (internal_format) {
-    case GL_RGBA8_OES:
-      *out_format = gfx::BufferFormat::RGBA_8888;
-      return true;
-    case GL_BGRA8_EXT:
-      *out_format = gfx::BufferFormat::BGRA_8888;
-      return true;
-    case GL_RGBA16F_EXT:
-      *out_format = gfx::BufferFormat::RGBA_F16;
-      return true;
-    case GL_R8_EXT:
-      *out_format = gfx::BufferFormat::R_8;
-      return true;
-    default:
-      return false;
   }
 }
 

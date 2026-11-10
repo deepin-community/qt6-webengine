@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef BASE_ALLOCATOR_DISPATCHER_REENTRY_GUARD_H_
 #define BASE_ALLOCATOR_DISPATCHER_REENTRY_GUARD_H_
 
@@ -33,8 +38,9 @@ struct BASE_EXPORT ReentryGuard {
   }
 
   ALWAYS_INLINE ~ReentryGuard() {
-    if (LIKELY(allowed_))
+    if (allowed_) [[likely]] {
       pthread_setspecific(entered_key_, nullptr);
+    }
   }
 
   explicit operator bool() const noexcept { return allowed_; }

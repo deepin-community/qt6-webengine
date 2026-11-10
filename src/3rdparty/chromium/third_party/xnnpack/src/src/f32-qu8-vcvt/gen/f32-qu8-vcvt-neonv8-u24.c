@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-qs8-vcvt/neonv8.c.in
 //   Generator: tools/xngen
@@ -7,30 +8,30 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_f32_qu8_vcvt_ukernel__neonv8_u24(
     size_t batch,
     const float* input,
     uint8_t* output,
-    const union xnn_f32_qu8_cvt_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_qu8_cvt_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const float32x4_t vscale = vld1q_dup_f32(&params->neonv8.scale);
-  const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->neonv8.output_zero_point);
-  const uint8x16_t voutput_min = vld1q_dup_u8(&params->neonv8.output_min);
-  const uint8x16_t voutput_max = vld1q_dup_u8(&params->neonv8.output_max);
+  const float32x4_t vscale = vdupq_n_f32(params->scalar.scale);
+  const int16x8_t voutput_zero_point = vdupq_n_s16(params->scalar.output_zero_point);
   for (; batch >= 24 * sizeof(float); batch -= 24 * sizeof(float)) {
     float32x4_t vx0123 = vld1q_f32(input); input += 4;
     float32x4_t vx4567 = vld1q_f32(input); input += 4;
@@ -64,12 +65,6 @@ void xnn_f32_qu8_vcvt_ukernel__neonv8_u24(
     uint8x16_t vy0123456789ABCDEF = vcombine_u8(vqmovun_s16(vacc01234567), vqmovun_s16(vacc89ABCDEF));
     uint8x8_t vyGHIJKLMN = vqmovun_s16(vaccGHIJKLMN);
 
-    vy0123456789ABCDEF = vmaxq_u8(vy0123456789ABCDEF, voutput_min);
-    vyGHIJKLMN = vmax_u8(vyGHIJKLMN, vget_low_u8(voutput_min));
-
-    vy0123456789ABCDEF = vminq_u8(vy0123456789ABCDEF, voutput_max);
-    vyGHIJKLMN = vmin_u8(vyGHIJKLMN, vget_low_u8(voutput_max));
-
     vst1q_u8(output, vy0123456789ABCDEF); output += 16;
     vst1_u8(output, vyGHIJKLMN); output += 8;
   }
@@ -87,8 +82,6 @@ void xnn_f32_qu8_vcvt_ukernel__neonv8_u24(
     vacc = vqaddq_s16(vacc, voutput_zero_point);
 
     uint8x8_t vy = vqmovun_s16(vacc);
-    vy = vmax_u8(vy, vget_low_u8(voutput_min));
-    vy = vmin_u8(vy, vget_low_u8(voutput_max));
     vst1_u8(output, vy); output += 8;
   }
   if XNN_UNLIKELY(batch != 0) {
@@ -108,8 +101,6 @@ void xnn_f32_qu8_vcvt_ukernel__neonv8_u24(
     vacc = vqaddq_s16(vacc, voutput_zero_point);
 
     uint8x8_t vy = vqmovun_s16(vacc);
-    vy = vmax_u8(vy, vget_low_u8(voutput_min));
-    vy = vmin_u8(vy, vget_low_u8(voutput_max));
 
     if (batch & (4 * sizeof(float))) {
       vst1_lane_u32((void*) output, vreinterpret_u32_u8(vy), 0); output += 4;

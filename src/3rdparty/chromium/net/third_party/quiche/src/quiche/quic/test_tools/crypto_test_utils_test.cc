@@ -4,6 +4,8 @@
 
 #include "quiche/quic/test_tools/crypto_test_utils.h"
 
+#include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/strings/escaping.h"
@@ -147,7 +149,7 @@ TEST_F(CryptoTestUtilsTest, TestGenerateFullCHLO) {
   std::unique_ptr<CryptoHandshakeMessage> msg =
       crypto_config.AddConfig(primary_config, clock.WallNow());
   absl::string_view orbit;
-  ASSERT_TRUE(msg->GetStringPiece(kORBT, &orbit));
+  ASSERT_TRUE(msg->GetStringPiece(kOBIT, &orbit));
   std::string nonce;
   CryptoUtils::GenerateNonce(clock.WallNow(), QuicRandom::GetInstance(), orbit,
                              &nonce);

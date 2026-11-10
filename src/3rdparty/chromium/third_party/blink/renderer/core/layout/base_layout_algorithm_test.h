@@ -7,6 +7,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/layout/constraint_space.h"
+#include "third_party/blink/renderer/core/layout/gap_fragment_data.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_size.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
@@ -17,7 +18,7 @@ namespace blink {
 
 class BlockNode;
 class BreakToken;
-class LayoutNGBlockFlow;
+class LayoutBlockFlow;
 class PhysicalBoxFragment;
 
 // Base class for all LayoutNG Algorithms unit test classes.
@@ -42,8 +43,11 @@ class BaseLayoutAlgorithmTest
 
   const PhysicalBoxFragment* GetBoxFragmentByElementId(const char*);
 
-  static const PhysicalBoxFragment* CurrentFragmentFor(
-      const LayoutNGBlockFlow*);
+  static const PhysicalBoxFragment* CurrentFragmentFor(const LayoutBlockFlow*);
+
+  static void VerifyGapIntersections(
+      const Vector<GapIntersectionList>& expected_intersections,
+      const Vector<GapIntersectionList>& intersections);
 };
 
 class FragmentChildIterator {

@@ -18,7 +18,6 @@
 #include "libANGLE/Texture.h"
 #include "libANGLE/formatutils.h"
 #include "libANGLE/renderer/GLImplFactory.h"
-#include "libANGLE/renderer/d3d/RenderTargetD3D.h"
 
 namespace gl
 {
@@ -37,7 +36,7 @@ InitState DetermineInitState(const Context *context)
 RenderbufferState::RenderbufferState()
     : mWidth(0),
       mHeight(0),
-      mFormat(GL_RGBA4),
+      mFormat(GL_NONE),
       mSamples(0),
       mMultisamplingMode(MultisamplingMode::Regular),
       mHasProtectedContent(false),
@@ -112,6 +111,11 @@ void Renderbuffer::onDestroy(const Context *context)
 {
     egl::RefCountObjectReleaser<egl::Image> releaseImage;
     (void)orphanImages(context, &releaseImage);
+
+    if (context && context->retainIdUntilObjectDestroyed())
+    {
+        context->onRenderbufferDestroy(this);
+    }
 
     if (mImplementation)
     {
@@ -365,6 +369,11 @@ bool Renderbuffer::isRenderable(const Context *context,
                                                  context->getExtensions());
 }
 
+bool Renderbuffer::isEGLImageSource() const
+{
+    return !getSiblingSourcesOf().empty();
+}
+
 InitState Renderbuffer::initState(GLenum /*binding*/, const gl::ImageIndex & /*imageIndex*/) const
 {
     if (isEGLImageTarget())
@@ -417,6 +426,11 @@ angle::Result Renderbuffer::getRenderbufferImage(const Context *context,
 
 void Renderbuffer::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)
 {
+    if (message == angle::SubjectMessage::ObjectReallocated)
+    {
+        onStateChange(angle::SubjectMessage::ObjectReallocated);
+        return;
+    }
     ASSERT(message == angle::SubjectMessage::SubjectChanged);
     onStateChange(angle::SubjectMessage::ContentsChanged);
 }

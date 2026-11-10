@@ -6,6 +6,7 @@
 
 import '@material/web/ripple/ripple.js';
 import '@material/web/focus/md-focus-ring.js';
+import '../tooltip/tooltip';
 
 import {css, CSSResultGroup, html, LitElement, nothing, PropertyValues} from 'lit';
 import {classMap} from 'lit/directives/class-map';
@@ -120,9 +121,10 @@ export class SidenavItem extends LitElement {
     }
 
     :host([separator])::before {
-      border-bottom: 1px solid var(--cros-separator-color);
+      border-top: 1px solid var(--cros-separator-color);
       content: '';
       display: block;
+      padding-bottom: 8px;
       width: 100%;
     }
 
@@ -375,34 +377,34 @@ export class SidenavItem extends LitElement {
    * mainly used to identify this tree item is a start of the new section.
    * @export
    */
-  separator: boolean;
+  declare separator: boolean;
   /**
    * Indicate if a tree item is disabled or not. Disabled tree item will have
    * a greyed out color, can't be enabled, can't get focus. It can still have
    * children, but it can't be expanded, and the expand icon will be hidden.
    * @export
    */
-  disabled: boolean;
+  declare disabled: boolean;
   /**
    * Indicate if a tree item has been enabled or not.
    * @export
    */
-  enabled: boolean;
+  declare enabled: boolean;
   /**
    * Indicate if a tree item has been expanded or not.
    * @export
    */
-  expanded: boolean;
+  declare expanded: boolean;
   /**
    * Indicate if a tree item is in renaming mode or not.
    * @export
    */
-  renaming: boolean;
+  declare renaming: boolean;
   /**
    * Indicate the item contains an error.
    * @export
    */
-  error: boolean;
+  declare error: boolean;
   /**
    * A tree item will have children if the child tree items have been inserted
    * into its default slot. Only use `mayHaveChildren` if we want the tree item
@@ -411,46 +413,46 @@ export class SidenavItem extends LitElement {
    * child tree items.
    * @export
    */
-  mayHaveChildren: boolean;
+  declare mayHaveChildren: boolean;
   /**
    * The label text of the tree item.
    * @export
    */
-  label: string;
+  declare label: string;
   /**
    * If the user navigates to this item, tabs away from the sidenav and then
    * tabs back into the sidenav, the item that receives focus should be the one
    * they had navigated to. `tabIndex` is forwarded to the `<li>` element.
    * @export
    */
-  override tabIndex: number;
+  declare tabIndex: number;
   /**
    * Indicate the depth of this tree item, we use it to calculate the padding
    * indentation. Note: "aria-level" can be calculated by DOM structure so
    * no need to provide it explicitly.
    * @export
    */
-  layer: number;
+  declare layer: number;
 
   /**
    * Always render as if layer is 0.
    * @export
    */
-  ignoreLayer: boolean;
+  declare ignoreLayer: boolean;
 
   /**
    * Whether an icon has been slotted. CSS cannot distinguish slots that have
    * slotted items, so we check manually and set a class.
    * @export
    */
-  hasIcon: boolean;
+  declare hasIcon: boolean;
 
   /**
    * Whether this item is in a Sidenav with nested SidenavItems. If this
    * SidenavItem has a Sidenav parent, the parent will control this attribute.
    * @export
    */
-  inLayered: boolean;
+  declare inLayered: boolean;
 
   private get treeRowElement(): HTMLDivElement {
     return castExists(
@@ -559,7 +561,6 @@ export class SidenavItem extends LitElement {
             aria-expanded=${showExpandIcon ? this.expanded : nothing}
             aria-disabled=${this.disabled}
             tabindex=${this.tabIndex}
-            title="${this.label}"
             @click=${this.onRowClicked}
             @keydown=${this.onKeyDown}
             class=${classMap(treeRowClasses)}
@@ -598,6 +599,7 @@ export class SidenavItem extends LitElement {
             role="group">
           <slot @slotchange=${this.onSlotChanged}></slot>
         </ul>
+        ${this.renderTooltip()}
        </li>
      `;
   }
@@ -653,6 +655,20 @@ export class SidenavItem extends LitElement {
       class="tree-label"
       id="tree-label"
     >${this.label || ''}</span>`;
+  }
+
+  /**
+   * Renders a tooltip if the label is truncated.
+   */
+  private renderTooltip() {
+    return html`
+        <cros-tooltip
+          ?hidden=${!this.isLabelTruncated()}
+          anchor="tree-row"
+          label=${this.label}
+          follow-anchor>
+        </cros-tooltip>
+      `;
   }
 
   private onIconSlotChanged() {
@@ -808,6 +824,12 @@ export class SidenavItem extends LitElement {
   }
 
   private onRenameInputBlur() {
+    // Renaming is already false then the rename input element is not available
+    // and castExists will throw an error. This can occur in tests which
+    // programmatically call blur() on the input element.
+    if (!this.renaming) {
+      return;
+    }
     this.renaming = false;
     if (this.shouldRenameOnBlur) {
       this.commitRename(this.renameInputElement?.value || '');
@@ -831,6 +853,14 @@ export class SidenavItem extends LitElement {
           detail: {item: this, oldLabel, newLabel: newName},
         });
     this.dispatchEvent(renameEvent);
+  }
+
+  private isLabelTruncated(): boolean {
+    const treeLabel = this.shadowRoot?.querySelector('.tree-label');
+    if (!treeLabel) {
+      return false;
+    }
+    return treeLabel.scrollWidth > treeLabel.clientWidth;
   }
 }
 

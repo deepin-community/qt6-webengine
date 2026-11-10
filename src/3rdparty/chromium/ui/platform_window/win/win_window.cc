@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/string_util_win.h"
 #include "ui/base/cursor/platform_cursor.h"
@@ -110,7 +111,6 @@ void WinWindow::SetBoundsInDIP(const gfx::Rect& bounds) {
 gfx::Rect WinWindow::GetBoundsInDIP() const {
   // GetBounds should not be used on Windows tests.
   NOTREACHED();
-  return GetBoundsInPixels();
 }
 
 void WinWindow::SetTitle(const std::u16string& title) {

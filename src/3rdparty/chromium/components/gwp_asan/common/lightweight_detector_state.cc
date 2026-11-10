@@ -4,6 +4,8 @@
 
 #include "components/gwp_asan/common/lightweight_detector_state.h"
 
+#include "base/compiler_specific.h"
+
 namespace gwp_asan::internal {
 
 bool LightweightDetectorState::IsValid() const {
@@ -24,7 +26,7 @@ LightweightDetectorState::SlotMetadata&
 LightweightDetectorState::GetSlotMetadataById(
     MetadataId id,
     LightweightDetectorState::SlotMetadata* metadata_arr) {
-  return metadata_arr[id % num_metadata];
+  return UNSAFE_TODO(metadata_arr[id % num_metadata]);
 }
 
 bool LightweightDetectorState::HasMetadataForId(

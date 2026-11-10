@@ -21,12 +21,21 @@ import sys
 import urllib.request
 
 
-def FindSrcDirPath():
-    """Returns the abs path to the src/ dir of the project."""
-    src_dir = os.path.dirname(os.path.abspath(__file__))
-    while os.path.basename(src_dir) != 'src':
-        src_dir = os.path.normpath(os.path.join(src_dir, os.pardir))
-    return src_dir
+def FindRootPath():
+    """Returns the absolute path to the highest level repo root.
+
+    If this repo is checked out as a submodule of the chromium/src
+    superproject, this returns the superproect root. Otherwise, it returns the
+    webrtc/src repo root.
+    """
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    while os.path.basename(root_dir) not in ('src', 'chromium'):
+        par_dir = os.path.normpath(os.path.join(root_dir, os.pardir))
+        if par_dir == root_dir:
+            raise RuntimeError('Could not find the repo root.')
+        root_dir = par_dir
+    return root_dir
+
 
 
 # Skip these dependencies (list without solution name prefix).
@@ -35,6 +44,7 @@ DONT_AUTOROLL_THESE = [
     # Disable the roll of 'android_ndk' as it won't appear in chromium DEPS.
     'src/third_party/android_ndk',
     'src/third_party/mockito/src',
+    'src/third_party/protobuf-javascript',
 ]
 
 # These dependencies are missing in chromium/src/DEPS, either unused or already
@@ -49,7 +59,9 @@ WEBRTC_ONLY_DEPS = [
     'src/testing',
     'src/third_party',
     'src/third_party/clang_format/script',
+    'src/third_party/grpc/src',
     'src/third_party/gtest-parallel',
+    'src/third_party/kotlin_stdlib',
     'src/third_party/pipewire/linux-amd64',
     'src/tools',
 ]
@@ -65,8 +77,8 @@ CLANG_REVISION_RE = re.compile(r'^CLANG_REVISION = \'([-0-9a-z]+)\'$')
 ROLL_BRANCH_NAME = 'roll_chromium_revision'
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CHECKOUT_SRC_DIR = FindSrcDirPath()
-CHECKOUT_ROOT_DIR = os.path.realpath(os.path.join(CHECKOUT_SRC_DIR, os.pardir))
+CHECKOUT_ROOT_DIR = FindRootPath()
+GCLIENT_ROOT_DIR = os.path.realpath(os.path.join(CHECKOUT_ROOT_DIR, os.pardir))
 
 # Copied from tools/android/roll/android_deps/.../BuildConfigGenerator.groovy.
 ANDROID_DEPS_START = r'=== ANDROID_DEPS Generated Code Start ==='
@@ -76,24 +88,31 @@ ANDROID_DEPS_PATH = 'src/third_party/android_deps/'
 
 NOTIFY_EMAIL = 'webrtc-trooper@grotations.appspotmail.com'
 
-sys.path.append(os.path.join(CHECKOUT_SRC_DIR, 'build'))
+GCS_OBJECTS_ERROR = (
+    'The number of objects in %s is different between '
+    'Chromium\'s DEPS and WebRTC\'s DEPS. They must be the same.\n'
+    'Old: %s\nNew: %s\n'
+    'Manually update the DEPS file and add appropriate conditions for any new '
+    'objects. Note that the order of objects matter and must be the same as in '
+    'Chromium.')
+
+sys.path.append(os.path.join(CHECKOUT_ROOT_DIR, 'build'))
 import find_depot_tools
 
 find_depot_tools.add_depot_tools_to_path()
-
-CLANG_UPDATE_SCRIPT_URL_PATH = 'tools/clang/scripts/update.py'
-CLANG_UPDATE_SCRIPT_LOCAL_PATH = os.path.join(CHECKOUT_SRC_DIR, 'tools',
-                                              'clang', 'scripts', 'update.py')
 
 DepsEntry = collections.namedtuple('DepsEntry', 'path url revision')
 ChangedDep = collections.namedtuple('ChangedDep',
                                     'path url current_rev new_rev')
 CipdDepsEntry = collections.namedtuple('CipdDepsEntry', 'path packages')
+GcsDepsEntry = collections.namedtuple('GcsDepsEntry', 'path bucket objects')
 VersionEntry = collections.namedtuple('VersionEntry', 'version')
 ChangedCipdPackage = collections.namedtuple(
     'ChangedCipdPackage', 'path package current_version new_version')
 ChangedVersionEntry = collections.namedtuple(
     'ChangedVersionEntry', 'path current_version new_version')
+ChangedGcsPackage = collections.namedtuple(
+    'ChangedGcsPackage', 'path setdep_arg current_version new_version')
 
 ChromiumRevisionUpdate = collections.namedtuple('ChromiumRevisionUpdate',
                                                 ('current_chromium_rev '
@@ -151,7 +170,7 @@ def _RunCommand(command,
     Returns:
       A tuple containing the stdout and stderr outputs as strings.
     """
-    working_dir = working_dir or CHECKOUT_SRC_DIR
+    working_dir = working_dir or CHECKOUT_ROOT_DIR
     logging.debug('CMD: %s CWD: %s', ' '.join(command), working_dir)
     env = os.environ.copy()
     if extra_env:
@@ -175,6 +194,12 @@ def _RunCommand(command,
                       err_output)
         sys.exit(p.returncode)
     return std_output, err_output
+
+
+def _IsExistingDir(path):
+    """Returns True if `path` exists and is a dir.
+    """
+    return os.path.isdir(path)
 
 
 def _GetBranches():
@@ -278,6 +303,9 @@ def BuildDepsentryDict(deps_dict):
                 dep = {'url': dep}
             if dep.get('dep_type') == 'cipd':
                 result[path] = CipdDepsEntry(path, dep['packages'])
+            elif dep.get('dep_type') == 'gcs':
+                result[path] = GcsDepsEntry(path, dep['bucket'],
+                                            dep['objects'])
             else:
                 if '@' not in dep['url']:
                     url, revision = dep['url'], 'HEAD'
@@ -299,6 +327,25 @@ def BuildDepsentryDict(deps_dict):
         AddDepsEntries(deps_dict.get('deps_os', {}).get(deps_os, {}))
     AddVersionEntry(deps_dict.get('vars', {}))
     return result
+
+
+def _FindChangedGcsPackage(path, old_pkg, new_pkg):
+    old_object_names = [x['object_name'] for x in old_pkg.objects]
+    new_object_names = [x['object_name'] for x in new_pkg.objects]
+    assert len(old_pkg.objects) == len(
+        new_pkg.objects), (GCS_OBJECTS_ERROR %
+                           (path, old_object_names, new_object_names))
+    if old_object_names != new_object_names:
+        objects = [
+            ','.join([
+                o['object_name'], o['sha256sum'],
+                str(o['size_bytes']),
+                str(o['generation'])
+            ]) for o in new_pkg.objects
+        ]
+        setdep_arg = '%s@%s' % (path, '?'.join(objects))
+        yield ChangedGcsPackage(path, setdep_arg, ','.join(old_object_names),
+                                ','.join(new_object_names))
 
 
 def _FindChangedCipdPackages(path, old_pkgs, new_pkgs):
@@ -440,6 +487,12 @@ def CalculateChangedDeps(webrtc_deps, new_cr_deps):
                                              cr_deps_entry.packages))
                 continue
 
+            if isinstance(cr_deps_entry, GcsDepsEntry):
+                result.extend(
+                    _FindChangedGcsPackage(path, webrtc_deps_entry,
+                                           cr_deps_entry))
+                continue
+
             if isinstance(cr_deps_entry, VersionEntry):
                 result.extend(
                     _FindChangedVars(path, webrtc_deps_entry.version,
@@ -471,26 +524,6 @@ def CalculateChangedDeps(webrtc_deps, new_cr_deps):
     return sorted(result)
 
 
-def CalculateChangedClang(new_cr_rev):
-
-    def GetClangRev(lines):
-        for line in lines:
-            match = CLANG_REVISION_RE.match(line)
-            if match:
-                return match.group(1)
-        raise RollError('Could not parse Clang revision!')
-
-    with open(CLANG_UPDATE_SCRIPT_LOCAL_PATH, 'r') as f:
-        current_lines = f.readlines()
-    current_rev = GetClangRev(current_lines)
-
-    new_clang_update_py = ReadRemoteCrFile(CLANG_UPDATE_SCRIPT_URL_PATH,
-                                           new_cr_rev).splitlines()
-    new_rev = GetClangRev(new_clang_update_py)
-    return ChangedDep(CLANG_UPDATE_SCRIPT_LOCAL_PATH, None, current_rev,
-                      new_rev)
-
-
 def GenerateCommitMessage(
         rev_update,
         current_commit_pos,
@@ -498,7 +531,6 @@ def GenerateCommitMessage(
         changed_deps_list,
         added_deps_paths=None,
         removed_deps_paths=None,
-        clang_change=None,
 ):
     current_cr_rev = rev_update.current_chromium_rev[0:10]
     new_cr_rev = rev_update.new_chromium_rev[0:10]
@@ -523,6 +555,9 @@ def GenerateCommitMessage(
             if isinstance(c, ChangedCipdPackage):
                 commit_msg.append('* %s: %s..%s' %
                                   (c.path, c.current_version, c.new_version))
+            elif isinstance(c, ChangedGcsPackage):
+                commit_msg.append('* %s: %s..%s' %
+                                  (c.path, c.current_version, c.new_version))
             elif isinstance(c, ChangedVersionEntry):
                 commit_msg.append('* %s_version: %s..%s' %
                                   (c.path, c.current_version, c.new_version))
@@ -544,15 +579,6 @@ def GenerateCommitMessage(
         commit_msg.append('DEPS diff: %s\n' % change_url)
     else:
         commit_msg.append('No dependencies changed.')
-
-    if clang_change and clang_change.current_rev != clang_change.new_rev:
-        commit_msg.append('Clang version changed %s:%s' %
-                          (clang_change.current_rev, clang_change.new_rev))
-        change_url = CHROMIUM_FILE_TEMPLATE % (rev_interval,
-                                               CLANG_UPDATE_SCRIPT_URL_PATH)
-        commit_msg.append('Details: %s\n' % change_url)
-    else:
-        commit_msg.append('No update to Clang.\n')
 
     commit_msg.append('BUG=None')
     return '\n'.join(commit_msg)
@@ -595,8 +621,8 @@ def UpdateDepsFile(deps_filename, rev_update, changed_deps, new_cr_content):
         # ChangedVersionEntry types are already been processed.
         if isinstance(dep, ChangedVersionEntry):
             continue
-        local_dep_dir = os.path.join(CHECKOUT_ROOT_DIR, dep.path)
-        if not os.path.isdir(local_dep_dir):
+        local_dep_dir = os.path.join(GCLIENT_ROOT_DIR, dep.path)
+        if not _IsExistingDir(local_dep_dir):
             raise RollError(
                 'Cannot find local directory %s. Either run\n'
                 'gclient sync --deps=all\n'
@@ -607,10 +633,12 @@ def UpdateDepsFile(deps_filename, rev_update, changed_deps, new_cr_content):
         if isinstance(dep, ChangedCipdPackage):
             package = dep.package.format()  # Eliminate double curly brackets
             update = '%s:%s@%s' % (dep.path, package, dep.new_version)
+        elif isinstance(dep, ChangedGcsPackage):
+            update = dep.setdep_arg
         else:
             update = '%s@%s' % (dep.path, dep.new_rev)
         _RunCommand(['gclient', 'setdep', '--revision', update],
-                    working_dir=CHECKOUT_SRC_DIR)
+                    working_dir=CHECKOUT_ROOT_DIR)
 
 
 def _IsTreeClean():
@@ -778,7 +806,7 @@ def main():
     if not opts.ignore_unclean_workdir:
         _EnsureUpdatedMainBranch(opts.dry_run)
 
-    deps_filename = os.path.join(CHECKOUT_SRC_DIR, 'DEPS')
+    deps_filename = os.path.join(CHECKOUT_ROOT_DIR, 'DEPS')
     webrtc_deps = ParseLocalDepsFile(deps_filename)
 
     rev_update = GetRollRevisionRanges(opts, webrtc_deps)
@@ -800,15 +828,13 @@ def main():
                         'Remove them or add them to either '
                         'WEBRTC_ONLY_DEPS or DONT_AUTOROLL_THESE.' %
                         other_deps)
-    clang_change = CalculateChangedClang(rev_update.new_chromium_rev)
     commit_msg = GenerateCommitMessage(
         rev_update,
         current_commit_pos,
         new_commit_pos,
         changed_deps,
         added_deps_paths=new_generated_android_deps,
-        removed_deps_paths=removed_generated_android_deps,
-        clang_change=clang_change)
+        removed_deps_paths=removed_generated_android_deps)
     logging.debug('Commit message:\n%s', commit_msg)
 
     _CreateRollBranch(opts.dry_run)

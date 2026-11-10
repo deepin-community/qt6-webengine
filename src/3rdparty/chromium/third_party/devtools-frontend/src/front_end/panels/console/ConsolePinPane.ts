@@ -1,17 +1,20 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as CodeMirror from '../../third_party/codemirror.next/codemirror.next.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as TextEditor from '../../ui/components/text_editor/text_editor.js';
 import * as ObjectUI from '../../ui/legacy/components/object_ui/object_ui.js';
-// eslint-disable-next-line rulesdir/es_modules_import
+// eslint-disable-next-line rulesdir/es-modules-import
 import objectValueStyles from '../../ui/legacy/components/object_ui/objectValue.css.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import consolePinPaneStyles from './consolePinPane.css.js';
 
@@ -49,7 +52,7 @@ const UIStrings = {
    *@description Text of a DOM element in Console Pin Pane of the Console panel
    */
   notAvailable: 'not available',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/console/ConsolePinPane.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -60,22 +63,20 @@ export class ConsolePinPane extends UI.ThrottledWidget.ThrottledWidget {
   private readonly pinsSetting: Common.Settings.Setting<string[]>;
   constructor(private readonly liveExpressionButton: UI.Toolbar.ToolbarButton, private readonly focusOut: () => void) {
     super(true, 250);
+    this.registerRequiredCSS(consolePinPaneStyles, objectValueStyles);
     this.contentElement.classList.add('console-pins', 'monospace');
     this.contentElement.addEventListener('contextmenu', this.contextMenuEventFired.bind(this), false);
+    this.contentElement.setAttribute('jslog', `${VisualLogging.pane('console-pins')}`);
 
     this.pins = new Set();
-    this.pinsSetting = Common.Settings.Settings.instance().createLocalSetting('consolePins', []);
+    this.pinsSetting = Common.Settings.Settings.instance().createLocalSetting('console-pins', []);
     for (const expression of this.pinsSetting.get()) {
       this.addPin(expression);
     }
   }
 
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([consolePinPaneStyles, objectValueStyles]);
-  }
-
   override willHide(): void {
+    super.willHide();
     for (const pin of this.pins) {
       pin.setHovered(false);
     }
@@ -95,12 +96,15 @@ export class ConsolePinPane extends UI.ThrottledWidget.ThrottledWidget {
         const targetPin = elementToConsolePin.get(targetPinElement);
         if (targetPin) {
           contextMenu.editSection().appendItem(
-              i18nString(UIStrings.removeExpression), this.removePin.bind(this, targetPin));
+              i18nString(UIStrings.removeExpression), this.removePin.bind(this, targetPin),
+              {jslogContext: 'remove-expression'});
           targetPin.appendToContextMenu(contextMenu);
         }
       }
     }
-    contextMenu.editSection().appendItem(i18nString(UIStrings.removeAllExpressions), this.removeAllPins.bind(this));
+    contextMenu.editSection().appendItem(
+        i18nString(UIStrings.removeAllExpressions), this.removeAllPins.bind(this),
+        {jslogContext: 'remove-all-expressions'});
     void contextMenu.show();
   }
 
@@ -174,16 +178,20 @@ export class ConsolePin {
   private committedExpression: string;
   private hovered: boolean;
   private lastNode: SDK.RemoteObject.RemoteObject|null;
-  private deletePinIcon: UI.UIUtils.DevToolsCloseButton;
+  private deletePinIcon: Buttons.Button.Button;
 
   constructor(expression: string, private readonly pinPane: ConsolePinPane, private readonly focusOut: () => void) {
-    this.deletePinIcon = document.createElement('div', {is: 'dt-close-button'}) as UI.UIUtils.DevToolsCloseButton;
+    this.deletePinIcon = new Buttons.Button.Button();
+    this.deletePinIcon
+        .data = {variant: Buttons.Button.Variant.ICON, iconName: 'cross', size: Buttons.Button.Size.MICRO};
     this.deletePinIcon.classList.add('close-button');
-    this.deletePinIcon.setTabbable(true);
+    this.deletePinIcon.setAttribute('jslog', `${VisualLogging.close().track({click: true})}`);
+    this.deletePinIcon.tabIndex = 0;
+
     if (expression.length) {
-      this.deletePinIcon.setAccessibleName(i18nString(UIStrings.removeExpressionS, {PH1: expression}));
+      UI.ARIAUtils.setLabel(this.deletePinIcon, i18nString(UIStrings.removeExpressionS, {PH1: expression}));
     } else {
-      this.deletePinIcon.setAccessibleName(i18nString(UIStrings.removeBlankExpression));
+      UI.ARIAUtils.setLabel(this.deletePinIcon, i18nString(UIStrings.removeBlankExpression));
     }
     self.onInvokeElement(this.deletePinIcon, event => {
       pinPane.removePin(this);
@@ -193,7 +201,9 @@ export class ConsolePin {
     const fragment = UI.Fragment.Fragment.build`
   <div class='console-pin'>
   ${this.deletePinIcon}
-  <div class='console-pin-name' $='name'></div>
+  <div class='console-pin-name' $='name' jslog="${VisualLogging.textField().track({
+      change: true,
+    })}"></div>
   <div class='console-pin-preview' $='preview'></div>
   </div>`;
     this.pinElement = fragment.element();
@@ -236,7 +246,7 @@ export class ConsolePin {
       CodeMirror.keymap.of([
         {
           key: 'Escape',
-          run: (view: CodeMirror.EditorView): boolean => {
+          run: (view: CodeMirror.EditorView) => {
             view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: this.committedExpression}});
             this.focusOut();
             return true;
@@ -244,22 +254,47 @@ export class ConsolePin {
         },
         {
           key: 'Enter',
-          run: (): boolean => {
+          run: () => {
             this.focusOut();
             return true;
           },
         },
         {
           key: 'Mod-Enter',
-          run: (): boolean => {
+          run: () => {
             this.focusOut();
+            return true;
+          },
+        },
+        {
+          key: 'Tab',
+          run: (view: CodeMirror.EditorView) => {
+            if (CodeMirror.completionStatus(this.editor.state) !== null) {
+              return false;
+            }
+            // User should be able to tab out of edit field after auto complete is done
+            view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: this.committedExpression}});
+            this.focusOut();
+            return true;
+          },
+        },
+        {
+          key: 'Shift-Tab',
+          run: (view: CodeMirror.EditorView) => {
+            if (CodeMirror.completionStatus(this.editor.state) !== null) {
+              return false;
+            }
+            // User should be able to tab out of edit field after auto complete is done
+            view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: this.committedExpression}});
+            this.editor.blur();
+            this.deletePinIcon.focus();
             return true;
           },
         },
       ]),
       CodeMirror.EditorView.domEventHandlers({blur: (_e, view) => this.onBlur(view)}),
       TextEditor.Config.baseConfiguration(doc),
-      TextEditor.Config.closeBrackets,
+      TextEditor.Config.closeBrackets.instance(),
       TextEditor.Config.autocompletion.instance(),
     ];
     if (Root.Runtime.Runtime.queryParam('noJavaScriptCompletion') !== 'true') {
@@ -276,9 +311,10 @@ export class ConsolePin {
     this.committedExpression = trimmedText;
     this.pinPane.savePins();
     if (this.committedExpression.length) {
-      this.deletePinIcon.setAccessibleName(i18nString(UIStrings.removeExpressionS, {PH1: this.committedExpression}));
+      UI.ARIAUtils.setLabel(
+          this.deletePinIcon, i18nString(UIStrings.removeExpressionS, {PH1: this.committedExpression}));
     } else {
-      this.deletePinIcon.setAccessibleName(i18nString(UIStrings.removeBlankExpression));
+      UI.ARIAUtils.setLabel(this.deletePinIcon, i18nString(UIStrings.removeBlankExpression));
     }
     editor.dispatch({
       selection: {anchor: trimmedText.length},
@@ -313,7 +349,9 @@ export class ConsolePin {
   appendToContextMenu(contextMenu: UI.ContextMenu.ContextMenu): void {
     if (this.lastResult && !('error' in this.lastResult) && this.lastResult.object) {
       contextMenu.appendApplicableItems(this.lastResult.object);
-      // Prevent result from being released manually. It will release along with 'console' group.
+      // Prevent result from being released automatically, since it may be used by
+      // the context menu action. It will be released when the console is cleared,
+      // where we release the 'live-expression' object group.
       this.lastResult = null;
     }
   }
@@ -328,7 +366,7 @@ export class ConsolePin {
     const timeout = throwOnSideEffect ? 250 : undefined;
     const executionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
     const {preview, result} = await ObjectUI.JavaScriptREPL.JavaScriptREPL.evaluateAndBuildPreview(
-        text, throwOnSideEffect, true /* replMode */, timeout, !isEditing /* allowErrors */, 'console',
+        text, throwOnSideEffect, true /* replMode */, timeout, !isEditing /* allowErrors */, 'live-expression',
         true /* awaitPromise */, true /* silent */);
     if (this.lastResult && this.lastExecutionContext) {
       this.lastExecutionContext.runtimeModel.releaseEvaluationResult(this.lastResult);
@@ -340,8 +378,7 @@ export class ConsolePin {
     if (!previewText || previewText !== this.pinPreview.deepTextContent()) {
       this.pinPreview.removeChildren();
       if (result && SDK.RuntimeModel.RuntimeModel.isSideEffectFailure(result)) {
-        const sideEffectLabel =
-            (this.pinPreview.createChild('span', 'object-value-calculate-value-button') as HTMLElement);
+        const sideEffectLabel = this.pinPreview.createChild('span', 'object-value-calculate-value-button');
         sideEffectLabel.textContent = '(…)';
         UI.Tooltip.Tooltip.install(sideEffectLabel, i18nString(UIStrings.evaluateAllowingSideEffects));
       } else if (previewText) {

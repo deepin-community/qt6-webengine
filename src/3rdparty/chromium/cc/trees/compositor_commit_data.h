@@ -6,9 +6,9 @@
 #define CC_TREES_COMPOSITOR_COMMIT_DATA_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
-#include <optional>
 #include "cc/cc_export.h"
 #include "cc/input/browser_controls_state.h"
 #include "cc/input/scroll_snap_data.h"
@@ -98,11 +98,12 @@ struct CC_EXPORT CompositorCommitData {
   bool browser_controls_constraint_changed = false;
 
   struct ScrollEndInfo {
-    // Set to true when a scroll gesture being handled on the compositor has
-    // ended.
-    bool scroll_gesture_did_end = false;
+    ScrollEndInfo();
+    ~ScrollEndInfo();
 
-    bool gesture_affects_outer_viewport_scroll = false;
+    // The set of containers for which an impl scroll has ended between this
+    // commit and the last.
+    base::flat_set<ElementId> done_containers;
   };
   ScrollEndInfo scroll_end_data;
 
@@ -121,7 +122,7 @@ struct CC_EXPORT CompositorCommitData {
 
   // This tracks the strategy cc will use to snap at the end of the current
   // scroll based on the scroll updates so far. The main thread will use this to
-  // determine whether to fire snapchanging or not.
+  // determine whether to fire scrollsnapchanging or not.
   std::unique_ptr<SnapSelectionStrategy> snap_strategy;
 };
 

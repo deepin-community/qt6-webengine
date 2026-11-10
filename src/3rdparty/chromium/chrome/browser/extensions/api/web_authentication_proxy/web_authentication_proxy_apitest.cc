@@ -13,6 +13,8 @@
 #include "chrome/browser/extensions/api/web_authentication_proxy/web_authentication_proxy_service.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_management_test_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
@@ -41,13 +43,14 @@ constexpr char kTestDomain[] = "a.test";
 
 constexpr char kJsErrorPrefix[] = "a JavaScript error: \"";
 
-MATCHER_P(IsJsError, name, "") {
-  return base::StartsWith(arg.error, base::StrCat({kJsErrorPrefix, name}));
+auto IsJsError(std::string_view name) {
+  return content::EvalJsResult::ErrorIs(
+      testing::StartsWith(base::StrCat({kJsErrorPrefix, name})));
 }
 
-MATCHER_P2(IsJsErrorWithMessage, name, message, "") {
-  return base::StrCat({kJsErrorPrefix, name, ": ", message, "\"\n"}) ==
-         arg.error;
+auto IsJsErrorWithMessage(std::string_view name, std::string_view message) {
+  return content::EvalJsResult::ErrorIs(
+      base::StrCat({kJsErrorPrefix, name, ": ", message, "\"\n"}));
 }
 
 class WebAuthenticationProxyApiTest : public ExtensionApiTest {
@@ -124,9 +127,10 @@ class WebAuthenticationProxyApiTest : public ExtensionApiTest {
               let err = await createPromise;
               return err;
             })();)";
-    return content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                           kMakeCredentialJs)
-               .error.find("AbortError") >= 0;
+    return testing::Value(
+        content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                        kMakeCredentialJs),
+        content::EvalJsResult::ErrorIs(testing::HasSubstr("AbortError")));
   }
 
   content::EvalJsResult NavigateAndCallGetAssertion() {
@@ -164,9 +168,10 @@ class WebAuthenticationProxyApiTest : public ExtensionApiTest {
               let err = await getPromise;
               return err;
             })();)";
-    return content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                           kGetAssertionJs)
-               .error.find("AbortError") >= 0;
+    return testing::Value(
+        content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                        kGetAssertionJs),
+        content::EvalJsResult::ErrorIs(testing::HasSubstr("AbortError")));
   }
 
   bool ProxyIsActive() { return ProxyIsActiveForContext(profile()); }
@@ -194,7 +199,7 @@ IN_PROC_BROWSER_TEST_F(WebAuthenticationProxyApiTest, AttachDetach) {
   EXPECT_TRUE(RunExtensionTest("web_authentication_proxy/main"));
 }
 
-// TODO(crbug.com/1276042): Flaky on all platforms
+// TODO(crbug.com/40808644): Flaky on all platforms
 IN_PROC_BROWSER_TEST_F(WebAuthenticationProxyApiTest, DISABLED_AttachReload) {
   SetJsTestName("attachReload");
   // Load an extension that immediately attaches.

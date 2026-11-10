@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef PROFILE_IO_DATA_QT_H
 #define PROFILE_IO_DATA_QT_H
@@ -19,10 +20,6 @@ namespace cert_verifier {
 namespace mojom {
 class CertVerifierCreationParams;
 }}
-
-namespace extensions {
-class ExtensionSystemQt;
-}
 
 namespace net {
 class ClientCertStore;
@@ -46,7 +43,7 @@ private:
 };
 
 // ProfileIOData contains data that lives on the IOthread
-// we still use shared memebers and use mutex which breaks
+// we still use shared members and use mutex which breaks
 // idea for this object, but this is wip.
 
 class ProfileIODataQt : public content::StoragePartition::NetworkContextCreatedObserver {
@@ -62,9 +59,6 @@ public:
     virtual ~ProfileIODataQt();
 
     QPointer<ProfileAdapter> profileAdapter();
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    extensions::ExtensionSystemQt* GetExtensionSystem();
-#endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
     void initializeOnUIThread(); // runs on ui thread
     void shutdownOnUIThread(); // runs on ui thread

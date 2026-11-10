@@ -8,7 +8,6 @@
 #include <memory>
 #include <utility>
 #include "base/task/single_thread_task_runner.h"
-#include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/keep_alive_handle.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/keep_alive_handle_factory.mojom-blink.h"
 #include "third_party/blink/public/platform/url_loader_throttle_provider.h"
@@ -42,16 +41,14 @@ class CORE_EXPORT LoaderFactoryForFrame final
       scoped_refptr<base::SingleThreadTaskRunner>,
       scoped_refptr<base::SingleThreadTaskRunner>,
       BackForwardCacheLoaderHelper*,
-      const absl::optional<base::UnguessableToken>&
+      const std::optional<base::UnguessableToken>&
           service_worker_race_network_request_token,
       bool is_from_origin_dirty_style_sheet) override;
   CodeCacheHost* GetCodeCacheHost() override;
 
  private:
-  void IssueKeepAliveHandleIfRequested(
-      const network::ResourceRequest& network_request,
-      mojom::blink::LocalFrameHost& local_frame_host,
-      mojo::PendingReceiver<mojom::blink::KeepAliveHandle> pending_receiver);
+  mojo::PendingRemote<mojom::blink::KeepAliveHandle> MaybeIssueKeepAliveHandle(
+      const network::ResourceRequest& network_request);
   scoped_refptr<BackgroundCodeCacheHost> GetBackgroundCodeCacheHost();
 
   URLLoaderThrottleProvider* GetURLLoaderThrottleProvider();

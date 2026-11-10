@@ -33,7 +33,7 @@ namespace openscreen::cast {
 namespace {
 
 // Maximum amount of time needed for a query to be received.
-constexpr seconds kMaxQueryDuration{3};
+constexpr seconds kMaxQueryDuration(3);
 
 // Total wait time = 4 seconds.
 constexpr milliseconds kWaitLoopSleepTime(500);
@@ -106,12 +106,12 @@ class ServiceReceiver : public discovery::DnsSdServiceWatcher<ReceiverInfo> {
 };
 
 class FailOnErrorReporting : public discovery::ReportingClient {
-  void OnFatalError(Error error) override {
+  void OnFatalError(const Error& error) override {
     OSP_LOG_FATAL << "Fatal error received: '" << error << "'";
     OSP_NOTREACHED();
   }
 
-  void OnRecoverableError(Error error) override {
+  void OnRecoverableError(const Error& error) override {
     // Pending resolution of openscreen:105, logging recoverable errors is
     // disabled, as this will end up polluting the output with logs related to
     // mDNS messages received from non-loopback network interfaces over which
@@ -153,11 +153,11 @@ class DiscoveryE2ETest : public testing::Test {
   }
 
   void SetUpService(const discovery::Config& config) {
-    OSP_DCHECK(!dnssd_service_.get());
-    std::atomic_bool done{false};
+    OSP_CHECK(!dnssd_service_);
+    std::atomic_bool done(false);
     task_runner_->PostTask([this, &config, &done]() {
-      dnssd_service_ = discovery::CreateDnsSdService(
-          *task_runner_, &reporting_client_, config);
+      dnssd_service_ = discovery::CreateDnsSdService(*task_runner_,
+                                                     reporting_client_, config);
       receiver_ = std::make_unique<ServiceReceiver>(dnssd_service_.get());
       publisher_ = std::make_unique<Publisher>(dnssd_service_.get());
       done = true;
@@ -168,16 +168,16 @@ class DiscoveryE2ETest : public testing::Test {
   }
 
   void StartDiscovery() {
-    OSP_DCHECK(dnssd_service_.get());
+    OSP_CHECK(dnssd_service_);
     task_runner_->PostTask([this]() { receiver_->StartDiscovery(); });
   }
 
   template <typename... RecordTypes>
   void UpdateRecords(RecordTypes... records) {
-    OSP_DCHECK(dnssd_service_.get());
-    OSP_DCHECK(publisher_.get());
+    OSP_CHECK(dnssd_service_);
+    OSP_CHECK(publisher_);
 
-    std::vector<ReceiverInfo> record_set{std::move(records)...};
+    std::vector<ReceiverInfo> record_set = {std::move(records)...};
     for (ReceiverInfo& record : record_set) {
       task_runner_->PostTask([this, r = std::move(record)]() {
         auto error = publisher_->UpdateRegistration(r);
@@ -189,10 +189,10 @@ class DiscoveryE2ETest : public testing::Test {
 
   template <typename... RecordTypes>
   void PublishRecords(RecordTypes... records) {
-    OSP_DCHECK(dnssd_service_.get());
-    OSP_DCHECK(publisher_.get());
+    OSP_CHECK(dnssd_service_);
+    OSP_CHECK(publisher_);
 
-    std::vector<ReceiverInfo> record_set{std::move(records)...};
+    std::vector<ReceiverInfo> record_set = {std::move(records)...};
     for (ReceiverInfo& record : record_set) {
       task_runner_->PostTask([this, r = std::move(record)]() {
         auto error = publisher_->Register(r);
@@ -204,7 +204,7 @@ class DiscoveryE2ETest : public testing::Test {
 
   template <typename... AtomicBoolPtrs>
   void WaitUntilSeen(bool should_be_seen, AtomicBoolPtrs... bools) {
-    OSP_DCHECK(dnssd_service_.get());
+    OSP_CHECK(dnssd_service_);
     std::vector<std::atomic_bool*> atomic_bools{bools...};
 
     int waiting_on = atomic_bools.size();
@@ -230,7 +230,7 @@ class DiscoveryE2ETest : public testing::Test {
 
   void CheckForClaimedIds(ReceiverInfo receiver_info,
                           std::atomic_bool* has_been_seen) {
-    OSP_DCHECK(dnssd_service_.get());
+    OSP_CHECK(dnssd_service_);
     task_runner_->PostTask(
         [this, info = std::move(receiver_info), has_been_seen]() mutable {
           CheckForClaimedIds(std::move(info), has_been_seen, 0);
@@ -239,7 +239,7 @@ class DiscoveryE2ETest : public testing::Test {
 
   void CheckForPublishedService(ReceiverInfo receiver_info,
                                 std::atomic_bool* has_been_seen) {
-    OSP_DCHECK(dnssd_service_.get());
+    OSP_CHECK(dnssd_service_);
     task_runner_->PostTask(
         [this, info = std::move(receiver_info), has_been_seen]() mutable {
           CheckForPublishedService(std::move(info), has_been_seen, 0, true);
@@ -251,7 +251,7 @@ class DiscoveryE2ETest : public testing::Test {
   // if it exists, so waits throughout this file can be removed.
   void CheckNotPublishedService(ReceiverInfo receiver_info,
                                 std::atomic_bool* has_been_seen) {
-    OSP_DCHECK(dnssd_service_.get());
+    OSP_CHECK(dnssd_service_.get());
     task_runner_->PostTask(
         [this, info = std::move(receiver_info), has_been_seen]() mutable {
           CheckForPublishedService(std::move(info), has_been_seen, 0, false);
@@ -259,7 +259,7 @@ class DiscoveryE2ETest : public testing::Test {
   }
   TaskRunner* task_runner_;
   FailOnErrorReporting reporting_client_;
-  std::unique_ptr<discovery::DnsSdService, TaskRunnerDeleter> dnssd_service_;
+  discovery::DnsSdServicePtr dnssd_service_;
   std::unique_ptr<ServiceReceiver> receiver_;
   std::unique_ptr<Publisher> publisher_;
 
@@ -345,9 +345,9 @@ TEST_F(DiscoveryE2ETest, ValidateQueryFlow) {
   // Wait until all probe phases complete and all instance ids are claimed. At
   // this point, all records should be published.
   OSP_LOG_INFO << "Service publication in progress...";
-  std::atomic_bool found1{false};
-  std::atomic_bool found2{false};
-  std::atomic_bool found3{false};
+  std::atomic_bool found1(false);
+  std::atomic_bool found2(false);
+  std::atomic_bool found3(false);
   CheckForClaimedIds(instance1, &found1);
   CheckForClaimedIds(instance2, &found2);
   CheckForClaimedIds(instance3, &found3);
@@ -391,9 +391,9 @@ TEST_F(DiscoveryE2ETest, ValidateAnnouncementFlow) {
   // Wait until all probe phases complete and all instance ids are claimed. At
   // this point, all records should be published.
   OSP_LOG_INFO << "Service publication in progress...";
-  std::atomic_bool found1{false};
-  std::atomic_bool found2{false};
-  std::atomic_bool found3{false};
+  std::atomic_bool found1(false);
+  std::atomic_bool found2(false);
+  std::atomic_bool found3(false);
   CheckForClaimedIds(instance1, &found1);
   CheckForClaimedIds(instance2, &found2);
   CheckForClaimedIds(instance3, &found3);
@@ -451,7 +451,7 @@ TEST_F(DiscoveryE2ETest, ValidateRecordsOnlyReceivedWhenQueryRunning) {
   // Wait until all probe phases complete and all instance ids are claimed. At
   // this point, all records should be published.
   OSP_LOG_INFO << "Service publication in progress...";
-  std::atomic_bool found{false};
+  std::atomic_bool found(false);
   CheckForClaimedIds(instance, &found);
   WaitUntilSeen(true, &found);
 
@@ -534,7 +534,7 @@ TEST_F(DiscoveryE2ETest, ValidateRefreshFlow) {
   // Wait until all probe phases complete and all instance ids are claimed. At
   // this point, all records should be published.
   OSP_LOG_INFO << "Service publication in progress...";
-  std::atomic_bool found{false};
+  std::atomic_bool found(false);
   CheckForClaimedIds(instance, &found);
   WaitUntilSeen(true, &found);
 

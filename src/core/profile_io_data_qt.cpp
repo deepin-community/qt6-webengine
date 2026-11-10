@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "profile_io_data_qt.h"
 
@@ -60,19 +61,12 @@ void ProfileIODataQt::shutdownOnUIThread()
         removeBrowsingDataRemoverObserver();
     }
 
-    bool posted = content::BrowserThread::DeleteSoon(content::BrowserThread::IO, FROM_HERE, this);
+    bool posted = content::GetIOThreadTaskRunner()->DeleteSoon(FROM_HERE, this);
     if (!posted) {
-        qWarning() << "Could not delete ProfileIODataQt on io thread !";
+        qWarning("Could not delete ProfileIODataQt on io thread !");
         delete this;
     }
 }
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-extensions::ExtensionSystemQt* ProfileIODataQt::GetExtensionSystem()
-{
-    return m_profile->GetExtensionSystem();
-}
-#endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
 base::WeakPtr<ProfileIODataQt> ProfileIODataQt::getWeakPtrOnIOThread()
 {
@@ -192,12 +186,13 @@ ClientCertificateStoreData *ProfileIODataQt::clientCertificateStoreData()
 std::unique_ptr<net::ClientCertStore> ProfileIODataQt::CreateClientCertStore()
 {
 #if QT_CONFIG(ssl)
-    return std::unique_ptr<net::ClientCertStore>(new ClientCertStoreQt(m_clientCertificateStoreData));
+    return std::unique_ptr<net::ClientCertStore>(new ClientCertStoreQt(m_clientCertificateStoreData, m_profile));
 #else
-    return std::unique_ptr<net::ClientCertStore>(new ClientCertStoreQt(nullptr));
+    return std::unique_ptr<net::ClientCertStore>(new ClientCertStoreQt(nullptr, m_profile));
 #endif
 }
 
+// Adapted from ProfileNetworkContextService::ConfigureNetworkContextParamsInternal()
 void ProfileIODataQt::ConfigureNetworkContextParams(bool in_memory,
                                                     const base::FilePath &relative_partition_path,
                                                     network::mojom::NetworkContextParams *network_context_params,
@@ -213,6 +208,7 @@ void ProfileIODataQt::ConfigureNetworkContextParams(bool in_memory,
     network_context_params->enable_referrers = true;
     // Encrypted cookies requires os_crypt, which currently has issues for us on Linux.
     network_context_params->enable_encrypted_cookies = false;
+    network_context_params->enable_zstd = true;
 
     network_context_params->http_cache_enabled = m_httpCacheType != ProfileAdapter::NoCache;
     network_context_params->http_cache_max_size = m_httpCacheMaxSize;
@@ -230,17 +226,30 @@ void ProfileIODataQt::ConfigureNetworkContextParams(bool in_memory,
         if (m_persistentCookiesPolicy != ProfileAdapter::NoPersistentCookies) {
             network_context_params->file_paths->cookie_database_name = base::FilePath::FromASCII("Cookies");
             network_context_params->restore_old_session_cookies = m_persistentCookiesPolicy == ProfileAdapter::ForcePersistentCookies;
-            network_context_params->persist_session_cookies = m_persistentCookiesPolicy != ProfileAdapter::NoPersistentCookies;
+            network_context_params->persist_session_cookies =
+                    m_persistentCookiesPolicy != ProfileAdapter::OnlyPersistentCookies;
         }
     }
 
     network_context_params->enforce_chrome_ct_policy = false;
 
-    // Should be initialized with existing per-profile CORS access lists.
-    network_context_params->cors_origin_access_list =
-        m_profile->GetSharedCorsOriginAccessList()->GetOriginAccessList().CreateCorsOriginAccessPatternsList();
-
     m_proxyConfigMonitor->AddToNetworkContextParams(network_context_params);
+
+#if QT_CONFIG(ssl)
+    const auto additionalCertificates = m_profileAdapter->additionalTrustedCertificates();
+    if (!additionalCertificates.isEmpty()) {
+        auto additionalVerifiedCertificates = cert_verifier::mojom::AdditionalCertificates::New();
+
+        for (const QSslCertificate &certificate : additionalCertificates) {
+            const QByteArray certificateBytes = certificate.toDer();
+            additionalVerifiedCertificates->trust_anchors.push_back(
+                    std::vector<uint8_t>(certificateBytes.begin(), certificateBytes.end()));
+        }
+
+        cert_verifier_creation_params->initial_additional_certificates =
+                std::move(additionalVerifiedCertificates);
+    }
+#endif
 }
 
 // static

@@ -35,6 +35,7 @@ namespace tab_groups {
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.tab_groups
 //
+// LINT.IfChange
 enum class TabGroupColorId {
   kGrey = 0,
   kBlue = 1,
@@ -46,7 +47,9 @@ enum class TabGroupColorId {
   kCyan = 7,
   kOrange = 8,
   // Next value: 9
+  kNumEntries = 9,
 };
+// LINT.ThenChange(//components/tab_groups/android/java/src/org/chromium/components/tab_groups/TabGroupColorPickerUtils.java)
 
 using ColorLabelMap = base::flat_map<TabGroupColorId, std::u16string>;
 

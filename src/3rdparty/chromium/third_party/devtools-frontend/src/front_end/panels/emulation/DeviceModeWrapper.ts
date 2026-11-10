@@ -1,6 +1,7 @@
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import type * as Common from '../../core/common/common.js';
 import * as Root from '../../core/root/root.js';
@@ -10,7 +11,7 @@ import * as EmulationModel from '../../models/emulation/emulation.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import {DeviceModeView} from './DeviceModeView.js';
-import {type InspectedPagePlaceholder} from './InspectedPagePlaceholder.js';
+import type {InspectedPagePlaceholder} from './InspectedPagePlaceholder.js';
 
 let deviceModeWrapperInstance: DeviceModeWrapper;
 
@@ -30,8 +31,8 @@ export class DeviceModeWrapper extends UI.Widget.VBox {
     this.showDeviceModeSetting.setRequiresUserAction(Boolean(Root.Runtime.Runtime.queryParam('hasOtherClients')));
     this.showDeviceModeSetting.addChangeListener(this.update.bind(this, false));
     SDK.TargetManager.TargetManager.instance().addModelListener(
-        SDK.OverlayModel.OverlayModel, SDK.OverlayModel.Events.ScreenshotRequested, this.screenshotRequestedFromOverlay,
-        this);
+        SDK.OverlayModel.OverlayModel, SDK.OverlayModel.Events.SCREENSHOT_REQUESTED,
+        this.screenshotRequestedFromOverlay, this);
     this.update(true);
   }
 
@@ -80,16 +81,15 @@ export class DeviceModeWrapper extends UI.Widget.VBox {
     this.captureScreenshot(false, clip);
   }
 
-  private update(force: boolean): void {
+  update(force?: boolean): void {
     this.toggleDeviceModeAction.setToggled(this.showDeviceModeSetting.get());
-    if (!force) {
-      const showing = this.deviceModeView && this.deviceModeView.isShowing();
-      if (this.showDeviceModeSetting.get() === showing) {
-        return;
-      }
+
+    const shouldShow = this.showDeviceModeSetting.get();
+    if (!force && shouldShow === this.deviceModeView?.isShowing()) {
+      return;
     }
 
-    if (this.showDeviceModeSetting.get()) {
+    if (shouldShow) {
       if (!this.deviceModeView) {
         this.deviceModeView = new DeviceModeView();
       }

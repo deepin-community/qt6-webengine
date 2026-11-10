@@ -2,15 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
 import("//ui/webui/resources/tools/build_webui.gni")
 
-assert(is_chromeos_ash, "Non-ChromeOS builds cannot depend on //ash")
+assert(is_chromeos, "Non-ChromeOS builds cannot depend on //ash")
 
 build_webui("build") {
   static_files = [
     "app_icon_192.png",
-    "index.html",
     "illustrations/base_on_flat_surface.svg",
     "illustrations/downloading.svg",
     "illustrations/error.svg",
@@ -19,6 +17,7 @@ build_webui("build") {
     "illustrations/repair_start.svg",
     "illustrations/success.svg",
     "illustrations/update_os.svg",
+    "index.html",
   ]
 
   css_files = [ "shimless_rma_shared.css" ]
@@ -40,8 +39,8 @@ build_webui("build") {
     "critical_error_page.ts",
     "hardware_error_page.ts",
     "onboarding_choose_destination_page.ts",
-    "onboarding_choose_wp_disable_method_page.ts",
     "onboarding_choose_wipe_device_page.ts",
+    "onboarding_choose_wp_disable_method_page.ts",
     "onboarding_enter_rsu_wp_disable_code_page.ts",
     "onboarding_landing_page.ts",
     "onboarding_network_page.ts",
@@ -66,7 +65,7 @@ build_webui("build") {
     "wrapup_wait_for_manual_wp_enable_page.ts",
   ]
 
-  non_web_component_files = [
+  ts_files = [
     "data.ts",
     "events.ts",
     "fake_data.ts",
@@ -75,21 +74,24 @@ build_webui("build") {
     "shimless_rma_util.ts",
   ]
 
-  mojo_files = [ "$root_gen_dir/mojom-webui/ash/webui/shimless_rma/mojom/shimless_rma.mojom-webui.js" ]
+  mojo_files = [
+    "$root_gen_dir/ash/webui/shimless_rma/mojom/shimless_rma.mojom-webui.ts",
+  ]
 
-  mojo_files_deps = [ "//ash/webui/shimless_rma/mojom:mojom_webui_js" ]
+  mojo_files_deps = [ "//ash/webui/shimless_rma/mojom:mojom_ts__generator" ]
   ts_composite = true
   ts_definitions = [ "//tools/typescript/definitions/chrome_send.d.ts" ]
 
   ts_deps = [
     "//ash/webui/common/resources:build_ts",
+    "//ash/webui/common/resources/cr_elements:build_ts",
     "//third_party/polymer/v3_0:library",
     "//ui/webui/resources/cr_components/color_change_listener:build_ts",
-    "//ui/webui/resources/cr_elements:build_ts",
     "//ui/webui/resources/js:build_ts",
     "//ui/webui/resources/mojo:build_ts",
   ]
 
+  webui_context_type = "trusted"
   grd_prefix = "ash_shimless_rma"
   grit_output_dir = "$root_gen_dir/ash/webui"
 }

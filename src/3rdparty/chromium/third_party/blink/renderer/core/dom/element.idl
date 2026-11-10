@@ -27,6 +27,16 @@ dictionary CheckVisibilityOptions {
   [RuntimeEnabled=CheckVisibilityExtraProperties] boolean visibilityProperty = false;
 };
 
+// Options dictionary for setHTML and setHTMLUnsafe.
+// See: https://wicg.github.io/sanitizer-api/#configobject
+enum SanitizerPresets { "default" };
+dictionary SetHTMLOptions {
+  (Sanitizer or SanitizerConfig or SanitizerPresets) sanitizer = "default";
+};
+dictionary SetHTMLUnsafeOptions {
+  (Sanitizer or SanitizerConfig or SanitizerPresets) sanitizer = {};
+};
+
 // https://dom.spec.whatwg.org/#interface-element
 
 [
@@ -44,7 +54,7 @@ dictionary CheckVisibilityOptions {
 
     [Affects=Nothing] boolean hasAttributes();
     [SameObject, PerWorldBindings, ImplementedAs=attributesForBindings] readonly attribute NamedNodeMap attributes;
-    [Affects=Nothing] sequence<DOMString> getAttributeNames();
+    [Affects=Nothing, ImplementedAs=getAttributeNamesForBindings] sequence<DOMString> getAttributeNames();
     [Affects=Nothing] DOMString? getAttribute(DOMString name);
     [Affects=Nothing] DOMString? getAttributeNS(DOMString? namespaceURI, DOMString localName);
     [RaisesException, CEReactions] void setAttribute(DOMString name, DOMString value);
@@ -56,6 +66,8 @@ dictionary CheckVisibilityOptions {
     [RaisesException, CEReactions] boolean toggleAttribute(DOMString qualifiedName, optional boolean force);
     [Affects=Nothing] boolean hasAttribute(DOMString name);
     [Affects=Nothing] boolean hasAttributeNS(DOMString? namespaceURI, DOMString localName);
+
+    [RuntimeEnabled=CSSPseudoElementInterface] CSSPseudoElement? pseudo(CSSOMString type);
 
     Attr? getAttributeNode(DOMString name);
     Attr? getAttributeNodeNS(DOMString? namespaceURI, DOMString localName);
@@ -92,24 +104,26 @@ dictionary CheckVisibilityOptions {
     [ImplementedAs=assignedSlotForBinding] readonly attribute HTMLSlotElement? assignedSlot;
 
     // DOM Parsing and Serialization
-    // https://w3c.github.io/DOM-Parsing/#extensions-to-the-element-interface
-    //
-    // TODO(mkwst): Write a spec for the `TrustedHTML` variants.
-    // TODO(lyf): Change the type to `[TreatNullAs=xxx] HTMLString` after
-    // https://crbug.com/1058762 has been fixed.
-    [CEReactions, RuntimeCallStatsCounter=ElementInnerHTML, RaisesException=Setter] attribute [LegacyNullToEmptyString, StringContext=TrustedHTML] DOMString innerHTML;
-    [CEReactions, RaisesException=Setter] attribute [LegacyNullToEmptyString, StringContext=TrustedHTML] DOMString outerHTML;
-    [CEReactions, RaisesException] void insertAdjacentHTML(DOMString position, HTMLString text);
-    // https://github.com/whatwg/html/pull/9538
-    [RuntimeEnabled=HTMLUnsafeMethods,RaisesException,MeasureAs=SetHTMLUnsafe,CEReactions] void setHTMLUnsafe(DOMString html);
+    // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#the-innerhtml-property
+    [CEReactions, RuntimeCallStatsCounter=ElementInnerHTML, RaisesException=Setter] attribute (TrustedHTML or [LegacyNullToEmptyString] DOMString) innerHTML;
+    [CEReactions, RaisesException=Setter] attribute (TrustedHTML or [LegacyNullToEmptyString] DOMString) outerHTML;
+    [CEReactions, RaisesException] void insertAdjacentHTML(DOMString position, (TrustedHTML or DOMString) text);
 
-    // Declarative Shadow DOM getInnerHTML() function.
-    [Affects=Nothing, MeasureAs=ElementGetInnerHTML] HTMLString getInnerHTML(optional GetInnerHTMLOptions options = {});
+    // https://github.com/whatwg/html/pull/9538
+    [RaisesException,MeasureAs=SetHTMLUnsafe,CEReactions] void setHTMLUnsafe((TrustedHTML or DOMString) html);
+    // https://wicg.github.io/sanitizer-api/#sanitizer-api
+    // TODO(vogelheim): Merge the two setHTMLUnsafe variants into one, once the
+    //   different RuntimeEnabled flags are both perma-enabled.
+    [RuntimeEnabled=SanitizerAPI,RaisesException,MeasureAs=SetHTMLUnsafe,CEReactions] void setHTMLUnsafe((TrustedHTML or DOMString) html, SetHTMLUnsafeOptions options);
+    [RuntimeEnabled=SanitizerAPI,RaisesException,MeasureAs=SetHTMLSafe,CEReactions] void setHTML(DOMString html, optional SetHTMLOptions options = {});
+
+    // Declarative Shadow DOM getHTML() function.
+    [Affects=Nothing, MeasureAs=ElementGetHTML, RaisesException] DOMString getHTML(optional GetHTMLOptions options = {});
 
     // Pointer Lock
     // https://w3c.github.io/pointerlock/#extensions-to-the-element-interface
     // https://github.com/w3c/pointerlock/pull/49
-    [MeasureAs=ElementRequestPointerLock, CallWith=ScriptState, RaisesException] any requestPointerLock(optional PointerLockOptions options = {});
+    [MeasureAs=ElementRequestPointerLock, CallWith=ScriptState, RaisesException] Promise<undefined> requestPointerLock(optional PointerLockOptions options = {});
 
     // CSSOM View Module
     // https://drafts.csswg.org/cssom-view/#extension-to-the-element-interface
@@ -119,15 +133,13 @@ dictionary CheckVisibilityOptions {
     // https://drafts.csswg.org/cssom-view/#dom-element-checkvisibility
     [MeasureAs=ElementCheckVisibility] boolean checkVisibility(optional CheckVisibilityOptions options = {});
 
-    // TODO(sunyunjia): Add default value for scrollIntoView() once
-    // crbug.com/734599 is fixed.
-    void scrollIntoView(optional (ScrollIntoViewOptions or boolean) arg = {});
-    [ImplementedAs=scrollTo] void scroll(optional ScrollToOptions options = {});
-    [ImplementedAs=scrollTo] void scroll(unrestricted double x, unrestricted double y);
-    void scrollTo(optional ScrollToOptions options = {});
-    void scrollTo(unrestricted double x, unrestricted double y);
-    void scrollBy(optional ScrollToOptions options = {});
-    void scrollBy(unrestricted double x, unrestricted double y);
+    [CallWith=ScriptState] Promise<undefined> scrollIntoView(optional (ScrollIntoViewOptions or boolean) arg = {});
+    [ImplementedAs=scrollTo, CallWith=ScriptState] Promise<undefined> scroll(optional ScrollToOptions options = {});
+    [ImplementedAs=scrollTo, CallWith=ScriptState] Promise<undefined> scroll(unrestricted double x, unrestricted double y);
+    [CallWith=ScriptState] Promise<undefined> scrollTo(optional ScrollToOptions options = {});
+    [CallWith=ScriptState] Promise<undefined> scrollTo(unrestricted double x, unrestricted double y);
+    [CallWith=ScriptState] Promise<undefined> scrollBy(optional ScrollToOptions options = {});
+    [CallWith=ScriptState] Promise<undefined> scrollBy(unrestricted double x, unrestricted double y);
     attribute unrestricted double scrollTop;
     attribute unrestricted double scrollLeft;
     readonly attribute long scrollWidth;
@@ -136,6 +148,10 @@ dictionary CheckVisibilityOptions {
     readonly attribute long clientLeft;
     readonly attribute long clientWidth;
     readonly attribute long clientHeight;
+    [RuntimeEnabled=StandardizedBrowserZoom] readonly attribute double currentCSSZoom;
+
+    // Used by both Anchor Positioning and Popover
+    [CEReactions,RuntimeEnabled=HTMLAnchorAttribute,ImplementedAs=anchorElementForBinding] attribute Element? anchorElement;
 
     // Non-standard API
     [MeasureAs=ElementScrollIntoViewIfNeeded] void scrollIntoViewIfNeeded(optional boolean centerIfNeeded);
@@ -144,12 +160,9 @@ dictionary CheckVisibilityOptions {
     [RuntimeEnabled=ComputedAccessibilityInfo] readonly attribute DOMString? computedRole;
     [RuntimeEnabled=ComputedAccessibilityInfo] readonly attribute DOMString? computedName;
 
-    // Accessibility Object Model
-    [RuntimeEnabled=AccessibilityObjectModel] readonly attribute AccessibleNode? accessibleNode;
-
-    // Confirmation of Action API
+    // ARIA Notify API
     // https://github.com/WICG/aom/blob/gh-pages/notification-api.md
-    [RuntimeEnabled=ConfirmationOfAction] void ariaNotify(HTMLString announcement, optional AriaNotificationOptions options = {});
+    [RuntimeEnabled=AriaNotify,MeasureAs=AriaNotify] void ariaNotify(DOMString announcement, optional AriaNotificationOptions options = {});
 
     // Event handler attributes
     attribute EventHandler onbeforecopy;
@@ -159,6 +172,17 @@ dictionary CheckVisibilityOptions {
 
     // Element Timing
     [CEReactions, Reflect=elementtiming] attribute DOMString elementTiming;
+    [RuntimeEnabled=ContainerTiming, CEReactions, Reflect=containertiming] attribute DOMString containerTiming;
+    [RuntimeEnabled=ContainerTiming, CEReactions, Reflect=containertiming-ignore] attribute boolean containerTimingIgnore;
+
+    // Heading Offset
+    [CEReactions, RuntimeEnabled=HeadingOffset] attribute unsigned long headingOffset;
+    [CEReactions, RuntimeEnabled=HeadingOffset] attribute boolean headingReset;
+
+    // Scoped Custom Element Registries
+    [CallWith=ScriptState, RuntimeEnabled=ScopedCustomElementRegistry] readonly attribute CustomElementRegistry? customElementRegistry;
+    // Declarative document updates
+    [RuntimeEnabled=DocumentPatching] readonly attribute PatchStatus? currentPatch;
 };
 
 Element includes ParentNode;

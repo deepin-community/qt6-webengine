@@ -16,10 +16,14 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/connected_flow.h"
 
+#include <memory>
+
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/base/test/status_matchers.h"
+#include "src/trace_processor/storage/trace_storage.h"
 #include "test/gtest_and_gmock.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 
 TEST(ConnectedFlow, SliceTableNullConstraint) {
@@ -30,17 +34,14 @@ TEST(ConnectedFlow, SliceTableNullConstraint) {
 
   ConnectedFlow generator{ConnectedFlow::Mode::kDirectlyConnectedFlow,
                           &storage};
+  auto cursor = generator.MakeCursor();
 
   // Check that if we pass start_id = NULL as a constraint, we correctly return
   // an empty table.
-  std::unique_ptr<Table> res;
-  Constraint c{tables::ConnectedFlowTable::ColumnIndex::start_id, FilterOp::kEq,
-               SqlValue()};
-  base::Status status = generator.ComputeTable({c}, {}, BitVector(), res);
-  ASSERT_TRUE(status.ok());
-  ASSERT_EQ(res->row_count(), 0u);
+  bool res = cursor->Run({SqlValue()});
+  ASSERT_TRUE(res);
+  ASSERT_EQ(cursor->dataframe()->row_count(), 0u);
 }
 
 }  // namespace
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

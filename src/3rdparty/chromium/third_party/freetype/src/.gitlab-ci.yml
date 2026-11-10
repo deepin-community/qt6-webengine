@@ -32,9 +32,10 @@ variables:
   stage: 'build'
 
 .build macos common:
+  image: "registry.freedesktop.org/gstreamer/gstreamer/macos-arm64/15-sequoia:2024-10-28.0"
   stage: 'build'
   tags:
-    - 'gst-macos-11.1'
+    - gst-mac-arm
 
 .build windows meson:
   extends: '.build windows common'
@@ -54,17 +55,7 @@ variables:
     # Make sure meson is up to date so we don't need to rebuild the image
     # with each release.
     - pip3 install -U 'meson==0.59.*'
-    - pip3 install --upgrade certifi
     - pip3 install -U ninja
-
-    # Generate a UWP cross-file in case it's used
-    - $PSDefaultParameterValues['Out-File:Encoding'] = 'ASCII'
-    - echo "[binaries]" > uwp-crossfile.meson
-    - echo "c = 'cl'" >> uwp-crossfile.meson
-    - echo "strip = ['true']" >> uwp-crossfile.meson
-    - echo "[built-in options]" >> uwp-crossfile.meson
-    - echo "c_args = ['-DWINAPI_FAMILY=WINAPI_FAMILY_APP', '-DUNICODE', '-D_WIN32_WINNT=0x0A00', '-we4013']" >> uwp-crossfile.meson
-    - echo "c_winlibs = ['windowsapp.lib']" >> uwp-crossfile.meson
   script:
     # For some reason, options are separated by newlines instead of spaces,
     # so we have to replace them first.
@@ -75,10 +66,12 @@ variables:
     # script.  Environment variables substitutions is done by PowerShell
     # before calling `cmd.exe`, that's why we use `$env:FOO` instead of
     # `%FOO%`.
-    - cmd.exe /C "C:\BuildTools\Common7\Tools\VsDevCmd.bat -host_arch=amd64 -arch=$env:ARCH $env:VS_UWP &&
-        meson setup build $env:MESON_ARGS_WINDOWS $env:MESON_ARGS_UWP &&
-        meson compile --verbose -C build
-        $env:MESON_WINDOWS_TESTS"
+    - cmd.exe /C "C:\BuildTools\Common7\Tools\VsDevCmd.bat -host_arch=amd64 -arch=$env:ARCH &&
+        meson setup build $env:MESON_ARGS_WINDOWS &&
+        meson compile --verbose -C build &&
+        meson test -C build &&
+        meson test -C build --benchmark"
+
 
 .build windows msbuild:
   extends: '.build windows common'
@@ -106,20 +99,11 @@ windows meson vs2019 amd64:
   extends: '.build windows meson'
   variables:
     ARCH: 'amd64'
-    MESON_WINDOWS_TESTS: '&& meson test -C build && meson test -C build --benchmark'
 
 windows meson vs2019 x86:
   extends: '.build windows meson'
   variables:
     ARCH: 'x86'
-    MESON_WINDOWS_TESTS: '&& meson test -C build && meson test -C build --benchmark'
-
-windows meson vs2019 amd64 uwp:
-  extends: '.build windows meson'
-  variables:
-    ARCH: 'amd64'
-    VS_UWP: '-app_platform=UWP'
-    MESON_ARGS_UWP: '--cross-file uwp-crossfile.meson -Dc_winlibs="windowsapp.lib"'
 
 windows msbuild vs2019 amd64:
   extends: '.build windows msbuild'
@@ -228,9 +212,10 @@ macos autotools:
   before_script:
     - '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"'
   script:
+    - export PATH=/opt/homebrew/bin:$PATH
     - brew install autoconf automake libtool
     - ./autogen.sh
-    - ./configure
+    - ./configure --prefix=/tmp/install-prefix
     - 'make -j$(sysctl -n hw.logicalcpu)'
     - make install
 
@@ -239,20 +224,21 @@ macos autotools clang:
   before_script:
     - '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"'
   script:
+    - export PATH=/opt/homebrew/bin:$PATH
     - brew install autoconf automake libtool
     - ./autogen.sh
-    - './configure CC=clang'
+    - ./configure --prefix=/tmp/install-prefix CC=clang
     - 'make -j$(sysctl -n hw.logicalcpu)'
     - make install
 
 macos meson:
   extends: '.build macos common'
-  script:
+  before_script:
     - pip3 install --upgrade pip
     - pip3 install -U meson
     - pip3 install --upgrade certifi
     - pip3 install -U ninja
-
-    - meson setup build ${MESON_ARGS}
+  script:
+    - meson setup . build --fatal-meson-warnings --default-library=both --prefix=/tmp/install-prefix
     - meson compile --verbose -C build
-    - sudo meson install -C build
+    - meson install -C build

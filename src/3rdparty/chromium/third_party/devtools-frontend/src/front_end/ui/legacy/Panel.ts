@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 /*
  * Copyright (C) 2007, 2008 Apple Inc.  All rights reserved.
@@ -32,28 +33,28 @@
 
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
-import {type SearchableView} from './SearchableView.js';
+import type {SearchableView} from './SearchableView.js';
 import {SplitWidget} from './SplitWidget.js';
 import {VBox} from './Widget.js';
 
 export class Panel extends VBox {
   protected panelName: string;
 
-  constructor(name: string) {
-    super();
+  constructor(name: string, useShadowDom?: boolean) {
+    super({useShadowDom});
 
-    this.element.setAttribute('jslog', `${VisualLogging.panel().context(name)}`);
+    this.element.setAttribute('jslog', `${VisualLogging.panel().context(name).track({resize: true})}`);
     this.element.classList.add('panel');
     this.element.setAttribute('aria-label', name);
     this.element.classList.add(name);
     this.panelName = name;
 
-    // @ts-ignore: Legacy global. Requires rewriting tests to get rid of.
+    // @ts-expect-error: Legacy global. Requires rewriting tests to get rid of.
     // For testing.
     self.UI = self.UI || {};
-    // @ts-ignore
+    // @ts-expect-error
     self.UI.panels = self.UI.panels || {};
-    // @ts-ignore
+    // @ts-expect-error
     UI.panels[name] = this;
   }
 
@@ -78,7 +79,8 @@ export class PanelWithSidebar extends Panel {
   constructor(name: string, defaultWidth?: number) {
     super(name);
 
-    this.panelSplitWidget = new SplitWidget(true, false, this.panelName + 'PanelSplitViewState', defaultWidth || 200);
+    this.panelSplitWidget =
+        new SplitWidget(true, false, this.panelName + '-panel-split-view-state', defaultWidth || 200);
     this.panelSplitWidget.show(this.element);
 
     this.mainWidget = new VBox();
@@ -89,6 +91,7 @@ export class PanelWithSidebar extends Panel {
     this.panelSplitWidget.setSidebarWidget(this.sidebarWidget);
 
     this.sidebarWidget.element.classList.add('panel-sidebar');
+    this.sidebarWidget.element.setAttribute('jslog', `${VisualLogging.pane('sidebar').track({resize: true})}`);
   }
 
   panelSidebarElement(): Element {

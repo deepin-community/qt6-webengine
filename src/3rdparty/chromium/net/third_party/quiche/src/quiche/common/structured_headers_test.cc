@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "quiche/common/platform/api/quiche_test.h"
 
@@ -84,6 +85,16 @@ const struct ItemTestCase {
     {"c-style hex escape in string", "\"\\x61\"", std::nullopt, nullptr},
     {"valid quoting containing \\u", "\"\\\\u0061\"", Item("\\u0061"), nullptr},
     {"c-style unicode escape in string", "\"\\u0061\"", std::nullopt, nullptr},
+    // TODO(b/393440282): Remove the following two tests once
+    // structured_headers_generated_test.cc is updated to include them.
+    // Manually copied from
+    // https://github.com/httpwg/structured-field-tests/blob/d2ec605907058638faa895642063581939d84da6/binary.json#L40-L44
+    // TODO(b/393153699): This input should be rejected.
+    {"bad padding dot", ":YQ=.:", Item("a", Item::kByteSequenceType), ":YQ==:"},
+    // Manually copied from
+    // https://github.com/httpwg/structured-field-tests/blob/d2ec605907058638faa895642063581939d84da6/binary.json#L58-L62
+    // TODO(b/393408763): This input should be rejected.
+    {"all whitespace", ":    :", Item("", Item::kByteSequenceType), "::"},
 };
 
 const ItemTestCase sh09_item_test_cases[] = {
@@ -696,6 +707,21 @@ TEST(StructuredHeaderTest, DictionaryConstructors) {
   EXPECT_EQ(member1, dict_init.at(key1));
 }
 
+TEST(StructuredHeaderTest, DictionaryClear) {
+  const std::string key0 = "key0";
+  const ParameterizedMember member0{Item("Applepie"), {}};
+
+  Dictionary dict({{key0, member0}});
+  EXPECT_EQ(1U, dict.size());
+  EXPECT_FALSE(dict.empty());
+  EXPECT_TRUE(dict.contains(key0));
+
+  dict.clear();
+  EXPECT_EQ(0U, dict.size());
+  EXPECT_TRUE(dict.empty());
+  EXPECT_FALSE(dict.contains(key0));
+}
+
 TEST(StructuredHeaderTest, DictionaryAccessors) {
   const std::string key0 = "key0";
   const std::string key1 = "key1";
@@ -712,9 +738,17 @@ TEST(StructuredHeaderTest, DictionaryAccessors) {
   EXPECT_EQ(&dict[key0], &dict[0]);
   EXPECT_EQ(&dict[key0], &dict.at(0));
 
+  {
+    auto it = dict.find(key0);
+    ASSERT_TRUE(it != dict.end());
+    EXPECT_EQ(it->first, key0);
+    EXPECT_EQ(it->second, nonempty_member0);
+  }
+
   // Even if the key does not yet exist in |dict|, operator[]() should
   // automatically create an empty entry.
   ASSERT_FALSE(dict.contains(key1));
+  EXPECT_TRUE(dict.find(key1) == dict.end());
   ParameterizedMember& member1 = dict[key1];
   EXPECT_TRUE(dict.contains(key1));
   EXPECT_EQ(empty_member, member1);

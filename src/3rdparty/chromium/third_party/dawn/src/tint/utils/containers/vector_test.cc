@@ -31,12 +31,18 @@
 #include <tuple>
 
 #include "gmock/gmock.h"
-#include "gtest/gtest-spi.h"
 
 #include "src/tint/utils/containers/predicates.h"
 #include "src/tint/utils/macros/compiler.h"
 #include "src/tint/utils/memory/bitcast.h"
 #include "src/tint/utils/text/string_stream.h"
+
+// MSVC claims there's unreachable code in some of the EXPECT_DEATH cases, but scoping the
+// DISABLE_WARNING to the test is not sufficient to suppress the warning.
+TINT_BEGIN_DISABLE_WARNING(UNREACHABLE_CODE);
+// Some of these tests are inspecting the underlying pointers being used by iterators, so there is
+// no simple way to avoid unsafe buffer usage warnings.
+TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 namespace tint {
 namespace {
@@ -2106,22 +2112,19 @@ TEST(TintVectorTest, ostream) {
     EXPECT_EQ(ss.str(), "[1, 2, 3]");
 }
 
-TEST(TintVectorTest, AssertOOBs) {
-    TINT_BEGIN_DISABLE_WARNING(UNREACHABLE_CODE);
-    EXPECT_FATAL_FAILURE(
+TEST(TintVectorDeathTest, AssertOOBs) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Vector vec{1};
             [[maybe_unused]] int i = vec[1];
         },
         "internal compiler error");
-    TINT_END_DISABLE_WARNING(UNREACHABLE_CODE);
 }
 
 #if TINT_VECTOR_MUTATION_CHECKS_ENABLED
-TEST(TintVectorTest, AssertPushWhileIterating) {
-    TINT_BEGIN_DISABLE_WARNING(UNREACHABLE_CODE);
+TEST(TintVectorDeathTest, AssertPushWhileIterating) {
     using V = Vector<int, 4>;
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             V vec;
             vec.Push(1);
@@ -2132,13 +2135,11 @@ TEST(TintVectorTest, AssertPushWhileIterating) {
             }
         },
         "internal compiler error");
-    TINT_END_DISABLE_WARNING(UNREACHABLE_CODE);
 }
 
-TEST(TintVectorTest, AssertPopWhileIterating) {
-    TINT_BEGIN_DISABLE_WARNING(UNREACHABLE_CODE);
+TEST(TintVectorDeathTest, AssertPopWhileIterating) {
     using V = Vector<int, 4>;
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             V vec;
             vec.Push(1);
@@ -2149,13 +2150,11 @@ TEST(TintVectorTest, AssertPopWhileIterating) {
             }
         },
         "internal compiler error");
-    TINT_END_DISABLE_WARNING(UNREACHABLE_CODE);
 }
 
-TEST(TintVectorTest, AssertClearWhileIterating) {
-    TINT_BEGIN_DISABLE_WARNING(UNREACHABLE_CODE);
+TEST(TintVectorDeathTest, AssertClearWhileIterating) {
     using V = Vector<int, 4>;
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             V vec;
             vec.Push(1);
@@ -2166,7 +2165,6 @@ TEST(TintVectorTest, AssertClearWhileIterating) {
             }
         },
         "internal compiler error");
-    TINT_END_DISABLE_WARNING(UNREACHABLE_CODE);
 }
 #endif
 
@@ -2450,8 +2448,8 @@ TEST(TintVectorRefTest, ostream) {
     EXPECT_EQ(ss.str(), "[1, 2, 3]");
 }
 
-TEST(TintVectorRefTest, AssertOOBs) {
-    EXPECT_FATAL_FAILURE(
+TEST(TintVectorRefDeathTest, AssertOOBs) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Vector vec{1};
             const VectorRef<int> vec_ref(vec);
@@ -2467,3 +2465,6 @@ TINT_INSTANTIATE_TYPEINFO(tint::C0);
 TINT_INSTANTIATE_TYPEINFO(tint::C1);
 TINT_INSTANTIATE_TYPEINFO(tint::C2a);
 TINT_INSTANTIATE_TYPEINFO(tint::C2b);
+
+TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
+TINT_END_DISABLE_WARNING(UNREACHABLE_CODE);

@@ -1,6 +1,7 @@
 // Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../../../core/common/common.js';
 import * as i18n from '../../../../core/i18n/i18n.js';
@@ -8,6 +9,7 @@ import * as Platform from '../../../../core/platform/platform.js';
 import * as TextUtils from '../../../../models/text_utils/text_utils.js';
 import * as Diff from '../../../../third_party/diff/diff.js';
 import * as TextPrompt from '../../../../ui/components/text_prompt/text_prompt.js';
+import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 import * as UI from '../../legacy.js';
 
 import filteredListWidgetStyles from './filteredListWidget.css.js';
@@ -32,7 +34,11 @@ const UIStrings = {
    * @example {5} PH3
    */
   sItemSOfS: '{PH1}, item {PH2} of {PH3}',
-};
+  /**
+   * @description Text that should be read out by screen readers when a new badge is available
+   */
+  newFeature: 'This is a new feature',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/components/quick_open/FilteredListWidget.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -59,7 +65,8 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
   private readonly queryChangedCallback?: (arg0: string) => void;
 
   constructor(provider: Provider|null, promptHistory?: string[], queryChangedCallback?: ((arg0: string) => void)) {
-    super(true);
+    super({useShadowDom: true});
+    this.registerRequiredCSS(filteredListWidgetStyles);
     this.promptHistory = promptHistory || [];
 
     this.scoringTimer = 0;
@@ -68,7 +75,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
 
     this.contentElement.classList.add('filtered-list-widget');
     const listener = (this.onKeyDown.bind(this) as (arg0: Event) => void);
-    this.contentElement.addEventListener('keydown', listener, true);
+    this.contentElement.addEventListener('keydown', listener);
     UI.ARIAUtils.markAsCombobox(this.contentElement);
 
     const hbox = this.contentElement.createChild('div', 'hbox');
@@ -77,6 +84,10 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.inputBoxElement.data = {ariaLabel: i18nString(UIStrings.quickOpenPrompt), prefix: '', suggestion: ''};
     this.inputBoxElement.addEventListener(
         TextPrompt.TextPrompt.PromptInputEvent.eventName, this.onInput.bind(this), false);
+    this.inputBoxElement.setAttribute('jslog', `${VisualLogging.textField().track({
+                                        change: true,
+                                        keydown: 'ArrowUp|ArrowDown|PageUp|PageDown|Enter|Tab|>|@|:|?|!',
+                                      })}`);
     hbox.appendChild(this.inputBoxElement);
 
     this.hintElement = hbox.createChild('span', 'filtered-list-widget-hint');
@@ -94,7 +105,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.itemElementsContainer.addEventListener('mousemove', this.onMouseMove.bind(this), false);
     UI.ARIAUtils.markAsListBox(this.itemElementsContainer);
     UI.ARIAUtils.setControls(this.inputBoxElement, this.itemElementsContainer);
-    UI.ARIAUtils.setAutocomplete(this.inputBoxElement, UI.ARIAUtils.AutocompleteInteractionModel.List);
+    UI.ARIAUtils.setAutocomplete(this.inputBoxElement, UI.ARIAUtils.AutocompleteInteractionModel.LIST);
 
     this.notFoundElement = this.bottomElementsContainer.createChild('div', 'not-found-text');
     this.notFoundElement.classList.add('hidden');
@@ -153,30 +164,23 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.hintElement.textContent = hint;
   }
 
-  /**
-   * Sets the text prompt's accessible title. By default, it is "Quick open prompt".
-   */
-  setPromptTitle(title: string): void {
-    UI.ARIAUtils.setLabel(this.inputBoxElement, title);
-  }
-
   showAsDialog(dialogTitle?: string): void {
     if (!dialogTitle) {
       dialogTitle = i18nString(UIStrings.quickOpen);
     }
 
-    this.dialog = new UI.Dialog.Dialog();
+    this.dialog = new UI.Dialog.Dialog('quick-open');
     UI.ARIAUtils.setLabel(this.dialog.contentElement, dialogTitle);
-    this.dialog.setMaxContentSize(new UI.Geometry.Size(504, 340));
-    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.SetExactWidthMaxHeight);
+    this.dialog.setMaxContentSize(new UI.Geometry.Size(576, 320));
+    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.SET_EXACT_WIDTH_MAX_HEIGHT);
     this.dialog.setContentPosition(null, 22);
-    this.dialog.contentElement.style.setProperty('border-radius', '4px');
+    this.dialog.contentElement.style.setProperty('border-radius', 'var(--sys-shape-corner-medium)');
+    this.dialog.contentElement.style.setProperty('box-shadow', 'var(--sys-elevation-level3)');
     this.show(this.dialog.contentElement);
     UI.ARIAUtils.setExpanded(this.contentElement, true);
-    void this.dialog.once(UI.Dialog.Events.Hidden).then(() => {
-      this.dispatchEventToListeners(Events.Hidden);
+    void this.dialog.once(UI.Dialog.Events.HIDDEN).then(() => {
+      this.dispatchEventToListeners(Events.HIDDEN);
     });
-    // @ts-ignore
     this.dialog.show();
   }
 
@@ -219,7 +223,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
   }
 
   override wasShown(): void {
-    this.registerCSSFiles([filteredListWidgetStyles]);
+    super.wasShown();
     this.attachProvider();
   }
 
@@ -246,8 +250,16 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
       return;
     }
     event.preventDefault();
-    const selectedIndexInProvider = this.provider.itemCount() ? this.list.selectedItem() : null;
+    const index = this.list.selectedIndex();
+    if (index < 0) {
+      return;
+    }
+    const element = this.list.elementAtIndex(index);
+    if (element) {
+      void VisualLogging.logClick(element, event);
+    }
 
+    const selectedIndexInProvider = this.provider.itemCount() ? this.list.selectedItem() : null;
     this.selectItem(selectedIndexInProvider);
     if (this.dialog) {
       this.dialog.hide();
@@ -271,13 +283,15 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     wrapperElement.className = 'filtered-list-widget-item-wrapper';
 
     const itemElement = wrapperElement.createChild('div');
-    const renderAsTwoRows = this.provider && this.provider.renderAsTwoRows();
+    const renderAsTwoRows = this.provider?.renderAsTwoRows();
     itemElement.className = 'filtered-list-widget-item ' + (renderAsTwoRows ? 'two-rows' : 'one-row');
     const titleElement = itemElement.createChild('div', 'filtered-list-widget-title');
     const subtitleElement = itemElement.createChild('div', 'filtered-list-widget-subtitle');
     subtitleElement.textContent = '\u200B';
     if (this.provider) {
       this.provider.renderItem(item, this.cleanValue(), titleElement, subtitleElement);
+      wrapperElement.setAttribute(
+          'jslog', `${VisualLogging.item(this.provider.jslogContextAt(item)).track({click: true})}`);
     }
     UI.ARIAUtils.markAsOption(itemElement);
     return wrapperElement;
@@ -321,9 +335,14 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
       return;
     }
     this.list.selectItem(item);
-    const text = this.list.elementAtIndex(this.list.selectedIndex())?.textContent;
+    const selectedElement = this.list.elementAtIndex(this.list.selectedIndex());
+    const children = selectedElement.querySelectorAll('*');
+    const text = Array.from(children)
+                     .filter(e => !e.children.length)
+                     .map(e => e.classList.contains('new-badge') ? i18nString(UIStrings.newFeature) : e.textContent)
+                     .join();
     if (text) {
-      UI.ARIAUtils.alert(
+      UI.ARIAUtils.LiveAnnouncer.alert(
           i18nString(UIStrings.sItemSOfS, {PH1: text, PH2: this.list.selectedIndex() + 1, PH3: this.items.length}));
     }
   }
@@ -355,6 +374,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
       }
       this.inputBoxElement.focus();
       this.inputBoxElement.setText(completion);
+      this.inputBoxElement.setSuggestion('');
       this.setQuerySelectedRange(userEnteredText.length, completion.length);
       return true;
     }
@@ -491,7 +511,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.notFoundElement.classList.toggle('hidden', hasItems);
     if (!hasItems && this.provider) {
       this.notFoundElement.textContent = this.provider.notFoundText(this.cleanValue());
-      UI.ARIAUtils.alert(this.notFoundElement.textContent);
+      UI.ARIAUtils.LiveAnnouncer.alert(this.notFoundElement.textContent);
     }
   }
 
@@ -519,7 +539,9 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     let handled = false;
     switch (keyboardEvent.key) {
       case Platform.KeyboardUtilities.ENTER_KEY:
-        this.onEnter(keyboardEvent);
+        if (!keyboardEvent.isComposing) {  // Ignore ENTER to confirm selection in an IME
+          this.onEnter(keyboardEvent);
+        }
         return;
       case Platform.KeyboardUtilities.TAB_KEY:
         if (keyboardEvent.shiftKey) {
@@ -545,7 +567,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
       keyboardEvent.consume(true);
       const text = this.list.elementAtIndex(this.list.selectedIndex())?.textContent;
       if (text) {
-        UI.ARIAUtils.alert(
+        UI.ARIAUtils.LiveAnnouncer.alert(
             i18nString(UIStrings.sItemSOfS, {PH1: text, PH2: this.list.selectedIndex() + 1, PH3: this.items.length}));
       }
     }
@@ -570,16 +592,18 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
 }
 
 export const enum Events {
-  Hidden = 'hidden',
+  HIDDEN = 'hidden',
 }
 
-export type EventTypes = {
-  [Events.Hidden]: void,
-};
+export interface EventTypes {
+  [Events.HIDDEN]: void;
+}
 
 export class Provider {
   private refreshCallback!: () => void;
-  constructor() {
+  jslogContext: string;
+  constructor(jslogContext: string) {
+    this.jslogContext = jslogContext;
   }
 
   setRefreshCallback(refreshCallback: () => void): void {
@@ -602,6 +626,10 @@ export class Provider {
   }
 
   renderItem(_itemIndex: number, _query: string, _titleElement: Element, _subtitleElement: Element): void {
+  }
+
+  jslogContextAt(_itemIndex: number): string {
+    return this.jslogContext;
   }
 
   renderAsTwoRows(): boolean {
@@ -643,8 +671,8 @@ export function getRegisteredProviders(): ProviderRegistration[] {
 export interface ProviderRegistration {
   prefix: string;
   iconName: string;
-  iconWidth: string;
   provider: () => Promise<Provider>;
+  helpTitle: (() => string);
   titlePrefix: (() => string);
   titleSuggestion?: (() => string);
 }

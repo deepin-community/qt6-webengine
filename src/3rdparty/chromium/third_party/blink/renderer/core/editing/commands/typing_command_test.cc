@@ -72,7 +72,7 @@ TEST_F(TypingCommandTest, insertLineBreakWithIllFormedHTML) {
   tr->AppendChild(input2);
   tr->AppendChild(rbc);
 
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   div->AppendChild(input1);
   div->AppendChild(tr);
 
@@ -98,7 +98,7 @@ TEST_F(TypingCommandTest,
   TypingCommand::InsertText(
       GetDocument(), " ", 0,
       TypingCommand::TextCompositionType::kTextCompositionUpdate, true);
-  EXPECT_EQ("<div contenteditable>^<h1></h1>|</div>",
+  EXPECT_EQ("<div contenteditable><h1>\xC2\xA0|</h1></div>",
             GetSelectionTextFromBody());
 }
 
@@ -119,20 +119,17 @@ TEST_F(TypingCommandTest, ForwardDeleteInvalidatesSelection) {
   TypingCommand::ForwardDeleteKeyPressed(GetDocument(), &editing_state);
 
   EXPECT_EQ(
-      "<blockquote>|</blockquote>"
-      "<q>"
-      "<table contenteditable=\"false\">"
-      "<colgroup width=\"-1\"></colgroup>"
-      "</table>\n"
-      "<svg></svg>"
-      "</q>",
+      "<blockquote>"
+      "<q>|<br></q>"
+      "</blockquote>"
+      "<q>\n<svg></svg></q>",
       GetSelectionTextFromBody());
 }
 
 // crbug.com/1382250
 TEST_F(TypingCommandTest, ForwardDeleteAtTableEnd) {
   SetBodyContent("<table contenteditable></table>");
-  Element* table = GetDocument().QuerySelector(AtomicString("table"));
+  Element* table = QuerySelector("table");
   table->setTextContent("a");
   UpdateAllLifecyclePhasesForTest();
   Selection().SetSelection(SelectionInDOMTree::Builder()
@@ -149,7 +146,7 @@ TEST_F(TypingCommandTest, ForwardDeleteAtTableEnd) {
 
 TEST_F(TypingCommandTest, TypedCharactersInContentEditable) {
   SetBodyContent("<table contenteditable></table>");
-  Element* table = GetDocument().QuerySelector(AtomicString("table"));
+  Element* table = QuerySelector("table");
   table->setTextContent("a");
   MockChromeClient* chrome_client = MakeGarbageCollected<MockChromeClient>();
   table->GetDocument().GetPage()->SetChromeClientForTesting(chrome_client);
@@ -170,7 +167,7 @@ TEST_F(TypingCommandTest, TypedCharactersInContentEditable) {
 
 TEST_F(TypingCommandTest, FirstTypedCharactersInContentEditable) {
   SetBodyContent("<table contenteditable></table>");
-  Element* table = GetDocument().QuerySelector(AtomicString("table"));
+  Element* table = QuerySelector("table");
   table->setTextContent("a");
   MockChromeClient* chrome_client = MakeGarbageCollected<MockChromeClient>();
   table->GetDocument().GetPage()->SetChromeClientForTesting(chrome_client);

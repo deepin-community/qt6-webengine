@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2017, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -19,6 +19,8 @@
 #include "aom_dsp/noise_model.h"
 #include "aom_dsp/noise_util.h"
 #include "aom_mem/aom_mem.h"
+#include "aom_ports/mem.h"
+#include "aom_scale/yv12config.h"
 
 #define kLowPolyNumParams 3
 
@@ -44,7 +46,7 @@ static const int kMaxLag = 4;
 GET_BLOCK_MEAN(uint8_t, lowbd)
 GET_BLOCK_MEAN(uint16_t, highbd)
 
-static INLINE double get_block_mean(const uint8_t *data, int w, int h,
+static inline double get_block_mean(const uint8_t *data, int w, int h,
                                     int stride, int x_o, int y_o,
                                     int block_size, int use_highbd) {
   if (use_highbd)
@@ -78,7 +80,7 @@ static INLINE double get_block_mean(const uint8_t *data, int w, int h,
 GET_NOISE_VAR(uint8_t, lowbd)
 GET_NOISE_VAR(uint16_t, highbd)
 
-static INLINE double get_noise_var(const uint8_t *data, const uint8_t *denoised,
+static inline double get_noise_var(const uint8_t *data, const uint8_t *denoised,
                                    int w, int h, int stride, int x_o, int y_o,
                                    int block_size_x, int block_size_y,
                                    int use_highbd) {
@@ -141,6 +143,11 @@ static int equation_system_solve(aom_equation_system_t *eqns) {
 
   if (ret == 0) {
     return 0;
+  }
+  for (int i = 0; i < n; ++i) {
+    if (isnan((float)eqns->x[i])) {
+      return 0;
+    }
   }
   return 1;
 }
@@ -480,7 +487,8 @@ int aom_flat_block_finder_init(aom_flat_block_finder_t *block_finder,
   for (i = 0; i < kLowPolyNumParams; ++i) {
     memset(eqns.b, 0, sizeof(*eqns.b) * kLowPolyNumParams);
     eqns.b[i] = 1;
-    equation_system_solve(&eqns);
+    const int ret = equation_system_solve(&eqns);
+    if (!ret) return ret;
 
     for (j = 0; j < kLowPolyNumParams; ++j) {
       AtA_inv[j * kLowPolyNumParams + i] = eqns.x[j];
@@ -702,7 +710,7 @@ int aom_noise_model_init(aom_noise_model_t *model,
     return 0;
   }
 
-  memcpy(&model->params, &params, sizeof(params));
+  model->params = params;
   for (c = 0; c < 3; ++c) {
     if (!noise_state_init(&model->combined_state[c], n + (c > 0), bit_depth)) {
       fprintf(stderr, "Failed to allocate noise state for channel %d\n", c);
@@ -1257,7 +1265,10 @@ int aom_noise_model_get_grain_parameters(aom_noise_model_t *const noise_model,
     if (c == 0) {
       avg_luma_strength = average_strength;
     } else {
-      y_corr[c - 1] = avg_luma_strength * eqns->x[n_coeff] / average_strength;
+      y_corr[c - 1] =
+          average_strength > 1e-6
+              ? avg_luma_strength * eqns->x[n_coeff] / average_strength
+              : 0;
       max_coeff = AOMMAX(max_coeff, y_corr[c - 1]);
       min_coeff = AOMMIN(min_coeff, y_corr[c - 1]);
     }
@@ -1334,8 +1345,11 @@ static float *get_half_cos_window(int block_size) {
         INT_TYPE new_val = (INT_TYPE)AOMMIN(                                \
             AOMMAX(result[result_idx] * block_normalization + 0.5f, 0),     \
             block_normalization);                                           \
-        const float err =                                                   \
+        float err =                                                         \
             -(((float)new_val) / block_normalization - result[result_idx]); \
+        if (fabsf(err) < 1e-6f) {                                           \
+          err = 0.0f;                                                       \
+        }                                                                   \
         denoised[y * stride + x] = new_val;                                 \
         if (x + 1 < (w >> chroma_sub_w)) {                                  \
           result[result_idx + 1] += err * 7.0f / 16.0f;                     \
@@ -1555,7 +1569,7 @@ void aom_denoise_and_model_free(struct aom_denoise_and_model_t *ctx) {
 }
 
 static int denoise_and_model_realloc_if_necessary(
-    struct aom_denoise_and_model_t *ctx, YV12_BUFFER_CONFIG *sd) {
+    struct aom_denoise_and_model_t *ctx, const YV12_BUFFER_CONFIG *sd) {
   if (ctx->width == sd->y_width && ctx->height == sd->y_height &&
       ctx->y_stride == sd->y_stride && ctx->uv_stride == sd->uv_stride)
     return 1;
@@ -1624,7 +1638,7 @@ static int denoise_and_model_realloc_if_necessary(
 // TODO(aomedia:3151): Handle a monochrome image (sd->u_buffer and sd->v_buffer
 // are null pointers) correctly.
 int aom_denoise_and_model_run(struct aom_denoise_and_model_t *ctx,
-                              YV12_BUFFER_CONFIG *sd,
+                              const YV12_BUFFER_CONFIG *sd,
                               aom_film_grain_t *film_grain, int apply_denoise) {
   const int block_size = ctx->block_size;
   const int use_highbd = (sd->flags & YV12_FLAG_HIGHBITDEPTH) != 0;

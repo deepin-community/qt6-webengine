@@ -1,5 +1,6 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QWEBENGINEPERMISSION_P_H
 #define QWEBENGINEPERMISSION_P_H
@@ -32,12 +33,14 @@ struct QWebEnginePermissionPrivate : public QSharedData
 {
     Q_WEBENGINECORE_EXPORT QWebEnginePermissionPrivate();
     Q_WEBENGINECORE_EXPORT QWebEnginePermissionPrivate(const QUrl &, QWebEnginePermission::PermissionType,
-        QSharedPointer<QtWebEngineCore::WebContentsAdapter>, QtWebEngineCore::ProfileAdapter *);
+        QtWebEngineCore::ProfileAdapter *, int = -1, const std::string & = std::string());
 
     QUrl origin;
     QWebEnginePermission::PermissionType permissionType;
 
-    QWeakPointer<QtWebEngineCore::WebContentsAdapter> webContentsAdapter;
+    int childId = -1;
+    std::string serializedToken;
+
     QPointer<QtWebEngineCore::ProfileAdapter> profileAdapter;
 };
 

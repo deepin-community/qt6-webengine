@@ -6,9 +6,9 @@
 
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -24,8 +24,15 @@ class LayoutTextControlTest : public RenderingTest {
   }
   // Return the LayoutText from inside a text control's user agent shadow tree.
   LayoutText* GetInnerLayoutText(TextControlElement* control) {
-    return To<LayoutText>(
-        control->InnerEditorElement()->GetLayoutObject()->SlowFirstChild());
+    auto* editor_box = control->InnerEditorElement()->GetLayoutObject();
+    if (!RuntimeEnabledFeatures::TextareaMultipleIfcsEnabled()) {
+      return To<LayoutText>(editor_box->SlowFirstChild());
+    }
+    if (auto* anonymous_block =
+            DynamicTo<LayoutBlockFlow>(editor_box->SlowFirstChild())) {
+      return To<LayoutText>(anonymous_block->FirstChild());
+    }
+    return To<LayoutText>(editor_box->SlowFirstChild());
   }
 
   // Focus on |control|, select 1-3 characters, get the first LayoutText, and

@@ -4,6 +4,7 @@
 
 #include "cc/metrics/lcd_text_metrics_reporter.h"
 
+#include "base/compiler_specific.h"
 #include "base/functional/function_ref.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
@@ -30,10 +31,6 @@ constexpr char kMetricNameLCDTextKPixelsHighDPI[] =
     "Compositing.Renderer.LCDTextDisallowedReasonKPixels2.HighDPI";
 constexpr char kMetricNameLCDTextKPixelsLowDPI[] =
     "Compositing.Renderer.LCDTextDisallowedReasonKPixels2.LowDPI";
-constexpr char kMetricNameLCDTextLayersHighDPI[] =
-    "Compositing.Renderer.LCDTextDisallowedReasonLayers2.HighDPI";
-constexpr char kMetricNameLCDTextLayersLowDPI[] =
-    "Compositing.Renderer.LCDTextDisallowedReasonLayers2.LowDPI";
 
 void Report(const LayerTreeImpl* layer_tree,
             base::FunctionRef<void(int64_t text_pixels,
@@ -42,7 +39,7 @@ void Report(const LayerTreeImpl* layer_tree,
     if (!layer->draws_content() || !layer->GetRasterSource()) {
       continue;
     }
-    const scoped_refptr<DisplayItemList>& display_item_list =
+    const scoped_refptr<const DisplayItemList>& display_item_list =
         layer->GetRasterSource()->GetDisplayItemList();
     if (!display_item_list) {
       continue;
@@ -59,17 +56,15 @@ void Report(const LayerTreeImpl* layer_tree,
   }
 }
 
-constexpr char const* kTraceCategory =
-    TRACE_DISABLED_BY_DEFAULT("cc.debug.lcd_text");
-
 }  // anonymous namespace
 
 std::unique_ptr<LCDTextMetricsReporter> LCDTextMetricsReporter::CreateIfNeeded(
     const LayerTreeHostImpl* layer_tree_host_impl) {
   const char* client_name = GetClientNameForMetrics();
   // The metrics are for the renderer only.
-  if (!client_name || strcmp(client_name, "Renderer") != 0)
+  if (!client_name || UNSAFE_TODO(strcmp(client_name, "Renderer")) != 0) {
     return nullptr;
+  }
   return base::WrapUnique(new LCDTextMetricsReporter(layer_tree_host_impl));
 }
 
@@ -87,6 +82,8 @@ void LCDTextMetricsReporter::NotifySubmitFrame(
     last_report_frame_time_ = current_frame_time_;
   }
 
+  static constexpr char kTraceCategory[] =
+      TRACE_DISABLED_BY_DEFAULT("cc.debug.lcd_text");
   bool trace_enabled;
   TRACE_EVENT_CATEGORY_GROUP_ENABLED(kTraceCategory, &trace_enabled);
   if (trace_enabled) {
@@ -121,11 +118,9 @@ void LCDTextMetricsReporter::NotifyPauseFrameProduction() {
            if (is_high_dpi) {
              UMA_HISTOGRAM_SCALED_ENUMERATION(kMetricNameLCDTextKPixelsHighDPI,
                                               reason, text_pixels, 1000);
-             UMA_HISTOGRAM_ENUMERATION(kMetricNameLCDTextLayersHighDPI, reason);
            } else {
              UMA_HISTOGRAM_SCALED_ENUMERATION(kMetricNameLCDTextKPixelsLowDPI,
                                               reason, text_pixels, 1000);
-             UMA_HISTOGRAM_ENUMERATION(kMetricNameLCDTextLayersLowDPI, reason);
            }
 #endif
          });

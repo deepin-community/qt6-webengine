@@ -9,10 +9,13 @@
 #ifndef LIBANGLE_ANGLETYPES_H_
 #define LIBANGLE_ANGLETYPES_H_
 
+#include <anglebase/sha1.h>
 #include "common/Color.h"
 #include "common/FixedVector.h"
+#include "common/MemoryBuffer.h"
 #include "common/PackedEnums.h"
 #include "common/bitset_utils.h"
+#include "common/hash_utils.h"
 #include "common/vector_utils.h"
 #include "libANGLE/Constants.h"
 #include "libANGLE/Error.h"
@@ -26,6 +29,62 @@
 #include <map>
 #include <memory>
 #include <unordered_map>
+
+namespace angle
+{
+template <typename T>
+struct Extents
+{
+    Extents() : width(0), height(0), depth(0) {}
+    Extents(T width_, T height_, T depth_) : width(width_), height(height_), depth(depth_) {}
+
+    Extents(const Extents &other)            = default;
+    Extents &operator=(const Extents &other) = default;
+
+    bool empty() const { return (width * height * depth) == 0; }
+
+    T width;
+    T height;
+    T depth;
+};
+
+template <typename T>
+struct Offset
+{
+  public:
+    constexpr Offset() : x(0), y(0), z(0) {}
+    constexpr Offset(T x_in, T y_in, T z_in) : x(x_in), y(y_in), z(z_in) {}
+
+    T x;
+    T y;
+    T z;
+};
+
+template <typename T>
+inline bool operator==(const Extents<T> &lhs, const Extents<T> &rhs)
+{
+    return lhs.width == rhs.width && lhs.height == rhs.height && lhs.depth == rhs.depth;
+}
+
+template <typename T>
+inline bool operator!=(const Extents<T> &lhs, const Extents<T> &rhs)
+{
+    return !(lhs == rhs);
+}
+
+template <typename T>
+inline bool operator==(const Offset<T> &a, const Offset<T> &b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+template <typename T>
+inline bool operator!=(const Offset<T> &a, const Offset<T> &b)
+{
+    return !(a == b);
+}
+
+}  // namespace angle
 
 namespace gl
 {
@@ -41,6 +100,7 @@ enum class Command
     Blit,
     BlitAll = Blit + 0x7,
     Clear,
+    ClearTexture,
     CopyImage,
     Dispatch,
     Draw,
@@ -48,6 +108,7 @@ enum class Command
     Invalidate,
     ReadPixels,
     TexImage,
+    GetMultisample,
     Other,
 };
 
@@ -56,6 +117,8 @@ enum CommandBlitBuffer
     CommandBlitBufferColor   = 0x1,
     CommandBlitBufferDepth   = 0x2,
     CommandBlitBufferStencil = 0x4,
+
+    CommandBlitBufferDepthStencil = CommandBlitBufferDepth | CommandBlitBufferStencil,
 };
 
 enum class InitState
@@ -155,38 +218,9 @@ void GetEnclosingRectangle(const Rectangle &rect1, const Rectangle &rect2, Recta
 //
 void ExtendRectangle(const Rectangle &source, const Rectangle &extend, Rectangle *extended);
 
-struct Offset
-{
-    constexpr Offset() : x(0), y(0), z(0) {}
-    constexpr Offset(int x_in, int y_in, int z_in) : x(x_in), y(y_in), z(z_in) {}
-
-    int x;
-    int y;
-    int z;
-};
-
+using Extents = angle::Extents<int>;
+using Offset  = angle::Offset<int>;
 constexpr Offset kOffsetZero(0, 0, 0);
-
-bool operator==(const Offset &a, const Offset &b);
-bool operator!=(const Offset &a, const Offset &b);
-
-struct Extents
-{
-    Extents() : width(0), height(0), depth(0) {}
-    Extents(int width_, int height_, int depth_) : width(width_), height(height_), depth(depth_) {}
-
-    Extents(const Extents &other)            = default;
-    Extents &operator=(const Extents &other) = default;
-
-    bool empty() const { return (width * height * depth) == 0; }
-
-    int width;
-    int height;
-    int depth;
-};
-
-bool operator==(const Extents &lhs, const Extents &rhs);
-bool operator!=(const Extents &lhs, const Extents &rhs);
 
 struct Box
 {
@@ -266,29 +300,6 @@ struct RasterizerState final
 bool operator==(const RasterizerState &a, const RasterizerState &b);
 bool operator!=(const RasterizerState &a, const RasterizerState &b);
 
-struct BlendState final
-{
-    // This will zero-initialize the struct, including padding.
-    BlendState();
-    BlendState(const BlendState &other);
-
-    bool blend;
-    GLenum sourceBlendRGB;
-    GLenum destBlendRGB;
-    GLenum sourceBlendAlpha;
-    GLenum destBlendAlpha;
-    GLenum blendEquationRGB;
-    GLenum blendEquationAlpha;
-
-    bool colorMaskRed;
-    bool colorMaskGreen;
-    bool colorMaskBlue;
-    bool colorMaskAlpha;
-};
-
-bool operator==(const BlendState &a, const BlendState &b);
-bool operator!=(const BlendState &a, const BlendState &b);
-
 struct DepthStencilState final
 {
     // This will zero-initialize the struct, including padding.
@@ -297,9 +308,9 @@ struct DepthStencilState final
     DepthStencilState &operator=(const DepthStencilState &other);
 
     bool isDepthMaskedOut() const;
-    bool isStencilMaskedOut() const;
-    bool isStencilNoOp() const;
-    bool isStencilBackNoOp() const;
+    bool isStencilMaskedOut(GLuint framebufferStencilSize) const;
+    bool isStencilNoOp(GLuint framebufferStencilSize) const;
+    bool isStencilBackNoOp(GLuint framebufferStencilSize) const;
 
     bool depthTest;
     GLenum depthFunc;
@@ -507,14 +518,38 @@ struct PixelPackState : PixelStoreStateBase
     bool reverseRowOrder = false;
 };
 
-// Used in VertexArray.
-using VertexArrayBufferBindingMask = angle::BitSet<MAX_VERTEX_ATTRIB_BINDINGS>;
+// Used in VertexArray. For ease of tracking, we add vertex array element buffer to the end of
+// vertex array buffer bindings.
+constexpr uint32_t kElementArrayBufferIndex = MAX_VERTEX_ATTRIB_BINDINGS;
+using VertexArrayBufferBindingMask          = angle::BitSet<kElementArrayBufferIndex + 1>;
 
 // Used in Program and VertexArray.
 using AttributesMask = angle::BitSet<MAX_VERTEX_ATTRIBS>;
+using BufferBindingMask = angle::BitSet<MAX_VERTEX_ATTRIB_BINDINGS>;
 
 // Used in Program
-using UniformBlockBindingMask = angle::BitSet<IMPLEMENTATION_MAX_COMBINED_SHADER_UNIFORM_BUFFERS>;
+static_assert(IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS >
+                  IMPLEMENTATION_MAX_COMBINED_SHADER_UNIFORM_BUFFERS,
+              "maxCombinedShaderStorageBlocks must be greater than maxCombinedUniformBlocks");
+using ProgramBufferBlockMask  = angle::BitSet<IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>;
+using ProgramUniformBlockMask = ProgramBufferBlockMask;
+using ProgramStorageBlockMask = ProgramBufferBlockMask;
+template <typename T>
+using ProgramUniformBlockArray = std::array<T, IMPLEMENTATION_MAX_COMBINED_SHADER_UNIFORM_BUFFERS>;
+template <typename T>
+using UniformBufferBindingArray = std::array<T, IMPLEMENTATION_MAX_UNIFORM_BUFFER_BINDINGS>;
+
+// Fine grained dirty type for buffers updates.
+enum class BufferDirtyType
+{
+    Binding,
+    Offset,
+    Size,
+
+    InvalidEnum,
+    EnumCount = InvalidEnum,
+};
+using BufferDirtyTypeBitMask = angle::PackedEnumBitSet<BufferDirtyType>;
 
 // Used in Framebuffer / Program
 using DrawBufferMask = angle::BitSet8<IMPLEMENTATION_MAX_DRAW_BUFFERS>;
@@ -665,6 +700,8 @@ class BlendStateExt final
     void setEnabledIndexed(const size_t index, const bool enabled);
 
     ///////// Color Write Mask /////////
+
+    constexpr static uint8_t kColorMaskRGBA = 0xf;
 
     static constexpr size_t PackColorMask(const bool red,
                                           const bool green,
@@ -950,10 +987,69 @@ ANGLE_INLINE ComponentTypeMask GetActiveComponentTypeMask(gl::AttributesMask act
     return ComponentTypeMask(activeAttribs << kMaxComponentTypeMaskIndex | activeAttribs);
 }
 
-bool ValidateComponentTypeMasks(unsigned long outputTypes,
-                                unsigned long inputTypes,
-                                unsigned long outputMask,
-                                unsigned long inputMask);
+ANGLE_INLINE DrawBufferMask GetComponentTypeMaskDiff(ComponentTypeMask mask1,
+                                                     ComponentTypeMask mask2)
+{
+    const uint32_t diff = static_cast<uint32_t>((mask1 ^ mask2).bits());
+    return DrawBufferMask(static_cast<uint8_t>(diff | (diff >> gl::kMaxComponentTypeMaskIndex)));
+}
+
+bool ValidateComponentTypeMasks(uint64_t outputTypes,
+                                uint64_t inputTypes,
+                                uint64_t outputMask,
+                                uint64_t inputMask);
+
+// Helpers for performing WebGL 2.0 clear validation
+// Extracted component type has always one of these four values:
+// * 0x10001 - float or normalized
+// * 0x00001 - int
+// * 0x10000 - unsigned int
+// * 0x00000 - unused or disabled
+
+// The following functions rely on these.
+static_assert(kComponentMasks[ComponentType::Float] == 0x10001);
+static_assert(kComponentMasks[ComponentType::Int] == 0x00001);
+static_assert(kComponentMasks[ComponentType::UnsignedInt] == 0x10000);
+
+// Used for clearBufferuiv
+ANGLE_INLINE bool IsComponentTypeFloatOrInt(ComponentTypeMask mask, size_t index)
+{
+    ASSERT(index <= kMaxComponentTypeMaskIndex);
+    // 0x10001 or 0x00001
+    return ((mask.bits() >> index) & 0x00001) != 0;
+}
+
+// Used for clearBufferiv
+ANGLE_INLINE bool IsComponentTypeFloatOrUnsignedInt(ComponentTypeMask mask, size_t index)
+{
+    ASSERT(index <= kMaxComponentTypeMaskIndex);
+    // 0x10001 or 0x10000
+    return ((mask.bits() >> index) & 0x10000) != 0;
+}
+
+// Used for clearBufferfv
+ANGLE_INLINE bool IsComponentTypeIntOrUnsignedInt(ComponentTypeMask mask, size_t index)
+{
+    ASSERT(index <= kMaxComponentTypeMaskIndex);
+    // 0x00001 or 0x10000; this expression is more efficient than two explicit comparisons
+    return ((((mask.bits() >> kMaxComponentTypeMaskIndex) ^ mask.bits()) >> index) & 1) != 0;
+}
+
+// Used for clear
+ANGLE_INLINE DrawBufferMask GetIntOrUnsignedIntDrawBufferMask(ComponentTypeMask mask)
+{
+    static_assert(DrawBufferMask::size() <= 8);
+    return DrawBufferMask(
+        static_cast<uint8_t>((mask.bits() >> kMaxComponentTypeMaskIndex) ^ mask.bits()));
+}
+
+// GL_ANGLE_blob_cache state
+struct BlobCacheCallbacks
+{
+    GLSETBLOBPROCANGLE setFunction = nullptr;
+    GLGETBLOBPROCANGLE getFunction = nullptr;
+    const void *userParam          = nullptr;
+};
 
 enum class RenderToTextureImageIndex
 {
@@ -1006,22 +1102,15 @@ using DrawBuffersVector = angle::FixedVector<T, IMPLEMENTATION_MAX_DRAW_BUFFERS>
 template <typename T>
 using AttribArray = std::array<T, MAX_VERTEX_ATTRIBS>;
 
+template <typename T>
+using AttribVector = angle::FixedVector<T, MAX_VERTEX_ATTRIBS>;
+
 using ActiveTextureMask = angle::BitSet<IMPLEMENTATION_MAX_ACTIVE_TEXTURES>;
 
 template <typename T>
 using ActiveTextureArray = std::array<T, IMPLEMENTATION_MAX_ACTIVE_TEXTURES>;
 
 using ActiveTextureTypeArray = ActiveTextureArray<TextureType>;
-
-template <typename T>
-using UniformBuffersArray = std::array<T, IMPLEMENTATION_MAX_UNIFORM_BUFFER_BINDINGS>;
-template <typename T>
-using StorageBuffersArray = std::array<T, IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>;
-template <typename T>
-using AtomicCounterBuffersArray = std::array<T, IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS>;
-using AtomicCounterBufferMask   = angle::BitSet<IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS>;
-template <typename T>
-using ImagesArray = std::array<T, IMPLEMENTATION_MAX_IMAGE_UNITS>;
 
 using ImageUnitMask = angle::BitSet<IMPLEMENTATION_MAX_IMAGE_UNITS>;
 
@@ -1182,6 +1271,73 @@ inline DestT *SafeGetImplAs(SrcT *src)
 
 namespace angle
 {
+enum class NativeWindowSystem
+{
+    X11,
+    Wayland,
+    Gbm,
+    NullCompute,
+    Other,
+};
+
+struct FeatureOverrides
+{
+    std::vector<std::string> enabled;
+    std::vector<std::string> disabled;
+    bool allDisabled = false;
+};
+
+// 160-bit SHA-1 hash key used for hasing a program.  BlobCache opts in using fixed keys for
+// simplicity and efficiency.
+static constexpr size_t kBlobCacheKeyLength = angle::base::kSHA1Length;
+using BlobCacheKey                          = std::array<uint8_t, kBlobCacheKeyLength>;
+class BlobCacheValue  // To be replaced with std::span when C++20 is required
+{
+  public:
+    BlobCacheValue() : mPtr(nullptr), mSize(0) {}
+    BlobCacheValue(const uint8_t *ptr, size_t size) : mPtr(ptr), mSize(size) {}
+
+    // A very basic struct to hold the pointer and size together.  The objects of this class
+    // don't own the memory.
+    const uint8_t *data() { return mPtr; }
+    size_t size() { return mSize; }
+
+    const uint8_t &operator[](size_t pos) const
+    {
+        ASSERT(pos < mSize);
+        return mPtr[pos];
+    }
+
+  private:
+    const uint8_t *mPtr;
+    size_t mSize;
+};
+
+bool CompressBlob(const size_t cacheSize, const uint8_t *cacheData, MemoryBuffer *compressedData);
+bool DecompressBlob(const uint8_t *compressedData,
+                    const size_t compressedSize,
+                    size_t maxUncompressedDataSize,
+                    MemoryBuffer *uncompressedData);
+uint32_t GenerateCRC32(const uint8_t *data, size_t size);
+uint32_t InitCRC32();
+uint32_t UpdateCRC32(uint32_t prevCrc32, const uint8_t *data, size_t size);
+}  // namespace angle
+
+namespace std
+{
+template <>
+struct hash<angle::BlobCacheKey>
+{
+    // Simple routine to hash four ints.
+    size_t operator()(const angle::BlobCacheKey &key) const
+    {
+        return angle::ComputeGenericHash(key.data(), key.size());
+    }
+};
+}  // namespace std
+
+namespace angle
+{
 // Under certain circumstances, such as for increased parallelism, the backend may defer an
 // operation to be done at the end of a call after the locks have been unlocked.  The entry point
 // function passes an |UnlockedTailCall| through the frontend to the backend.  If it is set, the
@@ -1222,10 +1378,9 @@ class UnlockedTailCall final : angle::NonCopyable
     // with unMakeCurrent destroying both the read and draw surfaces, each adding a tail call in the
     // Vulkan backend.
     //
-    // The max count can be increased as necessary.  An assertion would fire inside FixedVector if
-    // the max count is surpassed.
-    static constexpr size_t kMaxCallCount = 2;
-    angle::FixedVector<CallType, kMaxCallCount> mCalls;
+    // Some apps will create multiple windows surfaces and not call corresponding destroy api, which
+    // cause many tail calls been added, so remove the max call count limitations.
+    std::vector<CallType> mCalls;
 };
 
 enum class JobThreadSafety
@@ -1307,11 +1462,111 @@ class DestroyThenDelete
 template <typename ObjT, typename ContextT>
 using UniqueObjectPointer = std::unique_ptr<ObjT, DestroyThenDelete<ObjT, ContextT>>;
 
+using ShadingRateSet = PackedEnumBitSet<gl::ShadingRate, uint16_t>;
+using ShadingRateMap = PackedEnumMap<gl::ShadingRate, uint16_t>;
+
 }  // namespace angle
 
 namespace gl
 {
 class State;
+
+// Focal Point information for foveated rendering
+struct FocalPoint
+{
+    float focalX;
+    float focalY;
+    float gainX;
+    float gainY;
+    float foveaArea;
+
+    constexpr FocalPoint() : focalX(0), focalY(0), gainX(0), gainY(0), foveaArea(0) {}
+
+    FocalPoint(float fX, float fY, float gX, float gY, float fArea)
+        : focalX(fX), focalY(fY), gainX(gX), gainY(gY), foveaArea(fArea)
+    {}
+    FocalPoint(const FocalPoint &other)            = default;
+    FocalPoint &operator=(const FocalPoint &other) = default;
+
+    bool operator==(const FocalPoint &other) const
+    {
+        return focalX == other.focalX && focalY == other.focalY && gainX == other.gainX &&
+               gainY == other.gainY && foveaArea == other.foveaArea;
+    }
+    bool operator!=(const FocalPoint &other) const { return !(*this == other); }
+
+    bool valid() const { return gainX > 0 && gainY > 0; }
+};
+
+constexpr FocalPoint kDefaultFocalPoint = FocalPoint();
+
+class FoveationState
+{
+  public:
+    FoveationState()
+    {
+        mConfigured          = false;
+        mFoveatedFeatureBits = 0;
+        mMinPixelDensity     = 0.0f;
+        mFocalPoints.fill(kDefaultFocalPoint);
+    }
+    FoveationState &operator=(const FoveationState &other) = default;
+
+    void configure() { mConfigured = true; }
+    bool isConfigured() const { return mConfigured; }
+    bool isFoveated() const
+    {
+        // Consider foveated if at least 1 focal point is valid
+        return std::any_of(mFocalPoints.begin(), mFocalPoints.end(),
+                           [](const FocalPoint &focalPoint) { return focalPoint.valid(); });
+    }
+    bool operator==(const FoveationState &other) const
+    {
+        return mConfigured == other.mConfigured &&
+               mFoveatedFeatureBits == other.mFoveatedFeatureBits &&
+               mMinPixelDensity == other.mMinPixelDensity && mFocalPoints == other.mFocalPoints;
+    }
+    bool operator!=(const FoveationState &other) const { return !(*this == other); }
+
+    void setFoveatedFeatureBits(const GLuint features) { mFoveatedFeatureBits = features; }
+    GLuint getFoveatedFeatureBits() const { return mFoveatedFeatureBits; }
+    void setMinPixelDensity(const GLfloat density) { mMinPixelDensity = density; }
+    GLfloat getMinPixelDensity() const { return mMinPixelDensity; }
+    GLuint getMaxNumFocalPoints() const { return gl::IMPLEMENTATION_MAX_FOCAL_POINTS; }
+    void setFocalPoint(uint32_t layer, uint32_t focalPointIndex, const FocalPoint &focalPoint)
+    {
+        mFocalPoints[getIndex(layer, focalPointIndex)] = focalPoint;
+    }
+    const FocalPoint &getFocalPoint(uint32_t layer, uint32_t focalPointIndex) const
+    {
+        return mFocalPoints[getIndex(layer, focalPointIndex)];
+    }
+    GLuint getSupportedFoveationFeatures() const { return GL_FOVEATION_ENABLE_BIT_QCOM; }
+
+  private:
+    size_t getIndex(uint32_t layer, uint32_t focalPointIndex) const
+    {
+        ASSERT(layer < IMPLEMENTATION_MAX_NUM_LAYERS &&
+               focalPointIndex < IMPLEMENTATION_MAX_FOCAL_POINTS);
+        return (layer * IMPLEMENTATION_MAX_FOCAL_POINTS) + focalPointIndex;
+    }
+    bool mConfigured;
+    GLuint mFoveatedFeatureBits;
+    GLfloat mMinPixelDensity;
+
+    static constexpr size_t kMaxFocalPoints =
+        IMPLEMENTATION_MAX_NUM_LAYERS * IMPLEMENTATION_MAX_FOCAL_POINTS;
+    std::array<FocalPoint, kMaxFocalPoints> mFocalPoints;
+};
+
+enum class BufferStorage : bool
+{
+    // The buffer storage is mutable
+    Mutable,
+    // The buffer storage is immutable
+    Immutable,
+};
+
 }  // namespace gl
 
 #endif  // LIBANGLE_ANGLETYPES_H_

@@ -82,11 +82,14 @@ class Switch final : public Castable<Switch, ControlInstruction> {
     };
 
     /// Constructor (no results, no operands, no cases)
-    Switch();
+    /// @param id the instruction id
+    explicit Switch(Id id);
 
     /// Constructor
+    /// @param id the instruction id
     /// @param cond the condition
-    explicit Switch(Value* cond);
+    Switch(Id id, Value* cond);
+
     ~Switch() override;
 
     /// @copydoc Instruction::Clone()
@@ -95,6 +98,9 @@ class Switch final : public Castable<Switch, ControlInstruction> {
     /// @copydoc ControlInstruction::ForeachBlock
     void ForeachBlock(const std::function<void(ir::Block*)>& cb) override;
 
+    /// @copydoc ControlInstruction::ForeachBlock
+    void ForeachBlock(const std::function<void(const ir::Block*)>& cb) const override;
+
     /// @returns the switch cases
     Vector<Case, 4>& Cases() { return cases_; }
 
@@ -102,13 +108,25 @@ class Switch final : public Castable<Switch, ControlInstruction> {
     VectorRef<Case> Cases() const { return cases_; }
 
     /// @returns the condition
-    Value* Condition() { return operands_[kConditionOperandOffset]; }
+    Value* Condition() { return Operand(kConditionOperandOffset); }
 
     /// @returns the condition
-    const Value* Condition() const { return operands_[kConditionOperandOffset]; }
+    const Value* Condition() const { return Operand(kConditionOperandOffset); }
 
     /// @returns the friendly name for the instruction
     std::string FriendlyName() const override { return "switch"; }
+
+    /// @returns the default block for the switch, or nullptr if non-exists
+    ir::Block* DefaultBlock() {
+        for (auto& c : cases_) {
+            for (auto& s : c.selectors) {
+                if (s.IsDefault()) {
+                    return c.block.Get();
+                }
+            }
+        }
+        return nullptr;
+    }
 
   private:
     Vector<Case, 4> cases_;

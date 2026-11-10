@@ -261,6 +261,23 @@ bool IsDebuggerAttached()
     return false;
 }
 
+bool IsSameFileDescriptor(int fd1, int fd2)
+{
+    struct stat stat1, stat2;
+    if (fstat(fd1, &stat1) < 0)
+    {
+        return false;
+    }
+    if (fstat(fd2, &stat2) < 0)
+    {
+        return false;
+    }
+    // Comparing st_ino (the unique identifier within a filesystem) and
+    // st_dev (the identifier of the filesystem) uniquely identifies a
+    // file within a POSIX-conforming system
+    return (stat1.st_dev == stat2.st_dev) && (stat1.st_ino == stat2.st_ino);
+}
+
 void BreakDebugger()
 {
     // This could have a fuller implementation.
@@ -281,6 +298,39 @@ char GetPathSeparator()
 std::string GetRootDirectory()
 {
     return "/";
+}
+
+bool CreateDirectories(const std::string &path)
+{
+    // First sanitize path so we can use "/" as universal path separator
+    std::string sanitizedPath(path);
+    MakeForwardSlashThePathSeparator(sanitizedPath);
+
+    size_t pos = 0;
+    do
+    {
+        pos = sanitizedPath.find("/", pos);
+        std::string checkPath(sanitizedPath.substr(0, pos));
+        if (!checkPath.empty() && !IsDirectory(checkPath.c_str()))
+        {
+            if (mkdir(checkPath.c_str(), S_IRWXU | S_IRWXG | S_IRWXO) == -1)
+            {
+                return false;
+            }
+        }
+        if (pos == std::string::npos)
+        {
+            break;
+        }
+        ++pos;
+    } while (true);
+    return true;
+}
+
+void MakeForwardSlashThePathSeparator(std::string &path)
+{
+    // Nothing to do here for *nix side
+    return;
 }
 
 Optional<std::string> GetTempDirectory()

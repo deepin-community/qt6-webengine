@@ -8,7 +8,8 @@
 #include <stdint.h>
 
 #include "base/check_op.h"
-#include "base/memory/raw_ptr.h"
+#include "base/compiler_specific.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -137,7 +138,9 @@ class GLES2_IMPL_EXPORT VertexArrayObject {
     GLboolean normalized_;
 
     // The pointer/offset into the buffer.
-    raw_ptr<const GLvoid> pointer_;
+    // RAW_PTR_EXCLUSION: The assigned value may be an offset instead of a
+    // pointer.
+    RAW_PTR_EXCLUSION const GLvoid* pointer_;
 
     // The stride that will be used to access the buffer. This is the bogus GL
     // stride where 0 = compute the stride based on size and type.
@@ -373,7 +376,7 @@ void VertexArrayObjectManager::GenVertexArrays(
   for (GLsizei i = 0; i < n; ++i) {
     std::pair<VertexArrayObjectMap::iterator, bool> result =
         vertex_array_objects_.insert(std::make_pair(
-            arrays[i],
+            UNSAFE_TODO(arrays[i]),
             std::make_unique<VertexArrayObject>(max_vertex_attribs_)));
     DCHECK(result.second);
   }
@@ -383,7 +386,7 @@ void VertexArrayObjectManager::DeleteVertexArrays(
     GLsizei n, const GLuint* arrays) {
   DCHECK_GE(n, 0);
   for (GLsizei i = 0; i < n; ++i) {
-    GLuint id = arrays[i];
+    GLuint id = UNSAFE_TODO(arrays[i]);
     if (id) {
       VertexArrayObjectMap::iterator it = vertex_array_objects_.find(id);
       if (it != vertex_array_objects_.end()) {
@@ -466,9 +469,10 @@ GLsizei VertexArrayObjectManager::CollectData(
   }
   const int8_t* src = static_cast<const int8_t*>(data);
   int8_t* dst = collection_buffer_.get();
-  int8_t* end = dst + bytes_per_element * num_elements;
-  for (; dst < end; src += real_stride, dst += bytes_per_element) {
-    memcpy(dst, src, bytes_per_element);
+  int8_t* end = UNSAFE_TODO(dst + bytes_per_element * num_elements);
+  for (; dst < end;
+       UNSAFE_TODO(src += real_stride), UNSAFE_TODO(dst += bytes_per_element)) {
+    UNSAFE_TODO(memcpy(dst, src, bytes_per_element));
   }
   return bytes_needed;
 }
@@ -576,8 +580,8 @@ bool VertexArrayObjectManager::SetupSimulatedIndexAndClientSideBuffers(
       case GL_UNSIGNED_BYTE: {
         const uint8_t* src = static_cast<const uint8_t*>(indices);
         for (GLsizei ii = 0; ii < count; ++ii) {
-          if (src[ii] > max_index) {
-            max_index = src[ii];
+          if (UNSAFE_TODO(src[ii]) > max_index) {
+            max_index = UNSAFE_TODO(src[ii]);
           }
         }
         break;
@@ -585,8 +589,8 @@ bool VertexArrayObjectManager::SetupSimulatedIndexAndClientSideBuffers(
       case GL_UNSIGNED_SHORT: {
         const uint16_t* src = static_cast<const uint16_t*>(indices);
         for (GLsizei ii = 0; ii < count; ++ii) {
-          if (src[ii] > max_index) {
-            max_index = src[ii];
+          if (UNSAFE_TODO(src[ii]) > max_index) {
+            max_index = UNSAFE_TODO(src[ii]);
           }
         }
         break;
@@ -599,12 +603,12 @@ bool VertexArrayObjectManager::SetupSimulatedIndexAndClientSideBuffers(
           // Other parts of the API use GLsizei (signed) to store limits.
           // As such, if we encounter a index that cannot be represented with
           // an unsigned int we need to flag it as an error here.
-          if(src[ii] > max_glsizei) {
+          if (UNSAFE_TODO(src[ii]) > max_glsizei) {
             gl->SetGLError(
                 GL_INVALID_OPERATION, function_name, "index too large.");
             return false;
           }
-          GLsizei signed_index = static_cast<GLsizei>(src[ii]);
+          GLsizei signed_index = static_cast<GLsizei>(UNSAFE_TODO(src[ii]));
           if (signed_index > max_index) {
             max_index = signed_index;
           }

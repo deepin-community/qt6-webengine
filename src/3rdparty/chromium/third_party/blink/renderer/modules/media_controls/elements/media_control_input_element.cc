@@ -6,7 +6,6 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
-#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
@@ -22,6 +21,7 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/strings/grit/ax_strings.h"
 
 namespace {
 
@@ -169,7 +169,7 @@ void MediaControlInputElement::UpdateOverflowLabelAriaLabel(String subtitle) {
   }
 
   overflow_label_element_->setAttribute(html_names::kAriaLabelAttr,
-                                        WTF::AtomicString(full_aria_label));
+                                        AtomicString(full_aria_label));
 }
 
 void MediaControlInputElement::MaybeRecordDisplayed() {
@@ -207,7 +207,6 @@ MediaControlInputElement::MediaControlInputElement(
 
 int MediaControlInputElement::GetOverflowStringId() const {
   NOTREACHED();
-  return IDS_AX_AM_PM_FIELD_TEXT;
 }
 
 void MediaControlInputElement::UpdateShownState() {

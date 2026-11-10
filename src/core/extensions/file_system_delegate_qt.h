@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef FILE_SYSTEM_DELEGATE_QT_H
 #define FILE_SYSTEM_DELEGATE_QT_H
@@ -42,9 +43,9 @@ private:
     ~FileEntryPickerQt() override;
 
     // ui::SelectFileDialog::Listener implementation.
-    void FileSelected(const ui::SelectedFileInfo &file, int index, void *params) override;
-    void MultiFilesSelected(const std::vector<ui::SelectedFileInfo> &files, void *params) override;
-    void FileSelectionCanceled(void *params) override;
+    void FileSelected(const ui::SelectedFileInfo &file, int index) override;
+    void MultiFilesSelected(const std::vector<ui::SelectedFileInfo> &files) override;
+    void FileSelectionCanceled() override;
 
     FileSystemDelegate::FilesSelectedCallback m_filesSelectedCallback;
     base::OnceClosure m_fileSelectionCanceledCallback;

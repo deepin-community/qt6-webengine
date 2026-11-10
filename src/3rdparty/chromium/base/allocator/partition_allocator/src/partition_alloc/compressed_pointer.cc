@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "partition_alloc/compressed_pointer.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#if BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#include "partition_alloc/compressed_pointer.h"
+
+#include "partition_alloc/buildflags.h"
+
+#if PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)
 
 namespace partition_alloc::internal {
 
@@ -26,4 +32,4 @@ void CompressedPointerBaseGlobal::ResetBaseForTesting() {
 
 }  // namespace partition_alloc::internal
 
-#endif  // BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#endif  // PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)

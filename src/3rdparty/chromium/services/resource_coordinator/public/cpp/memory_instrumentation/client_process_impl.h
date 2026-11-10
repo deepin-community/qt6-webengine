@@ -67,17 +67,11 @@ class COMPONENT_EXPORT(RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION)
 
   // mojom::ClientProcess implementation. The Coordinator calls this.
   void RequestOSMemoryDump(mojom::MemoryMapOption mmap_option,
+                           const std::vector<mojom::MemDumpFlags>& flags,
                            const std::vector<base::ProcessId>& ids,
                            RequestOSMemoryDumpCallback callback) override;
 
-  struct OSMemoryDumpArgs {
-    OSMemoryDumpArgs();
-    OSMemoryDumpArgs(OSMemoryDumpArgs&&);
-    ~OSMemoryDumpArgs();
-    mojom::MemoryMapOption mmap_option;
-    std::vector<base::ProcessId> pids;
-    RequestOSMemoryDumpCallback callback;
-  };
+  struct OSMemoryDumpArgs;
   void PerformOSMemoryDump(OSMemoryDumpArgs args);
 
   // Map containing pending chrome memory callbacks indexed by dump guid.
@@ -91,7 +85,7 @@ class COMPONENT_EXPORT(RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION)
   // https://bugs.chromium.org/p/chromium/issues/detail?id=812346#c16.
   std::map<uint64_t, std::vector<OSMemoryDumpArgs>>
       delayed_os_memory_dump_callbacks_;
-  absl::optional<uint64_t> most_recent_chrome_memory_dump_guid_;
+  std::optional<uint64_t> most_recent_chrome_memory_dump_guid_;
 
   mojo::Receiver<mojom::ClientProcess> receiver_;
   mojo::Remote<mojom::Coordinator> coordinator_;

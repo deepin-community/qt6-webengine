@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "cert_error_params.h"
 
@@ -11,7 +21,7 @@
 #include "input.h"
 #include "string_util.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -19,12 +29,12 @@ namespace {
 // blobs. It makes a copy of the der::Inputs.
 class CertErrorParams2Der : public CertErrorParams {
  public:
-  CertErrorParams2Der(const char *name1, const der::Input &der1,
-                      const char *name2, const der::Input &der2)
+  CertErrorParams2Der(const char *name1, der::Input der1, const char *name2,
+                      der::Input der2)
       : name1_(name1),
-        der1_(der1.AsString()),
+        der1_(BytesAsStringView(der1)),
         name2_(name2),
-        der2_(der2.AsString()) {}
+        der2_(BytesAsStringView(der2)) {}
 
   CertErrorParams2Der(const CertErrorParams2Der &) = delete;
   CertErrorParams2Der &operator=(const CertErrorParams2Der &) = delete;
@@ -43,9 +53,8 @@ class CertErrorParams2Der : public CertErrorParams {
   static void AppendDer(const char *name, const std::string &der,
                         std::string *out) {
     *out += name;
-    *out +=
-        ": " + bssl::string_util::HexEncode(
-                   reinterpret_cast<const uint8_t *>(der.data()), der.size());
+    *out += ": ";
+    *out += bssl::string_util::HexEncode(StringAsBytes(der));
   }
 
   const char *name1_;
@@ -104,16 +113,17 @@ class CertErrorParams2SizeT : public CertErrorParams {
 CertErrorParams::CertErrorParams() = default;
 CertErrorParams::~CertErrorParams() = default;
 
-std::unique_ptr<CertErrorParams> CreateCertErrorParams1Der(
-    const char *name, const der::Input &der) {
+std::unique_ptr<CertErrorParams> CreateCertErrorParams1Der(const char *name,
+                                                           der::Input der) {
   BSSL_CHECK(name);
   return std::make_unique<CertErrorParams2Der>(name, der, nullptr,
                                                der::Input());
 }
 
-std::unique_ptr<CertErrorParams> CreateCertErrorParams2Der(
-    const char *name1, const der::Input &der1, const char *name2,
-    const der::Input &der2) {
+std::unique_ptr<CertErrorParams> CreateCertErrorParams2Der(const char *name1,
+                                                           der::Input der1,
+                                                           const char *name2,
+                                                           der::Input der2) {
   BSSL_CHECK(name1);
   BSSL_CHECK(name2);
   return std::make_unique<CertErrorParams2Der>(name1, der1, name2, der2);
@@ -132,4 +142,4 @@ OPENSSL_EXPORT std::unique_ptr<CertErrorParams> CreateCertErrorParams2SizeT(
   return std::make_unique<CertErrorParams2SizeT>(name1, value1, name2, value2);
 }
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

@@ -5,7 +5,7 @@
 #ifndef MEDIA_BASE_AUDIO_LATENCY_H_
 #define MEDIA_BASE_AUDIO_LATENCY_H_
 
-#include "media/base/media_shmem_export.h"
+#include "media/base/media_export.h"
 
 namespace base {
 class TimeDelta;
@@ -13,7 +13,7 @@ class TimeDelta;
 
 namespace media {
 
-class MEDIA_SHMEM_EXPORT AudioLatency {
+class MEDIA_EXPORT AudioLatency {
  public:
   // Categories of expected latencies for input/output audio. Do not change
   // existing values, they are used for UMA histogram reporting.
@@ -60,7 +60,7 @@ class MEDIA_SHMEM_EXPORT AudioLatency {
   // sizes (e.g. hardware running at 4096 and caller running at 4224).
   // `hardware_buffer_size` is the platform's preferred buffer size.
   //
-  // TODO(crbug.com/1395234) Ensure that all callers validate conditions listed
+  // TODO(crbug.com/40248990) Ensure that all callers validate conditions listed
   // above.
   //
   // It is valid for both the min and max to be zero in which case only

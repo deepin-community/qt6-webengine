@@ -32,11 +32,12 @@ import json
 import re
 import six
 import unittest
+from io import StringIO
 from unittest import mock
 
 from blinkpy.common import exit_codes
 from blinkpy.common.host_mock import MockHost
-from blinkpy.common.path_finder import WEB_TESTS_LAST_COMPONENT
+from blinkpy.common.path_finder import PathFinder, WEB_TESTS_LAST_COMPONENT
 from blinkpy.common.system.path import abspath_to_uri
 from blinkpy.common.system.system_host import SystemHost
 
@@ -47,17 +48,16 @@ from blinkpy.web_tests.models.typ_types import ResultType
 from blinkpy.web_tests.port import test
 from blinkpy.web_tests.views.printing import Printer
 
-from six import StringIO
 
-
-def parse_args(extra_args=None, tests_included=False):
+def parse_args(extra_args=None, tests_included=False, show_results=False):
     extra_args = extra_args or []
     args = []
     if not '--platform' in extra_args:
         args.extend(['--platform', 'test'])
-
     if not {'--jobs', '-j', '--child-processes'}.intersection(set(args)):
         args.extend(['--jobs', '1'])
+    if not show_results:
+        args.append('--no-show-results')
     args.extend(extra_args)
     if not tests_included:
         # We use the glob to test that globbing works.
@@ -88,11 +88,22 @@ def passing_run(extra_args=None,
 def logging_run(extra_args=None,
                 port_obj=None,
                 tests_included=False,
+                show_results=False,
                 host=None,
                 shared_port=True):
-    options, parsed_args = parse_args(
-        extra_args=extra_args, tests_included=tests_included)
+    options, parsed_args = parse_args(extra_args=extra_args,
+                                      tests_included=tests_included,
+                                      show_results=show_results)
     host = host or MockHost()
+    if show_results:
+        finder = PathFinder(host.filesystem)
+        host.filesystem.write_text_file(
+            finder.path_from_blink_tools('blinkpy', 'web_tests',
+                                         'results.html'),
+            '<h1>Test run summary</h1> ...')
+        host.filesystem.write_text_file(
+            finder.path_from_blink_tools('blinkpy', 'web_tests',
+                                         'results.html.version'), '1.0')
     if not port_obj:
         port_obj = host.port_factory.get(
             port_name=options.platform, options=options)
@@ -206,11 +217,7 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         one_line_summary = "%d tests ran as expected%s, %d didn't:\n" % (
             expected_tests, expected_summary_str,
             len(details.initial_results.unexpected_results_by_name))
-        if six.PY2:
-            self.assertIn(one_line_summary, logging_stream.buflist)
-        else:
-            self.assertIn(one_line_summary, logging_stream.getvalue())
-
+        self.assertIn(one_line_summary, logging_stream.getvalue())
 
         # Ensure the results were summarized properly.
         self.assertEqual(details.summarized_failing_results['num_regressions'],
@@ -239,26 +246,18 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         _, regular_output, _ = logging_run(
             ['--debug-rwt-logging', '--jobs', '2', 'passes', 'http/tests', 'perf/foo'],
             tests_included=True, shared_port=False)
-        if six.PY2:
-            self.assertTrue(
-                any('1 locked' in line for line in regular_output.buflist))
-        else:
-            self.assertTrue(
-                any('1 locked' in line
-                    for line in regular_output.getvalue().splitlines()))
+        self.assertTrue(
+            any('1 locked' in line
+                for line in regular_output.getvalue().splitlines()))
 
     def test_child_processes_2(self):
         _, regular_output, _ = logging_run(
             ['--debug-rwt-logging', '--jobs', '2'], shared_port=False)
-        if six.PY2:
-            self.assertTrue(
-                any(['Running 2 ' in line for line in regular_output.buflist]))
-        else:
-            self.assertTrue(
-                any([
-                    'Running 2 ' in line
-                    for line in regular_output.getvalue().splitlines()
-                ]))
+        self.assertTrue(
+            any([
+                'Running 2 ' in line
+                for line in regular_output.getvalue().splitlines()
+            ]))
 
     def test_child_processes_min(self):
         _, regular_output, _ = logging_run([
@@ -267,15 +266,11 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         ],
                                            tests_included=True,
                                            shared_port=False)
-        if six.PY2:
-            self.assertTrue(
-                any(['Running 1 ' in line for line in regular_output.buflist]))
-        else:
-            self.assertTrue(
-                any([
-                    'Running 1 ' in line
-                    for line in regular_output.getvalue().splitlines()
-                ]))
+        self.assertTrue(
+            any([
+                'Running 1 ' in line
+                for line in regular_output.getvalue().splitlines()
+            ]))
 
     def test_dryrun(self):
         tests_run = get_tests_run(['--dry-run'])
@@ -1443,6 +1438,7 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
             _, _, user = logging_run(
                 ['--results-directory=' + str(tmpdir), '--order', 'natural'],
                 tests_included=True,
+                show_results=True,
                 host=host)
             self.assertEqual(user.opened_urls, [
                 abspath_to_uri(
@@ -1456,7 +1452,7 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         # look for what the output results url was.
 
         # This is the default location.
-        _, _, user = logging_run(tests_included=True)
+        _, _, user = logging_run(tests_included=True, show_results=True)
         self.assertEqual(user.opened_urls, [
             abspath_to_uri(MockHost().platform,
                            '/tmp/layout-test-results/results.html')
@@ -1470,6 +1466,7 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         host.filesystem.chdir('/tmp/cwd')
         _, _, user = logging_run(['--results-directory=foo'],
                                  tests_included=True,
+                                 show_results=True,
                                  host=host)
         self.assertEqual(user.opened_urls, [
             abspath_to_uri(host.platform,
@@ -2459,6 +2456,33 @@ class RebaselineTest(unittest.TestCase, StreamTestingMixin):
                               log_stream,
                               'failures/unexpected/text-image-checksum',
                               expected_extensions=[])
+
+    def test_reset_results_no_output_generated(self):
+        host = MockHost()
+        baseline_filename = (
+            test.MOCK_WEB_TESTS + 'platform/test-mac-mac10.10/'
+            'failures/unexpected/no-text-generated-expected.txt')
+        # Overrides the generic baseline.
+        host.filesystem.write_text_file(baseline_filename, 'not empty')
+        details, log_stream, _ = logging_run([
+            '--reset-results',
+            'failures/unexpected/no-text-generated.html',
+        ],
+                                             tests_included=True,
+                                             host=host)
+        written_files = host.filesystem.written_files
+
+        self.assertEqual(details.exit_code, 0)
+        # The empty baseline is removed, but written back to override the
+        # generic baseline.
+        self.assert_contains(
+            log_stream,
+            'Removing the current baseline "platform/test-mac-mac10.10/'
+            'failures/unexpected/no-text-generated-expected.txt"')
+        self.assert_baselines(
+            written_files, log_stream,
+            'platform/test-mac-mac10.10/failures/unexpected/no-text-generated',
+            ['.txt'])
 
     def test_reset_results_missing_results(self):
         # Test that we create new baselines at the generic location for

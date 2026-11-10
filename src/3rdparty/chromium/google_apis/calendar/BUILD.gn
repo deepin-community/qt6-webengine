@@ -17,11 +17,10 @@ static_library("calendar") {
 
   deps = [
     "//base",
-    "//base/third_party/dynamic_annotations",
     "//components/signin/public/identity_manager",
     "//crypto",
-    "//google_apis:google_apis",
-    "//google_apis/common:common",
+    "//google_apis",
+    "//google_apis/common",
     "//net",
     "//services/network/public/cpp",
   ]
@@ -39,7 +38,7 @@ source_set("test_support") {
     "//base",
     "//base/test:test_support",
     "//google_apis:test_support",
-    "//google_apis/common:common",
+    "//google_apis/common",
     "//google_apis/common:test_support",
     "//net:test_support",
   ]

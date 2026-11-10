@@ -7,7 +7,6 @@
 #include <optional>
 #include <string>
 
-#include "base/strings/string_piece.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -75,6 +74,18 @@ const AutocompleteAttributeTestcase kAutocompleteTestcases[]{
     {"webauthn",
      {{"", HtmlFieldMode::kNone, HtmlFieldType::kUnspecified,
        /*webauthn=*/true}}},
+    {"name webauthn webidentity",
+     {{"", HtmlFieldMode::kNone, HtmlFieldType::kName, /*webauthn=*/true,
+       /*webidentity=*/true}}},
+    {"name webidentity webauthn",
+     {{"", HtmlFieldMode::kNone, HtmlFieldType::kName, /*webauthn=*/true,
+       /*webidentity=*/true}}},
+    {"webauthn webidentity",
+     {{"", HtmlFieldMode::kNone, HtmlFieldType::kUnspecified,
+       /*webauthn=*/true, /*webidentity=*/true}}},
+    {"webidentity",
+     {{"", HtmlFieldMode::kNone, HtmlFieldType::kUnspecified,
+       /*webauthn=*/false, /*webidentity=*/true}}},
 
     // Too many tokens.
     {"hello section-one shipping home tel webauthn", std::nullopt}};
@@ -89,9 +100,9 @@ TEST_P(AutocompleteAttributeProcessingUtilTest, ParseAutocompleteAttribute) {
                << "autocomplete=\"" << test.autocomplete << "\"");
 
   FormFieldData field;
-  field.autocomplete_attribute = std::string(test.autocomplete);
+  field.set_autocomplete_attribute(std::string(test.autocomplete));
 
-  auto result = ParseAutocompleteAttribute(field.autocomplete_attribute);
+  auto result = ParseAutocompleteAttribute(field.autocomplete_attribute());
   EXPECT_EQ(result, test.expected_result);
 }
 

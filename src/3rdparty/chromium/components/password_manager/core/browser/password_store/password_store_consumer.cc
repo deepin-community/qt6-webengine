@@ -5,21 +5,11 @@
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 
 #include "components/password_manager/core/browser/password_form.h"
+#include "components/password_manager/core/browser/password_store/interactions_stats.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/password_store_util.h"
-#include "components/password_manager/core/browser/password_store/interactions_stats.h"
 
 namespace password_manager {
-
-std::vector<std::unique_ptr<PasswordForm>> ConvertToUniquePtr(
-    std::vector<PasswordForm> forms) {
-  std::vector<std::unique_ptr<PasswordForm>> result;
-  result.reserve(forms.size());
-  for (auto& form : forms) {
-    result.push_back(std::make_unique<PasswordForm>(std::move(form)));
-  }
-  return result;
-}
 
 PasswordStoreConsumer::PasswordStoreConsumer() = default;
 
@@ -35,8 +25,9 @@ void PasswordStoreConsumer::OnGetPasswordStoreResultsOrErrorFrom(
     PasswordStoreInterface* store,
     LoginsResultOrError results_or_error) {
   OnGetPasswordStoreResultsFrom(
-      store, ConvertToUniquePtr(password_manager::GetLoginsOrEmptyListOnFailure(
-                 std::move(results_or_error))));
+      store, password_manager::ConvertPasswordToUniquePtr(
+                 password_manager::GetLoginsOrEmptyListOnFailure(
+                     std::move(results_or_error))));
 }
 
 void PasswordStoreConsumer::OnGetPasswordStoreResults(

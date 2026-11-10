@@ -21,10 +21,7 @@
 
 #include "third_party/blink/renderer/core/svg/svg_image_element.h"
 
-#include "third_party/blink/public/mojom/permissions_policy/document_policy_feature.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
-#include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/cross_origin_attribute.h"
 #include "third_party/blink/renderer/core/layout/layout_image_resource.h"
@@ -41,10 +38,6 @@ SVGImageElement::SVGImageElement(Document& document)
     : SVGGraphicsElement(svg_names::kImageTag, document),
       SVGURIReference(this),
       ActiveScriptWrappable<SVGImageElement>({}),
-      is_default_overridden_intrinsic_size_(
-          GetExecutionContext() &&
-          !GetExecutionContext()->IsFeatureEnabled(
-              mojom::blink::DocumentPolicyFeature::kUnsizedMedia)),
       x_(MakeGarbageCollected<SVGAnimatedLength>(
           this,
           svg_names::kXAttr,
@@ -86,79 +79,46 @@ void SVGImageElement::Trace(Visitor* visitor) const {
   SVGURIReference::Trace(visitor);
 }
 
-bool SVGImageElement::CurrentFrameHasSingleSecurityOrigin() const {
+bool SVGImageElement::HasSingleSecurityOrigin() const {
   if (auto* layout_svg_image = To<LayoutSVGImage>(GetLayoutObject())) {
     LayoutImageResource* layout_image_resource =
         layout_svg_image->ImageResource();
     ImageResourceContent* image_content = layout_image_resource->CachedImage();
     if (image_content) {
       if (Image* image = image_content->GetImage())
-        return image->CurrentFrameHasSingleSecurityOrigin();
+        return image->HasSingleSecurityOrigin();
     }
   }
   return true;
 }
 
-ScriptPromise SVGImageElement::decode(ScriptState* script_state,
-                                      ExceptionState& exception_state) {
+ScriptPromise<IDLUndefined> SVGImageElement::decode(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
   return GetImageLoader().Decode(script_state, exception_state);
-}
-
-void SVGImageElement::CollectStyleForPresentationAttribute(
-    const QualifiedName& name,
-    const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
-  SVGAnimatedPropertyBase* property = PropertyFromAttribute(name);
-  if (property == width_) {
-    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kWidth,
-                                            width_->CssValue());
-  } else if (property == height_) {
-    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kHeight,
-                                            height_->CssValue());
-  } else if (property == x_) {
-    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kX,
-                                            x_->CssValue());
-  } else if (property == y_) {
-    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kY,
-                                            y_->CssValue());
-  } else {
-    SVGGraphicsElement::CollectStyleForPresentationAttribute(name, value,
-                                                             style);
-  }
 }
 
 void SVGImageElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   const QualifiedName& attr_name = params.name;
-  bool is_length_attribute =
-      attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
-      attr_name == svg_names::kWidthAttr || attr_name == svg_names::kHeightAttr;
 
-  if (is_length_attribute || attr_name == svg_names::kPreserveAspectRatioAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
+  if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
+      attr_name == svg_names::kWidthAttr ||
+      attr_name == svg_names::kHeightAttr) {
+    UpdatePresentationAttributeStyle(params.property);
+    return;
+  }
 
-    if (is_length_attribute) {
-      InvalidateSVGPresentationAttributeStyle();
-      SetNeedsStyleRecalc(
-          kLocalStyleChange,
-          StyleChangeReasonForTracing::FromAttribute(attr_name));
-      UpdateRelativeLengthsInformation();
-    }
-
+  if (attr_name == svg_names::kPreserveAspectRatioAttr) {
     LayoutObject* object = GetLayoutObject();
     if (!object)
       return;
 
-    // FIXME: if isLengthAttribute then we should avoid this call if the
-    // viewport didn't change, however since we don't have the computed
-    // style yet we can't use updateBoundingBox/updateImageContainerSize.
-    // See http://crbug.com/466200.
     MarkForLayoutAndParentResourceInvalidation(*object);
     return;
   }
 
   if (SVGURIReference::IsKnownAttribute(attr_name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     GetImageLoader().UpdateFromElement(ImageLoader::kUpdateIgnorePreviousError);
     return;
   }
@@ -257,15 +217,10 @@ void SVGImageElement::SynchronizeAllSVGAttributes() const {
 }
 
 void SVGImageElement::CollectExtraStyleForPresentationAttribute(
-    MutableCSSPropertyValueSet* style) {
-  for (SVGAnimatedPropertyBase* property : {x_.Get(), y_.Get(),
-                                            width_.Get(), height_.Get()}) {
-    DCHECK(property->HasPresentationAttributeMapping());
-    if (property->IsAnimating()) {
-      CollectStyleForPresentationAttribute(property->AttributeName(),
-                                           g_empty_atom, style);
-    }
-  }
+    HeapVector<CSSPropertyValue, 8>& style) {
+  std::array<const SVGAnimatedPropertyBase*, 4> pres_attrs
+      {x_.Get(), y_.Get(), width_.Get(), height_.Get()};
+  AddAnimatedPropertiesToPresentationAttributeStyle(pres_attrs, style);
   SVGGraphicsElement::CollectExtraStyleForPresentationAttribute(style);
 }
 

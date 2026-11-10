@@ -6,10 +6,10 @@
 
 #include "xfa/fxfa/parser/cxfa_dataexporter.h"
 
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_codepage.h"
 #include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "core/fxcrt/xml/cfx_xmlnode.h"
-#include "third_party/base/check.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
 #include "xfa/fxfa/parser/xfa_utils.h"
@@ -36,8 +36,9 @@ bool CXFA_DataExporter::Export(const RetainPtr<IFX_SeekableStream>& pStream,
       }
       case XFA_PacketType::Datasets: {
         CFX_XMLElement* pElement = ToXMLElement(pNode->GetXMLMappingNode());
-        if (!pElement)
+        if (!pElement) {
           return false;
+        }
 
         CXFA_Node* pDataNode = pNode->GetFirstChild();
         DCHECK(pDataNode);
@@ -51,8 +52,9 @@ bool CXFA_DataExporter::Export(const RetainPtr<IFX_SeekableStream>& pStream,
       case XFA_PacketType::Template:
       default: {
         CFX_XMLElement* pElement = ToXMLElement(pNode->GetXMLMappingNode());
-        if (!pElement)
+        if (!pElement) {
           return false;
+        }
 
         pElement->Save(pStream);
         break;
@@ -71,8 +73,9 @@ bool CXFA_DataExporter::Export(const RetainPtr<IFX_SeekableStream>& pStream,
     }
   }
   CFX_XMLElement* pElement = ToXMLElement(pExportNode->GetXMLMappingNode());
-  if (!pElement)
+  if (!pElement) {
     return false;
+  }
 
   XFA_DataExporter_DealWithDataGroupNode(pExportNode);
   pElement->SetAttribute(L"xmlns:xfa",

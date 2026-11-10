@@ -8,6 +8,8 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "net/base/net_string_util.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "net/net_jni_headers/NetStringUtil_jni.h"
 
 using base::android::ScopedJavaLocalRef;
@@ -21,7 +23,7 @@ namespace {
 ScopedJavaLocalRef<jstring> ConvertToJstring(std::string_view text,
                                              const char* charset) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> java_byte_buffer(
+  auto java_byte_buffer = ScopedJavaLocalRef<jobject>::Adopt(
       env,
       env->NewDirectByteBuffer(const_cast<char*>(text.data()), text.length()));
   base::android::CheckException(env);
@@ -39,7 +41,7 @@ ScopedJavaLocalRef<jstring> ConvertToJstring(std::string_view text,
 ScopedJavaLocalRef<jstring> ConvertToNormalizedJstring(std::string_view text,
                                                        const char* charset) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> java_byte_buffer(
+  auto java_byte_buffer = ScopedJavaLocalRef<jobject>::Adopt(
       env,
       env->NewDirectByteBuffer(const_cast<char*>(text.data()), text.length()));
   base::android::CheckException(env);
@@ -57,7 +59,7 @@ ScopedJavaLocalRef<jstring> ConvertToJstringWithSubstitutions(
     std::string_view text,
     const char* charset) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> java_byte_buffer(
+  auto java_byte_buffer = ScopedJavaLocalRef<jobject>::Adopt(
       env,
       env->NewDirectByteBuffer(const_cast<char*>(text.data()), text.length()));
   base::android::CheckException(env);
@@ -121,10 +123,10 @@ bool ConvertToUTF16WithSubstitutions(std::string_view text,
   return true;
 }
 
-bool ToUpper(std::u16string_view str, std::u16string* output) {
+bool ToUpperUsingLocale(std::u16string_view str, std::u16string* output) {
   output->clear();
   JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> java_new_str(
+  auto java_new_str = ScopedJavaLocalRef<jstring>::Adopt(
       env,
       env->NewString(reinterpret_cast<const jchar*>(str.data()), str.length()));
   if (java_new_str.is_null())

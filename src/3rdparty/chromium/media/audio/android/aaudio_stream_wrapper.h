@@ -12,6 +12,7 @@
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
+#include "media/audio/android/audio_device.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_parameters.h"
 
@@ -48,6 +49,7 @@ class REQUIRES_ANDROID_API(AAUDIO_MIN_API) AAudioStreamWrapper {
   AAudioStreamWrapper(DataCallback* callback,
                       StreamType stream_type,
                       const AudioParameters& params,
+                      android::AudioDevice device,
                       aaudio_usage_t usage);
 
   AAudioStreamWrapper(const AAudioStreamWrapper&) = delete;
@@ -77,7 +79,10 @@ class REQUIRES_ANDROID_API(AAUDIO_MIN_API) AAudioStreamWrapper {
  private:
   SEQUENCE_CHECKER(sequence_checker_);
 
+  void EmitSetDeviceIdResultToHistogram(bool success);
+
   const AudioParameters params_;
+  const android::AudioDevice device_;
 
   // Whether this class is using an input or an output stream.
   StreamType stream_type_;
@@ -89,9 +94,7 @@ class REQUIRES_ANDROID_API(AAUDIO_MIN_API) AAudioStreamWrapper {
 
   bool is_closed_ = false;
 
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #addr-of
-  RAW_PTR_EXCLUSION AAudioStream* aaudio_stream_ = nullptr;
+  raw_ptr<AAudioStream> aaudio_stream_ = nullptr;
 
   // Constant used for calculating latency. Amount of nanoseconds per frame.
   const double ns_per_frame_;

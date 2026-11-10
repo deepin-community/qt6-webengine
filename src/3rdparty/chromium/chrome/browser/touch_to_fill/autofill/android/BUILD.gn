@@ -6,8 +6,9 @@ import("//build/config/android/rules.gni")
 
 source_set("public") {
   sources = [
-    "touch_to_fill_credit_card_view.h",
-    "touch_to_fill_credit_card_view_controller.h",
+    "touch_to_fill_payment_method_controller.h",
+    "touch_to_fill_payment_method_view.h",
+    "touch_to_fill_payment_method_view_controller.h",
   ]
 
   deps = [ "//base" ]
@@ -15,26 +16,43 @@ source_set("public") {
 
 source_set("android") {
   sources = [
-    "touch_to_fill_credit_card_view_impl.cc",
-    "touch_to_fill_credit_card_view_impl.h",
+    "touch_to_fill_payment_method_view_impl.cc",
+    "touch_to_fill_payment_method_view_impl.h",
   ]
 
   public_deps = [ "//base" ]
 
   deps = [
-    ":jni_headers",
     ":public",
+    "//chrome/android:chrome_jni_headers",
     "//chrome/browser/autofill",
+    "//chrome/browser/profiles",
+    "//components/autofill/android:main_autofill_jni_headers",
     "//components/autofill/core/common:features",
-    "//content/public/browser:browser",
+    "//content/public/browser",
     "//third_party/libaddressinput:util",
     "//ui/android",
   ]
 }
 
-group("jni_headers") {
-  public_deps =
-      [ "//chrome/browser/touch_to_fill/autofill/android/internal:jni" ]
+source_set("test_support") {
+  testonly = true
+  sources = [
+    "mock_touch_to_fill_payment_method_controller.cc",
+    "mock_touch_to_fill_payment_method_controller.h",
+  ]
+
+  public_deps = [
+    ":public",
+    "//base",
+    "//components/autofill/core/browser:test_support",
+  ]
+
+  deps = [
+    ":android",
+    "//testing/gmock",
+    "//testing/gtest",
+  ]
 }
 
 android_library("public_java") {
@@ -47,5 +65,5 @@ android_library("public_java") {
     "//ui/android:ui_java",
   ]
 
-  sources = [ "java/src/org/chromium/chrome/browser/touch_to_fill/payments/TouchToFillCreditCardComponent.java" ]
+  sources = [ "java/src/org/chromium/chrome/browser/touch_to_fill/payments/TouchToFillPaymentMethodComponent.java" ]
 }

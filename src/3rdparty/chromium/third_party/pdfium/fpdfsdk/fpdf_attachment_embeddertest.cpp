@@ -148,9 +148,9 @@ TEST_F(FPDFAttachmentEmbedderTest, AddAttachments) {
   EXPECT_FALSE(FPDFAttachment_SetFile(attachment, document(), nullptr, 10));
 
   // Set the new attachment's file.
-  constexpr char kContents1[] = "Hello!";
+  static constexpr char kContents1[] = "Hello!";
   EXPECT_TRUE(FPDFAttachment_SetFile(attachment, document(), kContents1,
-                                     strlen(kContents1)));
+                                     UNSAFE_TODO(strlen(kContents1))));
   EXPECT_EQ(3, FPDFDoc_GetAttachmentCount(document()));
 
   // Verify the name of the new attachment (i.e. the first attachment).
@@ -175,9 +175,9 @@ TEST_F(FPDFAttachmentEmbedderTest, AddAttachments) {
   file_name = GetFPDFWideString(L"z.txt");
   attachment = FPDFDoc_AddAttachment(document(), file_name.get());
   ASSERT_TRUE(attachment);
-  constexpr char kContents2[] = "World!";
+  static constexpr char kContents2[] = "World!";
   EXPECT_TRUE(FPDFAttachment_SetFile(attachment, document(), kContents2,
-                                     strlen(kContents2)));
+                                     UNSAFE_TODO(strlen(kContents2))));
   EXPECT_EQ(4, FPDFDoc_GetAttachmentCount(document()));
 
   // Verify the name of the new attachment (i.e. the fourth attachment).
@@ -209,18 +209,18 @@ TEST_F(FPDFAttachmentEmbedderTest, AddAttachmentsWithParams) {
   FPDF_ATTACHMENT attachment =
       FPDFDoc_AddAttachment(document(), file_name.get());
   ASSERT_TRUE(attachment);
-  constexpr char kContents[] = "Hello World!";
+  static constexpr char kContents[] = "Hello World!";
   EXPECT_TRUE(FPDFAttachment_SetFile(attachment, document(), kContents,
-                                     strlen(kContents)));
+                                     UNSAFE_TODO(strlen(kContents))));
 
   // Set the date to be an arbitrary value.
-  constexpr wchar_t kDateW[] = L"D:20170720161527-04'00'";
+  static constexpr wchar_t kDateW[] = L"D:20170720161527-04'00'";
   ScopedFPDFWideString ws_date = GetFPDFWideString(kDateW);
   EXPECT_TRUE(
       FPDFAttachment_SetStringValue(attachment, kDateKey, ws_date.get()));
 
   // Set the checksum to be an arbitrary value.
-  constexpr wchar_t kCheckSumW[] = L"<ABCDEF01234567899876543210FEDCBA>";
+  static constexpr wchar_t kCheckSumW[] = L"<ABCDEF01234567899876543210FEDCBA>";
   ScopedFPDFWideString ws_checksum = GetFPDFWideString(kCheckSumW);
   EXPECT_TRUE(FPDFAttachment_SetStringValue(attachment, kChecksumKey,
                                             ws_checksum.get()));
@@ -288,9 +288,9 @@ TEST_F(FPDFAttachmentEmbedderTest, AddAttachmentsToFileWithNoAttachments) {
   ASSERT_TRUE(attachment);
 
   // Set the new attachment's file.
-  constexpr char kContents1[] = "Hello!";
+  static constexpr char kContents1[] = "Hello!";
   EXPECT_TRUE(FPDFAttachment_SetFile(attachment, document(), kContents1,
-                                     strlen(kContents1)));
+                                     UNSAFE_TODO(strlen(kContents1))));
   EXPECT_EQ(1, FPDFDoc_GetAttachmentCount(document()));
 
   // Verify the name of the new attachment (i.e. the first attachment).
@@ -315,9 +315,9 @@ TEST_F(FPDFAttachmentEmbedderTest, AddAttachmentsToFileWithNoAttachments) {
   file_name = GetFPDFWideString(L"z.txt");
   attachment = FPDFDoc_AddAttachment(document(), file_name.get());
   ASSERT_TRUE(attachment);
-  constexpr char kContents2[] = "World!";
+  static constexpr char kContents2[] = "World!";
   EXPECT_TRUE(FPDFAttachment_SetFile(attachment, document(), kContents2,
-                                     strlen(kContents2)));
+                                     UNSAFE_TODO(strlen(kContents2))));
   EXPECT_EQ(2, FPDFDoc_GetAttachmentCount(document()));
 
   // Verify the name of the new attachment (i.e. the second attachment).
@@ -365,4 +365,77 @@ TEST_F(FPDFAttachmentEmbedderTest, DeleteAttachment) {
   buf = GetFPDFWideStringBuffer(length_bytes);
   EXPECT_EQ(26u, FPDFAttachment_GetName(attachment, buf.data(), length_bytes));
   EXPECT_EQ(L"attached.pdf", GetPlatformWString(buf.data()));
+}
+
+TEST_F(FPDFAttachmentEmbedderTest, GetStringValueForChecksumNotString) {
+  ASSERT_TRUE(OpenDocument("embedded_attachments_invalid_types.pdf"));
+  EXPECT_EQ(2, FPDFDoc_GetAttachmentCount(document()));
+
+  FPDF_ATTACHMENT attachment = FPDFDoc_GetAttachment(document(), 0);
+  ASSERT_TRUE(attachment);
+
+  // The checksum key is a name, which violates the spec. This will still return
+  // the value, but should not crash.
+  static constexpr unsigned long kExpectedLength = 8u;
+  ASSERT_EQ(kExpectedLength, FPDFAttachment_GetStringValue(
+                                 attachment, kChecksumKey, nullptr, 0));
+  std::vector<FPDF_WCHAR> buf = GetFPDFWideStringBuffer(kExpectedLength);
+  EXPECT_EQ(kExpectedLength,
+            FPDFAttachment_GetStringValue(attachment, kChecksumKey, buf.data(),
+                                          kExpectedLength));
+  EXPECT_EQ(L"Bad", GetPlatformWString(buf.data()));
+}
+
+TEST_F(FPDFAttachmentEmbedderTest, GetStringValueForNotString) {
+  ASSERT_TRUE(OpenDocument("embedded_attachments_invalid_types.pdf"));
+  EXPECT_EQ(2, FPDFDoc_GetAttachmentCount(document()));
+
+  FPDF_ATTACHMENT attachment = FPDFDoc_GetAttachment(document(), 1);
+  ASSERT_TRUE(attachment);
+
+  // The checksum key is a stream, while the API requires a string or name.
+  static constexpr unsigned long kExpectedLength = 2u;
+  ASSERT_EQ(kExpectedLength, FPDFAttachment_GetStringValue(
+                                 attachment, kChecksumKey, nullptr, 0));
+  std::vector<FPDF_WCHAR> buf = GetFPDFWideStringBuffer(kExpectedLength);
+  EXPECT_EQ(kExpectedLength,
+            FPDFAttachment_GetStringValue(attachment, kChecksumKey, buf.data(),
+                                          kExpectedLength));
+  EXPECT_EQ(L"", GetPlatformWString(buf.data()));
+}
+
+TEST_F(FPDFAttachmentEmbedderTest, GetSubtype) {
+  ASSERT_TRUE(OpenDocument("embedded_attachments.pdf"));
+  FPDF_ATTACHMENT attachment = FPDFDoc_GetAttachment(document(), 0);
+  ASSERT_TRUE(attachment);
+
+  // Test getting Subtype (MIME type)
+  constexpr char kExpectedSubtype[] = "text/plain";
+  unsigned long length = FPDFAttachment_GetSubtype(attachment, nullptr, 0);
+  ASSERT_EQ(2u * (strlen(kExpectedSubtype) + 1), length);
+
+  std::vector<FPDF_WCHAR> buf = GetFPDFWideStringBuffer(length);
+  EXPECT_EQ(length, FPDFAttachment_GetSubtype(attachment, buf.data(), length));
+  EXPECT_EQ(kExpectedSubtype, GetPlatformString(buf.data()));
+
+  // Test with buffer too small
+  std::vector<FPDF_WCHAR> small_buf(length - 1);
+  const FPDF_WCHAR kPattern = 0xDEAD;
+  std::ranges::fill(small_buf, kPattern);
+  EXPECT_EQ(length, FPDFAttachment_GetSubtype(attachment, small_buf.data(),
+                                              length - 1));
+  EXPECT_THAT(small_buf, testing::Each(kPattern));
+}
+
+TEST_F(FPDFAttachmentEmbedderTest, GetSubtypeInvalid) {
+  ASSERT_TRUE(OpenDocument("embedded_attachments.pdf"));
+  FPDF_ATTACHMENT attachment = FPDFDoc_GetAttachment(document(), 0);
+  ASSERT_TRUE(attachment);
+
+  std::vector<FPDF_WCHAR> buf(1);
+  EXPECT_EQ(0u, FPDFAttachment_GetSubtype(nullptr, buf.data(), 1));
+
+  constexpr char kExpectedSubtype[] = "text/plain";
+  EXPECT_EQ(2u * (strlen(kExpectedSubtype) + 1),
+            FPDFAttachment_GetSubtype(attachment, nullptr, 10));
 }

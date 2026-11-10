@@ -3,21 +3,27 @@
 // found in the LICENSE file.
 
 import * as AnimationsTrackAppender from './AnimationsTrackAppender.js';
+import * as AnnotationHelpers from './AnnotationHelpers.js';
 import * as AppenderUtils from './AppenderUtils.js';
 import * as BenchmarkEvents from './BenchmarkEvents.js';
 import * as CLSLinkifier from './CLSLinkifier.js';
 import * as CompatibilityTracksAppender from './CompatibilityTracksAppender.js';
 import * as CountersGraph from './CountersGraph.js';
+import * as EntriesFilter from './EntriesFilter.js';
 import * as EventsTimelineTreeView from './EventsTimelineTreeView.js';
-import * as EventUICategory from './EventUICategory.js';
+import * as ExtensionTrackAppender from './ExtensionTrackAppender.js';
+import * as ExternalRequests from './ExternalRequests.js';
+import * as FreshRecording from './FreshRecording.js';
 import * as GPUTrackAppender from './GPUTrackAppender.js';
 import * as Initiators from './Initiators.js';
 import * as InteractionsTrackAppender from './InteractionsTrackAppender.js';
 import * as LayoutShiftsTrackAppender from './LayoutShiftsTrackAppender.js';
+import * as ModificationsManager from './ModificationsManager.js';
 import * as NetworkTrackAppender from './NetworkTrackAppender.js';
-import * as PerformanceModel from './PerformanceModel.js';
+import * as RecordingMetadata from './RecordingMetadata.js';
 import * as SaveFileFormatter from './SaveFileFormatter.js';
-import * as SourceMapsResolver from './SourceMapsResolver.js';
+import * as TargetForEvent from './TargetForEvent.js';
+import * as ThirdPartyTreeView from './ThirdPartyTreeView.js';
 import * as ThreadAppender from './ThreadAppender.js';
 import * as TimelineController from './TimelineController.js';
 import * as TimelineDetailsView from './TimelineDetailsView.js';
@@ -36,26 +42,34 @@ import * as TimelineSelection from './TimelineSelection.js';
 import * as TimelineTreeView from './TimelineTreeView.js';
 import * as TimelineUIUtils from './TimelineUIUtils.js';
 import * as TimingsTrackAppender from './TimingsTrackAppender.js';
+import * as TrackConfiguration from './TrackConfiguration.js';
 import * as UIDevtoolsController from './UIDevtoolsController.js';
 import * as UIDevtoolsUtils from './UIDevtoolsUtils.js';
+import * as Utils from './utils/utils.js';
 
 export {
   AnimationsTrackAppender,
+  AnnotationHelpers,
   AppenderUtils,
   BenchmarkEvents,
   CLSLinkifier,
   CompatibilityTracksAppender,
   CountersGraph,
+  EntriesFilter,
   EventsTimelineTreeView,
-  EventUICategory,
+  ExtensionTrackAppender,
+  ExternalRequests,
+  FreshRecording,
   GPUTrackAppender,
   Initiators,
   InteractionsTrackAppender,
   LayoutShiftsTrackAppender,
+  ModificationsManager,
   NetworkTrackAppender,
-  PerformanceModel,
+  RecordingMetadata,
   SaveFileFormatter,
-  SourceMapsResolver,
+  TargetForEvent,
+  ThirdPartyTreeView,
   ThreadAppender,
   TimelineController,
   TimelineDetailsView,
@@ -74,6 +88,8 @@ export {
   TimelineTreeView,
   TimelineUIUtils,
   TimingsTrackAppender,
+  TrackConfiguration,
   UIDevtoolsController,
   UIDevtoolsUtils,
+  Utils,
 };

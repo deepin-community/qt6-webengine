@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "ash/constants/ash_features.h"
 #include "base/no_destructor.h"
 
 namespace ash::settings {
@@ -39,35 +38,11 @@ std::vector<T> All() {
   return all;
 }
 
-void IncludeRevampSectionsOnly(std::vector<mojom::Section>& sections) {
-  std::erase_if(sections, [](mojom::Section section) {
-    // TODO(b/292678609) Gradually add checks here to filter out old Sections
-    // from the set of available Sections. An old Section can be filtered out
-    // once it has been fully incorporated into the new revamp Section.
-    return section == mojom::Section::kDateAndTime ||
-           section == mojom::Section::kCrostini ||
-           section == mojom::Section::kFiles ||
-           section == mojom::Section::kLanguagesAndInput ||
-           section == mojom::Section::kPrinting ||
-           section == mojom::Section::kReset ||
-           section == mojom::Section::kSearchAndAssistant;
-  });
-}
-
-void RemoveRevampSections(std::vector<mojom::Section>& sections) {
-  std::erase(sections, mojom::Section::kSystemPreferences);
-}
-
 }  // namespace
 
 const std::vector<mojom::Section>& AllSections() {
   static const base::NoDestructor<std::vector<mojom::Section>> all_sections([] {
     std::vector<mojom::Section> sections = All<mojom::Section>();
-    if (ash::features::IsOsSettingsRevampWayfindingEnabled()) {
-      IncludeRevampSectionsOnly(sections);
-    } else {
-      RemoveRevampSections(sections);
-    }
     return sections;
   }());
 
@@ -75,8 +50,11 @@ const std::vector<mojom::Section>& AllSections() {
 }
 
 const std::vector<mojom::Subpage>& AllSubpages() {
-  static const base::NoDestructor<std::vector<mojom::Subpage>> all_subpages(
-      All<mojom::Subpage>());
+  static const base::NoDestructor<std::vector<mojom::Subpage>> all_subpages([] {
+    std::vector<mojom::Subpage> subpages = All<mojom::Subpage>();
+    std::erase(subpages, mojom::Subpage::kInternalStorybook);
+    return subpages;
+  }());
   return *all_subpages;
 }
 

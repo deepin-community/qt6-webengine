@@ -257,7 +257,6 @@ class BaseNetworkChangeNotifierAndroidTest : public TestWithTaskEnvironment {
         break;
       case NONE:
         NOTREACHED();
-        break;
     }
     // See comment above.
     base::RunLoop().RunUntilIdle();

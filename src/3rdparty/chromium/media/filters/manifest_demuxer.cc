@@ -4,6 +4,7 @@
 
 #include "media/filters/manifest_demuxer.h"
 
+#include <optional>
 #include <vector>
 
 #include "base/logging.h"
@@ -17,12 +18,10 @@
 #include "media/base/media_log.h"
 #include "media/base/media_track.h"
 #include "media/base/pipeline_status.h"
-#include "media/formats/hls/audio_rendition.h"
 #include "media/formats/hls/media_playlist.h"
 #include "media/formats/hls/multivariant_playlist.h"
 #include "media/formats/hls/types.h"
 #include "media/formats/hls/variant_stream.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -80,19 +79,21 @@ ManifestDemuxer::ManifestDemuxer(
     : request_seek_(std::move(request_seek)),
       media_log_(media_log->Clone()),
       media_task_runner_(std::move(media_task_runner)),
-      impl_(std::move(impl)) {}
+      impl_(std::move(impl)) {
+        media_log_->AddMessage(MediaLogMessageLevel::kINFO,
+          "Demuxing stream using ManifestDemuxer");
+      }
 
-std::vector<raw_ptr<DemuxerStream, VectorExperimental>>
-ManifestDemuxer::GetAllStreams() {
+std::vector<DemuxerStream*> ManifestDemuxer::GetAllStreams() {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
 
   // For each stream that ChunkDemuxer returns, we need to wrap it so that we
   // can grab the timestamp. Chunk demuxer's streams live forever, so ours
   // might as well also live forever, even if that leaks a small amount of
   // memory.
-  // TODO(crbug/1266991): Rearchitect the demuxer stream ownership model to
+  // TODO(crbug.com/40057824): Rearchitect the demuxer stream ownership model to
   // prevent long-lived streams from potentially leaking memory.
-  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams;
+  std::vector<DemuxerStream*> streams;
   for (DemuxerStream* chunk_demuxer_stream : chunk_demuxer_->GetAllStreams()) {
     auto it = streams_.find(chunk_demuxer_stream);
     if (it != streams_.end()) {
@@ -144,7 +145,7 @@ void ManifestDemuxer::Initialize(DemuxerHost* host,
 void ManifestDemuxer::AbortPendingReads() {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
   chunk_demuxer_->AbortPendingReads();
-  impl_->AbortPendingReads();
+  impl_->AbortPendingReads(base::DoNothing());
 }
 
 void ManifestDemuxer::StartWaitingForSeek(base::TimeDelta seek_time) {
@@ -180,7 +181,7 @@ void ManifestDemuxer::CancelPendingSeek(base::TimeDelta seek_time) {
   // pending, then canceling the chunk demuxer pending seek should execute
   // its callback immediately with a success status, and we'd just then be left
   // waiting for the engine to finish.
-  // TODO(crbug/1266991): Make the engine cancelable as well.
+  // TODO(crbug.com/40057824): Make the engine cancelable as well.
   if (pending_seek_) {
     AbortPendingReads();
     chunk_demuxer_->CancelPendingSeek(seek_time);
@@ -231,15 +232,16 @@ void ManifestDemuxer::Stop() {
 
 base::TimeDelta ManifestDemuxer::GetStartTime() const {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  // TODO(crbug/1266991): Support time remapping for streams that start > 0.
+  // TODO(crbug.com/40057824): Support time remapping for streams that start >
+  // 0.
   return base::TimeDelta();
 }
 
 base::Time ManifestDemuxer::GetTimelineOffset() const {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  // TODO(crbug/1266991): Implement this with the value of the
+  // TODO(crbug.com/40057824): Implement this with the value of the
   // EXT-X-PROGRAM-DATETIME tag.
-  // TODO(crbug/1266991): Moderate that tag with respect to any underlying
+  // TODO(crbug.com/40057824): Moderate that tag with respect to any underlying
   // streams' nonzero timeline offsets that the wrapped ChunkDemuxer may have?
   // And should wrapped ChunkDemuxer's enforcement that any specified (non-null)
   // offset across multiple ChunkDemuxer::OnSourceInitDone() match be relaxed if
@@ -249,36 +251,66 @@ base::Time ManifestDemuxer::GetTimelineOffset() const {
 
 int64_t ManifestDemuxer::GetMemoryUsage() const {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  // TODO(crbug/1266991): Consider other potential significant memory usage
+  // TODO(crbug.com/40057824): Consider other potential significant memory usage
   // here of the player impl.
   int64_t demuxer_usage = chunk_demuxer_ ? chunk_demuxer_->GetMemoryUsage() : 0;
   int64_t impl_usage = impl_ ? impl_->GetMemoryUsage() : 0;
   return demuxer_usage + impl_usage;
 }
 
-absl::optional<container_names::MediaContainerName>
+std::optional<container_names::MediaContainerName>
 ManifestDemuxer::GetContainerForMetrics() const {
-  // TODO(crbug/1266991): Consider how this is used. HLS can involve multiple
-  // stream types (mp2t, mp4, etc). Refactor to report something useful.
-  return absl::nullopt;
+  // TODO(crbug.com/40057824): Consider how this is used. HLS can involve
+  // multiple stream types (mp2t, mp4, etc). Refactor to report something
+  // useful.
+  return std::nullopt;
 }
 
-void ManifestDemuxer::OnEnabledAudioTracksChanged(
-    const std::vector<MediaTrack::Id>& track_ids,
-    base::TimeDelta curr_time,
-    TrackChangeCB change_completed_cb) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  chunk_demuxer_->OnEnabledAudioTracksChanged(track_ids, curr_time,
-                                              std::move(change_completed_cb));
+void ManifestDemuxer::OnChunkDemuxerTracksChangeComplete(
+    DemuxerStream::Type type,
+    std::optional<MediaTrack::Id> track_id,
+    TrackChangeCB change_completed_cb,
+    DemuxerStream* stream) {
+  if (!track_id.has_value()) {
+    // TODO(crbug.com/361853710): We might want to stop running the rendition
+    // impl loop when there is no enabled track. Doing so would require a
+    // restart and seek of the rendition impl when re-enabling.
+    std::move(change_completed_cb).Run({});
+    return;
+  }
+
+  DCHECK(stream);
+
+  if (type == DemuxerStream::AUDIO) {
+    impl_->SelectAudioRendition(*track_id);
+  } else if (type == DemuxerStream::VIDEO) {
+    impl_->SelectVideoVariant(*track_id);
+  } else {
+    NOTREACHED();
+  }
+
+  std::move(change_completed_cb).Run(streams_.at(stream).get());
 }
 
-void ManifestDemuxer::OnSelectedVideoTrackChanged(
-    const std::vector<MediaTrack::Id>& track_ids,
-    base::TimeDelta curr_time,
-    TrackChangeCB change_completed_cb) {
+void ManifestDemuxer::OnTracksChanged(DemuxerStream::Type track_type,
+                                      std::optional<MediaTrack::Id> track_id,
+                                      base::TimeDelta curr_time,
+                                      TrackChangeCB change_completed_cb) {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  chunk_demuxer_->OnSelectedVideoTrackChanged(track_ids, curr_time,
-                                              std::move(change_completed_cb));
+  std::optional<MediaTrack::Id> chunk_demuxer_track = std::nullopt;
+  if (track_id.has_value()) {
+    if (track_type == DemuxerStream::AUDIO) {
+      chunk_demuxer_track = internal_audio_track_id_;
+    } else if (track_type == DemuxerStream::VIDEO) {
+      chunk_demuxer_track = internal_video_track_id_;
+    }
+  }
+
+  chunk_demuxer_->OnTracksChanged(
+      track_type, std::move(chunk_demuxer_track), curr_time,
+      base::BindOnce(&ManifestDemuxer::OnChunkDemuxerTracksChangeComplete,
+                     weak_factory_.GetWeakPtr(), track_type,
+                     std::move(track_id), std::move(change_completed_cb)));
 }
 
 void ManifestDemuxer::SetPlaybackRate(double rate) {
@@ -297,12 +329,11 @@ void ManifestDemuxer::SetPlaybackRate(double rate) {
   }
 }
 
-bool ManifestDemuxer::AddRole(base::StringPiece role,
-                              std::string container,
-                              std::string codec) {
+bool ManifestDemuxer::AddRole(std::string_view role,
+                              RelaxedParserSupportedType mime) {
   CHECK(chunk_demuxer_);
   if (ChunkDemuxer::kOk !=
-      chunk_demuxer_->AddId(std::string(role), container, codec)) {
+      chunk_demuxer_->AddAutoDetectedCodecsId(std::string(role), mime)) {
     return false;
   }
   chunk_demuxer_->SetParseWarningCallback(
@@ -316,11 +347,11 @@ bool ManifestDemuxer::AddRole(base::StringPiece role,
   return true;
 }
 
-void ManifestDemuxer::RemoveRole(base::StringPiece role) {
+void ManifestDemuxer::RemoveRole(std::string_view role) {
   chunk_demuxer_->RemoveId(std::string(role));
 }
 
-void ManifestDemuxer::SetSequenceMode(base::StringPiece role,
+void ManifestDemuxer::SetSequenceMode(std::string_view role,
                                       bool sequence_mode) {
   CHECK(chunk_demuxer_);
   return chunk_demuxer_->SetSequenceMode(std::string(role), sequence_mode);
@@ -332,18 +363,18 @@ void ManifestDemuxer::SetDuration(double duration) {
 }
 
 Ranges<base::TimeDelta> ManifestDemuxer::GetBufferedRanges(
-    base::StringPiece role) {
+    std::string_view role) {
   CHECK(chunk_demuxer_);
   return chunk_demuxer_->GetBufferedRanges(std::string(role));
 }
 
-void ManifestDemuxer::Remove(base::StringPiece role,
+void ManifestDemuxer::Remove(std::string_view role,
                              base::TimeDelta start,
                              base::TimeDelta end) {
   chunk_demuxer_->Remove(std::string(role), start, end);
 }
 
-void ManifestDemuxer::RemoveAndReset(base::StringPiece role,
+void ManifestDemuxer::RemoveAndReset(std::string_view role,
                                      base::TimeDelta start,
                                      base::TimeDelta end,
                                      base::TimeDelta* offset) {
@@ -354,7 +385,7 @@ void ManifestDemuxer::RemoveAndReset(base::StringPiece role,
 }
 
 void ManifestDemuxer::SetGroupStartIfParsingAndSequenceMode(
-    base::StringPiece role,
+    std::string_view role,
     base::TimeDelta start) {
   CHECK(chunk_demuxer_);
   if (!chunk_demuxer_->IsParsingMediaSegment(std::string(role))) {
@@ -363,7 +394,7 @@ void ManifestDemuxer::SetGroupStartIfParsingAndSequenceMode(
   }
 }
 
-void ManifestDemuxer::EvictCodedFrames(base::StringPiece role,
+void ManifestDemuxer::EvictCodedFrames(std::string_view role,
                                        base::TimeDelta time,
                                        size_t data_size) {
   CHECK(chunk_demuxer_);
@@ -372,20 +403,17 @@ void ManifestDemuxer::EvictCodedFrames(base::StringPiece role,
   }
 }
 
-bool ManifestDemuxer::AppendAndParseData(base::StringPiece role,
-                                         base::TimeDelta start,
+bool ManifestDemuxer::AppendAndParseData(std::string_view role,
                                          base::TimeDelta end,
                                          base::TimeDelta* offset,
-                                         const uint8_t* data,
-                                         size_t data_size) {
+                                         base::span<const uint8_t> data) {
   CHECK(chunk_demuxer_);
-  if (!chunk_demuxer_->AppendToParseBuffer(std::string(role), data,
-                                           data_size)) {
+  if (!chunk_demuxer_->AppendToParseBuffer(std::string(role), data)) {
     return false;
   }
   while (true) {
-    switch (chunk_demuxer_->RunSegmentParserLoop(std::string(role), start, end,
-                                                 offset)) {
+    switch (chunk_demuxer_->RunSegmentParserLoop(
+        std::string(role), base::TimeDelta(), end, offset)) {
       case StreamParser::ParseStatus::kSuccess:
         return true;
       case StreamParser::ParseStatus::kSuccessHasMoreData:
@@ -394,6 +422,14 @@ bool ManifestDemuxer::AppendAndParseData(base::StringPiece role,
         return false;
     }
   }
+}
+
+void ManifestDemuxer::ResetParserState(std::string_view role,
+                                       base::TimeDelta end,
+                                       base::TimeDelta* offset) {
+  CHECK(chunk_demuxer_);
+  return chunk_demuxer_->ResetParserState(std::string(role), base::TimeDelta(),
+                                          end, offset);
 }
 
 void ManifestDemuxer::OnError(PipelineStatus error) {
@@ -420,7 +456,7 @@ void ManifestDemuxer::RequestSeek(base::TimeDelta time) {
   request_seek_.Run(time);
 }
 
-void ManifestDemuxer::SetGroupStartTimestamp(base::StringPiece role,
+void ManifestDemuxer::SetGroupStartTimestamp(std::string_view role,
                                              base::TimeDelta time) {
   chunk_demuxer_->SetGroupStartTimestampIfInSequenceMode(std::string(role),
                                                          time);
@@ -589,14 +625,21 @@ void ManifestDemuxer::OnChunkDemuxerParseWarning(
 void ManifestDemuxer::OnChunkDemuxerTracksChanged(
     std::string role,
     std::unique_ptr<MediaTracks> tracks) {
-  MEDIA_LOG(WARNING, media_log_) << "TracksChanged for role: " << role;
+  for (const auto& track : tracks->tracks()) {
+    if (track->enabled()) {
+      if (track->type() == MediaTrack::Type::kVideo) {
+        internal_video_track_id_ = track->track_id();
+      } else if (track->type() == MediaTrack::Type::kAudio) {
+        internal_audio_track_id_ = track->track_id();
+      }
+    }
+  }
 }
 
 void ManifestDemuxer::OnEncryptedMediaData(EmeInitDataType type,
                                            const std::vector<uint8_t>& data) {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  // TODO(crbug/1266991): This will be required for iOS support in the future.
-  NOTIMPLEMENTED();
+  OnError(PIPELINE_ERROR_INVALID_STATE);
 }
 
 void ManifestDemuxer::OnDemuxerStreamRead(

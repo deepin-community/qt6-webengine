@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <vector>
 
@@ -27,8 +28,9 @@ TEST(CPDFPageObjectHolder, GraphicsDataAsKey) {
   // Verify self-comparisions.
   for (float c1 : {fMin, 1.0f, 2.0f, fMax, fInf, fNan}) {
     for (float c2 : {fMin, 1.0f, 2.0f, fMax, fInf, fNan}) {
-      for (BlendMode c3 : {BlendMode::kMultiply, BlendMode::kScreen})
+      for (BlendMode c3 : {BlendMode::kMultiply, BlendMode::kScreen}) {
         EXPECT_FALSE(GraphicsData({c1, c2, c3}) < GraphicsData({c1, c2, c3}));
+      }
     }
   }
 
@@ -55,7 +57,7 @@ TEST(CPDFPageObjectHolder, GraphicsDataAsKey) {
   EXPECT_EQ(72u, graphics_map.size());
 
   // clang-format off
-  const int expected[72] = {
+  std::array<const int, 72> expected = {
       71, 35, 65, 29, 59, 23, 53, 17, 47, 11, 41, 5,
       70, 34, 64, 28, 58, 22, 52, 16, 46, 10, 40, 4,
       69, 33, 63, 27, 57, 21, 51, 15, 45, 9,  39, 3,
@@ -75,8 +77,9 @@ TEST(CPDFPageObjectHolder, GraphicsDataAsKey) {
   // Erase in forward index permuted order.
   for (BlendMode c3 : {BlendMode::kMultiply, BlendMode::kScreen}) {
     for (float c2 : {fMin, 1.0f, 2.0f, fMax, fInf, fNan}) {
-      for (float c1 : {fMin, 1.0f, 2.0f, fMax, fInf, fNan})
+      for (float c1 : {fMin, 1.0f, 2.0f, fMax, fInf, fNan}) {
         graphics_map.erase({c1, c2, c3});
+      }
     }
   }
   EXPECT_EQ(0u, graphics_map.size());

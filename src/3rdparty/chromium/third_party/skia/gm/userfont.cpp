@@ -15,10 +15,12 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
+#include "include/core/SkTextBlob.h"
 #include "include/utils/SkCustomTypeface.h"
 #include "src/core/SkFontPriv.h"
 #include "tools/Resources.h"
 #include "tools/fonts/FontToolUtils.h"
+
 
 static sk_sp<SkDrawable> make_drawable(const SkPath& path) {
     const auto bounds = path.computeTightBounds();
@@ -56,13 +58,11 @@ static sk_sp<SkTypeface> make_tf() {
     builder.setFontStyle(font.getTypeface()->fontStyle());
 
     // Steal the first 128 chars from the default font
-    for (SkGlyphID index = 0; index <= 127; ++index) {
+    for (SkUnichar index = 0; index <= 127; ++index) {
         SkGlyphID glyph = font.unicharToGlyph(index);
 
-        SkScalar width;
-        font.getWidths(&glyph, 1, &width);
-        SkPath path;
-        font.getPath(glyph, &path);
+        SkScalar width = font.getWidth(glyph);
+        SkPath path = font.getPath(glyph).value_or(SkPath());
         path.transform(scale);
 
         // we use the charcode to be our glyph index, since we have no cmap table
@@ -75,8 +75,6 @@ static sk_sp<SkTypeface> make_tf() {
 
     return builder.detach();
 }
-
-#include "include/core/SkTextBlob.h"
 
 static sk_sp<SkTypeface> round_trip(sk_sp<SkTypeface> tf) {
     auto data = tf->serialize();
@@ -93,9 +91,8 @@ public:
     UserFontGM() {}
 
     void onOnceBeforeDraw() override {
-        fTF = make_tf();
         // test serialization
-        fTF = round_trip(fTF);
+        fTF = round_trip(make_tf());
     }
 
     static sk_sp<SkTextBlob> make_blob(sk_sp<SkTypeface> tf, float size, float* spacing) {

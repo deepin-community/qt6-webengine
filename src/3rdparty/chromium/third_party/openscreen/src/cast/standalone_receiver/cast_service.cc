@@ -25,7 +25,7 @@ constexpr uint16_t kDefaultCastServicePort = 8010;
 constexpr int kCastUniqueIdLength = 6;
 
 constexpr int kDefaultMaxBacklogSize = 64;
-const TlsListenOptions kDefaultListenOptions{kDefaultMaxBacklogSize};
+constexpr TlsListenOptions kDefaultListenOptions = {kDefaultMaxBacklogSize};
 
 IPEndpoint DetermineEndpoint(const InterfaceInfo& interface) {
   const IPAddress address = interface.GetIpAddressV4()
@@ -44,28 +44,28 @@ discovery::Config MakeDiscoveryConfig(const InterfaceInfo& interface) {
 CastService::CastService(CastService::Configuration config)
     : local_endpoint_(DetermineEndpoint(config.interface)),
       credentials_(std::move(config.credentials)),
-      agent_(config.task_runner, credentials_.provider.get()),
+      agent_(config.task_runner, *credentials_.provider),
       mirroring_application_(config.task_runner,
                              local_endpoint_.address,
-                             &agent_),
-      socket_factory_(&agent_, agent_.cast_socket_client()),
+                             agent_),
+      socket_factory_(agent_, *agent_.cast_socket_client()),
       connection_factory_(
-          TlsConnectionFactory::CreateFactory(&socket_factory_,
+          TlsConnectionFactory::CreateFactory(socket_factory_,
                                               config.task_runner)),
       discovery_service_(config.enable_discovery
                              ? discovery::CreateDnsSdService(
                                    config.task_runner,
-                                   this,
+                                   *this,
                                    MakeDiscoveryConfig(config.interface))
-                             : LazyDeletedDiscoveryService()),
+                             : discovery::DnsSdServicePtr()),
       discovery_publisher_(
           discovery_service_
-              ? MakeSerialDelete<
-                    discovery::DnsSdServicePublisher<ReceiverInfo>>(
-                    &config.task_runner,
-                    discovery_service_.get(),
-                    kCastV2ServiceId,
-                    ReceiverInfoToDnsSdInstance)
+              ? LazyDeletedDiscoveryPublisher(
+                    new discovery::DnsSdServicePublisher<ReceiverInfo>(
+                        discovery_service_.get(),
+                        kCastV2ServiceId,
+                        ReceiverInfoToDnsSdInstance),
+                    TaskRunnerDeleter(config.task_runner))
               : LazyDeletedDiscoveryPublisher()) {
   connection_factory_->SetListenCredentials(credentials_.tls_credentials);
   connection_factory_->Listen(local_endpoint_, kDefaultListenOptions);
@@ -88,7 +88,7 @@ CastService::CastService(CastService::Configuration config)
     info.capabilities = kHasVideoOutput | kHasAudioOutput;
     const Error error = discovery_publisher_->Register(info);
     if (!error.ok()) {
-      OnFatalError(std::move(error));
+      OnFatalError(error);
     }
   }
 }
@@ -99,11 +99,11 @@ CastService::~CastService() {
   }
 }
 
-void CastService::OnFatalError(Error error) {
+void CastService::OnFatalError(const Error& error) {
   OSP_LOG_FATAL << "Encountered fatal discovery error: " << error;
 }
 
-void CastService::OnRecoverableError(Error error) {
+void CastService::OnRecoverableError(const Error& error) {
   OSP_LOG_ERROR << "Encountered recoverable discovery error: " << error;
 }
 

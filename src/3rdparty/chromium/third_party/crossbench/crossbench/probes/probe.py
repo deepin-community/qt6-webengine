@@ -5,29 +5,36 @@
 from __future__ import annotations
 
 import abc
-import argparse
-import datetime as dt
-import enum
-import pathlib
-from typing import (TYPE_CHECKING, Any, Dict, Generic, Iterable, Optional, Set,
-                    Tuple, Type, TypeVar, Union)
+import logging
+from typing import TYPE_CHECKING, Hashable, Optional, Self, Set, Type, TypeVar
 
-from crossbench import compat, plt
-from crossbench.config import ConfigParser
-from crossbench.probes.results import (BrowserProbeResult, EmptyProbeResult,
+from typing_extensions import override
+
+from crossbench import path as pth
+from crossbench import plt
+from crossbench.config import ConfigParser, UnusedPropertiesMode
+# TODO: Keep commonly used classes here.
+from crossbench.probes.probe_context import ProbeContext  # noqa: TC001
+from crossbench.probes.probe_error import ProbeIncompatibleBrowser
+from crossbench.probes.probe_result_key import ProbeResultKey
+from crossbench.probes.result_location import ResultLocation
+from crossbench.probes.results import (EmptyProbeResult, LocalProbeResult,
                                        ProbeResult)
 
 if TYPE_CHECKING:
-  from selenium.webdriver.common.options import BaseOptions
-
+  from crossbench.browsers.attributes import BrowserAttributes
   from crossbench.browsers.browser import Browser
-  from crossbench.env import HostEnvironment
-  from crossbench.runner.groups import (BrowsersRunGroup,
-                                        CacheTemperatureRunGroup,
-                                        RepetitionsRunGroup, StoriesRunGroup,
-                                        BrowserSessionRunGroup)
+  from crossbench.env.runner_env import RunnerEnv
+  from crossbench.probes.probe_context import ProbeSessionContext
+  from crossbench.runner.groups.base import RunGroup
+  from crossbench.runner.groups.browsers import BrowsersRunGroup
+  from crossbench.runner.groups.cache_temperatures import \
+      CacheTemperaturesRunGroup
+  from crossbench.runner.groups.repetitions import RepetitionsRunGroup
+  from crossbench.runner.groups.session import BrowserSessionRunGroup
+  from crossbench.runner.groups.stories import StoriesRunGroup
   from crossbench.runner.run import Run
-  from crossbench.runner.runner import Runner
+
 
 ProbeT = TypeVar("ProbeT", bound="Probe")
 
@@ -35,41 +42,26 @@ ProbeT = TypeVar("ProbeT", bound="Probe")
 class ProbeConfigParser(ConfigParser[ProbeT]):
 
   def __init__(self, probe_cls: Type[ProbeT]) -> None:
-    super().__init__("Probe", probe_cls)
+    probe_name: str = probe_cls.NAME
+    if not probe_name:
+      raise ValueError("Missing probe name.")
+    super().__init__(
+        probe_cls,
+        key=probe_name,
+        title=f"{probe_name} probe parser",
+        unused_properties_mode=UnusedPropertiesMode.ERROR)
     self._probe_cls: Type[ProbeT] = probe_cls
 
-
-@enum.unique
-class ResultLocation(compat.StrEnumWithHelp):
-  LOCAL = ("local",
-           "Probe always produces results on the runner's local platform.")
-  BROWSER = ("browser",
-             ("Probe produces results on the browser's platform. "
-              "This can be either remote (for instance android browser) "
-              "or local (default system browser)."))
+  @property
+  def probe_cls(self) -> Type[ProbeT]:
+    return self._probe_cls
 
 
-class ProbeMissingDataError(ValueError):
-  pass
+
+ProbeKeyT = tuple[tuple[str, Hashable], ...]
 
 
-class ProbeValidationError(ValueError):
-
-  def __init__(self, probe: Probe, message: str) -> None:
-    self.probe = probe
-    super().__init__(f"Probe({probe.NAME}): {message}")
-
-
-class ProbeIncompatibleBrowser(ProbeValidationError):
-
-  def __init__(self,
-               probe: Probe,
-               browser: Browser,
-               message: str = "Incompatible browser") -> None:
-    super().__init__(probe, f"{message}, got {browser}")
-
-
-class Probe(abc.ABC):
+class Probe(ProbeResultKey, abc.ABC):
   """
   Abstract Probe class.
 
@@ -91,32 +83,26 @@ class Probe(abc.ABC):
   - setup(): Used for high-overhead Probe initialization
   - start(): Low-overhead start-to-measure signal
   - stop():  Low-overhead stop-to-measure signal
-  - tear_down(): Used for high-overhead Probe cleanup
+  - teardown(): Used for high-overhead Probe cleanup
 
   """
-
-  @property
-  @abc.abstractmethod
-  def NAME(self) -> str:
-    pass
+  NAME: str = ""
 
   @classmethod
-  def config_parser(cls) -> ProbeConfigParser:
+  def config_parser(cls) -> ProbeConfigParser[Self]:
     return ProbeConfigParser(cls)
 
   @classmethod
-  def from_config(cls: Type[ProbeT], config_data: Dict) -> ProbeT:
-    config_parser = cls.config_parser()
-    kwargs: Dict[str, Any] = config_parser.kwargs_from_config(config_data)
-    if config_data:
-      raise argparse.ArgumentTypeError(
-          f"Config for Probe={cls.NAME} contains unused properties: "
-          f"{', '.join(config_data.keys())}")
-    return cls(**kwargs)
+  def from_config(cls: Type[ProbeT], config_data: dict) -> ProbeT:
+    return cls.config_parser().parse(config_data)
 
   @classmethod
   def help_text(cls) -> str:
-    return str(cls.config_parser())
+    return cls.config_parser().help
+
+  @classmethod
+  def summary_text(cls) -> str:
+    return cls.config_parser().summary
 
   # Set to False if the Probe cannot be used with arbitrary Stories or Pages
   IS_GENERAL_PURPOSE: bool = True
@@ -127,11 +113,9 @@ class Probe(abc.ABC):
   # Set to True if the probe only works on battery power with single runs
   BATTERY_ONLY: bool = False
 
-  _browsers: Set[Browser]
-
   def __init__(self) -> None:
     assert self.name is not None, "A Probe must define a name"
-    self._browsers = set()
+    self._browsers: Set[Browser] = set()
 
   def __str__(self) -> str:
     return type(self).__name__
@@ -144,7 +128,13 @@ class Probe(abc.ABC):
     return self.key == other.key
 
   @property
-  def key(self) -> Tuple[Tuple, ...]:
+  def is_internal(self) -> bool:
+    """Returns True for subclasses of InternalProbe that are not
+    directly user-accessible."""
+    return False
+
+  @property
+  def key(self) -> ProbeKeyT:
     """Return a sort key."""
     return (("name", self.name),)
 
@@ -152,10 +142,11 @@ class Probe(abc.ABC):
     return hash(self.key)
 
   @property
-  def runner_platform(self) -> plt.Platform:
+  def host_platform(self) -> plt.Platform:
     return plt.PLATFORM
 
   @property
+  @override
   def name(self) -> str:
     return self.NAME
 
@@ -172,7 +163,7 @@ class Probe(abc.ABC):
         f"Probe={self.name} is attached multiple times to the same browser")
     self._browsers.add(browser)
 
-  def validate_env(self, env: HostEnvironment) -> None:
+  def validate_env(self, env: RunnerEnv) -> None:
     """
     Part of the Checklist, make sure everything is set up correctly for a probe
     to run.
@@ -185,7 +176,7 @@ class Probe(abc.ABC):
     for browser in self._browsers:
       self.validate_browser(env, browser)
 
-  def validate_browser(self, env: HostEnvironment, browser: Browser) -> None:
+  def validate_browser(self, env: RunnerEnv, browser: Browser) -> None:
     """
     Validate that browser is compatible with this Probe.
     - Raise ProbeValidationError for hard-errors,
@@ -196,54 +187,85 @@ class Probe(abc.ABC):
 
   def expect_browser(self,
                      browser: Browser,
-                     types: Union[Type, Tuple[Type]],
+                     attributes: BrowserAttributes,
                      message: Optional[str] = None) -> None:
-    if isinstance(browser, types):
+    if attributes in browser.attributes():
       return
     if not message:
-      if not isinstance(types, tuple):
-        types = (types,)
-      type_names = ",".join(str(type.__name__) for type in types)
-      message = f"Incompatible browser, expected {type_names}"
+      message = f"Incompatible browser, expected {attributes}"
     raise ProbeIncompatibleBrowser(self, browser, message)
 
   def expect_macos(self, browser: Browser) -> None:
     if not browser.platform.is_macos:
       raise ProbeIncompatibleBrowser(self, browser, "Only supported on macOS")
 
+  def expect_android(self, browser: Browser) -> None:
+    if not browser.platform.is_android:
+      raise ProbeIncompatibleBrowser(self, browser, "Only supported on Android")
+
+  def setup(self, runner) -> None:
+    """Called before any runs or browsers have been started."""
+    pass
+
   def merge_cache_temperatures(self,
-                               group: CacheTemperatureRunGroup) -> ProbeResult:
+                               group: CacheTemperaturesRunGroup) -> ProbeResult:
     """
     For merging probe data from multiple browser cache temperatures with the
     same repetition, story and browser.
     """
     # Return the first result by default.
-    return tuple(group.runs)[0].results[self]
+    return group.first_run.results[self]
+
+  def symlinked_single_run_result(self, group: RunGroup) -> ProbeResult:
+    runs = tuple(group.runs)
+    if len(runs) != 1:
+      return EmptyProbeResult()
+    first_run = runs[0]
+    if not first_run.create_symlinks:
+      return EmptyProbeResult()
+
+    first_run_results: ProbeResult = first_run.results[self]
+    group_dir: pth.LocalPath = group.path
+    symlinked_files: list[pth.LocalPath] = []
+    for file in first_run_results.all_files():
+      group_result_symlink = group_dir / file.name
+      if group_result_symlink.exists():
+        logging.debug("Skipping symlinking single run results: %s", file)
+        continue
+      group_result_symlink.symlink_to(file.relative_to(group_dir))
+      symlinked_files.append(group_result_symlink)
+    return LocalProbeResult(file=symlinked_files)
 
   def merge_repetitions(self, group: RepetitionsRunGroup) -> ProbeResult:
     """
     For merging probe data from multiple repetitions of the same story.
     """
-    del group
-    return EmptyProbeResult()
+    return self.symlinked_single_run_result(group)
 
   def merge_stories(self, group: StoriesRunGroup) -> ProbeResult:
     """
     For merging multiple stories for the same browser.
     """
-    del group
-    return EmptyProbeResult()
+    return self.symlinked_single_run_result(group)
 
   def merge_browsers(self, group: BrowsersRunGroup) -> ProbeResult:
     """
     For merging all probe data (from multiple stories and browsers.)
     """
-    del group
-    return EmptyProbeResult()
+    return self.symlinked_single_run_result(group)
 
-  @abc.abstractmethod
-  def get_context(self: ProbeT, run: Run) -> ProbeContext[ProbeT]:
-    pass
+  def get_context(self: Self, run: Run) -> Optional[ProbeContext[Self]]:
+    probe_cls: Type[ProbeContext[Self]] = self.get_context_cls()
+    return probe_cls(self, run)
+
+  def get_context_cls(self: Self) -> Type[ProbeContext[Self]]:
+    raise NotImplementedError(f"Missing default ProbeContext class for {self}")
+
+  def get_session_context(  # pylint: disable=useless-return
+      self: Self,
+      session: BrowserSessionRunGroup) -> Optional[ProbeSessionContext[Self]]:
+    del session
+    return None
 
   def log_run_result(self, run: Run) -> None:
     """
@@ -257,171 +279,3 @@ class Probe(abc.ABC):
     Override to print a short summary of all the collected results.
     """
     del group
-
-
-class ProbeContext(Generic[ProbeT], metaclass=abc.ABCMeta):
-  """
-  A scope during which a probe is actively collecting data.
-  Override in Probe subclasses to implement actual performance data
-  collection.
-  - The data should be written to self.result_path.
-  - A file / list / dict of result file Paths should be returned by the
-    override tear_down() method
-  """
-
-  def __init__(self, probe: ProbeT, run: Run) -> None:
-    self._probe: ProbeT = probe
-    self._run: Run = run
-    self._default_result_path: pathlib.Path = self.get_default_result_path()
-    self._is_active: bool = False
-    self._is_success: bool = False
-    self._start_time: Optional[dt.datetime] = None
-    self._stop_time: Optional[dt.datetime] = None
-
-  def get_default_result_path(self) -> pathlib.Path:
-    return self._run.get_default_probe_result_path(self._probe)
-
-  def set_start_time(self, start_datetime: dt.datetime) -> None:
-    assert self._start_time is None
-    self._start_time = start_datetime
-
-  def __enter__(self) -> ProbeContext[ProbeT]:
-    assert not self._is_active
-    assert not self._is_success
-    with self._run.exception_handler(f"Probe {self.name} start"):
-      self._is_active = True
-      self.start()
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback) -> None:
-    assert self._is_active
-    with self._run.exception_handler(f"Probe {self.name} stop"):
-      self.stop()
-      self._is_success = True
-      assert self._stop_time is None
-    self._stop_time = dt.datetime.now()
-
-  @property
-  def probe(self) -> ProbeT:
-    return self._probe
-
-  @property
-  def run(self) -> Run:
-    return self._run
-
-  @property
-  def session(self) -> BrowserSessionRunGroup:
-    return self._run.session
-
-  @property
-  def browser(self) -> Browser:
-    return self._run.browser
-
-  @property
-  def runner(self) -> Runner:
-    return self._run.runner
-
-  @property
-  def browser_platform(self) -> plt.Platform:
-    return self.browser.platform
-
-  @property
-  def runner_platform(self) -> plt.Platform:
-    return self.runner.platform
-
-  def browser_result(
-      self,
-      url: Optional[Iterable[str]] = None,
-      file: Optional[Iterable[pathlib.Path]] = None,
-      json: Optional[Iterable[pathlib.Path]] = None,
-      csv: Optional[Iterable[pathlib.Path]] = None) -> BrowserProbeResult:
-    """Helper to create BrowserProbeResult that might be stored on a remote
-    browser/device and need to be copied over to the local machine."""
-    return BrowserProbeResult(self.run, url, file, json, csv)
-
-  @property
-  def start_time(self) -> dt.datetime:
-    """
-    Returns a unified start time that is the same for all ProbeContexts
-    within a run. This can be used to account for startup delays caused by other
-    Probes.
-    """
-    assert self._start_time
-    return self._start_time
-
-  @property
-  def duration(self) -> dt.timedelta:
-    assert self._start_time and self._stop_time
-    return self._stop_time - self._start_time
-
-  @property
-  def is_success(self) -> bool:
-    return self._is_success
-
-  @property
-  def result_path(self) -> pathlib.Path:
-    return self._default_result_path
-
-  @property
-  def name(self) -> str:
-    return self.probe.name
-
-  @property
-  def browser_pid(self) -> int:
-    maybe_pid = self.run.browser.pid
-    assert maybe_pid, "Browser is not runner or does not provide a pid."
-    return maybe_pid
-
-  def setup(self) -> None:
-    """
-    Called before starting the browser, typically used to set run-specific
-    browser flags.
-    """
-
-  def setup_selenium_options(self, options: BaseOptions) -> None:
-    """
-    Custom hook to change selenium options before starting the browser.
-    """
-    del options
-
-  @abc.abstractmethod
-  def start(self) -> None:
-    """
-    Called immediately before starting the given Run, after the browser started.
-    This method should have as little overhead as possible. If possible,
-    delegate heavy computation to the "SetUp" method.
-    """
-
-  def start_story_run(self) -> None:
-    """
-    Called before running a Story's core workload (Story.run)
-    and after running Story.setup.
-    """
-
-  def stop_story_run(self) -> None:
-    """
-    Called after running a Story's core workload (Story.run) and before running
-    Story.tear_down.
-    """
-
-  @abc.abstractmethod
-  def stop(self) -> None:
-    """
-    Called immediately after finishing the given Run with the browser still
-    running.
-    This method should have as little overhead as possible. If possible,
-    delegate heavy computation to the "tear_down" method.
-    """
-    return None
-
-  @abc.abstractmethod
-  def tear_down(self) -> ProbeResult:
-    """
-    Called after stopping all probes and shutting down the browser.
-    Returns
-    - None if no data was collected
-    - If Data was collected:
-      - Either a path (or list of paths) to results file
-      - Directly a primitive json-serializable object containing the data
-    """
-    return EmptyProbeResult()

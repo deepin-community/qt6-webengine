@@ -54,7 +54,7 @@ class RTCEncodedAudioUnderlyingSinkTest : public testing::Test {
       : main_task_runner_(
             blink::scheduler::GetSingleThreadTaskRunnerForTesting()),
         webrtc_callback_(
-            new rtc::RefCountedObject<MockWebRtcTransformedFrameCallback>()),
+            new webrtc::RefCountedObject<MockWebRtcTransformedFrameCallback>()),
         transformer_(main_task_runner_) {}
 
   void SetUp() override {
@@ -71,7 +71,8 @@ class RTCEncodedAudioUnderlyingSinkTest : public testing::Test {
 
   RTCEncodedAudioUnderlyingSink* CreateSink(ScriptState* script_state) {
     return MakeGarbageCollected<RTCEncodedAudioUnderlyingSink>(
-        script_state, transformer_.GetBroker());
+        script_state, transformer_.GetBroker(),
+        /*detach_frame_data_on_write=*/false);
   }
 
   RTCEncodedAudioStreamTransformer* GetTransformer() { return &transformer_; }
@@ -88,7 +89,7 @@ class RTCEncodedAudioUnderlyingSinkTest : public testing::Test {
     if (expect_data_read) {
       EXPECT_CALL(*mock_frame.get(), GetData)
           .WillOnce(
-              Return(rtc::ArrayView<const uint8_t>(buffer, payload_length)));
+              Return(webrtc::ArrayView<const uint8_t>(buffer, payload_length)));
     } else {
       EXPECT_CALL(*mock_frame.get(), GetData).Times(0);
     }
@@ -112,7 +113,7 @@ class RTCEncodedAudioUnderlyingSinkTest : public testing::Test {
   test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
-  rtc::scoped_refptr<MockWebRtcTransformedFrameCallback> webrtc_callback_;
+  webrtc::scoped_refptr<MockWebRtcTransformedFrameCallback> webrtc_callback_;
   RTCEncodedAudioStreamTransformer transformer_;
   uint8_t buffer[1500];
 };
@@ -178,83 +179,6 @@ TEST_F(RTCEncodedAudioUnderlyingSinkTest, WriteInDifferentDirectionIsAllowed) {
                   script_state,
                   webrtc::TransformableFrameInterface::Direction::kReceiver),
               /*controller=*/nullptr, dummy_exception_state);
-  EXPECT_FALSE(dummy_exception_state.HadException());
-}
-
-TEST_F(RTCEncodedAudioUnderlyingSinkTest,
-       WriteLargeButNotTooLargeFrameSucceeds) {
-  V8TestingScope v8_scope;
-  ScriptState* script_state = v8_scope.GetScriptState();
-  auto* sink = CreateSink(script_state);
-  RTCEncodedAudioFrame* frame = CreateEncodedAudioFrame(script_state);
-  frame->setData(
-      DOMArrayBuffer::Create(/*num_elements=*/1000, /*element_byte_size=*/1));
-
-  DummyExceptionStateForTesting dummy_exception_state;
-  EXPECT_CALL(*webrtc_callback_, OnTransformedFrame(_));
-  sink->write(
-      script_state,
-      ScriptValue(script_state->GetIsolate(),
-                  ToV8Traits<RTCEncodedAudioFrame>::ToV8(script_state, frame)),
-      /*controller=*/nullptr, dummy_exception_state);
-  EXPECT_FALSE(dummy_exception_state.HadException());
-}
-
-TEST_F(RTCEncodedAudioUnderlyingSinkTest, WriteTooLargeFrameFails) {
-  V8TestingScope v8_scope;
-  ScriptState* script_state = v8_scope.GetScriptState();
-  auto* sink = CreateSink(script_state);
-  RTCEncodedAudioFrame* frame = CreateEncodedAudioFrame(script_state);
-  // Set too much data on the frame.
-  frame->setData(
-      DOMArrayBuffer::Create(/*num_elements=*/1001, /*element_byte_size=*/1));
-
-  DummyExceptionStateForTesting dummy_exception_state;
-  sink->write(
-      script_state,
-      ScriptValue(script_state->GetIsolate(),
-                  ToV8Traits<RTCEncodedAudioFrame>::ToV8(script_state, frame)),
-      /*controller=*/nullptr, dummy_exception_state);
-  EXPECT_TRUE(dummy_exception_state.HadException());
-}
-
-TEST_F(RTCEncodedAudioUnderlyingSinkTest, WriteOfUnmodifiedLargeFrameSucceeds) {
-  V8TestingScope v8_scope;
-  ScriptState* script_state = v8_scope.GetScriptState();
-  auto* sink = CreateSink(script_state);
-  RTCEncodedAudioFrame* frame = CreateEncodedAudioFrame(
-      script_state, webrtc::TransformableFrameInterface::Direction::kSender,
-      /*data_length=*/1001);
-
-  DummyExceptionStateForTesting dummy_exception_state;
-  EXPECT_CALL(*webrtc_callback_, OnTransformedFrame(_));
-  sink->write(
-      script_state,
-      ScriptValue(script_state->GetIsolate(),
-                  ToV8Traits<RTCEncodedAudioFrame>::ToV8(script_state, frame)),
-      /*controller=*/nullptr, dummy_exception_state);
-  EXPECT_FALSE(dummy_exception_state.HadException());
-}
-
-TEST_F(RTCEncodedAudioUnderlyingSinkTest,
-       WriteOfReadUnmodifiedLargeFrameSucceeds) {
-  V8TestingScope v8_scope;
-  ScriptState* script_state = v8_scope.GetScriptState();
-  auto* sink = CreateSink(script_state);
-  RTCEncodedAudioFrame* frame = CreateEncodedAudioFrame(
-      script_state, webrtc::TransformableFrameInterface::Direction::kSender,
-      /*data_length=*/1001, /*expect_data_read=*/true);
-
-  // Trigger a copy of the payload data to a JS ArrayBuffer.
-  frame->data();
-
-  DummyExceptionStateForTesting dummy_exception_state;
-  EXPECT_CALL(*webrtc_callback_, OnTransformedFrame(_));
-  sink->write(
-      script_state,
-      ScriptValue(script_state->GetIsolate(),
-                  ToV8Traits<RTCEncodedAudioFrame>::ToV8(script_state, frame)),
-      /*controller=*/nullptr, dummy_exception_state);
   EXPECT_FALSE(dummy_exception_state.HadException());
 }
 

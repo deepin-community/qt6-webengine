@@ -16,41 +16,43 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/experimental_slice_layout.h"
 
-#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
-#include "src/trace_processor/containers/bit_vector.h"
+#include "perfetto/base/compiler.h"
+#include "perfetto/ext/base/status_or.h"
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/base/test/status_matchers.h"
+#include "src/trace_processor/containers/string_pool.h"
+#include "src/trace_processor/dataframe/dataframe.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/table_functions/tables_py.h"
+#include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/slice_tables_py.h"
+#include "src/trace_processor/tables/track_tables_py.h"
 #include "test/gtest_and_gmock.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 
-constexpr uint32_t kColumn =
-    tables::ExperimentalSliceLayoutTable::ColumnIndex::filter_track_ids;
-
-std::string ToVis(const Table& table) {
-  const ColumnLegacy* layout_depth_column =
-      table.GetColumnByName("layout_depth");
-  const ColumnLegacy* ts_column = table.GetColumnByName("ts");
-  const ColumnLegacy* dur_column = table.GetColumnByName("dur");
-  const ColumnLegacy* filter_track_ids_column =
-      table.GetColumnByName("filter_track_ids");
-
+std::string ToVis(const tables::SliceTable& slice,
+                  const dataframe::Dataframe& table) {
+  constexpr auto kSpec = tables::ExperimentalSliceLayoutTable::kSpec;
+  using CI = tables::ExperimentalSliceLayoutTable::ColumnIndex;
   std::vector<std::string> lines;
   for (uint32_t i = 0; i < table.row_count(); ++i) {
-    int64_t layout_depth = layout_depth_column->Get(i).long_value;
-    int64_t ts = ts_column->Get(i).long_value;
-    int64_t dur = dur_column->Get(i).long_value;
-    const char* filter_track_ids = filter_track_ids_column->Get(i).AsString();
-    if (std::string("") == filter_track_ids) {
-      continue;
-    }
+    auto layout_depth = table.GetCellUnchecked<CI::layout_depth>(kSpec, i);
+    auto rr = slice.FindById(SliceId(table.GetCellUnchecked<CI::id>(kSpec, i)));
+    int64_t ts = rr->ts();
+    int64_t dur = rr->dur();
     for (int64_t j = 0; j < dur; ++j) {
-      size_t y = static_cast<size_t>(layout_depth);
-      size_t x = static_cast<size_t>(ts + j);
+      auto y = static_cast<size_t>(layout_depth);
+      auto x = static_cast<size_t>(ts + j);
       while (lines.size() <= y) {
-        lines.push_back("");
+        lines.emplace_back("");
       }
       if (lines[y].size() <= x) {
         lines[y].resize(x + 1, ' ');
@@ -59,7 +61,7 @@ std::string ToVis(const Table& table) {
     }
   }
 
-  std::string output = "";
+  std::string output;
   output += "\n";
   for (const std::string& line : lines) {
     output += line;
@@ -68,8 +70,10 @@ std::string ToVis(const Table& table) {
   return output;
 }
 
-void ExpectOutput(const Table& table, const std::string& expected) {
-  const auto& actual = ToVis(table);
+void ExpectOutput(const tables::SliceTable& slices,
+                  const dataframe::Dataframe& table,
+                  const std::string& expected) {
+  const auto& actual = ToVis(slices, table);
   EXPECT_EQ(actual, expected)
       << "Actual:" << actual << "\nExpected:" << expected;
 }
@@ -87,7 +91,7 @@ tables::SliceTable::Id Insert(tables::SliceTable* table,
   std::optional<tables::SliceTable::Id> id = parent_id;
   while (id) {
     row.depth++;
-    id = table->parent_id()[id.value().value];
+    id = (*table)[id.value().value].parent_id();
   }
   row.track_id = tables::TrackTable::Id{track_id};
   row.name = name;
@@ -105,12 +109,10 @@ TEST(ExperimentalSliceLayoutTest, SingleRow) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
  #####
 )");
 }
@@ -126,12 +128,10 @@ TEST(ExperimentalSliceLayoutTest, DoubleRow) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
  #####
  #####
 )");
@@ -152,12 +152,10 @@ TEST(ExperimentalSliceLayoutTest, MultipleRows) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
  #####
  ####
  ###
@@ -185,12 +183,10 @@ TEST(ExperimentalSliceLayoutTest, MultipleTracks) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1,2")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1,2")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
  ####
  ##
     ####
@@ -223,12 +219,10 @@ TEST(ExperimentalSliceLayoutTest, MultipleTracksWithGap) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1,2")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1,2")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
 #### ####
 ##   ##
    ####
@@ -268,12 +262,10 @@ TEST(ExperimentalSliceLayoutTest, PreviousGroupFullyNested) {
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
 
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1,2,3")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1,2,3")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
 #
 ##########
 #########
@@ -306,12 +298,11 @@ TEST(ExperimentalSliceLayoutTest, FilterOutTracks) {
   base::ignore_result(q);
 
   ExperimentalSliceLayout gen(&pool, &slice_table);
-  std::unique_ptr<Table> table;
-  auto status = gen.ComputeTable(
-      {Constraint{kColumn, FilterOp::kEq, SqlValue::String("1,2")}}, {},
-      BitVector(), table);
-  EXPECT_TRUE(status.ok());
-  ExpectOutput(*table, R"(
+
+  auto cursor = gen.MakeCursor();
+  bool res = cursor->Run({SqlValue::String("1,2")});
+  EXPECT_TRUE(res);
+  ExpectOutput(slice_table, *cursor->dataframe(), R"(
 ####
 ##
    ####
@@ -320,5 +311,4 @@ TEST(ExperimentalSliceLayoutTest, FilterOutTracks) {
 }
 
 }  // namespace
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

@@ -1,9 +1,12 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginewebauthuxrequest.h"
 #include "qwebenginewebauthuxrequest_p.h"
 #include "authenticator_request_dialog_controller.h"
+
+#include <QTimer>
 
 /*!
     \qmltype WebEngineWebAuthUxRequest
@@ -12,7 +15,7 @@
     \since QtWebEngine 6.7
     \brief Encapsulates the data of a WebAuth UX request.
 
-    Web engine's WebAuth UX requests are passed to the user in the
+    WebEngine's WebAuth UX requests are passed to the user in the
     \l WebEngineView::webAuthUxRequested() signal.
 
     For more information about how to handle web engine authenticator requests, see the
@@ -109,8 +112,9 @@
         \c{WebEngineWebAuthUxRequest.PinEntryReason.Challenge}.
     \li The minimum PIN length that the authenticator will accept for the PIN.
     \endlist
-    Use this structure to update the WebAuth UX dialog when the WebAuth UX state is \l
-    WebEngineWebAuthUxRequest.WebAuthUxState.CollectPin.
+    Use this structure to update the WebAuth UX dialog when the WebAuth UX
+    \l {WebEngineWebAuthUxRequest::}{state} is
+    \c {WebEngineWebAuthUxRequest.WebAuthUxState.CollectPin}.
 */
 
 /*!
@@ -137,7 +141,7 @@
 /*!
     \qmlproperty int QtWebEngine::webEngineWebAuthPinRequest::remainingAttempts
     \brief The number of attempts remaining before a hard lock. Should be ignored unless
-           \l{WebEngineWebAuthPinRequest::reason} is
+           \l{webEngineWebAuthPinRequest::reason} is
            \c{WebEngineWebAuthUxRequest.PinEntryReason.Challenge}.
 */
 
@@ -162,6 +166,9 @@
     \value RequestFailed WebAuth request failed. Display error details.
     \value Cancelled  WebAuth request is cancelled. Close the WebAuth dialog.
     \value Completed WebAuth request is completed. Close the WebAuth dialog.
+    \value [since 6.12] Discovery Authentication is requested. No devices are available, but once one is
+           visible, for example by inserting a physical passkey device, authentication will
+           continue.
 */
 
 /*!
@@ -208,7 +215,7 @@
     \value StorageFull The resident credential could not be created because the
            authenticator has insufficient storage.
     \value UserConsentDenied User consent denied.
-    \value WinUserCancelled The user clicked \uicontrol Cancel in the native windows UI.
+    \value WinUserCancelled The user clicked \uicontrol Cancel in the native Windows UI.
 */
 
 /*!
@@ -249,7 +256,8 @@ QWebEngineWebAuthUxRequest::QWebEngineWebAuthUxRequest(QWebEngineWebAuthUxReques
             [this](WebAuthUxState currentState) {
                 Q_D(QWebEngineWebAuthUxRequest);
                 d->m_currentState = currentState;
-                Q_EMIT stateChanged(d->m_currentState);
+                QTimer::singleShot(0, this,
+                                   [this, currentState]() { Q_EMIT stateChanged(currentState); });
             });
 }
 
@@ -266,7 +274,7 @@ QWebEngineWebAuthUxRequest::~QWebEngineWebAuthUxRequest() { }
     WebAuth dialog displays user names. The user needs to select an
     account to proceed.
 
-    \sa state setSelectedAccount() QWebEngineWebAuthUxRequest::userNames
+    \sa state, setSelectedAccount(), QWebEngineWebAuthUxRequest::userNames
 */
 /*!
     \property QWebEngineWebAuthUxRequest::userNames
@@ -312,7 +320,7 @@ QString QWebEngineWebAuthUxRequest::relyingPartyId() const
     WebAuth Dialog displays a PIN request dialog. The user needs to enter a PIN and
     invoke \l setPin() to proceed.
 
-    \sa QWebEngineWebAuthPinRequest CollectPin setPin()
+    \sa QWebEngineWebAuthPinRequest, CollectPin, setPin()
 */
 QWebEngineWebAuthPinRequest QWebEngineWebAuthUxRequest::pinRequest() const
 {
@@ -338,13 +346,16 @@ QWebEngineWebAuthPinRequest QWebEngineWebAuthUxRequest::pinRequest() const
            Close the WebAuth dialog.
     \value WebEngineWebAuthUxRequest.WebAuthUxState.Completed WebAuth request is completed.
            Close the WebAuth dialog.
+    \value [since 6.12] WebEngineWebAuthUxRequest.WebAuthUxState.Discovery Authentication is requested.
+           No devices are available, but once one is visible, for example by inserting a physical passkey
+           device, authentication will continue.
 */
 /*!
     \property QWebEngineWebAuthUxRequest::state
     \brief The WebAuth request's current UX state.
 
     \l stateChanged() is emitted when the current state changes.
-    Update the WebAuth dialog in reponse to the changes in state.
+    Update the WebAuth dialog in response to the changes in state.
 */
 QWebEngineWebAuthUxRequest::WebAuthUxState QWebEngineWebAuthUxRequest::state() const
 {
@@ -360,14 +371,14 @@ QWebEngineWebAuthUxRequest::WebAuthUxState QWebEngineWebAuthUxRequest::state() c
     WebAuth request is blocked until the user selects an account and
     invokes this method.
 
-    \sa WebEngineWebAuthUxRequest::userNames state
+    \sa WebEngineWebAuthUxRequest::userNames, state
 */
 /*!
     Sends the \a selectedAccount name to the authenticator.
     This is needed when the current WebAuth request's UX state is \l SelectAccount.
     The WebAuth request is blocked until the user selects an account and invokes this method.
 
-    \sa userNames SelectAccount
+    \sa userNames, SelectAccount
 */
 void QWebEngineWebAuthUxRequest::setSelectedAccount(const QString &selectedAccount)
 {
@@ -383,14 +394,14 @@ void QWebEngineWebAuthUxRequest::setSelectedAccount(const QString &selectedAccou
     WebEngineWebAuthUxRequest.WebAuthUxState.CollectPin. The WebAuth
     request is blocked until the user responds with a PIN.
 
-    \sa QWebEngineWebAuthPinRequest state
+    \sa QWebEngineWebAuthPinRequest, state
 */
 /*!
     Sends the \a pin to the authenticator that prompts for a PIN.
     This is needed when the current WebAuth request's UX state is \l CollectPin.
     The WebAuth request is blocked until the user responds with a PIN.
 
-    \sa QWebEngineWebAuthPinRequest CollectPin
+    \sa QWebEngineWebAuthPinRequest, CollectPin
 */
 void QWebEngineWebAuthUxRequest::setPin(const QString &pin)
 {

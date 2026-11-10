@@ -8,6 +8,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/expected.h"
 #include "content/common/service_worker/service_worker_router_evaluator.h"
 #include "third_party/blink/public/common/cache_storage/cache_storage_utils.h"
 
@@ -23,13 +24,29 @@ ControllerServiceWorkerConnector::ControllerServiceWorkerConnector(
     blink::mojom::ServiceWorkerFetchHandlerBypassOption
         fetch_handler_bypass_option,
     std::optional<blink::ServiceWorkerRouterRules> router_rules,
-    blink::EmbeddedWorkerStatus initial_running_status,
+    const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+    mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+        cross_origin_embedder_policy_reporter,
+    const network::DocumentIsolationPolicy& document_isolation_policy,
+    mojo::PendingRemote<network::mojom::DocumentIsolationPolicyReporter>
+        document_isolation_policy_reporter,
+    std::optional<blink::EmbeddedWorkerStatus> initial_running_status,
     mojo::PendingReceiver<blink::mojom::ServiceWorkerRunningStatusCallback>
         running_status_receiver)
-    : client_id_(client_id),
+    : cross_origin_embedder_policy_(cross_origin_embedder_policy),
+      document_isolation_policy_(document_isolation_policy),
+      client_id_(client_id),
       fetch_handler_bypass_option_(fetch_handler_bypass_option),
       running_status_(initial_running_status),
       running_status_receiver_(this) {
+  if (cross_origin_embedder_policy_reporter) {
+    cross_origin_embedder_policy_reporter_.Bind(
+        std::move(cross_origin_embedder_policy_reporter));
+  }
+  if (document_isolation_policy_reporter) {
+    document_isolation_policy_reporter_.Bind(
+        std::move(document_isolation_policy_reporter));
+  }
   container_host_.Bind(std::move(remote_container_host));
   container_host_.set_disconnect_handler(base::BindOnce(
       &ControllerServiceWorkerConnector::OnContainerHostConnectionClosed,
@@ -43,6 +60,7 @@ ControllerServiceWorkerConnector::ControllerServiceWorkerConnector(
     }
     if (running_status_receiver) {
       CHECK(router_evaluator_->need_running_status());
+      CHECK(running_status_.has_value());
       running_status_receiver_.Bind(std::move(running_status_receiver));
     }
   }
@@ -77,7 +95,6 @@ ControllerServiceWorkerConnector::GetControllerServiceWorker(
       return nullptr;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 void ControllerServiceWorkerConnector::AddObserver(Observer* observer) {
@@ -139,7 +156,8 @@ void ControllerServiceWorkerConnector::SetControllerServiceWorker(
 
 blink::EmbeddedWorkerStatus
 ControllerServiceWorkerConnector::GetRecentRunningStatus() {
-  return running_status_;
+  CHECK(running_status_.has_value());
+  return *running_status_;
 }
 
 void ControllerServiceWorkerConnector::OnStatusChanged(
@@ -156,8 +174,8 @@ void ControllerServiceWorkerConnector::CallCacheStorageMatch(
     blink::mojom::FetchAPIRequestPtr request,
     blink::mojom::CacheStorage::MatchCallback callback) {
   if (!cache_storage_ || !cache_storage_.is_bound()) {
-    std::move(callback).Run(blink::mojom::MatchResult::NewStatus(
-        blink::mojom::CacheStorageError::kErrorStorage));
+    std::move(callback).Run(
+        base::unexpected(blink::mojom::CacheStorageError::kErrorStorage));
     return;
   }
   int64_t trace_id = blink::cache_storage::CreateTraceId();

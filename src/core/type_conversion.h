@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef TYPE_CONVERSION_H
 #define TYPE_CONVERSION_H
@@ -20,11 +21,12 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
-#include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#include <string_view>
 
 QT_FORWARD_DECLARE_CLASS(QSslCertificate)
 
@@ -51,14 +53,14 @@ inline QString toQt(const std::u16string &string)
     return QString::fromStdU16String(string);
 }
 
-inline QString toQt(const absl::optional<std::u16string> &string)
+inline QString toQt(const std::optional<std::u16string> &string)
 {
     if (!string.has_value())
         return QString();
     return QString::fromStdU16String(*string);
 }
 
-inline QString toQString(const base::StringPiece &string)
+inline QString toQString(const std::string_view &string)
 {
     return QString::fromUtf8(string.data(), string.size());
 }
@@ -68,7 +70,7 @@ inline QString toQString(const std::string &string)
     return QString::fromStdString(string);
 }
 
-inline QByteArray toQByteArray(const base::StringPiece &string)
+inline QByteArray toQByteArray(const std::string_view &string)
 {
     return QByteArray(string.data(), string.size());
 }
@@ -89,11 +91,11 @@ inline std::u16string toString16(const QString &qString)
     return qString.toStdU16String();
 }
 
-inline absl::optional<std::u16string> toOptionalString16(const QString &qString)
+inline std::optional<std::u16string> toOptionalString16(const QString &qString)
 {
     if (qString.isNull())
-        return absl::nullopt;
-    return absl::make_optional(qString.toStdU16String());
+        return std::nullopt;
+    return std::make_optional(qString.toStdU16String());
 }
 
 inline QUrl toQt(const GURL &url)
@@ -189,6 +191,11 @@ inline QColor toQt(const SkColor &c)
     return QColor(SkColorGetR(c), SkColorGetG(c), SkColorGetB(c), SkColorGetA(c));
 }
 
+inline QString toQt(const base::FilePath &path)
+{
+    return toQt(path.value());
+}
+
 inline SkColor toSk(const QColor &c)
 {
     return c.rgba();
@@ -254,8 +261,6 @@ inline QStringList fromVector(const std::vector<std::u16string> &vector)
 }
 
 QList<QSslCertificate> toCertificateChain(net::X509Certificate *certificate);
-
-Qt::InputMethodHints toQtInputMethodHints(ui::TextInputType inputType);
 
 } // namespace QtWebEngineCore
 

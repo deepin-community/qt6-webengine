@@ -4,12 +4,15 @@
 
 #include "ui/gfx/geometry/transform.h"
 
+#include <array>
 #include <ostream>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/notreached.h"
+#include "base/numerics/angle_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "ui/gfx/geometry/angle_conversions.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/clamp_float_geometry.h"
@@ -32,7 +35,7 @@ namespace {
 const double kEpsilon = std::numeric_limits<float>::epsilon();
 
 double TanDegrees(double degrees) {
-  return std::tan(DegToRad(degrees));
+  return std::tan(base::DegToRad(degrees));
 }
 
 inline bool ApproximatelyZero(double x, double tolerance) {
@@ -53,11 +56,14 @@ Matrix44 AxisTransform2dToMatrix44(const AxisTransform2d& axis_2d) {
 template <typename T>
 void AxisTransform2dToColMajor(const AxisTransform2d& axis_2d, T a[16]) {
   a[0] = axis_2d.scale().x();
-  a[5] = axis_2d.scale().y();
-  a[12] = axis_2d.translation().x();
-  a[13] = axis_2d.translation().y();
-  a[1] = a[2] = a[3] = a[4] = a[6] = a[7] = a[8] = a[9] = a[11] = a[14] = 0;
-  a[10] = a[15] = 1;
+  UNSAFE_TODO(a[5]) = axis_2d.scale().y();
+  UNSAFE_TODO(a[12]) = axis_2d.translation().x();
+  UNSAFE_TODO(a[13]) = axis_2d.translation().y();
+  UNSAFE_TODO(a[1]) = UNSAFE_TODO(a[2]) = UNSAFE_TODO(a[3]) =
+      UNSAFE_TODO(a[4]) = UNSAFE_TODO(a[6]) = UNSAFE_TODO(a[7]) =
+          UNSAFE_TODO(a[8]) = UNSAFE_TODO(a[9]) = UNSAFE_TODO(a[11]) =
+              UNSAFE_TODO(a[14]) = 0;
+  UNSAFE_TODO(a[10]) = UNSAFE_TODO(a[15]) = 1;
 }
 
 }  // namespace
@@ -85,13 +91,14 @@ Transform::Transform(const Quaternion& q)
 // clang-format on
 
 Matrix44 Transform::GetFullMatrix() const {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     return AxisTransform2dToMatrix44(axis_2d_);
+  }
   return matrix_;
 }
 
 Matrix44& Transform::EnsureFullMatrix() {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     full_matrix_ = true;
     matrix_ = AxisTransform2dToMatrix44(axis_2d_);
   }
@@ -99,24 +106,32 @@ Matrix44& Transform::EnsureFullMatrix() {
 }
 
 // static
-Transform Transform::ColMajor(const double a[16]) {
+Transform Transform::ColMajor(base::span<const double, 16> a) {
   return Transform(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9],
                    a[10], a[11], a[12], a[13], a[14], a[15]);
 }
 
 // static
 Transform Transform::ColMajorF(const float a[16]) {
-  if (AllTrue(Double4{a[1], a[2], a[3], a[4]} == Double4{0, 0, 0, 0} &
-              Double4{a[6], a[7], a[8], a[9]} == Double4{0, 0, 0, 0} &
-              Double4{a[10], a[11], a[14], a[15]} == Double4{1, 0, 0, 1})) {
-    return Transform(a[0], a[5], a[12], a[13]);
+  if (AllTrue(Double4{UNSAFE_TODO(a[1]), UNSAFE_TODO(a[2]), UNSAFE_TODO(a[3]),
+                     UNSAFE_TODO(a[4])} == Double4{0, 0, 0, 0} &
+              Double4{UNSAFE_TODO(a[6]), UNSAFE_TODO(a[7]), UNSAFE_TODO(a[8]),
+                     UNSAFE_TODO(a[9])} == Double4{0, 0, 0, 0} &
+              Double4{UNSAFE_TODO(a[10]), UNSAFE_TODO(a[11]), UNSAFE_TODO(a[14]),
+                     UNSAFE_TODO(a[15])} == Double4{1, 0, 0, 1})) {
+    return Transform(a[0], UNSAFE_TODO(a[5]), UNSAFE_TODO(a[12]),
+                     UNSAFE_TODO(a[13]));
   }
-  return Transform(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9],
-                   a[10], a[11], a[12], a[13], a[14], a[15]);
+  return Transform(a[0], UNSAFE_TODO(a[1]), UNSAFE_TODO(a[2]),
+                   UNSAFE_TODO(a[3]), UNSAFE_TODO(a[4]), UNSAFE_TODO(a[5]),
+                   UNSAFE_TODO(a[6]), UNSAFE_TODO(a[7]), UNSAFE_TODO(a[8]),
+                   UNSAFE_TODO(a[9]), UNSAFE_TODO(a[10]), UNSAFE_TODO(a[11]),
+                   UNSAFE_TODO(a[12]), UNSAFE_TODO(a[13]), UNSAFE_TODO(a[14]),
+                   UNSAFE_TODO(a[15]));
 }
 
 void Transform::GetColMajor(double a[16]) const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     AxisTransform2dToColMajor(axis_2d_, a);
   } else {
     matrix_.GetColMajor(a);
@@ -124,7 +139,7 @@ void Transform::GetColMajor(double a[16]) const {
 }
 
 void Transform::GetColMajorF(float a[16]) const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     AxisTransform2dToColMajor(axis_2d_, a);
   } else {
     matrix_.GetColMajorF(a);
@@ -174,21 +189,26 @@ void Transform::RotateAbout(const Vector3dF& axis, double degrees) {
 }
 
 double Transform::Determinant() const {
-  return LIKELY(!full_matrix_) ? axis_2d_.Determinant() : matrix_.Determinant();
+  if (!full_matrix_) [[likely]] {
+    return axis_2d_.Determinant();
+  }
+  return matrix_.Determinant();
 }
 
 void Transform::Scale(float x, float y) {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     axis_2d_.PreScale(Vector2dF(x, y));
-  else
+  } else {
     matrix_.PreScale(x, y);
+  }
 }
 
 void Transform::PostScale(float x, float y) {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     axis_2d_.PostScale(Vector2dF(x, y));
-  else
+  } else {
     matrix_.PostScale(x, y);
+  }
 }
 
 void Transform::Scale3d(float x, float y, float z) {
@@ -210,10 +230,11 @@ void Transform::Translate(const Vector2dF& offset) {
 }
 
 void Transform::Translate(float x, float y) {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     axis_2d_.PreTranslate(Vector2dF(x, y));
-  else
+  } else {
     matrix_.PreTranslate(x, y);
+  }
 }
 
 void Transform::PostTranslate(const Vector2dF& offset) {
@@ -221,10 +242,11 @@ void Transform::PostTranslate(const Vector2dF& offset) {
 }
 
 void Transform::PostTranslate(float x, float y) {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     axis_2d_.PostTranslate(Vector2dF(x, y));
-  else
+  } else {
     matrix_.PostTranslate(x, y);
+  }
 }
 
 void Transform::PostTranslate3d(const Vector3dF& offset) {
@@ -263,9 +285,9 @@ void Transform::ApplyPerspectiveDepth(double depth) {
 }
 
 void Transform::PreConcat(const Transform& transform) {
-  if (LIKELY(!transform.full_matrix_)) {
+  if (!transform.full_matrix_) [[likely]] {
     PreConcat(transform.axis_2d_);
-  } else if (LIKELY(!full_matrix_)) {
+  } else if (!full_matrix_) [[likely]] {
     AxisTransform2d self = axis_2d_;
     *this = transform;
     PostConcat(self);
@@ -275,9 +297,9 @@ void Transform::PreConcat(const Transform& transform) {
 }
 
 void Transform::PostConcat(const Transform& transform) {
-  if (LIKELY(!transform.full_matrix_)) {
+  if (!transform.full_matrix_) [[likely]] {
     PostConcat(transform.axis_2d_);
-  } else if (LIKELY(!full_matrix_)) {
+  } else if (!full_matrix_) [[likely]] {
     AxisTransform2d self = axis_2d_;
     *this = transform;
     PreConcat(self);
@@ -287,12 +309,12 @@ void Transform::PostConcat(const Transform& transform) {
 }
 
 Transform Transform::operator*(const Transform& transform) const {
-  if (LIKELY(!transform.full_matrix_)) {
+  if (!transform.full_matrix_) [[likely]] {
     Transform result = *this;
     result.PreConcat(transform.axis_2d_);
     return result;
   }
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     Transform result = transform;
     result.PostConcat(axis_2d_);
     return result;
@@ -314,7 +336,7 @@ void Transform::PostConcat(const AxisTransform2d& transform) {
 
 bool Transform::IsApproximatelyIdentityOrTranslation(double tolerance) const {
   DCHECK_GE(tolerance, 0);
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return ApproximatelyOne(axis_2d_.scale().x(), tolerance) &&
            ApproximatelyOne(axis_2d_.scale().y(), tolerance);
   }
@@ -345,7 +367,7 @@ bool Transform::IsApproximatelyIdentityOrIntegerTranslation(
   if (!IsApproximatelyIdentityOrTranslation(tolerance))
     return false;
 
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     for (float t : {axis_2d_.translation().x(), axis_2d_.translation().y()}) {
       if (!base::IsValueInRangeForNumericType<int>(t) ||
           std::abs(std::round(t) - t) > tolerance)
@@ -363,7 +385,7 @@ bool Transform::IsApproximatelyIdentityOrIntegerTranslation(
 }
 
 bool Transform::Is2dProportionalUpscaleAndOr2dTranslation() const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return axis_2d_.scale().x() >= 1 &&
            axis_2d_.scale().x() == axis_2d_.scale().y();
   }
@@ -379,7 +401,7 @@ bool Transform::IsIdentityOrIntegerTranslation() const {
   if (!IsIdentityOrTranslation())
     return false;
 
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     for (float t : {axis_2d_.translation().x(), axis_2d_.translation().y()}) {
       if (!base::IsValueInRangeForNumericType<int>(t) ||
           static_cast<int>(t) != t) {
@@ -401,15 +423,17 @@ bool Transform::IsIdentityOrInteger2dTranslation() const {
 }
 
 bool Transform::Creates3d() const {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     return false;
+  }
   return matrix_.rc(2, 0) != 0 || matrix_.rc(2, 1) != 0 ||
          matrix_.rc(2, 3) != 0;
 }
 
 bool Transform::IsBackFaceVisible() const {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     return false;
+  }
 
   // Compute whether a layer with a forward-facing normal of (0, 0, 1, 0)
   // would have its back face visible after applying the transform.
@@ -462,7 +486,7 @@ bool Transform::IsBackFaceVisible() const {
 }
 
 bool Transform::GetInverse(Transform* transform) const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     transform->full_matrix_ = false;
     if (axis_2d_.IsInvertible()) {
       transform->axis_2d_ = axis_2d_;
@@ -487,7 +511,7 @@ bool Transform::GetInverse(Transform* transform) const {
 Transform Transform::GetCheckedInverse() const {
   Transform inverse;
   if (!GetInverse(&inverse))
-    NOTREACHED() << ToString() << " is not invertible";
+    DUMP_WILL_BE_NOTREACHED() << ToString() << " is not invertible";
   return inverse;
 }
 
@@ -498,9 +522,43 @@ Transform Transform::InverseOrIdentity() const {
   return inverse;
 }
 
-bool Transform::Preserves2dAxisAlignment() const {
-  if (LIKELY(!full_matrix_))
+bool Transform::Preserves2dAffine() const {
+  if (!full_matrix_) [[likely]] {
     return true;
+  }
+
+  // The first two columns of row 2 allow the x and y axis to skew in the z
+  // direction. We also check there is no z translation. We can ignore the z
+  // scale component since it cannot affect coordinates where z = 0.
+  const bool is_flat_ignore_z = gfx::AllTrue(gfx::Double4{
+                                                 matrix_.rc(2, 0),
+                                                 matrix_.rc(2, 1),
+                                                 0,
+                                                 matrix_.rc(2, 3),
+                                             } == gfx::Double4{0, 0, 0, 0});
+
+  // We must ensure that the x and y perspective components are 0 since they can
+  // affect the affine-ness of the x/y plane. We can ignore the z perspective
+  // component since it does not affect values on the x/y plane.
+  const bool has_no_perspective_ignore_z =
+      gfx::AllTrue(gfx::Double4{
+                       matrix_.rc(3, 0),
+                       matrix_.rc(3, 1),
+                       0,
+                       matrix_.rc(3, 3),
+                   } == gfx::Double4{0, 0, 0, 1});
+
+  if (is_flat_ignore_z && has_no_perspective_ignore_z) {
+    return true;
+  }
+
+  return false;
+}
+
+bool Transform::Preserves2dAxisAlignment() const {
+  if (!full_matrix_) [[likely]] {
+    return true;
+  }
 
   // Check whether an axis aligned 2-dimensional rect would remain axis-aligned
   // after being transformed by this matrix (and implicitly projected by
@@ -553,8 +611,9 @@ bool Transform::Preserves2dAxisAlignment() const {
 }
 
 bool Transform::NonDegeneratePreserves2dAxisAlignment() const {
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     return axis_2d_.scale().x() > kEpsilon && axis_2d_.scale().y() > kEpsilon;
+  }
 
   // See comments above for Preserves2dAxisAlignment.
 
@@ -586,7 +645,7 @@ void Transform::ApplyTransformOrigin(float x, float y, float z) {
 }
 
 void Transform::Zoom(float zoom_factor) {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     axis_2d_.Zoom(zoom_factor);
   } else {
     matrix_.Zoom(zoom_factor);
@@ -594,21 +653,28 @@ void Transform::Zoom(float zoom_factor) {
 }
 
 void Transform::Flatten() {
-  if (UNLIKELY(full_matrix_))
+  if (full_matrix_) [[unlikely]] {
     matrix_.Flatten();
+  }
   DCHECK(IsFlat());
 }
 
 bool Transform::IsFlat() const {
-  return LIKELY(!full_matrix_) || matrix_.IsFlat();
+  if (!full_matrix_) [[likely]] {
+    return true;
+  }
+  return matrix_.IsFlat();
 }
 
 bool Transform::Is2dTransform() const {
-  return LIKELY(!full_matrix_) || matrix_.Is2dTransform();
+  if (!full_matrix_) [[likely]] {
+    return true;
+  }
+  return matrix_.Is2dTransform();
 }
 
 Vector2dF Transform::To2dTranslation() const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return Vector2dF(ClampFloatGeometry(axis_2d_.translation().x()),
                      ClampFloatGeometry(axis_2d_.translation().y()));
   }
@@ -617,7 +683,7 @@ Vector2dF Transform::To2dTranslation() const {
 }
 
 Vector3dF Transform::To3dTranslation() const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return Vector3dF(ClampFloatGeometry(axis_2d_.translation().x()),
                      ClampFloatGeometry(axis_2d_.translation().y()), 0);
   }
@@ -627,7 +693,7 @@ Vector3dF Transform::To3dTranslation() const {
 }
 
 Vector2dF Transform::To2dScale() const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return Vector2dF(ClampFloatGeometry(axis_2d_.scale().x()),
                      ClampFloatGeometry(axis_2d_.scale().y()));
   }
@@ -640,12 +706,14 @@ Point Transform::MapPoint(const Point& point) const {
 }
 
 PointF Transform::MapPoint(const PointF& point) const {
-  return LIKELY(!full_matrix_) ? axis_2d_.MapPoint(point)
-                               : MapPointInternal(matrix_, point);
+  if (!full_matrix_) [[likely]] {
+    return axis_2d_.MapPoint(point);
+  }
+  return MapPointInternal(matrix_, point);
 }
 
 Point3F Transform::MapPoint(const Point3F& point) const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     PointF result = axis_2d_.MapPoint(point.AsPointF());
     return Point3F(result.x(), result.y(), ClampFloatGeometry(point.z()));
   }
@@ -653,7 +721,7 @@ Point3F Transform::MapPoint(const Point3F& point) const {
 }
 
 Vector3dF Transform::MapVector(const Vector3dF& vector) const {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     return Vector3dF(ClampFloatGeometry(vector.x() * axis_2d_.scale().x()),
                      ClampFloatGeometry(vector.y() * axis_2d_.scale().y()),
                      ClampFloatGeometry(vector.z()));
@@ -664,9 +732,9 @@ Vector3dF Transform::MapVector(const Vector3dF& vector) const {
                    ClampFloatGeometry(p[2]));
 }
 
-void Transform::TransformVector4(float vector[4]) const {
-  DCHECK(vector);
-  if (LIKELY(!full_matrix_)) {
+void Transform::TransformVector4(base::span<float, 4> vector) const {
+  DCHECK(!vector.empty());
+  if (!full_matrix_) [[likely]] {
     vector[0] = vector[0] * axis_2d_.scale().x() +
                 vector[3] * axis_2d_.translation().x();
     vector[1] = vector[1] * axis_2d_.scale().y() +
@@ -674,51 +742,53 @@ void Transform::TransformVector4(float vector[4]) const {
     for (int i = 0; i < 4; i++)
       vector[i] = ClampFloatGeometry(vector[i]);
   } else {
-    double v[4] = {vector[0], vector[1], vector[2], vector[3]};
-    matrix_.MapVector4(v);
+    std::array<double, 4> v = {vector[0], vector[1], vector[2], vector[3]};
+    matrix_.MapVector4(v.data());
     for (int i = 0; i < 4; i++)
       vector[i] = ClampFloatGeometry(v[i]);
   }
 }
 
-absl::optional<PointF> Transform::InverseMapPoint(const PointF& point) const {
-  if (LIKELY(!full_matrix_)) {
+std::optional<PointF> Transform::InverseMapPoint(const PointF& point) const {
+  if (!full_matrix_) [[likely]] {
     if (!axis_2d_.IsInvertible())
-      return absl::nullopt;
+      return std::nullopt;
     return axis_2d_.InverseMapPoint(point);
   }
   Matrix44 inverse(Matrix44::kUninitialized);
   if (!matrix_.GetInverse(inverse))
-    return absl::nullopt;
+    return std::nullopt;
   return MapPointInternal(inverse, point);
 }
 
-absl::optional<Point> Transform::InverseMapPoint(const Point& point) const {
-  if (absl::optional<PointF> point_f = InverseMapPoint(PointF(point)))
+std::optional<Point> Transform::InverseMapPoint(const Point& point) const {
+  if (std::optional<PointF> point_f = InverseMapPoint(PointF(point))) {
     return ToRoundedPoint(*point_f);
-  return absl::nullopt;
+  }
+  return std::nullopt;
 }
 
-absl::optional<Point3F> Transform::InverseMapPoint(const Point3F& point) const {
-  if (LIKELY(!full_matrix_)) {
+std::optional<Point3F> Transform::InverseMapPoint(const Point3F& point) const {
+  if (!full_matrix_) [[likely]] {
     if (!axis_2d_.IsInvertible())
-      return absl::nullopt;
+      return std::nullopt;
     PointF result = axis_2d_.InverseMapPoint(point.AsPointF());
     return Point3F(result.x(), result.y(), ClampFloatGeometry(point.z()));
   }
   Matrix44 inverse(Matrix44::kUninitialized);
   if (!matrix_.GetInverse(inverse))
-    return absl::nullopt;
-  return absl::make_optional(MapPointInternal(inverse, point));
+    return std::nullopt;
+  return std::make_optional(MapPointInternal(inverse, point));
 }
 
 RectF Transform::MapRect(const RectF& rect) const {
   if (IsIdentity())
     return rect;
 
-  if (LIKELY(!full_matrix_) && axis_2d_.scale().x() >= 0 &&
-      axis_2d_.scale().y() >= 0) {
-    return axis_2d_.MapRect(rect);
+  if (!full_matrix_) [[likely]] {
+    if (axis_2d_.scale().x() >= 0 && axis_2d_.scale().y() >= 0) {
+      return axis_2d_.MapRect(rect);
+    }
   }
 
   return MapQuad(QuadF(rect)).BoundingBox();
@@ -731,31 +801,32 @@ Rect Transform::MapRect(const Rect& rect) const {
   return ToEnclosingRect(MapRect(RectF(rect)));
 }
 
-absl::optional<RectF> Transform::InverseMapRect(const RectF& rect) const {
+std::optional<RectF> Transform::InverseMapRect(const RectF& rect) const {
   if (IsIdentity())
     return rect;
 
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     if (!axis_2d_.IsInvertible())
-      return absl::nullopt;
+      return std::nullopt;
     if (axis_2d_.scale().x() > 0 && axis_2d_.scale().y() > 0)
       return axis_2d_.InverseMapRect(rect);
   }
 
   Transform inverse;
   if (!GetInverse(&inverse))
-    return absl::nullopt;
+    return std::nullopt;
 
   return inverse.MapQuad(QuadF(rect)).BoundingBox();
 }
 
-absl::optional<Rect> Transform::InverseMapRect(const Rect& rect) const {
+std::optional<Rect> Transform::InverseMapRect(const Rect& rect) const {
   if (IsIdentity())
     return rect;
 
-  if (absl::optional<RectF> mapped = InverseMapRect(RectF(rect)))
+  if (std::optional<RectF> mapped = InverseMapRect(RectF(rect))) {
     return ToEnclosingRect(mapped.value());
-  return absl::nullopt;
+  }
+  return std::nullopt;
 }
 
 BoxF Transform::MapBox(const BoxF& box) const {
@@ -798,8 +869,9 @@ PointF Transform::ProjectPoint(const PointF& point, bool* clamped) const {
   if (clamped)
     *clamped = false;
 
-  if (LIKELY(!full_matrix_))
+  if (!full_matrix_) [[likely]] {
     return axis_2d_.MapPoint(point);
+  }
 
   if (!std::isnormal(matrix_.rc(2, 2))) {
     // In this case, the projection plane is parallel to the ray we are trying
@@ -859,11 +931,11 @@ QuadF Transform::ProjectQuad(const QuadF& quad) const {
   return projected_quad;
 }
 
-absl::optional<DecomposedTransform> Transform::Decompose() const {
-  if (LIKELY(!full_matrix_)) {
+std::optional<DecomposedTransform> Transform::Decompose() const {
+  if (!full_matrix_) [[likely]] {
     // Consider letting 2d decomposition always succeed.
     if (!axis_2d_.IsInvertible())
-      return absl::nullopt;
+      return std::nullopt;
     return axis_2d_.Decompose();
   }
   return matrix_.Decompose();
@@ -894,10 +966,10 @@ Transform Transform::Compose(const DecomposedTransform& decomp) {
 }
 
 bool Transform::Blend(const Transform& from, double progress) {
-  absl::optional<DecomposedTransform> to_decomp = Decompose();
+  std::optional<DecomposedTransform> to_decomp = Decompose();
   if (!to_decomp)
     return false;
-  absl::optional<DecomposedTransform> from_decomp = from.Decompose();
+  std::optional<DecomposedTransform> from_decomp = from.Decompose();
   if (!from_decomp)
     return false;
 
@@ -908,10 +980,10 @@ bool Transform::Blend(const Transform& from, double progress) {
 }
 
 bool Transform::Accumulate(const Transform& other) {
-  absl::optional<DecomposedTransform> this_decomp = Decompose();
+  std::optional<DecomposedTransform> this_decomp = Decompose();
   if (!this_decomp)
     return false;
-  absl::optional<DecomposedTransform> other_decomp = other.Decompose();
+  std::optional<DecomposedTransform> other_decomp = other.Decompose();
   if (!other_decomp)
     return false;
 
@@ -922,7 +994,7 @@ bool Transform::Accumulate(const Transform& other) {
 }
 
 void Transform::Round2dTranslationComponents() {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     axis_2d_ = AxisTransform2d::FromScaleAndTranslation(
         axis_2d_.scale(), Vector2dF(std::round(axis_2d_.translation().x()),
                                     std::round(axis_2d_.translation().y())));
@@ -932,8 +1004,19 @@ void Transform::Round2dTranslationComponents() {
   }
 }
 
+void Transform::Floor2dTranslationComponents() {
+  if (!full_matrix_) [[likely]] {
+    axis_2d_ = AxisTransform2d::FromScaleAndTranslation(
+        axis_2d_.scale(), Vector2dF(std::floor(axis_2d_.translation().x()),
+                                    std::floor(axis_2d_.translation().y())));
+  } else {
+    matrix_.set_rc(0, 3, std::floor(matrix_.rc(0, 3)));
+    matrix_.set_rc(1, 3, std::floor(matrix_.rc(1, 3)));
+  }
+}
+
 void Transform::RoundToIdentityOrIntegerTranslation() {
-  if (LIKELY(!full_matrix_)) {
+  if (!full_matrix_) [[likely]] {
     axis_2d_ = AxisTransform2d::FromScaleAndTranslation(
         Vector2dF(1, 1), Vector2dF(std::round(axis_2d_.translation().x()),
                                    std::round(axis_2d_.translation().y())));
@@ -1004,7 +1087,7 @@ bool Transform::ApproximatelyEqual(const gfx::Transform& transform,
             diff <= (std::abs(a) + std::abs(b)) * rel_scale_tolerance);
   };
 
-  if (LIKELY(!full_matrix_) && LIKELY(!transform.full_matrix_)) {
+  if (!full_matrix_ && !transform.full_matrix_) [[likely]] {
     return scale_approximately_equal(axis_2d_.scale().x(),
                                      transform.axis_2d_.scale().x()) &&
            scale_approximately_equal(axis_2d_.scale().y(),
@@ -1047,7 +1130,7 @@ std::string Transform::ToString() const {
 }
 
 std::string Transform::ToDecomposedString() const {
-  absl::optional<gfx::DecomposedTransform> decomp = Decompose();
+  std::optional<gfx::DecomposedTransform> decomp = Decompose();
   if (!decomp)
     return ToString() + "(degenerate)";
 

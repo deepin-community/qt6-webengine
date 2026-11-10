@@ -6,9 +6,9 @@
 
 #include "fxjs/xfa/cjx_draw.h"
 
+#include "core/fxcrt/check.h"
 #include "fxjs/fxv8.h"
 #include "fxjs/xfa/cfxjse_value.h"
-#include "third_party/base/check.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-value.h"
 #include "xfa/fxfa/parser/cxfa_draw.h"
@@ -41,12 +41,14 @@ void CJX_Draw::defaultValue(v8::Isolate* pIsolate,
     return;
   }
 
-  if (!pValue || !fxv8::IsString(*pValue))
+  if (!pValue || !fxv8::IsString(*pValue)) {
     return;
+  }
 
   DCHECK(GetXFANode()->IsWidgetReady());
-  if (GetXFANode()->GetFFWidgetType() != XFA_FFWidgetType::kText)
+  if (GetXFANode()->GetFFWidgetType() != XFA_FFWidgetType::kText) {
     return;
+  }
 
   WideString wsNewValue = fxv8::ReentrantToWideStringHelper(pIsolate, *pValue);
   SetContent(wsNewValue, wsNewValue, true, true, true);

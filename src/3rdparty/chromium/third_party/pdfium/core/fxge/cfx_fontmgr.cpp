@@ -6,46 +6,42 @@
 
 #include "core/fxge/cfx_fontmgr.h"
 
+#include <array>
 #include <iterator>
 #include <memory>
 #include <utility>
 
+#include "core/fxcrt/check_op.h"
 #include "core/fxcrt/fixed_size_data_vector.h"
 #include "core/fxge/cfx_fontmapper.h"
 #include "core/fxge/cfx_substfont.h"
 #include "core/fxge/fontdata/chromefontdata/chromefontdata.h"
 #include "core/fxge/fx_font.h"
 #include "core/fxge/systemfontinfo_iface.h"
-#include "third_party/base/check_op.h"
 
 namespace {
 
-struct BuiltinFont {
-  const uint8_t* m_pFontData;  // Raw, POD struct.
-  uint32_t m_dwSize;
-};
+const std::array<pdfium::span<const uint8_t>,
+                     CFX_FontMapper::kNumStandardFonts>
+    kFoxitFonts = {{
+        kFoxitFixedFontData,
+        kFoxitFixedBoldFontData,
+        kFoxitFixedBoldItalicFontData,
+        kFoxitFixedItalicFontData,
+        kFoxitSansFontData,
+        kFoxitSansBoldFontData,
+        kFoxitSansBoldItalicFontData,
+        kFoxitSansItalicFontData,
+        kFoxitSerifFontData,
+        kFoxitSerifBoldFontData,
+        kFoxitSerifBoldItalicFontData,
+        kFoxitSerifItalicFontData,
+        kFoxitSymbolFontData,
+        kFoxitDingbatsFontData,
+    }};
 
-constexpr BuiltinFont kFoxitFonts[] = {
-    {kFoxitFixedFontData, 17597},
-    {kFoxitFixedBoldFontData, 18055},
-    {kFoxitFixedBoldItalicFontData, 19151},
-    {kFoxitFixedItalicFontData, 18746},
-    {kFoxitSansFontData, 15025},
-    {kFoxitSansBoldFontData, 16344},
-    {kFoxitSansBoldItalicFontData, 16418},
-    {kFoxitSansItalicFontData, 16339},
-    {kFoxitSerifFontData, 19469},
-    {kFoxitSerifBoldFontData, 19395},
-    {kFoxitSerifBoldItalicFontData, 20733},
-    {kFoxitSerifItalicFontData, 21227},
-    {kFoxitSymbolFontData, 16729},
-    {kFoxitDingbatsFontData, 29513},
-};
-static_assert(std::size(kFoxitFonts) == CFX_FontMapper::kNumStandardFonts,
-              "Wrong font count");
-
-constexpr BuiltinFont kGenericSansFont = {kFoxitSansMMFontData, 66919};
-constexpr BuiltinFont kGenericSerifFont = {kFoxitSerifMMFontData, 113417};
+const pdfium::span<const uint8_t> kGenericSansFont = kFoxitSansMMFontData;
+const pdfium::span<const uint8_t> kGenericSerifFont = kFoxitSerifMMFontData;
 
 FXFT_LibraryRec* FTLibraryInitHelper() {
   FXFT_LibraryRec* pLibrary = nullptr;
@@ -56,25 +52,25 @@ FXFT_LibraryRec* FTLibraryInitHelper() {
 }  // namespace
 
 CFX_FontMgr::FontDesc::FontDesc(FixedSizeDataVector<uint8_t> data)
-    : m_pFontData(std::move(data)) {}
+    : font_data_(std::move(data)) {}
 
 CFX_FontMgr::FontDesc::~FontDesc() = default;
 
 void CFX_FontMgr::FontDesc::SetFace(size_t index, CFX_Face* face) {
-  CHECK_LT(index, std::size(m_TTCFaces));
-  m_TTCFaces[index].Reset(face);
+  CHECK_LT(index, std::size(ttc_faces_));
+  ttc_faces_[index].Reset(face);
 }
 
 CFX_Face* CFX_FontMgr::FontDesc::GetFace(size_t index) const {
-  CHECK_LT(index, std::size(m_TTCFaces));
-  return m_TTCFaces[index].Get();
+  CHECK_LT(index, std::size(ttc_faces_));
+  return ttc_faces_[index].Get();
 }
 
 CFX_FontMgr::CFX_FontMgr()
-    : m_FTLibrary(FTLibraryInitHelper()),
-      m_pBuiltinMapper(std::make_unique<CFX_FontMapper>(this)),
-      m_FTLibrarySupportsHinting(SetLcdFilterMode() ||
-                                 FreeTypeVersionSupportsHinting()) {}
+    : ft_library_(FTLibraryInitHelper()),
+      builtin_mapper_(std::make_unique<CFX_FontMapper>(this)),
+      ft_library_supports_hinting_(SetLcdFilterMode() ||
+                                   FreeTypeVersionSupportsHinting()) {}
 
 CFX_FontMgr::~CFX_FontMgr() = default;
 
@@ -82,8 +78,8 @@ RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::GetCachedFontDesc(
     const ByteString& face_name,
     int weight,
     bool bItalic) {
-  auto it = m_FaceMap.find({face_name, weight, bItalic});
-  return it != m_FaceMap.end() ? pdfium::WrapRetain(it->second.Get()) : nullptr;
+  auto it = face_map_.find({face_name, weight, bItalic});
+  return it != face_map_.end() ? pdfium::WrapRetain(it->second.Get()) : nullptr;
 }
 
 RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::AddCachedFontDesc(
@@ -91,17 +87,17 @@ RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::AddCachedFontDesc(
     int weight,
     bool bItalic,
     FixedSizeDataVector<uint8_t> data) {
-  auto pFontDesc = pdfium::MakeRetain<FontDesc>(std::move(data));
-  m_FaceMap[{face_name, weight, bItalic}].Reset(pFontDesc.Get());
-  return pFontDesc;
+  auto font_desc = pdfium::MakeRetain<FontDesc>(std::move(data));
+  face_map_[{face_name, weight, bItalic}].Reset(font_desc.Get());
+  return font_desc;
 }
 
 RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::GetCachedTTCFontDesc(
     size_t ttc_size,
     uint32_t checksum) {
-  auto it = m_TTCFaceMap.find({ttc_size, checksum});
-  return it != m_TTCFaceMap.end() ? pdfium::WrapRetain(it->second.Get())
-                                  : nullptr;
+  auto it = ttc_face_map_.find({ttc_size, checksum});
+  return it != ttc_face_map_.end() ? pdfium::WrapRetain(it->second.Get())
+                                   : nullptr;
 }
 
 RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::AddCachedTTCFontDesc(
@@ -109,7 +105,7 @@ RetainPtr<CFX_FontMgr::FontDesc> CFX_FontMgr::AddCachedTTCFontDesc(
     uint32_t checksum,
     FixedSizeDataVector<uint8_t> data) {
   auto pNewDesc = pdfium::MakeRetain<FontDesc>(std::move(data));
-  m_TTCFaceMap[{ttc_size, checksum}].Reset(pNewDesc.Get());
+  ttc_face_map_[{ttc_size, checksum}].Reset(pNewDesc.Get());
   return pNewDesc;
 }
 
@@ -117,41 +113,35 @@ RetainPtr<CFX_Face> CFX_FontMgr::NewFixedFace(RetainPtr<FontDesc> pDesc,
                                               pdfium::span<const uint8_t> span,
                                               size_t face_index) {
   RetainPtr<CFX_Face> face =
-      CFX_Face::New(m_FTLibrary.get(), std::move(pDesc), span,
+      CFX_Face::New(ft_library_.get(), std::move(pDesc), span,
                     static_cast<FT_Long>(face_index));
-  if (!face)
+  if (!face || !face->SetPixelSize(64, 64)) {
     return nullptr;
-
-  if (FT_Set_Pixel_Sizes(face->GetRec(), 64, 64) != 0)
-    return nullptr;
+  }
 
   return face;
 }
 
 // static
 pdfium::span<const uint8_t> CFX_FontMgr::GetStandardFont(size_t index) {
-  CHECK_LT(index, std::size(kFoxitFonts));
-  return pdfium::make_span(kFoxitFonts[index].m_pFontData,
-                           kFoxitFonts[index].m_dwSize);
+  return kFoxitFonts[index];
 }
 
 // static
 pdfium::span<const uint8_t> CFX_FontMgr::GetGenericSansFont() {
-  return pdfium::make_span(kGenericSansFont.m_pFontData,
-                           kGenericSansFont.m_dwSize);
+  return kGenericSansFont;
 }
 
 // static
 pdfium::span<const uint8_t> CFX_FontMgr::GetGenericSerifFont() {
-  return pdfium::make_span(kGenericSerifFont.m_pFontData,
-                           kGenericSerifFont.m_dwSize);
+  return kGenericSerifFont;
 }
 
 bool CFX_FontMgr::FreeTypeVersionSupportsHinting() const {
   FT_Int major;
   FT_Int minor;
   FT_Int patch;
-  FT_Library_Version(m_FTLibrary.get(), &major, &minor, &patch);
+  FT_Library_Version(ft_library_.get(), &major, &minor, &patch);
   // Freetype versions >= 2.8.1 support hinting even if subpixel rendering is
   // disabled. https://sourceforge.net/projects/freetype/files/freetype2/2.8.1/
   return major > 2 || (major == 2 && minor > 8) ||
@@ -159,6 +149,6 @@ bool CFX_FontMgr::FreeTypeVersionSupportsHinting() const {
 }
 
 bool CFX_FontMgr::SetLcdFilterMode() const {
-  return FT_Library_SetLcdFilter(m_FTLibrary.get(), FT_LCD_FILTER_DEFAULT) !=
+  return FT_Library_SetLcdFilter(ft_library_.get(), FT_LCD_FILTER_DEFAULT) !=
          FT_Err_Unimplemented_Feature;
 }

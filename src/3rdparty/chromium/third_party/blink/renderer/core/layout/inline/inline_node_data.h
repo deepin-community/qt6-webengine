@@ -18,12 +18,20 @@ class InlineItemsBuilderTemplate;
 struct CORE_EXPORT InlineNodeData final : InlineItemsData {
  public:
   InlineNodeData() = default;
+  // Returns true if `text_content` contains non-latin1 characters other than
+  // kObjectReplacementCharacter.
+  bool HasNonOrc16BitCharacters() const { return has_non_orc_16bit_; }
   bool IsBidiEnabled() const { return is_bidi_enabled_; }
   TextDirection BaseDirection() const {
     return static_cast<TextDirection>(base_direction_);
   }
+  void DisableBidi();
 
   bool HasFloats() const { return has_floats_; }
+  bool HasOutOfFlowPositioned() const { return has_out_of_flow_positioned_; }
+  bool HasFloatingOrOutOfFlowPositioned() const {
+    return HasFloats() || HasOutOfFlowPositioned();
+  }
   bool HasInitialLetterBox() const { return has_initial_letter_box_; }
   bool HasRuby() const { return has_ruby_; }
 
@@ -39,6 +47,8 @@ struct CORE_EXPORT InlineNodeData final : InlineItemsData {
   bool IsScoreLineBreakDisabled() const {
     return is_score_line_break_disabled_;
   }
+
+  bool HasFirstLineItems() const { return first_line_items_; }
 
   const InlineItemsData& ItemsData(bool is_first_line) const {
     return !is_first_line || !first_line_items_ ? (const InlineItemsData&)*this
@@ -69,10 +79,12 @@ struct CORE_EXPORT InlineNodeData final : InlineItemsData {
 
   Member<SvgInlineNodeData> svg_node_data_;
 
+  unsigned has_non_orc_16bit_ : 1;
   unsigned is_bidi_enabled_ : 1;
   unsigned base_direction_ : 1;  // TextDirection
 
   unsigned has_floats_ : 1;
+  unsigned has_out_of_flow_positioned_ : 1;
 
   // True if this node contains initial letter box. This value is used for
   // clearing. To control whether subsequent blocks overlap with initial

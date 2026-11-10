@@ -15,9 +15,6 @@ def ruy_copts_warnings():
             "-Wall",
             # Some clang-based Windows toolchains have more warnings in -Wextra.
             "-Wextra",
-            # TensorFlow is C++14 at the moment. This flag ensures that we warn
-            # on any code that isn't C++14, but MSVC does not support it.
-            "-Wc++14-compat",
             # Warn on preprocessor expansion of an undefined token, e.g. catching
             # typos such as `#ifdef __linus__` instead of `#ifdef __linux__`.
             # Not supported by MSVC.
@@ -57,14 +54,12 @@ def ruy_copts():
 def ruy_copts_avx():
     return select({
         "//ruy:x86_64_and_not_msvc": ["-mavx"],
-        "//tools/cc_target_os:windows_msvc": ["/arch:AVX"],
         "//conditions:default": [],
     })
 
 def ruy_copts_avx2_fma():
     return select({
         "//ruy:x86_64_and_not_msvc": ["-mavx2", "-mfma"],
-        "//tools/cc_target_os:windows_msvc": ["/arch:AVX2"],
         "//conditions:default": [],
     })
 
@@ -74,6 +69,5 @@ def ruy_copts_avx512():
     # in optimized builds (-c opt).
     return select({
         "//ruy:x86_64_and_not_msvc": ["$(STACK_FRAME_UNLIMITED)", "-mavx512f", "-mavx512vl", "-mavx512cd", "-mavx512bw", "-mavx512dq"],
-        "//tools/cc_target_os:windows_msvc": ["/arch:AVX512"],
         "//conditions:default": [],
     })

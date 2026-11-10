@@ -8,7 +8,9 @@
 #include <stdint.h>
 
 #include <ostream>
+#include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/hash/hash.h"
 #include "base/rand_util.h"
@@ -73,23 +75,11 @@ Uuid Uuid::GenerateRandomV4() {
 }
 
 // static
-Uuid Uuid::FormatRandomDataAsV4(
-    base::span<const uint8_t, 16> input,
-    base::PassKey<content::FileSystemAccessManagerImpl> /*pass_key*/) {
-  return FormatRandomDataAsV4Impl(input);
-}
-
-// static
-Uuid Uuid::FormatRandomDataAsV4ForTesting(base::span<const uint8_t, 16> input) {
-  return FormatRandomDataAsV4Impl(input);
-}
-
-// static
 Uuid Uuid::FormatRandomDataAsV4Impl(base::span<const uint8_t, 16> input) {
   DCHECK_EQ(input.size_bytes(), kGuidV4InputLength);
 
   uint64_t sixteen_bytes[2];
-  memcpy(&sixteen_bytes, input.data(), sizeof(sixteen_bytes));
+  UNSAFE_TODO(memcpy(&sixteen_bytes, input.data(), sizeof(sixteen_bytes)));
 
   // Set the Uuid to version 4 as described in RFC 4122, section 4.4.
   // The format of Uuid version 4 must be xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx,
@@ -99,8 +89,8 @@ Uuid Uuid::FormatRandomDataAsV4Impl(base::span<const uint8_t, 16> input) {
   sixteen_bytes[0] &= 0xffffffff'ffff0fffULL;
   sixteen_bytes[0] |= 0x00000000'00004000ULL;
 
-  // Set the two most significant bits (bits 6 and 7) of the
-  // clock_seq_hi_and_reserved to zero and one, respectively:
+  // Clear bit 65 and set bit 64, to set the 'var' field to 0b10 per RFC 9562
+  // section 5.4.
   sixteen_bytes[1] &= 0x3fffffff'ffffffffULL;
   sixteen_bytes[1] |= 0x80000000'00000000ULL;
 
@@ -116,28 +106,28 @@ Uuid Uuid::FormatRandomDataAsV4Impl(base::span<const uint8_t, 16> input) {
 }
 
 // static
-Uuid Uuid::ParseCaseInsensitive(StringPiece input) {
+Uuid Uuid::ParseCaseInsensitive(std::string_view input) {
   Uuid uuid;
   uuid.lowercase_ = GetCanonicalUuidInternal(input, /*strict=*/false);
   return uuid;
 }
 
 // static
-Uuid Uuid::ParseCaseInsensitive(StringPiece16 input) {
+Uuid Uuid::ParseCaseInsensitive(std::u16string_view input) {
   Uuid uuid;
   uuid.lowercase_ = GetCanonicalUuidInternal(input, /*strict=*/false);
   return uuid;
 }
 
 // static
-Uuid Uuid::ParseLowercase(StringPiece input) {
+Uuid Uuid::ParseLowercase(std::string_view input) {
   Uuid uuid;
   uuid.lowercase_ = GetCanonicalUuidInternal(input, /*strict=*/true);
   return uuid;
 }
 
 // static
-Uuid Uuid::ParseLowercase(StringPiece16 input) {
+Uuid Uuid::ParseLowercase(std::u16string_view input) {
   Uuid uuid;
   uuid.lowercase_ = GetCanonicalUuidInternal(input, /*strict=*/true);
   return uuid;
@@ -162,7 +152,7 @@ std::ostream& operator<<(std::ostream& out, const Uuid& uuid) {
 }
 
 size_t UuidHash::operator()(const Uuid& uuid) const {
-  // TODO(crbug.com/1026195): Avoid converting to string to take the hash when
+  // TODO(crbug.com/40108138): Avoid converting to string to take the hash when
   // the internal type is migrated to a non-string type.
   return FastHash(uuid.AsLowercaseString());
 }

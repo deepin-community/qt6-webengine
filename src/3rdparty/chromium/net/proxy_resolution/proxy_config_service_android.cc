@@ -23,9 +23,11 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/proxy_server.h"
 #include "net/base/proxy_string_util.h"
-#include "net/net_jni_headers/ProxyChangeListener_jni.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "url/third_party/mozilla/url_parse.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "net/net_jni_headers/ProxyChangeListener_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -222,8 +224,7 @@ std::string ParseOverrideRules(
       return "Invalid Proxy URL: " + rule.proxy_url;
     } else if (proxy_chain.is_multi_proxy()) {
       return "Unsupported multi proxy chain: " + rule.proxy_url;
-    } else if (proxy_chain.is_single_proxy() &&
-               proxy_chain.GetProxyServer(/*chain_index=*/0).is_quic()) {
+    } else if (proxy_chain.is_single_proxy() && proxy_chain.First().is_quic()) {
       return "Unsupported proxy scheme: " + rule.proxy_url;
     }
 
@@ -430,7 +431,6 @@ class ProxyConfigServiceAndroid::Delegate
     // ProxyConfigServiceAndroid::JNIDelegate overrides.
     void ProxySettingsChangedTo(
         JNIEnv* env,
-        const JavaParamRef<jobject>& jself,
         const JavaParamRef<jstring>& jhost,
         jint jport,
         const JavaParamRef<jstring>& jpac_url,
@@ -438,15 +438,14 @@ class ProxyConfigServiceAndroid::Delegate
       std::string host = ConvertJavaStringToUTF8(env, jhost);
       std::string pac_url;
       if (jpac_url)
-        ConvertJavaStringToUTF8(env, jpac_url, &pac_url);
+        pac_url = ConvertJavaStringToUTF8(env, jpac_url);
       std::vector<std::string> exclusion_list;
       base::android::AppendJavaStringArrayToStringVector(
           env, jexclusion_list, &exclusion_list);
       delegate_->ProxySettingsChangedTo(host, jport, pac_url, exclusion_list);
     }
 
-    void ProxySettingsChanged(JNIEnv* env,
-                              const JavaParamRef<jobject>& self) override {
+    void ProxySettingsChanged(JNIEnv* env) override {
       delegate_->ProxySettingsChanged();
     }
 

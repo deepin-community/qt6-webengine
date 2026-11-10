@@ -36,16 +36,19 @@ PartialData::PartialData() = default;
 PartialData::~PartialData() = default;
 
 bool PartialData::Init(const HttpRequestHeaders& headers) {
-  std::string range_header;
-  if (!headers.GetHeader(HttpRequestHeaders::kRange, &range_header)) {
+  std::optional<std::string> range_header =
+      headers.GetHeader(HttpRequestHeaders::kRange);
+  if (!range_header) {
     range_requested_ = false;
     return false;
   }
   range_requested_ = true;
 
   std::vector<HttpByteRange> ranges;
-  if (!HttpUtil::ParseRangeHeader(range_header, &ranges) || ranges.size() != 1)
+  if (!HttpUtil::ParseRangeHeader(range_header.value(), &ranges) ||
+      ranges.size() != 1) {
     return false;
+  }
 
   // We can handle this range request.
   byte_range_ = ranges[0];
@@ -180,6 +183,17 @@ bool PartialData::UpdateFromStoredHeaders(const HttpResponseHeaders* headers,
                                           disk_cache::Entry* entry,
                                           bool truncated,
                                           bool writing_in_progress) {
+  // Vary: range is a very confusing for us when we're gluing things
+  // together, so just give up on it.
+  size_t iter = 0;
+  constexpr std::string_view name = "vary";
+  std::optional<std::string_view> vary_entry;
+  while ((vary_entry = headers->EnumerateHeader(&iter, name))) {
+    if (base::EqualsCaseInsensitiveASCII(vary_entry.value(), "range")) {
+      return false;
+    }
+  }
+
   resource_size_ = 0;
   if (truncated) {
     DCHECK_EQ(headers->response_code(), 200);
@@ -222,7 +236,7 @@ bool PartialData::UpdateFromStoredHeaders(const HttpResponseHeaders* headers,
     return true;
   }
 
-  sparse_entry_ = (headers->response_code() == net::HTTP_PARTIAL_CONTENT);
+  sparse_entry_ = (headers->response_code() == HTTP_PARTIAL_CONTENT);
 
   if (writing_in_progress || sparse_entry_) {
     // |writing_in_progress| means another Transaction is still fetching the
@@ -288,7 +302,7 @@ bool PartialData::IsRequestedRangeOK() {
 }
 
 bool PartialData::ResponseHeadersOK(const HttpResponseHeaders* headers) {
-  if (headers->response_code() == net::HTTP_NOT_MODIFIED) {
+  if (headers->response_code() == HTTP_NOT_MODIFIED) {
     if (!byte_range_.IsValid() || truncated_)
       return true;
 
@@ -371,7 +385,7 @@ void PartialData::FixResponseHeaders(HttpResponseHeaders* headers,
   if (byte_range_.IsValid() && resource_size_) {
     headers->UpdateWithNewRange(byte_range_, resource_size_, !sparse_entry_);
   } else {
-    if (headers->response_code() == net::HTTP_PARTIAL_CONTENT) {
+    if (headers->response_code() == HTTP_PARTIAL_CONTENT) {
       // TODO(rvargas): Is it safe to change the protocol version?
       headers->ReplaceStatusLine("HTTP/1.1 200 OK");
     }

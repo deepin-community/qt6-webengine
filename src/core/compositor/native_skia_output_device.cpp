@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "native_skia_output_device.h"
 
@@ -13,13 +14,29 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/skia_utils.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
 #include "third_party/skia/include/core/SkSurfaceProps.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gl/gl_fence.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(ENABLE_VULKAN)
+#include "ui/base/ozone_buildflags.h"
+#if BUILDFLAG(IS_OZONE_X11)
+// We need to define USE_VULKAN_XCB for proper vulkan function pointers.
+// Avoiding it may lead to call wrong vulkan functions.
+// This is originally defined in chromium/gpu/vulkan/BUILD.gn.
+#if !defined(USE_VULKAN_XCB)
+#define USE_VULKAN_XCB
+#endif
+#endif
+#include "components/viz/common/gpu/vulkan_context_provider.h"
+#include "gpu/vulkan/vulkan_device_queue.h"
+#include "gpu/vulkan/vulkan_function_pointers.h"
+#endif
+
+#if BUILDFLAG(IS_OZONE)
+#include "ozone/gl_ozone_qt.h"
+
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
@@ -41,8 +58,8 @@ NativeSkiaOutputDevice::NativeSkiaOutputDevice(
         gpu::SharedImageFactory *shared_image_factory,
         gpu::SharedImageRepresentationFactory *shared_image_representation_factory,
         DidSwapBufferCompleteCallback didSwapBufferCompleteCallback)
-    : SkiaOutputDevice(contextState->gr_context(), contextState->graphite_context(), memoryTracker,
-                       didSwapBufferCompleteCallback)
+    : SkiaOutputDevice(contextState->gr_context(), contextState->graphite_shared_context(),
+                       memoryTracker, didSwapBufferCompleteCallback)
     , Compositor(Type::Native)
     , m_contextState(contextState)
     , m_requiresAlpha(requiresAlpha)
@@ -50,21 +67,39 @@ NativeSkiaOutputDevice::NativeSkiaOutputDevice(
     , m_representationFactory(shared_image_representation_factory)
     , m_deps(dependency)
 {
+    qCDebug(lcWebEngineCompositor, "Skia Graphics Context Type: %s",
+            gpu::GrContextTypeToString(contextState->gr_context_type()).c_str());
+
     capabilities_.uses_default_gl_framebuffer = false;
     capabilities_.supports_surfaceless = true;
+    capabilities_.supports_viewporter = true;
     capabilities_.output_surface_origin = gfx::SurfaceOrigin::kTopLeft;
-    capabilities_.preserve_buffer_content = true;
-    capabilities_.only_invalidates_damage_rect = false;
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
     m_isNativeBufferSupported = ui::OzonePlatform::GetInstance()
                                         ->GetPlatformRuntimeProperties()
                                         .supports_native_pixmaps;
+    qCDebug(lcWebEngineCompositor, "Native Buffer Supported: %s",
+            m_isNativeBufferSupported ? "yes" : "no");
+
+    auto typeToString = [](ui::NativePixmapSupportType type) -> const char * {
+        switch (type) {
+        case ui::NativePixmapSupportType::kDMABuf:
+            return "DMABuf";
+        case ui::NativePixmapSupportType::kX11Pixmap:
+            return "X11Pixmap";
+        default:
+            return "None";
+        }
+    };
+    qCDebug(lcWebEngineCompositor, "Native Pixmap Support Type: %s",
+            typeToString(ui::GLOzoneQt::getNativePixmapSupportType()));
 #endif
 }
 
 NativeSkiaOutputDevice::~NativeSkiaOutputDevice()
 {
+    unbind();
 }
 
 void NativeSkiaOutputDevice::SetFrameSinkId(const viz::FrameSinkId &id)
@@ -72,18 +107,14 @@ void NativeSkiaOutputDevice::SetFrameSinkId(const viz::FrameSinkId &id)
     bind(id);
 }
 
-bool NativeSkiaOutputDevice::Reshape(const SkImageInfo &image_info,
-                                     const gfx::ColorSpace &colorSpace,
-                                     int sample_count,
-                                     float device_scale_factor,
-                                     gfx::OverlayTransform transform)
+bool NativeSkiaOutputDevice::Reshape(const ReshapeParams &params)
 {
-    m_shape = Shape{image_info, device_scale_factor, colorSpace, sample_count};
-    DCHECK_EQ(transform, gfx::OVERLAY_TRANSFORM_NONE);
+    m_shape = Shape{ params.image_info, params.device_scale_factor, params.color_space, params.sample_count };
+    DCHECK_EQ(params.transform, gfx::OVERLAY_TRANSFORM_NONE);
     return true;
 }
 
-void NativeSkiaOutputDevice::Present(const absl::optional<gfx::Rect> &update_rect,
+void NativeSkiaOutputDevice::Present(const std::optional<gfx::Rect> &update_rect,
                                      BufferPresentedCallback feedback,
                                      viz::OutputSurfaceFrame frame)
 {
@@ -98,9 +129,7 @@ void NativeSkiaOutputDevice::Present(const absl::optional<gfx::Rect> &update_rec
         std::swap(m_middleBuffer, m_backBuffer);
         m_readyToUpdate = true;
     }
-
-    if (auto obs = observer())
-        obs->readyToSwap();
+    readyToSwap();
 }
 
 void NativeSkiaOutputDevice::EnsureBackbuffer()
@@ -122,6 +151,9 @@ SkSurface *NativeSkiaOutputDevice::BeginPaint(std::vector<GrBackendSemaphore> *e
         }
     }
     auto surface = m_backBuffer->beginWriteSkia();
+    if (!surface)
+        return nullptr;
+
     *end_semaphores = m_backBuffer->takeEndWriteSkiaSemaphores();
     return surface;
 }
@@ -162,6 +194,11 @@ void NativeSkiaOutputDevice::releaseTexture()
         m_frontBuffer->endPresent();
         m_readyWithTexture = false;
     }
+}
+
+bool NativeSkiaOutputDevice::hasResources()
+{
+    return m_frontBuffer && m_frontBuffer->textureCleanupCallback;
 }
 
 void NativeSkiaOutputDevice::releaseResources()
@@ -209,33 +246,63 @@ NativeSkiaOutputDevice::Buffer::Buffer(NativeSkiaOutputDevice *parent)
 
 NativeSkiaOutputDevice::Buffer::~Buffer()
 {
+    // FIXME: Can't be called in case of threaded rendering with unexposed window.
+    //DCHECK(!textureCleanupCallback);
+    if (textureCleanupCallback)
+        qWarning("NativeSkiaOutputDevice: Leaking graphics resources.");
+
     if (m_scopedSkiaWriteAccess)
         endWriteSkia(false);
+
+#if BUILDFLAG(ENABLE_VULKAN)
+    if (m_vkFence != VK_NULL_HANDLE) {
+        auto *vkfp = gpu::GetVulkanFunctionPointers();
+        VkResult result = vkfp->vkWaitForFences(m_vkDevice, 1, &m_vkFence, VK_TRUE,
+                                                5'000'000'000ull /* 5s */);
+        if (result == VK_TIMEOUT)
+            qWarning("VkFence wait timed out in ~Buffer(), destroying anyway (device lost?)");
+        vkfp->vkDestroyFence(m_vkDevice, m_vkFence, nullptr);
+        m_vkFence = VK_NULL_HANDLE;
+    }
+#endif
 
     if (!m_mailbox.IsZero() && m_parent->m_factory)
         m_parent->m_factory->DestroySharedImage(m_mailbox);
 }
 
 // The following Buffer methods are based on
-// components/viz/service/display_embedder/output_presenter.cc: Copyright 2020 The Chromium Authors
+// components/viz/service/display_embedder/output_presenter_gl.cc: Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 bool NativeSkiaOutputDevice::Buffer::initialize()
 {
-    uint32_t kDefaultSharedImageUsage = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ
-            | gpu::SHARED_IMAGE_USAGE_DISPLAY_WRITE
-            | gpu::SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT;
+    qCDebug(lcWebEngineCompositor, "Initializing buffer %p with SharedImage:", this);
+
+    gpu::SharedImageUsageSet sharedImageUsage =
+            gpu::SHARED_IMAGE_USAGE_DISPLAY_READ
+          | gpu::SHARED_IMAGE_USAGE_DISPLAY_WRITE;
+    if (m_parent->m_contextState->gr_context_type() == gpu::GrContextType::kGL)
+        sharedImageUsage |= gpu::SHARED_IMAGE_USAGE_GLES2_READ;
     if (m_parent->m_isNativeBufferSupported)
-        kDefaultSharedImageUsage |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+        sharedImageUsage |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
 
-    auto mailbox = gpu::Mailbox::GenerateForSharedImage();
+    qCDebug(lcWebEngineCompositor, "  Usage: %s",
+            gpu::CreateLabelForSharedImageUsage(sharedImageUsage).c_str());
+    qCDebug(lcWebEngineCompositor, "  Pixels size: %dx%d", m_shape.imageInfo.width(),
+            m_shape.imageInfo.height());
 
-    SkColorType skColorType = m_shape.imageInfo.colorType();
+    auto mailbox = gpu::Mailbox::Generate();
+
+    const SkColorType skColorType = m_shape.imageInfo.colorType();
+    const viz::SharedImageFormat sharedImageFormat =
+            viz::SkColorTypeToSinglePlaneSharedImageFormat(skColorType);
+    qCDebug(lcWebEngineCompositor, "  Format: %s", sharedImageFormat.ToString().c_str());
+
     if (!m_parent->m_factory->CreateSharedImage(
-                mailbox, viz::SkColorTypeToSinglePlaneSharedImageFormat(skColorType),
+                mailbox, sharedImageFormat,
                 { m_shape.imageInfo.width(), m_shape.imageInfo.height() }, m_shape.colorSpace,
                 kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, m_parent->m_deps->GetSurfaceHandle(),
-                kDefaultSharedImageUsage, "QWE_SharedImageBuffer")) {
+                sharedImageUsage, "QWE_SharedImageBuffer")) {
         LOG(ERROR) << "CreateSharedImage failed.";
         return false;
     }
@@ -247,6 +314,7 @@ bool NativeSkiaOutputDevice::Buffer::initialize()
         LOG(ERROR) << "ProduceSkia() failed.";
         return false;
     }
+    qCDebug(lcWebEngineCompositor, "  Backing: %s", m_skiaRepresentation->backing_name());
 
     if (m_parent->m_isNativeBufferSupported) {
         m_overlayRepresentation = m_parent->m_representationFactory->ProduceOverlay(m_mailbox);
@@ -262,6 +330,7 @@ bool NativeSkiaOutputDevice::Buffer::initialize()
 SkSurface *NativeSkiaOutputDevice::Buffer::beginWriteSkia()
 {
     DCHECK(!m_scopedSkiaWriteAccess);
+    DCHECK(!m_scopedOverlayReadAccess);
     DCHECK(!m_presentCount);
     DCHECK(m_endSemaphores.empty());
 
@@ -273,7 +342,10 @@ SkSurface *NativeSkiaOutputDevice::Buffer::beginWriteSkia()
     m_scopedSkiaWriteAccess = m_skiaRepresentation->BeginScopedWriteAccess(
             m_shape.sampleCount, surface_props, &beginSemaphores, &m_endSemaphores,
             gpu::SharedImageRepresentation::AllowUnclearedAccess::kYes);
-    DCHECK(m_scopedSkiaWriteAccess);
+    if (!m_scopedSkiaWriteAccess) {
+        qWarning("SKIA: Failed to begin write access.");
+        return nullptr;
+    }
     if (!beginSemaphores.empty()) {
         m_scopedSkiaWriteAccess->surface()->wait(beginSemaphores.size(), beginSemaphores.data(),
                                                  /*deleteSemaphoresAfterWait=*/false);
@@ -381,9 +453,64 @@ void NativeSkiaOutputDevice::Buffer::freeTexture()
 
 void NativeSkiaOutputDevice::Buffer::createFence()
 {
-    // For some reason we still need to create this, but we do not need to wait on it.
-    if (m_parent->m_contextState->gr_context_type() == gpu::GrContextType::kGL)
+    if (m_parent->m_contextState->gr_context_type() == gpu::GrContextType::kGL) {
+        // For some reason we still need to create this, but we do not need to wait on it.
         m_fence = gl::GLFence::Create();
+    }
+#if BUILDFLAG(ENABLE_VULKAN)
+    else if (m_parent->m_contextState->gr_context_type() == gpu::GrContextType::kVulkan) {
+        auto *vkfp = gpu::GetVulkanFunctionPointers();
+
+        // Clean up previous fence if buffer was reused without consumption.
+        if (m_vkFence != VK_NULL_HANDLE) {
+            VkResult fenceResult = vkfp->vkWaitForFences(m_vkDevice, 1, &m_vkFence, VK_TRUE,
+                                                         5'000'000'000ull /* 5s */);
+            if (fenceResult == VK_TIMEOUT)
+                qWarning("VkFence wait timed out in createFence(), destroying anyway (device "
+                         "lost?)");
+            vkfp->vkDestroyFence(m_vkDevice, m_vkFence, nullptr);
+            m_vkFence = VK_NULL_HANDLE;
+        }
+
+        auto *vkContextProvider = m_parent->m_contextState->vk_context_provider();
+        if (!vkContextProvider)
+            return;
+
+        gpu::VulkanDeviceQueue *vulkanDeviceQueue = vkContextProvider->GetDeviceQueue();
+        if (!vulkanDeviceQueue)
+            return;
+
+        m_vkDevice = vulkanDeviceQueue->GetVulkanDevice();
+
+        VkFenceCreateInfo fenceCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+        };
+        VkResult result = vkfp->vkCreateFence(m_vkDevice, &fenceCreateInfo, nullptr, &m_vkFence);
+        if (result != VK_SUCCESS) {
+            qWarning("Failed to create VkFence");
+            m_vkFence = VK_NULL_HANDLE;
+            return;
+        }
+
+        // Submit empty batch with fence to ensure that the fence is signaled after all previous
+        // work is done. Same pattern as gpu::VulkanFenceHelper::GenerateCleanupFence(). Acquire the
+        // per-queue lock (matches the inline vkQueueSubmit wrapper).
+        VkQueue vkQueue = vulkanDeviceQueue->GetVulkanQueue();
+        gpu::VulkanQueueLock *queueLock = nullptr;
+        auto it = vkfp->per_queue_lock_map.find(vkQueue);
+        if (it != vkfp->per_queue_lock_map.end())
+            queueLock = it->second.get();
+        gpu::VulkanQueueAutoLockMaybe autoLock(queueLock);
+        result = vkfp->vkQueueSubmit(vkQueue, 0, nullptr, m_vkFence);
+        if (result != VK_SUCCESS) {
+            qWarning("vkQueueSubmit for fence failed");
+            vkfp->vkDestroyFence(m_vkDevice, m_vkFence, nullptr);
+            m_vkFence = VK_NULL_HANDLE;
+        }
+    }
+#endif
 }
 
 void NativeSkiaOutputDevice::Buffer::consumeFence()
@@ -392,6 +519,14 @@ void NativeSkiaOutputDevice::Buffer::consumeFence()
         m_acquireFence->Wait();
         m_acquireFence.reset();
     }
+#if BUILDFLAG(ENABLE_VULKAN)
+    if (m_vkFence != VK_NULL_HANDLE) {
+        auto *vkfp = gpu::GetVulkanFunctionPointers();
+        vkfp->vkWaitForFences(m_vkDevice, 1, &m_vkFence, VK_TRUE, 5'000'000'000ull /* 5s */);
+        vkfp->vkDestroyFence(m_vkDevice, m_vkFence, nullptr);
+        m_vkFence = VK_NULL_HANDLE;
+    }
+#endif
 }
 
 sk_sp<SkImage> NativeSkiaOutputDevice::Buffer::skImage()
@@ -399,7 +534,7 @@ sk_sp<SkImage> NativeSkiaOutputDevice::Buffer::skImage()
     QMutexLocker locker(&m_skImageMutex);
     return m_cachedSkImage;
 }
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 scoped_refptr<gfx::NativePixmap> NativeSkiaOutputDevice::Buffer::nativePixmap()
 {
     DCHECK(m_presentCount);
@@ -409,7 +544,7 @@ scoped_refptr<gfx::NativePixmap> NativeSkiaOutputDevice::Buffer::nativePixmap()
     return m_scopedOverlayReadAccess->GetNativePixmap();
 }
 #elif defined(Q_OS_WIN)
-absl::optional<gl::DCLayerOverlayImage> NativeSkiaOutputDevice::Buffer::overlayImage() const
+std::optional<gl::DCLayerOverlayImage> NativeSkiaOutputDevice::Buffer::overlayImage() const
 {
     DCHECK(m_presentCount);
     return m_scopedOverlayReadAccess->GetDCLayerOverlayImage();

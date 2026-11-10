@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -21,6 +22,7 @@
 #include <QtCore/QUrl>
 #include <QtCore/QVariant>
 #include <QtCore/QPointer>
+#include <QtCore/QQueue>
 #include <QtGui/qtgui-config.h>
 #include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 #include <QtWebEngineCore/qwebenginecontextmenurequest.h>
@@ -48,6 +50,7 @@ namespace content {
 class WebContents;
 class SiteInstance;
 class RenderFrameHost;
+struct GlobalRenderFrameHostToken;
 }
 
 QT_BEGIN_NAMESPACE
@@ -141,7 +144,7 @@ public:
     void setZoomFactor(qreal);
     qreal currentZoomFactor() const;
     void runJavaScript(const QString &javaScript, quint32 worldId, quint64 frameId,
-                       const std::function<void(const QVariant &)> &callback);
+                       QtPrivate::SlotObjUniquePtr callback);
     void didRunJavaScript(quint64 requestId, const base::Value &result);
     void clearJavaScriptCallbacks();
     quint64 fetchDocumentMarkup();
@@ -179,11 +182,9 @@ public:
     void devToolsFrontendDestroyed(DevToolsFrontendQt *frontend);
     QString devToolsId();
 
-    void setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType, QWebEnginePermission::State state);
-    QWebEnginePermission::State getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType);
-
-    void grantMediaAccessPermission(const QUrl &origin, WebContentsAdapterClient::MediaRequestFlags flags);
-    void grantMouseLockPermission(const QUrl &origin, bool granted);
+    void setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
+        QWebEnginePermission::State state, int childId = -1, const std::string &serializedToken = std::string());
+    void grantMouseLockPermission(const QUrl &origin, int childId, const std::string &serializedToken, bool granted);
     void handlePendingMouseLockPermission();
 
     void setBackgroundColor(const QColor &color);
@@ -210,10 +211,10 @@ public:
     void leaveDrag();
 #endif // QT_CONFIG(draganddrop)
     void printToPDF(const QPageLayout &, const QPageRanges &, const QString &, quint64 frameId);
-    void printToPDFCallbackResult(std::function<void(QSharedPointer<QByteArray>)> &&,
+    void printToPDFCallbackResult(QtPrivate::SlotObjUniquePtr callback,
                                   const QPageLayout &, const QPageRanges &, bool colorMode,
-                                  bool useCustomMargins, quint64 frameId);
-    void didPrintPage(quint64 requestId, QSharedPointer<QByteArray> result);
+                                  quint64 frameId);
+    void didPrintPage(quint64 requestId, std::shared_ptr<QByteArray> result);
 
     void replaceMisspelling(const QString &word);
     void viewSource();
@@ -272,9 +273,9 @@ private:
 #endif
     WebContentsAdapterClient *m_adapterClient;
     quint64 m_nextRequestId;
-    QMap<QUrl, bool> m_pendingMouseLockPermissions;
-    QMap<quint64, std::function<void(const QVariant &)>> m_javaScriptCallbacks;
-    std::map<quint64, std::function<void(QSharedPointer<QByteArray>)>> m_printCallbacks;
+    QQueue<std::tuple<QUrl, bool, int, std::string>> m_pendingMouseLockPermissions;
+    std::map<quint64, QtPrivate::SlotObjUniquePtr> m_javaScriptCallbacks;
+    std::map<quint64, QtPrivate::SlotObjUniquePtr> m_printCallbacks;
     std::unique_ptr<content::DropData> m_currentDropData;
     uint m_currentDropAction;
     bool m_updateDragActionCalled;

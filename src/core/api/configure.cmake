@@ -11,31 +11,17 @@ if(NOT QT_CONFIGURE_RUNNING)
         pkg_check_modules(ALSA alsa IMPORTED_TARGET)
         pkg_check_modules(PULSEAUDIO libpulse>=0.9.10 libpulse-mainloop-glib)
         pkg_check_modules(XDAMAGE xdamage)
-        pkg_check_modules(POPPLER_CPP poppler-cpp IMPORTED_TARGET)
         pkg_check_modules(GBM gbm)
         pkg_check_modules(LIBVA libva>=1.14)
         if(NOT GIO_FOUND)
             pkg_check_modules(GIO gio-2.0)
         endif()
     endif()
-    find_package(Qt6 ${PROJECT_VERSION} CONFIG QUIET
+    find_package(Qt6 ${Qt6BuildInternals_VERSION} CONFIG QUIET
         OPTIONAL_COMPONENTS Positioning WebChannel PrintSupport)
 endif()
 
 #### Tests
-
-qt_config_compile_test(poppler
-    LABEL "poppler"
-    LIBRARIES
-        PkgConfig::POPPLER_CPP
-    CODE
-"
-#include <poppler-document.h>
-
-int main() {
-   auto *pdf = poppler::document::load_from_raw_data(\"file\",100,std::string(\"user\"));
-}"
-)
 
 qt_config_compile_test(alsa
     LABEL "alsa"
@@ -48,6 +34,20 @@ qt_config_compile_test(alsa
 #error Alsa version found too old, require >= 1.0.10
 #endif
 int main(){};
+")
+
+qt_config_compile_test(udot
+    LABEL "udot on arm64"
+    CODE
+"
+static_assert(__aarch64__);
+static void test_dot_prod(){
+asm volatile (
+\"udot v0.4s, v4.16b, v16.16b\"
+:
+:
+: \"v0\",\"v4\",\"v16\");
+}
 ")
 
 #### Features
@@ -65,6 +65,9 @@ qt_feature("webengine-system-alsa" PRIVATE
 qt_feature("webengine-v8-context-snapshot" PRIVATE
     LABEL "Use v8 context snapshot"
     AUTODETECT NOT CMAKE_CROSSCOMPILING
+    # FIXME: Try to re-enable it for debug build.
+    # It is disabled due to OOM issues with gold linker on CI.
+    DISABLE CMAKE_BUILD_TYPE STREQUAL Debug
 )
 qt_feature("webengine-geolocation" PUBLIC
     LABEL "Geolocation"
@@ -81,6 +84,12 @@ qt_feature("webengine-system-gbm" PRIVATE
     AUTODETECT UNIX
     CONDITION GBM_FOUND
 )
+qt_feature("webengine-webrtc-system-openh264" PRIVATE
+    LABEL "Use system openh264 for webrtc"
+    CONDITION UNIX
+        AND QT_FEATURE_webengine_system_openh264
+        AND QT_FEATURE_webengine_proprietary_codecs
+)
 qt_feature("webengine-printing-and-pdf" PRIVATE
     LABEL "Printing and PDF"
     PURPOSE "Provides printing and output to PDF."
@@ -90,7 +99,7 @@ qt_feature("webengine-printing-and-pdf" PRIVATE
 qt_feature("webengine-pepper-plugins" PRIVATE
     LABEL "Pepper Plugins"
     PURPOSE "Enables use of Pepper plugins."
-    AUTODETECT QT_FEATURE_webengine_printing_and_pdf
+    AUTODETECT TRUE
 )
 qt_feature("webengine-webchannel" PUBLIC
     SECTION "WebEngine"
@@ -124,9 +133,7 @@ qt_feature("webengine-native-spellchecker" PUBLIC
 qt_feature("webengine-extensions" PUBLIC
     SECTION "WebEngine"
     LABEL "Extensions"
-    PURPOSE "Enables Chromium extensions within certain limits. Currently used by the pdf viewer and hangout webrtc extension."
-    AUTODETECT ON
-    CONDITION QT_FEATURE_webengine_printing_and_pdf OR QT_FEATURE_webengine_webrtc
+    PURPOSE "Enables Chromium extensions API."
 )
 qt_feature("webengine-webrtc" PRIVATE
     LABEL "WebRTC"
@@ -147,6 +154,8 @@ qt_feature("webengine-full-debug-info" PRIVATE
     AUTODETECT OFF
     CONDITION CMAKE_BUILD_TYPE STREQUAL Debug OR Debug IN_LIST CMAKE_CONFIGURATION_TYPES OR
               CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo OR RelWithDebInfo IN_LIST CMAKE_CONFIGURATION_TYPES
+    # The PDB format has practical size limits that we can't work around, so this option is disabled on Windows
+    DISABLE WIN32
 )
 qt_feature("webengine-sanitizer" PRIVATE
     SECTION "WebEngine"
@@ -160,6 +169,7 @@ qt_feature("webengine-vulkan" PRIVATE
     LABEL "Vulkan support"
     PURPOSE "Enables support for Vulkan rendering"
     CONDITION QT_FEATURE_vulkan
+    DISABLE MACOS
 )
 qt_feature("webengine-vaapi" PRIVATE
     SECTION "WebEngine"
@@ -178,16 +188,14 @@ qt_feature("webenginedriver" PUBLIC
               AND NOT (CMAKE_OSX_ARCHITECTURES AND osx_arch_count GREATER 1)
     DISABLE CMAKE_BUILD_TYPE STREQUAL Debug
 )
-# internal testing feature
-qt_feature("webengine-system-poppler" PRIVATE
-    LABEL "poppler"
-    CONDITION UNIX AND TEST_poppler
+qt_feature("webengine-arm64-udot-support" PRIVATE
+    LABEL "Use libyuv on neon64"
+    CONDITION UNIX AND TEST_udot
 )
 qt_configure_add_summary_section(NAME "Qt WebEngineCore")
 qt_configure_add_summary_entry(ARGS "webengine-embedded-build")
 qt_configure_add_summary_entry(ARGS "webengine-full-debug-info")
 qt_configure_add_summary_entry(ARGS "webengine-sanitizer")
-qt_configure_add_summary_entry(ARGS "webengine-pepper-plugins")
 qt_configure_add_summary_entry(ARGS "webengine-printing-and-pdf")
 qt_configure_add_summary_entry(ARGS "webengine-proprietary-codecs")
 qt_configure_add_summary_entry(ARGS "webengine-spellchecker")
@@ -220,6 +228,10 @@ qt_configure_add_summary_entry(
 qt_configure_add_summary_entry(
     ARGS "webengine-system-pulseaudio"
     CONDITION LINUX
+)
+qt_configure_add_summary_entry(
+    ARGS "webengine-webrtc-system-openh264"
+    CONDITION UNIX
 )
 qt_configure_add_summary_entry(ARGS "webengine-v8-context-snapshot")
 qt_configure_add_summary_entry(ARGS "webenginedriver")

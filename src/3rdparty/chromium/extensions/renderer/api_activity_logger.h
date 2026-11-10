@@ -60,12 +60,12 @@ class APIActivityLogger : public ObjectBackedNativeHandler {
   void LogForJS(const IPCMessageSender::ActivityLogCallType call_type,
                 const v8::FunctionCallbackInfo<v8::Value>& args);
 
-  // Not owned by |this|.
+  // Not owned by `this`.
   // This is owned by NativeExtensionBindingsSystem.
   //
   // Valid to use so long as there's a valid ScriptContext associated with the
   // call-site.
-  raw_ptr<IPCMessageSender, ExperimentalRenderer> ipc_sender_ = nullptr;
+  raw_ptr<IPCMessageSender> ipc_sender_ = nullptr;
 };
 
 }  // namespace extensions

@@ -3,22 +3,25 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <xnnpack.h>
-#include <xnnpack/math.h>
+#include "include/xnnpack.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
 
 void xnn_normalize_slice(
     const size_t num_dims,
-    const size_t offsets[XNN_MIN_ELEMENTS(1)],
-    const size_t sizes[XNN_MIN_ELEMENTS(1)],
-    const size_t input_shape[XNN_MIN_ELEMENTS(1)],
-    size_t normalized_offsets[XNN_MIN_ELEMENTS(XNN_MAX_TENSOR_DIMS)],
-    size_t normalized_input_shape[XNN_MIN_ELEMENTS(XNN_MAX_TENSOR_DIMS)],
-    size_t normalized_output_shape[XNN_MIN_ELEMENTS(XNN_MAX_TENSOR_DIMS)],
+    const size_t* offsets,
+    const size_t* sizes,
+    const size_t* input_shape,
+    size_t* normalized_offsets,
+    size_t* normalized_input_shape,
+    size_t* normalized_output_shape,
     size_t* num_normalized_dims)
 {
   *num_normalized_dims = num_dims;
@@ -32,8 +35,8 @@ void xnn_normalize_slice(
   size_t num_size_one = 0;
   for (size_t i = 0; i < num_dims; i++) {
     const size_t offset = offsets[num_dims - 1 - i];
-    const size_t size = sizes[num_dims - 1 - i];
     const size_t input_dim = input_shape[num_dims - 1 - i];
+    const size_t size = sizes[num_dims - 1 - i] > 0 ? sizes[num_dims - 1 - i] : input_dim;
 
     // If the innermost dimension is size 1, we can't merge it anywhere, so skip it.
     if (size == 1 && i != 0) {
@@ -278,12 +281,6 @@ void xnn_normalize_transpose_permutation(
   *normalized_num_dims = output_dims;
 }
 
-static int cmp_value_size_t(const void* a_ptr, const void* b_ptr) {
-  const size_t a = *((const size_t*) a_ptr);
-  const size_t b = *((const size_t*) b_ptr);
-  return (b < a) - (b > a);
-}
-
 void xnn_normalize_reduction(
     size_t* num_reduction_axes_ptr,
     size_t* reduction_axes,
@@ -291,7 +288,6 @@ void xnn_normalize_reduction(
     size_t* input_dims)
 {
   size_t num_reduction_axes = *num_reduction_axes_ptr;
-  qsort(reduction_axes, num_reduction_axes, sizeof(size_t), cmp_value_size_t);
 
   // The original number of input dimensions.
   const size_t num_input_dims = *num_input_dims_ptr;

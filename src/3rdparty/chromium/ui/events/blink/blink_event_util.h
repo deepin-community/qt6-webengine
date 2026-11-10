@@ -29,10 +29,6 @@ struct GestureEventData;
 struct GestureEventDetails;
 class MotionEvent;
 
-// The scroll percentage per mousewheel tick. Used to determine scroll delta
-// if percent based scrolling is enabled.
-const float kScrollPercentPerLineOrChar = 0.05f;
-
 blink::WebTouchEvent CreateWebTouchEventFromMotionEvent(
     const MotionEvent& event,
     bool may_cause_scrolling,
@@ -54,7 +50,7 @@ int EventFlagsToWebEventModifiers(int flags);
 std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
     const blink::WebInputEvent& event,
     float scale,
-    absl::optional<int64_t> trace_id = absl::nullopt);
+    std::optional<int64_t> trace_id = std::nullopt);
 
 // Transforms coordinates and other properties of |event|, by
 // 1) translating / shifting by |delta| and
@@ -65,7 +61,7 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     const blink::WebInputEvent& event,
     const gfx::Vector2dF& delta,
     float scale,
-    absl::optional<int64_t> trace_id = absl::nullopt);
+    std::optional<int64_t> trace_id = std::nullopt);
 
 blink::WebInputEvent::Type ToWebMouseEventType(MotionEvent::Action action);
 

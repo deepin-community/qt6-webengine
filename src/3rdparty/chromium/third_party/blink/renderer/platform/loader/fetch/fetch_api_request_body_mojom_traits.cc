@@ -18,7 +18,7 @@
 namespace mojo {
 
 // static
-WTF::Vector<network::DataElement>
+blink::Vector<network::DataElement>
 StructTraits<blink::mojom::FetchAPIRequestBodyDataView,
              blink::ResourceRequestBody>::elements(blink::ResourceRequestBody&
                                                        mutable_body) {
@@ -34,9 +34,9 @@ StructTraits<blink::mojom::FetchAPIRequestBodyDataView,
     network_body = NetworkResourceRequestBodyFor(std::move(mutable_body));
   }
   if (!network_body) {
-    return WTF::Vector<network::DataElement>();
+    return blink::Vector<network::DataElement>();
   }
-  WTF::Vector<network::DataElement> out_elements;
+  blink::Vector<network::DataElement> out_elements;
   DCHECK(network_body->elements_mutable());
   for (auto& element : *network_body->elements_mutable()) {
     out_elements.emplace_back(std::move(element));
@@ -83,14 +83,12 @@ bool StructTraits<blink::mojom::FetchAPIRequestBodyDataView,
     switch (element.type()) {
       case network::DataElement::Tag::kBytes: {
         const auto& bytes = element.As<network::DataElementBytes>();
-        form_data->AppendData(
-            bytes.bytes().data(),
-            base::checked_cast<wtf_size_t>(bytes.bytes().size()));
+        form_data->AppendData(bytes.bytes());
         break;
       }
       case network::DataElement::Tag::kFile: {
         const auto& file = element.As<network::DataElementFile>();
-        absl::optional<base::Time> expected_modification_time;
+        std::optional<base::Time> expected_modification_time;
         if (!file.expected_modification_time().is_null()) {
           expected_modification_time = file.expected_modification_time();
         }
@@ -109,7 +107,6 @@ bool StructTraits<blink::mojom::FetchAPIRequestBodyDataView,
       }
       case network::DataElement::Tag::kChunkedDataPipe:
         NOTREACHED();
-        return false;
     }
   }
 

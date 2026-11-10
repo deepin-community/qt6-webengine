@@ -3,15 +3,16 @@
 // found in the LICENSE file.
 
 import type * as SDK from '../../core/sdk/sdk.js';
-import * as TraceEngine from '../../models/trace/trace.js';
 
-export class PerformanceTracing implements TraceEngine.TracingManager.TracingManagerClient {
+import {TracingManager, type TracingManagerClient} from './TracingManager.js';
+
+export class PerformanceTracing implements TracingManagerClient {
   readonly #traceEvents: Object[] = [];
-  #tracingManager: TraceEngine.TracingManager.TracingManager|null = null;
+  #tracingManager: TracingManager|null = null;
   #delegate: Delegate;
 
   constructor(target: SDK.Target.Target, delegate: Delegate) {
-    this.#tracingManager = target.model(TraceEngine.TracingManager.TracingManager);
+    this.#tracingManager = target.model(TracingManager);
     this.#delegate = delegate;
   }
 
@@ -45,7 +46,7 @@ export class PerformanceTracing implements TraceEngine.TracingManager.TracingMan
       'v8',
     ].join(',');
 
-    const started = await this.#tracingManager.start(this, categories, '');
+    const started = await this.#tracingManager.start(this, categories);
 
     if (!started) {
       throw new Error('Unable to start tracing.');
@@ -57,10 +58,6 @@ export class PerformanceTracing implements TraceEngine.TracingManager.TracingMan
   }
 
   // Start of implementation of SDK.TracingManager.TracingManagerClient
-  getTraceEvents(): Object[] {
-    return this.#traceEvents;
-  }
-
   traceEventsCollected(events: Object[]): void {
     this.#traceEvents.push(...events);
   }

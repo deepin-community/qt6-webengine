@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/scalar.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_qu8_gemm_minmax_rndnu_ukernel_1x2__scalar(
@@ -24,7 +30,7 @@ void xnn_qu8_gemm_minmax_rndnu_ukernel_1x2__scalar(
     uint8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_qu8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qu8_conv_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -33,6 +39,13 @@ void xnn_qu8_gemm_minmax_rndnu_ukernel_1x2__scalar(
 
   const uint8_t* a0 = a;
   uint8_t* c0 = c;
+
+  const int32_t vmultiplier = params->rndnu_scalar.multiplier;
+  const int64_t vrounding = params->rndnu_scalar.rounding;
+  const uint32_t vshift = params->rndnu_scalar.shift;
+  const int32_t voutput_min_less_zero_point = (int32_t) params->rndnu_scalar.output_min - (int32_t) params->rndnu_scalar.output_zero_point;
+  const int32_t voutput_max_less_zero_point = (int32_t) params->rndnu_scalar.output_max - (int32_t) params->rndnu_scalar.output_zero_point;
+  const int32_t voutput_zero_point = params->rndnu_scalar.output_zero_point;
 
   const int32_t vb_zero_point = params->rndnu_scalar.kernel_zero_point;
   do {
@@ -54,24 +67,18 @@ void xnn_qu8_gemm_minmax_rndnu_ukernel_1x2__scalar(
       k -= sizeof(uint8_t);
     } while (k != 0);
 
-    const int32_t vmultiplier = params->rndnu_scalar.multiplier;
-    const int64_t vrounding = params->rndnu_scalar.rounding;
     const int64_t vextacc0x0 = math_mulext_s32(vacc0x0, vmultiplier) + vrounding;
     const int64_t vextacc0x1 = math_mulext_s32(vacc0x1, vmultiplier) + vrounding;
 
-    const uint32_t vshift = params->rndnu_scalar.shift;
     int32_t vout0x0 = (int32_t) math_asr_s64(vextacc0x0, vshift);
     int32_t vout0x1 = (int32_t) math_asr_s64(vextacc0x1, vshift);
 
-    const int32_t voutput_min_less_zero_point = params->rndnu_scalar.output_min_less_zero_point;
     vout0x0 = math_max_s32(vout0x0, voutput_min_less_zero_point);
     vout0x1 = math_max_s32(vout0x1, voutput_min_less_zero_point);
 
-    const int32_t voutput_max_less_zero_point = params->rndnu_scalar.output_max_less_zero_point;
     vout0x0 = math_min_s32(vout0x0, voutput_max_less_zero_point);
     vout0x1 = math_min_s32(vout0x1, voutput_max_less_zero_point);
 
-    const int32_t voutput_zero_point = params->rndnu_scalar.output_zero_point;
     vout0x0 += voutput_zero_point;
     vout0x1 += voutput_zero_point;
 

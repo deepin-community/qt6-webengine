@@ -4,11 +4,15 @@
 
 #include "quiche/quic/core/quic_control_frame_manager.h"
 
+#include <memory>
 #include <utility>
+#include <vector>
 
 #include "quiche/quic/core/crypto/null_encrypter.h"
 #include "quiche/quic/core/frames/quic_ack_frequency_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
 #include "quiche/quic/core/frames/quic_retire_connection_id_frame.h"
+#include "quiche/quic/core/quic_error_codes.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/platform/api/quic_expect_bug.h"
 #include "quiche/quic/platform/api/quic_flags.h"
@@ -79,6 +83,26 @@ TEST_F(QuicControlFrameManagerTest, WriteOrBufferRstStream) {
       rst_stream.byte_offset);
   EXPECT_EQ(1, QuicControlFrameManagerPeer::QueueSize(manager_.get()));
   EXPECT_TRUE(manager_->IsControlFrameOutstanding(QuicFrame(&rst_stream)));
+  EXPECT_FALSE(manager_->WillingToWrite());
+}
+
+TEST_F(QuicControlFrameManagerTest, WriteOrBufferResetStreamAt) {
+  QuicResetStreamAtFrame reset_stream_at = {1, kTestStreamId,
+                                            QUIC_STREAM_CANCELLED, 20, 10};
+  EXPECT_CALL(*session_, WriteControlFrame(_, _))
+      .WillOnce(Invoke([&reset_stream_at](const QuicFrame& frame,
+                                          TransmissionType /*type*/) {
+        EXPECT_EQ(RESET_STREAM_AT_FRAME, frame.type);
+        EXPECT_EQ(reset_stream_at, *frame.reset_stream_at_frame);
+        ClearControlFrame(frame);
+        return true;
+      }));
+  manager_->WriteOrBufferResetStreamAt(
+      reset_stream_at.stream_id,
+      QuicResetStreamError::FromIetf(reset_stream_at.error),
+      reset_stream_at.final_offset, reset_stream_at.reliable_offset);
+  EXPECT_EQ(1, QuicControlFrameManagerPeer::QueueSize(manager_.get()));
+  EXPECT_TRUE(manager_->IsControlFrameOutstanding(QuicFrame(&reset_stream_at)));
   EXPECT_FALSE(manager_->WillingToWrite());
 }
 
@@ -397,8 +421,9 @@ TEST_F(QuicControlFrameManagerTest, RetransmitControlFrame) {
 TEST_F(QuicControlFrameManagerTest, SendAndAckAckFrequencyFrame) {
   // Send AckFrequencyFrame
   QuicAckFrequencyFrame frame_to_send;
-  frame_to_send.packet_tolerance = 10;
-  frame_to_send.max_ack_delay = QuicTime::Delta::FromMilliseconds(24);
+  frame_to_send.ack_eliciting_threshold = 10;
+  frame_to_send.requested_max_ack_delay = QuicTime::Delta::FromMilliseconds(24);
+  frame_to_send.reordering_threshold = 3;
   EXPECT_CALL(*session_, WriteControlFrame(_, _))
       .WillOnce(Invoke(&ClearControlFrameWithTransmissionType));
   manager_->WriteOrBufferAckFrequency(frame_to_send);

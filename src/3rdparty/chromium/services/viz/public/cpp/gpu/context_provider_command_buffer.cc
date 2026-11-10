@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -38,7 +39,6 @@
 #include "gpu/command_buffer/client/webgpu_implementation.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/skia_utils.h"
-#include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/config/skia_limits.h"
 #include "gpu/ipc/client/client_shared_image_interface.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
@@ -47,9 +47,8 @@
 #include "gpu/skia_bindings/grcontext_for_gles2_interface.h"
 #include "services/viz/public/cpp/gpu/command_buffer_metrics.h"
 #include "skia/buildflags.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkTraceMemoryDump.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "ui/gl/trace_util.h"
 
 class SkDiscardableMemory;
@@ -60,7 +59,6 @@ ContextProviderCommandBuffer::ContextProviderCommandBuffer(
     scoped_refptr<gpu::GpuChannelHost> channel,
     int32_t stream_id,
     gpu::SchedulingPriority stream_priority,
-    gpu::SurfaceHandle surface_handle,
     const GURL& active_url,
     bool automatic_flushes,
     bool support_locking,
@@ -72,7 +70,6 @@ ContextProviderCommandBuffer::ContextProviderCommandBuffer(
           base::subtle::GetRefCountPreference<ContextProviderCommandBuffer>()),
       stream_id_(stream_id),
       stream_priority_(stream_priority),
-      surface_handle_(surface_handle),
       active_url_(active_url),
       automatic_flushes_(automatic_flushes),
       support_locking_(support_locking),
@@ -151,8 +148,8 @@ gpu::ContextResult ContextProviderCommandBuffer::BindToCurrentSequence() {
   command_buffer_ = std::make_unique<gpu::CommandBufferProxyImpl>(
       channel_, stream_id_, default_task_runner_, buffer_mapper_);
   bind_result_ = command_buffer_->Initialize(
-      surface_handle_, /*shared_command_buffer=*/nullptr, stream_priority_,
-      attributes_, active_url_);
+      /*shared_command_buffer=*/nullptr, stream_priority_, attributes_,
+      active_url_, command_buffer_metrics::ContextTypeToString(context_type_));
   if (bind_result_ != gpu::ContextResult::kSuccess) {
     DLOG(ERROR) << "GpuChannelHost failed to create command buffer.";
     command_buffer_metrics::UmaRecordContextInitFailed(context_type_);
@@ -221,7 +218,6 @@ gpu::ContextResult ContextProviderCommandBuffer::BindToCurrentSequence() {
     DCHECK(channel_);
     auto raster_impl = std::make_unique<gpu::raster::RasterImplementation>(
         raster_helper.get(), transfer_buffer.get(),
-        attributes_.bind_generates_resource,
         attributes_.lose_context_when_out_of_memory, command_buffer_.get(),
         channel_->image_decode_accelerator_proxy());
     bind_result_ = raster_impl->Initialize(memory_limits_);
@@ -270,13 +266,13 @@ gpu::ContextResult ContextProviderCommandBuffer::BindToCurrentSequence() {
       gles2_impl = std::make_unique<
           skia_bindings::GLES2ImplementationWithGrContextSupport>(
           gles2_helper.get(), /*share_group=*/nullptr, transfer_buffer.get(),
-          attributes_.bind_generates_resource,
+          /*bind_generates_resource=*/false,
           attributes_.lose_context_when_out_of_memory,
           support_client_side_arrays, command_buffer_.get());
     } else {
       gles2_impl = std::make_unique<gpu::gles2::GLES2Implementation>(
           gles2_helper.get(), /*share_group=*/nullptr, transfer_buffer.get(),
-          attributes_.bind_generates_resource,
+          /*bind_generates_resource=*/false,
           attributes_.lose_context_when_out_of_memory,
           support_client_side_arrays, command_buffer_.get());
     }
@@ -307,7 +303,7 @@ gpu::ContextResult ContextProviderCommandBuffer::BindToCurrentSequence() {
   cache_controller_ =
       std::make_unique<ContextCacheController>(impl_, default_task_runner_);
 
-  // TODO(crbug.com/868192): SetLostContextCallback should probably work on
+  // TODO(crbug.com/40586882): SetLostContextCallback should probably work on
   // WebGPU contexts too.
   if (impl_) {
     impl_->SetLostContextCallback(
@@ -376,19 +372,26 @@ gpu::raster::RasterInterface* ContextProviderCommandBuffer::RasterInterface() {
   DCHECK_EQ(bind_result_, gpu::ContextResult::kSuccess);
   CheckValidSequenceOrLockAcquired();
 
-  if (raster_interface_)
+  if (raster_interface_) {
     return raster_interface_.get();
+  }
 
   if (!attributes_.enable_raster_interface) {
     return nullptr;
   }
 
-  if (!gles2_impl_.get())
+#if BUILDFLAG(IS_ANDROID)
+  // Android uses RasterDecoder exclusively.
+  NOTREACHED();
+#else
+  if (!gles2_impl_.get()) {
     return nullptr;
+  }
 
   raster_interface_ = std::make_unique<gpu::raster::RasterImplementationGLES>(
       gles2_impl_.get(), gles2_impl_.get(), ContextCapabilities());
   return raster_interface_.get();
+#endif
 }
 
 gpu::ContextSupport* ContextProviderCommandBuffer::ContextSupport() {
@@ -408,7 +411,7 @@ class GrDirectContext* ContextProviderCommandBuffer::GrContext() {
     return gr_context_->get();
   }
 
-  if (attributes_.enable_oop_rasterization) {
+  if (attributes_.enable_gpu_rasterization) {
     return nullptr;
   }
 
@@ -546,8 +549,13 @@ bool ContextProviderCommandBuffer::OnMemoryDump(
   helper_->OnMemoryDump(args, pmd);
 
   if (gr_context_) {
-    gpu::raster::DumpGrMemoryStatistics(gr_context_->get(), pmd,
-                                        gles2_impl_->ShareGroupTracingGUID());
+    if (args.level_of_detail ==
+        base::trace_event::MemoryDumpLevelOfDetail::kBackground) {
+      gpu::raster::DumpBackgroundGrMemoryStatistics(gr_context_->get(), pmd);
+    } else {
+      gpu::raster::DumpGrMemoryStatistics(gr_context_->get(), pmd,
+                                          gles2_impl_->ShareGroupTracingGUID());
+    }
   }
   return true;
 }

@@ -7,9 +7,7 @@
 #include <memory>
 
 #include "base/win/windows_version.h"
-#include "gpu/command_buffer/service/feature_info.h"
-#include "gpu/config/gpu_preferences.h"
-#include "gpu/ipc/service/image_transport_surface_delegate.h"
+#include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gl/dcomp_presenter.h"
 #include "ui/gl/direct_composition_support.h"
@@ -34,31 +32,28 @@ gl::DCompPresenter::Settings CreatDCompPresenterSettings(
   settings.disable_vp_scaling = workarounds.disable_vp_scaling;
   settings.disable_vp_super_resolution =
       workarounds.disable_vp_super_resolution;
+  settings.disable_dc_letterbox_video_optimization =
+      workarounds.disable_direct_composition_letterbox_video_optimization;
   settings.force_dcomp_triple_buffer_video_swap_chain =
       workarounds.force_dcomp_triple_buffer_video_swap_chain;
-  settings.use_angle_texture_offset = true;
   return settings;
 }
 }  // namespace
 
 // static
 scoped_refptr<gl::Presenter> ImageTransportSurface::CreatePresenter(
-    gl::GLDisplay* display,
-    base::WeakPtr<ImageTransportSurfaceDelegate> delegate,
+    scoped_refptr<SharedContextState> context_state,
+    const GpuDriverBugWorkarounds& workarounds,
+    const GpuFeatureInfo& gpu_feature_info,
     SurfaceHandle surface_handle) {
   if (gl::DirectCompositionSupported()) {
-    auto vsync_callback = delegate->GetGpuVSyncCallback();
-    auto settings =
-        CreatDCompPresenterSettings(delegate->GetFeatureInfo()->workarounds());
-    auto presenter = base::MakeRefCounted<gl::DCompPresenter>(
-        display->GetAs<gl::GLDisplayEGL>(), std::move(vsync_callback),
-        settings);
-    if (!presenter->Initialize()) {
-      return nullptr;
-    }
-
-    delegate->AddChildWindowToBrowser(presenter->window());
-    return presenter;
+#if BUILDFLAG(SKIA_USE_DAWN)
+    // DirectComposition is only supported on Graphite with Dawn D3D11 backend.
+    DCHECK(!context_state->IsGraphiteDawn() ||
+           context_state->IsGraphiteDawnD3D11());
+#endif
+    return base::MakeRefCounted<gl::DCompPresenter>(
+        CreatDCompPresenterSettings(workarounds));
   }
 
   return nullptr;
@@ -67,13 +62,13 @@ scoped_refptr<gl::Presenter> ImageTransportSurface::CreatePresenter(
 // static
 scoped_refptr<gl::GLSurface> ImageTransportSurface::CreateNativeGLSurface(
     gl::GLDisplay* display,
-    base::WeakPtr<ImageTransportSurfaceDelegate> delegate,
     SurfaceHandle surface_handle,
     gl::GLSurfaceFormat format) {
   DCHECK_NE(surface_handle, kNullSurfaceHandle);
   scoped_refptr<gl::GLSurface> surface;
 
   if (gl::GetGLImplementation() == gl::kGLImplementationEGLANGLE) {
+    // We always expect to succeed from |CreatePresenter| when DComp is enabled.
     CHECK(!gl::DirectCompositionSupported());
     surface = gl::InitializeGLSurface(
         base::MakeRefCounted<gl::NativeViewGLSurfaceEGL>(

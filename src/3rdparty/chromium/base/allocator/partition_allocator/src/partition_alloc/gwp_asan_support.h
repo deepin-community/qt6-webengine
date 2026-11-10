@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
+#ifndef PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_
+#define PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_
+
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 
-#if BUILDFLAG(ENABLE_GWP_ASAN_SUPPORT)
+#if PA_BUILDFLAG(ENABLE_GWP_ASAN_SUPPORT)
 
 #include <cstddef>
 #include <cstdint>
@@ -109,12 +114,15 @@ namespace partition_alloc {
 // they are never used for anything other that storing the metadata.
 class PA_COMPONENT_EXPORT(PARTITION_ALLOC) GwpAsanSupport {
  public:
+  // This can fail if the PA pool is too small or too fragmented to fit the
+  // requested slot count.
   static void* MapRegion(size_t slot_count, std::vector<uint16_t>& free_list);
   static bool CanReuse(uintptr_t slot_start);
+  static void DestructForTesting();
 };
 
 }  // namespace partition_alloc
 
-#endif  // BUILDFLAG(ENABLE_GWP_ASAN_SUPPORT)
+#endif  // PA_BUILDFLAG(ENABLE_GWP_ASAN_SUPPORT)
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_
+#endif  // PARTITION_ALLOC_GWP_ASAN_SUPPORT_H_

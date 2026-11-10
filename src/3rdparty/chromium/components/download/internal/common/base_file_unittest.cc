@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/download/public/common/base_file.h"
 
 #include <stddef.h>
@@ -360,7 +365,7 @@ TEST_F(BaseFileTest, RenameWhileInProgress) {
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/1314064): Re-enable when RenameWithError works on Fuchsia.
+// TODO(crbug.com/40221266): Re-enable when RenameWithError works on Fuchsia.
 #define MAYBE_RenameWithError DISABLED_RenameWithError
 #else
 #define MAYBE_RenameWithError RenameWithError
@@ -387,7 +392,7 @@ TEST_F(BaseFileTest, MAYBE_RenameWithError) {
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/1314064): Re-enable when RenameWithErrorInProgress works on
+// TODO(crbug.com/40221266): Re-enable when RenameWithErrorInProgress works on
 // Fuchsia.
 #define MAYBE_RenameWithErrorInProgress DISABLED_RenameWithErrorInProgress
 #else
@@ -435,7 +440,7 @@ TEST_F(BaseFileTest, MAYBE_RenameWithErrorInProgress) {
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/1314068): Re-enable when WriteWithError works on Fuchsia.
+// TODO(crbug.com/40221270): Re-enable when WriteWithError works on Fuchsia.
 #define MAYBE_WriteWithError DISABLED_WriteWithError
 #else
 #define MAYBE_WriteWithError WriteWithError
@@ -510,7 +515,7 @@ TEST_F(BaseFileTest, AppendToBaseFile) {
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/1314062): Re-enable when ReadonlyBaseFile works on Fuchsia.
+// TODO(crbug.com/40221265): Re-enable when ReadonlyBaseFile works on Fuchsia.
 #define MAYBE_ReadonlyBaseFile DISABLED_ReadonlyBaseFile
 #else
 #define MAYBE_ReadonlyBaseFile ReadonlyBaseFile
@@ -751,6 +756,56 @@ TEST_F(BaseFileTest, CreatedInDefaultDirectory) {
   ASSERT_FALSE(temp_file.empty());
   EXPECT_STREQ(temp_file.DirName().value().c_str(),
                base_file_->full_path().DirName().value().c_str());
+  base_file_->Finish();
+}
+
+// Test that a temporary file is created in the system temporary directory
+// when no default directory is provided.
+TEST_F(BaseFileTest, CreatedInSystemTempDirectory) {
+  ASSERT_TRUE(base_file_->full_path().empty());
+  DownloadInterruptReason result = base_file_->Initialize(
+      base::FilePath(), base::FilePath(), base::File(), 0, std::string(),
+      std::unique_ptr<crypto::SecureHash>(), false, &kTestDataBytesWasted);
+  ASSERT_EQ(DOWNLOAD_INTERRUPT_REASON_NONE, result);
+  EXPECT_FALSE(base_file_->full_path().empty());
+  EXPECT_TRUE(base_file_->in_progress());
+
+  base::FilePath system_temp_dir;
+  ASSERT_TRUE(base::GetTempDir(&system_temp_dir));
+  EXPECT_TRUE(system_temp_dir.IsParent(base_file_->full_path()));
+  base_file_->Finish();
+}
+
+// Test that a temporary file is created in the system temporary directory
+// when the default directory is unwritable (fallback mechanism).
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/40221266): Re-enable when MakeFileUnwritable works on Fuchsia.
+#define MAYBE_CreatedInSystemTempDirectoryFallback \
+  DISABLED_CreatedInSystemTempDirectoryFallback
+#else
+#define MAYBE_CreatedInSystemTempDirectoryFallback \
+  CreatedInSystemTempDirectoryFallback
+#endif
+TEST_F(BaseFileTest, MAYBE_CreatedInSystemTempDirectoryFallback) {
+  base::FilePath unwritable_dir(
+      temp_dir_.GetPath().AppendASCII("UnwritableDir"));
+  ASSERT_TRUE(base::CreateDirectory(unwritable_dir));
+
+  base::FilePermissionRestorer restore_permissions(unwritable_dir);
+  ASSERT_TRUE(base::MakeFileUnwritable(unwritable_dir));
+
+  ASSERT_TRUE(base_file_->full_path().empty());
+  DownloadInterruptReason result = base_file_->Initialize(
+      base::FilePath(), unwritable_dir, base::File(), 0, std::string(),
+      std::unique_ptr<crypto::SecureHash>(), false, &kTestDataBytesWasted);
+  ASSERT_EQ(DOWNLOAD_INTERRUPT_REASON_NONE, result);
+  EXPECT_FALSE(base_file_->full_path().empty());
+  EXPECT_TRUE(base_file_->in_progress());
+
+  EXPECT_FALSE(unwritable_dir.IsParent(base_file_->full_path()));
+  base::FilePath system_temp_dir;
+  ASSERT_TRUE(base::GetTempDir(&system_temp_dir));
+  EXPECT_TRUE(system_temp_dir.IsParent(base_file_->full_path()));
   base_file_->Finish();
 }
 

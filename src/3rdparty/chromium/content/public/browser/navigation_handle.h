@@ -11,9 +11,14 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/safe_ref.h"
+#include "base/memory/safety_checks.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/child_process_id.h"
+#include "content/public/browser/error_navigation_trigger.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/frame_type.h"
+#include "content/public/browser/navigation_discard_reason.h"
 #include "content/public/browser/navigation_handle_timing.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/preloading_trigger_type.h"
@@ -73,6 +78,10 @@ class WebContents;
 // WebContentsObserver::DidFinishNavigation, just before the handle is
 // destroyed.
 class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
+  // Do not remove this macro!
+  // The macro is maintained by the memory safety team.
+  ADVANCED_MEMORY_SAFETY_CHECKS();
+
  public:
   ~NavigationHandle() override = default;
 
@@ -82,7 +91,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // some may change during navigation (e.g. due to server redirects).
 
   // Get a unique ID for this navigation.
-  virtual int64_t GetNavigationId() = 0;
+  virtual int64_t GetNavigationId() const = 0;
 
   // Get the page UKM ID that will be in use once this navigation fully commits
   // (typically the eventual value of
@@ -135,7 +144,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // frame and for a prerendered main frame, but false for a <fencedframe>. See
   // documentation for `RenderFrameHost::GetParentOrOuterDocument()` for more
   // details.
-  virtual bool IsInOutermostMainFrame() = 0;
+  virtual bool IsInOutermostMainFrame() const = 0;
 
   // Prerender2:
   // Whether the navigation is taking place in the main frame of the
@@ -156,6 +165,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Returns true if the navigation is taking place in a frame in a fenced frame
   // tree.
   virtual bool IsInFencedFrameTree() const = 0;
+
+  // Returns true if the navigation is taking place in a GuestView main frame.
+  virtual bool IsGuestViewMainFrame() const = 0;
 
   // Returns the type of the frame in which this navigation is taking place.
   virtual FrameType GetNavigatingFrameType() const = 0;
@@ -198,7 +210,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // navigation is committed into may later transfer to another FrameTreeNode.
   // See documentation for RenderFrameHost::GetFrameTreeNodeId() for more
   // details.
-  virtual int GetFrameTreeNodeId() = 0;
+  virtual FrameTreeNodeId GetFrameTreeNodeId() = 0;
 
   // Returns the RenderFrameHost for the parent frame, or nullptr if this
   // navigation is taking place in the main frame. This value will not change
@@ -207,7 +219,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
 
   // Returns the document owning the frame this NavigationHandle is located
   // in, which will either be a parent (for <iframe>s) or outer document (for
-  // <fencedframe> and <portal>). See documentation for
+  // <fencedframe>). See documentation for
   // `RenderFrameHost::GetParentOrOuterDocument()` for more details.
   virtual RenderFrameHost* GetParentFrameOrOuterDocument() = 0;
 
@@ -252,6 +264,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // |bool IsPost()| as opposed to |const std::string& GetMethod()| method.
   virtual bool IsPost() = 0;
 
+  // Gets the request method for the initial network request. Unlike `IsPost()`,
+  // This will not change during the navigation (e.g. after encountering a
+  // server redirect).
+  virtual std::string GetRequestMethod() = 0;
+
   // Returns a sanitized version of the referrer for this request.
   virtual const blink::mojom::Referrer& GetReferrer() = 0;
 
@@ -289,6 +306,17 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // be net::OK.
   virtual net::Error GetNetErrorCode() = 0;
 
+  // The details why `net::Error` was emitted.
+  virtual int GetNetExtendedErrorCode() = 0;
+
+  // The trigger for early cancellation of a navigation. Note that despite the
+  // name, this might be set even when `GetNetErrorCode()` is returning
+  // `net::OK`, and this might not be set even when `GetNetErrorCode()` is not
+  // returning `net::OK`. Currently, this returns non-nullopt in mostly
+  // `net::ERR_ABORTED` cases or navigation discards caused by
+  // `kInternalCancellation` for investigation purposes.
+  virtual std::optional<ErrorNavigationTrigger> GetErrorNavigationTrigger() = 0;
+
   // Returns the RenderFrameHost this navigation is committing in.  The
   // RenderFrameHost returned will be the final host for the navigation. (Use
   // WebContentsObserver::RenderFrameHostChanged() to observe RenderFrameHost
@@ -325,7 +353,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Returns the id of the RenderProcessHost this navigation is expected to
   // commit in. The actual RenderProcessHost may change at commit time. It is
   // only valid to call this before commit.
-  virtual int GetExpectedRenderProcessHostId() = 0;
+  virtual ChildProcessId GetExpectedRenderProcessHostId() = 0;
 
   // Whether the navigation happened without changing document. Examples of
   // same document navigations are:
@@ -333,6 +361,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // * pushState/replaceState
   // * same page history navigation
   virtual bool IsSameDocument() const = 0;
+
+  // Whether the navigation is a history traversal navigation, which navigates
+  // to a pre-existing NavigationEntry. Note that this will return false for
+  // reloads, and return true for session restore navigations.
+  virtual bool IsHistory() const = 0;
 
   // Whether the navigation has encountered a server redirect or not.
   virtual bool WasServerRedirect() = 0;
@@ -375,7 +408,13 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // the session history will be updated. E.g., on unreachable urls or other
   // navigations that the users may not think of as navigations (such as
   // happens with 'history.replaceState()'), or navigations in non-primary frame
-  // trees or portals that should not appear in history.
+  // trees that should not appear in history.
+  //
+  // NOTE: When `blink::features::kVisitedLinksOnErrorNavigations` is enabled,
+  // this method will return true for 404s from reachable URLs. When
+  // `blink::features::kVisitedLinksOnErrorNavigations` is disabled, this method
+  // will return false for 404s. If callers wish to filter out 404s, they must
+  // perform an explicit response code check.
   virtual bool ShouldUpdateHistory() = 0;
 
   // The previous main frame URL that the user was on. This may be empty if
@@ -412,7 +451,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Set LCP Critical Path Predictor hint data to be passed along to the
   // renderer process on the navigation commit.
   virtual void SetLCPPNavigationHint(
-      const blink::mojom::LCPCriticalPathPredictorNavigationTimeHint& hint) = 0;
+      blink::mojom::LCPCriticalPathPredictorNavigationTimeHintPtr hint) = 0;
 
   // Peek into LCP Critical Path Predictor hint data attached to the navigation.
   virtual const blink::mojom::LCPCriticalPathPredictorNavigationTimeHintPtr&
@@ -541,7 +580,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // - History navigation to the page with subframes. The subframe
   //   navigations will return 1 here although they don't create a new
   //   navigation entry.
-  virtual int GetNavigationEntryOffset() = 0;
+  virtual int GetNavigationEntryOffset() const = 0;
 
   virtual void RegisterSubresourceOverride(
       blink::mojom::TransferrableURLLoaderPtr transferrable_loader) = 0;
@@ -559,6 +598,21 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Suppress any errors during a navigation and behave as if the user cancelled
   // the navigation: no error page will commit.
   virtual void SetSilentlyIgnoreErrors() = 0;
+
+  // The :visited link hashtable is stored in shared memory and contains salted
+  // hashes for all visits. Each salt corresponds to a unique origin, and
+  // renderer processes are only informed of salts that correspond to their
+  // origins. As a result, any given renderer process can only
+  // learn about visits relevant to origins for which it has the salt.
+  //
+  // Here we store the salt corresponding to this navigation's origin to
+  // be committed. It will allow the renderer process that commits this
+  // navigation to learn about visits hashed with this salt. Setting a salt
+  // value is optional - `commit_params` is constructed with a std::nullopt
+  // default value. In these cases, VisitedLinkWriter is responsible for
+  // sending salt values to the renderer after the :visited link hashtable has
+  // been initialized.
+  virtual void SetVisitedLinkSalt(uint64_t salt) = 0;
 
   // The sandbox flags of the initiator of the navigation, if any.
   // WebSandboxFlags::kNone otherwise.
@@ -612,6 +666,10 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // `true` if the timeout is being started for the first time. Repeated calls
   // will be ignored (they won't reset the timeout) and will return `false`.
   virtual bool SetNavigationTimeout(base::TimeDelta timeout) = 0;
+  // Cancels the request timeout for this navigation. If the navigation is still
+  // happening, it will continue as if the timer wasn't set. Otherwise, this is
+  // a no-op.
+  virtual void CancelNavigationTimeout() = 0;
 
   // Configures whether a Cookie header added to this request should not be
   // overwritten by the network service.
@@ -641,9 +699,25 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Used for metrics.
   virtual PreloadingTriggerType GetPrerenderTriggerType() = 0;
   virtual std::string GetPrerenderEmbedderHistogramSuffix() = 0;
+  virtual bool IsPrerenderHostReused() = 0;
 
   // Returns a SafeRef to this handle.
   virtual base::SafeRef<NavigationHandle> GetSafeRef() = 0;
+
+  // Will calculate the origin that this NavigationRequest will commit. (This
+  // should be reasonably accurate, but some browser-vs-renderer inconsistencies
+  // might still exist - they are currently tracked in
+  // https://crbug.com/1220238).
+  //
+  // Returns `nullopt` if the navigation will not commit (e.g. in case of
+  // downloads, or 204 responses).  This may happen if and only if
+  // `NavigationHandle::GetRenderFrameHost` returns null.
+  //
+  // This method may only be called after a response has been delivered for
+  // processing, or after the navigation fails with an error page, because the
+  // return value depends on headers in the HTTP response (e.g., a CSP sandbox
+  // header may cause the origin to be opaque).
+  virtual std::optional<url::Origin> GetOriginToCommit() = 0;
 
   // Testing methods ----------------------------------------------------------
   //
@@ -708,6 +782,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // `GetNavigationInitiatorActivationAndAdStatus()` as it can include other
   // signals outside of the initiator.
   virtual void SetIsAdTagged() = 0;
+
+  // If the navigation is discarded without committing, returns the reason for
+  // the discarding. See `NavigationDiscardReason` for the various cases.
+  virtual std::optional<NavigationDiscardReason>
+  GetNavigationDiscardReason() = 0;
 };
 
 }  // namespace content

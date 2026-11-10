@@ -7,9 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
@@ -72,10 +74,8 @@ WebTouchPoint::State ToWebTouchPointState(
     case SyntheticPointerActionParams::PointerActionType::NOT_INITIALIZED:
       NOTREACHED()
           << "Invalid SyntheticPointerActionParams::PointerActionType.";
-      return WebTouchPoint::State::kStateUndefined;
   }
   NOTREACHED() << "Invalid SyntheticPointerActionParams::PointerActionType.";
-  return WebTouchPoint::State::kStateUndefined;
 }
 
 WebInputEvent::Type ToWebMouseEventType(
@@ -94,10 +94,8 @@ WebInputEvent::Type ToWebMouseEventType(
     case SyntheticPointerActionParams::PointerActionType::NOT_INITIALIZED:
       NOTREACHED()
           << "Invalid SyntheticPointerActionParams::PointerActionType.";
-      return WebInputEvent::Type::kUndefined;
   }
   NOTREACHED() << "Invalid SyntheticPointerActionParams::PointerActionType.";
-  return WebInputEvent::Type::kUndefined;
 }
 
 WebInputEvent::Type WebTouchPointStateToEventType(
@@ -167,6 +165,12 @@ class MockSyntheticGestureTarget : public SyntheticGestureTarget {
     if (!(event.GetModifiers() & blink::WebInputEvent::kFromDebugger)) {
       all_from_debugger_ = false;
     }
+  }
+
+  void GetVSyncParameters(base::TimeTicks& timebase,
+                          base::TimeDelta& interval) const override {
+    timebase = base::TimeTicks();
+    interval = base::Microseconds(16667);
   }
 
   content::mojom::GestureSourceType GetDefaultSyntheticGestureSourceType()
@@ -435,7 +439,6 @@ class MockSyntheticTouchscreenPinchTouchTarget
         return 1.0f;
       default:
         NOTREACHED();
-        return 0.0f;
     }
   }
 
@@ -687,7 +690,7 @@ class MockSyntheticPointerTouchActionTarget
   testing::AssertionResult SyntheticTouchActionListDispatchedCorrectly(
       const std::vector<SyntheticPointerActionParams>& params_list,
       int start_index,
-      int index_array[]) {
+      base::span<int> index_array) {
     testing::AssertionResult result = testing::AssertionSuccess();
     for (size_t i = 0; i < params_list.size(); ++i) {
       if (params_list[i].pointer_action_type() !=
@@ -701,9 +704,9 @@ class MockSyntheticPointerTouchActionTarget
   }
 
  private:
-  gfx::PointF positions_[kTouchPointersLength];
-  int indexes_[kTouchPointersLength];
-  WebTouchPoint::State states_[kTouchPointersLength];
+  std::array<gfx::PointF, kTouchPointersLength> positions_;
+  std::array<int, kTouchPointersLength> indexes_;
+  std::array<WebTouchPoint::State, kTouchPointersLength> states_;
 };
 
 class MockSyntheticPointerMouseActionTarget
@@ -829,14 +832,12 @@ class SyntheticGestureControllerTestBase {
   }
 
   void FlushInputUntilComplete() {
-    // Start and stop the timer explicitly here, since the test does not need to
+    // Start the timer explicitly here, since the test does not need to
     // wait for begin-frame to start the timer.
-    controller_->dispatch_timer_.Start(FROM_HERE, base::Seconds(1),
-                                       base::DoNothing());
+    controller_->StartOrUpdateTimer();
     do
       time_ += base::Milliseconds(kFlushInputRateInMs);
     while (controller_->DispatchNextEvent(time_));
-    controller_->dispatch_timer_.Stop();
   }
 
   void OnSyntheticGestureCompleted(SyntheticGesture::Result result) {

@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "platform/api/task_runner.h"
-#include "util/serial_delete_ptr.h"
+#include "platform/api/task_runner_deleter.h"
 
 namespace openscreen {
 
@@ -22,10 +22,14 @@ namespace openscreen {
 // be engaged upon creating the first instance, and then held until all
 // instances have been destroyed.
 //
-// TODO(https://issuetracker.google.com/288311411): Implement for Linux.
+// TODO(issuetracker.google.com/288311411): Implement for Linux.
+
+class ScopedWakeLock;
+using ScopedWakeLockPtr = std::unique_ptr<ScopedWakeLock, TaskRunnerDeleter>;
+
 class ScopedWakeLock {
  public:
-  static SerialDeletePtr<ScopedWakeLock> Create(TaskRunner& task_runner);
+  static ScopedWakeLockPtr Create(TaskRunner& task_runner);
 
   // Instances are not copied nor moved.
   ScopedWakeLock(const ScopedWakeLock&) = delete;

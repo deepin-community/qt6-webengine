@@ -6,14 +6,13 @@
 
 #include "core/fxcrt/fx_number.h"
 
-#include <ctype.h>
-
 #include <limits>
+#include <variant>
 
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/fx_string.h"
-#include "third_party/base/numerics/safe_conversions.h"
+#include "core/fxcrt/numerics/safe_conversions.h"
 
 FX_Number::FX_Number() = default;
 
@@ -22,8 +21,9 @@ FX_Number::FX_Number(int32_t value) : value_(value) {}
 FX_Number::FX_Number(float value) : value_(value) {}
 
 FX_Number::FX_Number(ByteStringView strc) {
-  if (strc.IsEmpty())
+  if (strc.IsEmpty()) {
     return;
+  }
 
   if (strc.Contains('.')) {
     value_ = StringToFloat(strc);
@@ -48,11 +48,11 @@ FX_Number::FX_Number(ByteStringView strc) {
     cc++;
   }
 
-  for (; cc < strc.GetLength() && isdigit(strc[cc]); ++cc) {
+  for (; cc < strc.GetLength() && FXSYS_IsDecimalDigit(strc.CharAt(cc)); ++cc) {
     // Deliberately not using FXSYS_DecimalCharToInt() in a tight loop to avoid
-    // a duplicate isdigit() call. Note that the order of operation is
-    // important to avoid unintentional overflows.
-    unsigned_val = unsigned_val * 10 + (strc[cc] - '0');
+    // a duplicate FXSYS_IsDecimalDigit() call. Note that the order of operation
+    // is important to avoid unintentional overflows.
+    unsigned_val = unsigned_val * 10 + (strc.CharAt(cc) - '0');
   }
 
   uint32_t uValue = unsigned_val.ValueOrDefault(0);
@@ -63,11 +63,12 @@ FX_Number::FX_Number(ByteStringView strc) {
 
   // We have a sign, so if the value was greater then the signed integer
   // limits, then we've overflowed and must reset to the default value.
-  constexpr uint32_t uLimit =
+  static constexpr uint32_t uLimit =
       static_cast<uint32_t>(std::numeric_limits<int>::max());
 
-  if (uValue > (bNegative ? uLimit + 1 : uLimit))
+  if (uValue > (bNegative ? uLimit + 1 : uLimit)) {
     uValue = 0;
+  }
 
   // Switch back to the int space so we can flip to a negative if we need.
   int32_t value = static_cast<int32_t>(uValue);
@@ -84,31 +85,31 @@ FX_Number::FX_Number(ByteStringView strc) {
 }
 
 bool FX_Number::IsInteger() const {
-  return absl::holds_alternative<uint32_t>(value_) ||
-         absl::holds_alternative<int32_t>(value_);
+  return std::holds_alternative<uint32_t>(value_) ||
+         std::holds_alternative<int32_t>(value_);
 }
 
 bool FX_Number::IsSigned() const {
-  return absl::holds_alternative<int32_t>(value_) ||
-         absl::holds_alternative<float>(value_);
+  return std::holds_alternative<int32_t>(value_) ||
+         std::holds_alternative<float>(value_);
 }
 
 int32_t FX_Number::GetSigned() const {
-  if (absl::holds_alternative<uint32_t>(value_)) {
-    return static_cast<int32_t>(absl::get<uint32_t>(value_));
+  if (std::holds_alternative<uint32_t>(value_)) {
+    return static_cast<int32_t>(std::get<uint32_t>(value_));
   }
-  if (absl::holds_alternative<int32_t>(value_)) {
-    return absl::get<int32_t>(value_);
+  if (std::holds_alternative<int32_t>(value_)) {
+    return std::get<int32_t>(value_);
   }
-  return pdfium::base::saturated_cast<int32_t>(absl::get<float>(value_));
+  return pdfium::saturated_cast<int32_t>(std::get<float>(value_));
 }
 
 float FX_Number::GetFloat() const {
-  if (absl::holds_alternative<uint32_t>(value_)) {
-    return static_cast<float>(absl::get<uint32_t>(value_));
+  if (std::holds_alternative<uint32_t>(value_)) {
+    return static_cast<float>(std::get<uint32_t>(value_));
   }
-  if (absl::holds_alternative<int32_t>(value_)) {
-    return static_cast<float>(absl::get<int32_t>(value_));
+  if (std::holds_alternative<int32_t>(value_)) {
+    return static_cast<float>(std::get<int32_t>(value_));
   }
-  return absl::get<float>(value_);
+  return std::get<float>(value_);
 }

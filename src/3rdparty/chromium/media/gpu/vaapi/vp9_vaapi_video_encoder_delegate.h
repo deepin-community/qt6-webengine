@@ -5,20 +5,21 @@
 #ifndef MEDIA_GPU_VAAPI_VP9_VAAPI_VIDEO_ENCODER_DELEGATE_H_
 #define MEDIA_GPU_VAAPI_VP9_VAAPI_VIDEO_ENCODER_DELEGATE_H_
 
+#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "media/base/video_bitrate_allocation.h"
-#include "media/filters/vp9_parser.h"
 #include "media/gpu/vaapi/vaapi_video_encoder_delegate.h"
 #include "media/gpu/vp9_picture.h"
 #include "media/gpu/vp9_reference_frame_vector.h"
+#include "media/parsers/vp9_parser.h"
 #include "third_party/libvpx/source/libvpx/vp9/ratectrl_rtc.h"
 
 namespace media {
 class VaapiWrapper;
-class VP9SVCLayers;
+class SVCLayers;
 
 // Wrapper for the libVPX VP9 rate controller that allows us to override methods
 // for unit testing.
@@ -69,6 +70,9 @@ class VP9VaapiVideoEncoderDelegate : public VaapiVideoEncoderDelegate {
     // The rate controller drop frame threshold. 0-100 as this is percentage.
     uint8_t drop_frame_thresh = 0;
 
+    // The encoding content is a screen content.
+    bool is_screen = false;
+
     bool error_resilident_mode = false;
   };
 
@@ -97,7 +101,6 @@ class VP9VaapiVideoEncoderDelegate : public VaapiVideoEncoderDelegate {
   void set_rate_ctrl_for_testing(
       std::unique_ptr<VP9RateControlWrapper> rate_ctrl);
 
-  bool RecreateSVCLayersIfNeeded(VideoBitrateAllocation& bitrate_allocation);
   bool ApplyPendingUpdateRates();
 
   PrepareEncodeJobResult PrepareEncodeJob(EncodeJob& encode_job) override;
@@ -129,14 +132,14 @@ class VP9VaapiVideoEncoderDelegate : public VaapiVideoEncoderDelegate {
   EncodeParams current_params_;
 
   Vp9ReferenceFrameVector reference_frames_;
-  std::unique_ptr<VP9SVCLayers> svc_layers_;
+  std::unique_ptr<SVCLayers> svc_layers_;
 
-  absl::optional<std::pair<VideoBitrateAllocation, uint32_t>>
+  std::optional<std::pair<VideoBitrateAllocation, uint32_t>>
       pending_update_rates_;
 
   std::unique_ptr<VP9RateControlWrapper> rate_ctrl_;
 
-  absl::optional<base::TimeDelta> dropped_superframe_timestamp_;
+  std::optional<base::TimeDelta> dropped_superframe_timestamp_;
 
   // TODO(b/297226972): Remove the workaround once the iHD driver is fixed.
   bool is_last_encoded_key_frame_ = false;

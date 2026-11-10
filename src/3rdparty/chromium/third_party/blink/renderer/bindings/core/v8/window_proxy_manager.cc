@@ -120,7 +120,6 @@ WindowProxy* WindowProxyManager::CreateWindowProxy(DOMWrapperWorld& world) {
           isolate_, *static_cast<RemoteFrame*>(frame_.Get()), &world);
   }
   NOTREACHED();
-  return nullptr;
 }
 
 WindowProxy* WindowProxyManager::WindowProxyMaybeUninitialized(

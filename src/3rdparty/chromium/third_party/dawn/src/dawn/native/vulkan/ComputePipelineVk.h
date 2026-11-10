@@ -31,24 +31,24 @@
 #include "dawn/native/ComputePipeline.h"
 
 #include "dawn/common/vulkan_platform.h"
+#include "dawn/native/CreatePipelineAsyncEvent.h"
 #include "dawn/native/Error.h"
+#include "dawn/native/vulkan/PipelineVk.h"
 
 namespace dawn::native::vulkan {
 
 class Device;
+struct VkPipelineLayoutObject;
 
-class ComputePipeline final : public ComputePipelineBase {
+class ComputePipeline final : public ComputePipelineBase, public PipelineVk {
   public:
     static Ref<ComputePipeline> CreateUninitialized(
         Device* device,
         const UnpackedPtr<ComputePipelineDescriptor>& descriptor);
-    static void InitializeAsync(Ref<ComputePipelineBase> computePipeline,
-                                WGPUCreateComputePipelineAsyncCallback callback,
-                                void* userdata);
 
     VkPipeline GetHandle() const;
 
-    MaybeError Initialize() override;
+    MaybeError InitializeImpl() override;
 
     // Dawn API
     void SetLabelImpl() override;

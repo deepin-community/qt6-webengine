@@ -56,13 +56,14 @@ class CORE_EXPORT StylePendingImage final : public StyleImage {
   CSSValue* CssValue() const override { return value_.Get(); }
 
   CSSValue* ComputedCSSValue(const ComputedStyle& style,
-                             bool allow_visited_style) const override;
+                             bool allow_visited_style,
+                             CSSValuePhase value_phase) const override;
 
   bool IsAccessAllowed(String&) const override { return true; }
-  IntrinsicSizingInfo GetNaturalSizingInfo(
+  NaturalSizingInfo GetNaturalSizingInfo(
       float multiplier,
       RespectImageOrientationEnum) const override {
-    return IntrinsicSizingInfo();
+    return NaturalSizingInfo();
   }
   gfx::SizeF ImageSize(float,
                        const gfx::SizeF&,
@@ -73,10 +74,10 @@ class CORE_EXPORT StylePendingImage final : public StyleImage {
   void AddClient(ImageResourceObserver*) override {}
   void RemoveClient(ImageResourceObserver*) override {}
   scoped_refptr<Image> GetImage(const ImageResourceObserver&,
-                                const Document&,
+                                const Node&,
                                 const ComputedStyle&,
                                 const gfx::SizeF& target_size) const override {
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED();
     return nullptr;
   }
   bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override {

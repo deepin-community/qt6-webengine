@@ -6,7 +6,7 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "ui/base/idle/idle_internal.h"
 
 @interface IOSScreenMonitor : NSObject
@@ -80,7 +80,7 @@ void InitIdleMonitor() {
 }
 
 int CalculateIdleTime() {
-  // TODO(crbug.com/1412105): Implement this.
+  // TODO(crbug.com/40255110): Implement this.
   NOTIMPLEMENTED();
   return 0;
 }

@@ -9,7 +9,9 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/read_only_shared_memory_region.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "components/enterprise/buildflags/buildflags.h"
 #include "components/services/print_compositor/public/cpp/print_service_mojo_types.h"
 #include "components/services/print_compositor/public/mojom/print_compositor.mojom.h"
 #include "components/strings/grit/components_strings.h"
@@ -26,12 +28,17 @@
 #include "printing/printing_utils.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
+#include "components/enterprise/watermarking/content/watermark_text_container.h"  // nogncheck
+#include "components/enterprise/watermarking/mojom/watermark.mojom.h"
+#endif
+
 namespace printing {
 
 namespace {
 
 uint64_t GenerateFrameGuid(content::RenderFrameHost* render_frame_host) {
-  int process_id = render_frame_host->GetProcess()->GetID();
+  int process_id = render_frame_host->GetProcess()->GetDeprecatedID();
   int frame_id = render_frame_host->GetRoutingID();
   return static_cast<uint64_t>(process_id) << 32 | frame_id;
 }
@@ -46,7 +53,7 @@ ContentToFrameMap ConvertContentInfoMap(
     content::RenderFrameHost* render_frame_host,
     const ContentToProxyTokenMap& content_proxy_map) {
   ContentToFrameMap content_frame_map;
-  int process_id = render_frame_host->GetProcess()->GetID();
+  int process_id = render_frame_host->GetProcess()->GetDeprecatedID();
   for (const auto& entry : content_proxy_map) {
     auto content_id = entry.first;
     auto proxy_token = entry.second;
@@ -71,22 +78,7 @@ PrintCompositeClient::PrintCompositeClient(content::WebContents* web_contents)
     : content::WebContentsUserData<PrintCompositeClient>(*web_contents),
       content::WebContentsObserver(web_contents) {}
 
-PrintCompositeClient::~PrintCompositeClient() {}
-
-// static
-mojom::PrintCompositor::DocumentType PrintCompositeClient::GetDocumentType() {
-  // Using the compositor already means that the source is modifiable (e.g., not
-  // PDF).
-  mojom::SkiaDocumentType skia_document_type =
-      GetPrintDocumentType(/*source_is_pdf=*/false);
-#if BUILDFLAG(IS_WIN)
-  if (skia_document_type == mojom::SkiaDocumentType::kXPS) {
-    return mojom::PrintCompositor::DocumentType::kXPS;
-  }
-#endif
-  CHECK_EQ(skia_document_type, mojom::SkiaDocumentType::kPDF);
-  return mojom::PrintCompositor::DocumentType::kPDF;
-}
+PrintCompositeClient::~PrintCompositeClient() = default;
 
 void PrintCompositeClient::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
@@ -248,7 +240,8 @@ void PrintCompositeClient::PrepareToCompositeDocument(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!GetIsDocumentConcurrentlyComposited(document_cookie));
 
-  auto* compositor = CreateCompositeRequest(document_cookie, render_frame_host);
+  auto* compositor =
+      CreateCompositeRequest(document_cookie, render_frame_host, document_type);
   is_doc_concurrently_composited_ = true;
   compositor->PrepareToCompositeDocument(
       document_type,
@@ -283,13 +276,16 @@ void PrintCompositeClient::CompositeDocument(
     content::RenderFrameHost* render_frame_host,
     const mojom::DidPrintContentParams& content,
     const ui::AXTreeUpdate& accessibility_tree,
+    mojom::GenerateDocumentOutline generate_document_outline,
     mojom::PrintCompositor::DocumentType document_type,
     mojom::PrintCompositor::CompositeDocumentCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!GetIsDocumentConcurrentlyComposited(document_cookie));
 
-  auto* compositor = CreateCompositeRequest(document_cookie, render_frame_host);
+  auto* compositor =
+      CreateCompositeRequest(document_cookie, render_frame_host, document_type);
   compositor->SetAccessibilityTree(accessibility_tree);
+  compositor->SetGenerateDocumentOutline(generate_document_outline);
 
   for (auto& requested : requested_subframes_) {
     if (!IsDocumentCookieValid(requested->document_cookie_))
@@ -358,7 +354,8 @@ bool PrintCompositeClient::GetIsDocumentConcurrentlyComposited(
 
 mojom::PrintCompositor* PrintCompositeClient::CreateCompositeRequest(
     int cookie,
-    content::RenderFrameHost* initiator_frame) {
+    content::RenderFrameHost* initiator_frame,
+    mojom::PrintCompositor::DocumentType document_type) {
   DCHECK(initiator_frame);
 
   if (document_cookie_ != 0) {
@@ -375,9 +372,18 @@ mojom::PrintCompositor* PrintCompositeClient::CreateCompositeRequest(
           .WithDisplayName(IDS_PRINT_COMPOSITOR_SERVICE_DISPLAY_NAME)
           .Pass());
 
+  compositor_->SetTitle(base::UTF16ToUTF8(web_contents()->GetTitle()));
   compositor_->SetWebContentsURL(web_contents()->GetLastCommittedURL());
   compositor_->SetUserAgent(user_agent_);
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
+  auto* watermark_text_container =
+      enterprise_watermark::WatermarkTextContainer::FromWebContents(
+          web_contents());
+  if (watermark_text_container) {
+    compositor_->SetWatermarkBlock(watermark_text_container->Serialize());
+  }
+#endif
   return compositor_.get();
 }
 

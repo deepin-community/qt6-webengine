@@ -58,6 +58,9 @@ void TargetGenerator::Run() {
   if (!FillTestonly())
     return;
 
+  if (!FillLFlagsRemovePattern())
+    return;
+
   if (!FillRspTypes())
     return;
 
@@ -97,7 +100,7 @@ void TargetGenerator::GenerateTarget(Scope* scope,
     g_scheduler->Log("Defining target", label.GetUserVisibleName(true));
 
   std::unique_ptr<Target> target = std::make_unique<Target>(
-      scope->settings(), label, scope->build_dependency_files());
+      scope->settings(), label, scope->CollectBuildDependencyFiles());
   target->set_defined_from(function_call);
 
   // Create and call out to the proper generator.
@@ -313,6 +316,16 @@ bool TargetGenerator::FillTestonly() {
       return false;
     target_->set_testonly(value->boolean_value());
   }
+  return true;
+}
+
+bool TargetGenerator::FillLFlagsRemovePattern() {
+  const Value* value = scope_->GetValue(variables::kLFlagsRemovePattern, true);
+  if (!value)
+    return true;
+  if (!value->VerifyTypeIs(Value::STRING, err_))
+    return false;
+  target_->set_lflags_remove_pattern(value->string_value());
   return true;
 }
 

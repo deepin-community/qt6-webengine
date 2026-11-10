@@ -14,37 +14,41 @@
 
 #include "internal/platform/implementation/windows/preferences_manager.h"
 
-#include <filesystem>  // NOLINT(build/c++17)
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "nlohmann/json.hpp"
 #include "nlohmann/json_fwd.hpp"
+#include "internal/base/files.h"
+#include "internal/base/file_path.h"
+#include "internal/platform/implementation/platform.h"
 #include "internal/platform/implementation/windows/preferences_repository.h"
 #include "internal/platform/logging.h"
 
-namespace nearby {
-namespace windows {
+namespace nearby::windows {
 namespace {
 using json = ::nlohmann::json;
 }  // namespace
 
-PreferencesManager::PreferencesManager(absl::string_view file_path)
-    : api::PreferencesManager(file_path) {
-  std::optional<std::filesystem::path> path =
+PreferencesManager::PreferencesManager(FilePath file_path) {
+  std::optional<FilePath> path =
       nearby::api::ImplementationPlatform::CreateDeviceInfo()
           ->GetLocalAppDataPath();
   if (!path.has_value()) {
-    path = std::filesystem::temp_directory_path();
+    path = Files::GetTemporaryDirectory();
   }
 
-  std::filesystem::path full_path = *path / std::string(file_path);
-  preferences_repository_ =
-      std::make_unique<PreferencesRepository>(full_path.string());
+  path->append(file_path);
+  preferences_repository_ = std::make_unique<PreferencesRepository>(*path);
   value_ = preferences_repository_->LoadPreferences();
 }
 
@@ -187,7 +191,7 @@ void PreferencesManager::Remove(absl::string_view key) {
 // Writes data to storage.
 bool PreferencesManager::Commit() {
   if (!preferences_repository_->SavePreferences(value_)) {
-    NEARBY_LOGS(ERROR) << "Failed to save preference." << std::endl;
+    LOG(ERROR) << "Failed to save preference." << std::endl;
     return false;
   }
   return true;
@@ -195,8 +199,8 @@ bool PreferencesManager::Commit() {
 
 bool PreferencesManager::SetValue(absl::string_view key, const json& value) {
   if (!value_.is_object()) {
-    NEARBY_LOGS(ERROR) << "Preferences is no longer an object! value_="
-                       << value_.dump(4);
+    LOG(ERROR) << "Preferences is no longer an object! value_="
+               << value_.dump(4);
     value_ = json::object();
   }
 
@@ -212,8 +216,8 @@ template <typename T>
 T PreferencesManager::GetValue(absl::string_view key,
                                const T& default_value) const {
   if (!value_.is_object()) {
-    NEARBY_LOGS(ERROR) << "Preferences is no longer an object! value_="
-                       << value_.dump(4);
+    LOG(ERROR) << "Preferences is no longer an object! value_="
+               << value_.dump(4);
     return default_value;
   }
 
@@ -228,8 +232,8 @@ template <typename T>
 bool PreferencesManager::SetArrayValue(absl::string_view key,
                                        absl::Span<const T> value) {
   if (!value_.is_object()) {
-    NEARBY_LOGS(ERROR) << "Preferences is no longer an object! value_="
-                       << value_.dump(4);
+    LOG(ERROR) << "Preferences is no longer an object! value_="
+               << value_.dump(4);
     value_ = json::object();
   }
 
@@ -252,8 +256,8 @@ std::vector<T> PreferencesManager::GetArrayValue(
   std::vector<T> result;
 
   if (!value_.is_object()) {
-    NEARBY_LOGS(ERROR) << "Preferences is no longer an object! value_="
-                       << value_.dump(4);
+    LOG(ERROR) << "Preferences is no longer an object! value_="
+               << value_.dump(4);
 
     for (const T& value : default_value) {
       result.push_back(value);
@@ -278,5 +282,4 @@ std::vector<T> PreferencesManager::GetArrayValue(
   return result;
 }
 
-}  // namespace windows
-}  // namespace nearby
+}  // namespace nearby::windows

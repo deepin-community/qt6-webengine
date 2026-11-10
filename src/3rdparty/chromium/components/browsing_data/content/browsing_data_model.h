@@ -7,6 +7,7 @@
 
 #include <iterator>
 #include <map>
+#include <variant>
 
 #include "base/containers/enum_set.h"
 #include "base/functional/callback_forward.h"
@@ -16,12 +17,13 @@
 #include "components/browsing_data/content/shared_worker_info.h"
 #include "components/webid/federated_identity_data_model.h"
 #include "content/public/browser/attribution_data_model.h"
+#include "content/public/browser/cdm_storage_data_model.h"
 #include "content/public/browser/interest_group_manager.h"
 #include "content/public/browser/private_aggregation_data_model.h"
 #include "content/public/browser/session_storage_usage_info.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
+#include "services/network/public/mojom/device_bound_sessions.mojom.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/origin.h"
@@ -39,12 +41,12 @@ class BrowsingDataModel {
  public:
   // The entity that logically owns a set of data. All browsing data will be
   // grouped by its owner.
-  using DataOwner = absl::variant<std::string,  // Hostname
-                                  url::Origin>;
+  using DataOwner = std::variant<std::string,  // Hostname
+                                 url::Origin>;
 
   // Storage types which are represented by the model. Some types have
   // incomplete implementations, and are marked as such.
-  // TODO(crbug.com/1271155): Complete implementations for all browsing data.
+  // TODO(crbug.com/40205603): Complete implementations for all browsing data.
   enum class StorageType {
     kTrustTokens = 1,  // Only issuance information considered.
     kSharedStorage = 2,
@@ -57,9 +59,11 @@ class BrowsingDataModel {
     kSharedDictionary,
     kSharedWorker,
     kCookie,
+    kCdmStorage,
+    kDeviceBoundSession,
 
     kFirstType = kTrustTokens,
-    kLastType = kCookie,
+    kLastType = kDeviceBoundSession,
     kExtendedDelegateRange =
         63,  // This is needed to include delegate values when adding delegate
              // browsing data to the model.
@@ -71,18 +75,19 @@ class BrowsingDataModel {
   // The information which uniquely identifies this browsing data. The set of
   // data an entry represents can be pulled from the relevant storage backends
   // using this information.
-  typedef absl::variant<url::Origin,        // Single origin, e.g. Trust Tokens
-                        blink::StorageKey,  // Partitioned JS storage
-                        content::InterestGroupManager::InterestGroupDataKey,
-                        content::AttributionDataModel::DataKey,
-                        content::PrivateAggregationDataModel::DataKey,
-                        content::SessionStorageUsageInfo,
-                        net::SharedDictionaryIsolationKey,
-                        browsing_data::SharedWorkerInfo,
-                        net::CanonicalCookie,
-                        webid::FederatedIdentityDataModel::DataKey
-                        // TODO(crbug.com/1271155): Additional backend keys.
-                        >
+  typedef std::variant<url::Origin,        // Single origin, e.g. Trust Tokens
+                       blink::StorageKey,  // Partitioned JS storage
+                       content::InterestGroupManager::InterestGroupDataKey,
+                       content::AttributionDataModel::DataKey,
+                       content::PrivateAggregationDataModel::DataKey,
+                       content::SessionStorageUsageInfo,
+                       net::SharedDictionaryIsolationKey,
+                       browsing_data::SharedWorkerInfo,
+                       net::CanonicalCookie,
+                       webid::FederatedIdentityDataModel::DataKey,
+                       net::device_bound_sessions::SessionKey
+                       // TODO(crbug.com/40205603): Additional backend keys.
+                       >
       DataKey;
 
   // Information about the data pointed at by a DataKey.
@@ -98,8 +103,11 @@ class BrowsingDataModel {
 
     // The number of cookies included in this storage. This is only included to
     // support legacy UI surfaces.
-    // TODO(crbug.com/1359998): Remove this when UI no longer requires it.
+    // TODO(crbug.com/40862729): Remove this when UI no longer requires it.
     uint64_t cookie_count = 0;
+
+    // Flag indicating if the data was blocked in a third-party context.
+    bool blocked_third_party = false;
   };
 
   // A view of a single "unit" of browsing data. Considered a "view" as it holds
@@ -113,7 +121,7 @@ class BrowsingDataModel {
 
     // Returns the non-1P SchemefulSite this data is partitioned on. Returns
     // base::nullopt if the data is not partitioned, or is the 1P partition.
-    absl::optional<net::SchemefulSite> GetThirdPartyPartitioningSite() const;
+    std::optional<net::SchemefulSite> GetThirdPartyPartitioningSite() const;
 
     // The logical owner of this browsing data. This is the entity which this
     // information will be most strongly associated with in UX surfaces.
@@ -159,8 +167,12 @@ class BrowsingDataModel {
     // Returns the owner of the data identified by the given DataKey and
     // StorageType, or nullopt if the delegate does not manage the entity that
     // owns the given data.
-    virtual absl::optional<DataOwner> GetDataOwner(
+    virtual std::optional<DataOwner> GetDataOwner(
         const DataKey& data_key,
+        StorageType storage_type) const = 0;
+
+    // Returns true if storage type is Cookie-like i.e. non kAPI type.
+    virtual std::optional<bool> IsStorageTypeCookieLike(
         StorageType storage_type) const = 0;
 
     // Returns whether the delegate considers `storage_type` to be blocked by
@@ -169,7 +181,7 @@ class BrowsingDataModel {
     // This method isn't aware of the context in which the data key is being
     // accessed and may return false positive in case it was called for a first
     // party key in a first party context.
-    virtual absl::optional<bool> IsBlockedByThirdPartyCookieBlocking(
+    virtual std::optional<bool> IsBlockedByThirdPartyCookieBlocking(
         const DataKey& data_key,
         StorageType storage_type) const = 0;
 
@@ -192,7 +204,6 @@ class BrowsingDataModel {
     ~Iterator();
     Iterator(const Iterator& iterator);
     bool operator==(const Iterator& other) const;
-    bool operator!=(const Iterator& other) const;
 
     // Input iterator functionality. These declarations allow STL functions to
     // make use of the iterator interface.
@@ -227,6 +238,10 @@ class BrowsingDataModel {
   // Retrieves the host from the data owner.
   static const std::string GetHost(const DataOwner& data_owner);
 
+  // Retrieves the owning origin for a specific data key.
+  static const url::Origin GetOriginForDataKey(
+      const BrowsingDataModel::DataKey& data_key);
+
   // Consults supported storage backends to create and populate a Model based
   // on the current state of `browser_context`.
   static void BuildFromDisk(
@@ -254,8 +269,9 @@ class BrowsingDataModel {
   void AddBrowsingData(const DataKey& data_key,
                        StorageType storage_type,
                        uint64_t storage_size,
-                       // TODO(crbug.com/1359998): Deprecate cookie count.
-                       uint64_t cookie_count = 0);
+                       // TODO(crbug.com/40862729): Deprecate cookie count.
+                       uint64_t cookie_count = 0,
+                       bool blocked_third_party = false);
 
   // Removes all browsing data associated with `data_owner`, reaches out to
   // all supported storage backends to remove the data, and updates the model.
@@ -282,6 +298,10 @@ class BrowsingDataModel {
   // Virtual to allow an in-memory only fake to be created.
   virtual void RemoveUnpartitionedBrowsingData(const DataOwner& data_owner,
                                                base::OnceClosure completed);
+
+  // Returns true if storage type is Cookie-like i.e. non kAPI type.
+  // This can't be static as it requires to consult the delegate.
+  bool IsStorageTypeCookieLike(StorageType storage_type) const;
 
   // Returns whether the provided `storage_type` is blocked when third party
   // cookies are blocked, utilizing `data_key` to exclude partitioned data.
@@ -310,7 +330,7 @@ class BrowsingDataModel {
   explicit BrowsingDataModel(
       content::StoragePartition* storage_partition,
       std::unique_ptr<Delegate> delegate
-      // TODO(crbug.com/1271155): Inject other dependencies.
+      // TODO(crbug.com/40205603): Inject other dependencies.
   );
 
   void GetAffectedDataKeyEntriesForRemovePartitionedBrowsingData(
@@ -331,7 +351,7 @@ class BrowsingDataModel {
 
   // Non-owning pointers to storage backends. All derivable from a browser
   // context, but broken out to allow easier injection in tests.
-  // TODO(crbug.com/1271155): More backends to come, they should all be broken
+  // TODO(crbug.com/40205603): More backends to come, they should all be broken
   // out from the browser context at the appropriate level.
   raw_ptr<content::StoragePartition, DanglingUntriaged> storage_partition_;
 

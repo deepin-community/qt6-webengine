@@ -1,12 +1,12 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import type * as Platform from '../../../core/platform/platform.js';
 import * as EmulationModel from '../../../models/emulation/emulation.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
 import * as UILegacy from '../../../ui/legacy/legacy.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import {html, render} from '../../../ui/lit/lit.js';
 import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 class SizeChangedEvent extends Event {
@@ -27,8 +27,6 @@ export class SizeInputElement extends HTMLElement {
   #placeholder = '';
   #title: Platform.UIString.LocalizedString;
   #jslogContext: string;
-
-  static readonly litTagName = LitHtml.literal`device-mode-emulation-size-input`;
 
   constructor(title: Platform.UIString.LocalizedString, {jslogContext}: {jslogContext: string}) {
     super();
@@ -56,14 +54,13 @@ export class SizeInputElement extends HTMLElement {
   }
 
   render(): void {
-    LitHtml.render(
+    render(
         // Since the emulation code runs in a different frame, we can't
         // use constructed stylesheets (they are disallowed cross-frame).
         // For now, use an inline style tag and later we can refactor this
         // to use proper constructed stylesheets, when the code runs
         // in the correct frame context.
-        // eslint-disable-next-line rulesdir/ban_style_tags_in_lit_html
-        LitHtml.html`
+        html`
       <style>
         input {
           /*
@@ -124,14 +121,13 @@ export class SizeInputElement extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('device-mode-emulation-size-input', SizeInputElement);
+customElements.define('device-mode-emulation-size-input', SizeInputElement);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'device-mode-emulation-size-input': SizeInputElement;
   }
   interface HTMLElementEventMap {
-    'sizechanged': SizeChangedEvent;
+    sizechanged: SizeChangedEvent;
   }
 }

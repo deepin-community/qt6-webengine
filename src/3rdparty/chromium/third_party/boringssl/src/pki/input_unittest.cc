@@ -1,12 +1,23 @@
 // Copyright 2015 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "input.h"
 
 #include <gtest/gtest.h>
 
-namespace bssl::der::test {
+BSSL_NAMESPACE_BEGIN
+namespace der::test {
 
 constexpr uint8_t kInput[] = {'t', 'e', 's', 't'};
 const uint8_t kInput2[] = {'t', 'e', 'a', 'l'};
@@ -41,14 +52,12 @@ TEST(InputTest, LessThan) {
 
 TEST(InputTest, AsString) {
   Input input(kInput);
-  std::string expected_string(reinterpret_cast<const char *>(kInput),
-                              std::size(kInput));
-  EXPECT_EQ(expected_string, input.AsString());
+  EXPECT_EQ(bssl::BytesAsStringView(kInput), input.AsString());
 }
 
 TEST(InputTest, StaticArray) {
   Input input(kInput);
-  EXPECT_EQ(std::size(kInput), input.Length());
+  EXPECT_EQ(std::size(kInput), input.size());
 
   Input input2(kInput);
   EXPECT_EQ(input, input2);
@@ -56,17 +65,17 @@ TEST(InputTest, StaticArray) {
 
 TEST(InputTest, ConstExpr) {
   constexpr Input default_input;
-  static_assert(default_input.Length() == 0);
-  static_assert(default_input.UnsafeData() == nullptr);
+  static_assert(default_input.size() == 0);
+  static_assert(default_input.data() == nullptr);
 
   constexpr Input const_array_input(kInput);
-  static_assert(const_array_input.Length() == 4);
-  static_assert(const_array_input.UnsafeData() == kInput);
+  static_assert(const_array_input.size() == 4);
+  static_assert(const_array_input.data() == kInput);
   static_assert(default_input < const_array_input);
 
   constexpr Input ptr_len_input(kInput, 2);
-  static_assert(ptr_len_input.Length() == 2);
-  static_assert(ptr_len_input.UnsafeData() == kInput);
+  static_assert(ptr_len_input.size() == 2);
+  static_assert(ptr_len_input.data() == kInput);
   static_assert(ptr_len_input < const_array_input);
 
   Input runtime_input(kInput2, 2);
@@ -104,4 +113,5 @@ TEST(ByteReaderTest, HasMore) {
   ASSERT_FALSE(reader.HasMore());
 }
 
-}  // namespace bssl::der::test
+}  // namespace der::test
+BSSL_NAMESPACE_END
